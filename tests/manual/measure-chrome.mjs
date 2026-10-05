@@ -14,8 +14,7 @@
 //   phone (390, touch):
 //     * the sub-tab strip never scrolls sideways, every pane is on screen,
 //       Home's five fit on one row, and each is a 44px target;
-//     * the status strip shows its first segment and a "+N more", draws no
-//       separator, and opens to every segment when asked;
+//     * no status strip sits over the reports (House > Reports cut it);
 //     * Help opens on the guide: the contents are a shut fold whose summary
 //       names the section, the page starts above the fold, and the fold
 //       opens to the links.
@@ -149,41 +148,17 @@ const subtab = (page, view) => page.click(`.subtab[data-view="${view}"]`);
     note(where, `Home's panes take ${new Set(strip.tabs.map((t) => t.top)).size} rows, not 1`);
   }
 
-  // The status strip lives over the Insights cards.
+  // The status strip used to sit over the Insights cards. House > Reports
+  // cut it (the redesign: a report is its headline and its age), so what
+  // is measured now is that it stays cut — a strip of checks and runs over
+  // the reports is the chrome this file exists to keep off a phone.
   await subtab(page, 'insights');
-  await page.waitForSelector('#todayStrip .tseg');
-  const today = () => page.evaluate(() => {
-    const s = document.querySelector('#todayStrip');
-    const segs = [...s.querySelectorAll('.tseg')];
-    const shown = segs.filter((n) => getComputedStyle(n).display !== 'none');
-    const more = s.querySelector('.tsegmore');
-    return {
-      segs: segs.length,
-      shown: shown.length,
-      bars: shown.filter((n) => {
-        const b = getComputedStyle(n, '::before');
-        return b.display !== 'none' && b.content !== 'none';
-      }).length,
-      more: more ? { text: more.textContent,
-                     h: Math.round(more.getBoundingClientRect().height),
-                     shown: getComputedStyle(more).display !== 'none' } : null,
-      h: Math.round(s.getBoundingClientRect().height),
-    };
+  await page.waitForSelector('#viewInsights.active');
+  const strip2 = await page.evaluate(() => {
+    const s = document.querySelector('#viewInsights #todayStrip');
+    return s ? Math.round(s.getBoundingClientRect().height) : null;
   });
-  let t = await today();
-  if (t.segs < 4) note(where, `the stub drew ${t.segs} status segments, expected at least 4`);
-  if (t.shown !== 1) note(where, `the folded status strip shows ${t.shown} segments, not 1`);
-  if (t.bars) note(where, `${t.bars} status segment(s) draw a separator bar on a phone`);
-  if (!t.more || !t.more.shown || !/^\+\d+ more$/.test(t.more.text)) {
-    note(where, `no "+N more" on the folded status strip (${JSON.stringify(t.more)})`);
-  } else if (t.more.h < MIN_TARGET) {
-    note(where, `"${t.more.text}" is ${t.more.h}px tall`);
-  }
-  if (t.more && t.more.shown) {
-    await page.click('#todayStrip .tsegmore');
-    t = await today();
-    if (t.shown !== t.segs) note(where, `opened, the status strip shows ${t.shown} of ${t.segs}`);
-  }
+  if (strip2) note(where, `a ${strip2}px status strip is back over the reports`);
 
   // Help: the guide first, the contents behind a fold.
   await page.click('.viewtab[data-group="help"]');

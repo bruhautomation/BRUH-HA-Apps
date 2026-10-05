@@ -28,6 +28,11 @@
 //   * the window is called what it is — "Last 24 hours", never "Today".
 //   * a row a person undid says so on the row, in words.
 //   * "nobody home" is shown when it is known and absent when it is not.
+//   * the top line is what the house is doing now (the situation reading),
+//     and the tab's intro and each group's blurb stay cut (House ›
+//     What happened): a group is its name.
+//   * the cause filter is ONE "Caused by" select with no counts, never a
+//     row of counted chips — the row that scrolled sideways on a phone.
 //   * the paragraph is a PRESS and says it costs something; it is never
 //     fetched on arrival.
 //   * tapping a row opens that entity's own history, and closes it again.
@@ -168,7 +173,12 @@ window.fetch = async (url, opts) => {
                     changes: [{ ts: ${NOW} - 300, state: 'off',
                                 cause: 'person', by_name: 'Ben' }] });
   }
+  if (p.includes('api/situation')) {
+    return answer({ house_mode: 'home', sentence: 'Two people are in; the '
+      + 'lounge TV is on.', sentence_stale: false, frame: {} });
+  }
   if (p.includes('api/activity')) {
+    (window.__activityQueries = window.__activityQueries || []).push(p);
     if (window.__empty) {
       return answer({ available: true, error: '', sections: [], away: [],
                       counts: {}, dropped: 40, changes: 0, episodes: 0,
@@ -246,9 +256,14 @@ for (const width of WIDTHS) {
       away: document.querySelector('.actaway')?.textContent.trim() || '',
       range: document.querySelector('#actRange')?.textContent.trim() || '',
       askLabel: document.querySelector('.actask button')?.textContent.trim() || '',
+      now: document.querySelector('#actNow')?.textContent.trim() || '',
+      nowShown: !document.querySelector('#actNow')?.hidden,
+      pane: document.querySelector('#viewActivity')?.textContent || '',
+      chips: document.querySelectorAll('#viewActivity .fchip').length,
+      selectIsSel: !!document.querySelector('#actCause.sel'),
       summaryShown: !!document.querySelector('.actsum'),
       foot: document.querySelector('.actfoot')?.textContent.trim() || '',
-      filters: [...document.querySelectorAll('#actFilters .fchip')]
+      filters: [...document.querySelectorAll('#actCause option')]
         .map((b) => b.textContent.trim()),
       wrapRight: wrap.right,
       docWidth: document.documentElement.scrollWidth,
@@ -264,8 +279,8 @@ for (const width of WIDTHS) {
   }
   for (const sec of m.sections) {
     if (!sec.heading) note(`${width}px`, `section ${sec.id} renders no heading`);
-    if (!sec.blurb) {
-      note(`${width}px`, `section ${sec.id} does not say what is in it`);
+    if (sec.blurb) {
+      note(`${width}px`, `section ${sec.id} still carries its cut intro`);
     }
     if (!sec.count) note(`${width}px`, `section ${sec.id} shows no count`);
   }
@@ -390,15 +405,41 @@ for (const width of WIDTHS) {
     note(`${width}px`, `the summary ran ${m.summaryCalls}× without a press`);
   }
   if (m.summaryShown) note(`${width}px`, 'a summary is shown with none asked for');
-  if (!m.askLabel) note(`${width}px`, 'no way to ask for the summary');
+  if (m.askLabel !== 'Ask') {
+    note(`${width}px`, `the summary press reads "${m.askLabel}", not Ask`);
+  }
+  if (!m.nowShown || !/^Someone's home/.test(m.now)) {
+    note(`${width}px`, `the top line is "${m.now}", not the house's situation`);
+  }
+  for (const cut of [/Not every state change/, /no Claude run, nothing spent/,
+                     /What does this add up to/, /Tap a row/,
+                     /Home Assistant itself stopping and starting/]) {
+    if (cut.test(m.pane)) note(`${width}px`, `cut text is back: ${cut}`);
+  }
 
-  if (!m.filters.length) note(`${width}px`, 'no cause filters rendered');
+  if (!m.selectIsSel) note(`${width}px`, 'no "Caused by" select.sel rendered');
+  if (m.chips) note(`${width}px`, `${m.chips} filter chips are back`);
+  if (m.filters[0] !== 'Anything') {
+    note(`${width}px`, `the select opens on "${m.filters[0]}"`);
+  }
+  if (m.filters.some((f) => /\d|·/.test(f))) {
+    note(`${width}px`, `a cause carries a count: ${m.filters.join(' | ')}`);
+  }
   if (m.filters.some((f) => /^Scene/.test(f))) {
     note(`${width}px`, 'a filter is offered for a cause with no rows');
   }
   if (m.docWidth > width + 0.5) {
     note(`${width}px`, `page scrolls sideways (${m.docWidth}px)`);
   }
+
+  // Picking a cause asks the server for that cause, and nothing else.
+  await page.evaluate(() => { window.__activityQueries = []; });
+  await page.selectOption('#actCause', 'automation');
+  await page.waitForFunction(() => (window.__activityQueries || [])
+    .some((q) => /cause=automation/.test(q)), null, { timeout: 5000 })
+    .catch(() => note(`${width}px`, 'picking a cause asked the server nothing'));
+  await page.selectOption('#actCause', '');
+  await page.waitForSelector('.actrow');
 
   // Tapping a row opens that entity's history, and tapping it again closes it.
   // A collapsed burst opens onto what it collapsed, with no fetch.

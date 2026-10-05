@@ -294,7 +294,7 @@ window.__hintSentences = () => {
 };
 window.__visibleButtons = () => [...document.querySelectorAll(
   '#setModal button, #setModal a.btn')]
-  .filter((b) => b.offsetParent !== null && !b.hidden)
+  .filter((b) => b.offsetParent !== null && !b.hidden && !b.classList.contains('krow'))
   .map((b) => b.textContent.replace(/\\s+/g, ' ').trim());
 `;
 
@@ -531,7 +531,7 @@ for (const width of WIDTHS) {
     const d = await page.evaluate(() => ({
       first: (document.querySelector('#diagBody .drow .dk') || {}).textContent || '',
       accuracy: document.querySelector('#diagAccuracy').textContent,
-      measures: document.querySelectorAll('#diagMeasures .drow').length,
+      measures: document.querySelectorAll('#kStores .krow').length,
       measureText: document.querySelector('#diagMeasures').textContent,
       access: document.querySelector('#diagAccess').textContent,
       runs: [...document.querySelectorAll('#diagRuns .diagrun')].map((r) => r.dataset.source),

@@ -1826,9 +1826,6 @@ body.modal-open {
   /* The same floor, for a class rule that sizes a control through the
      token rather than a bare selector this block can outrank. */
   :root { --fs-control: 16px; --btn-h: 44px; --gutter: 16px; }
-  /* The conversation filter chips are reachable from the ⋯ dialog on a
-     phone, where the rail that normally holds them isn't rendered. */
-  .crfilter { min-height: 40px; padding: 8px 14px; }
   /* Undo is a button rather than a chip on a finger: what it takes back
      can be an automation now running in somebody's house, and the offer
      expires with the toast — there is no second chance to aim at it.
@@ -2114,6 +2111,49 @@ body.modal-open {
   #viewTerminal.active .chat { flex: 1; min-width: 0; }
 }
 
+/* Below the rail's breakpoint the list is the page Ask opens on, and the
+   transcript has a head with the way back to it. Neither applies to the
+   classic terminal, which is one shell and has no list. */
+.chathead { display: none; }
+@media (max-width: 1099px) {
+  body:not(.term-classic).ask-list #viewTerminal.active .chatrail {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    border-right: 0;
+  }
+  body:not(.term-classic).ask-list #viewTerminal.active .chat { display: none; }
+  /* The floating ⋯ and ⤢ sit over the list's top-right corner. */
+  body:not(.term-classic).ask-list .crhead { padding-right: 108px; }
+  body:not(.term-classic):not(.ask-list) #viewTerminal.active .chathead {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    min-height: 52px;
+    padding: 4px 108px 4px 6px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  /* The head clears the floating buttons now, so the log need not. */
+  body:not(.term-classic):not(.ask-list) #viewTerminal.active #chatLog {
+    padding-top: 16px;
+  }
+}
+@media (min-width: 1100px) {
+  /* Beside a rail, the rail is the list: the menu item would open nothing. */
+  #chatOpen { display: none; }
+}
+.chathead .btn.icon { width: 44px; height: 44px; flex: none; }
+.chathead .chtitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
 .chatrail {
   display: none;
   flex: none;
@@ -2146,10 +2186,20 @@ body.modal-open {
   flex-direction: column;
   gap: 2px;
 }
-.crempty { padding: 12px 8px; color: var(--ink-3); font-size: var(--fs-body); }
+.crempty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 8px;
+  color: var(--ink-3);
+  font-size: var(--fs-body);
+}
+.crempty p { margin: 0; }
 .critem {
   display: grid;
   gap: 1px;
+  min-height: 44px;
   padding: 8px 10px;
   border: 0;
   border-radius: 10px;
@@ -2174,20 +2224,6 @@ body.modal-open {
 }
 .critem .cwhen { font-size: var(--fs-meta); color: var(--ink-3); }
 .critem .crfoot { display: flex; align-items: center; gap: 6px; }
-
-/* Who ran it. Only on rows that were not you — labelling the ordinary case
-   is noise with extra steps — and quiet enough that a rail of them still
-   reads as a list of conversations rather than a table of metadata. */
-.csrc {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--hairline);
-  background: var(--surface-2);
-  color: var(--ink-3);
-  font-size: var(--fs-meta);
-  font-weight: 700;
-}
 
 /* What a conversation's own Claude session is doing, on its row in both
    surfaces. Only two of the three states draw anything — a row with no
@@ -2224,35 +2260,6 @@ body.modal-open {
 /* A pulse is decoration; the word is the information. */
 @media (prefers-reduced-motion: reduce) {
   .crbusy { animation: none; }
-}
-
-/* The filter row, in the rail and in the ⋯ dialog. Wraps rather than
-   scrolls: four chips must never end up with the fourth off the edge of a
-   248px column where nothing suggests it is there. */
-.crfilters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 8px 0;
-}
-.crfilters:empty { display: none; }
-.crfilter {
-  min-height: 32px;
-  padding: 5px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--ink-2);
-  font: inherit;
-  font-size: var(--fs-meta);
-  cursor: pointer;
-}
-.crfilter:hover { border-color: var(--accent); }
-.crfilter.on {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  color: var(--ink);
-  font-weight: 600;
 }
 
 /* Model and context, under the composer. Quiet by construction: this is a
@@ -2523,6 +2530,74 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .think > summary { font-style: italic; }
 .think .tbody { color: var(--ink-2); font-style: italic; }
 
+/* One reply's working, folded: every tool call, its result and the
+   thinking behind one line that counts them. Closed by default — the
+   answer is what a reply is for — and the line says when something failed
+   or was not permitted, so the fold never hides the one step worth
+   reading. The approval and question cards are never in it. */
+.steps {
+  max-width: 760px;
+  width: 100%;
+  align-self: center;
+  font-size: var(--fs-body);
+}
+.steps > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 4px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink-3);
+}
+.steps > summary::-webkit-details-marker { display: none; }
+.steps > summary::after {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: .6;
+  transform: rotate(-45deg);
+  transition: transform .15s ease;
+}
+.steps[open] > summary::after { transform: rotate(45deg); }
+.steps > summary:hover { color: var(--ink-2); }
+.steps .tdot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--good);
+}
+.steps.running .tdot { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.steps.bad .tdot { background: var(--critical); }
+.stepsbody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* "Save as report" under an answer: quiet, because most answers are read
+   once and that is the end of them. */
+.msgacts { display: flex; gap: 8px; margin-top: 8px; }
+.msgacts .msgsaved { font-size: var(--fs-meta); color: var(--ink-3); }
+
+/* A discussion's opener is the card, not a page of context: its title, and
+   what brAIn told Claude about it one press down. */
+.msg.user .bubble.discuss { white-space: normal; }
+.bubble.discuss .dtitle { font-weight: 600; white-space: pre-wrap; }
+.bubble.discuss .dmore { margin-top: 4px; font-size: var(--fs-meta); color: var(--ink-3); }
+.bubble.discuss .dmore > summary { cursor: pointer; min-height: 24px; }
+.bubble.discuss .dbody { margin-top: 6px; white-space: pre-wrap; color: var(--ink-2); }
+
+/* A card reached from a conversation's "show this card": marked for a
+   moment so the eye lands on it. */
+.cardflash { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .chatnotice {
   max-width: 760px;
   width: 100%;
@@ -2735,6 +2810,12 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   margin: auto;
   padding: 24px 18px;
   max-width: 560px;
+  /* Scrolls rather than pushing the composer and the meta line off a short
+     phone: a flex item whose overflow is not visible may shrink below its
+     content, which is what lets the transcript head and four seeds share
+     320px with the box you type into. */
+  min-height: 0;
+  overflow-y: auto;
   text-align: center;
   color: var(--ink-2);
 }
@@ -2823,127 +2904,40 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   color: var(--ink-3);
 }
 
-/* The conversation list. One row per conversation: what it opened with,
-   and when anything last happened in it — which between them are how
-   anyone recognises a conversation they had. */
-.convlist { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.convitem {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  width: 100%;
-  min-height: 48px;
-  padding: 10px 12px;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.convitem:hover { border-color: var(--accent); }
-/* The open conversation: marked, not hidden — and not a place to go. */
-.convitem.active { border-color: var(--accent); cursor: default; }
-.convitem.active .ctitle { color: var(--accent); }
-
 /* The run reader: the same message, think and tool nodes the chat draws,
    read-only in a modal. Its own class rather than .chatlog, whose flex
    sizing and floating-button padding belong to the chat pane. */
 .viewlog { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
-.convitem .ctitle {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--fs-body);
-}
-.convitem .cwhen { flex: none; font-size: var(--fs-meta); color: var(--ink-3); }
 
-/* Deleting a conversation. A row is itself a button, and a button cannot
-   hold another — so every row sits in a wrapper and the ✕ floats over its
-   right edge. On the rail it appears on hover, because a column of ✕s
-   turns a list of conversations into a list of deletions; on touch there
-   is no hover, so it is simply there, and in the dialog — the touch path —
-   it gets a full-size target. */
+/* A row's ⋯. A row is itself a button, and a button cannot hold another —
+   so every row sits in a wrapper and the ⋯ floats over its right edge. On a
+   pointer it appears with the row's hover, because a column of controls
+   turns a list of conversations into a list of things to do to them; on
+   touch there is no hover, so it is simply there, at a thumb's size. */
 .crrow { position: relative; }
-.crrow > .critem, .crrow > .convitem { width: 100%; padding-right: 36px; }
-.crdel {
+.crrow > .critem { width: 100%; padding-right: 48px; }
+.crmore {
   position: absolute;
   top: 50%;
   right: 4px;
   transform: translateY(-50%);
-  width: 28px;
-  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: 0;
   border-radius: 8px;
   background: none;
   color: var(--ink-3);
-  font: inherit;
-  font-size: var(--fs-body);
-  line-height: 1;
   cursor: pointer;
   opacity: 0;
 }
-.crrow:hover .crdel, .crrow:focus-within .crdel { opacity: 1; }
-.crdel:hover { background: var(--surface-2); color: var(--critical); }
-.crrow > .convitem { padding-right: 52px; }
-.crrow > .convitem ~ .crdel { width: 40px; height: 40px; right: 6px; opacity: 1; }
-@media (pointer: coarse) { .crdel { opacity: 1; } }
-
-/* Selection mode: several conversations in one press instead of one ✕
-   each. The checkbox anchors to the row (the button is the row, and a
-   button cannot hold another control), the selected row tints, and the
-   open conversation goes inert — the server refuses to delete it, so a
-   checkbox on it would only ever answer "skipped". */
-.crrow > .hascheck { padding-left: 36px; }
-.crcheck {
-  position: absolute;
-  left: 9px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
-  border: 1.5px solid var(--ink-3);
-  border-radius: 5px;
-  background: var(--surface);
-}
-.crcheck.on {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-.crcheck.on::after {
-  content: "✓";
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  color: var(--on-accent);
-  font-size: var(--fs-meta);
-  line-height: 1;
-}
-.critem.sel, .convitem.sel {
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-}
-.critem.inert, .convitem.inert { opacity: 0.55; cursor: default; }
-.cselbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 8px;
-  margin-bottom: 4px;
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  background: var(--surface-2);
-}
-.cselbar .cselcount {
-  flex: 1;
-  min-width: 90px;
-  font-size: var(--fs-meta);
-  color: var(--ink-2);
-}
+.crmore .ico { width: 18px; height: 18px; }
+.crrow:hover .crmore, .crrow:focus-within .crmore,
+.crmore[aria-expanded="true"] { opacity: 1; }
+.crmore:hover { background: var(--surface-2); color: var(--ink); }
 
 /* Session details, in the shared chip popover. */
 .chippop .mono {
@@ -2972,23 +2966,29 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   background: var(--surface);
 }
 .chatfinding.hidden { display: none; }
-.chatfinding .cfhead { display: flex; align-items: baseline; gap: 8px; }
-.chatfinding .cflabel {
-  flex: none;
-  font-size: var(--fs-meta);
-  font-weight: 700;
-  color: var(--ink-3);
-}
+.chatfinding .cfhead { display: flex; align-items: center; gap: 8px; }
+/* The card's own title, and the way back to it: a link in all but name. */
 .chatfinding .cftext {
   flex: 1;
   min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--fs-body);
-  font-weight: 600;
+  cursor: pointer;
 }
-.chatfinding .cfhead .btn.icon { width: 28px; height: 28px; flex: none; }
+.chatfinding .cftext:hover { color: var(--accent); text-decoration-color: currentColor; }
+.chatfinding .cfhead .btn.icon { width: 32px; height: 32px; flex: none; }
 .chatfinding .cfacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 .snoozeopts { display: flex; flex-direction: column; gap: 6px; }
@@ -5449,3 +5449,147 @@ input[type="range"]::-moz-range-thumb {
   width: var(--thumb); height: var(--thumb); border-radius: 50%; border: 0; background: var(--accent);
 }
 input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* Ask on a finger: the row's ⋯ is always there and a thumb's size, and the
+   fold, the strip and "Save as report" are targets, not text. After the
+   first coarse block on purpose — that one is the 16px text floor. */
+@media (pointer: coarse) {
+  .crmore { opacity: 1; width: 44px; height: 44px; }
+  .crrow > .critem { padding-right: 52px; }
+  .steps > summary { min-height: 44px; }
+  .msgacts .btn { min-height: 44px; }
+  .chatfinding .cftext { min-height: 44px; }
+  .chatfinding .cfhead .btn.icon { width: 44px; height: 44px; }
+  .bubble.discuss .dmore > summary { min-height: 44px; display: flex; align-items: center; }
+}
+
+/* ---------------------------------------------------------------- House
+   One segmented control over Reports, What it knows, the house book and
+   What happened. Four buttons on a pointer; one styled select below 640px,
+   because four labels in a phone's row is a row that wraps or scrolls
+   sideways, and the select is the same choice in one control. */
+.houseseg { display: flex; align-items: center; margin: 0 0 var(--sp-4); }
+.houseseg[hidden] { display: none; }
+.houseseg .segbtns {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: var(--card-border);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+}
+.houseseg .segbtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 500;
+  min-height: 32px;
+  padding: 0 var(--sp-4);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.houseseg .segbtn:hover { color: var(--ink); }
+.houseseg .segbtn.active { color: var(--ink); background: var(--surface-2); font-weight: 600; }
+.houseseg .segbtn[hidden] { display: none; }
+.houseseg .segsel { display: none; width: 100%; }
+@media (max-width: 640px) {
+  .houseseg .segbtns { display: none; }
+  .houseseg .segsel { display: block; }
+}
+
+/* Reports: the search field (only past eight reports), and two rows under
+   the grid — the deep review and Suggested — each a name and a Run. */
+.reportsearch {
+  display: block;
+  width: 100%;
+  min-height: var(--btn-h);
+  margin: 0 0 var(--sp-3);
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-control);
+  color: var(--ink);
+  background: var(--surface);
+  border: var(--card-border);
+  border-radius: var(--control-radius);
+  outline: none;
+}
+.reportsearch[hidden] { display: none; }
+.reportsearch:focus { border-color: var(--accent); }
+.reportrow {
+  margin-top: var(--section-gap);
+  padding: var(--card-pad);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+}
+.reportrow h2 { margin: 0; font-size: var(--fs-card); line-height: var(--lh-card); font-weight: 600; }
+.reportrowhead { display: flex; align-items: center; gap: var(--sp-3); justify-content: space-between; }
+.ideasrow .findlist { margin-top: var(--sp-3); }
+.ideasrow.empty .findlist:empty { display: none; }
+.ideasrow .ideasnote { margin-top: var(--sp-2); font-size: var(--fs-meta); color: var(--ink-3); }
+.kreviewsec .kreview { margin-top: var(--sp-2); }
+.kreviewsec .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.kreviewsec .kreviewcost { font-size: var(--fs-meta); color: var(--ink-3); }
+.card.opens { cursor: pointer; }
+.card .cardage { color: var(--ink-3); }
+.refinemore { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-3); }
+.refinemore[hidden] { display: none; }
+.refinelink { color: var(--accent-2); font-size: var(--fs-body); text-decoration: none; }
+.refinelink:hover { text-decoration: underline; }
+
+/* What it knows: a fact is a row; pressing it opens who taught it, when,
+   and the run it came from. */
+.kknow .kadd { margin-top: 0; }
+.kfact .kfactopen {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.kfact .kfactopen .kfacttext { color: var(--ink); word-break: break-word; }
+.kfact .kfactopen .kfactsubj { color: var(--ink-3); justify-self: start; }
+.kfact .kfactdetail { margin-top: var(--sp-1); }
+
+/* What happened: the house's situation as the top line, and one
+   "Caused by" picker where a row of counted chips used to scroll. */
+.actnow {
+  display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); align-items: baseline;
+  margin: 0 0 var(--sp-3); font-size: var(--fs-body); line-height: var(--lh-body);
+}
+.actnow[hidden] { display: none; }
+.actnow .actnowmode { font-weight: 600; color: var(--ink); }
+.actnow .actnowsaid { color: var(--ink-2); }
+.actnow .actnowsaid.stale { color: var(--ink-3); }
+.actcause {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-body); color: var(--ink-2); min-width: 0;
+}
+.actcause select.sel { max-width: 220px; }
+
+/* The house book: Run and Share, and the sentence a sitter is told too. */
+.bookwrap .bookactions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.bookwrap .booksafe { margin: var(--sp-2) 0 var(--sp-3); }
+
+/* Touch targets for House's own controls, after the text floor. */
+@media (pointer: coarse) {
+  .houseseg .segbtn, .houseseg .segsel, .reportsearch,
+  .kfact .kfactopen, .actcause select.sel { min-height: 44px; }
+  .reportrow .btn, .bookwrap .btn, .card .cardask { min-height: 44px; }
+  .refinelink { display: inline-flex; align-items: center; min-height: 44px; }
+}
+@media (max-width: 640px) {
+  .acthead .actnav, .actcause { width: 100%; }
+  .actcause select.sel { flex: 1; max-width: none; }
+}

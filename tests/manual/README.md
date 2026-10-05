@@ -79,6 +79,36 @@ negative *bottom* margin left there shortens `.wrap` — whose overflow then
 clips the bottom of the view, which is exactly where this line lives. Set
 `CHATMETA_SHOT_DIR=/some/dir` for PNGs at representative widths.
 
+Its second pass drives the real conversation list at 390 and 1200 — the
+rail beside the transcript on a wide screen and the page Ask opens on below
+1100px, one renderer at both — and fails on a missing, hidden or
+overhanging state pill or a row under the touch floor. Its third pass drives
+the line above the message box through every row state and fails if a plain
+pause draws anything, if a pause offers a button (sending is what resumes),
+or if the word "Resume" comes back.
+
+## `measure-ask.mjs`
+
+Drives the Ask tab — the list of your chats and a transcript — through the
+real renderers behind a stubbed fetch, at 390 (touch) and 1200.
+
+```bash
+node tests/manual/measure-ask.mjs
+```
+
+It fails on any run-type chip (Chats · Automation · Cards · Voice…), a
+selection mode or a ✕ on the rows, a row without its ⋯ or a ⋯ under 44px on
+touch, a row menu offering anything but Delete or a Delete with no Undo, a
+phone that does not open on the list or a transcript with no way back, a
+reply whose tool calls and thinking are not folded into ONE closed "Worked
+through N steps" per reply, an approval card or the resolutions card folded
+away with them, a "Save as report" on anything but a reply's last answer (or
+on a discussion's opener, or one that does not post `report: true` with the
+question), a strip whose buttons are not the card verbs, a discussion still
+titled "Discussing", and any cut text coming back (Resume now, Select
+conversations). Run it after touching the chat renderer, the rail, the
+composer line or the discussion strip.
+
 ## `measure-tooltips.mjs`
 
 Hovers every visible `[data-tip]` control on the Findings tab at five widths
@@ -144,6 +174,26 @@ node tests/manual/measure-chrome.mjs
 
 Run it after touching `.subtabs`, `.today`, the docs nav, `.findwrap` /
 `.findlist`, or `#viewProposals`.
+
+## `measure-house.mjs`
+
+The House screen, driven on the real markup behind a stubbed fetch at 390px
+(touch) and 1200px. House is one segmented control — Reports · What it knows ·
+House book · What happened — and on a phone that control is one `select.sel`
+rather than four buttons. Fails on a segment that opens the wrong pane or does
+not light up, the control showing on a pane outside House, any cut Reports
+text coming back (the checks strip, the second ask box, tag chips, a tokens
+line), a card head other than Ask · ⋯ or a foot other than "Updated N ago",
+a missing Deep review or Suggested row, a search box shown at eight reports or
+fewer (or one that does not narrow past eight), What happened's top line not
+being the house's situation, a target under 44px on touch, or sideways scroll.
+
+```bash
+node tests/manual/measure-house.mjs
+```
+
+Run it after touching `#houseSeg`, the Reports grid, `#viewHousebook` or the
+top of `#viewActivity`.
 
 ## `demo_panel.py` + `shoot-panel.mjs` — the docs screenshots
 
@@ -220,3 +270,8 @@ text the keyboard did not change, when a keyboard sliding in resizes the
 terminal more than once, when the panel's bar flaps after a keyboard closes,
 and when a toolbar key opens a keyboard that was down. Run against the script
 before 2.10.1 it fails fourteen ways.
+
+Its last pass loads the real panel at 390 (touch): the chat face of Ask must
+open on the list of your chats with a way back from a transcript, the classic
+face must open straight on the terminal with no list over it, and Chat
+options and Full-screen terminal must be on screen in both.

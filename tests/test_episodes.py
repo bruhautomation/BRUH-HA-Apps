@@ -797,8 +797,10 @@ class TestOneVocabulary(unittest.TestCase):
 
     def test_the_panel_renders_the_sections_the_server_sends(self):
         self.assertIn("function actSection(sec)", self.js)
-        self.assertIn("sec.blurb", self.js)
         self.assertIn("sec.reads", self.js)
+        # A group is its name: the server still sends each section's blurb,
+        # and the redesign (House > What happened) stopped rendering it.
+        self.assertNotIn("sec.blurb", self.js)
 
     def test_the_old_flat_list_is_gone_from_the_panel_and_the_stylesheet(self):
         """Hour headings over a flat stream of state changes were the tab,

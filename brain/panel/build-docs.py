@@ -117,6 +117,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "it-knows-how-your-house-holds-its-heat", "what-the-thermal-model-is-for",
         "it-knows-what-happened-and-what-caused-it",
         "it-asks-why-you-did-something", "what-brain-is-measuring",
+        "the-house-book",
     ]),
     ("Changing the house", [
         "it-runs-home-assistant", "it-works-while-youre-asleep",

@@ -819,7 +819,10 @@ class TestChatTerminalPanel(unittest.TestCase):
         conversation picker, which lists Claude Code's own store and replays
         the one you choose."""
         self.assertIn('id="chatOpen"', self.html)
-        self.assertIn('id="convModal"', self.html)
+        # The list is the rail (beside the transcript, or the page Ask
+        # opens on below the breakpoint) — never a second dialog copy.
+        self.assertIn('id="chatRail"', self.html)
+        self.assertNotIn('id="convModal"', self.html)
         self.assertIn("api/chat/resume", self.js)
         self.assertIn("api/chat/conversations", self.js)
         chat = (PANEL / "chat_session.py").read_text()
@@ -1039,12 +1042,16 @@ class TestDocsTab(unittest.TestCase):
         guide was teaching a UI nobody had."""
         self.assertNotIn("refreshAll", self.app)
         self.assertNotIn("refreshAll", self.html)
-        self.assertIn("⋯ → Regenerate", self.docs)
-        self.assertIn("⋯ → Delete", self.docs)
-        self.assertIn("✎ Refine", self.docs)
-        self.assertIn("↗ Share", self.docs)
-        self.assertNotIn("⋯ → Give feedback", self.docs)
-        self.assertNotIn("⋯ → Add to dashboard", self.docs)
+        # House > Reports: the head is Ask and ⋯, and ⋯ is exactly Share,
+        # Past versions, Run and Delete.
+        self.assertIn("Two controls are on the card", self.docs)
+        for press in ("**Ask**", "**Share**", "**Past versions**",
+                      "**Run**", "**Delete**"):
+            self.assertIn(press, self.docs, press)
+        for gone in ("✎ Refine", "↗ Share", "⤢ Expand", "⋯ → Regenerate",
+                     "⋯ → Edit tags", "⋯ → Give feedback",
+                     "⋯ → Add to dashboard"):
+            self.assertNotIn(gone, self.docs, gone)
 
     def test_no_form_control_can_trigger_the_ios_zoom_trap(self):
         """iOS Safari zooms the page in when a text control's font is under
@@ -2803,18 +2810,19 @@ class TestKnowledgeTab(unittest.TestCase):
                 # docstring rather than in a branch; the rest are branches.
                 self.assertIn(state, chip + "\nnot_started")
 
-    def test_the_four_sections_are_in_the_order_they_are_read(self):
-        """What brAIn said this morning, what it has measured, what it
-        remembers, what is queued. The document used to sit beside the queue
-        in two columns, which said nothing about which was which."""
-        order = ["This morning", "What brAIn has measured",
-                 "How brAIn's memory works", "Memory document",
-                 "Waiting to be filed", "Facts brAIn has learned"]
-        # The headings, not the prose: a comment can say any of these words
-        # in any order, and the thing being asserted is the page.
-        marks = [f"<h2>{h}" for h in order]
-        at = [self.html.index(m) for m in marks]
-        self.assertEqual(at, sorted(at), f"sections are out of order: {order}")
+    def test_what_it_knows_is_a_teach_box_over_the_facts(self):
+        """House > What it knows is two things: tell brAIn something, and
+        what it knows. The brief, the measurements, the memory guide, the
+        document and the queue left the pane in the redesign, and a heading
+        that comes back is a section that comes back."""
+        pane = self.html.split('id="viewMemory"', 1)[1].split(
+            '<div id="view', 1)[0]
+        self.assertLess(pane.index('id="kAddForm"'), pane.index('id="kKnown"'))
+        self.assertIn("Tell brAIn something", pane)
+        for cut in ("This morning", "What brAIn has measured",
+                    "How brAIn's memory works", "Memory document",
+                    "Waiting to be filed", "File into memory now"):
+            self.assertNotIn(f"<h2>{cut}", self.html, cut)
 
     def test_the_today_strip_makes_no_request_of_its_own(self):
         """It is read off the /api/status poll every viewer already makes. A

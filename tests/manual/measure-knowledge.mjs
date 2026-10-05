@@ -1,32 +1,33 @@
-// Render the Knowledge tab against a house mid-measurement and assert every
-// row answers the question the tab exists to answer.
+// Render House › What it knows (the facts and the box that teaches them),
+// and the measurement, brief and Today-strip renderers wherever they are
+// mounted, and assert every row answers the question it exists for.
 //
-// The failure this exists to prevent is the one the tab was built for: a
-// measurement that has stopped, one that has not started, and a house with
-// nothing odd in it are three silences that used to look identical from
-// every screen. So the checks are about what a row SAYS as much as where it
-// sits:
+// The redesign (House › What it knows) took the brief, the seven
+// measurements, the memory guide, the document and its filing queue off
+// this pane: the brief is linked from Today's status line and the rest is
+// brAIn's own machinery, which ⚙ mounts. So this file asserts two things
+// that are easy to confuse:
 //
-//   * all seven stores render, in order, whatever state each is in. A store
-//     that drops out of the list is a store nobody can ask about, and the
-//     day you install this six of the seven have nothing to say.
-//   * every row carries its state chip with words in it. A row with no chip
-//     is a row that cannot tell "collecting" from "stopped".
-//   * a `reason` in the payload is visible on screen. "I could not look" is
-//     the half that says which silence this is, and a reason rendered into a
-//     node nobody can see is the same as no reason at all.
-//   * pressing a row opens its drill-down, and pressing another closes the
-//     first — one at a time, or seven answers become a page with no shape.
-//   * the baselines chart really draws: a week with 168 buckets of data and
-//     an empty <svg> look identical from a screenshot, so the nodes are
-//     COUNTED.
-//   * no row is under the touch floor, and nothing scrolls sideways.
-//
-// Plus a second pass over the Today strip, on five status shapes, because
-// none is a superset of the others: everything present, a partial payload
-// (segments must be omitted, not rendered as zeroes), a pass in flight with
-// no elapsed and one with, and a status where nothing has run at all — which
-// has to leave the strip HIDDEN rather than empty.
+//   * the House pane holds a "Tell brAIn something…" box with Send and the
+//     facts list — search plus Rooms · Devices · House chips, no counts, no
+//     sort or "who taught it" pickers, no "Rules you set" — each row a fact
+//     with its subject, a ⋯ whose one item is Delete, and its source, date
+//     and run behind a press on the row; and the cut sections stay cut.
+//   * the RENDERERS that moved still draw correctly. They are driven into a
+//     host this file mounts when the page has none (`#kStores`, `#kBrief`,
+//     `#todayStrip`) — the renderer is what is under test, and where it is
+//     mounted is ⚙'s business. A measurement that has stopped, one that has
+//     not started and a house with nothing odd in it are three silences that
+//     used to look identical, so:
+//       - all seven stores render, in order, whatever state each is in;
+//       - every row carries its state chip with words in it;
+//       - a `reason` in the payload is visible on screen;
+//       - pressing a row opens its drill-down, one at a time;
+//       - the baselines chart really draws (its nodes are COUNTED);
+//       - no row is under the touch floor, and nothing scrolls sideways.
+//     Plus the Today strip on five status shapes, and the deep review —
+//     which is a report now, on House › Reports, priced on its Run as a
+//     share of a session and dated "4 Oct" with no model or token count.
 //
 // Like measure-activity.mjs, this drives the panel's REAL renderers behind a
 // stubbed fetch. A copy of renderHouse in this file would only ever agree
@@ -34,6 +35,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openView } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -341,6 +343,10 @@ window.fetch = async (url, opts) => {
     return answer({ ok: true, facts: window.__facts,
                     summary: { count: window.__factsCount } });
   }
+  if (p.includes('api/knowledge/fact')) {
+    (window.__taught = window.__taught || []).push(JSON.parse((opts || {}).body || '{}'));
+    return answer({ added: true, merging: false });
+  }
   if (p.includes('api/knowledge')) {
     return answer({
       inbox: [{ id: 'a1', ts: ${NOW - 900}, source: 'analyst',
@@ -411,6 +417,49 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 
+// The measurement, brief and Today-strip renderers left House. Where the
+// page mounts none of their hosts (⚙ mounts them, in its own markup), the
+// measure mounts one so the renderer is still what is under test.
+const MOUNT = `
+document.addEventListener('DOMContentLoaded', () => {
+  const main = document.querySelector('main.wrap') || document.body;
+  // The panel may already have painted from its first status before this
+  // ran, and it repaints only when the status changes — so once the hosts
+  // are in, ask it to paint again.
+  setTimeout(() => {
+    try { lastRenderKey = ''; if (state.status) render(); } catch (e) { /* not booted */ }
+  }, 0);
+  if (!document.getElementById('kStores')) {
+    const box = document.createElement('section');
+    box.id = 'measureMachinery';
+    box.innerHTML = '<div id="todayHost"></div>'
+      + '<section class="ksec kbriefsec"><h2>This morning</h2><div id="kBrief" class="kbrief"></div></section>'
+      + '<section class="ksec"><h2>What brAIn has measured</h2><div id="kStores" class="kstores"></div></section>';
+    main.prepend(box);
+  }
+  if (!document.getElementById('todayStrip')) {
+    const strip = document.createElement('div');
+    strip.id = 'todayStrip';
+    strip.className = 'today hidden';
+    (document.getElementById('todayHost') || main).appendChild(strip);
+  }
+});
+`;
+
+async function openMeasurements(page) {
+  await openView(page, 'memory');
+  // The measurements are mounted in ⚙ › Diagnostics now (the redesign's
+  // PR 9), inside a dialog that is shut until somebody opens it.
+  await page.evaluate(() => {
+    if (document.querySelector('#setModal #kStores')) {
+      openBox('#setModal');
+      const sec = document.querySelector('#setsecDiagnostics');
+      if (sec) sec.open = true;
+    }
+  });
+  await page.evaluate(() => refreshHouse());
+}
+
 async function openPanel(width, extra, touch) {
   const context = await browser.newContext({
     viewport: { width, height: 900 },
@@ -421,6 +470,7 @@ async function openPanel(width, extra, touch) {
   await page.addInitScript(
     `window.__facts = ${JSON.stringify(FACTS)}; window.__factsCount = ${FACTS_COUNT};`);
   await page.addInitScript(STUB);
+  await page.addInitScript(MOUNT);
   if (extra) await page.addInitScript(extra);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
   return { context, page };
@@ -429,7 +479,7 @@ async function openPanel(width, extra, touch) {
 // ---------------------------------------------------------------- the tab
 for (const width of WIDTHS) {
   const { context, page } = await openPanel(width);
-  await page.click('.viewtab[data-view="memory"]');
+  await openMeasurements(page);
   await page.waitForSelector('#kStores .krow');
 
   const m = await page.evaluate(() => {
@@ -458,10 +508,13 @@ for (const width of WIDTHS) {
         };
       }),
       briefText: (document.getElementById('kBrief') || {}).textContent || '',
-      // The four sections, in order, by the headings and hosts that name
-      // them. Order is the contract: this is a page somebody reads down.
-      sections: [...document.querySelectorAll(
-        '#viewMemory h2, #viewMemory label')].map((n) => n.textContent.trim()),
+      // What House › What it knows holds, and what it must not.
+      house: (document.getElementById('viewMemory') || {}).textContent || '',
+      houseFirst: (() => {
+        const v = document.getElementById('viewMemory');
+        const first = v && v.querySelector('form, input, .klist');
+        return first ? (first.id || first.className) : '';
+      })(),
       hostRight: host.right,
       docWidth: document.documentElement.scrollWidth,
     };
@@ -521,22 +574,17 @@ for (const width of WIDTHS) {
   if (!/This morning/.test(m.briefText)) {
     note(`${width}px`, 'the brief does not say when it was sent');
   }
-  // Four sections, in order.
-  const order = ['This morning', 'Deep review', 'What brAIn has measured',
-                 "How brAIn's memory works", 'Memory document',
-                 'Waiting to be filed', 'Facts brAIn has learned'];
-  const found = order.map((h) => m.sections.findIndex((t) => t.startsWith(h)));
-  found.forEach((at, i) => {
-    if (at < 0) note(`${width}px`, `section "${order[i]}" is missing`);
-  });
-  if (found.every((at) => at >= 0)) {
-    for (let i = 1; i < found.length; i += 1) {
-      if (found[i] < found[i - 1]) {
-        note(`${width}px`,
-          `"${order[i]}" comes before "${order[i - 1]}"`);
-        break;
-      }
-    }
+  // House › What it knows opens on the teach box, and the sections the
+  // redesign moved off it stay off it.
+  if (m.houseFirst !== 'kAddForm') {
+    note(`${width}px`, `What it knows opens on "${m.houseFirst}", not the teach box`);
+  }
+  for (const cut of ['This morning', 'Deep review', 'What brAIn has measured',
+                     "How brAIn's memory works", 'Memory document',
+                     'Waiting to be filed', 'File into memory now',
+                     'Edit markdown', 'Export', 'Anyone taught it',
+                     'Rules you set', 'Newest first']) {
+    if (m.house.includes(cut)) note(`${width}px`, `"${cut}" is back on What it knows`);
   }
   if (m.docWidth > width + 0.5) {
     note(`${width}px`, `page scrolls sideways (${m.docWidth}px)`);
@@ -745,9 +793,13 @@ for (const width of WIDTHS) {
   const touch = width <= 768;
   const { context, page } = await openPanel(width, '', touch);
   const at = `facts/${width}px`;
-  await page.click('.viewtab[data-view="memory"]');
+  page.on('dialog', (d) => d.accept());
+  await openView(page, 'memory');
   await page.waitForSelector('#kKnown .kfact', { timeout: 5000 })
     .catch(() => note(at, 'no fact rows rendered'));
+  // A press on a row opens its detail: who taught it, when, the run.
+  await page.evaluate(() => document.querySelectorAll('#kKnown .kfactopen')
+    .forEach((b) => b.click()));
 
   const f = await page.evaluate(() => {
     const seen = (node) => {
@@ -761,13 +813,16 @@ for (const width of WIDTHS) {
     return {
       rows: [...host.querySelectorAll('.kfact')].map((r) => {
         const del = r.querySelector('.btn.icon');
+        const detail = r.querySelector('.kfactdetail');
         const run = r.querySelector('.kfactrun');
         const subj = r.querySelector('.kfactsubj');
         const dbox = del ? del.getBoundingClientRect() : { width: 0, height: 0 };
         const rbox = run ? run.getBoundingClientRect() : { width: 0, height: 0 };
         return {
-          text: (r.querySelector('.txt > div') || {}).textContent || '',
-          meta: (r.querySelector('.when') || {}).textContent || '',
+          text: (r.querySelector('.kfacttext') || {}).textContent || '',
+          meta: (detail || {}).textContent || '',
+          metaShown: seen(detail),
+          more: del ? del.textContent.trim() : '',
           subject: subj ? subj.textContent.trim() : '',
           subjectShown: seen(subj),
           hasRun: !!run,
@@ -777,7 +832,13 @@ for (const width of WIDTHS) {
         };
       }),
       more: (host.querySelector('.kmore') || {}).textContent || '',
-      hint: (document.getElementById('kKnownHint') || {}).textContent || '',
+      chips: [...document.querySelectorAll('#kKnownKinds .fchip')]
+        .map((c) => c.textContent.trim()),
+      pickers: document.querySelectorAll('#viewMemory select').length,
+      teach: {
+        placeholder: (document.getElementById('kAddInput') || {}).placeholder || '',
+        send: ((document.querySelector('#kAddForm button') || {}).textContent || '').trim(),
+      },
       hostRight: hostBox.right,
       docWidth: document.documentElement.scrollWidth,
     };
@@ -795,6 +856,8 @@ for (const width of WIDTHS) {
     if (!row.subject || !row.subjectShown) {
       note(at, `row ${i} shows no subject chip`);
     }
+    if (!row.metaShown) note(at, `row ${i}'s detail does not open on a press`);
+    if (row.more !== '⋯') note(at, `row ${i}'s menu button reads "${row.more}"`);
     if (!/correction|study/i.test(row.meta)) {
       note(at, `row ${i} does not name who taught it: "${row.meta}"`);
     }
@@ -810,7 +873,7 @@ for (const width of WIDTHS) {
     }
     if (touch) {
       if (row.delH < MIN_TARGET || row.delW < MIN_TARGET) {
-        note(at, `row ${i} ✕ is ${row.delW}x${row.delH}, under ${MIN_TARGET}`);
+        note(at, `row ${i} ⋯ is ${row.delW}x${row.delH}, under ${MIN_TARGET}`);
       }
       if (row.hasRun && row.runH < MIN_TARGET) {
         note(at, `row ${i} run link is ${row.runH}px, under ${MIN_TARGET}`);
@@ -839,6 +902,16 @@ for (const width of WIDTHS) {
   if (f.docWidth > width + 0.5) {
     note(at, `page scrolls sideways (${f.docWidth}px)`);
   }
+  // Rooms · Devices · House and nothing else, no counts, no pickers.
+  const allowed = ['Rooms', 'Devices', 'House'];
+  if (f.chips.some((c) => !allowed.includes(c))) {
+    note(at, `the chips are ${f.chips.join(' | ')}`);
+  }
+  if (f.pickers) note(at, `${f.pickers} select(s) are back on What it knows`);
+  if (f.teach.placeholder !== 'Tell brAIn something…') {
+    note(at, `the teach box reads "${f.teach.placeholder}"`);
+  }
+  if (f.teach.send !== 'Send') note(at, `the teach box's button reads "${f.teach.send}"`);
 
   // Search narrows the list on the server, and a kind chip does too.
   await page.fill('#kKnownSearch', 'porch');
@@ -851,25 +924,33 @@ for (const width of WIDTHS) {
     (n) => document.querySelectorAll('#kKnown .kfact').length === n,
     FACTS.length, { timeout: 5000 })
     .catch(() => note(at, 'clearing the search did not bring every fact back'));
-  const ruleChip = await page.$('#kKnownKinds .fchip:has-text("Rules you set")');
-  if (!ruleChip) {
-    note(at, 'no "Rules you set" chip for a store holding an exception');
+  const roomChip = await page.$('#kKnownKinds .fchip:has-text("Rooms")');
+  if (!roomChip) {
+    note(at, 'no Rooms chip for a store holding a room fact');
   } else {
-    await ruleChip.click();
+    await roomChip.click();
     await page.waitForFunction(
       () => document.querySelectorAll('#kKnown .kfact').length === 1,
       null, { timeout: 5000 })
-      .catch(() => note(at, 'the rules chip did not narrow to the one rule'));
-    // The chips are rebuilt on every paint, so press the new one.
-    await page.click('#kKnownKinds .fchip:has-text("All")');
+      .catch(() => note(at, 'the Rooms chip did not narrow to the one room fact'));
+    // The chips are rebuilt on every paint; pressing the one that is on
+    // turns it off, which is how you get back to everything.
+    await page.click('#kKnownKinds .fchip:has-text("Rooms")');
     await page.waitForFunction(
       (n) => document.querySelectorAll('#kKnown .kfact').length === n,
       FACTS.length, { timeout: 5000 })
-      .catch(() => note(at, 'the All chip did not bring every fact back'));
+      .catch(() => note(at, 'pressing Rooms again did not bring every fact back'));
   }
 
-  // ✕ forgets, the list repaints from the answer, and the count follows.
+  // ⋯ › Delete forgets (after one confirm), the list repaints from the
+  // answer, and the count follows.
   await page.click('#kKnown .kfact .btn.icon');
+  const items = await page.evaluate(() => [...document.querySelectorAll(
+    '#chipPop .cardmenuitem b')].map((b) => b.textContent));
+  if (JSON.stringify(items) !== JSON.stringify(['Delete'])) {
+    note(at, `a fact's ⋯ holds ${JSON.stringify(items)}, not Delete`);
+  }
+  await page.click('#chipPop .cardmenuitem');
   await page.waitForFunction(
     (n) => document.querySelectorAll('#kKnown .kfact').length === n,
     FACTS.length - 1, { timeout: 5000 })
@@ -882,18 +963,24 @@ for (const width of WIDTHS) {
 
   // Nothing filed yet is a sentence, not a blank.
   await page.evaluate(() => { window.__facts = []; window.__factsCount = 0; });
-  await page.click('.viewtab[data-view="findings"]');
-  await page.click('.viewtab[data-view="memory"]');
+  await openView(page, 'findings');
+  await openView(page, 'memory');
   await page.waitForSelector('#kKnown .kempty', { timeout: 5000 })
     .catch(() => note(at, 'an empty facts store renders nothing at all'));
   const empty = await page.evaluate(
     () => (document.querySelector('#kKnown .kempty') || {}).textContent || '');
-  if (!/teach/.test(empty)) {
+  if (!/Tell brAIn/.test(empty)) {
     note(at, `the empty state does not say where facts come from: "${empty}"`);
   }
 
+  // Send teaches it: the sentence reaches the server as typed.
+  await page.fill('#kAddInput', 'The garage fridge runs all night on purpose');
+  await page.click('#kAddForm button');
+  await page.waitForFunction(() => (window.__taught || []).length === 1, null,
+    { timeout: 5000 }).catch(() => note(at, 'Send did not teach it anything'));
+
   console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(4)}px  `
-    + `facts: ${f.rows.length} rows with provenance, ✕ repaints, empty state says`);
+    + `facts: ${f.rows.length} rows with provenance, ⋯ › Delete repaints, Send teaches`);
   await context.close();
 }
 
@@ -1040,7 +1127,7 @@ for (const [name, payload, check] of TODAY_CASES) {
   const { context, page } = await openPanel(1200,
     'window.__house = { generated_at: 0, brief: { enabled: false }, '
     + 'weekly: { enabled: false }, stores: {} };');
-  await page.click('.viewtab[data-view="memory"]');
+  await openMeasurements(page);
   await page.waitForSelector('#kStores .krow');
   const m = await page.evaluate(() => ({
     rows: document.querySelectorAll('#kStores .krow').length,
@@ -1109,7 +1196,7 @@ for (const width of WIDTHS) {
   const { context, page } = await openPanel(width,
     `window.__cards = ${JSON.stringify(CARDS)};`, touch);
   const at = `milestones/${width}px`;
-  await page.click('.viewtab[data-view="memory"]');
+  await openMeasurements(page);
   await page.waitForSelector('#kStores .krow');
 
   // The pending lines are always on screen — they are one muted sentence,
@@ -1182,7 +1269,8 @@ for (const width of WIDTHS) {
       foot: foot ? foot.textContent : '',
       because: (box.querySelector('.foot .because') || {}).textContent || '',
       again: again ? Math.round(again.getBoundingClientRect().height) : 0,
-      againShort: again ? again.getBoundingClientRect().height < floor : false,
+      againShort: again ? again.getBoundingClientRect().height < floor - 0.5 : false,
+      againExact: again ? again.getBoundingClientRect().height : 0,
       // No regenerate/edit/feedback/delete menu: a milestone is not a card
       // you keep re-running, and a ⋯ offering to delete it would be a
       // second way to lose the one thing this tab is for.
@@ -1253,8 +1341,10 @@ for (const width of WIDTHS) {
 }
 
 // ------------------------------------------------------------ deep review
-// One press on the top tier: the price is on the screen before the press,
-// the last review is readable under it, and the press says it started.
+// One press on the top tier, and a report like the others on House ›
+// Reports: Run is priced before it is pressed as a share of a session, the
+// last review is dated "4 Oct" with no model or token count beside it, and
+// the press says it started.
 // The shape is `server._deep_review_payload`'s, copied rather than guessed.
 const REVIEW = {
   running: false, started_at: 0, last_error: '', error: '', authenticated: true,
@@ -1280,9 +1370,12 @@ for (const width of WIDTHS) {
   const at = `review ${width}px`;
   const { context, page } = await openPanel(width,
     `window.__review = ${JSON.stringify(REVIEW)};`, touch);
-  await page.click('.viewtab[data-view="memory"]');
+  await openView(page, 'insights');
   await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 })
     .catch(() => note(at, 'the deep review section never rendered'));
+  const onReports = await page.evaluate(
+    () => !!document.querySelector('#viewInsights #kReview'));
+  if (!onReports) note(at, 'the deep review is not a row on House › Reports');
   const r = await page.evaluate(() => {
     const box = document.getElementById('kReview');
     const btn = box && box.querySelector('.kreviewrun .btn');
@@ -1296,12 +1389,19 @@ for (const width of WIDTHS) {
       docWidth: document.documentElement.scrollWidth,
     };
   });
-  if (!/146k tokens/.test(r.text)) note(at, 'the price is not on the screen before the press');
-  if (!/49%/.test(r.text)) note(at, 'the price does not say what share of a session it is');
-  if (!/estimate/i.test(r.text)) note(at, 'the price does not say it is an estimate');
+  if (r.btnText.trim() !== 'Run') note(at, `the review press reads "${r.btnText.trim()}"`);
+  if (!/~49% of a session/.test(r.text)) {
+    note(at, 'Run is not priced as a share of a session before the press');
+  }
+  for (const cut of [/tokens/i, /fable/i, /OPUS/, /An estimate/]) {
+    if (cut.test(r.text)) note(at, `cut text is back on the review: ${cut}`);
+  }
+  const dated = new Date((Date.now() / 1000 - 5 * 86400) * 1000)
+    .toLocaleDateString([], { day: 'numeric', month: 'short' });
+  if (!r.text.includes(dated)) note(at, `the review is not dated "${dated}"`);
   if (r.obs !== 2) note(at, `${r.obs} observations rendered, not 2`);
   if (!/Move the Zigbee hub/.test(r.text)) note(at, 'the one thing this month is missing');
-  if (!/Earlier reviews/.test(r.text)) note(at, 'the earlier reviews are not named');
+  if (!/Earlier/.test(r.text)) note(at, 'the earlier reviews are not named');
   if (r.btnH < MIN_TARGET) note(at, `the review button is ${r.btnH}px`);
   if (r.disabled) note(at, 'the review button is disabled with nothing running');
   if (r.docWidth > width + 0.5) note(at, `page scrolls sideways (${r.docWidth}px)`);
@@ -1314,10 +1414,10 @@ for (const width of WIDTHS) {
     toast: (document.getElementById('toast') || {}).textContent || '',
   }));
   if (after.presses !== 1) note(at, `the press reached the server ${after.presses} times`);
-  if (!/Reviewing/.test(after.btn) || !after.disabled) {
+  if (!/Running/.test(after.btn) || !after.disabled) {
     note(at, 'a running review does not say so on its own button');
   }
-  if (!/lands here/.test(after.toast)) note(at, `the press said "${after.toast}"`);
+  if (!/lands under Reports/.test(after.toast)) note(at, `the press said "${after.toast}"`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
   await context.close();
 }

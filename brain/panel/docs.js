@@ -188,8 +188,8 @@ one thing that looks exactly like being broken. This is the table that says whic
 is which.
 
 Every number below is the floor that is actually in the code — \`MIN_DAYS\`,
-\`MIN_SAMPLES\`, \`MIN_BUCKETS\`, \`HISTORY_DAYS\` — not a guess. The **Knowledge** tab
-shows the same thing live, per measurement, with a date when it can estimate one.
+\`MIN_SAMPLES\`, \`MIN_BUCKETS\`, \`HISTORY_DAYS\` — not a guess. **⚙ → Diagnostics →
+Measurements** shows the same thing live, per measurement, with a date when it can estimate one.
 
 The four measurement stores (baselines, thermal, closures, appliances) are all
 built by one pass that runs about five minutes after the add-on starts and then
@@ -248,7 +248,7 @@ strip under the bar, shown only where a tab holds more than one.
 | --- | --- |
 | **Home** | What is waiting on you and what brAIn has made. **Findings** is one feed of cases — problems, suggestions and guesses — each with the same row of answers (**Fix it** where brAIn can, **Add to list**, **Dismiss**, **Not a problem**; a guess gets **Yes · No · Dismiss**, a plan gets **Apply · Don't change it**) and I've already fixed it, Check again, Talk about it, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
-| **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
+| **House** | One control across the top — **Reports · What it knows · House book · What happened** (a picker on a phone). **Reports** is your cards, each a headline and how long ago it was updated, with the deep review and the suggested reports under them. **What it knows** is a box to tell brAIn something and every fact it holds. **House book** is the manual brAIn writes for a house-sitter, with **Run** and **Share**. **What happened** opens on what the house is doing now, then what changed and what caused it — a person, an automation, a script, voice, brAIn itself — fetched fresh every visit and never cached. |
 | **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |
 
 Every pane keeps the name it always had, so the rest of this guide says
@@ -315,7 +315,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 | **Haiku** | the first look at every finding and signal, scene naming, playbook text, milestones, the memory consolidator, the morning brief, auth check, the action gate's question, a follow-up look at a fix, compiling a house rule | A yes/no, a name or a sentence over material something else already gathered |
 | **Sonnet** | insight cards, fix plans, the weekly report, study, intents, curiosity, episode summaries, onboarding | Reading a house with tools and writing about it |
 | **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
-| **Fable** | the **deep review** you press for on House → Knowledge | Never from a timer — a scheduler cannot name it |
+| **Fable** | the **deep review** you press for on House → Reports | Never from a timer — a scheduler cannot name it |
 
 The **thinking** dial (⚙ → Usage & schedule → Advanced, or \`thinking\` in \`/api/settings\`) is
 \`light\` / \`normal\` / \`generous\`. **Light** steps down only the jobs where a
@@ -342,36 +342,42 @@ Humidity") — and the question you typed is not repeated on it: hover the headi
 open **Refine**, to see it. The first sentence of the summary is the answer, then the
 reason; the numbers sit in even rows of tiles; the chart sits straight on the card.
 
-Four controls are on the card, the rest are behind **⋯**:
+Two controls are on the card, and pressing anywhere else on it opens it at full size:
 
-- **✎ Refine** — say what should change ("compare it with upstairs", "use the last 7
-  days", "just the chart") and brAIn regenerates the card with that change, keeping
-  what you did not ask to change. Leave **Keep asking this on every future run**
-  ticked and it sticks, so the next scheduled run does not quietly undo it; the list
-  under the box is everything you have asked of the card, each with a ✕. The version
-  it replaces stays in the card's history (\`‹ ›\` in the foot) — cards you asked for
-  keep history too now.
-- **↗ Share** — two ways to take a card somewhere else:
-  - **As a picture**: the card's face (title, answer, numbers and chart, no buttons)
-    drawn to a PNG. **Copy picture** puts it on the clipboard; where the browser will
-    not allow that (Home Assistant's own frame often will not), right-click or
-    long-press the picture, or use **Download**.
-  - **On a dashboard**: pick a dashboard and a view and press **Add card** — brAIn
-    adds a Webpage card that always shows this card's latest run, either the whole
-    card or just the chart. A dashboard kept in YAML, or one Home Assistant still
-    builds automatically, cannot be written to; the dialog says which, and the YAML
-    for pasting in by hand is underneath.
-- **⤢ Expand** — the chart at full size.
-- **⋯ → Regenerate** — run this card again now. On a card you asked for, it re-runs
-  that card in place.
-- **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00")
-  use far fewer tokens than a short interval. On a card you asked for, **⋯ → Rename**
-  changes the heading and icon.
-- **⋯ → Edit tags** — what the card can be filtered by.
-- **⋯ → Delete** — the card and its history.
+- **Ask** — say what should change ("compare it with upstairs", "use the last 7
+  days", "just the chart") and press **Send**: brAIn regenerates the card with that
+  change, keeping what you did not ask to change. Leave **Keep asking this on every
+  future run** ticked and it sticks, so the next scheduled run does not quietly undo
+  it; the list under the box is everything you have asked of the card, each with a
+  ✕. **Ask** in the same dialog takes the question to the chat instead. The links
+  under it change the card's schedule and prompt, rename one you asked for, make one
+  you asked for recurring, or turn a suggestion on it into an automation.
+- **⋯** — four things:
+  - **Share**, as a picture or on a dashboard:
+    - **As a picture**: the card's face (title, answer, numbers and chart, no
+      buttons) drawn to a PNG. **Copy picture** puts it on the clipboard; where the
+      browser will not allow that (Home Assistant's own frame often will not),
+      right-click or long-press the picture, or use **Download**.
+    - **On a dashboard**: pick a dashboard and a view and press **Add card** — brAIn
+      adds a Webpage card that always shows this card's latest run, either the whole
+      card or just the chart. A dashboard kept in YAML, or one Home Assistant still
+      builds automatically, cannot be written to; the dialog says which, and the
+      YAML for pasting in by hand is underneath.
+  - **Past versions** — the card's earlier runs; pick one to read what it said then
+    (**Latest** in the foot comes back). Cards you asked for keep history too.
+  - **Run** — run this card again now. On a card you asked for, it re-runs that card
+    in place.
+  - **Delete** — the card and its history.
 
-On a narrow card Refine and Share shrink to their icons, and on a phone the title gets
-a row of its own under the buttons.
+The foot says **Updated** and how long ago. A card that keeps some readings live
+says so only when they stop arriving.
+
+Reports has a search box once there are more than eight. Under the cards are the
+**Deep review** row and the **Suggested** row: ideas for reports this house is
+missing, each naming what brAIn found here and the question it would answer every
+run. **Save** makes one an ordinary report and **Ignore** means it is not suggested
+again; **Run** on the row asks for ideas now, and brAIn also looks once a week. An
+idea costs nothing until you save it.
 
 There is no "refresh everything" button. It used to sit in the top bar, where it was
 a circular arrow that read like a page reload and in fact queued a Claude run for
@@ -492,8 +498,8 @@ ingress iframe is refused the clipboard). It is the same payload behind **Downlo
 diagnostics** on the brAIn integration page, and the one \`brain report\` bundles.
 Since 1.48.0 it also draws six things its payload had always carried and the
 dialog had never rendered: when the house wakes and settles, how rooms hold heat,
-doors and windows, machines, habits, and the background daemons. The **Knowledge**
-tab is where those numbers belong; they are here because a bug report has to carry
+doors and windows, machines, habits, and the background daemons. **Measurements**,
+just above, is where those numbers are read; they are in the report too because a bug report has to carry
 them too — a rhythm that never gathered enough days and one that did were, on this
 screen, the same silence.
 
@@ -710,8 +716,8 @@ down, and once a day brAIn checks each one against what you did next: *Not a
 problem**, **I've fixed it**, **Add to list*, putting back something it hid, a problem
 it had passed over turning up within three days, or undoing a fix. Where the record
 is lopsided — the same sensor raised four times and marked **Not a problem** each
-time — a cheap run writes a short judgement into its facts. You will see it on the
-Knowledge tab, and you can forget it there. The counts in it are brAIn's own
+time — a cheap run writes a short judgement into its facts. You will see it under
+House → What it knows, and you can forget it there. The counts in it are brAIn's own
 arithmetic. Judgements never make brAIn quieter about leaks, smoke, gas, freezing or
 anything on your protected list, never mention people, and disappear when a later
 card on the same thing turns out to be real. Each look is also shown a handful of
@@ -1491,20 +1497,35 @@ same \`/config\`, with the same permissions — what differs is only how you see
   is ordinary text, so it wraps like text.
 - **Code blocks keep the grid** — inside their own horizontal scroller, so a
   200-column log line never makes the whole page slide sideways.
-- **Tool calls collapse to one line each.** \`Read /config/automations.yaml\`, with a
-  dot that goes green or red; tap it for the arguments and the full result. In the
-  grid terminal each of those was twenty lines you scrolled past.
-- **Reasoning folds away** behind a "Thinking" line you can open.
+- **The working folds into one line per reply.** Every tool call, its result, the
+  reasoning and a background task finishing go into one **Worked through N steps**
+  line above the answer, closed; open it for each call with a dot that went green
+  or red, its arguments and its full result. The line says when a step failed or
+  was not permitted, so you can tell without opening it. What never folds away:
+  the answer, an approval card, a question card and the endings a discussion
+  offers — those are where you decide something.
+- **Save as report.** Under a reply's answer, **Save as report** asks the same
+  question again as a report card under House, so an answer worth keeping outlives
+  the conversation it was given in.
 - **Commands, both kinds.** Type **/** and you get the commands **your** Claude Code
   actually has — including anything you put in \`/config/.claude/commands\`. Type
   **brain** or **ha** and you get brAIn's own CLI, \`brain memory add\` through
   \`ha reload\`, with the same descriptions and argument hints the dispatchers print.
   ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
   neither can go stale.
-- **⋯ holds the rest** — **New chat**, **Conversations** (every conversation in \`/config\`,
-  started here or in the classic terminal; picking one replays it and carries on),
-  **Session details**, **Model**, and the switch to Classic. Two buttons float over the
-  terminal, not a column of them.
+- **Your chats are the list.** On a wide screen it sits beside the conversation;
+  on a phone Ask opens on it, a row opens the conversation, and the back button at
+  the top of a conversation returns to it. It holds every conversation you started,
+  here or in the classic terminal; picking one replays it and carries on.
+- **⋯ holds the rest** — **New chat**, **Your chats** (on a phone), **Session details**,
+  **Model**, and the switch to Classic. Two buttons float over the terminal, *Chat
+  options** and **Full-screen terminal*, not a column of them.
+- **A conversation about a card is called by the card.** **Ask** on a card in Today
+  opens a conversation about it: the card's title is above the box, and pressing it
+  takes you back to the card. The card's own verbs sit under it — **Plan**, **Done**,
+  **Snooze**, **Ignore** — so agreeing at the end of the conversation is one press.
+  An empty chat also offers **Design lighting scenes for a room**, which fills the box
+  for you to name the room.
 - **The chat picks its own model.** Press the model name under the message box (or
   ⋯ → **Model**) and choose — the current conversation carries straight on under the
   new model. Refused while **that** conversation is being answered, because the model
@@ -1531,30 +1552,22 @@ same \`/config\`, with the same permissions — what differs is only how you see
   the one closed. The only switch that is refused is when every open chat is still
   answering and there is nothing idle to close — it says exactly that, with the
   count and the setting.
-- **Conversations can be deleted.** Every row in the list grows a **✕**, and the
+- **Conversations can be deleted.** Each row's **⋯** holds **Delete**, and the
   toast grows an **Undo** for the few minutes a mis-tap needs. One the chat is
-  holding open is refused, and the ✕ offers to close it first rather than leaving
-  you with a no — closing one mid-answer loses what it was writing, so it asks.
+  holding open is closed first — and closing one mid-answer loses what it was
+  writing, so it asks.
   (Old conversations that Claude Code itself has pruned can no longer be picked up
   mid-thought: reopening one shows its transcript and says plainly that the next
   message starts fresh, instead of erroring on every send.)
-- **Yours, and everyone else's.** brAIn runs Claude in \`/config\` for voice, automation
-  tasks and filing memory, so those conversations live beside yours. The list shows
-  **Chats** by default — everything you started yourself, in the chat or the
-  classic terminal, including a finding you opened for discussion — and puts the
-  rest behind a chip each, alphabetically:
-  **Automation**, **Cards**, **Fixes**, **Memory**, **Study**, **Voice** — with a count, and
-  only for the ones your house actually uses. Each row's time is when something
-  last **happened in** the conversation — opening one just to look at it doesn't
-  bump it to the top.
-- **Cards and Fixes open read-only.** Every insight run (scheduled or a question
-  you asked) and every Fix-it run is a Claude conversation too, and its chip lists
-  them all — pick one and it opens as a record: exactly what brAIn sent to Claude
-  about your house, every tool call it made, and what came back. Read-only on
-  purpose: those runs happen under the analyst's read-only tool scoping (or the
-  fixer's), and quietly continuing one under the chat's permissions would change
-  the conversation's rules mid-thread. Want to talk about what a run found? Ask
-  in the chat — memory and the findings list already carry what it learned.
+- **Only yours.** brAIn runs Claude in \`/config\` for voice, automation tasks,
+  filing memory, cards and fixes, so those conversations live beside yours — but
+  they are records of what brAIn did, not chats you started, so Ask does not list
+  them. They are under ⚙ › Diagnostics › Runs, where a card or fix run opens as a
+  record: exactly what brAIn sent to Claude about your house, every tool call it
+  made, and what came back — read-only, because those runs happened under the
+  analyst's (or the fixer's) rules. Each row's time is when something last
+  **happened in** the conversation — opening one just to look at it doesn't bump it
+  to the top.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
@@ -1569,28 +1582,29 @@ same \`/config\`, with the same permissions — what differs is only how you see
   deliberately no second "continue in the terminal" button beside a switch that
   already moves you, because two controls for one thing is how you end up unsure
   which one actually moved.
-- **Every conversation says what state it is in.** A row in the rail (and in the ⋯
-  dialog, which is the only surface a phone has) carries one of seven:
+- **Every conversation says what state it is in.** A row in the list carries one
+  of these:
 
   | State | What it means |
   | --- | --- |
   | **Live** | A Claude Code process is running and idle. Type and it answers. |
   | **Answering…** | It is writing. **Stop** is the control above the composer. |
   | **Needs your OK** | It has asked to use a tool. Answer the card; an unanswered one declines itself. |
-  | **(no pill)** | Paused: no process, and your next message resumes it with its context. |
-  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; **Resume now** brings it back. Only an **idle** conversation is ever taken, never one that is answering. |
+  | **(no pill)** | Paused: no process. Sending a message picks it up with its context. |
+  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; sending a message picks it back up. Only an **idle** conversation is ever taken, never one that is answering. |
   | **Context lost** | Claude Code no longer holds this conversation. You can read it; a new message starts fresh from here (**Start fresh**). |
   | **Record** | A card or fix run, kept to be read. It ran under the analyst's or the fixer's rules, so it can never be resumed — **Ask about it** opens a new chat about it instead. |
 
-  A status line above the composer says what sending will do, and offers the one
-  control that fits that state — **Stop**, **New chat**, **Resume now**, **Start fresh**,
-  **Ask about it**, or nothing at all while an approval card is the thing to answer.
+  A status line above the composer says what sending will do when that is news,
+  and offers the one control that fits — **Stop**, **New chat**, **Start fresh**, *Ask
+  about it*, or nothing at all while an approval card is the thing to answer. A
+  plainly paused conversation shows no line: sending is what resumes it.
   The state is derived in one place and kept in the
   conversation's own metadata, so a reload agrees with what you were just looking at.
 
 Both faces stand in \`/config\`, which is what lets them see each other's
 conversations at all: Claude Code files them per working directory. So \`claude
---resume\` in the terminal lists the chats you had in the panel, ⟲ in the chat lists
+--resume\` in the terminal lists the chats you had in the panel, Ask's list holds
 the ones you had in the terminal, and a conversation can move either way without
 losing anything.
 
@@ -1759,7 +1773,7 @@ is a week from now rather than a week from Sunday.
 
 Everything else brAIn writes is about one thing — a card about a category, a
 case about a signal, a report about a week — and runs on a model chosen so it
-can run often. **House → Knowledge → Deep review** is the other kind: Claude's
+can run often. **House → Reports → Deep review** is the other kind: Claude's
 top model, at high effort, with read-only tools and a long budget, sits with
 the whole house and says what it adds up to — a pattern across rooms, a cause
 behind several symptoms, something set up in a way that will bite later,
@@ -1767,14 +1781,14 @@ something working well that you should keep.
 
 - **Only by a press.** Nothing schedules it; the scheduler cannot even name
   the job.
-- **The price is on the button.** Before you press it says roughly how many
-  tokens it will spend and what share of a five-hour session that is on your
-  plan — read off what earlier reviews on your house actually cost, and a
-  first guess (about 150k) until one has run. It is an estimate and says so.
+- **The price is on the button.** Beside **Run** it says roughly what share
+  of a five-hour session it will take ("~11% of a session"), read off what
+  earlier reviews on your house actually cost, and a first guess until one
+  has run; the token estimate is in the button's tooltip.
 - **It reads, and files nothing.** No findings, no proposals, no memory
   lines. It is told what brAIn already knows so it does not repeat it, and
-  what it says is kept on that page (the last six reviews). If something in
-  it is worth acting on, ask about it in the chat.
+  what it says is kept on the row under Reports, dated (the last six
+  reviews). If something in it is worth acting on, ask about it in the chat.
 - Pressing it skips the usage budget, like every press: automatic runs pause
   at the budget, asking by hand always runs.
 `,
@@ -1810,8 +1824,8 @@ the ledger is what a run **retrieves** from. A card about the kitchen is handed 
 facts about the kitchen, the morning brief the facts about the rooms it is
 reporting on, the Resident's look the facts about the signals in front of it —
 never the whole document, which on a mature house is 30 KB of things that are true
-and mostly beside the point. The Knowledge tab lists the ledger under **What brAIn
-knows**, with a ✕ on each row; a fact you forget there is gone from every future
+and mostly beside the point. **House → What it knows** lists the ledger, with
+**⋯ → Delete** on each row; a fact you forget there is gone from every future
 prompt, and the document is left for you to edit yourself.
 
 What you teach the terminal or the chat is picked up by a small run after each
@@ -1870,7 +1884,7 @@ is still written by brAIn afterwards, out of the JSON the session returned.
 
 And everything it has learned is **portable**: \`brain memory export\` writes one
 JSON file carrying the memory document, the findings list, the settled answers
-and the facts ledger (the Knowledge tab's ⬇ Export does the same), and
+and the facts ledger, and
 \`brain memory import\` folds one back in on another install — ledgers merge with
 the local entries winning, and the document itself is only replaced when the
 local one is empty or you say \`--replace-memory\`. Migrating to new hardware no
@@ -1893,7 +1907,7 @@ threshold somebody guessed.
 sensors, and only sensors whose readings vary and that are not settings-page
 sensors (signal strength, uptime) take a place, so a big house's upstairs
 thermometers are not crowded out by energy totals. If the limit still leaves
-some out, ⚙ → Diagnostics and the Knowledge tab say how many. A reading also has
+some out, ⚙ → Diagnostics says how many, under Measurements. A reading also has
 to move by an amount that matters in its own unit — 20 W, 2%, half a degree —
 before it is called unusual.
 
@@ -2197,7 +2211,7 @@ prefers the one that reads what your weather entity reads, the one that comes
 from the same integration as your weather entity, one named or placed
 outdoors, and — after a month — the one that swings across the day the way
 outside air does; one named like a heat pump's coil, a pool or a pipe counts
-against itself. The Knowledge tab's thermal drill-down says which sensor won
+against itself. The thermal drill-down (⚙ → Diagnostics → Measurements) says which sensor won
 and why, lists the others, and lets you pick a different one; the rooms are
 re-measured against your choice straight away.
 
@@ -2275,6 +2289,24 @@ tomorrow.
 `,
   },
   {
+    id: "the-house-book",
+    group: "What it knows",
+    title: "The house book",
+    body: `
+# The house book
+
+**House → House book** is a short manual written from your own automations,
+scripts, scenes and what brAIn has learned — something to hand a house-sitter.
+Every sentence names what it came from; codes and passwords are left out, and
+that line is always on the page. **Run** writes it (or rewrites it). Questions
+it cannot answer from the house appear on the Findings tab, and your answer goes
+into memory. **Share** gives you a private link to a read-only copy; **Delete**
+takes the copy down and changes the link, so a link somebody kept stops working.
+After the first one, brAIn rewrites the book weekly, but only when something it
+reads has changed.
+`,
+  },
+  {
     id: "it-knows-what-happened-and-what-caused-it",
     group: "What it knows",
     title: "It knows what happened, and what caused it",
@@ -2286,7 +2318,8 @@ whether somebody pressed a switch, an automation fired, a voice command
 asked, or brAIn did it — and that is the question behind most of what people
 ask their house.
 
-The **Activity** tab reads Home Assistant's own logbook and answers with what
+**House → What happened** (the Activity pane) opens on one line saying what the
+house is doing right now, then reads Home Assistant's own logbook and answers with what
 **happened**, which is not the same as what changed. Nobody thinks in state
 changes: a person thinks in **episodes**. The TV was on in the lounge from
 eight until eleven. Somebody got home at 17:40. The bedroom heating ran from
@@ -2318,13 +2351,13 @@ who was out, so it is silent unless it really knows.
 
 Every row still names its cause, a row somebody undid says so on the row, and
 tapping one opens that entity's own recent history. Page back a day at a
-time; filter by cause. All of that costs nothing — no Claude run, no stored
+time with **Earlier** and **Later**; narrow it with **Caused by**. All of that costs nothing — no Claude run, no stored
 copy — and it needs the \`logbook\` integration, which is part of Home
 Assistant's default config.
 
 ## What does this add up to?
 
-One button, and it is the only thing on the tab that spends anything. It puts
+**Ask** is the one button, and the only thing on the pane that spends anything. It puts
 the window you are looking at in front of Claude and asks for a paragraph:
 what today adds up to, rather than a list read back. It is a press rather
 than something that happens when you open the tab, because a Claude run
@@ -2423,44 +2456,25 @@ because asking by hand always does.
     body: `
 # What brAIn is measuring
 
-The **Knowledge** tab is what brAIn knows about your house, as opposed to what it
+**House → What it knows** is what brAIn knows about your house, as opposed to what it
 thinks is broken (the Findings feed), what it would like to change (Proposals) or what
-happened (Activity). Four sections, in this order.
+happened (What happened). It is two things.
 
-**This morning.** The brief that went out, or one sentence saying why there wasn't
-one. "The brief is switched off" and "there was nothing worth saying" are different
-answers and only the first has something to do about it.
+**Tell brAIn something.** Type a fact about the house and press **Send**; it is filed
+into memory like anything else brAIn learns.
 
-**What brAIn has measured.** Seven rows, always, in the same order — rhythm,
-baselines, thermal, closures, appliances, habits, energy — whatever state each is
-in. A store missing from the list would be a store nobody can ask about, and on the
-day you install this six of the seven have not started. Nothing on this list costs a
-Claude run: it is all built overnight from what Home Assistant already records.
-Press a row to open the numbers behind it.
+**The facts.** What brAIn knows one fact at a time, each tagged with the device, room
+or the house it is about — the index a run looks things up in when it is working on
+one device. Search it (a device's friendly name works) and narrow it with **Rooms**,
+**Devices** and **House**. Press a fact to see who taught it, when, and **See the run**
+that said it; **⋯ → Delete** forgets it without touching the memory document.
 
-**How brAIn's memory works.** Three short lines saying what the next three sections
-are, because all three hold "things brAIn has learned" and they are different:
+The seven measurements, the morning brief and the memory document with its filing
+queue are brAIn's own machinery rather than something you read every day, so they are
+not on this pane.
 
-**Memory document.** brAIn's written summary of your home, editable in place. Every
-run reads the top of it and voice reads a condensed copy; correcting it here is how
-you stop brAIn saying something.
-
-**Waiting to be filed.** The inbox queue: things that have been learned and not yet
-folded into the document. It drains itself once a day; **File into memory now** runs
-the same consolidator by hand.
-
-**Facts brAIn has learned.** The same knowledge one fact at a time, each tagged with
-the device, room or person it is about, who taught it and when — the index a run
-looks things up in when it is working on one device. It shows **every** fact: search
-it (a device's friendly name works), narrow it with the chips (the house, rooms,
-devices, people, and **Rules you set** — the checks you told brAIn to stop raising),
-filter by who taught it, sort it newest first, oldest first, most certain first or
-grouped by what it is about, and page through with **Show more**. ✕ forgets a fact
-without touching the document.
-
-There is no badge on this tab. Everything on it is a queue that files itself and
-things you read — nothing is waiting on a person, and a badge counting work nobody
-has to do is how the badge next to it stops being read.
+There is no badge on this pane. Nothing on it is waiting on a person, and a badge
+counting work nobody has to do is how the badge next to it stops being read.
 
 ## The five states a measurement can be in
 
@@ -3260,14 +3274,6 @@ that run fails you get **Morning**, **Day**, **Evening**, **Night**, which work 
 **House → Upkeep** keeps the house itself in order, and every part of it is a
 press. Each section says what it last did, when, and why a scheduled pass was
 held back.
-
-- **House book**: a short manual written from your own automations, scripts,
-  scenes and what brAIn has learned. Every line shows the sources it came from,
-  and codes and passwords are left out. Questions it cannot answer from the house
-  appear on the Findings tab; your answer goes into memory. **Publish** gives you a
-  private link to a read-only copy, and **Stop sharing** deletes it and changes the
-  link. After the first one, brAIn rewrites the book weekly, but only when
-  something it reads has changed.
 - **Names and rooms**: suggests tidier names, rooms and spoken aliases in one
   table. Tick what you want and press Apply. A room move lists the automations it
   will change. Undo works for 30 days and never overwrites a rename you made

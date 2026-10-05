@@ -7060,6 +7060,20 @@ async def h_generate(request: web.Request) -> web.Response:
     # in `SCENE_RE` a single literal one (see the note there), and it is
     # also what stops a room's name arriving as two lines.
     question = " ".join((body.get("question") or "").split()) or None
+    if question and body.get("report") is True:
+        # "Save as report" on an answer in Ask: the person already asked
+        # this, in words, and read the answer — so it is a question for a
+        # card and nothing else. Not read by `interpret` and not matched
+        # against the ask bar's patterns: a question that happens to open
+        # "when…" or "learn…" must not become a rule or a study session
+        # because somebody pressed Save.
+        question = question[:500]
+        stamp = int(time.time())
+        while _job_active(f"custom-{stamp}"):
+            stamp += 1
+        insight_id = f"custom-{stamp}"
+        _enqueue(insight_id, question=question)
+        return web.json_response({"queued": [insight_id]})
     if question:
         if len(question) > 500:
             raise web.HTTPBadRequest(text="question too long")
@@ -20107,6 +20121,7 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         # held session or the flag its transcript kept across a restart.
         row["row_state"] = registry.row_state(
             row["id"], view_only=bool(row.get("view_only")))
+        _discussion_row(row, registry)
     return web.json_response({
         "conversations": rows,
         "current": session.session_id,
@@ -20114,6 +20129,30 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
         "sessions": registry.live(),
         "max_sessions": chat_session.max_sessions(),
     })
+
+
+DISCUSS_TITLE_PREFIX = "Discussing: "
+
+
+def _discussion_row(row: dict, registry) -> None:
+    """A discussion is titled by the card it is about, and links back to it.
+
+    A conversation's title is its first message, and a Discuss opener
+    starts "Discussing: <the card's title>" (`DISCUSS_PROMPT`) — so every
+    discussion in the list used to lead with the same word. The word goes
+    and the card's own title stays; ``finding_ts`` is what the panel links
+    back to the card with. It is read off the conversation's kept meta,
+    never parsed out of the title, so a person who happens to type
+    "Discussing:" gets no link to a card that does not exist.
+    """
+    if row.get("view_only"):
+        return
+    ts = registry.finding_of(row["id"])
+    title = str(row.get("title") or "")
+    if ts:
+        row["finding_ts"] = ts
+        if title.startswith(DISCUSS_TITLE_PREFIX):
+            row["title"] = title[len(DISCUSS_TITLE_PREFIX):].strip() or title
 
 
 def _conversation_source_counts() -> list[dict]:

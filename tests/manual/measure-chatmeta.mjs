@@ -70,12 +70,12 @@ function probe() {
 // derivation (`row_state`): a live process is "Live", one answering says
 // so, one waiting on a person carries the badge, one the cap paused says
 // "Paused to make room", one whose context Claude Code no longer holds
-// says "Context lost", a card run is a "Record" — and a plainly paused
-// conversation, the ordinary case, draws nothing. They sit beside a title
-// that is already competing for the width, and the surface differs by
-// screen: the rail is display:none below 1100px, so on a phone the ⋯
-// dialog is the only place these can be read. So all of them are measured,
-// at the width each surface is the answer for.
+// says "Context lost" — and a plainly paused conversation, the ordinary
+// case, draws nothing. They sit beside a title that is already competing
+// for the width. The list is the rail beside the transcript on a wide
+// screen and the page Ask opens on below 1100px, so it is one renderer
+// measured at both widths. A card run's "Record" is not in it: the list is
+// your conversations only (⚙ › Diagnostics › Runs is where those are).
 //
 // Unlike the pass above this drives the panel's REAL renderers behind a
 // stubbed fetch (the same arrangement measure-activity.mjs uses): a copy of
@@ -88,10 +88,10 @@ const ROW_STATES = {
   live: { label: 'Live', hint: 'Ready' },
   answering: { label: 'Answering…', hint: 'Claude is answering' },
   needs_ok: { label: 'Needs your OK', hint: 'Claude is waiting for your approval' },
-  paused: { label: '', hint: 'Your next message resumes this conversation with its context' },
+  paused: { label: '', hint: '' },
   paused_room: { label: 'Paused to make room',
-    hint: 'brAIn keeps 3 chats running at once. Sending resumes this one and '
-      + 'pauses the quietest' },
+    hint: 'brAIn keeps 3 chats running at once. Sending picks this one back up '
+      + 'and pauses the quietest' },
   context_lost: { label: 'Context lost',
     hint: 'Claude Code no longer has this conversation. You can read it; a new '
       + 'message starts fresh from here' },
@@ -125,9 +125,6 @@ const CONVS = [
   { id: 'c-cold', title: 'An older one nothing is holding open', modified: 0,
     age: '3 d ago', source: 'you', live: false, busy: false, needs_ok: false,
     row_state: rs('paused') },
-  { id: 'c-record', title: 'Analyse the upstairs heating', modified: 0,
-    age: '5 d ago', source: 'card', view_only: true, live: false, busy: false,
-    needs_ok: false, row_state: rs('record') },
 ];
 const EXPECT_PILL = Object.fromEntries(
   CONVS.map((c) => [c.title.slice(0, 24), PILL_OF[c.row_state.state]]));
@@ -186,16 +183,13 @@ async function livePass(browser, note) {
     await page.goto(`file://${path.join(PANEL, 'index.html')}`);
     await page.click('.viewtab[data-view="terminal"]');
 
-    // The rail on a wide screen, the ⋯ dialog on a phone — whichever of the
-    // two a person at this width actually has.
-    const wide = await page.evaluate(() =>
-      getComputedStyle(document.querySelector('#chatRail')).display !== 'none');
-    const selector = wide ? '#chatRailList .crrow' : '#convList .crrow';
-    await page.evaluate(async (isWide) => {
+    // One list at both widths: the rail beside the transcript, or the page
+    // Ask opens on below the rail's breakpoint.
+    const selector = '#chatRailList .crrow';
+    await page.evaluate(async () => {
       chatState.sessionId = 'c-live';
-      if (isWide) await refreshChatRail();
-      else await openConversations();
-    }, wide);
+      await refreshChatRail();
+    });
     await page.waitForSelector(selector);
 
     const m = await page.evaluate(([sel, pillSel]) => {
@@ -210,7 +204,7 @@ async function livePass(browser, note) {
           const title = r.querySelector('.ctitle');
           const ms = mark && getComputedStyle(mark);
           return {
-            id: r.querySelector('.critem, .convitem').textContent.slice(0, 24),
+            id: r.querySelector('.critem').textContent.slice(0, 24),
             mark: mark ? mark.className : '',
             markText: mark ? mark.textContent.trim() : '',
             markShown: !!(ms && ms.display !== 'none'
@@ -252,12 +246,12 @@ async function livePass(browser, note) {
     // fetch to rebuild the map, is exactly that moment.
     let after = -1;
     try {
-      after = await page.evaluate(([isWide, pillSel]) => {
+      after = await page.evaluate((pillSel) => {
         chatState.live = null;
         chatState.liveText = '';
-        if (isWide) renderChatRail(); else renderConvModal();
+        renderChatRail();
         return [...document.querySelectorAll(pillSel)].length;
-      }, [wide, PILL_SEL]);
+      }, PILL_SEL);
     } catch (e) {
       note(`${width}px`, `repainting after a turn ended threw: ${e.message.split('\n')[0]}`);
     }
@@ -295,17 +289,19 @@ async function livePass(browser, note) {
 // The third pass: the line above the message box.
 //
 // `composer_state` is the attached conversation's own row state, and the
-// panel renders it as a sentence and ONE control — Stop while answering,
-// New chat when ready, Resume now for either kind of pause, Start fresh
-// when the context is gone, Ask about it on a record. Six states are
-// pushed through the real renderer at both widths; each has to change the
-// sentence AND the button, and the button has to be a real target on a
-// phone, because "Resume now" is the press somebody makes there.
+// panel renders it as a sentence and at most ONE control — Stop while
+// answering, New chat when ready, Start fresh when the context is gone, Ask
+// about it on a record. Neither kind of pause has a control: sending is
+// what picks a paused conversation back up, so the "Resume now" that used
+// to sit there was a second button for Send. A plain pause says nothing at
+// all; a cap's pause keeps its sentence because it says what sending costs.
+// Each state is pushed through the real renderer at both widths, and a
+// button that is there has to be a real target on a phone.
 const COMPOSER_CASES = [
   ['live', 'Ready', 'New chat'],
   ['answering', 'Claude is answering', 'Stop'],
-  ['paused', 'resumes this conversation', 'Resume now'],
-  ['paused_room', 'pauses the quietest', 'Resume now'],
+  ['paused', null, ''],
+  ['paused_room', 'pauses the quietest', ''],
   ['context_lost', 'no longer has this conversation', 'Start fresh'],
   ['record', 'cannot be continued', 'Ask about it'],
 ];
@@ -320,6 +316,8 @@ async function composerPass(browser, note) {
     await page.click('.viewtab[data-view="terminal"]');
     // Attached, not visible: on an empty chat it is hidden by design.
     await page.waitForSelector('#chatState', { state: 'attached' });
+    // A phone opens Ask on the list; the composer is the transcript's.
+    await page.evaluate(() => askShow('chat'));
 
     // A fresh chat with nothing in it says nothing — "Ready · New chat"
     // on an empty conversation would offer a no-op, and the 44px it would
@@ -364,6 +362,7 @@ async function composerPass(browser, note) {
           h: Math.round(box.height),
           w: Math.round(box.width),
           shown: cs.display !== 'none' && cs.visibility !== 'hidden' && box.width > 0,
+          lineShown: getComputedStyle(host).display !== 'none',
           right: host.getBoundingClientRect().right,
           // The square Stop icon in the bar stands down while the line
           // offers a labelled Stop — one Stop, not two.
@@ -374,17 +373,27 @@ async function composerPass(browser, note) {
       }, rs(state));
       const where = `${width}px composer/${state}`;
       if (m.state !== state) note(where, `data-state is "${m.state}"`);
+      if (/resum/i.test(m.text) || /resum/i.test(m.button)) {
+        note(where, `"Resume" is back: "${m.text}" / "${m.button}"`);
+      }
+      if (needle === null) {
+        // A plain pause: no sentence, no button, no line at all.
+        if (m.lineShown) note(where, 'a plain pause still draws the line');
+        if (m.button) note(where, `a plain pause offers "${m.button}"`);
+        line.push(`${state}: hidden`);
+        continue;
+      }
       if (!m.text.includes(needle)) note(where, `text "${m.text}" lacks "${needle}"`);
       if (state === 'answering' && !/· 1[34] s$/.test(m.text)) {
         note(where, `answering does not count seconds: "${m.text}"`);
       }
       if (m.button !== button) note(where, `button is "${m.button}", expected "${button}"`);
-      if (!m.shown) note(where, 'the button is not shown');
-      if (m.h < MIN_TARGET) note(where, `button is ${m.h}px tall, under ${MIN_TARGET}`);
+      if (button && !m.shown) note(where, 'the button is not shown');
+      if (!button && m.shown) note(where, 'a button is shown with nothing to say');
+      if (button && m.h < MIN_TARGET) note(where, `button is ${m.h}px tall, under ${MIN_TARGET}`);
       if (m.right > width + 0.5) note(where, `the line overflows the viewport (${m.right})`);
       if (m.docWidth > width + 0.5) note(where, `page scrolls sideways (${m.docWidth}px)`);
-      if (state === 'paused' && m.pill) note(where, `a plain pause drew a pill "${m.pill}"`);
-      if (state !== 'paused' && !m.pill) note(where, 'no pill');
+      if (!m.pill) note(where, 'no pill');
       if (state === 'answering' && m.iconStopShown) {
         note(where, 'two Stops: the bar icon is still shown beside the labelled one');
       }
@@ -394,11 +403,13 @@ async function composerPass(browser, note) {
     }
     // The sentence changes with every state, and the button with every
     // state that asks for a different thing.
-    if (seenText.size !== COMPOSER_CASES.length) {
-      note(`${width}px composer`, `${seenText.size} distinct sentences for ${COMPOSER_CASES.length} states`);
+    const said = COMPOSER_CASES.filter((c) => c[1] !== null).length;
+    if (seenText.size !== said) {
+      note(`${width}px composer`, `${seenText.size} distinct sentences for ${said} states that speak`);
     }
-    if (new Set(seenButton).size !== 5) {
-      note(`${width}px composer`, `${new Set(seenButton).size} distinct buttons, expected 5`);
+    const pressed = new Set(seenButton.filter(Boolean));
+    if (pressed.size !== 4) {
+      note(`${width}px composer`, `${pressed.size} distinct buttons, expected 4`);
     }
     console.log(`${String(width).padStart(5)} ${line.join(' | ')}`);
     await context.close();
@@ -449,7 +460,7 @@ async function composerPass(browser, note) {
   composerFailures.forEach((f) => console.log('  ' + f));
   console.log(composerFailures.length
     ? `\n${composerFailures.length} problem(s) with the composer line`
-    : '\nboth widths: six states, six sentences, one control each');
+    : '\nboth widths: a plain pause says nothing, and nothing says Resume');
 
   await browser.close();
   process.exit(bad || failures.length || composerFailures.length ? 1 : 0);
