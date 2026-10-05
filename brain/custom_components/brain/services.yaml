@@ -249,11 +249,11 @@ answer_question:
     Answer one of the guesses brAIn is waiting on, yes or no — the same as pressing Yes or
     No on the Findings tab. A yes files the guess as something brAIn knows; a no closes it,
     and a reason after the no is kept as a correction. The open guesses and their ids are
-    on the "Waiting on you" sensor. Needs a Home Assistant administrator.
+    on the "Questions waiting" sensor. Needs a Home Assistant administrator.
   fields:
     ts:
       name: Guess id
-      description: The guess's id, from the "Waiting on you" sensor's questions. Use this or
+      description: The guess's id, from the "Questions waiting" sensor's questions. Use this or
         the question.
       required: false
       selector:

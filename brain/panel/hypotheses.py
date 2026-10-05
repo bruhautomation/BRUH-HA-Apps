@@ -59,6 +59,7 @@ import unicodedata
 from pathlib import Path
 
 import atomic_write
+import textclip
 
 MEMORY_DIR = Path(os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory"))
 HYPOTHESES_FILE = Path(
@@ -204,7 +205,7 @@ def list_all(status: str | None = None) -> list[dict]:
             "topic": str(e.get("topic") or ""),
             "status": st,
             "settled_at": int(e.get("settled_at") or 0),
-            "note": str(e.get("note") or "")[:MAX_NOTE_CHARS],
+            "note": textclip.clip(str(e.get("note") or ""), MAX_NOTE_CHARS),
             "snoozed_until": int(_num(e.get("snoozed_until"))),
         })
     return out

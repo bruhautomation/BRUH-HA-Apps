@@ -27,6 +27,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, POOL_STATUS_FILENAME, SHARED_DIR
 from .learning import read_open_hypotheses
+from .status_mirror import STATUS_FILENAME
+from .status_mirror import count as status_count
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             BruhClaudeHealthSensor(config_entry, bridge),
+            BrainNeedsYouSensor(config_entry),
             BrainWantsInputSensor(config_entry),
         ],
         update_before_add=True,
@@ -130,17 +133,78 @@ class BruhClaudeHealthSensor(BinarySensorEntity):
             return None
 
 
+class BrainNeedsYouSensor(BinarySensorEntity):
+    """`binary_sensor.brain_needs_you`: on while the queue is not empty.
+
+    The queue is the panel's one list of decisions — open findings, open
+    questions and open suggestions — and its length is counted in one
+    place (`cases.queue_count`) and published in the status mirror, so
+    this is on exactly when the Today badge shows a number. It replaces
+    the old "Waiting on you" sensor as the thing to automate "brAIn needs
+    me" on: that one only ever counted the guesses, which is why it is
+    now called what it counts ("Questions waiting").
+
+    A mirror that is missing or stale reads as unknown with the reason —
+    never "off", because "nothing needs you" is the one wrong answer that
+    hides a problem.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = True
+    _attr_name = "Needs you"
+    _attr_icon = "mdi:account-alert-outline"
+    _attr_device_info = DeviceInfo(
+        identifiers={(DOMAIN, "system_health")},
+        name="brAIn System",
+        manufacturer="BRUH Automation",
+        model="brAIn add-on",
+    )
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        self._entry = config_entry
+        self._attr_unique_id = f"{DOMAIN}_needs_you"
+        # Asked for by name, for the reason `sensor.brain_status` is.
+        self.entity_id = "binary_sensor.brain_needs_you"
+        self._attr_is_on = None
+        self._count: int | None = None
+        self._reason = "not read yet"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs: dict[str, Any] = {"count": self._count}
+        if self._reason:
+            attrs["reason"] = self._reason
+        return attrs
+
+    def update(self) -> None:
+        try:
+            value, reason = status_count(
+                self.hass.config.path(SHARED_DIR, STATUS_FILENAME),
+                "queue_count")
+        except Exception:  # noqa: BLE001 — a sensor must not take HA down
+            _LOGGER.debug("could not read the status mirror", exc_info=True)
+            value, reason = None, "the status file could not be read"
+        self._count = value
+        self._reason = reason
+        self._attr_is_on = None if value is None else value > 0
+
+
 class BrainWantsInputSensor(BinarySensorEntity):
     """On when brAIn has a guess waiting on a yes/no.
 
     This exists to be *automatable*. A guess sitting in a panel nobody has
     open is a guess that expires unanswered; a binary sensor can push it to
     a phone, where answering costs one tap.
+
+    It was called "Waiting on you", which read as the whole queue while it
+    counted only the guesses — `binary_sensor.brain_needs_you` is the
+    queue now. The unique id is unchanged so its history, its entity id
+    and every automation built on its `questions` attribute keep working.
     """
 
     _attr_has_entity_name = True
     _attr_should_poll = True
-    _attr_name = "Waiting on you"
+    _attr_name = "Questions waiting"
     _attr_icon = "mdi:comment-question-outline"
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "brain_memory")},

@@ -20,6 +20,8 @@ already reports.
 """
 from __future__ import annotations
 
+import numfmt
+
 from . import devices
 from ._util import House, domain_of
 
@@ -194,13 +196,14 @@ def unusual(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} is reading far outside its usual range",
             "detail": (
-                f"{found['value']:g}{unit} now, against a usual "
-                f"{found['median']:g}{unit} {against}. That is "
-                f"{abs(found['sigmas']):g} times its normal variation."
+                f"{numfmt.quantity(found['value'], unit)} now, against a "
+                f"usual {numfmt.quantity(found['median'], unit)} {against}. "
+                f"That is {numfmt.times(abs(found['sigmas']))} its normal "
+                "variation."
                 + (f" {where}." if where else "")),
             "fix": ("Look at what it is measuring. If this is normal for a "
                     "reason brAIn cannot see — a guest, a heatwave, a new "
-                    "appliance — press Wrong and say so, and it will stop "
+                    "appliance — press Ignore and say why, and it will stop "
                     "reporting it."),
             "severity": "info",
             "fixable": False,

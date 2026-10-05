@@ -134,8 +134,8 @@ def left_open(snap: dict, now: float) -> list[dict]:
                       f"open for under {int(RARE_OPEN * 60)} minutes of "
                       "this hour in an ordinary week")
                    + f". Checked {when}."),
-        "fix": ("Shut it, or if it is meant to be open press Wrong and "
-                "say so — brAIn measures what is normal here rather than "
+        "fix": ("Shut it, or if it is meant to be open press Ignore and "
+                "say why — brAIn measures what is normal here rather than "
                 "assuming, so it will stop asking once this hour looks "
                 "like your ordinary one."),
         "severity": "warning",
