@@ -147,8 +147,38 @@ class TestGetHistory(unittest.TestCase):
         self.assertEqual(result["min"], 18.0)
         self.assertEqual(result["max"], 23.1)
         self.assertEqual(result["last"], "23.1")
-        endpoint = mock_api.call_args[0][0]
+        # The history request is the first call; the live state read that
+        # checks the window is not cut short comes after it.
+        endpoint = mock_api.call_args_list[0][0][0]
         self.assertIn("filter_entity_id=sensor.outdoor_temp", endpoint)
+
+    @patch("ha_mcp_server.ha_api_request")
+    def test_history_that_stops_before_the_live_state_says_so(self, mock_api):
+        """A window whose last row is days before the entity's live
+        last_changed is a recorder missing rows, not a device gone quiet."""
+        history = [[
+            {"state": "heat_cool", "last_changed": "2026-10-01T09:14:00+00:00"},
+        ]]
+        live = {"entity_id": "climate.downstairs", "state": "heat_cool",
+                "last_changed": "2026-10-04T11:11:48+00:00"}
+
+        def answer(path, *a, **k):
+            return live if path.startswith("/api/states/") else history
+
+        mock_api.side_effect = answer
+        with patch("ha_mcp_server._entity_exposed", return_value=True):
+            result = ha_mcp_server.get_history("climate.downstairs", hours=96)
+        # "now" is the real clock; the live change is in the past, so it
+        # falls inside the window and the gap is days.
+        self.assertIn("history_incomplete", result)
+        self.assertIn("missing rows", result["history_incomplete"])
+
+        # The same window with its end present says nothing.
+        history[0].append({"state": "heat_cool",
+                           "last_changed": "2026-10-04T11:11:48+00:00"})
+        with patch("ha_mcp_server._entity_exposed", return_value=True):
+            result = ha_mcp_server.get_history("climate.downstairs", hours=96)
+        self.assertNotIn("history_incomplete", result)
 
     @patch("ha_mcp_server.ha_api_request")
     def test_hours_clamped(self, mock_api):

@@ -366,6 +366,15 @@ def lifecycle(entries: list[dict]) -> list[dict]:
     return out
 
 
+def ha_starts(entries: list[dict]) -> list[float]:
+    """When Home Assistant itself started inside the window, oldest first.
+
+    The starts out of `lifecycle` — the one fact that explains a row of
+    devices going unavailable in the same minute.
+    """
+    return [e["ts"] for e in lifecycle(entries) if e["event"] == "started"]
+
+
 def count_causes(actions: list[dict]) -> dict[str, int]:
     counts = {c: 0 for c in CAUSES}
     for a in actions:
@@ -616,7 +625,7 @@ async def collect(session, start: float, end: float,
     if entries is None:
         return {"available": False, "error": "logbook could not be read",
                 "actions": [], "overrides": [], "conflicts": [],
-                "lifecycle": [],
+                "lifecycle": [], "starts": [],
                 "moves": {}, "counts": count_causes([]),
                 "capped": False, "start": start, "end": end}
     mined = mine(entries, users, read_ledger(start))
@@ -636,4 +645,5 @@ async def collect(session, start: float, end: float,
         # same mined list over the same window, and two passes over the
         # same data is two chances to disagree about the window.
         "moves": automation_moves(mined["actions"]),
+        "starts": ha_starts(entries),
     }

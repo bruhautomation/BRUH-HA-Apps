@@ -388,7 +388,19 @@ async def build(session, states: dict, now: float | None = None,
             "closures", load(path),
             f"Home Assistant did not answer for any of the {len(ids)} "
             "closures asked about")
+    # A series that stops well before the door's own live last change is
+    # the recorder missing rows, and the hours it is missing would be
+    # measured as "shut": left out, and named, rather than stored as a
+    # habit nobody has (`ha_data.history_cutoffs`).
+    import ha_data  # noqa: PLC0415
+    cut = ha_data.history_cutoffs(
+        {eid: [{"last_changed": point[0]} for point in points]
+         for eid, points in series.items()}, states, now)
+    if cut:
+        payload["history_incomplete"] = sorted(cut)
     for eid, points in series.items():
+        if eid in cut:
+            continue
         built = build_entity(points, tz, now)
         if built:
             name = ((states.get(eid) or {}).get("attributes") or {}).get(

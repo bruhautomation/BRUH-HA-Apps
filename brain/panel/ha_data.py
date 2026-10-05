@@ -171,6 +171,88 @@ def history_params(ids, end: dt.datetime, *,
     return params
 
 
+# How far an entity's last history row may trail the live state's own
+# `last_changed` before the history is called cut off. Generous on
+# purpose: the recorder commits within seconds, so an hour is never the
+# recorder being slow — it is rows that are not there.
+HISTORY_GAP_S = 3600
+
+
+def _epoch(value: Any) -> float | None:
+    """An ISO stamp or an epoch number as epoch seconds, or None."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when.timestamp()
+
+
+def history_cutoffs(series: dict[str, list], live: dict[str, dict],
+                    end: Any = None,
+                    gap_s: float = HISTORY_GAP_S) -> dict[str, dict]:
+    """The entities whose history stops before what Home Assistant says
+    happened to them last.
+
+    `series` is `{entity_id: [row, ...]}` as `/history/period` answers it
+    (rows carry `last_changed`, or `last_updated` on a minimal row); `live`
+    is `{entity_id: state}` as `/states` answers it. An entity whose live
+    `last_changed` falls inside the window and more than ``gap_s`` after
+    its last history row has history that is MISSING rows — the recorder
+    did not write them, or would not return them — and every number read
+    off that window ("silent since", "0 W all week", "frozen") is a reading
+    of the hole rather than of the device. Measured on a real house: a
+    24-hour window answered 156 rows for a thermostat and a 48-hour window
+    answered one, ending days before the thermostat's live last change.
+
+    Returns `{entity_id: {"history_ends", "live_changed"}}` (epoch
+    seconds). An entity with no rows at all is not judged — a recorder
+    `exclude` answers that way on purpose — and neither is one whose live
+    change is after ``end``, which is a change the window never asked
+    about. Pure, so every caller reads one rule.
+    """
+    stop = _epoch(end)
+    out: dict[str, dict] = {}
+    for eid, rows in (series or {}).items():
+        if not isinstance(rows, list) or not rows:
+            continue
+        st = (live or {}).get(eid)
+        if not isinstance(st, dict):
+            continue
+        changed = _epoch(st.get("last_changed"))
+        if changed is None or (stop is not None and changed > stop):
+            continue
+        last = None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            when = _epoch(row.get("last_changed") or row.get("last_updated"))
+            if when is not None and (last is None or when > last):
+                last = when
+        if last is None or changed - last <= gap_s:
+            continue
+        out[eid] = {"history_ends": last, "live_changed": changed}
+    return out
+
+
+def series_by_entity(raw: Any) -> dict[str, list]:
+    """`/history/period`'s list of lists, keyed by the entity each is."""
+    out: dict[str, list] = {}
+    for series in raw or []:
+        if not isinstance(series, list) or not series:
+            continue
+        first = series[0] if isinstance(series[0], dict) else {}
+        eid = str(first.get("entity_id") or "")
+        if eid:
+            out[eid] = series
+    return out
+
+
 def history_path(start: dt.datetime) -> str:
     """The path half, which holds a timestamp and nothing a caller typed."""
     return f"/history/period/{start.isoformat()}"
@@ -689,6 +771,8 @@ async def get_history(
     entity_ids: list[str],
     start: dt.datetime,
     end: dt.datetime | None = None,
+    live: dict[str, dict] | None = None,
+    cutoffs: dict[str, dict] | None = None,
 ) -> dict[str, list]:
     """Fetch and downsample history for the given entities.
 
@@ -698,6 +782,12 @@ async def get_history(
     for one day starting `history_days` ago, so a card built on a week of
     history was reading a single day of it, six days stale, and saying
     nothing about that.
+
+    With ``live`` (`{entity_id: state}` off `/states`), an entity whose
+    history stops well before its own live `last_changed` is left OUT of
+    the answer and written into ``cutoffs`` instead
+    (:func:`history_cutoffs`) — a series with its end missing reads as a
+    device that went quiet, and that is the one reading it cannot support.
     """
     if not entity_ids:
         return {}
@@ -706,11 +796,18 @@ async def get_history(
     raw = await _rest_get(
         session, history_path(start), timeout=90,
         params=history_params(ids, finish, minimal=True, no_attributes=True))
+    cut: dict[str, dict] = {}
+    if live:
+        cut = history_cutoffs(series_by_entity(raw), live, finish)
+        if cutoffs is not None:
+            cutoffs.update(cut)
     out: dict[str, list] = {}
     for series in raw or []:
         if not series:
             continue
         eid = series[0].get("entity_id", "")
+        if eid in cut:
+            continue
         numeric: list[tuple[str, float]] = []
         changes: list[list] = []
         for point in series:
@@ -1076,9 +1173,32 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
                 # moves) carry the arrival/departure story for presence
                 ids += [e["e"] for e in device_context if e["e"] not in ids]
             try:
-                hist = await get_history(session, ids, start)
+                live = {st.get("entity_id"): st for st in states or []
+                        if isinstance(st, dict) and st.get("entity_id")}
+                cut: dict[str, dict] = {}
+                hist = await get_history(session, ids, start, live=live,
+                                         cutoffs=cut)
                 if hist:
                     bundle["history"] = hist
+                if cut:
+                    # Said rather than silently missing: an entity left
+                    # out of `history` with no reason reads as one that
+                    # did nothing all week.
+                    bundle["history_incomplete"] = {
+                        "note": "Home Assistant's history for these stops "
+                                "before their live state's last change, so "
+                                "the recorder is missing rows. Do not read "
+                                "a quiet, flat or offline stretch into "
+                                "this window for them.",
+                        "entities": {
+                            eid: {"history_ends": dt.datetime.fromtimestamp(
+                                      row["history_ends"], dt.timezone.utc
+                                  ).isoformat()[:16],
+                                  "live_changed": dt.datetime.fromtimestamp(
+                                      row["live_changed"], dt.timezone.utc
+                                  ).isoformat()[:16]}
+                            for eid, row in sorted(cut.items())},
+                    }
             except Exception:  # noqa: BLE001 — history is best-effort
                 pass
 

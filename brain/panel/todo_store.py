@@ -165,6 +165,8 @@ def _shape(entry: dict) -> dict:
         "added_at": int(entry.get("added_at") or 0),
         "done_at": int(entry.get("done_at") or 0),
         "note": _clean(entry.get("note"), MAX_NOTE),
+        # When the check that filed it said it was not done after all.
+        "came_back": int(entry.get("came_back") or 0),
     }
 
 
@@ -306,6 +308,62 @@ def reopen(item_id: int) -> dict | None:
         return None
     _write(items)
     return found
+
+
+# A chore that came from a house check is ticked off on somebody's word,
+# and the check that filed it is the one reading that can say whether it
+# is done: a ZSE44 still at 0% twelve days after "Done", an integration
+# still in setup_retry. So a check that RAN and still reports the problem,
+# past this long after the tick, puts the chore back on the list saying
+# so. Long enough that a sleepy battery device has reported its new level
+# and a reloaded integration has finished setting up; a check that did not
+# run reopens nothing, `clear_resolved`'s rule.
+CHORE_SETTLE_S = 2 * 3600
+CAME_BACK_NOTE = ("Came back: the check that reported this still reports it "
+                  "after you marked it done.")
+
+
+def still_reported(sources: set[str], keep_keys: set[str],
+                   now: float | None = None) -> list[dict]:
+    """Done chores from a check in ``sources`` whose key that pass still
+    reported, past `CHORE_SETTLE_S`. A read: nothing is written."""
+    now = time.time() if now is None else float(now)
+    out = []
+    for entry in _load():
+        item = _shape(entry)
+        if (item["status"] == "done" and item["origin"] == "finding"
+                and item["source"].startswith("check:")
+                and item["source"] in sources
+                and item["finding_key"] in keep_keys
+                and item["done_at"]
+                and now - item["done_at"] >= CHORE_SETTLE_S):
+            out.append(item)
+    return out
+
+
+@_mutates
+def came_back(item_ids: list[int], now: float | None = None) -> list[dict]:
+    """Put finished chores back on the list because they are not done.
+
+    Not `reopen` (the toast's Undo, which clears the note): this one says
+    why, and stamps `came_back`, so the item reads as the check speaking
+    rather than as somebody's mis-tap. Returns the items reopened.
+    """
+    now = time.time() if now is None else float(now)
+    wanted = {int(i) for i in item_ids}
+    items = _load()
+    out = []
+    for entry in items:
+        if (int(entry.get("id") or 0) in wanted
+                and entry.get("status") == "done"):
+            entry["status"] = "open"
+            entry["done_at"] = 0
+            entry["came_back"] = int(now)
+            entry["note"] = CAME_BACK_NOTE
+            out.append(_shape(entry))
+    if out:
+        _write(items)
+    return out
 
 
 @_mutates

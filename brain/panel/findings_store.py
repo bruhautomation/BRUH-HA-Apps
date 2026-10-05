@@ -915,6 +915,54 @@ def _prune(items: list[dict]) -> list[dict]:
     return [f for f in items if id(f) not in drop][-MAX_FINDINGS:]
 
 
+# A producer whose sentences a model writes rewords the same report every
+# time it files it — ten rows over three weeks about one pair of "Cooling
+# Time Yesterday" sensors, each worded differently, each passing a dedupe
+# keyed on text. For those, the same ENTITY from the same producer is the
+# same report: folded into the row already there (any status, a snooze and
+# a held verdict included) and into a "Wrong" already given.
+#
+# Never for a house check — its text is stable by construction, and one
+# check may say two different things about one entity (a battery that is
+# low, and one that has stopped reporting) — and never for a producer whose
+# rows are about an EVENT rather than a subject: the safety lane files one
+# row per trip by putting the time in the text, and folding the second
+# leak on a sensor into the first is the one fold that loses something
+# real. A different producer about the same entity is a different claim
+# and is never folded either, which is why the source is half the key.
+SUBJECT_FOLD_EXCLUDED = frozenset({
+    "safety", "security", "sre", "correction", "notify_policy",
+    "house_book", "healing", "followup", "fix", "doctor", "condition",
+    "scene"})
+
+
+def _folds_by_subject(entry: dict) -> tuple[str, str] | None:
+    """The `(entity_id, source)` this row is deduped on besides its text,
+    or None when it is deduped on its text alone."""
+    eid = str(entry.get("entity_id") or "").strip()
+    source = str(entry.get("source") or "").strip()
+    if (not eid or not source or ":" in source
+            or source in SUBJECT_FOLD_EXCLUDED):
+        return None
+    return eid, source
+
+
+def _subjects_answered_wrong() -> set[tuple[str, str]]:
+    """The subjects somebody said a model-written report was wrong about.
+
+    Only `ignored`: "not a problem here" is a statement about the house
+    that a reworded report does not change, where a fix is a dated event
+    and a re-report after it may be news (`_suppresses`'s argument)."""
+    out = set()
+    for e in _load_settled():
+        if e.get("kind") != "ignored":
+            continue
+        subject = _folds_by_subject(e)
+        if subject:
+            out.add(subject)
+    return out
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -930,15 +978,22 @@ def add_many(objs: list[dict]) -> list[dict]:
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
     seen |= suppressing_keys()
+    subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
+    subjects |= _subjects_answered_wrong()
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     for obj in objs:
         entry = coerce(obj)
         if entry is None or normalize(entry["text"]) in seen:
             continue
+        subject = _folds_by_subject(entry)
+        if subject and subject in subjects:
+            continue
         entry["ts"] = _unique_ts(used)
         used.add(entry["ts"])
         seen.add(normalize(entry["text"]))
+        if subject:
+            subjects.add(subject)
         items.append(entry)
         created.append(_shape(entry))
     if created:
@@ -1452,6 +1507,10 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # which card is worth trusting in this house.
         "source": str(shaped.get("source") or "")[:64],
         "source_title": str(shaped.get("source_title") or "")[:120],
+        # What it was about, so a reworded report about the same entity
+        # from the same producer is recognised as answered
+        # (`_subjects_answered_wrong`).
+        "entity_id": str(shaped.get("entity_id") or "")[:255],
     })
     _write_settled(ledger[-MAX_SETTLED:])
 
@@ -2057,7 +2116,31 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     # And the answers. The same pass that may clear a row it no longer
     # reports may end an answer about one — see `_suppresses`.
     lapse_settled(sources, keep_keys)
+    # And the other half of an answer: a chore ticked off while the check
+    # that filed it still reports it is not done, so it goes back on the
+    # list and its ledger entry back to `accepted` (the work is waiting
+    # again). Here, so the scheduled pass, "Check again" and a delayed
+    # verification are one rule with three callers.
+    _chores_came_back(sources, keep_keys)
     return gone
+
+
+def _chores_came_back(sources: set[str], keep_keys: set[str]) -> list[dict]:
+    import todo_store  # noqa: PLC0415 — the store imports nothing of ours
+    try:
+        due = todo_store.still_reported(sources, keep_keys)
+        if not due:
+            return []
+        back = todo_store.came_back([i["id"] for i in due])
+    except OSError as exc:
+        log.warning("could not reopen chores a check still reports: %s", exc)
+        return []
+    for item in back:
+        if item.get("finding_key"):
+            remember_answer(item["finding_key"], item["text"], "accepted",
+                            source=item.get("source", ""),
+                            source_title=item.get("source_title", ""))
+    return back
 
 
 # How long after a brAIn fix ends before the check that filed the row may
