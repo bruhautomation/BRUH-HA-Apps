@@ -395,3 +395,23 @@ def dead_ends(limit: int = 20) -> list[str]:
         note = e.get("note") or ""
         out.append(f"{e['text']}{DEAD_END_SEP}{note}" if note else e["text"])
     return out
+
+
+def prompt_block(limit: int = MAX_OPEN * 2) -> str:
+    """The guesses still waiting on the homeowner, for an insight card.
+
+    Open guesses only, sleeping ones included — a dismissed question is
+    still unanswered, and still possibly the reason for what a card is
+    looking at. Labelled as unconfirmed so a run cannot read one as a
+    fact; an empty queue is no block at all.
+    """
+    try:
+        open_ = list_all("open")[-limit:]
+    except Exception:  # noqa: BLE001 — a queue that will not read costs the block
+        return ""
+    lines = [f"- {e['text']}" for e in open_ if e.get("text")]
+    if not lines:
+        return ""
+    return ("OPEN QUESTIONS waiting on the homeowner (unconfirmed — never state "
+            "one as fact, but name it when it could explain what this card "
+            "shows):\n" + "\n".join(lines))

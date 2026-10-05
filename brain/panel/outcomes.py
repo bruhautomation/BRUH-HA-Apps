@@ -1299,7 +1299,8 @@ def replay_prompt(entry: dict) -> str:
         now_line=str(inputs.get("now_line") or ""),
         watch_notes=inputs.get("watch_notes") or [],
         examples=inputs.get("examples") or [],
-        situation_line=str(inputs.get("situation_line") or ""))
+        situation_line=str(inputs.get("situation_line") or ""),
+        used_by=inputs.get("used_by") or [])
 
 
 def replay_look(entry: dict, ask) -> dict:

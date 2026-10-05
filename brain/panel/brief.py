@@ -104,6 +104,12 @@ Rules that matter more than style:
 - Do not list everything. Two or three things is a message; six is a
   report, and a report is what this replaces.
 - No praise, no reassurance, no "everything else looks great".
+- Never tell them to switch off, unplug or change something that its
+  labels or brAIn's memory say is meant to stay as it is ("Always On",
+  "powers the bulbs", "keep on"). A thing on that is meant to be on is
+  not news; leave it out.
+- Write every time of day in ONE format, the one the prompt names. Never
+  mix "10:20 PM" and "23:28" in one message.
 """
 
 
@@ -266,11 +272,67 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
     return {"left_on": left_on, "open_unusual": sorted(open_unusual)}
 
 
+# Where a clock reads 10:20 PM rather than 22:20. Home Assistant's
+# `core.config` carries the house's country; the brief is the one message
+# brAIn writes in the person's own clock, and a paragraph that said
+# "10:20pm" in one sentence and "23:28" in the next is how this came up.
+TWELVE_HOUR_COUNTRIES = frozenset({
+    "US", "CA", "AU", "NZ", "IN", "PH", "PK", "BD", "EG", "SA", "MY",
+    "CO", "SV", "HN", "NI", "JO", "IE",
+})
+# A house that has not set a country: the US zones, because a 12-hour
+# house reading 22:20 is the commoner complaint and the zone is all there
+# is to go on. Every other zone is 24-hour.
+_TWELVE_HOUR_ZONES = ("America/New_York", "America/Chicago",
+                      "America/Denver", "America/Los_Angeles",
+                      "America/Phoenix", "America/Anchorage",
+                      "America/Detroit", "America/Boise",
+                      "America/Indiana/", "America/Kentucky/",
+                      "Pacific/Honolulu")
+
+
+def clock_style(country: str = "", tz_name: str = "") -> str:
+    """'12h' or '24h' for this house, from its country, else its zone."""
+    country = str(country or "").strip().upper()
+    if country:
+        return "12h" if country in TWELVE_HOUR_COUNTRIES else "24h"
+    tz_name = str(tz_name or "")
+    return "12h" if tz_name.startswith(_TWELVE_HOUR_ZONES) else "24h"
+
+
+def format_clock(hour: int, minute: int, style: str = "24h") -> str:
+    """One time of day in the house's style: '22:20' or '10:20 PM'."""
+    hour, minute = int(hour) % 24, int(minute) % 60
+    if style != "12h":
+        return f"{hour:02d}:{minute:02d}"
+    return f"{(hour % 12) or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
+
+
 def frame(reasons: list[str], state: dict) -> str:
     """The prompt. A frame, not a bundle — the tools fetch the rest."""
     lines = ["Write this morning's message for the home.", "",
              "What is worth mentioning, already established:"]
     lines += [f"- {r}" for r in reasons]
+
+    # What the things above ARE, in the house's own words: their names,
+    # the labels somebody put on them, and what brAIn has been told about
+    # each. A brief that told somebody to switch off a switch labelled
+    # "Always On" — whose only job is keeping the bulbs behind it powered
+    # — was a brief handed the reason and none of this.
+    about = [str(a).strip() for a in state.get("about") or []
+             if str(a or "").strip()]
+    if about:
+        lines += ["", "What these things are (names and labels from Home "
+                  + "Assistant — a label is the homeowner saying how a "
+                  + "thing is meant to be):"]
+        lines += [f"- {a}" for a in about]
+
+    if state.get("clock_style") == "12h":
+        lines += ["", "Write times of day in 12-hour form, like 10:20 PM, "
+                  + "every time — convert any 24-hour time above."]
+    elif state.get("clock_style") == "24h":
+        lines += ["", "Write times of day in 24-hour form, like 22:20, "
+                  + "every time — convert any 12-hour time above."]
 
     if state.get("woke_at"):
         lines.append(f"It is about {state['woke_at']}, which is when this "
@@ -364,6 +426,6 @@ def state_from(findings: list[dict], health: dict, overnight: dict,
 
 
 __all__ = [
-    "MAX_TURNS", "MAX_WORDS", "MIN_CHARS", "SYSTEM", "TIMEOUT_S", "due",
-    "frame", "morning_facts", "state_from", "tidy", "worth_saying",
+    "MAX_TURNS", "MAX_WORDS", "MIN_CHARS", "SYSTEM", "TIMEOUT_S",
+    "clock_style", "due", "format_clock", "frame", "morning_facts", "state_from", "tidy", "worth_saying",
 ]
