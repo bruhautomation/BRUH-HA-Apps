@@ -67,7 +67,7 @@ import os
 import time
 
 import answers
-from urgency import (  # noqa: F401 — re-exported: callers read these here
+from urgency import (  # re-exported (named in __all__): callers read these here
     DEFAULT_URGENCY, PRODUCER_URGENCY, URGENCY, is_urgent, urgency_of)
 import textclip
 
@@ -902,7 +902,7 @@ __all__ = [
     "ESCALATION_MAX_ROWS", "ESCALATION_S", "PRODUCER_URGENCY", "QUEUE_FILE",
     "TIERS", "URGENCY", "actions_for", "begin_escalation", "can_answer",
     "classify", "compose", "compose_accepted", "compose_escalation",
-    "due_escalations", "escalation_state", "hold", "in_quiet_hours",
+    "due_escalations", "escalation_state", "hold", "in_quiet_hours", "is_urgent",
     "load_escalations", "load_queue", "next_escalation_at", "parse_action",
     "parse_hour", "prune_escalations", "quiet_ends_at", "record_reminder",
     "save_escalations", "save_queue", "stop_escalation", "take_queue",
