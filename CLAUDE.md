@@ -873,6 +873,7 @@ BRUH-HA-Apps/
 │   │   ├── sre.py               # The overnight check: root causes that cite the records they rest on
 │   │   ├── house_book.py        # How this house works, every sentence cited, shared by its own token
 │   │   ├── triage.py            # The one door every producer files through, mutes included
+│   │   ├── urgency.py           # How soon a row wants reading, and which are Urgent (a leaf: notify_router re-exports it)
 │   │   ├── today.py             # Today's own half: Snooze/Ignore for the tidy and update cards, and History
 │   │   ├── schedule_store.py    # When brAIn last spoke, across a restart
 │   │   ├── finding_requests.py  # An answer given in HA, on its way to the one store

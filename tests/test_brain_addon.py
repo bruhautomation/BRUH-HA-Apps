@@ -1024,7 +1024,6 @@ class TestDocsTab(unittest.TestCase):
         eight named groups, every section is assigned one by name rather than
         falling into the last by default, and no row carries a glyph."""
         import importlib.util
-        import re
         spec = importlib.util.spec_from_file_location(
             "build_docs", PANEL / "build-docs.py")
         mod = importlib.util.module_from_spec(spec)

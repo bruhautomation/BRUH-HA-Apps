@@ -22,8 +22,8 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL_DIR = BASE_DIR / "brain" / "panel"
@@ -38,7 +38,7 @@ class _Store(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        patcher = mock.patch.object(today, "HIDDEN_FILE",
+        patcher = unittest.mock.patch.object(today, "HIDDEN_FILE",
                                     Path(self.tmp.name) / "today-hidden.json")
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -160,7 +160,7 @@ class TestTheQueueCountsTodaysOwnCards(_Store):
         import server
         self.server = server
         self.today = server.today_mod
-        patch = mock.patch.object(self.today, "HIDDEN_FILE", today.HIDDEN_FILE)
+        patch = unittest.mock.patch.object(self.today, "HIDDEN_FILE", today.HIDDEN_FILE)
         patch.start()
         self.addCleanup(patch.stop)
         proposal = {"at": 1700000000, "rows": [{"id": "r0"}]}
@@ -171,7 +171,7 @@ class TestTheQueueCountsTodaysOwnCards(_Store):
             (server.upgrades, "listing", lambda rows: [update]),
             (server.cases, "queue_count", lambda now=None: 4),
         ):
-            p = mock.patch.object(target, attr, value)
+            p = unittest.mock.patch.object(target, attr, value)
             p.start()
             self.addCleanup(p.stop)
 
@@ -187,7 +187,7 @@ class TestTheQueueCountsTodaysOwnCards(_Store):
         self.assertEqual(self.server._queue_count(NOW + self.today.SNOOZE_S + 1), 5)
 
     def test_an_update_nobody_assessed_is_not_a_card(self):
-        with mock.patch.object(self.server.upgrades, "listing",
+        with unittest.mock.patch.object(self.server.upgrades, "listing",
                                lambda rows: [{"entity_id": "update.os", "latest": "1"}]):
             self.assertEqual(self.server._today_cards(time.time())["updates"], [])
 
