@@ -5353,3 +5353,134 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   .chatfinding .cfhead .btn.icon { width: 44px; height: 44px; }
   .bubble.discuss .dmore > summary { min-height: 44px; display: flex; align-items: center; }
 }
+
+/* ---------------------------------------------------------------- House
+   One segmented control over Reports, What it knows, the house book and
+   What happened. Four buttons on a pointer; one styled select below 640px,
+   because four labels in a phone's row is a row that wraps or scrolls
+   sideways, and the select is the same choice in one control. */
+.houseseg { display: flex; align-items: center; margin: 0 0 var(--sp-4); }
+.houseseg[hidden] { display: none; }
+.houseseg .segbtns {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: var(--card-border);
+  border-radius: var(--control-radius);
+  background: var(--surface);
+}
+.houseseg .segbtn {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 500;
+  min-height: 32px;
+  padding: 0 var(--sp-4);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.houseseg .segbtn:hover { color: var(--ink); }
+.houseseg .segbtn.active { color: var(--ink); background: var(--surface-2); font-weight: 600; }
+.houseseg .segbtn[hidden] { display: none; }
+.houseseg .segsel { display: none; width: 100%; }
+@media (max-width: 640px) {
+  .houseseg .segbtns { display: none; }
+  .houseseg .segsel { display: block; }
+}
+
+/* Reports: the search field (only past eight reports), and two rows under
+   the grid — the deep review and Suggested — each a name and a Run. */
+.reportsearch {
+  display: block;
+  width: 100%;
+  min-height: var(--btn-h);
+  margin: 0 0 var(--sp-3);
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-control);
+  color: var(--ink);
+  background: var(--surface);
+  border: var(--card-border);
+  border-radius: var(--control-radius);
+  outline: none;
+}
+.reportsearch[hidden] { display: none; }
+.reportsearch:focus { border-color: var(--accent); }
+.reportrow {
+  margin-top: var(--section-gap);
+  padding: var(--card-pad);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+}
+.reportrow h2 { margin: 0; font-size: var(--fs-card); line-height: var(--lh-card); font-weight: 600; }
+.reportrowhead { display: flex; align-items: center; gap: var(--sp-3); justify-content: space-between; }
+.ideasrow .findlist { margin-top: var(--sp-3); }
+.ideasrow.empty .findlist:empty { display: none; }
+.ideasrow .ideasnote { margin-top: var(--sp-2); font-size: var(--fs-meta); color: var(--ink-3); }
+.kreviewsec .kreview { margin-top: var(--sp-2); }
+.kreviewsec .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.kreviewsec .kreviewcost { font-size: var(--fs-meta); color: var(--ink-3); }
+.card.opens { cursor: pointer; }
+.card .cardage { color: var(--ink-3); }
+.refinemore { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-4); margin-top: var(--sp-3); }
+.refinemore[hidden] { display: none; }
+.refinelink { color: var(--accent-2); font-size: var(--fs-body); text-decoration: none; }
+.refinelink:hover { text-decoration: underline; }
+
+/* What it knows: a fact is a row; pressing it opens who taught it, when,
+   and the run it came from. */
+.kknow .kadd { margin-top: 0; }
+.kfact .kfactopen {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.kfact .kfactopen .kfacttext { color: var(--ink); word-break: break-word; }
+.kfact .kfactopen .kfactsubj { color: var(--ink-3); justify-self: start; }
+.kfact .kfactdetail { margin-top: var(--sp-1); }
+
+/* What happened: the house's situation as the top line, and one
+   "Caused by" picker where a row of counted chips used to scroll. */
+.actnow {
+  display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-2); align-items: baseline;
+  margin: 0 0 var(--sp-3); font-size: var(--fs-body); line-height: var(--lh-body);
+}
+.actnow[hidden] { display: none; }
+.actnow .actnowmode { font-weight: 600; color: var(--ink); }
+.actnow .actnowsaid { color: var(--ink-2); }
+.actnow .actnowsaid.stale { color: var(--ink-3); }
+.actcause {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-body); color: var(--ink-2); min-width: 0;
+}
+.actcause select.sel { max-width: 220px; }
+
+/* The house book: Run and Share, and the sentence a sitter is told too. */
+.bookwrap .bookactions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.bookwrap .booksafe { margin: var(--sp-2) 0 var(--sp-3); }
+
+/* Touch targets for House's own controls, after the text floor. */
+@media (pointer: coarse) {
+  .houseseg .segbtn, .houseseg .segsel, .reportsearch,
+  .kfact .kfactopen, .actcause select.sel { min-height: 44px; }
+  .reportrow .btn, .bookwrap .btn, .card .cardask { min-height: 44px; }
+  .refinelink { display: inline-flex; align-items: center; min-height: 44px; }
+}
+@media (max-width: 640px) {
+  .acthead .actnav, .actcause { width: 100%; }
+  .actcause select.sel { flex: 1; max-width: none; }
+}

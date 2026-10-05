@@ -1,12 +1,16 @@
-// Render House → Upkeep and assert each of its four sections can be acted
-// on from what it shows.
+// Render House → Upkeep and House › House book, and assert each section can
+// be acted on from what it shows.
 //
-// The pane exists for four decisions, and each fails in a way a server test
-// cannot see:
+// The house book left Upkeep for a pane of its own (House › House book,
+// `#viewHousebook`, the redesign's "Run · Share"). The rest is Upkeep's.
+// Each fails in a way a server test cannot see:
 //
 //   * a house book sentence with no source chip under it reads exactly
 //     like a cited one — the citation is the half that makes it a manual
-//     rather than a story, so every entry must render at least one;
+//     rather than a story, so every entry must render at least one; its
+//     two presses are Run and Share, and the one line a sitter is told —
+//     "codes and passwords are left out" — is on screen whether or not the
+//     book is shared, because it is a safety line and never folded away;
 //   * the tidy table is a review: every row has its own tick, the tick is
 //     a 44px target on a finger, the Apply button counts what is ticked
 //     (and the count moves when a box is unticked), and an area move says
@@ -29,7 +33,8 @@ import { openView } from './tabs.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const NOW = Math.floor(Date.now() / 1000);
-const IDS = ['viewUpkeep', 'upBook', 'upTidy', 'upUpdates', 'upHealth'];
+const IDS = ['viewUpkeep', 'upTidy', 'upUpdates', 'upHealth'];
+const BOOK_IDS = ['viewHousebook', 'upBook'];
 
 const BOOK = {
   running: false, last_error: '', last_note: '', held: '', subject: '',
@@ -139,14 +144,14 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 
-const open = async (width, touch, bodies) => {
+const open = async (width, touch, bodies, view = 'upkeep') => {
   const context = await browser.newContext({
     viewport: { width, height: 900 }, hasTouch: touch, isMobile: touch });
   const page = await context.newPage();
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(stub(bodies));
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
-  await openView(page, 'upkeep');
+  await openView(page, view);
   return { context, page };
 };
 
@@ -156,6 +161,8 @@ const read = (page) => page.evaluate((ids) => {
   return {
     missing: ids.filter((i) => !document.getElementById(i)),
     visible: !!document.querySelector('#viewUpkeep.active'),
+    bookVisible: !!document.querySelector('#viewHousebook.active'),
+    bookInUpkeep: !!document.querySelector('#viewUpkeep #upBook'),
     entries: q('#upBook .upbooklist li').map((li) => ({
       text: li.firstChild ? li.firstChild.textContent : '',
       chips: li.querySelectorAll('.upchip').length,
@@ -183,6 +190,9 @@ const read = (page) => page.evaluate((ids) => {
     updatesText: (document.getElementById('upUpdates') || {}).textContent || '',
     bookText: (document.getElementById('upBook') || {}).textContent || '',
     health: (document.getElementById('upHealth') || {}).textContent || '',
+    bookButtons: q('#viewHousebook button').filter((b) => b.offsetParent).map((b) => ({
+      label: b.textContent.trim(), h: Math.round(box(b).height),
+      disabled: b.disabled })),
     buttons: q('#viewUpkeep button').filter((b) => b.offsetParent).map((b) => ({
       label: b.textContent.trim(), h: Math.round(box(b).height),
       disabled: b.disabled })),
@@ -203,15 +213,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (v.missing.length) note(where, `element id(s) gone: ${v.missing.join(', ')}`);
   if (!v.visible) note(where, 'the Upkeep pane is not the one in front');
 
-  if (v.entries.length !== 2) note(where, `${v.entries.length} book entries, not 2`);
-  for (const e of v.entries) {
-    if (!e.chips) note(where, `a book sentence carries no source: "${e.text.slice(0, 50)}"`);
-  }
-  if (!/left out for citing nothing/.test(v.bookText)) {
-    note(where, 'the book does not say a sentence was left out uncited');
-  }
-  if (!/house-book-/.test(v.link)) note(where, 'the published link is not shown');
-  if (!/Take the link down/.test(v.bookText)) note(where, 'no way to take the link down');
+  if (v.bookInUpkeep) note(where, 'the house book is still a section of Upkeep');
 
   if (v.rows.length !== 3) note(where, `${v.rows.length} tidy rows, not 3`);
   for (const r of v.rows) {
@@ -260,9 +262,80 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (v.docWidth > v.viewport + 1) {
     note(where, `page scrolls sideways (${v.docWidth} > ${v.viewport})`);
   }
-  console.log(`${String(width).padStart(5)}  ${v.entries.length} book entries  `
+  console.log(`${String(width).padStart(5)}  `
     + `${v.rows.length} tidy rows  ${v.updates.length} updates  ${v.buttons.length} buttons`);
   await context.close();
+}
+
+// House › House book: a pane of its own, Run and Share, the cited entries,
+// and the safety line under Share.
+const SAFETY = 'Every sentence names what it came from; codes and passwords are left out.';
+for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
+  const where = `book ${width}px`;
+  for (const [state, book] of [['shared', BOOK], ['not shared', { ...BOOK, published: null }]]) {
+    const { context, page } = await open(width, touch, { ...ALL, book }, 'housebook');
+    await page.waitForSelector('#upBook .upbooklist li', { timeout: 5000 })
+      .catch(() => note(where, `${state}: the book never rendered`));
+    const v = await page.evaluate(() => {
+      const box = (n) => n.getBoundingClientRect();
+      const q = (s) => [...document.querySelectorAll(s)];
+      return {
+        missing: ['viewHousebook', 'upBook'].filter((i) => !document.getElementById(i)),
+        visible: !!document.querySelector('#viewHousebook.active'),
+        entries: q('#upBook .upbooklist li').map((li) => ({
+          text: li.firstChild ? li.firstChild.textContent : '',
+          chips: li.querySelectorAll('.upchip').length,
+        })),
+        link: (document.querySelector('#upBook .uplink a') || {}).textContent || '',
+        text: (document.getElementById('upBook') || {}).textContent || '',
+        safe: [...document.querySelectorAll('#upBook .booksafe')].map((n) => ({
+          text: n.textContent.trim(), shown: box(n).height > 0 })),
+        buttons: q('#viewHousebook button').filter((b) => b.offsetParent).map((b) => ({
+          label: b.textContent.trim(), h: Math.round(box(b).height) })),
+        seg: !document.getElementById('houseSeg')?.hidden,
+        docWidth: document.documentElement.scrollWidth,
+        viewport: window.innerWidth,
+      };
+    });
+    if (v.missing.length) note(where, `element id(s) gone: ${v.missing.join(', ')}`);
+    if (!v.visible) note(where, 'House book is not the pane in front');
+    if (!v.seg) note(where, 'the House segmented control is not shown over the book');
+    if (v.entries.length !== 2) note(where, `${v.entries.length} book entries, not 2`);
+    for (const e of v.entries) {
+      if (!e.chips) note(where, `a book sentence carries no source: "${e.text.slice(0, 50)}"`);
+    }
+    if (!/left out for citing nothing/.test(v.text)) {
+      note(where, 'the book does not say a sentence was left out uncited');
+    }
+    if (v.safe.length !== 1 || v.safe[0].text !== SAFETY || !v.safe[0].shown) {
+      note(where, `${state}: the safety line under Share reads ${JSON.stringify(v.safe)}`);
+    }
+    const labels = v.buttons.map((b) => b.label);
+    if (labels[0] !== 'Run') note(where, `${state}: the first press is "${labels[0]}", not Run`);
+    if (state === 'not shared' && !labels.includes('Share')) {
+      note(where, 'an unshared book offers no Share');
+    }
+    if (state === 'shared') {
+      if (!/house-book-/.test(v.link)) note(where, 'the shared link is not shown');
+      if (!labels.includes('Delete')) note(where, 'no way to take the shared link down');
+      if (labels.includes('Share')) note(where, 'Share is offered over a book already shared');
+    }
+    for (const cut of [/Rewrite it now/, /Publish a link/, /Take the link down/,
+                       /Write the house book/]) {
+      if (cut.test(v.text)) note(where, `cut label is back: ${cut}`);
+    }
+    if (touch) {
+      for (const b of v.buttons) {
+        if (b.h < 44) note(where, `"${b.label}" is ${b.h}px tall on a finger`);
+      }
+    }
+    if (v.docWidth > v.viewport + 1) {
+      note(where, `page scrolls sideways (${v.docWidth} > ${v.viewport})`);
+    }
+    console.log(`${String(width).padStart(5)}  book (${state}): ${v.entries.length} entries  `
+      + `presses ${labels.join(' · ')}`);
+    await context.close();
+  }
 }
 
 // Two states that must not read alike: an update list brAIn could not read,
@@ -283,11 +356,20 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (/Nothing is waiting/.test(v.updatesText)) {
     note('unreadable', 'an unread list reads as "nothing is waiting"');
   }
+  await context.close();
+}
+{
+  const { context, page } = await open(1200, false, {
+    ...ALL, book: { ...BOOK, running: true } }, 'housebook');
+  await page.waitForFunction(() => /Writing the house book/.test(
+    document.getElementById('upBook')?.textContent || ''), null,
+    { timeout: 5000 }).catch(() => {});
+  const v = await read(page);
   if (!/Writing the house book/.test(v.bookText)) {
     note('running', 'nothing on the page says the book is being written');
   }
-  const run = v.buttons.find((b) => /Rewrite|Write the house book/.test(b.label));
-  if (!run || !run.disabled) note('running', 'the write button is still pressable');
+  const run = v.bookButtons.find((b) => b.label === 'Run');
+  if (!run || !run.disabled) note('running', 'Run is still pressable while the book is written');
   await context.close();
 }
 {
@@ -309,4 +391,4 @@ if (failures.length) {
   failures.forEach((f) => console.error('  - ' + f));
   process.exit(1);
 }
-console.log('\nevery section of Upkeep can be acted on from what it shows');
+console.log('\nevery section of Upkeep and the house book can be acted on from what it shows');

@@ -175,6 +175,26 @@ node tests/manual/measure-chrome.mjs
 Run it after touching `.subtabs`, `.today`, the docs nav, `.findwrap` /
 `.findlist`, or `#viewProposals`.
 
+## `measure-house.mjs`
+
+The House screen, driven on the real markup behind a stubbed fetch at 390px
+(touch) and 1200px. House is one segmented control — Reports · What it knows ·
+House book · What happened — and on a phone that control is one `select.sel`
+rather than four buttons. Fails on a segment that opens the wrong pane or does
+not light up, the control showing on a pane outside House, any cut Reports
+text coming back (the checks strip, the second ask box, tag chips, a tokens
+line), a card head other than Ask · ⋯ or a foot other than "Updated N ago",
+a missing Deep review or Suggested row, a search box shown at eight reports or
+fewer (or one that does not narrow past eight), What happened's top line not
+being the house's situation, a target under 44px on touch, or sideways scroll.
+
+```bash
+node tests/manual/measure-house.mjs
+```
+
+Run it after touching `#houseSeg`, the Reports grid, `#viewHousebook` or the
+top of `#viewActivity`.
+
 ## `demo_panel.py` + `shoot-panel.mjs` — the docs screenshots
 
 The screenshots on bruhautomation.com are the actual product, not mockups.

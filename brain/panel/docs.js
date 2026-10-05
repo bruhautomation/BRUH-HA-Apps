@@ -302,8 +302,8 @@ down, and once a day brAIn checks each one against what you did next: *Not a
 problem**, **I've fixed it**, **Add to list*, putting back something it hid, a problem
 it had passed over turning up within three days, or undoing a fix. Where the record
 is lopsided — the same sensor raised four times and marked **Not a problem** each
-time — a cheap run writes a short judgement into its facts. You will see it on the
-Knowledge tab, and you can forget it there. The counts in it are brAIn's own
+time — a cheap run writes a short judgement into its facts. You will see it under
+House → What it knows, and you can forget it there. The counts in it are brAIn's own
 arithmetic. Judgements never make brAIn quieter about leaks, smoke, gas, freezing or
 anything on your protected list, never mention people, and disappear when a later
 card on the same thing turns out to be real. Each look is also shown a handful of
@@ -930,8 +930,8 @@ the ledger is what a run **retrieves** from. A card about the kitchen is handed 
 facts about the kitchen, the morning brief the facts about the rooms it is
 reporting on, the Resident's look the facts about the signals in front of it —
 never the whole document, which on a mature house is 30 KB of things that are true
-and mostly beside the point. The Knowledge tab lists the ledger under **What brAIn
-knows**, with a ✕ on each row; a fact you forget there is gone from every future
+and mostly beside the point. **House → What it knows** lists the ledger, with
+**⋯ → Delete** on each row; a fact you forget there is gone from every future
 prompt, and the document is left for you to edit yourself.
 
 What you teach the terminal or the chat is picked up by a small run after each
@@ -990,7 +990,7 @@ is still written by brAIn afterwards, out of the JSON the session returned.
 
 And everything it has learned is **portable**: \`brain memory export\` writes one
 JSON file carrying the memory document, the findings list, the settled answers
-and the facts ledger (the Knowledge tab's ⬇ Export does the same), and
+and the facts ledger, and
 \`brain memory import\` folds one back in on another install — ledgers merge with
 the local entries winning, and the document itself is only replaced when the
 local one is empty or you say \`--replace-memory\`. Migrating to new hardware no
@@ -1757,7 +1757,7 @@ is a week from now rather than a week from Sunday.
 
 Everything else brAIn writes is about one thing — a card about a category, a
 case about a signal, a report about a week — and runs on a model chosen so it
-can run often. **House → Knowledge → Deep review** is the other kind: Claude's
+can run often. **House → Reports → Deep review** is the other kind: Claude's
 top model, at high effort, with read-only tools and a long budget, sits with
 the whole house and says what it adds up to — a pattern across rooms, a cause
 behind several symptoms, something set up in a way that will bite later,
@@ -1765,14 +1765,14 @@ something working well that you should keep.
 
 - **Only by a press.** Nothing schedules it; the scheduler cannot even name
   the job.
-- **The price is on the button.** Before you press it says roughly how many
-  tokens it will spend and what share of a five-hour session that is on your
-  plan — read off what earlier reviews on your house actually cost, and a
-  first guess (about 150k) until one has run. It is an estimate and says so.
+- **The price is on the button.** Beside **Run** it says roughly what share
+  of a five-hour session it will take ("~11% of a session"), read off what
+  earlier reviews on your house actually cost, and a first guess until one
+  has run; the token estimate is in the button's tooltip.
 - **It reads, and files nothing.** No findings, no proposals, no memory
   lines. It is told what brAIn already knows so it does not repeat it, and
-  what it says is kept on that page (the last six reviews). If something in
-  it is worth acting on, ask about it in the chat.
+  what it says is kept on the row under Reports, dated (the last six
+  reviews). If something in it is worth acting on, ask about it in the chat.
 - Pressing it skips the usage budget, like every press: automatic runs pause
   at the budget, asking by hand always runs.
 `,
@@ -2658,14 +2658,6 @@ away from the kitchen speaker if you want to.
 **House → Upkeep** keeps the house itself in order, and every part of it is a
 press. Each section says what it last did, when, and why a scheduled pass was
 held back.
-
-- **House book**: a short manual written from your own automations, scripts,
-  scenes and what brAIn has learned. Every line shows the sources it came from,
-  and codes and passwords are left out. Questions it cannot answer from the house
-  appear on the Findings tab; your answer goes into memory. **Publish** gives you a
-  private link to a read-only copy, and **Stop sharing** deletes it and changes the
-  link. After the first one, brAIn rewrites the book weekly, but only when
-  something it reads has changed.
 - **Names and rooms**: suggests tidier names, rooms and spoken aliases in one
   table. Tick what you want and press Apply. A room move lists the automations it
   will change. Undo works for 30 days and never overwrites a rename you made
@@ -2684,6 +2676,24 @@ held back.
 `,
   },
   {
+    id: "the-house-book",
+    icon: "📄",
+    title: "The house book",
+    body: `
+# The house book
+
+**House → House book** is a short manual written from your own automations,
+scripts, scenes and what brAIn has learned — something to hand a house-sitter.
+Every sentence names what it came from; codes and passwords are left out, and
+that line is always on the page. **Run** writes it (or rewrites it). Questions
+it cannot answer from the house appear on the Findings tab, and your answer goes
+into memory. **Share** gives you a private link to a read-only copy; **Delete**
+takes the copy down and changes the link, so a link somebody kept stops working.
+After the first one, brAIn rewrites the book weekly, but only when something it
+reads has changed.
+`,
+  },
+  {
     id: "it-knows-what-happened-and-what-caused-it",
     icon: "🗂️",
     title: "It knows what happened, and what caused it",
@@ -2695,7 +2705,8 @@ whether somebody pressed a switch, an automation fired, a voice command
 asked, or brAIn did it — and that is the question behind most of what people
 ask their house.
 
-The **Activity** tab reads Home Assistant's own logbook and answers with what
+**House → What happened** (the Activity pane) opens on one line saying what the
+house is doing right now, then reads Home Assistant's own logbook and answers with what
 **happened**, which is not the same as what changed. Nobody thinks in state
 changes: a person thinks in **episodes**. The TV was on in the lounge from
 eight until eleven. Somebody got home at 17:40. The bedroom heating ran from
@@ -2727,13 +2738,13 @@ who was out, so it is silent unless it really knows.
 
 Every row still names its cause, a row somebody undid says so on the row, and
 tapping one opens that entity's own recent history. Page back a day at a
-time; filter by cause. All of that costs nothing — no Claude run, no stored
+time with **Earlier** and **Later**; narrow it with **Caused by**. All of that costs nothing — no Claude run, no stored
 copy — and it needs the \`logbook\` integration, which is part of Home
 Assistant's default config.
 
 ## What does this add up to?
 
-One button, and it is the only thing on the tab that spends anything. It puts
+**Ask** is the one button, and the only thing on the pane that spends anything. It puts
 the window you are looking at in front of Claude and asks for a paragraph:
 what today adds up to, rather than a list read back. It is a press rather
 than something that happens when you open the tab, because a Claude run
@@ -3078,7 +3089,7 @@ strip under the bar, shown only where a tab holds more than one.
 | --- | --- |
 | **Home** | What is waiting on you and what brAIn has made. **Findings** is one feed of cases — problems, suggestions and guesses — each with the same row of answers (**Fix it** where brAIn can, **Add to list**, **Dismiss**, **Not a problem**; a guess gets **Yes · No · Dismiss**, a plan gets **Apply · Don't change it**) and I've already fixed it, Check again, Talk about it, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
-| **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
+| **House** | One control across the top — **Reports · What it knows · House book · What happened** (a picker on a phone). **Reports** is your cards, each a headline and how long ago it was updated, with the deep review and the suggested reports under them. **What it knows** is a box to tell brAIn something and every fact it holds. **House book** is the manual brAIn writes for a house-sitter, with **Run** and **Share**. **What happened** opens on what the house is doing now, then what changed and what caused it — a person, an automation, a script, voice, brAIn itself — fetched fresh every visit and never cached. |
 | **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |
 
 Every pane keeps the name it always had, so the rest of this guide says
@@ -3162,36 +3173,42 @@ Humidity") — and the question you typed is not repeated on it: hover the headi
 open **Refine**, to see it. The first sentence of the summary is the answer, then the
 reason; the numbers sit in even rows of tiles; the chart sits straight on the card.
 
-Four controls are on the card, the rest are behind **⋯**:
+Two controls are on the card, and pressing anywhere else on it opens it at full size:
 
-- **✎ Refine** — say what should change ("compare it with upstairs", "use the last 7
-  days", "just the chart") and brAIn regenerates the card with that change, keeping
-  what you did not ask to change. Leave **Keep asking this on every future run**
-  ticked and it sticks, so the next scheduled run does not quietly undo it; the list
-  under the box is everything you have asked of the card, each with a ✕. The version
-  it replaces stays in the card's history (\`‹ ›\` in the foot) — cards you asked for
-  keep history too now.
-- **↗ Share** — two ways to take a card somewhere else:
-  - **As a picture**: the card's face (title, answer, numbers and chart, no buttons)
-    drawn to a PNG. **Copy picture** puts it on the clipboard; where the browser will
-    not allow that (Home Assistant's own frame often will not), right-click or
-    long-press the picture, or use **Download**.
-  - **On a dashboard**: pick a dashboard and a view and press **Add card** — brAIn
-    adds a Webpage card that always shows this card's latest run, either the whole
-    card or just the chart. A dashboard kept in YAML, or one Home Assistant still
-    builds automatically, cannot be written to; the dialog says which, and the YAML
-    for pasting in by hand is underneath.
-- **⤢ Expand** — the chart at full size.
-- **⋯ → Regenerate** — run this card again now. On a card you asked for, it re-runs
-  that card in place.
-- **⋯ → Edit** — name, icon, prompt and schedule. Fixed daily times ("07:00, 19:00")
-  use far fewer tokens than a short interval. On a card you asked for, **⋯ → Rename**
-  changes the heading and icon.
-- **⋯ → Edit tags** — what the card can be filtered by.
-- **⋯ → Delete** — the card and its history.
+- **Ask** — say what should change ("compare it with upstairs", "use the last 7
+  days", "just the chart") and press **Send**: brAIn regenerates the card with that
+  change, keeping what you did not ask to change. Leave **Keep asking this on every
+  future run** ticked and it sticks, so the next scheduled run does not quietly undo
+  it; the list under the box is everything you have asked of the card, each with a
+  ✕. **Ask** in the same dialog takes the question to the chat instead. The links
+  under it change the card's schedule and prompt, rename one you asked for, make one
+  you asked for recurring, or turn a suggestion on it into an automation.
+- **⋯** — four things:
+  - **Share**, as a picture or on a dashboard:
+    - **As a picture**: the card's face (title, answer, numbers and chart, no
+      buttons) drawn to a PNG. **Copy picture** puts it on the clipboard; where the
+      browser will not allow that (Home Assistant's own frame often will not),
+      right-click or long-press the picture, or use **Download**.
+    - **On a dashboard**: pick a dashboard and a view and press **Add card** — brAIn
+      adds a Webpage card that always shows this card's latest run, either the whole
+      card or just the chart. A dashboard kept in YAML, or one Home Assistant still
+      builds automatically, cannot be written to; the dialog says which, and the
+      YAML for pasting in by hand is underneath.
+  - **Past versions** — the card's earlier runs; pick one to read what it said then
+    (**Latest** in the foot comes back). Cards you asked for keep history too.
+  - **Run** — run this card again now. On a card you asked for, it re-runs that card
+    in place.
+  - **Delete** — the card and its history.
 
-On a narrow card Refine and Share shrink to their icons, and on a phone the title gets
-a row of its own under the buttons.
+The foot says **Updated** and how long ago. A card that keeps some readings live
+says so only when they stop arriving.
+
+Reports has a search box once there are more than eight. Under the cards are the
+**Deep review** row and the **Suggested** row: ideas for reports this house is
+missing, each naming what brAIn found here and the question it would answer every
+run. **Save** makes one an ordinary report and **Ignore** means it is not suggested
+again; **Run** on the row asks for ideas now, and brAIn also looks once a week. An
+idea costs nothing until you save it.
 
 There is no "refresh everything" button. It used to sit in the top bar, where it was
 a circular arrow that read like a page reload and in fact queued a Claude run for
@@ -3335,44 +3352,25 @@ put the text where you can paste it. See Reports.
     body: `
 # What brAIn is measuring
 
-The **Knowledge** tab is what brAIn knows about your house, as opposed to what it
+**House → What it knows** is what brAIn knows about your house, as opposed to what it
 thinks is broken (the Findings feed), what it would like to change (Proposals) or what
-happened (Activity). Four sections, in this order.
+happened (What happened). It is two things.
 
-**This morning.** The brief that went out, or one sentence saying why there wasn't
-one. "The brief is switched off" and "there was nothing worth saying" are different
-answers and only the first has something to do about it.
+**Tell brAIn something.** Type a fact about the house and press **Send**; it is filed
+into memory like anything else brAIn learns.
 
-**What brAIn has measured.** Seven rows, always, in the same order — rhythm,
-baselines, thermal, closures, appliances, habits, energy — whatever state each is
-in. A store missing from the list would be a store nobody can ask about, and on the
-day you install this six of the seven have not started. Nothing on this list costs a
-Claude run: it is all built overnight from what Home Assistant already records.
-Press a row to open the numbers behind it.
+**The facts.** What brAIn knows one fact at a time, each tagged with the device, room
+or the house it is about — the index a run looks things up in when it is working on
+one device. Search it (a device's friendly name works) and narrow it with **Rooms**,
+**Devices** and **House**. Press a fact to see who taught it, when, and **See the run**
+that said it; **⋯ → Delete** forgets it without touching the memory document.
 
-**How brAIn's memory works.** Three short lines saying what the next three sections
-are, because all three hold "things brAIn has learned" and they are different:
+The seven measurements, the morning brief and the memory document with its filing
+queue are brAIn's own machinery rather than something you read every day, so they are
+not on this pane.
 
-**Memory document.** brAIn's written summary of your home, editable in place. Every
-run reads the top of it and voice reads a condensed copy; correcting it here is how
-you stop brAIn saying something.
-
-**Waiting to be filed.** The inbox queue: things that have been learned and not yet
-folded into the document. It drains itself once a day; **File into memory now** runs
-the same consolidator by hand.
-
-**Facts brAIn has learned.** The same knowledge one fact at a time, each tagged with
-the device, room or person it is about, who taught it and when — the index a run
-looks things up in when it is working on one device. It shows **every** fact: search
-it (a device's friendly name works), narrow it with the chips (the house, rooms,
-devices, people, and **Rules you set** — the checks you told brAIn to stop raising),
-filter by who taught it, sort it newest first, oldest first, most certain first or
-grouped by what it is about, and page through with **Show more**. ✕ forgets a fact
-without touching the document.
-
-There is no badge on this tab. Everything on it is a queue that files itself and
-things you read — nothing is waiting on a person, and a badge counting work nobody
-has to do is how the badge next to it stops being read.
+There is no badge on this pane. Nothing on it is waiting on a person, and a badge
+counting work nobody has to do is how the badge next to it stops being read.
 
 ## The five states a measurement can be in
 
