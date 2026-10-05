@@ -280,12 +280,12 @@ def _write(items: list[dict]) -> None:
 
 
 def _urgent(row: dict) -> bool:
-    """`notify_router.is_urgent`, asked lazily (that module reads this
-    one's severities) and never raising: a mirror row that could not be
-    judged is an ordinary one."""
+    """`urgency.is_urgent` (a leaf, so no import ring with the notifier),
+    never raising: a mirror row that could not be judged is an ordinary
+    one."""
     try:
-        import notify_router  # noqa: PLC0415 — panel-local, imports us back
-        return bool(notify_router.is_urgent(row))
+        import urgency  # noqa: PLC0415 — panel-local
+        return bool(urgency.is_urgent(row))
     except Exception:  # noqa: BLE001
         return False
 
