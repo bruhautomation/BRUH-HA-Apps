@@ -130,7 +130,7 @@ class TestNoInternalNumbers(unittest.TestCase):
         self.assertNotIn("signal 2", out[1]["why"])
 
     def test_the_prompt_asks_for_names_not_numbers(self):
-        self.assertIn('"signal 7" means nothing', resident.FIRST_LOOK_SYSTEM)
+        self.assertIn('never says "signal 7"', resident.FIRST_LOOK_SYSTEM)
 
     def test_a_category_id_is_not_a_tag(self):
         tags = card_tags.base_tags({"category": "user-1790086614",
