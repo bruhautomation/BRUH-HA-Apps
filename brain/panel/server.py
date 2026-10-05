@@ -213,6 +213,7 @@ import shadow_findings
 import signals
 import synthesis
 import terminal_proxy
+import textclip
 import thermal
 import todo_store
 import triage
@@ -910,6 +911,42 @@ DIAGNOSTICS_FILE = Path(os.environ.get(
     "BRAIN_DIAGNOSTICS_FILE", "/config/.brain/diagnostics.json"))
 DIAGNOSTICS_PUBLISH_S = 3600
 DIAG_STATE: dict = {"published_at": 0.0}
+
+# Which version of the brAIn integration Home Assistant is RUNNING, beside
+# the one run.sh deployed. run.sh copies new integration files into
+# /config/custom_components at every start, and Home Assistant goes on
+# running the old code until it restarts — so the add-on and the
+# integration can be a version apart for days, and the only thing that
+# said so was a Repairs entry. The integration writes what it loaded
+# (`integration_loaded.json`, at setup), run.sh writes the marker while a
+# restart is owed, and the panel reads both for the fault list.
+INTEGRATION_LOADED_FILE = Path(os.environ.get(
+    "BRAIN_INTEGRATION_LOADED_FILE", "/config/.brain/integration_loaded.json"))
+RESTART_MARKER_FILE = Path(os.environ.get(
+    "BRAIN_RESTART_MARKER_FILE", "/config/.brain/restart_required"))
+
+
+def _integration_versions() -> dict:
+    """`{loaded, required, restart_pending}` — what Home Assistant is
+    running, what the add-on deployed and is waiting on, and whether a
+    restart is owed. Never raises; a file that cannot be read is a None."""
+    def _read(path: Path) -> dict | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    loaded = _read(INTEGRATION_LOADED_FILE) or {}
+    marker = _read(RESTART_MARKER_FILE)
+    loaded_v = str(loaded.get("version") or "") or None
+    required = str((marker or {}).get("required_version") or "") or None
+    pending = marker is not None and (
+        not required or not loaded_v or required != loaded_v)
+    return {"loaded": loaded_v, "required": required,
+            "restart_pending": bool(pending)}
+
+
 # Problem reports (panel/reports.py) are written off whichever thread noticed
 # the problem: `journal.record` is synchronous and is called from the event
 # loop as well as from request threads, and a report fetches the add-on log
@@ -1695,6 +1732,63 @@ async def _brief_overnight(now: float) -> dict:
     return out
 
 
+def _clock_style() -> str:
+    """'12h' or '24h': the house's country off Core's config, else its
+    timezone. Best effort — an unreadable config is the zone's answer."""
+    country = ""
+    try:
+        with open("/config/.storage/core.config", encoding="utf-8") as fh:
+            country = str((json.load(fh).get("data") or {}).get("country")
+                          or "")
+    except (OSError, ValueError, TypeError, AttributeError):
+        # No config to read (a dev checkout, an older Core with no
+        # country): the zone decides, which is the documented fallback.
+        pass
+    try:
+        _tz, name = baselines.house_timezone()
+    except Exception:  # noqa: BLE001 — no zone is no zone's answer
+        name = ""
+    return brief.clock_style(country, name)
+
+
+def _brief_subjects(state: dict) -> list[str]:
+    """Every entity the brief's reasons are about: a finding's own
+    entity, a light left on, and any id a reason's text names."""
+    out: list[str] = []
+
+    def add(eid) -> None:
+        eid = str(eid or "")
+        if eid and "." in eid and eid not in out:
+            out.append(eid)
+
+    for f in list(state.get("new_findings") or [])[:brief.MAX_NEW] + list(
+            state.get("still_open") or [])[:brief.MAX_STILL_OPEN]:
+        add(f.get("entity_id"))
+        for m in _ENTITY_IN_TEXT_RE.finditer(
+                f"{f.get('text') or ''} {f.get('detail') or ''}"):
+            if m.group(0) in _NAMES:
+                add(m.group(0))
+    for row in ((state.get("morning") or {}).get("left_on") or [])[
+            :brief.MAX_NAMED]:
+        add(row.get("entity_id"))
+    return out
+
+
+def _about_lines(entities) -> list[str]:
+    """One line per entity: what it is called, where, and its labels."""
+    lines = []
+    for eid in entities or ():
+        row = _NAMES.get(str(eid)) or {}
+        bits = [f"{row.get('name') or eid} ({eid})"]
+        if row.get("area"):
+            bits.append(f"in the {row['area']}")
+        labels = [str(x).replace("_", " ") for x in row.get("labels") or []]
+        if labels:
+            bits.append("labels: " + ", ".join(labels))
+        lines.append(", ".join(bits))
+    return lines
+
+
 def _brief_morning(now: float, night: dict) -> dict:
     """`brief.morning_facts` over what `_brief_overnight` fetched."""
     if not night.get("states"):
@@ -1709,8 +1803,11 @@ def _brief_morning(now: float, night: dict) -> dict:
     except Exception:  # noqa: BLE001 — an unreadable store answers nothing
         store = {}
 
+    style = _clock_style()
+
     def clock(ts: float) -> str:
-        return _local_now(ts).strftime("%H:%M")
+        local = _local_now(ts)
+        return brief.format_clock(local.hour, local.minute, style)
 
     try:
         return brief.morning_facts(
@@ -1747,15 +1844,24 @@ async def _send_brief(now: float) -> str:
         return ""
 
     local = _local_now(now)
-    state["woke_at"] = rhythm.clock(
-        rhythm.wake_minute(rhythm.profile(), local))
+    style = await asyncio.to_thread(_clock_style)
+    state["clock_style"] = style
+    wake = rhythm.wake_minute(rhythm.profile(), local)
+    state["woke_at"] = ("" if wake is None else brief.format_clock(
+        int(round(wake)) // 60 % 24, int(round(wake)) % 60, style))
     # The brief reads no memory and no measurements today, which is how
     # it can say the hall is cold in a house whose hall is always cold.
     # Both are handed in rather than fetched there: `brief.py` owns no
     # store, and a second answer to what this house is like is the drift
     # `_CARD_CONTRACT` is shared to avoid.
     state["house"] = await _house_prompt_block(now)
-    state["memory"] = await asyncio.to_thread(_memory_block)
+    # What brAIn knows about the things the reasons are ABOUT, and the
+    # labels on them — not just the house's core facts. A brief handed
+    # neither told somebody to switch off a switch labelled Always On.
+    subjects = _brief_subjects(state)
+    state["about"] = _about_lines(subjects)
+    state["memory"] = await asyncio.to_thread(
+        _memory_block, entities=subjects, query=_subject_names(subjects))
 
     result = await _claude(
         engine.run_analyst, brief.frame(reasons, state), brief.SYSTEM,
@@ -3494,6 +3600,25 @@ def _deliveries_note_requests(requests: list[dict]) -> int:
     return noted
 
 
+def _scorecard() -> list[dict]:
+    """`findings_store.scorecard`, with a check named by its own title.
+
+    The ledger records the title a row was filed under, and for a check
+    that is often nothing, so the row fell back to its id — and
+    `check:auto.conflict` is what the Findings tab and the bug report
+    then printed — or it was the GROUP's title, and three rows reading
+    "Device check" are three things nobody can tell apart. The catalog's
+    own title is the one a person recognises (`_muted_rows`' rule)."""
+    rows = findings_store.scorecard()
+    for row in rows:
+        src = str(row.get("source") or "")
+        if src.startswith("check:"):
+            spec = checks.get_check(src[len("check:"):]) or {}
+            if spec.get("title"):
+                row["title"] = str(spec["title"])
+    return rows
+
+
 def _producer_titles(folded: list[dict]) -> dict[str, str]:
     """What each producer in the ledger is called, for a question's words:
     a check's own title, never the group's, `_muted_rows`' rule."""
@@ -3932,6 +4057,20 @@ async def _generate(insight_id: str) -> None:
         "domains": [], "device_classes": [], "history": False, "stats": False,
         "focus": "",
     }
+    # The scheduler queues every due card in one tick, and they run one
+    # after another: without this, the first card's refusal paused the
+    # scheduler while the eight queued behind it each went on to be refused
+    # too. A scheduled card still waiting when the account has said "not
+    # now" is let go with the hold written where "why did this card stop
+    # updating" is read; a press is never held.
+    paused_until = _rate_limited_now()
+    if job.get("scheduled") and paused_until:
+        REFRESH_HOLDS[insight_id] = {
+            "why": "the account's usage limit said wait; cards resume at "
+                   + time.strftime("%H:%M", time.localtime(paused_until)),
+            "at": int(time.time())}
+        _set_job(insight_id, state="done", error="")
+        return
     try:
         _set_job(insight_id, state="collecting", error="")
 
@@ -3960,6 +4099,7 @@ async def _generate(insight_id: str) -> None:
                 pass
         framing = dict(question=question, feedback=feedback,
                        hypothesis_budget=hypotheses.budget(),
+                       pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block(),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
@@ -4366,7 +4506,7 @@ async def _run_fix(job_id: str) -> None:
         # there" is the most side-channel of all the side channels.
         also = findings_store.add_many(triage.gate([
             {"text": extra, "source": "fix",
-             "source_title": f"Noticed while fixing “{finding['text']}”"}
+             "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
             for extra in parsed["also_found"]]))
         if also:
             log.info("the fix run also filed %d finding(s) for triage",
@@ -4424,22 +4564,16 @@ def _spawn_fix_verification(ts: int) -> None:
     task.add_done_callback(_FIX_VERIFICATIONS.discard)
 
 
-async def _verify_fix(ts: int) -> dict:
-    """Run the check that filed a row brAIn just fixed, and believe it.
+async def _rerun_check(source: str) -> dict:
+    """Run one house check over a fresh snapshot and apply what it says.
 
-    What makes `fixed` a claim about the house rather than about a run.
-    Only a house check's row can be verified this way — a model's report
-    has no rule to re-run — and only a check that RAN may answer: a
-    snapshot key that would not fetch is "I could not look", which leaves
-    the row exactly as the fix left it. The answer goes through
-    `clear_resolved`, the same door the scheduled pass and "Check again"
-    use, so the reopen (`findings_store._came_back`) and the answer's
-    lapse are one rule with three callers rather than three rules.
+    The re-run half of `_verify_fix` and `_verify_chore`: only a house
+    check's row has a rule to re-run, and only a check that RAN may
+    answer — a snapshot key that would not fetch is "I could not look".
+    The answer goes through `clear_resolved`, the door the scheduled pass
+    and "Check again" use, so what it does with a still-reported row (a
+    fix that did not hold, a chore that is not done) is one rule.
     """
-    finding = await asyncio.to_thread(findings_store.get, ts)
-    if finding is None or finding.get("status") != "fixed":
-        return {"checked": False, "why": "the row moved on"}
-    source = str(finding.get("source") or "")
     check_id = source[6:] if source.startswith("check:") else ""
     if (not check_id or checks.get_check(check_id) is None
             or checks.is_shadow(check_id)):
@@ -4458,6 +4592,82 @@ async def _verify_fix(ts: int) -> dict:
     keys = {findings_store.normalize(f["text"]) for f in result["findings"]}
     await asyncio.to_thread(findings_store.clear_resolved,
                             {checks.source_for(check_id)}, keys)
+    return {"checked": True, "check": check_id, "keys": keys}
+
+
+# How long after a chore from a check is ticked off before that check is
+# asked again: past `todo_store.CHORE_SETTLE_S`, so a battery device has
+# reported its new level before "still 0%" is believed.
+CHORE_VERIFY_DELAY_S = todo_store.CHORE_SETTLE_S + 60
+_CHORE_VERIFICATIONS: set = set()
+
+
+def _spawn_chore_verification(item: dict) -> None:
+    """Ask the check behind a finished chore again, later.
+
+    `_spawn_fix_verification`'s arrangement. In memory only, on purpose:
+    a restart loses it, and the next scheduled pass of the same check is
+    the same verification — `findings_store.clear_resolved` reopens a
+    chore it still reports whichever pass asks.
+    """
+    source = str(item.get("source") or "")
+    if not source.startswith("check:") or not item.get("finding_key"):
+        return
+
+    async def later() -> None:
+        try:
+            await asyncio.sleep(CHORE_VERIFY_DELAY_S)
+            await _verify_chore(int(item["id"]))
+        except asyncio.CancelledError:
+            # The panel is shutting down; the next scheduled pass of the
+            # same check reopens the chore if it is still reported.
+            pass
+        except Exception as exc:  # noqa: BLE001 — a verification, not the chore
+            log.debug("could not verify chore %s: %s", item.get("id"), exc)
+    try:
+        task = asyncio.get_running_loop().create_task(later())
+    except RuntimeError:
+        return
+    _CHORE_VERIFICATIONS.add(task)
+    task.add_done_callback(_CHORE_VERIFICATIONS.discard)
+
+
+async def _verify_chore(item_id: int) -> dict:
+    """Re-run the check behind a chore marked done; reopen it if the check
+    still reports the problem (through `clear_resolved`)."""
+    item = await asyncio.to_thread(todo_store.get, item_id)
+    if item is None or item.get("status") != "done":
+        return {"checked": False, "why": "the item moved on"}
+    answer = await _rerun_check(str(item.get("source") or ""))
+    if not answer["checked"]:
+        return answer
+    still = item.get("finding_key") in answer["keys"]
+    if still:
+        log.info("chore %s came back: %s still reports it after it was "
+                 "marked done", item_id, answer["check"])
+    return {"checked": True, "came_back": still}
+
+
+async def _verify_fix(ts: int) -> dict:
+    """Run the check that filed a row brAIn just fixed, and believe it.
+
+    What makes `fixed` a claim about the house rather than about a run.
+    Only a house check's row can be verified this way — a model's report
+    has no rule to re-run — and only a check that RAN may answer: a
+    snapshot key that would not fetch is "I could not look", which leaves
+    the row exactly as the fix left it. The answer goes through
+    `clear_resolved`, the same door the scheduled pass and "Check again"
+    use, so the reopen (`findings_store._came_back`) and the answer's
+    lapse are one rule with three callers rather than three rules.
+    """
+    finding = await asyncio.to_thread(findings_store.get, ts)
+    if finding is None or finding.get("status") != "fixed":
+        return {"checked": False, "why": "the row moved on"}
+    answer = await _rerun_check(str(finding.get("source") or ""))
+    if not answer["checked"]:
+        return answer
+    keys = answer["keys"]
+    check_id = answer["check"]
     still = findings_store.normalize(finding.get("text", "")) in keys
     if still:
         log.info("finding %s came back: %s still reports it after the fix",
@@ -4676,7 +4886,7 @@ async def _run_typed_fix(job_id: str, finding: dict) -> None:
         if also:
             findings_store.add_many(triage.gate([
                 {"text": extra, "source": "fix",
-                 "source_title": f"Noticed while fixing “{finding['text']}”"}
+                 "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
                 for extra in also]))
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s (typed fix %s)", ts, status, intervention)
@@ -5801,29 +6011,35 @@ def _inputs_change(stored: dict | None, current: dict) -> dict:
     the next run is the first that can be compared against anything.
     """
     if not isinstance(stored, dict) or not stored.get("parts"):
-        return {"moved": True, "why": "first run since inputs were tracked",
+        return {"moved": True, "why": "first refresh",
                 "fingerprint": current}
     was, now_parts = stored["parts"], current["parts"]
     if was == now_parts:
         return {"moved": False, "why": "nothing it reads has changed",
                 "fingerprint": current}
     changed = [p for p in CARD_INPUT_PARTS if was.get(p) != now_parts.get(p)]
-    reasons = []
+    # One short phrase for a card's foot. It used to be a clause per part
+    # joined with semicolons ("the findings list changed; memory was
+    # updated; a measurement was rebuilt"), which is the pipeline talking.
+    nouns = []
+    lead = ""
     if "findings" in changed:
         delta = int(current.get("open_findings") or 0) - \
             int(stored.get("open_findings") or 0)
-        reasons.append(f"{delta} more finding(s) on the list" if delta > 0
-                       else "the findings list changed")
-    if "memory" in changed:
-        reasons.append("memory was updated")
-    if "stores" in changed:
-        reasons.append("a measurement was rebuilt")
-    if "feedback" in changed:
-        reasons.append("your feedback changed")
-    if "focus" in changed:
-        reasons.append("its focus was rewritten")
-    return {"moved": True, "why": "; ".join(reasons) or "inputs changed",
-            "fingerprint": current}
+        if delta > 0:
+            lead = f"{delta} new finding{'' if delta == 1 else 's'}"
+        else:
+            nouns.append("findings")
+    nouns += [word for part, word in (
+        ("memory", "memory"), ("stores", "measurements"),
+        ("feedback", "your feedback"), ("focus", "its focus"))
+        if part in changed]
+    said = ""
+    if nouns:
+        said = (nouns[0] if len(nouns) == 1
+                else ", ".join(nouns[:-1]) + " and " + nouns[-1]) + " changed"
+    why = "; ".join(p for p in (lead, said) if p) or "something it reads changed"
+    return {"moved": True, "why": why, "fingerprint": current}
 
 
 # A card whose last scheduled run FAILED, per category id: how many times
@@ -5870,9 +6086,44 @@ def _note_card_failure(card_id: str, error: str, now: float | None = None) -> No
 # because that is the account answering again. Fed by the journal (every
 # run records itself there), so the chat or voice meeting the limit holds
 # the cards too.
-RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": ""}
+#
+# Two things it had wrong, and together they let the cards past it all day
+# (168 refused card runs against 17 that worked, on a house whose Opus
+# window was spent while its Haiku looks went on succeeding):
+#
+# **A success ends the pause only on the TIER that was refused.** A plan's
+# limits are per model as well as per account — the weekly Opus allowance
+# runs out while Haiku and Sonnet go on answering — and the Resident's
+# first look is a Haiku run every ten minutes. "Any run that works ends
+# it" let every one of those looks reopen the gate for the Opus cards,
+# which then queued, were refused, paused thirty minutes, and were let
+# through again by the next look. A success on another tier says nothing
+# about this window; one whose tier cannot be read on either side still
+# ends it, the direction in which being wrong costs a run, not a day.
+#
+# **The pause runs to the account's own reset when the tracker knows it.**
+# A window at 100% does not reopen in thirty minutes because the ladder
+# says so; asking into it is exactly the refused run this exists to stop.
+RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": "", "tier": ""}
 RATE_LIMIT_PAUSE_S = 30 * 60
 RATE_LIMIT_MAX_S = 4 * 3600
+
+
+def _account_reset_after(now: float) -> float:
+    """When the account's own spent window reopens, or 0.0 when nothing
+    says one is spent. Read off the usage tracker's figures; never raises."""
+    try:
+        state = usage_store.budget_state(settings_store.load(), now=now)
+    except Exception:  # noqa: BLE001 — no figure is no extension
+        return 0.0
+    if state.get("source") != "account":
+        return 0.0
+    out = 0.0
+    if float(state.get("used_percent") or 0) >= 100:
+        out = max(out, float(state.get("resets_at") or 0))
+    if float(state.get("week_percent") or 0) >= 100:
+        out = max(out, float(state.get("week_resets_at") or 0))
+    return out if out > now else 0.0
 
 
 def _journal_rate_listener(row: dict) -> None:
@@ -5881,14 +6132,29 @@ def _journal_rate_listener(row: dict) -> None:
     # every limit a streak of two.
     if not isinstance(row, dict) or not journal.is_claude_run(row):
         return
-    if row.get("outcome") == "rate_limited":
+    tier = model_plan.tier_of(str(row.get("model") or "")) or ""
+    # `outcome_of`, not the stored word: a row a caller wrote as `error`
+    # whose text is the account's limit is counted as one everywhere else.
+    if journal.outcome_of(row) == "rate_limited":
         streak = int(RATE_LIMIT_STATE.get("streak") or 0) + 1
+        ts = float(row.get("ts") or time.time())
         wait = min(RATE_LIMIT_PAUSE_S * 2 ** (streak - 1), RATE_LIMIT_MAX_S)
+        until = max(ts + wait, _account_reset_after(ts))
         RATE_LIMIT_STATE.update(
-            streak=streak, until=float(row.get("ts") or time.time()) + wait,
+            streak=streak, until=until, tier=tier,
             detail=str(row.get("error") or "")[:160])
-    elif row.get("ok") and journal.is_claude_run(row):
-        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="")
+    elif row.get("ok"):
+        refused = str(RATE_LIMIT_STATE.get("tier") or "")
+        if refused and tier and tier != refused:
+            return
+        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="", tier="")
+
+
+def _rate_limited_now(now: float | None = None) -> float:
+    """When the usage-limit pause ends, or 0.0 when there is none."""
+    until = float(RATE_LIMIT_STATE.get("until") or 0)
+    now = time.time() if now is None else now
+    return until if until > now else 0.0
 
 
 def _book_shell_usage(row: dict) -> None:
@@ -6120,7 +6386,7 @@ async def _scheduler() -> None:
                     "why": change["why"], "at": int(now)}
                 continue
             REFRESH_HOLDS.pop(cat["id"], None)
-            if _enqueue(cat["id"], because=change["why"]):
+            if _enqueue(cat["id"], because=change["why"], scheduled=True):
                 log.info("auto-refresh: queued %s (%s)",
                          cat["id"], change["why"])
 
@@ -6136,6 +6402,11 @@ def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
     # next plain Regenerate and written onto the card as why it happened.
     fields.setdefault("refine", "")
     fields.setdefault("because", "")
+    # Whether the scheduler queued this rather than a person: a scheduled
+    # card still waiting when the account says "not now" is let go
+    # (`_generate`), a pressed one is not. Reset on every queue for the
+    # reason the two above are.
+    fields.setdefault("scheduled", False)
     _set_job(job_id, state="queued", error="", question=question,
              started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
     QUEUE.put_nowait(job_id)
@@ -6402,8 +6673,9 @@ def _today_state(now: float | None = None) -> dict:
     finished = int(last.get("finished_at") or 0)
     built = int((baselines.load() or {}).get("built_at") or 0)
     try:
-        recent = len([r for r in reports.list_reports()
-                      if (r.get("ts") or 0) >= now - 86400])
+        # Problems, not every file in the folder: a report somebody asked
+        # for is not one (`reports.REQUESTED_KINDS`).
+        recent = reports.problems_since(now - 86400)
     except Exception as exc:  # noqa: BLE001 — one number, not the payload
         log.debug("could not count reports: %s", exc)
         recent = 0
@@ -6437,9 +6709,13 @@ def _today_state(now: float | None = None) -> dict:
             "running": _consolidation_running(),
         },
         "reports": {"since_yesterday": recent},
-        # Every Claude run and every checks pass that reached the journal.
-        # It is what tells a quiet add-on from a stopped one.
-        "landed_runs_24h": journal.summary(24.0, now).get("runs", 0),
+        # Claude runs in the last day — rows a model ran for, never the
+        # checks passes and summary rows beside them (`journal.summary`'s
+        # `claude_runs`). It is what tells a quiet add-on from a stopped
+        # one; it once counted every journal line and said "518 runs" on a
+        # day of a few hundred Claude runs, against a usage popover counting
+        # something else again.
+        "claude_runs_24h": journal.summary(24.0, now).get("claude_runs", 0),
     }
 
 
@@ -7024,6 +7300,7 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
         pass
     framing = dict(question=None, feedback=feedback,
                    hypothesis_budget=hypotheses.budget(),
+                   pending=hypotheses.prompt_block(),
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
                    findings=findings_store.prompt_block(),
@@ -7393,7 +7670,68 @@ h1{margin:2px 0 0;font-size:17px;line-height:1.25}
 .t .d{font-size:11.5px;color:var(--ink2);margin-top:1px}
 iframe{display:block;width:100%;height:320px;border:0;background:transparent}
 .f{font-size:11px;color:var(--ink3)}
+.age{margin:0;padding:7px 10px;border-radius:8px;font-size:13px;font-weight:600;
+background:#fff3d6;color:#5a3d00}
+@media (prefers-color-scheme: dark){.age{background:#3a2c08;color:#ffe2a3}}
+.age[hidden]{display:none}
+@media (max-width:420px){.c{padding:10px 12px 10px;gap:8px}
+.h{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px}
+.t{padding:6px 9px}.t .v{font-size:15px}h1{font-size:16px}.s{font-size:13.5px}}
 """
+
+# How old a mirrored card may be before it says so in words. The mirror
+# is a snapshot written when the card was made, and a dashboard shows it
+# for as long as nobody regenerates it — a battery card footed "analysed
+# 2026-09-24" in 11px was being read as this morning's on October 4th.
+# Worked out in the page itself, against the viewer's clock, because the
+# file is written once and read for weeks: an age baked in at write time
+# would always say "today".
+CARD_STALE_DAYS = 2
+_WHOLE_CARD_AGE = (
+    '<script>(function(){var e=document.getElementById("age");'
+    'if(!e)return;var t=Date.parse(e.getAttribute("data-made")||"");'
+    'if(isNaN(t))return;var d=Math.floor((Date.now()-t)/86400000);'
+    'if(d<' + str(CARD_STALE_DAYS) + ')return;'
+    'e.textContent="This card is "+d+" days old \u2014 it shows the house '
+    'as it was then, not now.";e.hidden=false;})();</script>'
+)
+
+# What a dashboard column is assumed to be, for sizing the card's frame.
+# Home Assistant's Webpage card has a fixed aspect ratio and no way to be
+# told how tall its page is, so a ratio taken from the panel's own (much
+# wider) card left a 246px window over 886px of card, scrolling inside
+# itself. A sections-view column is 300-500px; sizing for the narrow end
+# leaves a little space under the card on a wide one, which is the
+# cheaper mistake.
+DASH_COLUMN_PX = 320
+
+
+def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
+    """The aspect ratio (height as a % of width) the whole card needs.
+
+    An estimate from what is on it, with the page's own CSS numbers at a
+    narrow column: padding, the eyebrow and title, the summary, the tile
+    rows, the chart's frame, the age line and the foot.
+    """
+    inner = max(200, width - 24)
+    per_line_title = max(1, inner // 9)
+    per_line_text = max(1, inner // 7)
+    title = str(insight.get("title") or "")
+    summary = str(insight.get("summary") or "")
+    tiles = [h for h in insight.get("highlights") or []
+             if isinstance(h, dict) and h.get("label")]
+    per_row = max(1, (inner + 6) // 110)
+    height = 20                                   # padding
+    height += 16                                  # eyebrow
+    height += 21 * max(1, -(-len(title) // per_line_title))
+    height += 20 * max(1, -(-len(summary) // per_line_text))
+    if tiles:
+        height += 60 * -(-len(tiles) // per_row)
+    height += 320                                 # the chart's frame
+    height += 34 + 14                             # age line, foot
+    height += 8 * 5                               # gaps
+    return int(min(max(round(height / width * 100), 25), 300))
+
 
 _WHOLE_CARD_SIZE = (
     '<script>(function(){var f=document.getElementById("v");'
@@ -7439,6 +7777,9 @@ def _whole_card_page(insight: dict) -> str:
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
         f"<title>{esc(str(insight.get('title') or 'Insight'))}</title>"
         f"<style>{_WHOLE_CARD_CSS}</style></head><body><div class=\"c\">"
+        f'<p class="age" id="age" hidden '
+        f'data-made="{esc(str(insight.get("generated_at") or ""), quote=True)}">'
+        f'</p>'
         f"<div><div class=\"eb\">{esc(_card_eyebrow(insight))}</div>"
         f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
         f"<p class=\"s\">{summary}</p>"
@@ -7446,7 +7787,8 @@ def _whole_card_page(insight: dict) -> str:
         + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
         f'srcdoc="{esc(viz, quote=True)}"></iframe>'
         f'<div class="f">brAIn · analysed {esc(when)}</div>'
-        "</div>" + _WHOLE_CARD_SIZE + _CARD_RELOAD_SNIPPET + "</body></html>"
+        "</div>" + _WHOLE_CARD_SIZE + _WHOLE_CARD_AGE
+        + _CARD_RELOAD_SNIPPET + "</body></html>"
     )
 
 
@@ -8217,6 +8559,12 @@ def _dashboard_card(insight: dict, whole: bool, aspect) -> dict:
         ratio = int(float(aspect))
     except (TypeError, ValueError):
         ratio = 90 if whole else 60
+    if whole:
+        # The panel measures its own card, which is two or three times
+        # wider than a dashboard column — so its ratio is a window a
+        # third the height of the card it frames. Never shorter than
+        # the card needs at a column's width.
+        ratio = max(ratio, _whole_card_aspect(insight))
     ratio = min(max(ratio, 25), 300)
     title = " ".join(str(insight.get("title") or "Insight").split())[:80]
     card = {"type": "iframe", "url": url, "aspect_ratio": f"{ratio}%"}
@@ -9072,11 +9420,88 @@ def _note_registry(snapshot: dict) -> None:
                      or reg.get("original_device_class") or "")
             if klass:
                 names[eid]["class"] = str(klass)
+            # The labels somebody put on it ("always_on"): the one place
+            # a homeowner has already said how a thing is MEANT to be,
+            # and what the brief has to read before it tells them to
+            # switch one off. Registry label ids, which Core slugs from
+            # the name the label was given.
+            labels = [str(x) for x in (reg.get("labels") or []) if x]
+            if labels:
+                names[eid]["labels"] = labels[:8]
         _NAMES.clear()
         _NAMES.update(names)
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
+    try:
+        _USED_BY.clear()
+        _USED_BY.update(_used_by_map(snapshot))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("used-by note failed: %s", exc)
     _note_world(snapshot)
+
+
+# Which automations and scripts NAME each entity: `{entity_id: [label]}`.
+# A plug dropping off Wi-Fi is nothing in a house where nothing uses it
+# and the crawl-space fan in a house where an automation runs it every
+# hour — and a first look handed only the signal and the memory facts
+# filed under that entity said "no known critical load" about exactly
+# the second. The automations are the one record of what depends on a
+# device that nobody had to type in, so a look is shown them. Built from
+# the snapshot the checks pass already fetched, `_NAMES`' rule.
+_USED_BY: dict[str, list[str]] = {}
+USED_BY_PER_ENTITY = 6
+
+
+def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
+    house = House(snapshot)
+    out: dict[str, list[str]] = {}
+
+    def note(refs, label: str) -> None:
+        for ref in sorted(refs):
+            rows = out.setdefault(ref, [])
+            if label not in rows and len(rows) < USED_BY_PER_ENTITY:
+                rows.append(label)
+
+    for cfg in snapshot.get("automations") or []:
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get("alias") or cfg.get("id") or "").strip()
+        if name:
+            note(house.entity_refs(cfg), f"automation “{name[:80]}”")
+    scripts = snapshot.get("scripts")
+    for key, cfg in (scripts.items() if isinstance(scripts, dict) else ()):
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get("alias") or key or "").strip()
+        if name:
+            note(house.entity_refs(cfg) - {f"script.{key}"},
+                 f"script “{name[:80]}”")
+    return out
+
+
+def _used_by_rows(entities) -> list[str]:
+    """One line per entity something depends on, naming what does."""
+    rows: list[str] = []
+    for eid in entities or ():
+        users = _USED_BY.get(str(eid))
+        if not users:
+            continue
+        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
+        label = f"{eid} ({name})" if name and name != eid else str(eid)
+        rows.append(f"{label}: used by " + ", ".join(users))
+    return rows
+
+
+def _subject_names(entities) -> str:
+    """The friendly names of these entities, as a retrieval query: a fact
+    a person typed says "the Wemo Mini drives the crawl-space fan", in
+    words, and is filed under no entity id a tagger could find in it."""
+    names = []
+    for eid in entities or ():
+        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
+        if name and name != eid and name not in names:
+            names.append(name)
+    return " ".join(names)
 
 
 def _entity_names_in(*texts: str) -> dict[str, dict]:
@@ -9453,9 +9878,11 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         # subjects, so a look at twelve signals reads the facts about
         # those twelve and not the head of a document about the house.
         await asyncio.to_thread(
-            _memory_block, entities=outcomes.scope_subjects(batch)),
+            _memory_block, entities=outcomes.scope_subjects(batch),
+            query=_subject_names(outcomes.scope_subjects(batch))),
         await asyncio.to_thread(_open_case_rows),
         now_line=_now_line(now), watch_notes=notes,
+        used_by=_used_by_rows(outcomes.scope_subjects(batch)),
         examples=await asyncio.to_thread(_outcome_examples, batch, now),
         situation_line=await asyncio.to_thread(_situation_line, now),
         inputs=look_inputs)
@@ -9798,12 +10225,14 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
                 if refines else None)
     exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
     rows = signals.prompt_rows([signal], now, numbered=False)
+    about = _signal_entities(signal) + outcomes.scope_subjects([signal])
     prompt = resident.investigate_prompt(
         signal,
-        await asyncio.to_thread(_memory_block, entities=_signal_entities(
-            signal) + outcomes.scope_subjects([signal])),
+        await asyncio.to_thread(_memory_block, entities=about,
+                                query=_subject_names(about)),
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
+        used_by=_used_by_rows(about),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now),
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -9971,10 +10400,12 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
         engine.run_analyst,
         resident.investigate_prompt(
             signal,
-            await asyncio.to_thread(_memory_block,
-                                    entities=_signal_entities(signal)),
+            await asyncio.to_thread(
+                _memory_block, entities=_signal_entities(signal),
+                query=_subject_names(_signal_entities(signal))),
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
+            used_by=_used_by_rows(_signal_entities(signal)),
             signal_row=rows[0] if rows else "", why=why, refining=refining,
             prior_case=case, now_line=_now_line(now),
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -13368,35 +13799,93 @@ async def _activity(start: float, end: float, entity_id: str = "") -> dict:
         return await actions.collect(session, start, end, users, entity_id)
 
 
-async def _device_classes() -> dict[str, str]:
-    """`{entity_id: device_class}` for the whole house, in one call.
+async def _house_now() -> dict:
+    """What the activity tab needs to know about the house NOW, from one
+    `/states` read and one registry list.
 
-    A `binary_sensor` with no class is a door, a motion sensor, a leak
-    detector or a plug's own power flag, and `episodes.subject_for` will not
-    guess between them — so without this every one of them lands in
-    *Everything else*, which is the section people scroll past. One REST
-    read of `/states` is what the checks pass and every insight run already
-    spend, and a fetch that fails is an empty map rather than an error: a
-    tab that could not tell a door from a motion sensor is still a tab, and
-    that is what the refusal-to-guess is for.
+    * ``classes`` — `{entity_id: device_class}`. A `binary_sensor` with no
+      class is a door, a motion sensor, a leak detector or a plug's own
+      power flag, and `episodes.subject_for` will not guess between them —
+      so without this every one of them lands in *Everything else*.
+    * ``live`` — `{entity_id: {state, last_changed}}`, so a row reading
+      "since 20:36" cannot outlive the state it is about (the logbook
+      drops some transitions, and that is how a thermostat unavailable
+      since the morning was reported as heating for seventeen hours).
+    * ``people_trackers`` — the `device_tracker` ids that may stand for a
+      person: none when the house has `person.*` entities, and otherwise
+      only the GPS ones, because a router's tracker for a bulb is not
+      anybody.
+    * ``platforms`` — `{entity_id: integration}`, which is what lets a
+      collapsed burst say "from UniFi".
+
+    Every half that fails is empty rather than an error: a tab that could
+    not tell a door from a motion sensor is still a tab, and that is what
+    the refusal-to-guess is for.
     """
     import aiohttp
     import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+    out: dict = {"classes": {}, "live": {}, "people_trackers": None,
+                 "platforms": {}}
+    raw = None
+    regs = None
     try:
         async with aiohttp.ClientSession() as session:
             raw = await ha_data._rest_get(session, "/states", timeout=30)
+            try:
+                regs = await asyncio.wait_for(ha_data._ws_commands(
+                    session, [{"type": "config/entity_registry/list"}]),
+                    REGISTRY_LOOKUP_S)
+            except Exception as exc:  # noqa: BLE001 — names are a nicety
+                log.debug("entity registry unreadable for activity: %s", exc)
     except Exception as exc:  # noqa: BLE001
-        log.warning("could not read device classes for the activity tab: %s", exc)
-        return {}
-    out: dict[str, str] = {}
-    for st in raw or []:
+        log.warning("could not read the house for the activity tab: %s", exc)
+        return out
+    rows = (regs or [None])[0]
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict) and row.get("entity_id") and row.get("platform"):
+            out["platforms"][str(row["entity_id"])] = str(row["platform"])
+    has_person = False
+    gps: set[str] = set()
+    for st in raw if isinstance(raw, list) else []:
         if not isinstance(st, dict):
             continue
         eid = str(st.get("entity_id") or "")
-        klass = str(((st.get("attributes") or {}).get("device_class")) or "")
-        if eid and klass:
-            out[eid] = klass
+        if not eid:
+            continue
+        attrs = st.get("attributes") or {}
+        klass = str(attrs.get("device_class") or "")
+        if klass:
+            out["classes"][eid] = klass
+        out["live"][eid] = {
+            "state": str(st.get("state") or ""),
+            "last_changed": actions.parse_when(st.get("last_changed")) or 0.0,
+        }
+        if eid.startswith("person."):
+            has_person = True
+        elif eid.startswith("device_tracker.") and (
+                str(attrs.get("source_type") or "") == "gps"
+                or out["platforms"].get(eid) == "mobile_app"):
+            gps.add(eid)
+    if isinstance(raw, list):
+        out["people_trackers"] = set() if has_person else gps
     return out
+
+
+def _group_activity(mined: dict, rows: list[dict], house: dict,
+                    now: float) -> dict:
+    """`episodes.group` with everything the house can tell it — one call
+    shared by the tab and its paragraph, so the two cannot group the same
+    window two ways."""
+    # The live state only speaks for a window that ends now: a day paged
+    # back to last Tuesday is not contradicted by what the thermostat is
+    # doing this afternoon.
+    live = (house.get("live")
+            if float(mined.get("end") or 0) >= now - 120 else None)
+    return episodes.group(
+        rows, house.get("classes") or {}, now,
+        live=live, people_trackers=house.get("people_trackers"),
+        platforms=house.get("platforms") or {},
+        lifecycle=mined.get("lifecycle") or [])
 
 
 async def h_activity(request: web.Request) -> web.Response:
@@ -13421,7 +13910,7 @@ async def h_activity(request: web.Request) -> web.Response:
                                   "sections": [], "away": [], "counts": {},
                                   "dropped": 0, "changes": 0, "episodes": 0,
                                   "start": start, "end": end})
-    classes = await _device_classes() if mined.get("available") else {}
+    house = await _house_now() if mined.get("available") else {}
     now = time.time()
 
     def shape() -> dict:
@@ -13429,7 +13918,7 @@ async def h_activity(request: web.Request) -> web.Response:
         cause = (request.query.get("cause") or "").strip()
         if cause and cause in actions.CAUSES:
             rows = [a for a in rows if a["cause"] == cause]
-        grouped = episodes.group(rows, classes, now)
+        grouped = _group_activity(mined, rows, house, now)
         # On the row it happened in, never in a block above the list: a
         # count of "somebody put things back 4×" is not something anybody
         # can act on, where *this* row being the one they undid is.
@@ -13503,11 +13992,13 @@ async def h_activity_summary(request: web.Request) -> web.Response:
         raise web.HTTPBadGateway(text=unreadable) from exc
     if not mined.get("available"):
         raise web.HTTPBadGateway(text=unreadable)
-    classes = await _device_classes()
+    house = await _house_now()
     now = time.time()
 
     def build() -> tuple[dict, str]:
-        grouped = episodes.group(mined["actions"], classes, now)
+        # What is summarised is what the person is looking at, so it is
+        # grouped the way the tab groups it.
+        grouped = _group_activity(mined, mined["actions"], house, now)
         episodes.mark_overrides(grouped, mined.get("overrides") or [])
         payload = {
             "start": mined["start"], "end": mined["end"],
@@ -13681,6 +14172,9 @@ def _diagnostics_payload() -> dict:
         "versions": {
             "addon": os.environ.get("ADDON_VERSION", "dev"),
             "claude_cli": _cli_version(),
+            # The integration Home Assistant has loaded, and whether a
+            # restart is owed to load the one this add-on deployed.
+            "integration": _integration_versions(),
             "python": platform.python_version(),
             "machine": platform.machine(),
         },
@@ -13710,9 +14204,12 @@ def _diagnostics_payload() -> dict:
             "triage_oldest_wait_s": max(
                 [int(time.time() - f["ts"]) for f in rows
                  if f["status"] == "triaging"] or [0]),
+            # Rows past `triage.SHOW_AFTER_S` still waiting for that look:
+            # shown on the feed and counted in `open` above.
+            "waiting_look": len([f for f in rows if f.get("waiting_look")]),
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
-            "scorecard": findings_store.scorecard(),
+            "scorecard": _scorecard(),
             # Which producers the homeowner has switched off. A quiet check
             # and a muted one look identical from the list, and only one
             # of them is a fault worth reading the log about.
@@ -13874,7 +14371,10 @@ def _diagnostics_payload() -> dict:
         # held by a gate, a frame nobody rebuilt, a calendar that would
         # not answer — and each says which here.
         "understanding": _understanding_diagnostics(),
-        "daemons": _daemon_rollcall(),
+        # Each stopped daemon carries why it is correctly absent, when it
+        # is (`health.not_used_reason`): the classic assist listener on a
+        # fast-mode install read "not running" beside a verdict of fine.
+        "daemons": _annotate_daemons(_daemon_rollcall(), safe_options),
         # The panel's own loops — the generation worker, the scheduler, the
         # checks — alive or not, and when each last went round. A dead
         # worker is cards and fixes queued for ever with every other
@@ -13894,6 +14394,16 @@ def _diagnostics_payload() -> dict:
             # reports of the same stale number, and only one of them is
             # something to look into.
             "nudged_at": int(usage_store.nudged_at()) or None,
+            # When the account's windows reset, and whether the scheduler
+            # is holding the cards for a usage limit right now — what the
+            # fault row for a run of refused runs names as the way out.
+            **{k: usage.get(k) for k in ("resets_at", "week_percent",
+                                         "week_resets_at")},
+            "rate_limit": {
+                "until": int(RATE_LIMIT_STATE.get("until") or 0) or None,
+                "streak": int(RATE_LIMIT_STATE.get("streak") or 0),
+                "detail": journal.scrub(RATE_LIMIT_STATE.get("detail") or ""),
+            },
         },
     }
     # Derived last, from everything above it. The verdict is part of the
@@ -14298,7 +14808,7 @@ def _findings_payload() -> dict:
     # rides this payload rather than its own route because it is read in
     # exactly one place — a line under the filter chips — and a number
     # about the list belongs with the list.
-    payload["scorecard"] = findings_store.scorecard()
+    payload["scorecard"] = _scorecard()
     # The producers the homeowner has muted, named. It rides here for the
     # scorecard's reason: the one place it is read is a line under the
     # filters, beside the scorecard rows that argue for each mute.
@@ -14548,7 +15058,19 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
                 payload["correction"] = got["why"]
         else:
             template, hint = "", ""
-    if spec.get("hint") and hint:
+    if spec.get("hint") and hint and finding.get("source") == house_book.SOURCE:
+        # A house-book question's hint is a lead-in ("<the subject>:"),
+        # not a fact, and the answer is what somebody typed: filed as
+        # "<subject>: <answer>", never wrapped in the asking. An answer
+        # with no words in it teaches nothing and files nothing.
+        fact = house_book.answer_fact(
+            hint, note)
+        if fact:
+            await _submit_memory(
+                fact, source=spec.get("source", "homeowner"),
+                subject=subjects[0] if subjects else "", subjects=subjects[1:],
+                run_id=str(finding.get("run_id") or ""))
+    elif spec.get("hint") and hint:
         fact = hint + (f" (The homeowner added: {note})" if note else "")
         await _submit_memory(
             fact, source=spec.get("source", "homeowner"),
@@ -14848,6 +15370,9 @@ async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
     done = await asyncio.to_thread(finish)
     if done is None:
         return None, ""
+    # "Done" on somebody's word; the check that filed it says whether it
+    # is. A chore it still reports goes back on the list.
+    _spawn_chore_verification(done)
 
     # The same sentence "I fixed it" writes on the Findings tab, because it
     # is the same claim — said later, which is the only difference the to-do
@@ -18793,7 +19318,7 @@ async def h_auth_share(request: web.Request) -> web.Response:
                 "refreshes for itself. The shared file has nowhere to record a "
                 "refresh, so a copy would stop working within hours and every "
                 "add-on reading it would fail with nothing to say why. Sign in "
-                "here (or run `ha login` in the Terminal tab) to mint a "
+                "here (or run `ha login` in the classic terminal on the Ask tab) to mint a "
                 "long-lived token that can be shared.",
             "unwritable":
                 "Could not write to /config/.brain/secrets — check the add-on "
@@ -18874,6 +19399,17 @@ DAEMON_MARKS = {
     "assist_listener": "assist-listener.sh",
     "automation_listener": "automation-listener.sh",
 }
+
+
+def _annotate_daemons(rollcall: dict, options: dict) -> dict:
+    """The roll-call, with `not_used` on each daemon this configuration did
+    not ask for — health's answer, worded for the Diagnostics list."""
+    for name, row in (rollcall or {}).items():
+        if isinstance(row, dict) and not row.get("running"):
+            why = health.not_used_reason(name, options)
+            if why:
+                row["not_used"] = why
+    return rollcall
 
 
 def _daemon_rollcall() -> dict:
@@ -19210,8 +19746,25 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     no window between "what the transcript was" and "what happened next" —
     a reconnect that has to stitch two requests together is a reconnect that
     drops an event eventually.
+
+    It never answers with an error status. Opening Ask is the first thing
+    that asks for the attached session, which on a fresh install or after
+    a close is a conversation nobody has started — and an error there is
+    the panel's EventSource retrying into the same answer, logged as a
+    failure on every visit, about a state that is simply "nothing yet".
+    Whatever goes wrong building the session or its snapshot is answered
+    with an empty snapshot carrying the reason, on a 200 stream.
     """
-    session = _chat()
+    def empty(exc: Exception) -> dict:
+        log.warning("chat stream: no session to show yet: %s", exc)
+        return {"type": "snapshot", "session_id": None, "events": [],
+                "state": "idle", "error": _refusal(exc)}
+
+    first = None
+    try:
+        session = _chat()
+    except Exception as exc:   # noqa: BLE001 — see the docstring
+        session, first = None, empty(exc)
     resp = web.StreamResponse(headers={
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
@@ -19220,15 +19773,23 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         "X-Accel-Buffering": "no",
     })
     await resp.prepare(request)
-    queue = session.subscribe()
+    # With no session, a queue nothing feeds: the stream stays open rather
+    # than ending into a reconnect loop, and asks again every couple of
+    # seconds (below) until there is a session to hand the panel over to.
+    queue = session.subscribe() if session is not None else asyncio.Queue()
 
     async def send(payload: dict) -> None:
         await resp.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
 
     try:
-        await send(_chat_snapshot(session))
+        if first is None:
+            try:
+                first = _chat_snapshot(session)
+            except Exception as exc:   # noqa: BLE001 — see the docstring
+                first = empty(exc)
+        await send(first)
         registry = chat_session.registry()
-        if registry.attached() is not session:
+        if session is not None and registry.attached() is not session:
             # Attached somewhere else between picking the session and
             # subscribing to it. The `switched` event that would have said
             # so went to the queue this stream does not hold, so it is
@@ -19239,8 +19800,19 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                         "session_id": registry.attached().session_id or ""})
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=20)
+                event = await asyncio.wait_for(
+                    queue.get(), timeout=20 if session is not None else 2)
             except asyncio.TimeoutError:
+                if session is None:
+                    # Nothing to subscribe to was the problem; the moment
+                    # there is, the panel reconnects to it the way it does
+                    # after any switch.
+                    try:
+                        await send({"type": "switched",
+                                    "session_id": _chat().session_id or ""})
+                        break
+                    except Exception:   # noqa: BLE001 — still nothing
+                        pass
                 # A comment frame: proves the connection to both ends and
                 # keeps any intermediary from reaping an idle stream.
                 await resp.write(b": ping\n\n")
@@ -19256,7 +19828,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         # there is no longer anyone to send to.
         pass
     finally:
-        session.unsubscribe(queue)
+        if session is not None:
+            session.unsubscribe(queue)
     return resp
 
 
@@ -19275,8 +19848,12 @@ async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
+    session = _chat()
     try:
-        return web.json_response(await _chat().send(body.get("text") or ""))
+        # A conversation opened to be read has no process yet; the one this
+        # message starts is counted against the cap like any other spawn.
+        await _chat_registry().room_for(session)
+        return web.json_response(await session.send(body.get("text") or ""))
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
@@ -19683,8 +20260,13 @@ async def h_chat_resume(request: web.Request) -> web.Response:
         # notices that explain how it got here.
         replay = await asyncio.to_thread(
             conversations.transcript, chat_session.WORK_DIR, session_id)
+    # `spawn: false` is the rail's: a conversation opened to be read gets
+    # its transcript and no process, and the first message starts one.
+    # Anything that does not say so keeps the old meaning — "Resume now"
+    # and every older caller want the process up straight away.
+    spawn = body.get("spawn") is not False
     try:
-        out = await registry.open(session_id, replay)
+        out = await registry.open(session_id, replay, spawn=spawn)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
     except RuntimeError as exc:

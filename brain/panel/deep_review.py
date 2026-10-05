@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import textclip
 
 STORE = Path(os.environ.get("BRAIN_DEEP_REVIEW_FILE", "/data/deep-review.json"))
 MAX_REVIEWS = 6
@@ -117,7 +118,7 @@ def frame(*, findings: str = "", house: str = "", memory: str = "",
 
 
 def _clean(text, cap: int) -> str:
-    return " ".join(str(text or "").split())[:cap]
+    return textclip.clip(" ".join(str(text or "").split()), cap)
 
 
 def parse(answer: dict | None) -> dict | None:

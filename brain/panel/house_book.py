@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 import atomic_write
+import textclip
 
 STORE = os.environ.get("BRAIN_HOUSE_BOOK_FILE", "/data/house_book.json")
 TOKEN_FILE = Path(os.environ.get("BRAIN_SECRETS", "/data/secrets")) / "house_book_token"
@@ -79,6 +80,8 @@ MAX_SOURCES = 5
 MAX_QUESTIONS_PER_RUN = 3
 MAX_OPEN_QUESTIONS = 5
 MAX_QUESTION = 160
+# What a citation chip shows: the source's own label, ended on a word.
+MAX_LABEL = 120
 MAX_ASKED = 200
 TIMEOUT_S = 600
 
@@ -148,6 +151,50 @@ def _compact(obj: Any) -> str:
     return text if len(text) <= MAX_CONFIG_CHARS else text[:MAX_CONFIG_CHARS] + "…"
 
 
+# The wrapper an answer to one of the book's own questions used to be
+# filed under: "For the house book, about <label>: (The homeowner added:
+# <answer>)". It was the prompt's lead-in and the composer's parenthesis
+# around what somebody actually said, and it went into memory whole — so
+# the book cited its own scaffolding back as a chip. `answer_fact` is
+# what files one now; `clean_fact_text` reads the old ones the same way.
+_WRAPPED_RE = re.compile(
+    r"^\s*For the house book,\s*about\s+(?P<label>.+?):\s*"
+    r"(?:\(The homeowner added:\s*(?P<note>.*?)\)?)?\s*$",
+    re.IGNORECASE | re.DOTALL)
+
+
+_LEAD_IN_RE = re.compile(r"^\s*For the house book,\s*about\s+", re.IGNORECASE)
+
+
+def answer_fact(label: str, note: str) -> str:
+    """An answer to a house-book question, as the fact it is.
+
+    ``label`` is the question's subject, or its stored `memory_hint` —
+    "<label>:" now, "For the house book, about <label>:" on a row filed
+    before the wrapper was taken off, read the same way.
+    """
+    label = _LEAD_IN_RE.sub("", str(label or ""))
+    label = re.sub(r"\s+", " ", label).strip().rstrip(":").strip()
+    note = re.sub(r"\s+", " ", str(note or "")).strip()
+    if not note:
+        return ""
+    return f"{label}: {note}" if label else note
+
+
+def clean_fact_text(text: str) -> str:
+    """A fact's text with the old house-book wrapper taken off."""
+    raw = str(text or "")
+    m = _WRAPPED_RE.match(raw)
+    if not m:
+        return raw.strip()
+    return answer_fact(m.group("label"), m.group("note") or "") or raw.strip()
+
+
+def _norm(text: str) -> str:
+    """What two citations have to agree on to be one: the words, folded."""
+    return " ".join(re.findall(r"[a-z0-9]+", str(text or "").lower()))
+
+
 def _fact_rows() -> list[dict]:
     try:
         import facts_store
@@ -155,13 +202,25 @@ def _fact_rows() -> list[dict]:
     except Exception:  # noqa: BLE001 — a store that will not read costs the facts
         return []
     out = []
+    seen: dict[str, int] = {}
     for row in rows:
         if not isinstance(row, dict) or not row.get("id"):
             continue
         if str(row.get("predicate") or "").startswith("exception:"):
             continue
-        out.append({"id": str(row["id"]), "subject": str(row.get("subject") or ""),
-                    "text": redact_text(str(row.get("text") or ""))[:240]})
+        text = textclip.clip(redact_text(clean_fact_text(str(row.get("text") or ""))), 240)
+        # The same fact taught three times — three writers, three passes —
+        # is one source, or the book cites one setpoint three times over.
+        # The newest copy stands in for it.
+        key = _norm(text)
+        item = {"id": str(row["id"]), "subject": str(row.get("subject") or ""),
+                "text": text}
+        if key and key in seen:
+            out[seen[key]] = item
+            continue
+        if key:
+            seen[key] = len(out)
+        out.append(item)
     return out[-MAX_FACTS:]
 
 
@@ -184,7 +243,8 @@ def digest(snap: dict) -> dict:
         alias = str(auto.get("alias") or aid)
         index[f"automation:{aid}"] = alias
         autos.append({"id": aid, "alias": alias,
-                      "description": redact_text(str(auto.get("description") or ""))[:300],
+                      "description": textclip.clip(
+                          redact_text(str(auto.get("description") or "")), 300),
                       "config": _compact({k: auto.get(k) for k in
                                           ("trigger", "triggers", "condition",
                                            "conditions", "action", "actions")
@@ -209,7 +269,7 @@ def digest(snap: dict) -> dict:
                        if isinstance(scene.get("entities"), dict) else []})
     facts = _fact_rows()
     for f in facts:
-        index[f"fact:{f['id']}"] = f["text"][:120]
+        index[f"fact:{f['id']}"] = textclip.clip(f["text"], MAX_LABEL)
     areas = [{"id": a, "name": n} for a, n in sorted(house.areas.items())]
     for a in areas:
         index[f"area:{a['id']}"] = a["name"]
@@ -250,6 +310,11 @@ Rules:
   "shutoffs" or "other".
 - Never write a code, PIN, password or token, even if you could infer one.
 - Say only what the sources support. Do not guess where something is.
+- A reading is not what a thing typically does. A number in a fact that
+  was true at one moment (a standby draw of 0.06 W, a temperature at
+  noon) never becomes "draws about 0.06 W" or "sits at 21°C" in the book;
+  give a typical value only when a source says it is typical, and
+  otherwise describe what the thing does without the number.
 - Then list up to 3 QUESTIONS about things a reader needs and no source
   can tell you — above all, where a physical shutoff or device is — each
   about one subject {"kind", "id"} from what you were given.
@@ -337,21 +402,31 @@ def parse(answer: dict | None, dig: dict) -> dict:
             raw = re.sub(r"\s+", " ", str(entry.get("text") or "")).strip()
             if not raw:
                 continue
-            text = redact_text(raw)[:MAX_ENTRY]
-            if text != raw[:MAX_ENTRY]:
+            clean = redact_text(raw)
+            if clean != raw:
                 redacted += 1
+            text = textclip.clip(clean, MAX_ENTRY)
             keys = []
+            labels: set[str] = set()
             for src in entry.get("sources") or []:
                 key = _source_key(src)
-                if key and key in index and key not in keys:
-                    keys.append(key)
+                if not key or key not in index or key in keys:
+                    continue
+                # Two sources that SAY the same thing are one citation —
+                # three chips reading the same setpoint is the book
+                # looking better sourced than it is.
+                label = _norm(index[key])
+                if label and label in labels:
+                    continue
+                labels.add(label)
+                keys.append(key)
             if not keys:
                 uncited += 1
                 continue
             bucket = out_sections.setdefault(section["key"], [])
             if len(bucket) < MAX_ENTRIES:
                 bucket.append({"text": text, "sources": [
-                    {"key": k, "label": redact_text(index[k])[:120]}
+                    {"key": k, "label": textclip.clip(redact_text(index[k]), MAX_LABEL)}
                     for k in keys[:MAX_SOURCES]]})
     sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
                 for k in SECTIONS if out_sections.get(k)]
@@ -364,9 +439,10 @@ def parse(answer: dict | None, dig: dict) -> dict:
         text = redact_text(re.sub(r"\s+", " ", str(q.get("question") or "")).strip())
         if not key or key not in index or not text:
             continue
-        questions.append({"question": text[:MAX_QUESTION],
-                          "why": redact_text(str(q.get("why") or ""))[:300],
-                          "subject": key, "label": index[key][:120]})
+        questions.append({"question": textclip.clip(text, MAX_QUESTION),
+                          "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
+                          "subject": key,
+                          "label": textclip.clip(index[key], MAX_LABEL)})
     return {"sections": sections, "questions": questions,
             "uncited": uncited, "redacted": redacted}
 
@@ -392,7 +468,10 @@ def question_rows(questions: list[dict], asked: list[str],
             "source_title": SOURCE_TITLE,
             "kind": "question",
             "claim": q["question"],
-            "memory_hint": f"For the house book, about {q['label']}:",
+            # The subject's name, not a sentence about the book: an
+            # answer is filed as "<label>: <what they said>"
+            # (`answer_fact`), and nothing of the asking goes with it.
+            "memory_hint": f"{q['label']}:",
             "_subject": q["subject"],
         })
     return out
@@ -568,6 +647,6 @@ def revoke(www_dir: Path, token_path: Path | None = None) -> int:
     return removed
 
 
-__all__ = ["SCHEMA", "SECTIONS", "SOURCE", "SYSTEM", "digest", "fingerprint",
+__all__ = ["SCHEMA", "answer_fact", "clean_fact_text", "SECTIONS", "SOURCE", "SYSTEM", "digest", "fingerprint",
            "frame", "load", "moved", "parse", "publish", "question_rows",
            "redact_text", "render_page", "revoke", "save"]

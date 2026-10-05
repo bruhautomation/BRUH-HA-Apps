@@ -1567,17 +1567,27 @@ class TestFindingsUI(unittest.TestCase):
 
         They are verbs now, and short — a row of four buttons is read at a
         glance or not at all — but they still say different things, and the
-        tooltips carry the meaning the labels no longer spell out."""
-        self.assertIn("I fixed it", self.js)
-        self.assertIn("Ignore", self.js)
-        self.assertNotIn("I did it", self.js)
+        tooltips carry the meaning the labels no longer spell out.
 
-    def test_every_button_on_the_row_carries_a_glyph(self):
-        """One unlabelled-by-icon button in a row of icons reads as the odd
-        one out rather than as the quiet one."""
-        for label in ('"✦  Fix it"', '"💬  Discuss"', '"✓  I fixed it"',
-                      '"⏰  Remind me later"', '"⌫  Dismiss"', '"✕  Wrong"'):
+        Since the walkthrough the row is the one the header promises and
+        `answers.py` builds for the feed — Fix it, Add to list, Dismiss,
+        Not a problem — on a card no case covers as on one it does, with
+        "I've already fixed it" behind the ⋯ beside the other rare presses.
+        """
+        self.assertIn("I've already fixed it", self.js)
+        self.assertIn('el("button", "btn small ghost", "Not a problem")', self.js)
+        self.assertNotIn("I did it", self.js)
+        self.assertNotIn('"✕  Wrong"', self.js)
+
+    def test_the_row_matches_the_one_the_header_promises(self):
+        """The header says "Fix it, Add to list, Dismiss, Not a problem";
+        a card that showed Discuss · I fixed it · Remind me later · Wrong
+        beside them was a second vocabulary for the same row."""
+        for label in ('"Fix it"', '"Add to list"', '"Dismiss"', '"Not a problem"'):
             self.assertIn(label, self.js)
+        for gone in ('"💬  Discuss"', '"⏰  Remind me later"', '"⌫  Dismiss"',
+                     '"✓  I fixed it"'):
+            self.assertNotIn(gone, self.js)
 
     def test_dismiss_clears_without_teaching_anything(self):
         """Three ways off the list, and they are not the same thing.
@@ -1585,10 +1595,11 @@ class TestFindingsUI(unittest.TestCase):
         Wrong settles: the answer goes into memory and the analyst is told
         never to raise it again. Dismiss just clears the row — no memory
         line, no ledger entry — so the next run is free to find it again.
-        That is `forget`, which findings_store already separates from
-        `wrong` for exactly this reason, and it had no button.
+        That is the feed's Dismiss — the case route's `not_now`, which
+        settles nothing — and a card no case covers reaches it the same way
+        rather than through a second word for "off the list".
         """
-        self.assertIn('findAction(\n      f, "forget", "Cleared", btns)', self.js)
+        self.assertIn("api(`api/case/f:${f.ts}/not_now`", self.js)
         self.assertIn('f, "wrong",', self.js)
 
     def test_wrong_asks_why_and_sends_what_it_is_told(self):
@@ -1610,7 +1621,7 @@ class TestFindingsUI(unittest.TestCase):
     def test_the_endings_tooltips_stay_short(self):
         """These are read at a glance beside five other buttons. The old
         Ignore tooltip ran to two clauses and a caveat about wording."""
-        self.assertIn('"brAIn has this wrong, or it\'s normal here — say why, and it "',
+        self.assertIn('"brAIn has this wrong, or it\'s normal here. It stops raising "',
                       self.js)
         self.assertNotIn("in any wording", self.js)
 

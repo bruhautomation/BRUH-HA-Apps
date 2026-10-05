@@ -75,6 +75,7 @@ from pathlib import Path
 
 import answers
 import atomic_write
+import textclip
 import triage
 
 log = logging.getLogger("brain.findings")
@@ -307,12 +308,19 @@ def _publish_state(items: list[dict]) -> None:
     # `brain_finding` again, ringing whatever an automation hung off them).
     snoozed = [s for s in shaped
                if s["status"] in LIVE_STATUSES and is_snoozed(s, now)]
-    open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES]
+    # A row a look has not reached in `triage.SHOW_AFTER_S` is counted
+    # with the open ones — the sensor saying 0 over a serious row nothing
+    # has looked at for half an hour is the "nothing waiting on you" lie.
+    # It is counted and not listed: `findings` is what the watcher fires
+    # events and raises Repairs issues from, and those wait for a verdict.
+    waiting = [s for s in shaped if triage.waiting_too_long(s, now)]
+    open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES] + waiting
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
             "ts": int(now),
             "open": len(open_rows),
+            "waiting_look": len(waiting),
             "by_severity": {sev: len([s for s in open_rows
                                       if s["severity"] == sev])
                             for sev in SEVERITIES},
@@ -330,8 +338,8 @@ def _publish_state(items: list[dict]) -> None:
                 # byte-for-byte the file the integration has always read.
                 {**{k: s[k] for k in ("ts", "text", "severity", "status",
                                       "entity_id", "fixable", "source_title")},
-                 "detail": s["detail"][:STATE_MAX_PROSE],
-                 "fix": s["fix"][:STATE_MAX_PROSE],
+                 "detail": textclip.clip(s["detail"], STATE_MAX_PROSE),
+                 "fix": textclip.clip(s["fix"], STATE_MAX_PROSE),
                  # The presses this row can be given from outside the
                  # panel, `[{action, label}]`, decided by the same table
                  # the feed renders from. Repairs shows this subset and
@@ -417,7 +425,7 @@ def _clean_plan(value) -> dict:
     steps = []
     for item in value.get("steps") or []:
         if isinstance(item, str) and item.strip():
-            steps.append(item.strip()[:MAX_PLAN_STEP])
+            steps.append(textclip.clip(item.strip(), MAX_PLAN_STEP))
         if len(steps) >= MAX_PLAN_STEPS:
             break
     needs_you = bool(value.get("needs_you"))
@@ -427,8 +435,8 @@ def _clean_plan(value) -> dict:
         "can_fix": bool(value.get("can_fix")) and not needs_you,
         "needs_you": needs_you,
         "steps": steps,
-        "risk": str(value.get("risk") or "").strip()[:MAX_PLAN_RISK],
-        "summary": str(value.get("summary") or "").strip()[:MAX_PLAN_SUMMARY],
+        "risk": textclip.clip(str(value.get("risk") or "").strip(), MAX_PLAN_RISK),
+        "summary": textclip.clip(str(value.get("summary") or "").strip(), MAX_PLAN_SUMMARY),
         "at": int(value.get("at") or 0),
     }
     # The typed half — the ops Apply carries out, re-validated on every
@@ -463,7 +471,7 @@ def _clean_triage(value) -> dict:
         return {}
     return {
         "verdict": verdict,
-        "reason": str(value.get("reason") or "").strip()[:triage.MAX_REASON],
+        "reason": textclip.clip(str(value.get("reason") or "").strip(), triage.MAX_REASON),
         "run_id": str(value.get("run_id") or "").strip()[:64],
         "at": int(value.get("at") or 0),
         # Set when a person pressed "Bring it to the front" on a held row.
@@ -471,6 +479,10 @@ def _clean_triage(value) -> dict:
         # the run said, and overwriting it would lose the one piece of
         # evidence that triage got this one wrong.
         "elevated_by_person": bool(value.get("elevated_by_person")),
+        # When the person did, so the card can say "You brought this back
+        # on 3 Oct" rather than leaving the verdict's own date to stand in
+        # for it. Zero on a row put back before the stamp existed.
+        "elevated_at": int(value.get("elevated_at") or 0),
         # Whether the row's `fix` is the run's own sentence rather than
         # the generic one the rule filed. The text itself lives in `fix`,
         # where every reader of a finding already looks; this is the
@@ -499,7 +511,7 @@ def _clean_evidence(value) -> list[dict]:
             continue
         out.append({
             "entity": entity,
-            "value": str(item.get("value") or "").strip()[:MAX_EVIDENCE_VALUE],
+            "value": textclip.clip(str(item.get("value") or "").strip(), MAX_EVIDENCE_VALUE),
             "when": str(item.get("when") or "").strip()[:MAX_EVIDENCE_WHEN],
         })
         if len(out) >= MAX_EVIDENCE:
@@ -524,14 +536,14 @@ def _clean_actions(value) -> list[dict]:
         if not isinstance(item, dict):
             continue
         shape = str(item.get("shape") or "").strip().lower()
-        label = str(item.get("label") or "").strip()[:MAX_ACTION_LABEL]
+        label = textclip.clip(str(item.get("label") or "").strip(), MAX_ACTION_LABEL)
         if shape not in ACTION_SHAPES or not label:
             continue
         out.append({
             "label": label,
             "shape": shape,
             "consent": item.get("consent", True) is not False,
-            "detail": str(item.get("detail") or "").strip()[:MAX_ACTION_DETAIL],
+            "detail": textclip.clip(str(item.get("detail") or "").strip(), MAX_ACTION_DETAIL),
         })
         if len(out) >= MAX_ACTIONS:
             break
@@ -569,7 +581,7 @@ def _case_fields(entry: dict) -> dict:
     actions = _clean_actions(entry.get("actions"))
     if actions:
         out["actions"] = actions
-    hint = str(entry.get("memory_hint") or "").strip()[:MAX_MEMORY_HINT]
+    hint = textclip.clip(str(entry.get("memory_hint") or "").strip(), MAX_MEMORY_HINT)
     if hint:
         out["memory_hint"] = hint
     investigation = entry.get("investigation")
@@ -591,8 +603,8 @@ def _shape(entry: dict) -> dict:
     out = {
         "ts": int(entry.get("ts") or 0),
         "text": str(entry.get("text") or "")[:MAX_TEXT],
-        "detail": str(entry.get("detail") or "")[:MAX_DETAIL],
-        "fix": str(entry.get("fix") or "")[:MAX_FIX],
+        "detail": textclip.clip(str(entry.get("detail") or ""), MAX_DETAIL),
+        "fix": textclip.clip(str(entry.get("fix") or ""), MAX_FIX),
         # Whose sentence `fix` is: "" for the rule's own, "triage" for the
         # run that looked at the row before it was shown, "chat" for a
         # conversation the homeowner had about it. The card says which.
@@ -611,7 +623,7 @@ def _shape(entry: dict) -> dict:
         # for a session id.
         "run_id": str(entry.get("run_id") or "")[:64],
         "status": status,
-        "result": str(entry.get("result") or "")[:MAX_RESULT],
+        "result": textclip.clip(str(entry.get("result") or ""), MAX_RESULT),
         "changed": _clean_changed(entry.get("changed")),
         "settled_at": int(entry.get("settled_at") or 0),
         # "Not now" is not a decision, so it is not a status. Dismissing is
@@ -661,6 +673,11 @@ def _shape(entry: dict) -> dict:
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
         out["came_back"] = int(entry["came_back"])
+    # Still `triaging` past `triage.SHOW_AFTER_S`: shown on the feed with
+    # `triage.WAITING` and counted, while the look it is waiting for has
+    # still not come. Derived, never stored, and absent otherwise.
+    if triage.waiting_too_long({**entry, "status": status}):
+        out["waiting_look"] = True
     return out
 
 
@@ -769,8 +786,9 @@ def listing() -> dict:
     return {
         "findings": shaped,
         "open": len([f for f in shaped
-                     if f["status"] in UNSETTLED_STATUSES
-                     and not is_snoozed(f, now)]),
+                     if (f["status"] in UNSETTLED_STATUSES
+                         and not is_snoozed(f, now))
+                     or triage.waiting_too_long(f, now)]),
         "snoozed": len([f for f in shaped if is_snoozed(f, now)]),
         # The answers, so the tab can show what it has stopped asking about.
         # Same read, same reply: a second endpoint for it would be a second
@@ -796,9 +814,18 @@ def open_count() -> int:
     """
     now = time.time()
     return len([e for e in _load()
-                if e.get("status", "open") in UNSETTLED_STATUSES
-                and str(e.get("text") or "").strip()
-                and not (e.get("snoozed_until") or 0) > now])
+                if (e.get("status", "open") in UNSETTLED_STATUSES
+                    and str(e.get("text") or "").strip()
+                    and not (e.get("snoozed_until") or 0) > now)
+                or triage.waiting_too_long(e, now)])
+
+
+def waiting_look_count(now: float | None = None) -> int:
+    """Rows a look has not reached in `triage.SHOW_AFTER_S` — counted by
+    every badge beside the open ones, and shown on the feed with
+    `triage.WAITING`. Off the raw entries, `open_count`'s reason."""
+    now = time.time() if now is None else now
+    return len([e for e in _load() if triage.waiting_too_long(e, now)])
 
 
 def is_known(text: str) -> bool:
@@ -865,8 +892,8 @@ def coerce(obj: dict) -> dict | None:
     severity = str(obj.get("severity") or "").strip().lower()
     entry = {
         "text": text,
-        "detail": detail[:MAX_DETAIL],
-        "fix": str(obj.get("fix") or "").strip()[:MAX_FIX],
+        "detail": textclip.clip(detail, MAX_DETAIL),
+        "fix": textclip.clip(str(obj.get("fix") or "").strip(), MAX_FIX),
         "severity": severity if severity in SEVERITIES else "warning",
         # absent means fixable; only an explicit false means hands required
         "fixable": obj.get("fixable", True) is not False,
@@ -915,6 +942,54 @@ def _prune(items: list[dict]) -> list[dict]:
     return [f for f in items if id(f) not in drop][-MAX_FINDINGS:]
 
 
+# A producer whose sentences a model writes rewords the same report every
+# time it files it — ten rows over three weeks about one pair of "Cooling
+# Time Yesterday" sensors, each worded differently, each passing a dedupe
+# keyed on text. For those, the same ENTITY from the same producer is the
+# same report: folded into the row already there (any status, a snooze and
+# a held verdict included) and into a "Wrong" already given.
+#
+# Never for a house check — its text is stable by construction, and one
+# check may say two different things about one entity (a battery that is
+# low, and one that has stopped reporting) — and never for a producer whose
+# rows are about an EVENT rather than a subject: the safety lane files one
+# row per trip by putting the time in the text, and folding the second
+# leak on a sensor into the first is the one fold that loses something
+# real. A different producer about the same entity is a different claim
+# and is never folded either, which is why the source is half the key.
+SUBJECT_FOLD_EXCLUDED = frozenset({
+    "safety", "security", "sre", "correction", "notify_policy",
+    "house_book", "healing", "followup", "fix", "doctor", "condition",
+    "scene"})
+
+
+def _folds_by_subject(entry: dict) -> tuple[str, str] | None:
+    """The `(entity_id, source)` this row is deduped on besides its text,
+    or None when it is deduped on its text alone."""
+    eid = str(entry.get("entity_id") or "").strip()
+    source = str(entry.get("source") or "").strip()
+    if (not eid or not source or ":" in source
+            or source in SUBJECT_FOLD_EXCLUDED):
+        return None
+    return eid, source
+
+
+def _subjects_answered_wrong() -> set[tuple[str, str]]:
+    """The subjects somebody said a model-written report was wrong about.
+
+    Only `ignored`: "not a problem here" is a statement about the house
+    that a reworded report does not change, where a fix is a dated event
+    and a re-report after it may be news (`_suppresses`'s argument)."""
+    out = set()
+    for e in _load_settled():
+        if e.get("kind") != "ignored":
+            continue
+        subject = _folds_by_subject(e)
+        if subject:
+            out.add(subject)
+    return out
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -930,15 +1005,22 @@ def add_many(objs: list[dict]) -> list[dict]:
     items = _load()
     seen = {normalize(f.get("text", "")) for f in items}
     seen |= suppressing_keys()
+    subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
+    subjects |= _subjects_answered_wrong()
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     for obj in objs:
         entry = coerce(obj)
         if entry is None or normalize(entry["text"]) in seen:
             continue
+        subject = _folds_by_subject(entry)
+        if subject and subject in subjects:
+            continue
         entry["ts"] = _unique_ts(used)
         used.add(entry["ts"])
         seen.add(normalize(entry["text"]))
+        if subject:
+            subjects.add(subject)
         items.append(entry)
         created.append(_shape(entry))
     if created:
@@ -1078,10 +1160,10 @@ def refine(ts: int, case: dict, run_id: str = "",
         entry.update(_case_fields(merged))
         detail = str(case.get("detail") or "").strip()
         if detail:
-            entry["detail"] = detail[:MAX_DETAIL]
+            entry["detail"] = textclip.clip(detail, MAX_DETAIL)
         fix = str(case.get("fix") or "").strip()
         if fix:
-            entry["fix"] = fix[:MAX_FIX]
+            entry["fix"] = textclip.clip(fix, MAX_FIX)
             entry["fix_by"] = "resident"
         if _severity_rank(case.get("severity")) > _severity_rank(
                 entry.get("severity")):
@@ -1095,6 +1177,8 @@ def refine(ts: int, case: dict, run_id: str = "",
             "at": int(when if when is not None else time.time()),
             "elevated_by_person": bool(
                 (entry.get("triage") or {}).get("elevated_by_person")),
+            "elevated_at": int(
+                (entry.get("triage") or {}).get("elevated_at") or 0),
             "wrote_fix": bool(fix)})
         _write(items)
         return _shape(entry)
@@ -1124,7 +1208,8 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
             return None
         entry["status"] = "held"
         entry["triage"] = _clean_triage({
-            "verdict": "held", "reason": str(reason or "")[:MAX_CLAIM],
+            "verdict": "held",
+            "reason": textclip.clip(str(reason or "").strip(), triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
             "wrote_fix": False})
@@ -1145,7 +1230,7 @@ def set_status(ts: int, status: str, result: str = "",
             continue
         entry["status"] = status
         if result:
-            entry["result"] = str(result)[:MAX_RESULT]
+            entry["result"] = textclip.clip(str(result), MAX_RESULT)
         if changed is not None:
             entry["changed"] = _clean_changed(changed)
         entry["settled_at"] = (
@@ -1347,6 +1432,7 @@ def elevate(ts: int) -> dict | None:
         entry["settled_at"] = 0
         record = _clean_triage(entry.get("triage"))
         record["elevated_by_person"] = True
+        record["elevated_at"] = int(time.time())
         entry["triage"] = record
         _write(items)
         return _shape(entry)
@@ -1452,6 +1538,10 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # which card is worth trusting in this house.
         "source": str(shaped.get("source") or "")[:64],
         "source_title": str(shaped.get("source_title") or "")[:120],
+        # What it was about, so a reworded report about the same entity
+        # from the same producer is recognised as answered
+        # (`_subjects_answered_wrong`).
+        "entity_id": str(shaped.get("entity_id") or "")[:255],
     })
     _write_settled(ledger[-MAX_SETTLED:])
 
@@ -1649,7 +1739,7 @@ def merge_rows(rows: list[dict]) -> int:
             continue
         status = row.get("status")
         entry["status"] = status if status in STATUSES else "open"
-        entry["result"] = str(row.get("result") or "")[:MAX_RESULT]
+        entry["result"] = textclip.clip(str(row.get("result") or ""), MAX_RESULT)
         entry["changed"] = _clean_changed(row.get("changed"))
         entry["settled_at"] = int(row.get("settled_at") or 0)
         entry["snoozed_until"] = int(row.get("snoozed_until") or 0)
@@ -1811,7 +1901,7 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     hands back no undo token. Refuses an empty sentence and an author the
     row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
     """
-    fix = str(fix or "").strip()[:MAX_FIX]
+    fix = textclip.clip(str(fix or "").strip(), MAX_FIX)
     if not fix or by not in FIX_AUTHORS:
         return None
     items = _load()
@@ -1928,7 +2018,7 @@ def annotate(ts: int, line: str) -> dict | None:
             continue
         detail = str(entry.get("detail") or "").strip()
         merged = f"{detail} {line}".strip() if detail else line
-        entry["detail"] = merged[:MAX_DETAIL]
+        entry["detail"] = textclip.clip(merged, MAX_DETAIL)
         _write(items)
         return _shape(entry)
     return None
@@ -2057,7 +2147,31 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     # And the answers. The same pass that may clear a row it no longer
     # reports may end an answer about one — see `_suppresses`.
     lapse_settled(sources, keep_keys)
+    # And the other half of an answer: a chore ticked off while the check
+    # that filed it still reports it is not done, so it goes back on the
+    # list and its ledger entry back to `accepted` (the work is waiting
+    # again). Here, so the scheduled pass, "Check again" and a delayed
+    # verification are one rule with three callers.
+    _chores_came_back(sources, keep_keys)
     return gone
+
+
+def _chores_came_back(sources: set[str], keep_keys: set[str]) -> list[dict]:
+    import todo_store  # noqa: PLC0415 — the store imports nothing of ours
+    try:
+        due = todo_store.still_reported(sources, keep_keys)
+        if not due:
+            return []
+        back = todo_store.came_back([i["id"] for i in due])
+    except OSError as exc:
+        log.warning("could not reopen chores a check still reports: %s", exc)
+        return []
+    for item in back:
+        if item.get("finding_key"):
+            remember_answer(item["finding_key"], item["text"], "accepted",
+                            source=item.get("source", ""),
+                            source_title=item.get("source_title", ""))
+    return back
 
 
 # How long after a brAIn fix ends before the check that filed the row may

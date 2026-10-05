@@ -115,7 +115,7 @@ DAEMONS = {
     "ttyd": {
         "option": "enable_terminal",
         "what": "the terminal",
-        "fix": "The Terminal tab's classic face has nothing behind it. "
+        "fix": "The classic terminal on the Ask tab has nothing behind it. "
                "Restart the add-on.",
         "severity": "degraded",
     },
@@ -222,6 +222,30 @@ def expected_daemons(options: dict | None = None) -> frozenset[str]:
         out.add("assist_worker_pool" if options.get("assist_fast_mode", True)
                 else "assist_listener")
     return frozenset(out)
+
+
+def not_used_reason(name: str, options: dict | None = None) -> str:
+    """Why a daemon is correctly absent on this configuration, in the words
+    the Diagnostics roll-call shows, or "" when it was asked for.
+
+    The roll-call printed `assist_listener — not running` on every
+    fast-mode install while every verdict said fine — two true statements
+    that read as a contradiction, because the list did not say the classic
+    listener is the implementation fast mode does not use. Same answer as
+    :func:`expected_daemons`, worded for a person.
+    """
+    options = options or {}
+    if name in expected_daemons(options):
+        return ""
+    if name in ("assist_listener", "assist_worker_pool"):
+        if not options.get("enable_assist_integration"):
+            return "not used (Assist is switched off)"
+        return ("not used (fast mode)" if name == "assist_listener"
+                else "not used (classic mode)")
+    spec = DAEMONS.get(name) or {}
+    if spec.get("option"):
+        return f"not used ({spec['option']} is off)"
+    return "not used here"
 
 
 def _assist_daemon(diag: dict, options: dict) -> list[dict]:

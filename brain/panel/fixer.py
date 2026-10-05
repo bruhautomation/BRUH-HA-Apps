@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import engine
 import plan_ops
+import textclip
 
 # The plan run's guard. Far smaller than the fix's: this reads the entity, the
 # automation and the history and writes a paragraph, where a fix has to make
@@ -265,7 +266,7 @@ def parse_plan(text: str, obj: dict | None = None) -> dict:
         }
 
     needs_you = bool(obj.get("needs_you"))
-    summary = str(obj.get("summary") or "").strip()[:600]
+    summary = textclip.clip(str(obj.get("summary") or "").strip(), 600)
     # The ops are what Apply carries out, so they are what is checked — and
     # a plan whose ops cannot all be read is refused WHOLE: a dropped op is
     # a step on the card that would not happen, which is a half-applied fix
@@ -293,11 +294,11 @@ def parse_plan(text: str, obj: dict | None = None) -> dict:
         # step exists to prevent.
         "steps": [plan_ops.describe(op) for op in ops] if can_fix else [],
         "ops": ops if can_fix else [],
-        "expected_effect": (str(obj.get("expected_effect") or "").strip()
-                            [:plan_ops.MAX_EFFECT] if can_fix else ""),
+        "expected_effect": (textclip.clip(str(obj.get("expected_effect") or "").strip(),
+                                          plan_ops.MAX_EFFECT) if can_fix else ""),
         "verify_by": plan_ops.clean_verify(obj.get("verify_by")) if can_fix else None,
-        "risk": str(obj.get("risk") or "").strip()[:300],
-        "summary": summary[:900],
+        "risk": textclip.clip(str(obj.get("risk") or "").strip(), 300),
+        "summary": textclip.clip(summary, 900),
     }
 
 
@@ -502,10 +503,10 @@ def parse_result(text: str, obj: dict | None = None) -> dict:
         # your hands, software did not fix it, whatever the model ticked.
         "ok": bool(obj.get("ok")) and not needs_you,
         "needs_you": needs_you,
-        "summary": str(obj.get("summary") or "").strip()[:1000],
+        "summary": textclip.clip(str(obj.get("summary") or "").strip(), 1000),
         # length is capped by findings_store, which owns MAX_CHANGED
         "changed": _strings(obj.get("changed")),
-        "verified": str(obj.get("verified") or "").strip()[:400],
+        "verified": textclip.clip(str(obj.get("verified") or "").strip(), 400),
         "also_found": _strings(obj.get("also_found"), 5),
     }
 

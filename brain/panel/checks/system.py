@@ -22,7 +22,7 @@ reworded.
 """
 from __future__ import annotations
 
-from ._util import age_days, join_names, num, when
+from ._util import age_days, history_cut, join_names, num, when
 
 GB = 1024.0 ** 3
 BACKUP_STALE_DAYS = 7
@@ -62,6 +62,8 @@ UPDATE_LABELS = {"core": "Core", "os": "Operating system",
 # sentence nobody reads to the end.
 UPDATE_ADDONS_NAMED = 4
 UPDATE_PENDING_TEXT = "Updates are waiting to be installed"
+HISTORY_INCOMPLETE_TEXT = "Home Assistant's history is incomplete"
+HISTORY_NAMED = 3
 
 
 def _sup(snap: dict) -> dict:
@@ -351,6 +353,49 @@ def update_pending(snap: dict, now: float) -> list[dict]:
     }]
 
 
+# ---------------------------------------------------------------------------
+# sys.history_incomplete — the recorder is missing rows
+# ---------------------------------------------------------------------------
+
+def history_incomplete(snap: dict, now: float) -> list[dict]:
+    """ONE row when the history Core hands back stops before what the live
+    states say happened.
+
+    Measured on a real house: a thermostat's 24-hour window came back as
+    156 rows and its 48-hour window as one, and the longer the window the
+    earlier the data ended. Every finding read off such a window is a
+    reading of the hole — "silent since", "0 W all week", "frozen" — so
+    the checks that read windows stand down for this pass (`history_cut`
+    is the one answer both halves read) and this says why, once, about
+    the recorder rather than once per device.
+    """
+    cut = history_cut(snap)
+    if not cut:
+        return []
+    probed = int((snap.get("history_health") or {}).get("probed") or 0)
+    names = []
+    for eid in sorted(cut):
+        row = cut[eid]
+        names.append(f"{eid} (history ends {when(row.get('history_ends'))}, "
+                     f"last changed {when(row.get('live_changed'))})")
+    return [{
+        "text": HISTORY_INCOMPLETE_TEXT,
+        "detail": (f"For {len(cut)} of {probed} entities brAIn checked, the "
+                   "recorder's history stops before their live state's last "
+                   "change: " + join_names(names, limit=HISTORY_NAMED)
+                   + ". Findings read off history — a device silent since a "
+                     "date, a reading flat all week — are held back until "
+                     "it is whole again."),
+        "fix": "Settings > System > Logs, filtered to recorder: a database "
+               "error, a full disk or a restart that interrupted a write is "
+               "the usual cause. Settings > System > Repairs may also list a "
+               "recorder issue.",
+        "severity": "serious",
+        "fixable": False,
+        "entity_id": "",
+    }]
+
+
 CHECKS = [
     {"id": "sys.backup_stale", "title": "Backups missing or stale",
      "needs": ("supervisor",), "run": backup_stale},
@@ -364,4 +409,6 @@ CHECKS = [
      "needs": ("config_entries",), "run": entry_failed},
     {"id": "sys.update_pending", "title": "Updates waiting to be installed",
      "needs": ("updates",), "run": update_pending},
+    {"id": "sys.history_incomplete", "title": "Recorder history incomplete",
+     "needs": ("history_health",), "run": history_incomplete},
 ]

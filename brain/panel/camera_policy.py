@@ -120,7 +120,7 @@ def permit(entity_id: str, channel: str, grant: list[str] | None,
     if entity_id not in (opted_in or []):
         return False, (f"brAIn has not been allowed to look at {entity_id} on "
                        "its own. The homeowner can allow it in the brAIn panel "
-                       "under ⚙ → Generation defaults → Cameras.")
+                       "under ⚙ → Cameras.")
     if grant is not None and entity_id not in grant:
         return False, (f"this run was only allowed to look at "
                        f"{', '.join(grant) or 'no camera'}.")

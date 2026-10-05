@@ -125,11 +125,17 @@ jobs:
       - name: Measure the Problems section
         run: node tests/manual/measure-problems.mjs
 
-      # ⚙ is five disclosures rather than one scroll, and the numbers that
+      # ⚙ is six disclosures rather than one scroll, and the numbers that
       # make that true — its open height, its lazy Advanced loaders, the
       # prose it moved onto a ? — are only checkable by driving it.
       - name: Measure the Settings dialog
         run: node tests/manual/measure-settings.mjs
+
+      # What the panel spends on chrome before content: the sub-tab strip,
+      # the status strip and Help's contents on a phone, and how much of a
+      # wide screen the Home group's lists use.
+      - name: Measure the panel's chrome
+        run: node tests/manual/measure-chrome.mjs
 
       # The chat's approval card is where the asking happens, so it is
       # where the way out of asking has to be: "Always allow" with what it

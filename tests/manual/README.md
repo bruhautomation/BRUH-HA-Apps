@@ -105,6 +105,23 @@ to also write a PNG per width.
 CI still fails if the pseudo-element version comes back — it just can't
 measure pixels.
 
+## `measure-chrome.mjs`
+
+What the panel spends on chrome before content, driven on the real markup
+behind a stubbed fetch. At a 390px phone: the sub-tab strip never scrolls
+sideways and Home's five panes fit on one row, the status strip over the
+cards is one segment and a "+N more" with no separator bars, and Help opens
+on the guide with its sixty-section contents behind a fold. At 1448px: the
+Findings feed lays cards two abreast and uses the width, and Proposals sits
+in the same column under the same heading as Findings with a styled select.
+
+```bash
+node tests/manual/measure-chrome.mjs
+```
+
+Run it after touching `.subtabs`, `.today`, the docs nav, `.findwrap` /
+`.findlist`, or `#viewProposals`.
+
 ## `demo_panel.py` + `shoot-panel.mjs` — the docs screenshots
 
 The screenshots on bruhautomation.com are the actual product, not mockups.

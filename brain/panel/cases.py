@@ -745,7 +745,16 @@ def open_count(now: float | None = None) -> int:
     and the To-do tab carries its own (`FEED_KINDS`). So is every proposal,
     which the Proposals tab's own badge counts (`FEED_STORES`).
     """
-    return len(list_cases("open", now=now))
+    # And a finding still waiting for its first look past
+    # `triage.SHOW_AFTER_S`. It is not a case — nothing has judged it — but
+    # it is on the feed beneath the cases (`waiting_look`) and it may be
+    # serious, so a badge of 0 over it is the one count that must not be
+    # given. Counted, not converted: the look still decides what it is.
+    try:
+        waiting = findings_store.waiting_look_count(now)
+    except Exception:  # noqa: BLE001 — the cases are the badge's floor
+        waiting = 0
+    return len(list_cases("open", now=now)) + waiting
 
 
 def get(value: str, now: float | None = None) -> dict | None:

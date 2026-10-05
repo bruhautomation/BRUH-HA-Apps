@@ -322,6 +322,60 @@ def _missing_snapshot_key(why) -> str:
     return match.group(1) if match else ""
 
 
+# When a day's refused runs become a fault row: a share of the day's runs,
+# with a floor so three refusals in five runs on a quiet house is not one.
+RATE_LIMITED_SHARE = 0.10
+RATE_LIMITED_MIN = 5
+
+
+def _clock(epoch) -> str:
+    """A reset time as a person reads it, or "" for none."""
+    try:
+        epoch = float(epoch or 0)
+    except (TypeError, ValueError):
+        return ""
+    if epoch <= 0:
+        return ""
+    return time.strftime("%a %H:%M", time.localtime(epoch))
+
+
+def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
+    """The fault row for a day the account's usage limit refused a large
+    share of brAIn's runs, or None. Pure over the journal summary and the
+    usage block the diagnostics payload already carries."""
+    if not isinstance(runs, dict):
+        return None
+    limited = int((runs.get("by_outcome") or {}).get("rate_limited") or 0)
+    total = int(runs.get("runs") or 0)
+    if limited < RATE_LIMITED_MIN or not total:
+        return None
+    if limited / total < RATE_LIMITED_SHARE:
+        return None
+    hours = runs.get("hours") or 24
+    span = "day" if float(hours) == 24 else f"{hours:g} hours"
+    usage = usage if isinstance(usage, dict) else {}
+    when: list[str] = []
+    resets = _clock(usage.get("resets_at"))
+    if resets:
+        when.append(f"the session window resets {resets}")
+    week = usage.get("week_percent")
+    week_resets = _clock(usage.get("week_resets_at"))
+    if week_resets and isinstance(week, (int, float)) and week >= 90:
+        when.append(f"the weekly window ({week:.0f}% used) resets "
+                    f"{week_resets}")
+    held = _clock((usage.get("rate_limit") or {}).get("until"))
+    detail = ("The account's usage limit is refusing brAIn's runs — this is "
+              "the account saying wait, not brAIn failing, and runs resume "
+              "by themselves")
+    detail += (": " + "; ".join(when) + ".") if when else "."
+    if held:
+        detail += f" Scheduled cards are paused until {held}."
+    detail += (" A cheaper model, a lighter thinking dial or a lower usage "
+               "budget in ⚙ spends less of the window.")
+    return ("Claude usage limit",
+            f"refused {limited} of {total} runs in the last {span}", detail)
+
+
 def _faults(diag) -> list[dict]:
     if callable(diag):
         try:
@@ -369,6 +423,36 @@ def _faults(diag) -> list[dict]:
         rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",
              "see the journal below")
+
+    # Runs the account refused. A usage limit is not a failure — it is
+    # absent from `FAILURE_OUTCOMES` on purpose, a window that resets, and
+    # it must not turn the health verdict `degraded` — but a day where most
+    # runs were refused is a day where most of what brAIn was asked to do
+    # did not happen, and "no run failed" over 286 refusals in 518 is
+    # technically true and useless. So it is a row here, worded as the
+    # account saying wait, with when it stops saying it.
+    rate_row = _rate_limited_row(runs, diag.get("usage") or {})
+    if rate_row:
+        _row(out, *rate_row)
+
+    # The integration a version behind the add-on. run.sh deploys new
+    # integration files at every start and Home Assistant runs the old ones
+    # until it restarts; Repairs said so and nothing here did.
+    versions = diag.get("versions") if isinstance(
+        diag.get("versions"), dict) else {}
+    integ = versions.get("integration") if isinstance(
+        versions.get("integration"), dict) else {}
+    if integ.get("restart_pending"):
+        wanted = integ.get("required") or versions.get("addon")
+        wanted = f"v{wanted}" if wanted else "a newer one"
+        what = (f"running v{integ['loaded']}; the add-on deployed {wanted}"
+                if integ.get("loaded")
+                else f"has not loaded {wanted} yet")
+        _row(out, "Home Assistant integration", what,
+             "Home Assistant goes on running the integration it loaded until "
+             "it restarts. Restart Home Assistant (Settings → System → "
+             "Restart, or the brAIn entry under Settings → System → Repairs) "
+             "to load it.")
 
     # Authentication, and the usage tracker's own verdict — different
     # questions, and a 403 on the second says nothing about the first.
@@ -549,7 +633,13 @@ def _faults(diag) -> list[dict]:
         total = int(row.get("total") or 0)
         wrong = int(row.get("wrong") or 0)
         if total >= SCORE_MIN_ENDINGS and wrong > total - wrong:
-            _row(out, f"Producer {row.get('source') or '?'}",
+            # Named by its title where the scorecard carries one, because
+            # the id (`check:auto.conflict`) is what nobody recognises; the
+            # id rides after it, since this is also a bug report.
+            source = str(row.get("source") or "?")
+            title = str(row.get("title") or "")
+            name = f"{title} ({source})" if title and title != source else source
+            _row(out, f"Producer {name}",
                  f"marked Wrong {wrong} of {total} times",
                  "this rule is firing on a healthy house, which is worse "
                  "than not having it")
@@ -828,6 +918,22 @@ def list_reports() -> list[dict]:
         })
     out.sort(key=lambda r: (r["ts"], r["name"]), reverse=True)
     return out
+
+
+# Reports somebody ASKED for — ⚙ → "Copy for a bug report", `brain report`
+# and its shell fallback all write `kind: manual`. They are files in the
+# same folder and nothing failed to produce them, so they are never counted
+# as problems: two of them read "2 problems since yesterday" on a house
+# whose one problem was somebody asking for a report.
+REQUESTED_KINDS = frozenset({"manual"})
+
+
+def problems_since(cutoff: float) -> int:
+    """How many problem reports were written since ``cutoff``, leaving out
+    the ones somebody asked for."""
+    return len([r for r in list_reports()
+                if (r.get("ts") or 0) >= cutoff
+                and r.get("kind") not in REQUESTED_KINDS])
 
 
 def read_report(name: str) -> str | None:

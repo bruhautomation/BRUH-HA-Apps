@@ -1505,6 +1505,30 @@ def get_entity_state(entity_id):
 MAX_STATE_RESULTS = 300
 
 
+def _state_row(e):
+    """One row of `get_all_states`: the state, its name, and what the number
+    is measured IN.
+
+    The unit and the device class ride whenever Home Assistant carries them,
+    because a bare number is read as whatever the name suggests: a soil
+    probe's `Soil Battery 1` at `1.3` is 1.3 volts, and handed as `1.3` under
+    that name it was reported as a battery at 1.3% that had died.
+    """
+    attrs = e.get("attributes") or {}
+    row = {
+        "entity_id": e.get("entity_id"),
+        "state": tag_state(e.get("state")),
+        "friendly_name": attrs.get("friendly_name", ""),
+    }
+    unit = attrs.get("unit_of_measurement")
+    if unit:
+        row["unit"] = unit
+    klass = attrs.get("device_class")
+    if klass:
+        row["device_class"] = klass
+    return row
+
+
 def get_all_states(domain=None, name_filter=None):
     """Get states of all entities, filtered by domain and/or name substring."""
     result = ha_api_request("/api/states")
@@ -1517,14 +1541,7 @@ def get_all_states(domain=None, name_filter=None):
             # model to say it cannot see rather than to act on a row it
             # would then be refused.
             result = [e for e in result if _entity_exposed(e.get("entity_id"))]
-        entities = [
-            {
-                "entity_id": e.get("entity_id"),
-                "state": tag_state(e.get("state")),
-                "friendly_name": e.get("attributes", {}).get("friendly_name", ""),
-            }
-            for e in result
-        ]
+        entities = [_state_row(e) for e in result]
         if name_filter:
             needle = str(name_filter).lower()
             entities = [
@@ -3884,7 +3901,69 @@ def get_history(entity_id, hours=24):
         points = sampled
         summary["note"] = "Changes downsampled; min/max cover the full window."
     summary["changes"] = points
+    cut = _history_cut_short(entity_id, result[0], now)
+    if cut:
+        summary["history_incomplete"] = cut
     return summary
+
+
+# How far an entity's last history row may trail its live `last_changed`
+# before the history is called cut off — the panel's
+# `ha_data.HISTORY_GAP_S`, spelled again because this process cannot
+# import the panel.
+HISTORY_GAP_S = 3600
+
+
+def _iso_epoch(value):
+    from datetime import datetime, timezone
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        when = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.timestamp()
+
+
+def _history_cut_short(entity_id, rows, end):
+    """A sentence when this window's history stops before the entity's own
+    live last change, or "" — the panel's `ha_data.history_cutoffs`.
+
+    Home Assistant's history API has been seen answering a longer window
+    with data that ENDS earlier — a thermostat's 24 hours came back as 156
+    rows and its 48 hours as one, days stale — and a run reading that
+    reported a device "silent since" a date it was talking the whole
+    time. The live state is the one reading that says the window is
+    missing its end, so it is asked, and a state that cannot be read
+    leaves the history exactly as it came.
+    """
+    live = ha_api_request(f"/api/states/{entity_id}")
+    if not isinstance(live, dict):
+        return ""
+    changed = _iso_epoch(live.get("last_changed"))
+    if changed is None or changed > end.timestamp():
+        return ""
+    last = None
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        when = _iso_epoch(row.get("last_changed") or row.get("last_updated"))
+        if when is not None and (last is None or when > last):
+            last = when
+    if last is None or changed - last <= HISTORY_GAP_S:
+        return ""
+    return (f"Home Assistant's history for {entity_id} stops at "
+            f"{_utc_text(last)}, but its live state last changed at "
+            f"{_utc_text(changed)}: the recorder is missing rows. Do not "
+            "read a quiet, flat or offline stretch out of this window.")
+
+
+def _utc_text(epoch):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC")
 
 
 def get_statistics(entity_id, period="hour", days=7):

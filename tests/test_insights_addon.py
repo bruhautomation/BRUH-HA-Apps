@@ -2097,10 +2097,10 @@ class TestGenerateFlow(InsightsServerCase):
         """A card that cannot say why it is there reads as a timer going
         off — which for two releases is exactly what it was."""
         self.server.JOBS["energy"] = {"state": "queued",
-                                      "because": "2 more finding(s) on the list"}
+                                      "because": "2 new findings"}
         asyncio.run(self.server._generate("energy"))
         self.assertEqual(self._stored()["made_because"],
-                         "2 more finding(s) on the list")
+                         "2 new findings")
 
     def test_a_card_nobody_scheduled_says_a_person_asked_for_it(self):
         asyncio.run(self.server._generate("energy"))
@@ -3372,7 +3372,7 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
         base = self._inputs()
         self.server.SHARED_MEMORY_FILE.write_text("- the hall is cold\n")
         change = self.server._inputs_change(base, self._inputs())
-        self.assertIn("memory was updated", change["why"])
+        self.assertIn("memory changed", change["why"])
 
     def test_more_findings_is_counted_rather_than_described(self):
         base = self._inputs()
@@ -3386,7 +3386,7 @@ class TestARefreshHasToBeAboutSomething(InsightsServerCase):
              "source": "check:x"}])
         change = self.server._inputs_change(
             base, self._inputs(findings_text="three of them"))
-        self.assertIn("more finding(s) on the list", change["why"])
+        self.assertIn("new finding", change["why"])
 
     def test_reading_memory_costs_no_copy_of_it(self):
         """A digest of what the run would read, never the text: the
@@ -4032,7 +4032,7 @@ class TestShareToDashboard(InsightsServerCase):
                 with patch.object(self.ha_data, "_ws_calls", ws_calls):
                     resp = await client.post("/api/card/custom-4/dashboard", json={
                         "url_path": "home-dash", "view": 0, "show": "card",
-                        "aspect": 120})
+                        "aspect": 260})
                     return resp.status, await resp.json()
             finally:
                 await client.close()
@@ -4044,4 +4044,4 @@ class TestShareToDashboard(InsightsServerCase):
         card = saved[0]["config"]["views"][0]["cards"][0]
         self.assertEqual(card["type"], "iframe")
         self.assertTrue(card["url"].endswith(".card.html"))
-        self.assertEqual(card["aspect_ratio"], "120%")
+        self.assertEqual(card["aspect_ratio"], "260%")

@@ -50,6 +50,33 @@ that cannot pay. What a model is for is the paragraph, and that is a press.
 **And nothing here decides anything.** It groups and it ranks; whether an
 episode is worth worrying about is the checks' job and the analyst's, the
 same split `baselines.py` and `closures.py` keep.
+
+Three corrections the logbook needs before it can be read as a house,
+each found on a real one.
+
+**A row that says "since" has to agree with the house now.** The logbook
+drops some transitions — a climate entity going unavailable across a
+restart is the one that was caught — so the last change it holds can be
+seventeen hours stale while the entity has been unavailable since the
+morning. ``live`` is one `/states` read: when the entity is no longer in
+the state its newest episode ends in, that episode ends where the live
+`last_changed` says, and the state it is really in becomes an episode of
+its own. A row reading "heat_cool since 20:36" about a thermostat that
+has not answered since 11:11 is the reading nothing could correct.
+
+**Home Assistant restarting is an event, and it explains the minute after
+it.** Core's start and stop carry no entity, so the miner drops them; they
+are passed in as ``lifecycle`` and become one row, and every row nothing
+caused that began around it is marked as having begun around it.
+
+**Forty things changing in the same second is one thing happening.** An
+integration reload moves every entity it owns at once, and listing them
+is a page of one fact. Changes nothing caused, to one state, in one
+second, across ``MASS_MIN`` or more entities are one row that names the
+integration when the registry says they share one. And a
+`device_tracker` is a person only where nothing better is — a house with
+`person.*` entities has its people in those, and a router's tracker for a
+smart plug was never anybody.
 """
 from __future__ import annotations
 
@@ -105,6 +132,14 @@ SAFETY_CLASSES = frozenset({
 # different sentences about the same shape of record, decided here so the
 # panel cannot invent a fourth.
 SUBJECTS: tuple[dict, ...] = (
+    # First because it explains rows below it: the minute after a restart
+    # is a page of things going unavailable and coming back.
+    # No entity is ever grouped by this gap — its rows are built whole by
+    # `restart_episodes` and `_mass_changes` — but every subject carries one.
+    {"id": "system", "label": "Home Assistant", "gap_s": 60.0,
+     "reads": "span",
+     "blurb": "Home Assistant itself stopping and starting, and anything "
+              "that moved a whole integration's devices at once."},
     {"id": "security", "label": "Locks & safety", "gap_s": 300.0,
      "reads": "span",
      "blurb": "Locks, alarms, and the sensors that are about the house "
@@ -219,8 +254,55 @@ def _active(state: str) -> bool:
     return str(state or "").strip().lower() in ACTIVE_STATES
 
 
+# How many entities moving to one state in one second, with nothing to
+# say what moved them, is an integration doing it rather than a house. A
+# scene that turns six lights on carries the scene as its cause and is
+# never collapsed — only the changes nothing claims are.
+MASS_MIN = 6
+# A reload that takes everything unavailable and brings it back a few
+# seconds later is one thing that happened, so a second burst over mostly
+# the same entities within this long joins the first.
+MASS_JOIN_S = 300.0
+# How many of a collapsed row's entities it carries, for the detail.
+MASS_KEEP = 40
+# A stop and the start after it are one restart while they are this close.
+RESTART_PAIR_S = 3600.0
+# What "around a restart" means for a row nothing caused: a minute before
+# the stop (the shutdown takes entities with it) to ten minutes after the
+# start (an integration that is slow to set up comes back late).
+RESTART_BEFORE_S = 60.0
+RESTART_AFTER_S = 600.0
+
+# What an integration is called when a collapsed row names it. Anything
+# not here is its domain with the underscores taken out, which is right
+# for most of them and only wrong in its capitals.
+INTEGRATION_NAMES = {
+    "unifi": "UniFi", "zha": "ZHA", "mqtt": "MQTT", "zwave_js": "Z-Wave",
+    "esphome": "ESPHome", "homekit_controller": "HomeKit", "hue": "Hue",
+    "tplink": "TP-Link", "shelly": "Shelly", "tuya": "Tuya",
+    "wled": "WLED", "lifx": "LIFX", "sonos": "Sonos", "cast": "Google Cast",
+    "nmap_tracker": "Nmap", "ping": "Ping", "bluetooth_le_tracker":
+    "Bluetooth LE", "mobile_app": "Mobile App", "matter": "Matter",
+}
+
+
+def integration_name(platform: str) -> str:
+    p = str(platform or "").strip()
+    if not p:
+        return ""
+    return INTEGRATION_NAMES.get(p, p.replace("_", " ").title())
+
+
+def _norm(state) -> str:
+    return str(state or "").strip().lower()
+
+
 def group(actions: list[dict], classes: dict[str, str] | None = None,
-          now: float | None = None) -> dict:
+          now: float | None = None, *,
+          live: dict[str, dict] | None = None,
+          people_trackers: set[str] | frozenset[str] | None = None,
+          platforms: dict[str, str] | None = None,
+          lifecycle: list[dict] | None = None) -> dict:
     """Mined actions, oldest first, as episodes.
 
     Returns ``{"episodes": [...], "dropped": n, "kinds": {id: count}}`` —
@@ -231,27 +313,55 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
     Pure, and deliberately over what it is handed rather than what it could
     fetch: the same list feeds `find_overrides` and the counts in the same
     request, and a second pass over the same window is two chances to
-    disagree about it.
+    disagree about it. The keyword arguments are the three corrections the
+    module docstring describes, each optional so a caller without them gets
+    exactly the grouping it had:
+
+    * ``live`` — ``{entity_id: {"state", "last_changed"}}`` from `/states`;
+    * ``people_trackers`` — the `device_tracker` ids that may stand for a
+      person (a phone's GPS tracker), or None for "not known";
+    * ``platforms`` — ``{entity_id: integration}`` to name a collapsed row;
+    * ``lifecycle`` — `actions.lifecycle`'s starts and stops.
     """
     classes = classes or {}
     dropped = 0
-    # entity id -> the episode still open for it. An episode closes when
-    # the next change to that entity is further away than its subject's own
-    # gap, which is why this is keyed per entity rather than per subject.
-    live: dict[str, dict] = {}
-    out: list[dict] = []
-    for a in sorted(actions or [], key=lambda x: x.get("ts") or 0):
+    rows: list[dict] = []
+    for a in actions or []:
         entity_id = str(a.get("entity_id") or "")
         if not entity_id:
             continue
         if is_reading(entity_id):
             dropped += 1
             continue
+        rows.append(a)
+    rows.sort(key=lambda x: x.get("ts") or 0)
+
+    # A house with `person.*` entities has its people in those; a tracker
+    # there is a phone or, far more often, a router's view of a plug.
+    has_person = any(domain_of(a["entity_id"]) == "person" for a in rows) or \
+        any(domain_of(e) == "person" for e in (live or {}))
+
+    def subject_of(entity_id: str) -> str:
         subject = subject_for(entity_id, classes.get(entity_id, ""))
+        if subject == "people" and domain_of(entity_id) == "device_tracker":
+            if has_person or (people_trackers is not None
+                              and entity_id not in people_trackers):
+                return "other"
+        return subject
+
+    out, rows = _mass_changes(rows, platforms or {})
+
+    # entity id -> the episode still open for it. An episode closes when
+    # the next change to that entity is further away than its subject's own
+    # gap, which is why this is keyed per entity rather than per subject.
+    current: dict[str, dict] = {}
+    for a in rows:
+        entity_id = str(a["entity_id"])
+        subject = subject_of(entity_id)
         gap = _BY_ID[subject]["gap_s"]
         ts = float(a.get("ts") or 0)
         state = str(a.get("state") or "")
-        ep = live.get(entity_id)
+        ep = current.get(entity_id)
         if ep is not None and (_active(ep["last"]) or ts - ep["ended"] <= gap):
             # Either it never stopped, or this is close enough to be the
             # same burst. See the module docstring: the first half is what
@@ -278,15 +388,216 @@ def group(actions: list[dict], classes: dict[str, str] | None = None,
             "by_name": "",
         }
         _credit(ep, a)
-        live[entity_id] = ep
-    out.extend(live.values())
+        current[entity_id] = ep
+    newest = list(current.values())
+    out.extend(newest)
     for ep in out:
-        _settle(ep, now)
-    out.sort(key=lambda e: (_ORDER[e["subject"]], -e["ended"]))
+        if ep.get("kind") != "mass":
+            _settle(ep, now)
+    out.extend(_agree_with_now(newest, live or {}, now))
+    restarts = restart_episodes(lifecycle or [])
+    _mark_restarts(out, restarts)
+    out.extend(restarts)
+    out.sort(key=lambda e: (_ORDER[e["subject"]], -e["ended"], -e["started"]))
     kinds: dict[str, int] = {}
     for ep in out:
         kinds[ep["subject"]] = kinds.get(ep["subject"], 0) + 1
     return {"episodes": out, "dropped": dropped, "kinds": kinds}
+
+
+def _mass_changes(rows: list[dict], platforms: dict[str, str]
+                  ) -> tuple[list[dict], list[dict]]:
+    """The same-second bursts nothing caused, as one row each, and what is
+    left for the per-entity grouping.
+
+    Keyed on the SECOND and the state the entities moved TO, never on a
+    window: two lights switched off a few seconds apart are two things
+    somebody did, where forty trackers switching to `home` in one second
+    is a reload. A burst over mostly the same entities within
+    ``MASS_JOIN_S`` joins the row before it, which is what makes
+    "unavailable" and "home" twelve seconds later one row.
+    """
+    buckets: dict[tuple[int, str], dict[str, int]] = {}
+    for i, a in enumerate(rows):
+        if (a.get("cause") or "unattributed") != "unattributed":
+            continue
+        key = (int(float(a.get("ts") or 0)), _norm(a.get("state")))
+        buckets.setdefault(key, {})[str(a["entity_id"])] = i
+    mass = sorted(((k, v) for k, v in buckets.items() if len(v) >= MASS_MIN),
+                  key=lambda kv: kv[0][0])
+    if not mass:
+        return [], rows
+    taken: set[int] = set()
+    made: list[dict] = []
+    for (second, _state), members in mass:
+        taken.update(members.values())
+        ents = set(members)
+        state = str(rows[next(iter(members.values()))].get("state") or "")
+        ts = min(float(rows[i].get("ts") or 0) for i in members.values())
+        joined = None
+        for prev in reversed(made):
+            if ts - prev["ended"] > MASS_JOIN_S:
+                break
+            overlap = len(ents & prev["_ents"])
+            if overlap * 2 >= min(len(ents), len(prev["_ents"])):
+                joined = prev
+                break
+        if joined is not None:
+            joined["_ents"] |= ents
+            joined["ended"] = max(joined["ended"], ts)
+            joined["last"] = state
+            joined["count"] += len(members)
+            joined["states"].append({"ts": ts, "state": state,
+                                     "cause": "unattributed", "by_name": "",
+                                     "entities": len(members)})
+            continue
+        made.append({
+            "subject": "system", "kind": "mass", "entity_id": "",
+            "started": ts, "ended": ts, "count": len(members),
+            "first": state, "last": state,
+            "states": [{"ts": ts, "state": state, "cause": "unattributed",
+                        "by_name": "", "entities": len(members)}],
+            "causes": {"unattributed": len(members)},
+            "cause": "unattributed", "by_name": "", "_ents": ents,
+        })
+    for ep in made:
+        ents = sorted(ep.pop("_ents"))
+        names = {integration_name(platforms.get(e, "")) for e in ents}
+        source = names.pop() if len(names) == 1 else ""
+        ep["entities"] = ents[:MASS_KEEP]
+        ep["devices"] = len(ents)
+        ep["integration"] = source
+        ep["name"] = (f"{len(ents)} devices"
+                      + (f" from {source}" if source else ""))
+        ep["open"] = False
+        ep["duration_s"] = max(0.0, ep["ended"] - ep["started"])
+        ep["states"] = list(reversed(ep["states"]))[:MAX_STATES]
+    left = [a for i, a in enumerate(rows) if i not in taken]
+    return made, left
+
+
+def _agree_with_now(newest: list[dict], live: dict[str, dict],
+                    now: float | None) -> list[dict]:
+    """Make each entity's newest episode agree with the state it is in NOW.
+
+    The logbook can miss a transition — a thermostat going unavailable
+    across a restart is the one that was caught — so the newest episode
+    can claim a state the entity left hours ago. When the live state
+    differs, the episode ends at the live `last_changed` and the live
+    state becomes an episode of its own, open, because it is what the
+    entity is doing now. Returns the episodes it adds.
+
+    A `last_changed` no later than the episode's own end is a disagreement
+    this cannot resolve (the logbook holds a change the state does not),
+    so the episode is only marked with what it says now and stops claiming
+    to be still going — it is certainly not.
+    """
+    added: list[dict] = []
+    for ep in newest:
+        row = live.get(ep["entity_id"])
+        if not isinstance(row, dict) or row.get("state") is None:
+            continue
+        state = str(row.get("state"))
+        if _norm(state) == _norm(ep["last"]):
+            continue
+        ep["live"] = state
+        try:
+            changed = float(row.get("last_changed") or 0)
+        except (TypeError, ValueError):
+            changed = 0.0
+        if now:
+            changed = min(changed, float(now))
+        if changed <= ep["ended"]:
+            if ep["open"]:
+                ep["open"] = False
+                ep["duration_s"] = max(0.0, ep["ended"] - ep["started"])
+            continue
+        ep["open"] = False
+        ep["ended"] = changed
+        ep["duration_s"] = max(0.0, changed - ep["started"])
+        upto = float(now) if now else changed
+        added.append({
+            "subject": ep["subject"], "entity_id": ep["entity_id"],
+            "name": ep["name"], "started": changed, "ended": changed,
+            "count": 0, "first": state, "last": state,
+            "states": [{"ts": changed, "state": state,
+                        "cause": "unattributed", "by_name": ""}],
+            "causes": {}, "cause": "unattributed", "by_name": "",
+            # Read off the house rather than the logbook — the panel says
+            # so, because the change it stands for is the one the logbook
+            # did not record.
+            "from_live": True, "open": True,
+            "duration_s": max(0.0, upto - changed),
+        })
+    return added
+
+
+def restart_episodes(lifecycle: list[dict]) -> list[dict]:
+    """Home Assistant's own starts and stops, as rows.
+
+    A stop and the start after it are ONE restart: the gap between them is
+    how long the house had no Home Assistant, which is the number worth
+    having. A start with no stop before it in the window is still a row —
+    a power cut leaves no stop behind it, and that is when it matters most.
+    """
+    out: list[dict] = []
+    pending: float | None = None
+
+    def row(started: float, ended: float, first: str, last: str,
+            name: str, count: int) -> dict:
+        return {
+            "subject": "system", "kind": "restart", "entity_id": "",
+            "name": name, "started": started, "ended": ended,
+            "count": count, "first": first, "last": last,
+            "states": [], "causes": {}, "cause": "unattributed",
+            "by_name": "", "open": False,
+            "duration_s": max(0.0, ended - started),
+        }
+
+    for ev in sorted(lifecycle or [], key=lambda e: e.get("ts") or 0):
+        ts = float(ev.get("ts") or 0)
+        if ev.get("event") == "stopped":
+            if pending is not None:
+                out.append(row(pending, pending, "stopped", "stopped",
+                               "Home Assistant stopped", 1))
+            pending = ts
+        elif ev.get("event") == "started":
+            if pending is not None and ts - pending <= RESTART_PAIR_S:
+                out.append(row(pending, ts, "stopped", "started",
+                               "Home Assistant restarted", 2))
+            else:
+                if pending is not None:
+                    out.append(row(pending, pending, "stopped", "stopped",
+                                   "Home Assistant stopped", 1))
+                out.append(row(ts, ts, "started", "started",
+                               "Home Assistant started", 1))
+            pending = None
+    if pending is not None:
+        out.append(row(pending, pending, "stopped", "stopped",
+                       "Home Assistant stopped", 1))
+    return out
+
+
+def _mark_restarts(episodes: list[dict], restarts: list[dict]) -> int:
+    """Mark the rows nothing caused that began around a restart.
+
+    Only `unattributed` rows: an automation that ran at startup has its own
+    cause and the restart is not it. The mark is the restart's own time,
+    so the panel can say which one when a window holds two.
+    """
+    marked = 0
+    for ep in episodes:
+        if ep.get("kind") == "restart" or ep.get("cause") not in (
+                "", "unattributed"):
+            continue
+        for r in restarts:
+            lo = r["started"] - RESTART_BEFORE_S
+            hi = r["ended"] + RESTART_AFTER_S
+            if lo <= ep["started"] <= hi:
+                ep["near_restart"] = r["ended"]
+                marked += 1
+                break
+    return marked
 
 
 def _extend(ep: dict, a: dict, ts: float, state: str) -> None:
@@ -553,8 +864,10 @@ def summary_prompt(payload: dict, tz_name: str = "") -> str:
 
 
 __all__ = [
-    "ACTIVE_STATES", "COVER_CLASSES", "DOOR_CLASSES", "MAX_ROWS",
-    "MAX_STATES", "MOTION_CLASSES", "READINGS", "SAFETY_CLASSES",
+    "ACTIVE_STATES", "COVER_CLASSES", "DOOR_CLASSES", "INTEGRATION_NAMES",
+    "MASS_JOIN_S", "MASS_MIN", "MAX_ROWS", "MAX_STATES", "MOTION_CLASSES",
+    "READINGS", "RESTART_AFTER_S", "RESTART_BEFORE_S", "RESTART_PAIR_S",
+    "SAFETY_CLASSES", "integration_name", "restart_episodes",
     "SUBJECTS", "SUBJECT_IDS", "SUMMARY_MAX_ROWS", "SUMMARY_MAX_TURNS",
     "SUMMARY_MAX_WORDS", "SUMMARY_MIN_CHARS", "SUMMARY_SYSTEM",
     "SUMMARY_TIMEOUT_S", "away_spans", "domain_of", "group",

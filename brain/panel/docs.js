@@ -152,7 +152,7 @@ deliberate exceptions listed below — change it.
   },
   {
     id: "the-resident",
-    icon: "📄",
+    icon: "👁️",
     title: "The Resident",
     body: `
 # The Resident
@@ -476,7 +476,7 @@ it a third time. "Could not check" is shown as exactly that, never as success.
   },
   {
     id: "the-to-do-list",
-    icon: "📄",
+    icon: "📝",
     title: "The to-do list",
     body: `
 # The to-do list
@@ -668,7 +668,7 @@ not one rule but a judgement about each thing it looked at, and what you mean on
 one of its cards is **Not a problem**, with the reason.
 The line under the filters says how right each producer has been; one that has
 been wrong three times and right never offers the button, and the box on the
-**Wrong** form offers the same thing for the row in front of you. Muting a
+**Not a problem** form offers the same thing for the row in front of you. Muting a
 producer takes its open cards off the list and files nothing from it again —
 nothing is settled and nothing goes into memory, because this is about the rule
 and not the house — and a **Not raising** line above the list carries the one
@@ -698,7 +698,7 @@ A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
 raised again if the problem returns. What a person ends stays ended, exactly
 as before. And every ending teaches the **scorecard** under the filters: "I
-did it" and "Got it" say the report was right, "Wrong" says it was not, and
+did it" and "Got it" say the report was right, "Not a problem" says it was not, and
 once a producer has a few endings the tab says how right it has been.
 
 Findings reach you outside the panel too. The integration exposes an
@@ -795,7 +795,7 @@ Set both to the same value (or leave both empty) to notify at any hour.
   },
   {
     id: "replying-from-your-phone",
-    icon: "📄",
+    icon: "💬",
     title: "Replying from your phone",
     body: `
 # Replying from your phone
@@ -805,7 +805,7 @@ The **Reply** button on a notification does more than ask a question now. "It's 
   },
   {
     id: "corrections-that-know-how-far-they-reach",
-    icon: "📄",
+    icon: "🎚️",
     title: "Corrections that know how far they reach",
     body: `
 # Corrections that know how far they reach
@@ -821,7 +821,7 @@ A correction never covers a smoke, gas, carbon-monoxide or leak sensor, a lock, 
   },
   {
     id: "findings-in-home-assistants-repairs",
-    icon: "📄",
+    icon: "🩹",
     title: "Findings in Home Assistant's Repairs",
     body: `
 # Findings in Home Assistant's Repairs
@@ -880,7 +880,7 @@ with a one-line reason.
   },
   {
     id: "asking-brain-things",
-    icon: "📄",
+    icon: "❓",
     title: "Asking brAIn things",
     body: `
 # Asking brAIn things
@@ -890,7 +890,7 @@ Type anything into the question bar. brAIn reads what you meant before it does a
   },
   {
     id: "why-didnt-brain-tell-me",
-    icon: "📄",
+    icon: "🤫",
     title: "Why didn't brAIn tell me?",
     body: `
 # Why didn't brAIn tell me?
@@ -950,7 +950,7 @@ about an entity the house no longer has are dropped thirty days after it goes. A
 memory export carries the ledger too, so the rules your Wrong presses made travel
 to a new install.
 
-**A correction reaches the rule, not just the wording.** Pressing ✕ Wrong on a
+**A correction reaches the rule, not just the wording.** Pressing **Not a problem** on a
 finding from a house check writes an **exception** into the facts store — this
 sensor, this check — and the check reads it on its next pass and says nothing about
 that sensor again. Before 2.2 a Wrong settled one sentence, and the same rule made
@@ -1086,13 +1086,14 @@ Assistants and talk to it from any Assist pipeline, satellite or the app.
     body: `
 # It has a full terminal — in two shapes
 
-The **Terminal** tab is the real Claude Code CLI, in your browser, running as a
+The **Ask** tab is the real Claude Code CLI, in your browser, running as a
 non-root user with your \`/config\` in front of it. Everything above, plus everything a
 capable engineer with a shell can do: read logs, edit YAML, write scripts, install
 packages, use git, take the long way round a hard problem.
 
-It has two faces, and you switch between them with the **⌨/💬 button on the tab
-itself** (or in ⚙ Settings). Both run the same Claude Code, on the same login, in the
+It has two faces, and you switch between them from **⋯ → Classic terminal / Chat**
+on the tab (or in ⚙ Settings). The switch is saved: the Ask tab opens the way you
+left it next time. Both run the same Claude Code, on the same login, in the
 same \`/config\`, with the same permissions — what differs is only how you see it.
 
 **Chat** (the default) renders Claude Code's own output as a conversation:
@@ -1234,7 +1235,7 @@ To stop the asking, turn on **Let brAIn act without asking**. It is in ⚙ → T
 & chat and on the add-on's Configuration tab, and they are the same switch. It
 applies to the next terminal session and the chat's next message, with no restart; a
 chat that is in the middle of an answer finishes it first. A terminal session that is
-already open keeps the setting it started with, and reopening the Terminal tab goes
+already open keeps the setting it started with, and reopening the classic terminal goes
 back to that same session, so end it (\`/exit\`) to start one under the new setting.
 The line under the switch in ⚙, and the message after you change it, say when an
 open terminal session is still acting without asking (or still asking). If one is
@@ -1428,12 +1429,14 @@ act on it without a second lookup:
   event per new one, and an entry on Home Assistant's own **Repairs** page for
   each one waiting on you — and \`findings_notify_service\` pushes the critical
   ones to a phone with no automation at all.
-- The same findings are the \`todo.brain_system_brain\` list in Home Assistant's own
+- The same findings are the **brAIn System To-do** list (\`todo.brain_system_to_do\`;
+  \`todo.brain_system_brain\` on an install that had it before) in Home Assistant's own
   **To-do** panel and mobile app: one list, two views. Ticking one off is "I've fixed
   it" and deleting one is "not a problem here" — the Findings feed's own two endings,
   so answering from your phone teaches brAIn exactly what pressing the button would
   have.
-- \`sensor.brain_usage_limits_health\` says whether brAIn itself is working, so an
+- **brAIn System Health** (\`sensor.brain_system_health\`, or
+  \`sensor.brain_usage_limits_health\` on an older install) says whether brAIn itself is working, so an
   automation can tell you the add-on is in trouble rather than you noticing the
   insights stopped.
 
@@ -1567,7 +1570,7 @@ usual time, so it says so rather than reporting the middle of that as one.
   },
   {
     id: "it-knows-what-the-house-is-doing-right-now",
-    icon: "📄",
+    icon: "📍",
     title: "It knows what the house is doing right now",
     body: `
 # It knows what the house is doing right now
@@ -1732,7 +1735,7 @@ is a week from now rather than a week from Sunday.
   },
   {
     id: "a-deep-review-when-you-ask-for-one",
-    icon: "📄",
+    icon: "🔎",
     title: "A deep review, when you ask for one",
     body: `
 # A deep review, when you ask for one
@@ -2102,7 +2105,7 @@ what it would have done. Answered in seconds, before anything is enabled.
 "no"), but a sentence like *"the hall light stays on because my partner works
 nights"* is a fact brAIn did not have, and it stops the same suggestion coming
 back in different words next month. It goes into memory exactly as a finding's
-**Wrong** does.
+**Not a problem** does.
 
 A declined proposal is remembered by the **change** it described, not by the
 sentence describing it — so a miner that rewords its own explanation is still
@@ -2302,7 +2305,7 @@ to answer — so ⚙ → Diagnostics names which automations were skipped and wh
   },
   {
     id: "a-rule-in-a-sentence",
-    icon: "📄",
+    icon: "✍️",
     title: "A rule, in a sentence",
     body: `
 # A rule, in a sentence
@@ -2435,12 +2438,12 @@ that run fails you get **Morning**, **Day**, **Evening**, **Night**, which work 
 
 Two places show brAIn's work list, and both of them can end an item.
 
-**\`todo.brain_system_brain\`** is Home Assistant's own To-do panel and mobile app,
+**\`todo.brain_system_to_do\`** (\`todo.brain_system_brain\` on an older install) is Home Assistant's own To-do panel and mobile app,
 showing both of brAIn's lists as one: the findings it is still asking about, and
 the chores you have already accepted. From the app's side they are the same
 thing — work — so they are one list, and each row does on completion what it
 would have done on its own screen. Completing a finding is the Findings feed's
-**I fixed it** and deleting it is its **Wrong**; completing a chore is the To-do
+**I fixed it** and deleting it is its **Not a problem**; completing a chore is the To-do
 tab's **Done**, which is the moment the memory line is written, and deleting one
 is taking it off the list undone, which lets brAIn report the problem again. No
 new vocabulary: each row's own list already had these.
@@ -2487,7 +2490,7 @@ answer waits for it rather than being lost.
   },
   {
     id: "it-manages-your-esphome-devices",
-    icon: "📄",
+    icon: "📟",
     title: "It manages your ESPHome devices",
     body: `
 # It manages your ESPHome devices
@@ -2553,7 +2556,7 @@ every entity it carries, so a device holding anything on your
   },
   {
     id: "it-runs-music-assistant",
-    icon: "📄",
+    icon: "🎵",
     title: "It runs Music Assistant",
     body: `
 # It runs Music Assistant
@@ -2597,7 +2600,7 @@ the refusal names it.
   },
   {
     id: "it-runs-your-other-bruh-add-ons",
-    icon: "📄",
+    icon: "🧰",
     title: "It runs your other BRUH add-ons",
     body: `
 # It runs your other BRUH add-ons
@@ -2633,7 +2636,7 @@ away from the kitchen speaker if you want to.
   },
   {
     id: "upkeep-keeping-the-house-itself-in-order",
-    icon: "📄",
+    icon: "🧹",
     title: "Upkeep: keeping the house itself in order",
     body: `
 # Upkeep: keeping the house itself in order
@@ -2668,7 +2671,7 @@ held back.
   },
   {
     id: "it-knows-what-happened-and-what-caused-it",
-    icon: "📄",
+    icon: "🗂️",
     title: "It knows what happened, and what caused it",
     body: `
 # It knows what happened, and what caused it
@@ -2743,7 +2746,7 @@ a state.
   },
   {
     id: "it-asks-why-you-did-something",
-    icon: "📄",
+    icon: "🤔",
     title: "It asks why you did something",
     body: `
 # It asks why you did something
@@ -2815,7 +2818,7 @@ because asking by hand always does.
     body: `
 # It says when it is not working
 
-\`sensor.brain_usage_limits_health\` is \`ok\`, \`degraded\` or \`failed\`, with the reason and
+\`sensor.brain_system_health\` (\`sensor.brain_usage_limits_health\` on an older install) is \`ok\`, \`degraded\` or \`failed\`, with the reason and
 what to do about it in its attributes. It never goes unavailable — Home
 Assistant hides the attributes of an unavailable entity, and this is the
 entity you look at when the others have gone — and a verdict that has gone
@@ -2869,7 +2872,7 @@ whole-system and restorable, and brAIn deliberately does not duplicate them
 
 1. **Install and start the add-on.**
 2. **Open the panel** from the sidebar and connect your Claude account. Easiest route:
-   open the **Terminal** tab, run \`claude\`, and sign in there — the rest of brAIn
+   open the **Ask** tab, switch to the classic terminal (⋯), run \`claude\`, and sign in there — the rest of brAIn
    picks that login up. The panel also offers a guided sign-in and a paste-a-token
    box. This is the **only** login; terminal, insights, voice, findings and memory all
    share it.
@@ -2981,7 +2984,7 @@ ha login --token …    # paste a token minted elsewhere
 ha login --revoke     # withdraw the shared copy
 \`\`\`
 
-The interactive flow needs a terminal, so run it in the panel's **Terminal** tab —
+The interactive flow needs a terminal, so run it in the panel's classic terminal (**Ask** tab, ⋯ → Classic terminal) —
 not the separate **Terminal & SSH** add-on, which is a different container whose \`ha\`
 is the Supervisor CLI, an unrelated tool. Without a terminal at all, use \`--share\`,
 \`--token\`, or the panel.
@@ -3060,7 +3063,7 @@ strip under the bar, shown only where a tab holds more than one.
 | Tab | What's there |
 | --- | --- |
 | **Home** | What is waiting on you and what brAIn has made. **Findings** is one feed of cases — problems, suggestions and guesses — each with the same row of answers (**Fix it** where brAIn can, **Add to list**, **Dismiss**, **Not a problem**; a guess gets **Yes · No · Dismiss**, a plan gets **Apply · Don't change it**) and I've already fixed it, Check again, Talk about it, Elevate, Advice, Stop raising these and the rest behind the **⋯**; a count on the tab means something is waiting on you, and the line under the list says what the Resident did today. **Insights** is your cards and the ask bar that makes new ones (a question becomes a card; a line starting "learn about…" starts a study session; a rule in a sentence becomes a proposal), with a **Today** strip saying when the checks last ran, when the measurements were rebuilt, when memory was filed and how many problems have been written up since yesterday. **Ideas** is the cards brAIn thinks this house is missing — each one names what it found here that made it think so and the question the card would answer every run; take one and it becomes an ordinary card on Insights, say no and it is not suggested again. Nothing on that page is generating anything, which is why it is a separate page: an idea costs nothing until you take it. Press **Suggest ideas** for one now, or leave it — brAIn looks again once a week. **To-do** is the work you agreed to, and **Proposals** the changes brAIn would like to make — a habit worth automating, a condition an automation you keep undoing is missing, an emergency playbook, four scenes for a room, a rule you asked for in a sentence. |
-| **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with the button on the tab, or in ⚙ Settings. Press ⤢ to give either the whole screen. |
+| **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **House** | What brAIn knows and what happened. **Knowledge** is this morning's brief, the seven measurements and how far along each is, the facts with their provenance, the memory document and the queue waiting to be filed into it. **Activity** is what changed in your house and what caused it — a person, an automation, a script, voice, brAIn itself — plus the overrides that are evidence rather than history, fetched fresh every visit and never cached. |
 | **Help** | This guide, in the panel. ⚙ Settings stays in the bar. |
 
@@ -3077,7 +3080,7 @@ itself always runs, because it is the ingress target.
 
 ## ⚙ Settings
 
-Five sections, and you only open the ones you need.
+Six sections, and you only open the ones you need.
 
 * **Claude account** **(open)** — who brAIn is signed in as, which of the three
   credential stores holds it, when it was last verified, and the buttons to
@@ -3095,7 +3098,11 @@ Five sections, and you only open the ones you need.
 * **Generation defaults** — refresh interval, when a card actually refreshes,
   days of history, timeout, model, and how many past runs are kept. These are
   the add-on's own Configuration options; editing them here or on the
-  Configuration tab is the same setting either way.
+  Configuration tab is the same setting either way. **How hard brAIn thinks**
+  is greyed out while a model is chosen, because that model then runs every job.
+* **Cameras** — which cameras brAIn may look at on its own, and how many looks
+  it has used today. A robot vacuum's floor map is published as a camera too;
+  those are left out unless one is already ticked.
 * **Advanced** — Diagnostics (with **Changes and the action gate**: the
   tripwire and house rules), problem reports, corpus capture, the deep check
   and the rehearsal. Nothing here is fetched until you open it, because four of
@@ -3187,7 +3194,7 @@ would produce the same card at full price, and a dashboard that changes nothing 
 timer teaches people it is a timer.
 
 Every card records **why it was made** — "on its refresh interval", "a finding it
-reads changed", "first run since inputs were tracked" — and a card that skipped a run
+reads changed", "first refresh" — and a card that skipped a run
 records the hold instead, so a quiet dashboard can say which of the two it is.
 
 **When to refresh a card** in ⚙ Settings (\`refresh_mode\`) picks the rule. It is
@@ -3273,7 +3280,7 @@ brAIn can currently see that is not working, gathered from every surface it has:
 health verdict, runs that failed in the last day, house checks that could not run,
 snapshot keys that could not be fetched, a measurement store that measured nothing,
 the rehearsal and the deep check, notifications that would not deliver, the usage
-tracker's own verdict, the producers you keep marking **Wrong**, and any daemon that
+tracker's own verdict, the producers you keep marking **Not a problem**, and any daemon that
 is down. On a healthy install it is one sentence saying so. A refusal doing its job —
 an overnight repair that stood down on a protected entity, a producer that could not
 read a file — is deliberately not in it, because a list that includes those is one
@@ -3602,7 +3609,7 @@ memory excerpt, the open cases), and the nightly pass labels each one with what
 you did next, so \`brain eval first_look\` can replay them against today's prompt.
 
 That last part is the whole point. An ending on the Findings feed is already a
-label: **I fixed it** and **Got it** say the report was right, **Wrong** says
+label: **I fixed it** and **Got it** say the report was right, **Not a problem** says
 it was not. Pairing that with the prompt that produced it turns a house into a
 graded example, and a directory of graded examples is something a prompt change
 can be scored against before it ships.
@@ -3977,7 +3984,7 @@ To keep it from eating the plan you also use for your own work:
   },
   {
     id: "cameras",
-    icon: "📄",
+    icon: "📷",
     title: "Cameras",
     body: `
 # Cameras
@@ -3985,8 +3992,7 @@ To keep it from eating the plan you also use for your own work:
 A camera frame is the most private thing your house holds, so brAIn looks
 through one **on its own** — when you ask a voice assistant, when an
 automation runs the **Camera check** insight, or to confirm a safety alarm or
-an open door — only through the cameras you tick under **⚙ → Generation
-defaults → Cameras**. None are ticked to begin with.
+an open door — only through the cameras you tick under **⚙ → Cameras**. None are ticked to begin with.
 
 - **A daily limit.** Ticked cameras are looked at a dozen times a day at most,
   across every one of those paths together; the list says how many have been
@@ -4068,7 +4074,7 @@ Before 1.19.0 this port was published on every install and ttyd ran without
 a password, so anyone on your network could open a root shell with \`/config\`
 read-write and your signed-in Claude. It is unpublished now, and the
 terminal you use in the panel does not need it — the panel proxies ttyd over
-loopback, which is what makes Terminal a tab.
+loopback, which is what makes the terminal part of the Ask tab.
 
 If you do want the direct port (a wall tablet, a bookmark), assign it under
 the add-on's **Network** settings. It asks for a password either way:

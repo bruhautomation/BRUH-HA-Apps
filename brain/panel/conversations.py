@@ -39,6 +39,7 @@ every background caller claims its own session id before running.
 from __future__ import annotations
 
 import datetime as dt
+import html
 import json
 import os
 import re
@@ -92,7 +93,88 @@ _NOT_A_PROMPT = (
     "Caveat: The messages below",
     "<command-name>",
     "<local-command-stdout>",
+    "<task-notification>",
 )
+
+# User-shaped entries the CLI writes ITSELF, into the person's half of the
+# conversation: a background task (a backgrounded shell, a sub-agent)
+# finishing, and the reminders it injects. The tag is what says which, and
+# nothing else does — such an entry carries no isMeta. Rendered as a bubble
+# they read as something the person typed: four kilobytes of raw XML with
+# escaped newlines, which is what a walkthrough found in a real chat.
+_INJECTED = {
+    "<task-notification>": "task",
+    "<system-reminder>": "reminder",
+}
+# A one-line heading, never the body: the row is collapsed and the summary
+# is what it says while it is.
+MAX_INJECTED_SUMMARY = 200
+
+
+def _tag(text: str, name: str) -> str:
+    match = re.search(rf"<{name}>(.*?)</{name}>", text, re.S)
+    return match.group(1).strip() if match else ""
+
+
+def _unescape(text: str) -> str:
+    r"""A body as a person would read it.
+
+    The CLI writes these as XML, so ``>=`` arrives as ``&gt;=``; and a body
+    that was itself JSON-escaped arrives as one line with a literal ``\n``
+    in it. The second is only undone when the text has no real line breaks
+    of its own, so a body that merely mentions ``\n`` keeps it.
+    """
+    text = html.unescape(text)
+    if "\\n" in text and "\n" not in text.strip():
+        text = text.replace("\\n", "\n").replace("\\t", "\t")
+    return text
+
+
+def injected_event(text: str) -> dict | None:
+    """A CLI-injected user turn as a ``background`` event, or None.
+
+    One classifier for every reader — the live stream (``chat_session.
+    _normalise``), this module's replay, and a scrollback the panel saved
+    before this existed — because a second copy of "which user turns are
+    not the person" is the copy that lets one through. ``None`` means the
+    text is not one of these and the caller decides what it is.
+    """
+    stripped = (text or "").lstrip()
+    kind = next((k for tag, k in _INJECTED.items()
+                 if stripped.startswith(tag)), None)
+    if kind is None:
+        return None
+    if kind == "task":
+        status = _unescape(_tag(stripped, "status"))
+        summary = _unescape(_tag(stripped, "summary"))
+        body = _tag(stripped, "result")
+        if not body:
+            # No result block: what follows the notification (the CLI
+            # appends where the output can be read) is the body there is.
+            body = stripped.split("</task-notification>", 1)[-1].strip()
+        heading = summary or ("Background task " + (status or "finished"))
+    else:
+        status = ""
+        body = _tag(stripped, "system-reminder") or stripped
+        heading = "Note from Claude Code"
+    heading = " ".join(heading.split())
+    if len(heading) > MAX_INJECTED_SUMMARY:
+        heading = heading[:MAX_INJECTED_SUMMARY - 1] + "…"
+    return {"type": "background", "kind": kind, "status": status,
+            "summary": heading, "text": _clip(_unescape(body))}
+
+
+def injected_events(text: str) -> list[dict] | None:
+    """What the chat shows for a CLI-injected turn: None if it is not one.
+
+    A finished task is news in the conversation and becomes one collapsed
+    row; a reminder is the CLI talking to the model, was never shown, and
+    is still not. Either way it is never a bubble.
+    """
+    event = injected_event(text)
+    if event is None:
+        return None
+    return [event] if event["kind"] == "task" else []
 
 
 def _escape(path: str) -> str:
@@ -689,6 +771,9 @@ def _replay(entry: dict) -> list[dict]:
                     "text": _clip(text),
                 })
             return out
+        injected = injected_events(_message_text(entry))
+        if injected is not None:
+            return injected
         if _is_prompt(entry):
             return [{"type": "user", "text": _clip(_message_text(entry))}]
         return []

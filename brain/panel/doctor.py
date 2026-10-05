@@ -80,6 +80,7 @@ import chat_session
 import engine
 import findings_store
 import journal
+import run_sources
 import undo_store
 
 # The face every run here is filed under. It is in ``run_sources.SOURCES``
@@ -272,7 +273,7 @@ def _engine_failure(result: dict, what: str, timeout_message: str) -> dict:
                    "add-on log has the last thing it said.",
         "auth": f"{what} could not authenticate. Sign in again from "
                 "⚙ Settings → Claude account, or run `claude /login` in "
-                "the Terminal tab.",
+                "the classic terminal on the Ask tab.",
         "no_cli": "The Claude Code CLI is not in this image — nothing "
                   "here can run until it is back. Restart the add-on.",
         "max_turns": f"{what} hit the turn limit before answering.",
@@ -445,6 +446,9 @@ async def stage_chat(hooks: Hooks) -> dict:
         return _fail(f"The chat session failed: {str(exc)[:200]}")
     finally:
         session.unsubscribe(queue)
+        # Again here, for a turn that ended before its `info` reached the
+        # queue (a failed spawn that still named itself).
+        _claim_chat(session.session_id)
         try:
             await session.stop()
         except Exception:  # noqa: BLE001 — the stop is the cleanup, and a
@@ -480,6 +484,11 @@ async def _await_chat_result(queue: asyncio.Queue, timeout: int) -> str | None:
             raise asyncio.TimeoutError
         event = await asyncio.wait_for(queue.get(), timeout=left)
         kind = event.get("type")
+        if kind == "info" and event.get("session_id"):
+            # The id exists from the CLI's first word, and the probe is
+            # claimed then rather than when it ends: a listing taken while
+            # the turn runs must not offer it as somebody's chat either.
+            _claim_chat(event["session_id"])
         if kind == "text":
             said = str(event.get("text") or "") or said
         elif kind == "result":
@@ -488,6 +497,22 @@ async def _await_chat_result(queue: asyncio.Queue, timeout: int) -> str | None:
             return None
         elif kind == "state" and event.get("state") == "error":
             return None
+
+
+def _claim_chat(session_id: str | None) -> None:
+    """File the probe's conversation under ``doctor``.
+
+    The chat stage drives a real chat session from ``/config``, so the CLI
+    files its conversation beside the person's own, and the Chats rail
+    lists every id nobody claimed as theirs. Engine runs claim through
+    ``engine._run_cli``; a chat session mints its id inside the CLI and
+    claims nothing, so this stage has to — and for a long time only its
+    docstring did, which left a "Reply with exactly: OK" chat in the rail
+    after every deep check. Claiming twice is harmless: the ledger is an
+    index, and the last line for an id is the answer.
+    """
+    if session_id:
+        run_sources.record(session_id, SOURCE)
 
 
 def _forget_chat_transcript(session_id: str | None) -> None:

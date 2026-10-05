@@ -191,7 +191,11 @@ class BrainTodoList(TodoListEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "brAIn"
+    # Read with the device's name in front of it, so "brAIn" here made the
+    # list "brAIn System brAIn". Only the name moves: the unique id is what
+    # the registry keys the entity by, so an install that already has
+    # `todo.brain_system_brain` keeps that id (and its history).
+    _attr_name = "To-do"
     _attr_icon = "mdi:clipboard-list-outline"
     # CREATE is here because there is now a store behind it — see the
     # module docstring. Completing and deleting still mean what each row's
@@ -205,7 +209,7 @@ class BrainTodoList(TodoListEntity):
         identifiers={(DOMAIN, "system_health")},
         name="brAIn System",
         manufacturer="BRUH Automation",
-        model="Claude Terminal",
+        model="brAIn add-on",
     )
 
     def __init__(self, hass: HomeAssistant) -> None:

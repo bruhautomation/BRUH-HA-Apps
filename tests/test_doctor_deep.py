@@ -1022,6 +1022,29 @@ class TestChatStage(DoctorCase):
             if os.path.isdir(self.chat.TRANSCRIPT_DIR) else []
         self.assertEqual(left, [], "the probe left a conversation behind")
 
+    async def test_the_probe_is_filed_as_the_doctors_not_as_a_chat(self):
+        """The stage talks to a real chat session from /config, so the CLI
+        files its conversation beside the person's own, and the rail lists
+        every id nobody claimed. Only the docstring used to claim it, which
+        left a "Reply with exactly: OK" conversation in somebody's Chats
+        after every deep check."""
+        os.environ["BRAIN_RUN_SOURCES"] = os.path.join(
+            self.tmp.name, "run-sources.jsonl")
+        import run_sources
+        importlib.reload(run_sources)
+        self.doctor = importlib.reload(self.doctor)
+        try:
+            out = await self.doctor.stage_chat(hooks()[0])
+            self.assertEqual(out["state"], "ok", out["sentence"])
+            ledger = [json.loads(line) for line in
+                      Path(run_sources.LEDGER).read_text().splitlines()]
+            ids = {row["id"] for row in ledger}
+            self.assertTrue(ids, "the probe's conversation was never claimed")
+            self.assertEqual(set(run_sources.lookup(ids).values()), {"doctor"})
+        finally:
+            os.environ.pop("BRAIN_RUN_SOURCES", None)
+            importlib.reload(run_sources)
+
     async def test_it_never_joins_the_registry(self):
         """Nothing on screen may move, and no live conversation may be
         evicted, because a check that closed somebody's chat to prove the

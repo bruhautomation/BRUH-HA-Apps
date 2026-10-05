@@ -49,6 +49,7 @@ from __future__ import annotations
 from . import (automations, baseline, chores, dashboards,  # noqa: F401
                devices, evening, forecasts, registry, security, snapshot,
                system, thermal)
+from ._util import history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -169,6 +170,15 @@ def run_all(snap: dict, now: float | None = None,
         missing = [n for n in check.get("needs", ()) if not available.get(n)]
         if missing:
             skipped[cid] = "snapshot is missing " + ", ".join(missing)
+            continue
+        # A check that reads a window off the recorder says nothing while
+        # the recorder is missing rows — and is SKIPPED rather than run
+        # empty, because a skipped check clears nothing: "the history had
+        # a hole" is not "the sensor recovered". `sys.history_incomplete`
+        # is the one row that says why.
+        if check.get("reads_history") and history_cut(snap):
+            skipped[cid] = ("Home Assistant's history is incomplete this "
+                            "pass (sys.history_incomplete)")
             continue
         try:
             found = check["run"](snap, now) or []

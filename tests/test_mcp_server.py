@@ -201,6 +201,34 @@ class TestToolImplementations(unittest.TestCase):
         self.assertEqual(result[0]["entity_id"], "light.kitchen_main")
 
     @patch("ha_mcp_server.ha_api_request")
+    def test_get_all_states_says_what_a_number_is_measured_in(self, mock_api):
+        """A soil probe's battery at 1.3 is volts, and the row has to say so:
+        handed as a bare "1.3" under the name "Soil Battery 1" it was
+        reported as a battery at 1.3% that had died."""
+        mock_api.return_value = [
+            {"entity_id": "sensor.gw1100b_soil_battery_1", "state": "1.3",
+             "attributes": {"friendly_name": "GW1100B Soil Battery 1",
+                            "unit_of_measurement": "V",
+                            "device_class": "voltage"}},
+            {"entity_id": "sensor.door_battery", "state": "87",
+             "attributes": {"friendly_name": "Door Battery",
+                            "unit_of_measurement": "%",
+                            "device_class": "battery"}},
+            {"entity_id": "light.a", "state": "on",
+             "attributes": {"friendly_name": "A"}},
+        ]
+        rows = {r["entity_id"]: r for r in
+                ha_mcp_server.get_all_states(name_filter="battery")}
+        self.assertEqual(rows["sensor.gw1100b_soil_battery_1"]["unit"], "V")
+        self.assertEqual(
+            rows["sensor.gw1100b_soil_battery_1"]["device_class"], "voltage")
+        self.assertEqual(rows["sensor.door_battery"]["unit"], "%")
+        # A row with no unit carries no empty key for one.
+        plain = ha_mcp_server.get_all_states(domain="light")[0]
+        self.assertNotIn("unit", plain)
+        self.assertNotIn("device_class", plain)
+
+    @patch("ha_mcp_server.ha_api_request")
     def test_get_all_states_empty(self, mock_api):
         """Test empty state list."""
         mock_api.return_value = []

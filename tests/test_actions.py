@@ -246,6 +246,22 @@ class TestMining(unittest.TestCase):
         mined = actions.mine([entry()])
         self.assertEqual(set(mined["counts"]), set(actions.CAUSES))
 
+    def test_home_assistant_starting_is_kept_apart_from_the_actions(self):
+        """Core logs its own start with no entity, so `mine` drops it — and
+        it is the one fact that explains a row of devices going unavailable
+        in the same minute, so `ha_starts` keeps it."""
+        log = [
+            entry(),
+            {"when": NOW - 600, "name": "Home Assistant",
+             "message": "started", "domain": "homeassistant"},
+            {"when": NOW - 700, "name": "Home Assistant",
+             "message": "stopped", "domain": "homeassistant"},
+            {"when": NOW, "name": "Evening lights", "message": "triggered",
+             "domain": "automation"},
+        ]
+        self.assertEqual(actions.ha_starts(log), [NOW - 600])
+        self.assertEqual(len(actions.mine(log)["actions"]), 1)
+
 
 class TestOverrides(unittest.TestCase):
     def test_a_person_undoing_an_automation_is_an_override(self):

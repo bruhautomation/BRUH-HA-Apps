@@ -278,6 +278,66 @@ class TestAHeldRowReachesNobody(StoreCase):
         self.assertIn(held["ts"], [f["ts"] for f in rows])
 
 
+class TestARowNothingLookedAtIsNotInvisible(StoreCase):
+    """The walkthrough found a serious row — an add-on in an error state —
+    `triaging` for 28 minutes with `triage: {}`, while the feed said
+    "Nothing waiting on you", the sensor said 0 and Diagnostics said
+    "Findings open 0". `STALE_S` surfaces it after an hour; until then it
+    reached no surface at all. Past `SHOW_AFTER_S` it is shown and counted,
+    still waiting for the look."""
+
+    def _age(self, rows, seconds):
+        data = json.loads(findings_store.FINDINGS_FILE.read_text())
+        for entry in data["findings"]:
+            entry["ts"] = int(entry["ts"] - seconds)
+        findings_store.FINDINGS_FILE.write_text(json.dumps(data))
+
+    def test_a_fresh_row_waits_unseen_as_it_always_did(self):
+        self.file_check_rows(1)
+        self.assertEqual(findings_store.open_count(), 0)
+        self.assertEqual(findings_store.waiting_look_count(), 0)
+        self.assertNotIn("waiting_look", findings_store.listing()["findings"][0])
+
+    def test_past_the_bound_it_is_counted_everywhere(self):
+        base = Path(self.tmp.name)
+        findings_store.STATE_FILE = base / "config" / ".brain" / "state.json"
+        (base / "config").mkdir(parents=True, exist_ok=True)
+        self.file_check_rows(1)
+        self._age(None, 28 * 60)
+        findings_store.publish_state()
+        self.assertEqual(findings_store.waiting_look_count(), 1)
+        self.assertEqual(findings_store.open_count(), 1)
+        listing = findings_store.listing()
+        self.assertEqual(listing["open"], 1)
+        [row] = listing["findings"]
+        self.assertEqual(row["status"], "triaging")
+        self.assertTrue(row["waiting_look"])
+        mirror = json.loads(findings_store.STATE_FILE.read_text())
+        self.assertEqual(mirror["open"], 1)
+        self.assertEqual(mirror["waiting_look"], 1)
+        # Counted, not listed: the watcher's events and Repairs wait for a
+        # verdict, which is what `findings` there is read for.
+        self.assertEqual(mirror["findings"], [])
+
+    def test_the_badge_counts_it_beside_the_cases(self):
+        import cases
+        self.file_check_rows(1)
+        self._age(None, 28 * 60)
+        old = cases.list_cases
+        cases.list_cases = lambda *a, **k: []
+        try:
+            self.assertEqual(cases.open_count(), 1)
+        finally:
+            cases.list_cases = old
+
+    def test_once_looked_at_it_is_counted_as_what_the_look_said(self):
+        [row] = self.file_check_rows(1)
+        self._age(None, 28 * 60)
+        self.hold({**row, "ts": row["ts"] - 28 * 60})
+        self.assertEqual(findings_store.waiting_look_count(), 0)
+        self.assertEqual(findings_store.open_count(), 0)
+
+
 # ---------------------------------------------------------------------------
 # The pass, over the real server
 # ---------------------------------------------------------------------------

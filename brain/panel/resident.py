@@ -62,6 +62,7 @@ from pathlib import Path
 
 import atomic_write
 import model_plan
+import textclip
 
 # ---------------------------------------------------------------------------
 # The jobs, by name
@@ -270,7 +271,14 @@ Rules:
   interesting is a person rather than the house, ignore it.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
-  reasoning, so "looks fine" is not an answer.
+  reasoning, so "looks fine" is not an answer. The numbers on the signals
+  are for your reply only: a "why" never says "signal 7" or "same as
+  #3" — it names the device ("same Wi-Fi drop as the water meter").
+- A device that something USES is not a device with nothing behind it.
+  When the prompt says what an entity is used by, or what brAIn knows
+  about it, judge its failure by what stops with it — never write "no
+  known load" or "nothing depends on it" about an entity the prompt says
+  something depends on.
 - Judge each signal on what you were given. You have no tools here and
   nothing to look up: if you need to look something up, that is what
   "investigate" means.
@@ -353,7 +361,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
                       watch_notes=None, examples=None,
                       inputs: dict | None = None,
-                      situation_line: str = "") -> str:
+                      situation_line: str = "", used_by=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -382,6 +390,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
             "watch_notes": _rows(watch_notes),
             "examples": _rows(examples)[:MAX_EXAMPLES],
             "situation_line": str(situation_line or ""),
+            "used_by": _rows(used_by),
         })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
@@ -401,6 +410,12 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    used = _rows(used_by)
+    if used:
+        parts.append("WHAT USES THESE DEVICES — automations and scripts "
+                     "that name them, so whatever stops when one fails:")
+        parts += [f"- {row}" for row in used]
+        parts.append("")
     notes = _rows(watch_notes)
     if notes:
         # What an earlier look said about a subject it decided to watch.
@@ -423,6 +438,40 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
         parts.append(f"{i}. {row}")
     parts.append("\nReply with the JSON contract and nothing else.")
     return "\n".join(parts)
+
+
+# "signal 7", "signals 2 and 3", "(signal #4)": the batch's own numbering,
+# which a reply sometimes cites although the prompt says not to. A number
+# that only means something inside the prompt is noise on a card, so a
+# bracketed one is taken out and a bare one becomes "another signal".
+_NUM_LIST = r"#?\s*\d+(?:\s*(?:,|and|&|or|-|–)\s*#?\s*\d+)*"
+_SIGNAL_PAREN = re.compile(
+    r"\s*\(\s*(?:signals?|rows?|items?)\s*" + _NUM_LIST + r"\s*\)",
+    re.IGNORECASE)
+_SIGNAL_REF = re.compile(
+    r"\b(signals?|rows?|items?)\s*" + _NUM_LIST + r"\b", re.IGNORECASE)
+
+
+def strip_signal_refs(text: str) -> str:
+    """`text` without the batch's numbering ("same as signal 7").
+
+    Only a reference with a number is touched, so "a signal that repeats"
+    is left alone.
+    """
+    s = str(text or "")
+    if not re.search(r"\d", s):
+        return s
+
+    def _word(m: re.Match) -> str:
+        noun = m.group(1).lower()
+        plural = noun.endswith("s")
+        base = noun.rstrip("s") if plural else noun
+        out = f"other {base}s" if plural else f"another {base}"
+        return out.capitalize() if m.group(1)[:1].isupper() else out
+
+    out = _SIGNAL_PAREN.sub("", s)
+    out = _SIGNAL_REF.sub(_word, out)
+    return re.sub(r"\s{2,}", " ", out).strip() or s
 
 
 def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
@@ -468,7 +517,8 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                 # then a skipped one, which is watched and says so.
                 continue
             said[idx] = {"verdict": verdict,
-                         "why": str(row.get("why") or "").strip()[:MAX_WHY],
+                         "why": textclip.clip(strip_signal_refs(
+                             str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
 
     unreadable = not isinstance(listed, list)
@@ -489,8 +539,9 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         if floor and _RANK[answer["verdict"]] < _RANK[floor]:
             answer = {"verdict": floor,
-                      "why": (FORCED.format(why=why) + " " + answer["why"]
-                              ).strip()[:MAX_WHY],
+                      "why": textclip.clip(
+                          (FORCED.format(why=why) + " " + answer["why"]).strip(),
+                          MAX_WHY),
                       "forced": True,
                       "fallback": bool(answer.get("fallback"))}
         out[idx] = answer
@@ -642,7 +693,13 @@ Rules that matter more than anything about style:
 - Do not restate what brAIn already knows or what is already in front of
   the homeowner. If the answer is already on their list, make no claim.
 - One claim per run. If you found two things, claim the one that matters
-  and say the other in "detail"."""
+  and say the other in "detail".
+- Never refer to brAIn's own bookkeeping in anything the homeowner reads:
+  no "signal 7", "row 3", "finding #12", case ids or timestamps used as
+  ids. Name the device and the time instead.
+- Before saying a device has nothing behind it, read what the prompt says
+  it is USED BY and what brAIn knows about it: a plug that runs the
+  crawl-space fan is the crawl-space fan."""
 
 
 def investigate_prompt(signal: dict, memory_excerpt: str = "",
@@ -651,7 +708,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        refining: dict | None = None,
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
-                       situation_line: str = "") -> str:
+                       situation_line: str = "", used_by=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -710,6 +767,12 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
                      + memory_excerpt.strip() + "\n")
+    used = _rows(used_by)
+    if used:
+        parts.append("WHAT USES THESE DEVICES — automations and scripts "
+                     "that name them, so whatever stops when one fails:")
+        parts += [f"- {row}" for row in used]
+        parts.append("")
     if house_block.strip():
         parts.append("WHAT BRAIN HAS MEASURED:\n" + house_block.strip() + "\n")
     cases = _rows(open_cases_rows)
@@ -841,7 +904,7 @@ def parse_dismissal(obj) -> str | None:
         return None
     if str(obj.get("claim") or "").strip():
         return None
-    why = str(obj.get("detail") or "").strip()[:MAX_WHY]
+    why = textclip.clip(str(obj.get("detail") or "").strip(), MAX_WHY)
     return why or "An investigation looked and found nothing worth showing."
 
 
@@ -907,7 +970,7 @@ def watch(signal: dict, why: str = "", now: float | None = None) -> dict:
     rows[subject] = {
         "subject": subject,
         "kind": str((signal or {}).get("kind") or ""),
-        "why": str(why or "").strip()[:MAX_WATCH_WHY],
+        "why": textclip.clip(str(why or "").strip(), MAX_WATCH_WHY),
         "at": int(now),
         "seen": 0,
     }

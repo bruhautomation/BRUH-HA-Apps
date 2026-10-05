@@ -1535,8 +1535,8 @@ function makeCard(catInfo, insight, fallbackId) {
       foot.appendChild(live);
     }
     // WHY this run happened, beside when it did. The scheduler's own
-    // sentence when it queued one ("3 more finding(s) on the list", "memory
-    // was updated"), and "you asked" / "you pressed Generate" otherwise —
+    // sentence when it queued one ("1 new finding", "memory
+    // changed"), and "you asked" / "you pressed Generate" otherwise —
     // without it a card that refreshed itself is a card that changed for no
     // reason anybody can see. It is never truncated: the foot wraps rather
     // than squeezing this to an ellipsis, because half a reason is worse
@@ -1755,7 +1755,7 @@ function renderToday(today) {
   if (checks.running) {
     segs.push(["checks", `Checks running${elapsedLabel(checks.running_for)}`, null]);
   } else if (checks.last_at) {
-    const bits = [`Checks ran ${clockAt(checks.last_at)}`];
+    const bits = [`Checks ran ${whenAt(checks.last_at)}`];
     const ran = Number(checks.ran) || 0;
     const skipped = Number(checks.skipped) || 0;
     const errored = Number(checks.errored) || 0;
@@ -1769,7 +1769,7 @@ function renderToday(today) {
     const cleared = Number(checks.cleared) || 0;
     if (created) bits.push(`${created} new finding${created === 1 ? "" : "s"}`);
     if (cleared) bits.push(`${cleared} cleared`);
-    if (checks.next_at) bits.push(`next ${clockAt(checks.next_at)}`);
+    if (checks.next_at) bits.push(`next ${whenAt(checks.next_at)}`);
     segs.push(["checks", bits.join(" · "), null]);
   }
 
@@ -1779,7 +1779,7 @@ function renderToday(today) {
   } else if (base.error) {
     segs.push(["baselines", `Baselines: ${base.error}`, null]);
   } else if (base.built_at) {
-    segs.push(["baselines", `Baselines rebuilt ${clockAt(base.built_at)}`, null]);
+    segs.push(["baselines", `Baselines rebuilt ${whenAt(base.built_at)}`, null]);
   }
 
   const mem = t.memory || {};
@@ -1801,13 +1801,14 @@ function renderToday(today) {
       openProblems]);
   }
 
-  // Every Claude run and every checks pass that reached the journal. It is
-  // what tells a quiet add-on from a stopped one, which is why the window is
-  // said out loud rather than left as "today".
-  const landed = Number(t.landed_runs_24h) || 0;
-  if (landed) {
+  // Claude runs — rows a model ran for, not the checks passes beside them
+  // (the checks have their own segment). It is what tells a quiet add-on
+  // from a stopped one, which is why the window is said out loud rather
+  // than left as "today", and why it says WHAT it counts.
+  const runs = Number(t.claude_runs_24h) || 0;
+  if (runs) {
     segs.push(["runs",
-      `${landed} run${landed === 1 ? "" : "s"} landed in the last day`, null]);
+      `${runs} Claude run${runs === 1 ? "" : "s"} in the last day`, null]);
   }
 
   strip.classList.toggle("hidden", !segs.length);
@@ -1821,6 +1822,25 @@ function renderToday(today) {
     }
     strip.appendChild(node);
   });
+  // On a phone the strip is one line until asked: five segments wrapped to
+  // five lines above the first card, which is a record of what brAIn did for
+  // itself pushing what is waiting on you below the fold. The first segment
+  // and any press stay; the rest are behind "+N more" (CSS hides it, and
+  // the segments, only under the phone breakpoint — a wide screen has the
+  // room for all of them on one line).
+  const folded = segs.filter(([, , press], i) => i > 0 && !press).length;
+  if (folded) {
+    const more = el("button", "tsegmore", `+${folded} more`);
+    more.type = "button";
+    more.setAttribute("aria-expanded", String(strip.classList.contains("open")));
+    more.addEventListener("click", () => {
+      const open = strip.classList.toggle("open");
+      more.setAttribute("aria-expanded", String(open));
+      more.textContent = open ? "Less" : `+${folded} more`;
+    });
+    if (strip.classList.contains("open")) more.textContent = "Less";
+    strip.appendChild(more);
+  }
 }
 
 // ⚙ opens on the Diagnostics/Problems half; the section is already loaded by
@@ -2547,6 +2567,28 @@ function renderModelField(data) {
   sel.value = current;
   custom.value = known ? "" : current;
   custom.classList.add("hidden");
+  syncThinking(current);
+}
+
+// "How hard brAIn thinks" shifts the tiers each job runs on, and a model
+// chosen above replaces the tiers for every run — so with one chosen the
+// select changes nothing. It used to look exactly as live as when it
+// mattered; now it is disabled and its line says why. The saved value is
+// kept, so choosing the automatic model again brings it back as it was.
+const THINKING_NOTE = "Every run is tiered by its job (Haiku looks, Sonnet thinks, "
+  + "Opus acts); this shifts the tiers.";
+
+function syncThinking(model) {
+  const sel = $("#setThinking");
+  const note = $("#setThinkingNote");
+  const fixed = Boolean(model) && model !== CUSTOM_MODEL;
+  if (sel) sel.disabled = fixed;
+  if (note) {
+    note.textContent = fixed
+      ? "Not used while a model is chosen above: every run uses that model. "
+        + "Pick CLI default to use the tiers."
+      : THINKING_NOTE;
+  }
 }
 
 function renderSettingsForm(data) {
@@ -2579,12 +2621,12 @@ function renderSettingsForm(data) {
       + "and override the add-on's Configuration tab until it is.";
 }
 
-// ⚙ is five `<details>`, and a section remembers whether it was open —
+// ⚙ is six `<details>`, and a section remembers whether it was open —
 // somebody who lives in Advanced should not have to reopen it every visit,
 // and a disclosure that forgets is one people stop using. `prefGet` can
 // throw or answer null (an ingress iframe may be refused storage), so the
 // markup's own `open` is the fallback rather than an assumed shut.
-const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "advanced"];
+const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "cameras", "advanced"];
 const setSectionKey = (name) => "brain.set." + name;
 
 function restoreSettingsSections() {
@@ -2597,7 +2639,7 @@ function restoreSettingsSections() {
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
       if (name === "advanced" && box.open) loadAdvanced();
-      if (name === "defaults" && box.open) loadCameras();
+      if (name === "cameras" && box.open) loadCameras();
     });
   });
 }
@@ -2685,7 +2727,7 @@ async function openSettings() {
   loadAuth();
   advancedLoaded = false;
   camerasLoaded = false;
-  if ($("#setsecDefaults") && $("#setsecDefaults").open) loadCameras();
+  if ($("#setsecCameras") && $("#setsecCameras").open) loadCameras();
   // Its open state survived the close (it is remembered), so a visit that
   // lands on an already-expanded Advanced still has to fetch: the section
   // being open is not the same claim as its rows being current.
@@ -2837,8 +2879,11 @@ function renderDiagnostics(d) {
   rows.push(diagRow("Claude sign-in",
     esc((d.auth || {}).state || "unknown"),
     (d.auth || {}).state !== "ok"));
+  // `claude_runs` is the Claude runs; `by_outcome` counts every journal
+  // line (checks passes and summary rows too), so it is labelled as such.
   rows.push(diagRow("Claude runs, last 24h",
-    `${j.runs || 0} — ${diagCounts(j.by_outcome)}`,
+    `${j.claude_runs ?? j.runs ?? 0} — journal lines by outcome: `
+      + diagCounts(j.by_outcome),
     (j.runs || 0) > 0 && ok < (j.runs || 0)));
   if (c && c.finished_at) {
     const errs = Object.keys(c.errors || {}).length;
@@ -2868,7 +2913,11 @@ function renderDiagnostics(d) {
         + (b.stale ? " — stale" : "")
       : "not measured yet (the first pass runs overnight)",
     !!b.stale && !!b.built_at));
-  rows.push(diagRow("Findings open", String((d.findings || {}).open ?? 0)));
+  {
+    const fd = d.findings || {};
+    rows.push(diagRow("Findings open", String(fd.open ?? 0)
+      + (fd.waiting_look ? ` (${fd.waiting_look} still waiting for brAIn's first look)` : "")));
+  }
   const n = d.notify || {};
   if (n.service) {
     // A hold queue nobody can see is a queue that silently swallows: this
@@ -2960,8 +3009,10 @@ function renderDiagnostics(d) {
     // be measured against anything" look identical from everywhere else.
     rows.push(diagRow("How rooms hold heat",
       th.reason ? esc(th.reason)
+        // Pluralised on the count it sits beside: "1 of 8 rooms", never
+        // "1 of 8 room".
         : `${th.measured ?? 0} of ${th.asked ?? "?"} room`
-          + `${th.measured === 1 ? "" : "s"} measured`
+          + `${(th.asked ?? th.measured) === 1 ? "" : "s"} measured`
           + (th.outdoor ? ` against ${esc(th.outdoor)}` : "")
           + (th.built_at
               ? ` — ${timeAgo(new Date(th.built_at * 1000).toISOString())}` : ""),
@@ -3046,8 +3097,15 @@ function renderDiagnostics(d) {
     ? Object.keys(daemons) : [];
   if (names.length) {
     const up = (n) => !!(daemons[n] || {}).running;
-    const items = names.sort().map((n) =>
-      `<li><b>${esc(n)}</b> — ${up(n) ? "running" : "not running"}</li>`);
+    // `not_used` is the server's reason a stopped one was never asked for
+    // (`health.not_used_reason`) — "not used (fast mode)" rather than a
+    // bare "not running" beside a verdict that says everything is fine.
+    const items = names.sort().map((n) => {
+      const row = daemons[n] || {};
+      const said = up(n) ? "running"
+        : (row.not_used ? String(row.not_used) : "not running");
+      return `<li><b>${esc(n)}</b> — ${esc(said)}</li>`;
+    });
     // The roll-call is DESCRIPTIVE — some of these are correctly absent
     // because the option behind them is off — so a stopped one is not
     // painted as a fault here. `health.py` is what interprets it against
@@ -3489,7 +3547,8 @@ $("#deepRun").addEventListener("click", async () => {
     // A 409 means one is already going — which is an answer, not an error:
     // both presses are watching the same run.
     await api("api/doctor/deep", { method: "POST" });
-    toast("Deep check started — it spends a few Claude turns");
+    toast("Deep check started — it spends a few Claude turns and makes "
+      + "one reversible change to a test helper it creates");
   } catch (e) {
     toast(e.message);
   }
@@ -3660,7 +3719,10 @@ $("#rehearseSweep").addEventListener("click", async () => {
 function fmtSaved(epoch) {
   if (!epoch) return "";
   const d = new Date(epoch * 1000);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+  // No seconds: "3:52:44 PM" is precision nobody reads a sign-in date for.
+  return isNaN(d.getTime()) ? "" : d.toLocaleString([], {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit" });
 }
 
 // Where the credential in use came from. `source` is the field that makes a
@@ -3925,6 +3987,7 @@ $("#setModel").addEventListener("change", () => {
     return;
   }
   custom.classList.add("hidden");
+  syncThinking(sel.value);
   saveSettings({ model: sel.value });
 });
 $("#setModelCustom").addEventListener("change", () =>
@@ -4092,6 +4155,10 @@ const FIND_STATUS = {
   ignored:   { label: "Dismissed", cls: "ignored" },
 };
 
+// What a dismissed row says in place of its status: it is away, not
+// waiting on anybody.
+const FIND_SNOOZED = { label: "Dismissed", cls: "ignored" };
+
 const FIND_SEVERITY = {
   info: "Tidy-up", warning: "Degraded", serious: "Broken", critical: "Urgent",
 };
@@ -4126,9 +4193,13 @@ const FIND_SEVERITY = {
 // and overturn. Hence a reason on every row, the conversation behind it
 // one press away, and one verb that puts it back.
 const FIND_FILTERS = [
+  // `waiting_look` is a row still waiting for its first look past
+  // `triage.SHOW_AFTER_S`: no case covers it, so it renders beneath the
+  // cases as itself, saying it has not been looked at — rather than the
+  // tab saying "Nothing waiting on you" over a serious one.
   { id: "live", label: "Needs you", match: (f) =>
-    ["open", "planning", "planned", "fixing", "fixed", "failed",
-     "needs_you"].includes(f.status)
+    (["open", "planning", "planned", "fixing", "fixed", "failed",
+      "needs_you"].includes(f.status) || !!f.waiting_look)
     && !findings_isSnoozed(f) },
   { id: "snoozed", label: "Dismissed", match: (f) => findings_isSnoozed(f) },
   // What was brought up and looked at and is not worth your time. These
@@ -4504,19 +4575,74 @@ function fixFootLine(f) {
 // saying nothing happened is a badge people stop reading.
 function triageLine(f) {
   const t = f.triage || {};
+  if (!t.verdict && f.waiting_look) {
+    const box = el("p", "findtriage unchecked");
+    box.appendChild(el("span", "findtriagelabel", "Not looked at yet"));
+    box.appendChild(el("span", null, "brAIn has not looked at this one yet, "
+      + "so it is shown as it was filed rather than left waiting out of sight."));
+    return box;
+  }
   if (!t.verdict) return null;
   const box = el("p", "findtriage");
-  if (t.verdict === "untriaged") {
+  const untriaged = t.verdict === "untriaged";
+  const reason = stripSignalRefs(t.reason || "");
+  if (untriaged) {
     box.classList.add("unchecked");
     box.appendChild(el("span", "findtriagelabel", "Not checked first"));
+    if (reason) box.appendChild(el("span", null, reason));
   } else if (t.elevated_by_person) {
-    box.appendChild(el("span", "findtriagelabel", "You brought this back"));
+    // Two speakers, so two labels. The person's press heads the line, and
+    // the sentence under it is brAIn's — said as brAIn's, or it reads as
+    // if the person had written "this is not a fault".
+    const when = t.elevated_at ? ` on ${shortDate(t.elevated_at)}` : "";
+    box.appendChild(el("span", "findtriagelabel", `You brought this back${when}`));
+    if (reason) {
+      box.appendChild(el("span", "findtriagesaid",
+        `${t.verdict === "held" ? "brAIn had said" : "brAIn checked"}: ${reason}`));
+    }
   } else {
     box.appendChild(el("span", "findtriagelabel", "brAIn checked"));
+    if (reason) box.appendChild(el("span", null, reason));
   }
-  if (t.reason) box.appendChild(el("span", null, t.reason));
-  if (t.run_id) box.appendChild(triageLink(f));
+  // Only a run that looked has a record to open. An untriaged row's run
+  // id, where it has one, is the look that FAILED — and a button promising
+  // "what it checked" beside "Not checked first" contradicts the label.
+  if (t.run_id && !untriaged) box.appendChild(triageLink(f));
   return box;
+}
+
+// "signal 7": the first look's own numbering, which an older reply cites.
+// The server takes it out of new reasons (`resident.strip_signal_refs`);
+// this is the same rule for a reason stored before that.
+const SIGNAL_LIST = String.raw`#?\s*\d+(?:\s*(?:,|and|&|or|-|–)\s*#?\s*\d+)*`;
+const SIGNAL_PAREN = new RegExp(
+  String.raw`\s*\(\s*(?:signals?|rows?|items?)\s*` + SIGNAL_LIST + String.raw`\s*\)`, "gi");
+const SIGNAL_REF = new RegExp(
+  String.raw`\b(signals?|rows?|items?)\s*` + SIGNAL_LIST + String.raw`\b`, "gi");
+function stripSignalRefs(text) {
+  const s = String(text || "");
+  if (!/\d/.test(s)) return s;
+  const out = s.replace(SIGNAL_PAREN, "").replace(SIGNAL_REF, (m, noun) => {
+    const plural = /s$/i.test(noun);
+    const base = noun.replace(/s$/i, "").toLowerCase();
+    const word = plural ? `other ${base}s` : `another ${base}`;
+    return /^[A-Z]/.test(noun) ? word[0].toUpperCase() + word.slice(1) : word;
+  }).replace(/\s{2,}/g, " ").trim();
+  return out || s;
+}
+
+// "3 Oct" — a date with no year, for a line about something recent.
+function shortDate(epoch) {
+  return new Date(epoch * 1000).toLocaleDateString(
+    [], { month: "short", day: "numeric" });
+}
+
+// Where a finding came from, on one line. A long title ends in an
+// ellipsis, so the whole of it rides in the element's title.
+function srcChip(text) {
+  const chip = el("span", "findsrc", text);
+  chip.title = text;
+  return chip;
 }
 
 // The record of the run that judged it. Opened through the same reader
@@ -4546,7 +4672,7 @@ function makeHeld(f) {
   const line = el("div", "findmeta");
   line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
   line.appendChild(el("span", "findstate", "Not shown"));
-  if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  if (f.source_title) line.appendChild(srcChip(f.source_title));
   card.appendChild(line);
   card.appendChild(el("h3", "findtitle", f.text));
   if (f.detail) card.appendChild(el("p", "finddetail", f.detail));
@@ -4577,13 +4703,16 @@ function makeHeld(f) {
 }
 
 function makeFinding(f) {
-  const meta = FIND_STATUS[f.status] || FIND_STATUS.open;
+  const snoozed = findings_isSnoozed(f)
+    && !["planning", "fixing", "fixed"].includes(f.status);
+  const meta = snoozed ? FIND_SNOOZED
+    : (FIND_STATUS[f.status] || FIND_STATUS.open);
   const card = el("article", `finding sev-${f.severity} st-${meta.cls}`);
 
   const line = el("div", "findmeta");
   line.appendChild(el("span", "findsev", FIND_SEVERITY[f.severity] || "Degraded"));
   line.appendChild(el("span", "findstate", meta.label));
-  if (f.source_title) line.appendChild(el("span", "findsrc", f.source_title));
+  if (f.source_title) line.appendChild(srcChip(f.source_title));
   // What "Check again" leaves behind. A toast is gone in four seconds, so
   // the commonest answer — it is still there — used to leave the card
   // looking untouched and the press reading as a no-op. This is also the
@@ -4665,16 +4794,17 @@ function makeFinding(f) {
     // cannot help is worse than the sentence — and the server refuses the
     // same case, so the rule is not held here alone.
     if (f.plan && f.plan.can_fix) {
-      const go = add(el("button", "btn small primary", "✦  Apply"));
+      const go = add(el("button", "btn small primary", "Apply"));
       tip(go, "Let brAIn make exactly these changes, then report back");
       go.addEventListener("click", () => findAction(
         f, "apply", "On it — brAIn is making the change", btns));
     }
-    const no = add(el("button", "btn small ghost", "Cancel"));
+    const no = add(el("button", "btn small ghost", "Don't change it"));
     tip(no, "Don't make the change. The plan stays on the card, so you can "
       + "read it again without paying for it.");
     no.addEventListener("click", () => findAction(
       f, "cancel", "Left alone — the plan is still here", btns));
+    add(notAProblemButton(f, card, actions, btns));
   } else if (f.status === "fixing") {
     const busy = el("div", "phase");
     busy.appendChild(el("span", "orbit"));
@@ -4709,153 +4839,168 @@ function makeFinding(f) {
     const back = add(el("button", "btn small ghost", "Put it back on the list"));
     back.addEventListener("click", () =>
       findAction(f, "reopen", "Back on the list", btns));
+  } else if (snoozed) {
+    // A dismissed row is not asking for a decision, so it offers the two
+    // things somebody looking at the Dismissed list can mean: "I want it
+    // now after all" and "it was never a problem". Dismissing it again, or
+    // choosing when it comes back, is a press about a row that is already
+    // away.
+    const now = add(el("button", "btn small", "Bring it back now"));
+    now.dataset.verb = "bring_back";
+    tip(now, "Back onto Needs you, exactly as it was.");
+    now.addEventListener("click", () => snoozeFinding(f, "now", btns));
+    add(notAProblemButton(f, card, actions, btns));
   } else {
-    if (f.fixable) {
-      // What this press BUYS is a read-only plan, and for two releases
-      // the tooltip promised to "make the change in Home Assistant" and
-      // the toast said brAIn was making it — while `h_finding_fix`
-      // queues the plan run and the change waits for Apply. The route
-      // was changed and the words pressed to reach it were not, which is
-      // the whole of "it says Fix it but it is not clear what that does".
-      //
-      // The NAME stays. "Fix it" is what DOCS.md, `FIND_STATUS`, the two
-      // fixer prompts and the ⋯ menu all call this flow, and the flow
-      // really is the fix — Apply is a step inside it, not a separate
-      // feature. Renaming one button would leave six other places
-      // describing something the panel no longer offers. What was wrong
-      // was never the verb but the claim that it had already happened,
-      // and the heading directly above it now says whose fix it is.
-      const fix = add(el("button", "btn small primary",
-        f.status === "failed" ? "✦  Try again" : "✦  Fix it"));
+    // The row every card on this tab carries, in the order the header
+    // promises and `answers.py` decides for the feed: Fix it (only where
+    // brAIn could act and no plan has already said it will not), Add to
+    // list, Dismiss, Not a problem. A row that reaches this renderer is
+    // one no case covers, and a second vocabulary here is how the same
+    // finding used to show six different presses depending on which list
+    // it was drawn from. The rarer presses sit behind the ⋯, as they do
+    // on the feed.
+    //
+    // What this press BUYS is a read-only plan: `h_finding_fix` queues the
+    // plan run and the change waits for Apply. The name is the flow's,
+    // which DOCS.md, `FIND_STATUS` and both fixer prompts call Fix it.
+    if (findCanPlan(f)) {
+      const fix = add(el("button", "btn small primary", "Fix it"));
+      fix.dataset.verb = "fix";
       tip(fix, "brAIn works out exactly what it would change and shows you "
         + "the steps. Nothing in your house changes until you press Apply.");
       fix.addEventListener("click", () => findAction(
         f, "fix", "Working out what it would change — nothing has changed yet",
         btns));
     }
-    // "Is this still true?" — the one press on this card that says nothing
-    // about the house, and the reason it exists is that a check reads one
-    // instant. A device that was unavailable while its hub rebooted, a
-    // reading that was implausible while a printer was hot, an add-on
-    // stopped mid-update: each is a true report of a moment that has since
-    // passed, and answering it means saying something about a problem that
-    // is over. The scheduled pass would clear it in up to
-    // `checks_interval_hours` — six by default, which on a list you are
-    // looking at now may as well be never.
-    //
-    // Only on a check's row: a finding from the analyst came out of a
-    // Claude run over a whole category, and re-running that is Regenerate
-    // on the card, which costs real money and would not answer this
-    // question anyway. The button is absent there rather than failing.
-    if (String(f.source || "").startsWith("check:")) {
-      const again = add(el("button", "btn small", "↻  Check again"));
-      tip(again, "Run the check that found this, now — it clears itself if "
-        + "whatever it saw has passed");
-      again.addEventListener("click", () => recheckFinding(f, btns, again));
-    }
-
-    // Talk about it before deciding. "Explain this to me" and "go change
-    // my house" are different consents, and this used to promise the
-    // first with nothing but a sentence in the prompt holding it — the
-    // conversation had every acting tool pre-approved. It is the session
-    // that holds it now: a discussion's acting tools ask first
-    // (`chat_session.DISCUSS_ASK`), and a change it agrees on is offered
-    // as a plan for this card, which is Fix it's own path to Apply.
-    const talk = add(el("button", "btn small", "💬  Discuss"));
-    tip(talk, "Talk it through in the chat. Anything it would change asks you "
-      + "first, and a change you agree on becomes a plan on this card");
-    talk.addEventListener("click", () => discussFinding(f, btns));
-
-    // The two endings, in the words of what they mean rather than of what
-    // they do to a row. They are easy to confuse until you say what each
-    // one teaches brAIn: one says the problem is over, the other says it
-    // was never a problem here.
-    // Same box as Wrong, and for the same reason — but what it collects is
-    // not a correction. Nothing here is being denied: "I fixed it" leaves
-    // brAIn knowing a problem is over, and "replaced the CR2032, it's a
-    // 3-monthly job on that sensor" leaves it knowing the house. So it goes
-    // into memory beside the fact rather than as evidence against a report.
-    // The fourth ending, and the one people reach for most: it is real, and
-    // it is not getting done in the next thirty seconds. It sits before "I
-    // fixed it" because it is the honest answer far more often \u2014 a flat
-    // battery is a trip to a drawer, not a decision \u2014 and a list of
-    // decisions that fills up with chores is a list nobody empties.
-    const accept = add(el("button", "btn small", "Add to list"));
+    // It is real, and it is not getting done in the next thirty seconds —
+    // the honest answer far more often than "I fixed it".
+    const accept = add(el("button",
+      `btn small${findCanPlan(f) ? "" : " primary"}`, "Add to list"));
+    accept.dataset.verb = "todo";
     tip(accept, "It's real and you'll do it. Off this list, onto your to-do "
-      + "list \u2014 brAIn won't raise it again while it's there.");
+      + "list — brAIn won't raise it again while it's there.");
     accept.addEventListener("click", () => findAction(
       f, "todo", "On your to-do list", btns));
 
-    const done = add(el("button", "btn small", "✓  I fixed it"));
-    tip(done, "It was a real problem and it's sorted now. Say what you did, "
-      + "if it's worth remembering.");
-    done.addEventListener("click", () => openNoteForm(card, actions,
-      (note, formBtns) => findAction(
-        f, "done",
-        note ? "Fixed — that's gone into memory" : "Fixed — written into memory",
-        btns.concat(formBtns), note),
-      {
-        hint: "What did you do? Optional — it goes into memory with the fix, "
-          + "so brAIn knows how this house works next time.",
-        placeholder: "Replaced the CR2032 — it's a 3-monthly job on that one.",
-        send: "Done",
-      }));
+    // Off the list for now, and brAIn picks when it comes back — the
+    // feed's Dismiss, through the same route, so one word means one thing.
+    const dismiss = add(el("button", "btn small ghost", "Dismiss"));
+    dismiss.dataset.verb = "not_now";
+    tip(dismiss, "Off the list for now. Nothing is recorded — brAIn brings "
+      + "it back later if it's still true, sooner the more it matters.");
+    dismiss.addEventListener("click", () => dismissFinding(f, btns));
 
-    // Not a decision, so not next to the ones that are. Dismissing is
-    // permanent and teaches the analyst never to raise it again; this just
-    // stops it asking until the date you pick.
-    const later = add(el("button", "btn small ghost", "⏰  Remind me later"));
-    tip(later, "Take it off the list for a while — it comes back, unchanged");
-    later.addEventListener("click", (ev) => openSnoozePop(ev.currentTarget, f, btns));
+    add(notAProblemButton(f, card, actions, btns));
 
-    // Off the list now, and free to come back. Not a judgement about the
-    // problem — it clears the row without teaching the analyst anything, so
-    // the next run may well raise it again. That is the difference from
-    // Wrong, and it is the whole reason both exist.
-    const dismiss = add(el("button", "btn small ghost", "⌫  Dismiss"));
-    tip(dismiss, "Clear it for now. brAIn may raise it again.");
-    dismiss.addEventListener("click", () => findAction(
-      f, "forget", "Cleared", btns));
-
-    // This was "Ignore", which described what happened to the row and not
-    // what the person meant. Most of the time they do not mean "hide this",
-    // they mean "you have misread my house" — the sensor is not stuck, it
-    // is a door contact on a cupboard nobody opens — and the old button had
-    // nowhere to say so, so brAIn learned one wording was unwanted and
-    // nothing about why. It is the same ending; it now asks for the reason,
-    // and the reason is the half that stops the next four reports like it.
-    const wrong = add(el("button", "btn small ghost", "✕  Wrong"));
-    tip(wrong, "brAIn has this wrong, or it's normal here — say why, and it "
-      + "learns from that rather than just dropping the card.");
-    wrong.addEventListener("click", () => openNoteForm(card, actions,
-      (note, formBtns, mute) => findAction(
-        f, "wrong",
-        mute ? "Noted — and brAIn has stopped raising these"
-          : note ? "Noted — brAIn will take that into account"
-                 : "Noted — brAIn won't raise it again",
-        btns.concat(formBtns), note, mute ? { mute: true } : null),
-      {
-        hint: "What's brAIn got wrong? Optional — it goes into memory and "
-          + "into what the next analysis knows about your house.",
-        placeholder: "That sensor always reads on — it's not stuck.",
-        send: "Send",
-        // The box for the rule rather than the row: a mute takes every
-        // open card from this producer with it and files nothing from it
-        // again, reversible on the "Not raising" line above the list.
-        check: f.source ? `Stop raising these (${f.source_title || f.source})`
-                        : "",
-      }));
+    const menu = cardMenuButton(findingMoreItems(f, card, actions, btns));
+    btns.push(menu);
+    actions.appendChild(menu);
   }
-  if (findings_isSnoozed(f)) {
+  if (snoozed) {
     const back = el("div", "findsnoozed");
     back.appendChild(el("span", null, `⏰ Back ${timeUntil(f.snoozed_until)}`));
-    const now = el("button", "btn small ghost", "Bring it back now");
-    now.addEventListener("click", () => snoozeFinding(f, "now", [now]));
-    back.appendChild(now);
     card.appendChild(back);
   }
   card.appendChild(actions);
   return card;
+}
+
+// The ending every card calls "Not a problem": the `wrong` verb, with the
+// reason box, and the box for the rule rather than the row.
+function notAProblemButton(f, card, actions, btns) {
+  const wrong = el("button", "btn small ghost", "Not a problem");
+  wrong.dataset.verb = "wrong";
+  tip(wrong, "brAIn has this wrong, or it's normal here. It stops raising "
+    + "this. Say why if you like — it learns from the reason, not just the "
+    + "press.");
+  wrong.addEventListener("click", () => openNoteForm(card, actions,
+    (note, formBtns, mute) => findAction(
+      f, "wrong",
+      mute ? "Noted — and brAIn has stopped raising these"
+        : note ? "Noted — brAIn will take that into account"
+               : "Noted — brAIn won't raise it again",
+      btns.concat(formBtns), note, mute ? { mute: true } : null),
+    {
+      hint: "What's brAIn got wrong? Optional — it goes into memory and "
+        + "into what the next analysis knows about your house.",
+      placeholder: "That sensor always reads on — it's not stuck.",
+      send: "Not a problem",
+      // The box for the rule rather than the row: a mute takes every
+      // open card from this producer with it and files nothing from it
+      // again, reversible on the "Not raising" line above the list.
+      check: f.source ? `Stop raising these (${f.source_title || f.source})`
+                      : "",
+    }));
+  return wrong;
+}
+
+// Dismiss, the feed's way: the case route's `not_now`, so brAIn picks when
+// it comes back from how much it matters, and the toast says when.
+async function dismissFinding(f, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    const data = await api(`api/case/f:${f.ts}/not_now`, { method: "POST" });
+    absorbAnswer(data);
+    await Promise.all([refreshCases(), refreshFindings()]);
+    renderFindings();
+    const when = data && data.snoozed_until;
+    toast(when ? `Dismissed — back ${timeUntil(when)}` : "Dismissed");
+  } catch (e) {
+    toast(e.message);
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+// Whether Fix it may be offered: brAIn could act on the row, and no plan
+// run has already concluded it will not (`answers.plan_refused`, the same
+// rule the feed's row is built with).
+function findCanPlan(f) {
+  return !!f.fixable && f.status !== "needs_you" && f.status !== "failed"
+    && !planRefused(f.plan);
+}
+
+const LEGACY_PLAN_MARK = "this plan was written before brAIn checked";
+function planRefused(plan) {
+  if (!plan || typeof plan !== "object" || !Object.keys(plan).length) return false;
+  if (plan.can_fix && (plan.ops || []).length) return false;
+  if (!(plan.summary || (plan.steps || []).length || plan.at
+        || plan.ops_refused || plan.needs_you)) return false;
+  return !String(plan.ops_refused || "").startsWith(LEGACY_PLAN_MARK);
+}
+
+// The rarer presses on a finding, behind its ⋯ — the same set the feed's
+// overflow carries, in the same words.
+function findingMoreItems(f, card, actions, btns) {
+  const items = [];
+  items.push(["💬", "Talk about it", "Talk it through in the chat — any "
+    + "change asks you first", () => discussFinding(f, btns)]);
+  items.push(["✓", "I've already fixed it", "You've handled it yourself. "
+    + "brAIn records that and stops raising it.",
+  () => openNoteForm(card, actions,
+    (note, formBtns) => findAction(
+      f, "done",
+      note ? "Fixed — that's gone into memory" : "Fixed — written into memory",
+      btns.concat(formBtns), note),
+    {
+      hint: "What did you do? Optional — it goes into memory with the fix, "
+        + "so brAIn knows how this house works next time.",
+      placeholder: "Replaced the CR2032 — it's a 3-monthly job on that one.",
+      send: "Done",
+    })]);
+  if (String(f.source || "").startsWith("check:")) {
+    items.push(["↻", "Check again", "Run the check that found this, now — "
+      + "it clears itself if whatever it saw has passed",
+    () => recheckFinding(f, btns)]);
+  }
+  if (f.fixable && !findCanPlan(f) && f.status !== "needs_you") {
+    items.push(["✦", "Work out what to change", "Ask for a new plan — the "
+      + "house may have moved since the last one",
+    () => findAction(f, "fix",
+      "Working out what it would change — nothing has changed yet", btns)]);
+  }
+  items.push(["⏰", "Choose when it comes back", "Dismiss it until a time "
+    + "you pick", () => openSnoozePop(btns[0] || card, f, btns)]);
+  return items;
 }
 
 // A guess waiting to be confirmed, on the same list and in the same shape as
@@ -4944,7 +5089,7 @@ function makeSettled(entry) {
       new Date(entry.ts * 1000).toLocaleDateString([],
         { month: "short", day: "numeric" })));
   }
-  if (entry.source_title) line.appendChild(el("span", "findsrc", entry.source_title));
+  if (entry.source_title) line.appendChild(srcChip(entry.source_title));
   card.appendChild(line);
   card.appendChild(el("h3", "findtitle", entry.text || entry.key || ""));
   if (entry.note) card.appendChild(el("p", "findsaid", `You said: ${entry.note}`));
@@ -5285,7 +5430,7 @@ function makeCase(row) {
   if (row.kind === "problem" || row.kind === "chore") {
     line.appendChild(el("span", "findsev", FIND_SEVERITY[row.severity] || "Degraded"));
   }
-  if (row.source_title) line.appendChild(el("span", "findsrc", row.source_title));
+  if (row.source_title) line.appendChild(srcChip(row.source_title));
   if (row.ended && row.ended.when) {
     line.appendChild(el("span", "findchecked", "done "
       + timeAgo(new Date(row.ended.when * 1000).toISOString())));
@@ -5335,7 +5480,10 @@ function makeCase(row) {
   // The plan a read-only run wrote, above the Apply that would let it —
   // the one block on the card somebody is about to consent to, so it is
   // never folded away.
-  if (row.finding_status === "planned" || row.finding_status === "planning") {
+  // A plan that already said brAIn will not make the change stays on the
+  // card too: it is why there is no Fix it under it (`plan_refused`).
+  if (row.finding_status === "planned" || row.finding_status === "planning"
+      || (!ranItsCourse && planRefused(row.plan))) {
     const planned = planBlock(row);
     if (planned) card.appendChild(planned);
   }
@@ -5504,7 +5652,9 @@ function residentFootText() {
   if (bus.connected) line += " Watching the house live.";
   else if (bus.idle_reason) line += ` Live events off — ${bus.idle_reason}.`;
   else line += " Reconnecting to the event stream.";
-  if (res.queue_len) line += ` ${res.queue_len} signal(s) waiting.`;
+  if (res.queue_len) {
+    line += ` ${res.queue_len} thing${res.queue_len === 1 ? "" : "s"} waiting for a first look.`;
+  }
   if (res.last_error) line += ` ${res.last_error}.`;
   return line;
 }
@@ -5910,7 +6060,7 @@ function makeTodo(item) {
   // not, which is exactly what taking it off the list does differently.
   line.appendChild(el("span", "findstate",
     item.origin === "finding" ? "From a finding" : "Added by you"));
-  if (item.source_title) line.appendChild(el("span", "findsrc", item.source_title));
+  if (item.source_title) line.appendChild(srcChip(item.source_title));
   if (done && item.done_at) {
     line.appendChild(el("span", "findchecked", "done "
       + timeAgo(new Date(item.done_at * 1000).toISOString())));
@@ -6556,11 +6706,28 @@ function agoAt(epoch) {
   return timeAgo(new Date(n * 1000).toISOString());
 }
 
+// "1:45 PM" — `fmtClock`'s shape, which is the one the rest of the panel
+// uses. It was "01:45 PM" (`hour: "2-digit"`) here alone.
 function clockAt(epoch) {
   const n = Number(epoch) || 0;
   if (!n) return "";
-  return new Date(n * 1000).toLocaleTimeString([],
-    { hour: "2-digit", minute: "2-digit" });
+  return fmtClock(n);
+}
+
+// A clock time that says which day when it is not today. A bare "02:20 PM"
+// read at 1:55 PM is a time that has not happened yet; the stamp was
+// yesterday's.
+function whenAt(epoch) {
+  const n = Number(epoch) || 0;
+  if (!n) return "";
+  const d = new Date(n * 1000);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((day(d) - day(new Date())) / 86400000);
+  const clock = clockAt(n);
+  if (diff === 0) return clock;
+  if (diff === -1) return `yesterday ${clock}`;
+  if (diff === 1) return `tomorrow ${clock}`;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${clock}`;
 }
 
 function dateAt(epoch) {
@@ -7783,10 +7950,26 @@ function renderDocsNav() {
   });
 }
 
-function selectDocs(id) {
+// The contents fold. Wherever the nav sits beside the page it is always open
+// (its summary is not rendered there); where it stacks above the page it
+// starts shut, closes again once a section is picked, and opens while a
+// search is typed so the hits are what you see.
+const DOCS_NARROW = "(max-width: 860px)";
+function docsNarrow() {
+  return Boolean(window.matchMedia && window.matchMedia(DOCS_NARROW).matches);
+}
+function setDocsFold(open) {
+  const fold = $("#docsNavFold");
+  if (fold) fold.open = open || !docsNarrow();
+}
+
+function selectDocs(id, opts) {
   const sections = window.BRAIN_DOCS || [];
   const sec = sections.find((s) => s.id === id) || sections[0];
   if (!sec) return;
+  const cur = $("#docsNavCurrent");
+  if (cur) cur.textContent = sec.title;
+  if (!(opts && opts.keepFold)) setDocsFold(false);
   docsState.section = sec.id;
   $("#docsBody").innerHTML = renderMarkdown(sec.body);
   $("#docsBody").scrollTop = 0;
@@ -7829,10 +8012,16 @@ function renderDocs() {
 $("#docsSearch").addEventListener("input", (ev) => {
   docsState.query = ev.target.value;
   const hits = docsSearch(docsState.query);
+  setDocsFold(Boolean(docsState.query.trim()));
   // Jump straight to the best match so typing feels like it does something.
-  if (hits && hits.length) selectDocs(hits[0].sec.id);
+  if (hits && hits.length) selectDocs(hits[0].sec.id, { keepFold: true });
   else renderDocsNav();
 });
+if (window.matchMedia) {
+  const mq = window.matchMedia(DOCS_NARROW);
+  const onChange = () => setDocsFold(false);
+  if (mq.addEventListener) mq.addEventListener("change", onChange);
+}
 
 // ----------------------------------------------------------- onboarding
 // A fresh install has no cards. brAIn studies the home first, then
@@ -8909,9 +9098,7 @@ function propCard(row, withHint) {
 // press.
 
 function propIntentWhen(ts) {
-  if (!ts) return "";
-  return new Date(ts * 1000).toLocaleTimeString([],
-    { hour: "2-digit", minute: "2-digit" });
+  return ts ? whenAt(ts) : "";
 }
 
 function propIntentLine(row) {
@@ -9093,12 +9280,16 @@ function actTime(ts) {
     { hour: "2-digit", minute: "2-digit" });
 }
 
-function actDayLabel(end) {
-  const d = new Date((end || Date.now() / 1000) * 1000);
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  if (sameDay) return "Today";
-  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+// The window is a rolling one — `hours` back from `end` — so it is named as
+// one. It was labelled "Today" and opened on yesterday evening's rows,
+// which is the label lying about the list under it.
+function actDayLabel(end, hours) {
+  const h = hours || 24;
+  if (!end) return `Last ${h} hours`;
+  const d = new Date(end * 1000);
+  return `${h} hours to `
+    + d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
+    + ", " + actTime(end);
 }
 
 async function refreshActivity() {
@@ -9185,12 +9376,29 @@ function epStates(ep) {
   return `${ep.first} → ${ep.last}`;
 }
 
+// Empty for a row nothing claims. That was "No cause recorded" on every
+// such row — 14,249 of 15,098 on a real house — which is one fact said
+// fourteen thousand times; the foot says it once instead. A row nothing
+// caused that began around a restart says so, because that IS its cause.
 function epCause(ep) {
-  if (!ep.cause || ep.cause === "unattributed") return CAUSE_WORDS.unattributed;
+  if (!ep.cause || ep.cause === "unattributed") {
+    return ep.near_restart ? "Around the Home Assistant restart" : "";
+  }
   return (CAUSE_WORDS[ep.cause] || ep.cause) + (ep.by_name ? ": " + ep.by_name : "");
 }
 
-function epKey(ep) { return ep.entity_id + "|" + Math.round(ep.started); }
+// What the house says now, where it disagrees with the logbook. A row
+// read off `/states` rather than the logbook says where it came from,
+// because the change it stands for is one the logbook did not record.
+function epNote(ep) {
+  if (ep.from_live) return "Home Assistant's current state — the logbook has no row for it";
+  if (ep.live) return `now ${ep.live}`;
+  return "";
+}
+
+function epKey(ep) {
+  return (ep.entity_id || ep.kind || "") + "|" + Math.round(ep.started);
+}
 
 // When the house was empty — the one thing on this tab that Home Assistant
 // holds every fact for and has never said, and the reason it is above the
@@ -9285,7 +9493,7 @@ function renderActivity() {
   const list = $("#actList");
   if (!list) return;
   const data = actState.data;
-  $("#actRange").textContent = actDayLabel(actState.end);
+  $("#actRange").textContent = actDayLabel(actState.end, actState.hours);
   // "Later" is meaningless on the window that already ends now.
   $("#actNext").disabled = !actState.end;
   const head = $("#actSummary");
@@ -9336,6 +9544,14 @@ function renderActivity() {
     ? `${shown}. ${data.dropped.toLocaleString()} sensor readings are not `
       + `listed — a reading is not something that happened.`
     : `${shown}.`;
+  // Once, here, rather than on every row it is true of.
+  const orphans = (data.counts || {}).unattributed || 0;
+  if (orphans) {
+    foot.textContent += ` ${orphans.toLocaleString()} of the changes have no `
+      + `recorded cause: a wall switch and a device's own integration reach `
+      + `Home Assistant the same way, so a row with nothing beside it is one `
+      + `the logbook could not attribute.`;
+  }
   frag.appendChild(foot);
   list.innerHTML = "";
   list.appendChild(frag);
@@ -9357,21 +9573,39 @@ function actSection(sec) {
     row.className = "actrow";
     row.dataset.cause = ep.cause;
     row.dataset.key = key;
-    row.dataset.entity = ep.entity_id;
+    row.dataset.entity = ep.entity_id || "";
+    if (ep.kind) row.dataset.kind = ep.kind;
+    const cause = epCause(ep);
+    const note = epNote(ep);
     row.innerHTML = `<span class="what"><b>${esc(ep.name)}</b>`
       + `<span class="st">${esc(epStates(ep))}</span></span>`
       + `<span class="when">${esc(epWhen(ep, sec.reads))}</span>`
-      + `<span class="cause">${esc(epCause(ep))}</span>`
+      + (cause ? `<span class="cause">${esc(cause)}</span>` : "")
+      + (note ? `<span class="actnote">${esc(note)}</span>` : "")
       + (ep.undid
          ? `<span class="actundid">a person undid ${esc(ep.undid)}</span>` : "");
+    // A restart names no entity, so there is no history to open under it.
+    if (!ep.entity_id && ep.kind !== "mass") row.disabled = true;
     box.appendChild(row);
     if (actState.open === key) {
       const why = el("div", "actwhy");
-      why.innerHTML = actWhyHtml(ep);
+      why.innerHTML = ep.kind === "mass" ? actMassHtml(ep) : actWhyHtml(ep);
       box.appendChild(why);
     }
   });
   return box;
+}
+
+// A collapsed burst opens onto the entities it collapsed — already in the
+// payload, so nothing is fetched.
+function actMassHtml(ep) {
+  const ids = ep.entities || [];
+  const more = (ep.devices || ids.length) - ids.length;
+  return `<div>${esc(String(ep.devices || ids.length))} entities changed `
+    + `together, with nothing recorded as the cause — an integration `
+    + `reloading or reconnecting does this:</div>`
+    + ids.map((id) => `<div><code>${esc(id)}</code></div>`).join("")
+    + (more > 0 ? `<div>and ${esc(String(more))} more</div>` : "");
 }
 
 function actWhyHtml(ep) {
@@ -9403,6 +9637,8 @@ async function actOpenRow(key, entityId) {
   actState.open = key;
   actState.why = null;
   renderActivity();
+  // A collapsed burst carries its own list; there is no one entity to ask.
+  if (!entityId) return;
   const q = new URLSearchParams({ hours: String(actState.hours) });
   if (actState.end) q.set("end", String(Math.round(actState.end)));
   try {
@@ -9763,6 +9999,26 @@ function chatToolNode(ev) {
     pre.appendChild(el("code", null, ev.input));
     body.appendChild(pre);
   }
+  box.appendChild(body);
+  return box;
+}
+
+// A turn Claude Code injected itself — a backgrounded task finishing. It
+// lives in the person's half of the conversation, which is why it used to
+// render as a bubble of raw XML "they" had typed; the server classifies it
+// (conversations.injected_event) and this draws it as one collapsed row in
+// the tool calls' shape, with the task's own report as markdown inside.
+function chatBackgroundNode(ev) {
+  const failed = /fail|error|kill/i.test(ev.status || "");
+  const box = el("details", "toolcall bgtask " + (failed ? "bad" : "ok"));
+  const sum = el("summary");
+  sum.appendChild(el("span", "tdot"));
+  sum.appendChild(el("span", "tname",
+                     failed ? "Background task failed" : "Background task finished"));
+  sum.appendChild(el("span", "tsum", ev.summary || ""));
+  box.appendChild(sum);
+  const body = el("div", "tbody");
+  body.innerHTML = renderMarkdown(String(ev.text || ""));
   box.appendChild(body);
   return box;
 }
@@ -10163,6 +10419,10 @@ function chatRender(ev) {
     case "tool_result":
       chatToolResult(ev);
       chatStatus("Working…");
+      break;
+    case "background":
+      chatSealLive();
+      chatAppend(chatBackgroundNode(ev));
       break;
     case "resolutions":
       chatCloseLiveThink();
@@ -11367,8 +11627,12 @@ async function resumeConversation(conv) {
   const held = chatState.liveSessions[conv.id];
   if (!held) toast("Opening that conversation…");
   try {
+    // `spawn: false`: opening a conversation is reading it. Its transcript
+    // comes over now and the Claude process starts with the first message
+    // you send — not one per conversation you happened to look at.
     const out = await api("api/chat/resume", {
-      method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+      method: "POST",
+      body: JSON.stringify({ session_id: conv.id, spawn: false }) });
     // The row's state rides back so the composer line is right before the
     // reconnect's snapshot lands — and a fallback is a state on the line
     // ("Context lost") rather than only the toast below, which vanishes.
@@ -11443,6 +11707,8 @@ function renderReplayInto(host, events) {
       host.appendChild(row);
     } else if (ev.type === "text") {
       host.appendChild(chatMarkdown(ev.text));
+    } else if (ev.type === "background") {
+      host.appendChild(chatBackgroundNode(ev));
     } else if (ev.type === "thinking") {
       const box = el("details", "think");
       box.appendChild(el("summary", null, "Thinking"));
@@ -11667,10 +11933,10 @@ async function switchTermMode(next) {
   try {
     if (next === "classic") {
       if (chatState.sessionId) { await chatHandoff(); return; }
-      setTermMode("classic", "Classic terminal");
+      setTermMode("classic", "Ask now opens as the classic terminal");
       return;
     }
-    setTermMode("chat", "Chat terminal");
+    setTermMode("chat", "Ask now opens as chat");
     const out = await chatAdopt();
     if (out && out.adopted) {
       toast(out.title ? `Picked up: ${out.title}` : "Picked up where you left off");
@@ -11847,8 +12113,10 @@ function applyTermMode(mode) {
   document.body.classList.toggle("term-classic", classic);
   const btn = $("#termMode");
   const label = classic ? "Chat" : "Classic terminal";
+  // Saved, not peeked: the same setting ⚙ → Terminal & chat changes.
   btn.setAttribute("aria-label",
-    classic ? "Switch to chat" : "Switch to the classic terminal");
+    classic ? "Switch to chat (Ask opens this way from now on)"
+      : "Switch to the classic terminal (Ask opens this way from now on)");
   $("#termModeLabel").textContent = label;
   const onTab = currentView === "terminal";
   if (classic) {
@@ -13442,7 +13710,7 @@ async function runDeepReview(btn) {
 
 
 // ---------------------------------------------------------------------------
-// ⚙ → Generation defaults → Cameras. One tick per camera brAIn may look at
+// ⚙ → Cameras. One tick per camera brAIn may look at
 // on its own; empty until somebody ticks one. Read when the section opens,
 // never on the way into the dialog, and saved through the ordinary
 // settings PUT, so there is one route that changes a setting.
@@ -13466,8 +13734,14 @@ function renderCameras(data) {
   const box = $("#setCameras");
   if (!box) return;
   box.textContent = "";
-  const cams = Array.isArray(data.cameras) ? data.cameras : [];
-  if (!cams.length) {
+  const all = Array.isArray(data.cameras) ? data.cameras : [];
+  // A robot vacuum publishes its floor map as a camera entity, and a house
+  // with a few of them had nine "cameras" here that show no room at all.
+  // Left out unless one is already ticked, because a tick nobody can see is
+  // a tick nobody can take back.
+  const cams = all.filter((c) => c.allowed || !isMapCamera(c));
+  const maps = all.length - cams.length;
+  if (!cams.length && !maps) {
     box.appendChild(el("p", "hint tight", data.registry_read
       ? "This house has no cameras brAIn can see."
       : "brAIn has not read your devices yet — this list fills in after the first house check."));
@@ -13488,11 +13762,23 @@ function renderCameras(data) {
     label.appendChild(words);
     box.appendChild(label);
   });
+  if (maps) {
+    box.appendChild(el("p", "hint tight", maps === 1
+      ? "1 vacuum map is left out — it is published as a camera but shows no room."
+      : `${maps} vacuum maps are left out — they are published as cameras but show no room.`));
+  }
   const used = Number(data.used_today) || 0;
   const cap = Number(data.per_day) || 0;
   box.appendChild(el("p", "hint tight", data.error
     ? `brAIn will not look at any camera until it can count again: ${data.error}`
     : `Looked ${used} of ${cap} times today.`));
+}
+
+// A map, not a view: the object id says so (`camera.roborock_s7_map`,
+// `camera.downstairs_map_2`), which is how vacuum integrations name them.
+function isMapCamera(cam) {
+  const object = String(cam.entity_id || "").split(".").pop();
+  return /(^|_)map(_|$)/.test(object);
 }
 
 async function saveCameras() {

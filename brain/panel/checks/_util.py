@@ -101,6 +101,69 @@ def num(value: Any) -> float | None:
     return None if math.isnan(f) else f  # NaN reads as no number
 
 
+# How many probed entities have to be cut short before the recorder is
+# called incomplete. One could be a single integration writing late; two
+# is the store itself.
+HISTORY_MIN_CUT = 2
+
+
+def history_cut(snap: dict) -> dict:
+    """The entities the history probe found cut short, when there are
+    enough of them to say the recorder is missing rows — else `{}`.
+
+    One answer, read by `sys.history_incomplete` (which reports it) and by
+    every check that reads a window off the recorder (which stands down
+    for it), so the two can never disagree about whether history is
+    trustworthy this pass.
+    """
+    probe = snap.get("history_health") or {}
+    cut = probe.get("cut") or {}
+    if not isinstance(cut, dict) or not cut:
+        return {}
+    probed = int(probe.get("probed") or 0)
+    if len(cut) >= HISTORY_MIN_CUT or len(cut) >= probed:
+        return cut
+    return {}
+
+
+# How soon after Home Assistant starts a device going unavailable is put
+# down to the start. A restart is the commonest reason a whole row of
+# devices drops in one minute — and some integrations never come back from
+# one — so a finding that says only "unavailable since 11:11" when Core
+# started at 11:10 is telling half the story.
+RESTART_WINDOW_S = 600
+
+
+def ha_starts(snap: dict) -> list[float]:
+    """Every time the snapshot knows Home Assistant started, oldest first:
+    the logbook's own "started" lines, and the uptime integration's sensor
+    (which reaches past the logbook's day)."""
+    starts = [float(t) for t in ((snap.get("actions") or {}).get("starts")
+                                 or []) if isinstance(t, (int, float))]
+    states = snap.get("states") or {}
+    uptime = {str(e.get("entity_id") or "")
+              for e in snap.get("entities") or []
+              if isinstance(e, dict) and e.get("platform") == "uptime"}
+    for eid in uptime | {"sensor.uptime"}:
+        st = states.get(eid)
+        if isinstance(st, dict):
+            ts = parse_ts(st.get("state"))
+            if ts is not None:
+                starts.append(ts)
+    return sorted(set(starts))
+
+
+def after_restart(snap: dict, value: Any) -> float | None:
+    """The start a change at ``value`` came right after, or None."""
+    changed = parse_ts(value)
+    if changed is None:
+        return None
+    for start in reversed(ha_starts(snap)):
+        if 0 <= changed - start <= RESTART_WINDOW_S:
+            return start
+    return None
+
+
 def domain_of(entity_id: str) -> str:
     return entity_id.split(".", 1)[0] if "." in entity_id else ""
 

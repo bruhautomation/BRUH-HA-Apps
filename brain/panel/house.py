@@ -157,8 +157,16 @@ def days_ago(when: float | None, now: float | None = None) -> str:
 
 
 def plural(n: int, one: str, many: str | None = None) -> str:
-    """`1 day` / `4 days`, so a sentence does not read like a template."""
-    return f"{n} {one}" if n == 1 else f"{n} {many or one + 's'}"
+    """`1 day` / `4 days`, so a sentence does not read like a template.
+
+    A word that already ends in a hiss takes "es" — `plural(6, "press")`
+    printed "6 presss" on the Upkeep tab."""
+    if n == 1:
+        return f"{n} {one}"
+    if many:
+        return f"{n} {many}"
+    tail = "es" if one.endswith(("s", "x", "z", "ch", "sh")) else "s"
+    return f"{n} {one}{tail}"
 
 
 # ---------------------------------------------------------------------------
