@@ -63,6 +63,15 @@ MAX_ROWS = 20
 
 DELIVER = ("now", "hold_until", "digest", "feed_only")
 
+# The furthest away the morning list may be for `digest` to mean it. The
+# list is for what arrives in the evening or overnight; a row decided at
+# 10:00 whose "next morning list" is tomorrow at 07:00 was held for 21 hours
+# while the household was awake all day — "1 held since 4 h ago" outside the
+# quiet hours, with nothing delivered all week. Past this the decision is
+# refused and the row takes the deterministic path, which outside the quiet
+# hours is to send it.
+DIGEST_MAX_S = 12 * 3600
+
 # What one row's evidence may carry into the prompt.
 EVIDENCE_ROWS = 4
 TEXT_CHARS = 240
@@ -315,9 +324,14 @@ def frame(rows: list[dict], *, policy: str, now: float, tz=None,
         inside = notify_router.in_quiet_hours(now, start, end, tz)
         lines.append(f"Quiet hours: {start:02d}:00 to {end:02d}:00 "
                      f"({'it is inside them now' if inside else 'not now'}).")
-    if morning_at:
+    if morning_at and morning_at - now <= DIGEST_MAX_S:
         lines.append("The next morning list goes out at "
                      f"{_local(morning_at, tz):%A %H:%M}.")
+    elif morning_at:
+        # Said, so the model does not hold a daytime row until tomorrow:
+        # `parse` refuses a digest this far out anyway.
+        lines.append("This morning's list has already gone out; do not use "
+                     "digest now — choose now, hold_until or feed_only.")
     lines.append("")
     lines.append("THE HOUSEHOLD'S OWN SENTENCE about notifications:")
     lines.append(_clip(policy, POLICY_CHARS) if policy.strip()
@@ -419,7 +433,8 @@ def parse(reply, rows: list[dict], *, now: float, tz=None,
             until = when
         elif deliver == "digest":
             until = float(morning_at)
-            if until <= now or until > now + notify_router.HOLD_MAX_S:
+            if until <= now or until > now + min(notify_router.HOLD_MAX_S,
+                                                 DIGEST_MAX_S):
                 continue
         words = clean_words(item.get("title"), item.get("body"))
         if words is not None and not names_only_allowed(
@@ -452,6 +467,6 @@ def compose_batch(rows: list[dict], words: dict[int, tuple[str, str]]) -> tuple[
     return title, "\n".join(lines)[: notify_router.MESSAGE_MAX]
 
 
-__all__ = ["DELIVER", "JOB", "MAX_ROWS", "SCHEMA", "SYSTEM", "TIMEOUT_S",
-           "allowed_entities", "clean_words", "compose_batch", "frame",
+__all__ = ["DELIVER", "DIGEST_MAX_S", "JOB", "MAX_ROWS", "SCHEMA", "SYSTEM",
+           "TIMEOUT_S", "allowed_entities", "clean_words", "compose_batch", "frame",
            "names_only_allowed", "next_morning", "parse", "parse_when"]

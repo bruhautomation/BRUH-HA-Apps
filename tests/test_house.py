@@ -618,7 +618,7 @@ class TestWhatBrainDidTodayRidesOnTheStatusPoll(HouseServerCase):
         for key in ("last_filed_at", "waiting", "running"):
             self.assertIn(key, today["memory"])
         self.assertIn("since_yesterday", today["reports"])
-        self.assertIn("landed_runs_24h", today)
+        self.assertIn("claude_runs_24h", today)
 
     def test_a_pass_that_has_never_run_promises_no_next_time(self):
         old_checks = dict(self.server.CHECKS_STATE)

@@ -274,6 +274,23 @@ class TestListReadDelete(ReportsCase):
             self.assertGreater(r["bytes"], 100)
             self.assertEqual(r["count"], 1)
 
+    def test_a_report_somebody_asked_for_is_not_a_problem(self):
+        """The strip said "2 problems since yesterday" over two reports
+        somebody had asked for from ⚙ — the server's own `manual` writer
+        and `brain report`'s shell fallback both name the kind."""
+        now = time.time()
+        reports.file_incident("manual", "report requested", "w", "l",
+                              diagnostics=DIAG, dedup=False, now=now - 60)
+        reports.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        (reports.REPORTS_DIR / time.strftime(
+            "%Y-%m-%d-%H%M-manual-9.txt", time.localtime(now - 30))).write_text(
+            "brAIn report · shell fallback\n")
+        self.assertEqual(reports.problems_since(now - 86400), 0)
+        reports.file_incident("run", "a run failed", "w", "l",
+                              diagnostics=DIAG, now=now)
+        self.assertEqual(reports.problems_since(now - 86400), 1)
+        self.assertEqual(len(reports.list_reports()), 3)
+
     def test_read_and_delete(self):
         name = reports.file_incident("run", "h", "w", "l", diagnostics=DIAG,
                                      now=1_700_000_000)
@@ -1273,6 +1290,44 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
                         health=None, extra_text="", diagnostics=once,
                         log_text="")
         self.assertEqual(len(calls), 1)
+
+
+class TestARunOfRefusedRunsIsSaid(unittest.TestCase):
+    """518 runs in a day, 286 of them refused by the account's usage
+    limit, and every surface said nothing was wrong. A usage limit is not
+    a failure — that stays true, and health stays `ok` — but most of what
+    brAIn was asked to do not happening is a row in the fault list."""
+
+    def _payload(self, limited, total, **usage):
+        return {"journal": {"hours": 24, "runs": total,
+                            "by_outcome": {"rate_limited": limited,
+                                           "ok": total - limited},
+                            "failed": 0, "failures": []},
+                "usage": {"source": "account", "used_percent": 100.0,
+                          **usage}}
+
+    def test_the_field_day_is_a_fault_row_naming_the_reset(self):
+        reset = time.mktime((2026, 10, 4, 15, 40, 0, 0, 0, -1))
+        paused = time.mktime((2026, 10, 4, 16, 10, 0, 0, 0, -1))
+        rows = reports.faults(self._payload(
+            286, 518, resets_at=reset,
+            rate_limit={"until": paused, "streak": 3}))
+        said = _said(rows)
+        self.assertIn("Claude usage limit", said)
+        self.assertIn("refused 286 of 518 runs in the last day", said)
+        self.assertIn("15:40", said)
+        self.assertIn("paused until", said)
+        self.assertIn("not brAIn failing", said)
+
+    def test_a_few_refusals_are_not_one(self):
+        self.assertEqual(reports.faults(self._payload(4, 10)), [])
+        self.assertEqual(reports.faults(self._payload(9, 500)), [])
+
+    def test_health_still_does_not_count_it_as_failing(self):
+        """2.11.1's rule, kept: a limit must not make the verdict degraded."""
+        import health
+        payload = self._payload(286, 518)
+        self.assertEqual(health.verdict(payload, {})["state"], "ok")
 
 
 if __name__ == "__main__":

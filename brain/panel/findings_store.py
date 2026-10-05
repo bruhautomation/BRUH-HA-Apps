@@ -307,12 +307,19 @@ def _publish_state(items: list[dict]) -> None:
     # `brain_finding` again, ringing whatever an automation hung off them).
     snoozed = [s for s in shaped
                if s["status"] in LIVE_STATUSES and is_snoozed(s, now)]
-    open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES]
+    # A row a look has not reached in `triage.SHOW_AFTER_S` is counted
+    # with the open ones — the sensor saying 0 over a serious row nothing
+    # has looked at for half an hour is the "nothing waiting on you" lie.
+    # It is counted and not listed: `findings` is what the watcher fires
+    # events and raises Repairs issues from, and those wait for a verdict.
+    waiting = [s for s in shaped if triage.waiting_too_long(s, now)]
+    open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES] + waiting
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
             "ts": int(now),
             "open": len(open_rows),
+            "waiting_look": len(waiting),
             "by_severity": {sev: len([s for s in open_rows
                                       if s["severity"] == sev])
                             for sev in SEVERITIES},
@@ -661,6 +668,11 @@ def _shape(entry: dict) -> dict:
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
         out["came_back"] = int(entry["came_back"])
+    # Still `triaging` past `triage.SHOW_AFTER_S`: shown on the feed with
+    # `triage.WAITING` and counted, while the look it is waiting for has
+    # still not come. Derived, never stored, and absent otherwise.
+    if triage.waiting_too_long({**entry, "status": status}):
+        out["waiting_look"] = True
     return out
 
 
@@ -769,8 +781,9 @@ def listing() -> dict:
     return {
         "findings": shaped,
         "open": len([f for f in shaped
-                     if f["status"] in UNSETTLED_STATUSES
-                     and not is_snoozed(f, now)]),
+                     if (f["status"] in UNSETTLED_STATUSES
+                         and not is_snoozed(f, now))
+                     or triage.waiting_too_long(f, now)]),
         "snoozed": len([f for f in shaped if is_snoozed(f, now)]),
         # The answers, so the tab can show what it has stopped asking about.
         # Same read, same reply: a second endpoint for it would be a second
@@ -796,9 +809,18 @@ def open_count() -> int:
     """
     now = time.time()
     return len([e for e in _load()
-                if e.get("status", "open") in UNSETTLED_STATUSES
-                and str(e.get("text") or "").strip()
-                and not (e.get("snoozed_until") or 0) > now])
+                if (e.get("status", "open") in UNSETTLED_STATUSES
+                    and str(e.get("text") or "").strip()
+                    and not (e.get("snoozed_until") or 0) > now)
+                or triage.waiting_too_long(e, now)])
+
+
+def waiting_look_count(now: float | None = None) -> int:
+    """Rows a look has not reached in `triage.SHOW_AFTER_S` — counted by
+    every badge beside the open ones, and shown on the feed with
+    `triage.WAITING`. Off the raw entries, `open_count`'s reason."""
+    now = time.time() if now is None else now
+    return len([e for e in _load() if triage.waiting_too_long(e, now)])
 
 
 def is_known(text: str) -> bool:

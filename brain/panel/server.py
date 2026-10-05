@@ -910,6 +910,42 @@ DIAGNOSTICS_FILE = Path(os.environ.get(
     "BRAIN_DIAGNOSTICS_FILE", "/config/.brain/diagnostics.json"))
 DIAGNOSTICS_PUBLISH_S = 3600
 DIAG_STATE: dict = {"published_at": 0.0}
+
+# Which version of the brAIn integration Home Assistant is RUNNING, beside
+# the one run.sh deployed. run.sh copies new integration files into
+# /config/custom_components at every start, and Home Assistant goes on
+# running the old code until it restarts — so the add-on and the
+# integration can be a version apart for days, and the only thing that
+# said so was a Repairs entry. The integration writes what it loaded
+# (`integration_loaded.json`, at setup), run.sh writes the marker while a
+# restart is owed, and the panel reads both for the fault list.
+INTEGRATION_LOADED_FILE = Path(os.environ.get(
+    "BRAIN_INTEGRATION_LOADED_FILE", "/config/.brain/integration_loaded.json"))
+RESTART_MARKER_FILE = Path(os.environ.get(
+    "BRAIN_RESTART_MARKER_FILE", "/config/.brain/restart_required"))
+
+
+def _integration_versions() -> dict:
+    """`{loaded, required, restart_pending}` — what Home Assistant is
+    running, what the add-on deployed and is waiting on, and whether a
+    restart is owed. Never raises; a file that cannot be read is a None."""
+    def _read(path: Path) -> dict | None:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    loaded = _read(INTEGRATION_LOADED_FILE) or {}
+    marker = _read(RESTART_MARKER_FILE)
+    loaded_v = str(loaded.get("version") or "") or None
+    required = str((marker or {}).get("required_version") or "") or None
+    pending = marker is not None and (
+        not required or not loaded_v or required != loaded_v)
+    return {"loaded": loaded_v, "required": required,
+            "restart_pending": bool(pending)}
+
+
 # Problem reports (panel/reports.py) are written off whichever thread noticed
 # the problem: `journal.record` is synchronous and is called from the event
 # loop as well as from request threads, and a report fetches the add-on log
@@ -4001,6 +4037,20 @@ async def _generate(insight_id: str) -> None:
         "domains": [], "device_classes": [], "history": False, "stats": False,
         "focus": "",
     }
+    # The scheduler queues every due card in one tick, and they run one
+    # after another: without this, the first card's refusal paused the
+    # scheduler while the eight queued behind it each went on to be refused
+    # too. A scheduled card still waiting when the account has said "not
+    # now" is let go with the hold written where "why did this card stop
+    # updating" is read; a press is never held.
+    paused_until = _rate_limited_now()
+    if job.get("scheduled") and paused_until:
+        REFRESH_HOLDS[insight_id] = {
+            "why": "the account's usage limit said wait; cards resume at "
+                   + time.strftime("%H:%M", time.localtime(paused_until)),
+            "at": int(time.time())}
+        _set_job(insight_id, state="done", error="")
+        return
     try:
         _set_job(insight_id, state="collecting", error="")
 
@@ -6010,9 +6060,44 @@ def _note_card_failure(card_id: str, error: str, now: float | None = None) -> No
 # because that is the account answering again. Fed by the journal (every
 # run records itself there), so the chat or voice meeting the limit holds
 # the cards too.
-RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": ""}
+#
+# Two things it had wrong, and together they let the cards past it all day
+# (168 refused card runs against 17 that worked, on a house whose Opus
+# window was spent while its Haiku looks went on succeeding):
+#
+# **A success ends the pause only on the TIER that was refused.** A plan's
+# limits are per model as well as per account — the weekly Opus allowance
+# runs out while Haiku and Sonnet go on answering — and the Resident's
+# first look is a Haiku run every ten minutes. "Any run that works ends
+# it" let every one of those looks reopen the gate for the Opus cards,
+# which then queued, were refused, paused thirty minutes, and were let
+# through again by the next look. A success on another tier says nothing
+# about this window; one whose tier cannot be read on either side still
+# ends it, the direction in which being wrong costs a run, not a day.
+#
+# **The pause runs to the account's own reset when the tracker knows it.**
+# A window at 100% does not reopen in thirty minutes because the ladder
+# says so; asking into it is exactly the refused run this exists to stop.
+RATE_LIMIT_STATE: dict = {"until": 0.0, "streak": 0, "detail": "", "tier": ""}
 RATE_LIMIT_PAUSE_S = 30 * 60
 RATE_LIMIT_MAX_S = 4 * 3600
+
+
+def _account_reset_after(now: float) -> float:
+    """When the account's own spent window reopens, or 0.0 when nothing
+    says one is spent. Read off the usage tracker's figures; never raises."""
+    try:
+        state = usage_store.budget_state(settings_store.load(), now=now)
+    except Exception:  # noqa: BLE001 — no figure is no extension
+        return 0.0
+    if state.get("source") != "account":
+        return 0.0
+    out = 0.0
+    if float(state.get("used_percent") or 0) >= 100:
+        out = max(out, float(state.get("resets_at") or 0))
+    if float(state.get("week_percent") or 0) >= 100:
+        out = max(out, float(state.get("week_resets_at") or 0))
+    return out if out > now else 0.0
 
 
 def _journal_rate_listener(row: dict) -> None:
@@ -6021,14 +6106,29 @@ def _journal_rate_listener(row: dict) -> None:
     # every limit a streak of two.
     if not isinstance(row, dict) or not journal.is_claude_run(row):
         return
-    if row.get("outcome") == "rate_limited":
+    tier = model_plan.tier_of(str(row.get("model") or "")) or ""
+    # `outcome_of`, not the stored word: a row a caller wrote as `error`
+    # whose text is the account's limit is counted as one everywhere else.
+    if journal.outcome_of(row) == "rate_limited":
         streak = int(RATE_LIMIT_STATE.get("streak") or 0) + 1
+        ts = float(row.get("ts") or time.time())
         wait = min(RATE_LIMIT_PAUSE_S * 2 ** (streak - 1), RATE_LIMIT_MAX_S)
+        until = max(ts + wait, _account_reset_after(ts))
         RATE_LIMIT_STATE.update(
-            streak=streak, until=float(row.get("ts") or time.time()) + wait,
+            streak=streak, until=until, tier=tier,
             detail=str(row.get("error") or "")[:160])
-    elif row.get("ok") and journal.is_claude_run(row):
-        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="")
+    elif row.get("ok"):
+        refused = str(RATE_LIMIT_STATE.get("tier") or "")
+        if refused and tier and tier != refused:
+            return
+        RATE_LIMIT_STATE.update(streak=0, until=0.0, detail="", tier="")
+
+
+def _rate_limited_now(now: float | None = None) -> float:
+    """When the usage-limit pause ends, or 0.0 when there is none."""
+    until = float(RATE_LIMIT_STATE.get("until") or 0)
+    now = time.time() if now is None else now
+    return until if until > now else 0.0
 
 
 def _book_shell_usage(row: dict) -> None:
@@ -6260,7 +6360,7 @@ async def _scheduler() -> None:
                     "why": change["why"], "at": int(now)}
                 continue
             REFRESH_HOLDS.pop(cat["id"], None)
-            if _enqueue(cat["id"], because=change["why"]):
+            if _enqueue(cat["id"], because=change["why"], scheduled=True):
                 log.info("auto-refresh: queued %s (%s)",
                          cat["id"], change["why"])
 
@@ -6276,6 +6376,11 @@ def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
     # next plain Regenerate and written onto the card as why it happened.
     fields.setdefault("refine", "")
     fields.setdefault("because", "")
+    # Whether the scheduler queued this rather than a person: a scheduled
+    # card still waiting when the account says "not now" is let go
+    # (`_generate`), a pressed one is not. Reset on every queue for the
+    # reason the two above are.
+    fields.setdefault("scheduled", False)
     _set_job(job_id, state="queued", error="", question=question,
              started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
     QUEUE.put_nowait(job_id)
@@ -6542,8 +6647,9 @@ def _today_state(now: float | None = None) -> dict:
     finished = int(last.get("finished_at") or 0)
     built = int((baselines.load() or {}).get("built_at") or 0)
     try:
-        recent = len([r for r in reports.list_reports()
-                      if (r.get("ts") or 0) >= now - 86400])
+        # Problems, not every file in the folder: a report somebody asked
+        # for is not one (`reports.REQUESTED_KINDS`).
+        recent = reports.problems_since(now - 86400)
     except Exception as exc:  # noqa: BLE001 — one number, not the payload
         log.debug("could not count reports: %s", exc)
         recent = 0
@@ -6577,9 +6683,13 @@ def _today_state(now: float | None = None) -> dict:
             "running": _consolidation_running(),
         },
         "reports": {"since_yesterday": recent},
-        # Every Claude run and every checks pass that reached the journal.
-        # It is what tells a quiet add-on from a stopped one.
-        "landed_runs_24h": journal.summary(24.0, now).get("runs", 0),
+        # Claude runs in the last day — rows a model ran for, never the
+        # checks passes and summary rows beside them (`journal.summary`'s
+        # `claude_runs`). It is what tells a quiet add-on from a stopped
+        # one; it once counted every journal line and said "518 runs" on a
+        # day of a few hundred Claude runs, against a usage popover counting
+        # something else again.
+        "claude_runs_24h": journal.summary(24.0, now).get("claude_runs", 0),
     }
 
 
@@ -14036,6 +14146,9 @@ def _diagnostics_payload() -> dict:
         "versions": {
             "addon": os.environ.get("ADDON_VERSION", "dev"),
             "claude_cli": _cli_version(),
+            # The integration Home Assistant has loaded, and whether a
+            # restart is owed to load the one this add-on deployed.
+            "integration": _integration_versions(),
             "python": platform.python_version(),
             "machine": platform.machine(),
         },
@@ -14065,6 +14178,9 @@ def _diagnostics_payload() -> dict:
             "triage_oldest_wait_s": max(
                 [int(time.time() - f["ts"]) for f in rows
                  if f["status"] == "triaging"] or [0]),
+            # Rows past `triage.SHOW_AFTER_S` still waiting for that look:
+            # shown on the feed and counted in `open` above.
+            "waiting_look": len([f for f in rows if f.get("waiting_look")]),
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
             "scorecard": findings_store.scorecard(),
@@ -14229,7 +14345,10 @@ def _diagnostics_payload() -> dict:
         # held by a gate, a frame nobody rebuilt, a calendar that would
         # not answer — and each says which here.
         "understanding": _understanding_diagnostics(),
-        "daemons": _daemon_rollcall(),
+        # Each stopped daemon carries why it is correctly absent, when it
+        # is (`health.not_used_reason`): the classic assist listener on a
+        # fast-mode install read "not running" beside a verdict of fine.
+        "daemons": _annotate_daemons(_daemon_rollcall(), safe_options),
         # The panel's own loops — the generation worker, the scheduler, the
         # checks — alive or not, and when each last went round. A dead
         # worker is cards and fixes queued for ever with every other
@@ -14249,6 +14368,16 @@ def _diagnostics_payload() -> dict:
             # reports of the same stale number, and only one of them is
             # something to look into.
             "nudged_at": int(usage_store.nudged_at()) or None,
+            # When the account's windows reset, and whether the scheduler
+            # is holding the cards for a usage limit right now — what the
+            # fault row for a run of refused runs names as the way out.
+            **{k: usage.get(k) for k in ("resets_at", "week_percent",
+                                         "week_resets_at")},
+            "rate_limit": {
+                "until": int(RATE_LIMIT_STATE.get("until") or 0) or None,
+                "streak": int(RATE_LIMIT_STATE.get("streak") or 0),
+                "detail": journal.scrub(RATE_LIMIT_STATE.get("detail") or ""),
+            },
         },
     }
     # Derived last, from everything above it. The verdict is part of the
@@ -19244,6 +19373,17 @@ DAEMON_MARKS = {
     "assist_listener": "assist-listener.sh",
     "automation_listener": "automation-listener.sh",
 }
+
+
+def _annotate_daemons(rollcall: dict, options: dict) -> dict:
+    """The roll-call, with `not_used` on each daemon this configuration did
+    not ask for — health's answer, worded for the Diagnostics list."""
+    for name, row in (rollcall or {}).items():
+        if isinstance(row, dict) and not row.get("running"):
+            why = health.not_used_reason(name, options)
+            if why:
+                row["not_used"] = why
+    return rollcall
 
 
 def _daemon_rollcall() -> dict:

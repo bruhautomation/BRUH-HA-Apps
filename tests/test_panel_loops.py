@@ -319,6 +319,111 @@ class TestAUsageLimitHoldsTheCards(ServerCase):
         self.assertGreater(srv.RATE_LIMIT_STATE["until"], time.time())
         self.assertEqual(srv.RATE_LIMIT_STATE["streak"], 1)
 
+    def test_a_success_on_another_tier_does_not_end_it(self):
+        """The Opus window spent while the Resident's Haiku looks go on
+        answering: each look used to reopen the gate for the Opus cards,
+        which is how a day ended 168 refused card runs against 17."""
+        srv = self.server
+        listen = srv._journal_rate_listener
+        listen(self._row(outcome="rate_limited", ok=False,
+                         model="claude-opus-5-5",
+                         error="You've hit your limit"))
+        held = srv.RATE_LIMIT_STATE["until"]
+        self.assertGreater(held, 0)
+        listen(self._row(outcome="ok", ok=True, model="claude-haiku-4-5"))
+        self.assertEqual(srv.RATE_LIMIT_STATE["until"], held)
+        self.assertEqual(srv.RATE_LIMIT_STATE["streak"], 1)
+        # The tier that was refused answering again is the window reopening.
+        listen(self._row(outcome="ok", ok=True, model="claude-opus-5-5"))
+        self.assertEqual(srv.RATE_LIMIT_STATE["until"], 0.0)
+
+    def test_an_error_row_carrying_the_limit_holds_the_cards(self):
+        """`journal.outcome_of`'s rule: a row written as `error` whose own
+        text is the account's limit is counted as one everywhere else."""
+        srv = self.server
+        srv._journal_rate_listener(self._row(
+            outcome="error", ok=False, error="Claude AI usage limit reached"))
+        self.assertEqual(srv.RATE_LIMIT_STATE["streak"], 1)
+        self.assertGreater(srv.RATE_LIMIT_STATE["until"], 0)
+
+    def test_the_pause_runs_to_the_accounts_own_reset(self):
+        srv = self.server
+        ts = 1_800_000_000.0
+        reset = ts + 3 * 3600
+        old = srv.usage_store.budget_state
+        srv.usage_store.budget_state = lambda settings, now=None: {
+            "source": "account", "used_percent": 100.0, "resets_at": reset,
+            "week_percent": 40.0, "week_resets_at": ts + 86400}
+        try:
+            srv._journal_rate_listener(self._row(
+                outcome="rate_limited", ok=False, error="hit your limit"))
+        finally:
+            srv.usage_store.budget_state = old
+        self.assertEqual(srv.RATE_LIMIT_STATE["until"], reset)
+
+    def _queue_card(self, card_id, **fields):
+        srv = self.server
+        srv.QUEUE = asyncio.Queue()
+        self.assertTrue(srv._enqueue(card_id, question="how warm is it?",
+                                     **fields))
+        srv.QUEUE.get_nowait()
+
+    def test_scheduled_cards_queued_behind_a_refusal_are_let_go(self):
+        """One tick queues every due card and they run one after another,
+        so the first card's refusal used to be followed by eight more."""
+        srv = self.server
+        holds = dict(srv.REFRESH_HOLDS)
+        self.addCleanup(lambda: (srv.REFRESH_HOLDS.clear(),
+                                 srv.REFRESH_HOLDS.update(holds)))
+        srv.RATE_LIMIT_STATE.update(until=time.time() + 1800, streak=1)
+        calls = []
+
+        async def refuse(*a, **k):
+            calls.append(a)
+            raise AssertionError("a held card spent a run")
+
+        old = srv._search_run, srv._snapshot_run
+        srv._search_run = srv._snapshot_run = refuse
+        try:
+            self._queue_card("custom-held", scheduled=True)
+            asyncio.run(srv._generate("custom-held"))
+        finally:
+            srv._search_run, srv._snapshot_run = old
+        self.assertEqual(calls, [])
+        self.assertEqual(srv.JOBS["custom-held"]["state"], "done")
+        self.assertIn("usage limit", srv.REFRESH_HOLDS["custom-held"]["why"])
+
+    def test_a_pressed_card_is_never_held_by_it(self):
+        srv = self.server
+        srv.RATE_LIMIT_STATE.update(until=time.time() + 1800, streak=1)
+        jr = srv.journal
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        old_file, listeners = jr.JOURNAL_FILE, list(jr._LISTENERS)
+        jr.JOURNAL_FILE = str(Path(tmp.name) / "journal.jsonl")
+        jr._LISTENERS[:] = []
+        reached = []
+
+        async def search(*a, **k):
+            reached.append(a)
+            raise RuntimeError("reached the run")
+
+        old = srv._search_run, srv.eff_gather_mode
+        srv._search_run = search
+        srv.eff_gather_mode = lambda: "search"
+        try:
+            # A press re-queues with `scheduled` reset, whatever the last
+            # queue of the same card said.
+            self._queue_card("custom-pressed", scheduled=True)
+            srv.JOBS["custom-pressed"]["state"] = "done"
+            self._queue_card("custom-pressed")
+            asyncio.run(srv._generate("custom-pressed"))
+        finally:
+            srv._search_run, srv.eff_gather_mode = old
+            jr.JOURNAL_FILE = old_file
+            jr._LISTENERS[:] = listeners
+        self.assertEqual(len(reached), 1)
+
 
 class TestNoSecondRefusal(unittest.TestCase):
     @classmethod
