@@ -37,7 +37,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const NOW = Math.floor(Date.now() / 1000);
 const IDS = ['viewHousebook', 'upBook'];
-const BOOK_IDS = ['viewHousebook', 'upBook'];
 
 const BOOK = {
   running: false, last_error: '', last_note: '', held: '', subject: '',
