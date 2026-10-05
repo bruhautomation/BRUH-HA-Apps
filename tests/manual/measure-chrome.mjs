@@ -71,7 +71,7 @@ window.fetch = async (url) => {
                   next_at: ${NOW} + 20000 },
         baselines: { built_at: ${NOW} - 30000 },
         memory: { last_filed_at: ${NOW} - 4000, waiting: 3 },
-        landed_runs_24h: 73,
+        claude_runs_24h: 73,
       },
     });
   }
