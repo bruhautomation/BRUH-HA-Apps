@@ -2,6 +2,56 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.13.0
+
+**The panel, redesigned around three jobs: decide, ask, read.** Three tabs
+(Today, Ask, House) and ⚙ replace eight, with one card, one set of button
+words and one place for everything you have put away. Safety behaviour is
+unchanged: permissions, protected entities, the action gate, Undo, the safety
+lane and "What could go wrong" all work and read as before.
+
+### Today
+
+- **One screen for deciding.** A status line ("Watching · last look 9 min
+  ago"), one queue of cards, Your list, and a History drawer. Findings,
+  questions, suggestions, the name tidy-up and assessed updates are one kind
+  of card.
+- **One set of button words.** Plan or Apply, Add to list, Snooze, Ignore;
+  Done, Recheck and Ask behind ⋯. Ignore asks why (optional) and can ignore
+  everything like it.
+- **History** holds Snoozed, Ignored, Done and Set aside by brAIn, one line
+  each with Restore (or Undo), and repeats shown once with a count.
+- A three-step setup card stands in for the queue until the first look ends.
+
+### Ask
+
+- Your conversations only; machine runs are in ⚙ › Diagnostics › Runs.
+- A reply's tool calls fold into one "Worked through N steps" line; approval
+  and question cards never fold.
+- "Save as report" on an answer. Sending a message resumes a conversation.
+- On a phone, Ask opens on the list, with a way back.
+
+### House
+
+- One control over Reports, What it knows, House book and What happened.
+- Report cards show a headline and "Updated N ago", with Ask and ⋯.
+- The house book is its own page; the "codes and passwords are left out"
+  line is always shown.
+
+### ⚙
+
+- Eight named sections, no "?" bubbles. Usage, calendars, memory,
+  measurements, the overnight check and run history moved here.
+- The usage pill in the bar appears only past 80% or when paused.
+
+### Everywhere
+
+- Visual tokens: four type sizes, sentence case, no coloured left bars,
+  styled selects and toggles.
+- Every count agrees: the badge, Home Assistant's sensors and the to-do list
+  read one source. New `sensor.brain_status` and
+  `binary_sensor.brain_needs_you`; `todo.brain` is your list only.
+
 ## 2.12.0
 
 **Fixes from a walkthrough of brAIn on a real house: what was broken, what
