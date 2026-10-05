@@ -819,7 +819,10 @@ class TestChatTerminalPanel(unittest.TestCase):
         conversation picker, which lists Claude Code's own store and replays
         the one you choose."""
         self.assertIn('id="chatOpen"', self.html)
-        self.assertIn('id="convModal"', self.html)
+        # The list is the rail (beside the transcript, or the page Ask
+        # opens on below the breakpoint) — never a second dialog copy.
+        self.assertIn('id="chatRail"', self.html)
+        self.assertNotIn('id="convModal"', self.html)
         self.assertIn("api/chat/resume", self.js)
         self.assertIn("api/chat/conversations", self.js)
         chat = (PANEL / "chat_session.py").read_text()

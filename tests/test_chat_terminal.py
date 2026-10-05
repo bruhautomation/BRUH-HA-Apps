@@ -1541,7 +1541,9 @@ class TestManySessions(unittest.IsolatedAsyncioTestCase):
         payload = self.reg.row_state("conv-one")
         self.assertEqual(payload["state"], "paused")
         self.assertEqual(payload["label"], "", "an ordinary paused row is not news")
-        self.assertIn("resumes this conversation", payload["hint"])
+        # Nor is it a sentence: sending is what resumes it, and a line
+        # above the box saying so (with a Resume button) was cut.
+        self.assertEqual(payload["hint"], "")
 
     async def test_an_evicted_row_says_it_was_paused_to_make_room(self):
         self._cap(1)
@@ -1865,6 +1867,65 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             "/api/chat/conversations?source=all")).json()
         self.assertEqual({c["id"] for c in data["conversations"]},
                          {"mine", "machine"})
+
+    def _keep_meta(self, session_id, meta):
+        """What the panel keeps beside a conversation: its own transcript
+        file under /data/chat, whose `meta` says which card it is about."""
+        path = Path(os.environ["BRAIN_CHAT_TRANSCRIPT_DIR"]) / f"{session_id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"session_id": session_id, "events": [],
+                                    "meta": meta}), encoding="utf-8")
+
+    async def test_a_discussion_is_titled_by_its_card_and_links_back(self):
+        """Ask's list used to lead every discussion with the same word,
+        "Discussing:". The card's own title is the row's title, and the
+        card it is about rides along so the panel can link back to it."""
+        self._fake_conversation(
+            "disc", "Discussing: Garage door sensor battery is at 5%\nSeverity: warning")
+        self._keep_meta("disc", {"finding_ts": 1720000000})
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        row = next(c for c in data["conversations"] if c["id"] == "disc")
+        self.assertTrue(row["title"].startswith("Garage door sensor battery"))
+        self.assertNotIn("Discussing", row["title"])
+        self.assertEqual(row["finding_ts"], 1720000000)
+
+    async def test_a_person_typing_discussing_gets_no_card_link(self):
+        """The link comes off the conversation's kept meta, never out of
+        the title: a person who types the word links to no card."""
+        self._fake_conversation("typed", "Discussing: whether to move the router")
+        data = await (await self.client.get("/api/chat/conversations")).json()
+        row = next(c for c in data["conversations"] if c["id"] == "typed")
+        self.assertEqual(row["title"], "Discussing: whether to move the router")
+        self.assertNotIn("finding_ts", row)
+
+    async def test_the_snapshot_says_which_card_it_is_about(self):
+        """The strip above the composer follows the conversation on screen,
+        so the snapshot carries the card — 0 when it is about none."""
+        resp = await self.client.get("/api/chat/stream")
+        line = await asyncio.wait_for(resp.content.readline(), 5)
+        payload = json.loads(line.decode().split("data: ", 1)[1])
+        self.assertEqual(payload["finding_ts"], 0)
+        resp.close()
+
+    async def test_save_as_report_asks_the_question_as_a_card_and_nothing_else(self):
+        """"Save as report" posts the question with `report: true`. It is a
+        question for a card whatever its words: a question opening "when"
+        must not become a one-off rule, nor "learn" a study session, because
+        somebody pressed Save under an answer."""
+        queued = []
+        self.server._enqueue = lambda job_id, question=None, **f: queued.append(
+            (job_id, question)) or True
+
+        async def never(*a, **k):
+            raise AssertionError("a saved report was interpreted")
+        self.server._interpret = never
+        resp = await self.client.post("/api/generate", json={
+            "question": "when did the boiler last run?", "report": True})
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(len(data["queued"]), 1)
+        self.assertTrue(data["queued"][0].startswith("custom-"))
+        self.assertEqual(queued, [(data["queued"][0], "when did the boiler last run?")])
 
     async def test_the_filter_only_offers_faces_that_have_run_here(self):
         """A house with no voice assistant should not be given a Voice
@@ -2584,14 +2645,19 @@ class TestChatChrome(unittest.TestCase):
         bar = self.css.split(".chatbar {")[1].split("}")[0]
         self.assertNotIn("safe-area-inset", bar)
 
-    def test_the_rail_is_a_wide_screen_affordance_only(self):
-        """248px of conversations is most of a phone. Below the breakpoint
-        the rail is not rendered and ⋯ → Conversations is still the way in,
-        so nothing is only reachable from a screen you don't have."""
+    def test_the_list_is_a_rail_on_a_wide_screen_and_a_page_on_a_phone(self):
+        """248px of conversations is most of a phone, so below the
+        breakpoint the rail is not drawn beside the transcript — it is the
+        page Ask opens on (`body.ask-list`), and a transcript has a back
+        button to it (#chatBack). ⋯ → Your chats is the other way back."""
         self.assertIn('id="chatRail"', self.html)
         self.assertIn('id="chatOpen"', self.html)   # the menu route survives
+        self.assertIn('id="chatBack"', self.html)
         self.assertIn(".chatrail {\n  display: none;", self.css)
         self.assertIn("@media (min-width: 1100px)", self.css)
+        self.assertIn("body:not(.term-classic).ask-list #viewTerminal.active .chatrail",
+                      self.css)
+        self.assertIn('askShow("list")', self.js)
 
     def test_a_new_chat_does_not_claim_the_old_one_is_lost(self):
         """Claude Code keeps the conversation and it stays in the list, so

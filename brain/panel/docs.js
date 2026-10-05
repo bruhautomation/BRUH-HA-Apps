@@ -1104,20 +1104,35 @@ same \`/config\`, with the same permissions — what differs is only how you see
   is ordinary text, so it wraps like text.
 - **Code blocks keep the grid** — inside their own horizontal scroller, so a
   200-column log line never makes the whole page slide sideways.
-- **Tool calls collapse to one line each.** \`Read /config/automations.yaml\`, with a
-  dot that goes green or red; tap it for the arguments and the full result. In the
-  grid terminal each of those was twenty lines you scrolled past.
-- **Reasoning folds away** behind a "Thinking" line you can open.
+- **The working folds into one line per reply.** Every tool call, its result, the
+  reasoning and a background task finishing go into one **Worked through N steps**
+  line above the answer, closed; open it for each call with a dot that went green
+  or red, its arguments and its full result. The line says when a step failed or
+  was not permitted, so you can tell without opening it. What never folds away:
+  the answer, an approval card, a question card and the endings a discussion
+  offers — those are where you decide something.
+- **Save as report.** Under a reply's answer, **Save as report** asks the same
+  question again as a report card under House, so an answer worth keeping outlives
+  the conversation it was given in.
 - **Commands, both kinds.** Type **/** and you get the commands **your** Claude Code
   actually has — including anything you put in \`/config/.claude/commands\`. Type
   **brain** or **ha** and you get brAIn's own CLI, \`brain memory add\` through
   \`ha reload\`, with the same descriptions and argument hints the dispatchers print.
   ↑/↓ to move, Enter or Tab to pick. Both lists come from the thing that owns them, so
   neither can go stale.
-- **⋯ holds the rest** — **New chat**, **Conversations** (every conversation in \`/config\`,
-  started here or in the classic terminal; picking one replays it and carries on),
-  **Session details**, **Model**, and the switch to Classic. Two buttons float over the
-  terminal, not a column of them.
+- **Your chats are the list.** On a wide screen it sits beside the conversation;
+  on a phone Ask opens on it, a row opens the conversation, and the back button at
+  the top of a conversation returns to it. It holds every conversation you started,
+  here or in the classic terminal; picking one replays it and carries on.
+- **⋯ holds the rest** — **New chat**, **Your chats** (on a phone), **Session details**,
+  **Model**, and the switch to Classic. Two buttons float over the terminal, *Chat
+  options** and **Full-screen terminal*, not a column of them.
+- **A conversation about a card is called by the card.** **Ask** on a card in Today
+  opens a conversation about it: the card's title is above the box, and pressing it
+  takes you back to the card. The card's own verbs sit under it — **Plan**, **Done**,
+  **Snooze**, **Ignore** — so agreeing at the end of the conversation is one press.
+  An empty chat also offers **Design lighting scenes for a room**, which fills the box
+  for you to name the room.
 - **The chat picks its own model.** Press the model name under the message box (or
   ⋯ → **Model**) and choose — the current conversation carries straight on under the
   new model. Refused while **that** conversation is being answered, because the model
@@ -1144,30 +1159,22 @@ same \`/config\`, with the same permissions — what differs is only how you see
   the one closed. The only switch that is refused is when every open chat is still
   answering and there is nothing idle to close — it says exactly that, with the
   count and the setting.
-- **Conversations can be deleted.** Every row in the list grows a **✕**, and the
+- **Conversations can be deleted.** Each row's **⋯** holds **Delete**, and the
   toast grows an **Undo** for the few minutes a mis-tap needs. One the chat is
-  holding open is refused, and the ✕ offers to close it first rather than leaving
-  you with a no — closing one mid-answer loses what it was writing, so it asks.
+  holding open is closed first — and closing one mid-answer loses what it was
+  writing, so it asks.
   (Old conversations that Claude Code itself has pruned can no longer be picked up
   mid-thought: reopening one shows its transcript and says plainly that the next
   message starts fresh, instead of erroring on every send.)
-- **Yours, and everyone else's.** brAIn runs Claude in \`/config\` for voice, automation
-  tasks and filing memory, so those conversations live beside yours. The list shows
-  **Chats** by default — everything you started yourself, in the chat or the
-  classic terminal, including a finding you opened for discussion — and puts the
-  rest behind a chip each, alphabetically:
-  **Automation**, **Cards**, **Fixes**, **Memory**, **Study**, **Voice** — with a count, and
-  only for the ones your house actually uses. Each row's time is when something
-  last **happened in** the conversation — opening one just to look at it doesn't
-  bump it to the top.
-- **Cards and Fixes open read-only.** Every insight run (scheduled or a question
-  you asked) and every Fix-it run is a Claude conversation too, and its chip lists
-  them all — pick one and it opens as a record: exactly what brAIn sent to Claude
-  about your house, every tool call it made, and what came back. Read-only on
-  purpose: those runs happen under the analyst's read-only tool scoping (or the
-  fixer's), and quietly continuing one under the chat's permissions would change
-  the conversation's rules mid-thread. Want to talk about what a run found? Ask
-  in the chat — memory and the findings list already carry what it learned.
+- **Only yours.** brAIn runs Claude in \`/config\` for voice, automation tasks,
+  filing memory, cards and fixes, so those conversations live beside yours — but
+  they are records of what brAIn did, not chats you started, so Ask does not list
+  them. They are under ⚙ › Diagnostics › Runs, where a card or fix run opens as a
+  record: exactly what brAIn sent to Claude about your house, every tool call it
+  made, and what came back — read-only, because those runs happened under the
+  analyst's (or the fixer's) rules. Each row's time is when something last
+  **happened in** the conversation — opening one just to look at it doesn't bump it
+  to the top.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.
 - **⏹ stops a running answer**, and **＋ starts a new chat**. The conversation
   survives a page reload, a phone locking, and the add-on restarting.
@@ -1182,28 +1189,29 @@ same \`/config\`, with the same permissions — what differs is only how you see
   deliberately no second "continue in the terminal" button beside a switch that
   already moves you, because two controls for one thing is how you end up unsure
   which one actually moved.
-- **Every conversation says what state it is in.** A row in the rail (and in the ⋯
-  dialog, which is the only surface a phone has) carries one of seven:
+- **Every conversation says what state it is in.** A row in the list carries one
+  of these:
 
   | State | What it means |
   | --- | --- |
   | **Live** | A Claude Code process is running and idle. Type and it answers. |
   | **Answering…** | It is writing. **Stop** is the control above the composer. |
   | **Needs your OK** | It has asked to use a tool. Answer the card; an unanswered one declines itself. |
-  | **(no pill)** | Paused: no process, and your next message resumes it with its context. |
-  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; **Resume now** brings it back. Only an **idle** conversation is ever taken, never one that is answering. |
+  | **(no pill)** | Paused: no process. Sending a message picks it up with its context. |
+  | **Paused to make room** | brAIn keeps \`chat_max_sessions\` chats running at once (3, settable 1–8). This one was the quietest and was stopped; sending a message picks it back up. Only an **idle** conversation is ever taken, never one that is answering. |
   | **Context lost** | Claude Code no longer holds this conversation. You can read it; a new message starts fresh from here (**Start fresh**). |
   | **Record** | A card or fix run, kept to be read. It ran under the analyst's or the fixer's rules, so it can never be resumed — **Ask about it** opens a new chat about it instead. |
 
-  A status line above the composer says what sending will do, and offers the one
-  control that fits that state — **Stop**, **New chat**, **Resume now**, **Start fresh**,
-  **Ask about it**, or nothing at all while an approval card is the thing to answer.
+  A status line above the composer says what sending will do when that is news,
+  and offers the one control that fits — **Stop**, **New chat**, **Start fresh**, *Ask
+  about it*, or nothing at all while an approval card is the thing to answer. A
+  plainly paused conversation shows no line: sending is what resumes it.
   The state is derived in one place and kept in the
   conversation's own metadata, so a reload agrees with what you were just looking at.
 
 Both faces stand in \`/config\`, which is what lets them see each other's
 conversations at all: Claude Code files them per working directory. So \`claude
---resume\` in the terminal lists the chats you had in the panel, ⟲ in the chat lists
+--resume\` in the terminal lists the chats you had in the panel, Ask's list holds
 the ones you had in the terminal, and a conversation can move either way without
 losing anything.
 

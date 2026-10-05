@@ -26,6 +26,9 @@
 //     rather than rendering buttons that settle nothing.
 //   * nothing is under the touch floor ON TOUCH, and nothing scrolls
 //     sideways at 390px.
+//   * in a reply, the card is never folded into the "Worked through N
+//     steps" disclosure the tool calls go into — it is where somebody
+//     decides, and a decision folded away is one nobody makes.
 //
 // It drives the panel's REAL `chatResolutionsNode`, the rule measure-activity
 // and measure-todo follow: a copy of it in this file would only ever agree
@@ -156,6 +159,8 @@ for (const { width, touch } of CASES) {
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
   await page.click('.viewtab[data-view="terminal"]');
+  // A phone opens Ask on the list; this card lives in the transcript.
+  await page.evaluate(() => askShow('chat'));
   // Attached, not visible: `.chatlog:empty` is `display: none`, so the log
   // does not exist to look at until something is in it — which is what the
   // draw below puts there.
@@ -243,6 +248,37 @@ for (const { width, touch } of CASES) {
       note(`${width}px`, 'the plan press took the finding off the list');
     }
   }
+
+  // In a real reply the card arrives after the working — tool calls and
+  // thinking — which folds into one "Worked through N steps". The card is
+  // a decision and must never fold away with it.
+  const replied = await page.evaluate(({ ts, options, FINDING_TS }) => {
+    state.findings = [{ ts: FINDING_TS, text: 'Garage door sensor battery is at 5%',
+      severity: 'warning', status: 'open', fixable: true }];
+    chatState.chosen = {};
+    chatReset();
+    [
+      { type: 'user', text: 'Is the garage sensor really dying?' },
+      { type: 'thinking', text: 'Read its battery history.' },
+      { type: 'tool', id: 'h1', name: 'mcp__home-assistant__get_history',
+        summary: 'sensor.garage_battery', input: '{}' },
+      { type: 'tool_result', id: 'h1', ok: true, text: '5, 6, 8' },
+      { type: 'text', text: 'Yes — it has lost 3% a week.' },
+      { type: 'resolutions', id: 'toolu_res2', finding_ts: ts, options },
+      { type: 'result', duration_ms: 1200, turns: 2 },
+    ].forEach(chatRender);
+    const card = document.querySelector('#chatLog .chatres');
+    return {
+      card: !!card,
+      folded: !!(card && card.closest('details.steps')),
+      visible: !!(card && card.checkVisibility()),
+      folds: document.querySelectorAll('#chatLog details.steps').length,
+    };
+  }, { ts: FINDING_TS, options: OPTIONS, FINDING_TS });
+  if (!replied.card) note(`${width}px`, 'the resolutions card did not render in a reply');
+  if (replied.folded) note(`${width}px`, 'the resolutions card was folded into the steps');
+  if (replied.card && !replied.visible) note(`${width}px`, 'the resolutions card is hidden');
+  if (replied.folds !== 1) note(`${width}px`, `${replied.folds} step folds for one reply`);
 
   // And a conversation that is not about a finding at all.
   const loose = await draw(page, { ts: 0, options: OPTIONS, finding: true });

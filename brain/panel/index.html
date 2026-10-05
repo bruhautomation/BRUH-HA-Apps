@@ -628,31 +628,32 @@
        stream-json output as DOM, so text reflows to the screen it is on;
        classic is ttyd over tmux, which is a character grid and is the right
        answer for anything that draws one (a TUI, htop, an installer). -->
-  <!-- On a wide screen the conversations get a rail of their own rather than
-       living two presses deep in ⋯. Below the breakpoint the rail is not
-       rendered at all and the menu is still the way in — a 240px column is
-       most of a phone. -->
+  <!-- The conversations you started, and nothing else. On a wide screen
+       it is a rail beside the transcript; below the breakpoint it is the
+       page Ask opens on, and a transcript has a back button to it. brAIn's
+       own runs (voice, cards, fixes, the memory pass…) are not here: they
+       are records of what brAIn did, and ⚙ › Diagnostics › Runs reads the
+       same listing with `?source=`. -->
   <aside id="chatRail" class="chatrail" aria-label="Conversations">
     <div class="crhead">
-      <span class="crtitle">Chats</span>
-      <button id="chatRailSel" class="btn icon" data-tip="Select several to delete"
-              aria-label="Select conversations">
-        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
-          <path d="M4 6l2 2 3-3M4 12l2 2 3-3M4 18l2 2 3-3M12 7h8M12 13h8M12 19h8"/>
-        </svg>
-      </button>
+      <span class="crtitle">Your chats</span>
       <button id="chatRailNew" class="btn icon" data-tip="New chat" aria-label="New chat">
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
-    <!-- Who ran what. Only rendered when there is more than one answer:
-         on a house with no voice assistant and no automations there is
-         nothing to filter and the row would be a single dead chip. -->
-    <div id="chatRailFilter" class="crfilters"></div>
     <div id="chatRailList" class="crlist"></div>
   </aside>
 
   <section id="termChat" class="chat">
+    <!-- Below the rail's breakpoint only: the way back to the list, and
+         what this conversation is. On a wide screen the rail beside it is
+         both, so this would say everything twice. -->
+    <div id="chatHead" class="chathead">
+      <button id="chatBack" class="btn icon" type="button" aria-label="Back to your chats">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <span id="chatHeadTitle" class="chtitle">New chat</span>
+    </div>
     <div id="chatLog" class="chatlog" role="log" aria-live="polite" aria-label="Conversation"></div>
     <div id="chatEmpty" class="chatempty">
       <h3>Ask brAIn anything about your house</h3>
@@ -664,25 +665,32 @@
         <button class="seed">Why did the porch light not come on last night?</button>
         <button class="seed">Which of my devices have stopped reporting?</button>
         <button class="seed">Rename the switches in the garage to what they actually are</button>
+        <!-- Fills the box rather than sending: which room is yours to say.
+             This is where "Design scenes for a room" lives now that the
+             Proposals form is gone. -->
+        <button class="seed" data-fill="Design lighting scenes for the ">Design lighting scenes for a room</button>
       </div>
     </div>
     <div id="chatErr" class="chaterr hidden"></div>
-    <!-- What you are discussing, and the decisions that belong to it. The
-         discussion itself changes nothing — the prompt says so — so the
-         buttons that DO have to be here: agreeing to a fix at the end of a
-         conversation about it should be one press, not a trip back to the
-         other tab to find the card again. -->
+    <!-- The card this conversation is about, and the decisions that belong
+         to it. The title is the card's own and links back to it on Today;
+         the buttons are the card's verbs, so agreeing at the end of a
+         conversation is one press rather than a trip back to find the
+         card. The discussion itself changes nothing — its acting tools ask
+         first (chat_session.DISCUSS_ASK). -->
     <div id="chatFinding" class="chatfinding hidden">
       <div class="cfhead">
-        <span class="cflabel">Discussing</span>
-        <span id="chatFindingText" class="cftext"></span>
-        <button id="chatFindingClose" class="btn icon" aria-label="Stop discussing it">✕</button>
+        <button id="chatFindingText" class="cftext" type="button"
+                title="Show this card on Today"></button>
+        <button id="chatFindingClose" class="btn icon" type="button" aria-label="Stop discussing it">
+          <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
       </div>
       <div class="cfacts">
-        <button id="chatFindingFix" class="btn small primary">✦  Fix it</button>
-        <button id="chatFindingDone" class="btn small">✓  I fixed it</button>
-        <button id="chatFindingLater" class="btn small ghost">⏰  Dismiss</button>
-        <button id="chatFindingWrong" class="btn small ghost">✕  Not a problem</button>
+        <button id="chatFindingFix" class="btn small primary">Plan</button>
+        <button id="chatFindingDone" class="btn small">Done</button>
+        <button id="chatFindingLater" class="btn small ghost">Snooze</button>
+        <button id="chatFindingWrong" class="btn small ghost">Ignore</button>
       </div>
     </div>
     <!-- The CLI's own slash commands, as it advertises them over the stream.
@@ -757,13 +765,13 @@
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       <span>New chat</span>
     </button>
-    <!-- Every conversation in this project directory, whichever face made
-         it. Claude Code files them per working directory and both faces
-         stand in /config, so one started in the terminal is listed here
-         beside one started in the chat. -->
+    <!-- Your conversations — whichever face started them: Claude Code
+         files them per working directory and both faces stand in /config.
+         Below the rail's breakpoint this is the list page Ask opens on;
+         beside a rail it is hidden, the rail being that list. -->
     <button id="chatOpen" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4M3 4v5h5"/></svg>
-      <span>Conversations…</span>
+      <span>Your chats</span>
     </button>
     <button id="chatInfo" class="tmitem" role="menuitem">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.1"/></svg>
@@ -992,37 +1000,6 @@
         <button id="nameSave" class="btn primary">Save</button>
         <button id="nameDelete" class="btn ghost danger">Delete card</button>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- The conversation list. Read out of Claude Code's own store rather than
-     kept by us, so it is the same set the terminal's own /resume offers —
-     picking one here replays it into the chat pane and carries on. -->
-<div id="convModal" class="modal" role="dialog" aria-modal="true">
-  <div class="box edit">
-    <header>
-      <span>⟲</span>
-      <span>Conversations</span>
-      <div class="spacer"></div>
-      <button id="convSel" class="btn icon" data-tip="Select several to delete"
-              aria-label="Select conversations">
-        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">
-          <path d="M4 6l2 2 3-3M4 12l2 2 3-3M4 18l2 2 3-3M12 7h8M12 13h8M12 19h8"/>
-        </svg>
-      </button>
-      <button id="convClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
-    </header>
-    <div class="edit-body">
-      <!-- One line, not a manual: the chips explain themselves on press,
-           and the full story lives in Docs. The long version of this hint
-           took more of the dialog than the list it was introducing. -->
-      <p class="hint tight">Newest first — pick one to carry on where it left
-        off. brAIn's own runs sit behind their chips; Cards and Fixes open
-        read-only.</p>
-      <div id="convFilter" class="crfilters"></div>
-      <div id="convList" class="convlist"></div>
-      <p id="convEmpty" class="kempty hidden">No other conversations yet.</p>
     </div>
   </div>
 </div>

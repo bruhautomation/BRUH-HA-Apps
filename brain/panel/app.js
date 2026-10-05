@@ -4477,6 +4477,8 @@ async function discussFinding(f, btns) {
   try {
     if (chatState.session === "classic") applyTermMode("chat");
     switchView("terminal");
+    // Ask on a card opens the conversation about it, not the list.
+    askShow("chat");
     chatConnect();
     await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
     setChatFinding(f);
@@ -9750,6 +9752,9 @@ function switchView(name) {
     } else {
       chatConnect();
       restoreChatFinding();
+      // A phone opens Ask on the list of your chats, never straight into
+      // whichever transcript was last on screen.
+      askShow("list");
     }
   } else {
     // Leaving the tab: whatever the keyboard was doing over there, the bar
@@ -9937,6 +9942,10 @@ const chatState = {
   cli: [],           // the brain/ha dispatchers, parsed from their own help
   cmdIndex: 0,       // highlighted row in the command palette
   finding: null,     // the finding this conversation is about, if any
+  findingTs: 0,      // …as the conversation itself says (the snapshot's)
+  steps: null,       // this reply's "Worked through N steps" fold
+  question: "",      // what this reply answers, for "Save as report"
+  answerNode: null,  // the reply's last answer, which carries that button
 };
 
 function chatLog() { return $("#chatLog"); }
@@ -9961,21 +9970,6 @@ function chatAppend(node, stick) {
   return node;
 }
 
-// Thinking is generated BEFORE the text it precedes, but it only reaches us
-// in the assistant message that closes the turn — by which time the text has
-// already been streaming into a live node for several seconds. Appending it
-// would put the reasoning after the conclusion it led to, so it goes in
-// where it belongs instead. The transcript a reload repaints has it in the
-// right order already; this only fixes the live view.
-function chatInsertBeforeLive(node) {
-  const wasBottom = chatAtBottom();
-  if (chatState.live) chatLog().insertBefore(node, chatState.live);
-  else chatLog().appendChild(node);
-  $("#chatEmpty").classList.toggle("hidden", chatLog().childElementCount > 0);
-  if (wasBottom) chatScroll(true);
-  return node;
-}
-
 // The panel already has an escaping markdown renderer for the guide, and
 // this is exactly the content that needs one: it escapes first, so a model
 // that echoes a <script> back at you renders it as text.
@@ -9983,6 +9977,142 @@ function chatMarkdown(text) {
   const node = el("div", "msg bot");
   node.innerHTML = renderMarkdown(String(text || ""));
   return node;
+}
+
+// One reply's working, folded into one line.
+//
+// A reply that reads three things and runs a search used to be four rows of
+// tool names above the answer, and a long one was a screen of them — the
+// working, at the same weight as what it was for. Every tool call, its
+// result, the thinking and a backgrounded task finishing go into ONE
+// disclosure per reply, "Worked through N steps", closed. What is never in
+// it: the answer, an approval card, a question card and the endings a
+// discussion offers. Those are where somebody decides something, and a
+// decision folded away is a decision nobody makes — the CLI is blocked on
+// the first two.
+function chatStepsFold() {
+  const have = chatState.steps;
+  if (have && have.isConnected) return have;
+  const box = el("details", "steps");
+  const sum = el("summary");
+  sum.appendChild(el("span", "tdot"));
+  sum.appendChild(el("span", "steplabel", ""));
+  box.appendChild(sum);
+  box.appendChild(el("div", "stepsbody"));
+  chatState.steps = box;
+  // Above an answer that is still streaming, never under it: the working
+  // came first.
+  const wasBottom = chatAtBottom();
+  if (chatState.live && chatState.live.parentNode === chatLog()) {
+    chatLog().insertBefore(box, chatState.live);
+  } else {
+    chatLog().appendChild(box);
+  }
+  $("#chatEmpty").classList.add("hidden");
+  if (wasBottom) chatScroll(true);
+  return box;
+}
+
+function chatStepAdd(node) {
+  const box = chatStepsFold();
+  box.querySelector(".stepsbody").appendChild(node);
+  chatStepsLabel(box);
+  return node;
+}
+
+// The count, and the two things worth knowing without opening it: that
+// something failed, and that something was not permitted. A step still
+// running keeps the dot pulsing, which is the fold's whole liveness.
+function chatStepsLabel(box) {
+  if (!box) return;
+  const body = box.querySelector(".stepsbody");
+  const n = body.childElementCount;
+  const failed = body.querySelectorAll(".toolcall.bad").length;
+  const denied = body.querySelectorAll(".toolcall.denied").length;
+  let text = `Worked through ${n} step${n === 1 ? "" : "s"}`;
+  if (failed) text += ` · ${failed} failed`;
+  if (denied) text += ` · ${denied} not permitted`;
+  box.querySelector(".steplabel").textContent = text;
+  box.classList.toggle("running", !!body.querySelector(".toolcall.running, .think.live"));
+  box.classList.toggle("bad", !!failed);
+}
+
+// A reply ends where the next message starts (or the turn's result lands);
+// the next reply's working gets a fold of its own.
+function chatEndReply() {
+  chatState.steps = null;
+}
+
+// "Save as report" under a reply's answer: the question the person typed,
+// asked again as a card under House, so an answer worth keeping outlives
+// the conversation it was given in. One button per reply, on its LAST
+// answer — a reply that says "let me look" before the real answer would
+// otherwise offer to save the preamble.
+function chatOfferReport(node) {
+  if (!node || !chatState.question) return;
+  const prev = chatState.answerNode;
+  if (prev && prev !== node) {
+    const old = prev.querySelector(".msgacts");
+    if (old) old.remove();
+  }
+  chatState.answerNode = node;
+  if (node.querySelector(".msgacts")) return;
+  const question = chatState.question;
+  const row = el("div", "msgacts");
+  const save = el("button", "btn tiny ghost savereport", "Save as report");
+  save.type = "button";
+  save.title = "Ask this again as a report card under House";
+  save.addEventListener("click", async () => {
+    save.disabled = true;
+    try {
+      await api("api/generate", {
+        method: "POST", body: JSON.stringify({ question, report: true }) });
+      row.textContent = "";
+      row.appendChild(el("span", "msgsaved", "Saving as a report under House"));
+      toast("Saving as a report — it will be under House when it is ready");
+    } catch (e) {
+      save.disabled = false;
+      toast(e.message);
+    }
+  });
+  row.appendChild(save);
+  node.appendChild(row);
+}
+
+const DISCUSS_PREFIX = "Discussing: ";
+
+// Whether a message is a question worth saving: not a slash command, and
+// not the opener Discuss sends on a card's behalf.
+function chatReportable(text) {
+  const t = String(text || "").trim();
+  return !!t && !t.startsWith("/") && !t.startsWith(DISCUSS_PREFIX);
+}
+
+// The Discuss opener is a page of context brAIn handed Claude about the
+// card — evidence rows, what the first look said, the run that raised it.
+// In the transcript it is the card's title, with the rest one press down:
+// that context is what the answer was written against, so it stays
+// readable, but it is not something the person said.
+function chatUserNode(text) {
+  const row = el("div", "msg user");
+  const t = String(text || "");
+  if (!t.startsWith(DISCUSS_PREFIX)) {
+    row.appendChild(el("div", "bubble", t));
+    return row;
+  }
+  const nl = t.indexOf("\n");
+  const title = (nl < 0 ? t : t.slice(0, nl)).slice(DISCUSS_PREFIX.length).trim();
+  const rest = nl < 0 ? "" : t.slice(nl + 1).trim();
+  const bubble = el("div", "bubble discuss");
+  bubble.appendChild(el("div", "dtitle", title));
+  if (rest) {
+    const more = el("details", "dmore");
+    more.appendChild(el("summary", null, "What brAIn told Claude about this card"));
+    more.appendChild(el("div", "dbody", rest));
+    bubble.appendChild(more);
+  }
+  row.appendChild(bubble);
+  return row;
 }
 
 function chatToolNode(ev) {
@@ -10044,8 +10174,10 @@ function chatToolResult(ev) {
       + "without allowing it will not change the answer."));
   }
   // A failure is the one case worth opening unasked — it is the reason the
-  // next thing Claude says will look strange.
+  // next thing Claude says will look strange. Inside its fold, whose line
+  // says so ("· 1 failed") without opening it.
   if (!ev.ok) box.open = true;
+  chatStepsLabel(box.closest("details.steps"));
 }
 
 // The status line: a verb, the elapsed seconds, and the pulse that says
@@ -10117,7 +10249,7 @@ function chatThinkDelta(text) {
     entry = { box, body, text: "" };
     chatState.liveThink = entry;
     chatState.thinkBoxes.push(entry);
-    chatAppend(box);
+    chatStepAdd(box);
   }
   entry.text += text;
   entry.body.innerHTML = renderMarkdown(entry.text);
@@ -10133,6 +10265,7 @@ function chatCloseLiveThink() {
   entry.box.open = false;
   entry.box.querySelector("summary").textContent = "Thinking";
   chatState.liveThink = null;
+  chatStepsLabel(entry.box.closest("details.steps"));
 }
 
 // The approval card: the chat's version of the TUI's permission prompt.
@@ -10369,9 +10502,11 @@ function chatSealLive(finalText) {
 function chatRender(ev) {
   switch (ev.type) {
     case "user": {
-      const row = el("div", "msg user");
-      row.appendChild(el("div", "bubble", ev.text));
-      chatAppend(row, true);
+      chatEndReply();
+      chatState.question = chatReportable(ev.text)
+        ? String(ev.text).trim().slice(0, 500) : "";
+      chatState.answerNode = null;
+      chatAppend(chatUserNode(ev.text), true);
       chatScroll(true);
       chatStatus();
       break;
@@ -10385,10 +10520,13 @@ function chatRender(ev) {
       chatThinkDelta(ev.text);
       chatStatus("Thinking…");
       break;
-    case "text":
-      if (!chatSealLive(ev.text)) chatAppend(chatMarkdown(ev.text));
+    case "text": {
+      const streamed = chatState.live;
+      const node = chatSealLive(ev.text) ? streamed : chatAppend(chatMarkdown(ev.text));
+      chatOfferReport(node);
       chatStatus();
       break;
+    }
     case "thinking": {
       chatCloseLiveThink();
       // The whole block, at message close. If it streamed in live it is
@@ -10405,13 +10543,13 @@ function chatRender(ev) {
       const body = el("div", "tbody");
       body.innerHTML = renderMarkdown(ev.text || "");
       box.appendChild(body);
-      chatInsertBeforeLive(box);
+      chatStepAdd(box);
       break;
     }
     case "tool": {
       chatCloseLiveThink();
       chatSealLive();
-      const node = chatAppend(chatToolNode(ev));
+      const node = chatStepAdd(chatToolNode(ev));
       if (ev.id) chatState.tools.set(ev.id, node);
       chatStatus(`Running ${ev.name || "a tool"}…`);
       break;
@@ -10422,7 +10560,7 @@ function chatRender(ev) {
       break;
     case "background":
       chatSealLive();
-      chatAppend(chatBackgroundNode(ev));
+      chatStepAdd(chatBackgroundNode(ev));
       break;
     case "resolutions":
       chatCloseLiveThink();
@@ -10446,6 +10584,7 @@ function chatRender(ev) {
       break;
     case "result": {
       chatSealLive();
+      chatEndReply();
       const bits = [];
       if (ev.duration_ms) bits.push((ev.duration_ms / 1000).toFixed(1) + "s");
       if (ev.turns) bits.push(ev.turns + (ev.turns === 1 ? " turn" : " turns"));
@@ -10482,7 +10621,6 @@ function chatRender(ev) {
       (ev.sessions || []).forEach((s) => { chatState.liveSessions[s.session_id] = s; });
       chatComposerFromSessions(ev.sessions || []);
       renderChatRail();
-      renderConvModal();
       break;
     case "switched":
       // The view moved to another conversation. Reconnect rather than
@@ -10569,6 +10707,9 @@ function chatReset() {
   chatState.thinkBoxes = [];
   chatState.permCard = null;
   chatState.tools.clear();
+  chatState.steps = null;
+  chatState.question = "";
+  chatState.answerNode = null;
   $("#chatEmpty").classList.remove("hidden");
   renderComposerState();
 }
@@ -10635,6 +10776,7 @@ function chatConnect() {
       chatState.composer = ev.composer_state || chatState.composer;
       chatMeta();
       chatState.cli = ev.cli || chatState.cli;
+      restoreChatFinding(ev.finding_ts || 0);
       (ev.events || []).forEach(chatRender);
       chatSetState(ev.state, ev.error);
       if (ev.permission) {
@@ -10646,6 +10788,7 @@ function chatConnect() {
       chatState.ready = true;
       chatScroll(true);
       renderChatRail();
+      renderChatHead();
       refreshChatRail();
       return;
     }
@@ -10813,11 +10956,14 @@ $("#chatNew").addEventListener("click", async () => {
   // Not "this is cleared and Claude forgets": Claude Code keeps the
   // conversation on disk and it stays in the list, so the honest cost is
   // that the next thing you say starts a separate one.
-  if (chatLog().childElementCount && !window.confirm(
-    "Start a new chat? This one is kept — you can reopen it from the "
-    + "conversations list.")) return;
+  // From the list page there is nothing on screen to leave, so nothing to
+  // confirm.
+  if (!askOnList() && chatLog().childElementCount && !window.confirm(
+    "Start a new chat? This one is kept — you can reopen it from your "
+    + "chats.")) return;
   try { await api("api/chat/new", { method: "POST" }); }
-  catch (e) { toast(e.message); }
+  catch (e) { toast(e.message); return; }
+  askShow("chat");
   refreshChatRail();
 });
 
@@ -10836,12 +10982,16 @@ const COMPOSER_LOCAL = {
   answering: { state: "answering", label: "Answering…", hint: "Claude is answering" },
   live: { state: "live", label: "Live", hint: "Ready" },
 };
+// No control for either kind of pause: sending is what picks a paused
+// conversation back up, so a "Resume now" beside the box was a second
+// button for what Send already does. A plain pause says nothing at all;
+// a cap's pause keeps its sentence, because it says what sending costs.
 const COMPOSER_ACTION = {
   live: "New chat",
   answering: "Stop",
   needs_ok: "",
-  paused: "Resume now",
-  paused_room: "Resume now",
+  paused: "",
+  paused_room: "",
   context_lost: "Start fresh",
   record: "Ask about it",
 };
@@ -10866,16 +11016,17 @@ function renderComposerState() {
   // an empty conversation offers a no-op (the server reuses the empty
   // session), and the line costs 44px that a 320px phone does not have.
   // Every other state is worth its sentence whatever is on screen.
-  const blank = cs.state === "live" && !chatState.record
-    && chatLog().childElementCount === 0;
+  const blank = (cs.state === "live" && !chatState.record
+    && chatLog().childElementCount === 0)
+    // A state with nothing to say (a plain pause) says nothing.
+    || (!cs.label && !cs.hint && !COMPOSER_ACTION[cs.state]);
   host.classList.toggle("hidden", blank);
   host.dataset.state = cs.state || "";
   host.querySelector(".cs-pill").textContent = cs.label || "";
   host.querySelector(".cs-text").textContent = cs.hint || "";
   const act = $("#chatStateAct");
   act.textContent = COMPOSER_ACTION[cs.state] || "";
-  act.classList.toggle("primary", cs.state === "paused" || cs.state === "paused_room"
-    || cs.state === "context_lost");
+  act.classList.toggle("primary", cs.state === "context_lost");
   chatComposerTick();
 }
 
@@ -10919,35 +11070,9 @@ $("#chatStateAct").addEventListener("click", () => {
   const state = composerCurrent().state;
   if (state === "answering") $("#chatStop").click();
   else if (state === "live") $("#chatNew").click();
-  else if (state === "paused" || state === "paused_room") resumeNow();
   else if (state === "context_lost") startFresh();
   else if (state === "record") askAboutRecord();
 });
-
-// Resume now: the same route a click on the rail takes, for the
-// conversation already on screen — so the process comes back before you
-// have typed anything, and the line says what happened.
-async function resumeNow() {
-  if (!chatState.sessionId) return;
-  const btn = $("#chatStateAct");
-  btn.disabled = true;
-  try {
-    const out = await api("api/chat/resume", {
-      method: "POST", body: JSON.stringify({ session_id: chatState.sessionId }) });
-    if (out && out.row_state) chatState.composer = out.row_state;
-    renderComposerState();
-    if (out && out.resumed === false) {
-      toast("Claude Code no longer has that conversation — the transcript "
-        + "is shown, but the next message starts fresh without its context.");
-    } else {
-      toast("Resumed");
-    }
-  } catch (e) {
-    toast(e.message);
-  } finally {
-    btn.disabled = false;
-  }
-}
 
 // Start fresh: the new-chat path without its confirm. The confirm asks
 // whether you are sure about leaving a conversation Claude still holds,
@@ -10982,7 +11107,18 @@ async function askAboutRecord() {
 $("#convViewAsk").addEventListener("click", askAboutRecord);
 
 document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
-  btn.addEventListener("click", () => chatSend(btn.textContent)));
+  btn.addEventListener("click", () => {
+    // A seed with a blank in it fills the box and waits for the blank.
+    if (btn.dataset.fill) {
+      const input = $("#chatInput");
+      input.value = btn.dataset.fill;
+      chatGrow();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      return;
+    }
+    chatSend(btn.textContent);
+  }));
 
 // --------------------------------------------------- the finding on trial
 //
@@ -10991,8 +11127,10 @@ document.querySelectorAll(".chatseeds .seed").forEach((btn) =>
 // end of a conversation means going back to the other tab and finding the
 // card again, which is where a decision goes to die.
 //
-// Remembered across reloads, because a conversation you were having is not
-// over because the page reloaded.
+// It follows the conversation on screen: the snapshot says which card the
+// conversation is about (`finding_ts`, kept in the transcript's own meta),
+// so reopening a discussion from the list brings its card back with it,
+// and opening any other conversation takes it away.
 
 function setChatFinding(f) {
   chatState.finding = f || null;
@@ -11005,25 +11143,60 @@ function setChatFinding(f) {
   const acts = bar.querySelector(".cfacts");
   if (acts) acts.classList.remove("hidden");
   bar.classList.toggle("hidden", !f);
-  if (!f) { prefSet("brain.chatFinding", ""); return; }
-  $("#chatFindingText").textContent = f.text;
+  renderChatHead();
+  if (!f) return;
+  $("#chatFindingText").textContent = cardTitleOf(f);
   $("#chatFindingFix").classList.toggle("hidden", !f.fixable);
-  prefSet("brain.chatFinding", String(f.ts));
 }
 
-async function restoreChatFinding() {
-  const ts = prefGet("brain.chatFinding");
-  if (!ts) return;
-  const f = (state.findings || []).find((x) => String(x.ts) === ts);
-  if (f) { setChatFinding(f); return; }
+// What a card is called on Today: a Resident case leads with its claim,
+// a check's row with its sentence.
+function cardTitleOf(f) {
+  return String((f && (f.claim || f.text)) || "");
+}
+
+// The snapshot's word on which card this conversation is about. A card
+// that has since been settled is no longer a decision, so the strip stays
+// down for it — the conversation is still there to read.
+async function restoreChatFinding(ts) {
+  if (ts === undefined) ts = chatState.findingTs;
+  chatState.findingTs = Number(ts) || 0;
+  if (!chatState.findingTs) { setChatFinding(null); return; }
+  const want = chatState.findingTs;
+  const find = () => (state.findings || []).find((x) => Number(x.ts) === want);
+  if (find()) { setChatFinding(find()); return; }
   // The list may not be loaded yet on a cold start — fetch it once.
   try {
     takeFindings(await api("api/findings"));
-    const found = state.findings.find((x) => String(x.ts) === ts);
-    if (found) setChatFinding(found);
-    else prefSet("brain.chatFinding", "");
   } catch (e) { /* the strip simply stays down */ }
+  if (chatState.findingTs !== want) return;   // moved on meanwhile
+  setChatFinding(find() || null);
 }
+
+// "Show this card": Today, scrolled to the card the conversation is about.
+// The feed draws its cards after its own fetch, so this waits for the card
+// rather than for a fixed time; a card that has gone (settled, cleared)
+// just leaves Today open, which is where it would have been.
+function showCardOnToday(ts) {
+  switchView("findings");
+  let tries = 0;
+  const look = () => {
+    const card = document.querySelector(`[data-case-id="f:${ts}"]`)
+      || document.querySelector(`[data-ts="${ts}"]`);
+    if (card) {
+      card.scrollIntoView({ block: "center" });
+      card.classList.add("cardflash");
+      setTimeout(() => card.classList.remove("cardflash"), 2400);
+    } else if (++tries < 20) {
+      setTimeout(look, 150);
+    }
+  };
+  look();
+}
+
+$("#chatFindingText").addEventListener("click", () => {
+  if (chatState.finding) showCardOnToday(chatState.finding.ts);
+});
 
 async function chatFindingAction(verb, done, note, extraBtns) {
   const f = chatState.finding;
@@ -11042,7 +11215,7 @@ $("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
 // land, because this strip closes on the press and the plan is on the card.
 $("#chatFindingFix").addEventListener("click", () =>
   chatFindingAction("fix",
-    "Working out what it would change — the steps land on the Findings tab"));
+    "Working out what it would change — the steps land on the card in Today"));
 $("#chatFindingDone").addEventListener("click", () => openNoteForm(
   $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
   (note, formBtns) => chatFindingAction(
@@ -11248,36 +11421,24 @@ async function chooseResolution(ev, option, finding, btns, paint) {
 // session started in the classic terminal is here beside one started in the
 // chat, and picking either replays it into this pane and carries on.
 //
-// It also files everything the ADD-ON runs there, which is not the same
-// thing at all: voice, the automation listener and the memory consolidator
-// drive the same Claude Code, so a house using them showed a rail of
-// identical machine prompts. Each row now says whose it is and the filter
-// chooses; "Yours" is the default because that is what a list of your
-// conversations means. Nothing is hidden — a machine's run is one press
-// away, and worth having when you want to know what voice actually did.
-
-// Which face the list is showing. Persisted: a filter you have to re-pick
-// on every reload is a filter you stop using.
-const convFilter = { source: prefGet("brain.convSource") || "you",
-                     options: [] };
-
-function setConvFilter(source) {
-  convFilter.source = source;
-  prefSet("brain.convSource", source);
-  refreshChatRail();
-  if ($("#convModal").classList.contains("open")) openConversations();
-}
+// It is YOUR conversations and nothing else. The same store holds every
+// run the add-on makes there — voice, the automation listener, the memory
+// pass, the Resident — and those are records of what brAIn did, not chats
+// anybody started. They used to sit behind a row of filter chips here,
+// which made the list of your conversations the place to audit the
+// machines; that audit is ⚙ › Diagnostics › Runs now, over the same route
+// (`api/chat/conversations?source=…`). This asks for the default, "you".
 
 // What a conversation row says about itself: the pill for its
-// `row_state`, which the server derives once for the rail, the ⋯ dialog,
-// the composer line and the resume route alike. Seven states, six pills:
-// a plain "paused" conversation — no process, the ordinary case — draws
-// nothing, because most rows are that and it is not news. Everything
-// that IS news is a word on the row: a live process ("Live", quiet), one
-// answering, one waiting on a person (the loudest, because the approval
-// card behind it declines itself if nobody comes), one the cap paused
-// ("Paused to make room" — opening it is what picks it back up), one
-// whose context Claude Code no longer holds, and a record.
+// `row_state`, which the server derives once for the rail, the composer
+// line and the resume route alike. Seven states, six pills: a plain
+// "paused" conversation — no process, the ordinary case — draws nothing,
+// because most rows are that and it is not news. Everything that IS news is
+// a word on the row: a live process ("Live", quiet), one answering, one
+// waiting on a person (the loudest, because the approval card behind it
+// declines itself if nobody comes), one the cap paused ("Paused to make
+// room" — opening it is what picks it back up), one whose context Claude
+// Code no longer holds, and a record.
 //
 // The stream's listing wins over the fetched row: it is refreshed the
 // moment anything moves, where the row is as old as the last request.
@@ -11310,241 +11471,86 @@ function convMark(row) {
   return el("span", cls, rs.label);
 }
 
-// One row's "who ran this", as a chip. Yours get none: a label on every
-// row for the ordinary case is just noise with extra steps.
-function sourceChip(row) {
-  if (!row.source || row.source === "you") return null;
-  const meta = convFilter.options.find((o) => o.id === row.source);
-  return el("span", "csrc", meta ? meta.label : row.source);
-}
+const CONV_QUERY = "api/chat/conversations";
 
-// The chips above the list. Only faces that have actually run here are
-// offered — the server counts them — so a house with no voice assistant is
-// never given an empty Voice filter to wonder about.
-function renderConvFilter(host, onPick) {
-  host.textContent = "";
-  if (convFilter.options.length <= 1) return;   // only "Yours": no choice to make
-  convFilter.options.forEach((o) => {
-    const b = el("button", "crfilter" + (o.id === convFilter.source ? " on" : ""),
-                 o.count ? `${o.label} ${o.count}` : o.label);
-    b.type = "button";
-    if (o.blurb) tip(b, o.blurb);
-    b.setAttribute("aria-pressed", o.id === convFilter.source ? "true" : "false");
-    b.addEventListener("click", () => { setConvFilter(o.id); onPick(); });
-    host.appendChild(b);
+// A row's ⋯. One item today — Delete — and a menu rather than a ✕ on every
+// row: a column of ✕s is a column of the most destructive control in the
+// list, each one the width of a thumb from the row it would delete. The
+// row itself is a button, so this cannot be its child; the wrapper the
+// caller puts both in is what keeps them siblings.
+function convRowMenu(c) {
+  const more = el("button", "crmore");
+  more.type = "button";
+  more.setAttribute("aria-label", "More for this chat");
+  more.setAttribute("aria-haspopup", "true");
+  more.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true">'
+    + '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/>'
+    + '<circle cx="19" cy="12" r="1.6"/></svg>';
+  more.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    if (chipPopFor === more) { closeChipPop(); return; }
+    closeChipPop();
+    setChipPop(more, "", '<div class="cardmenu">'
+      + '<button class="cardmenuitem crmenudel" type="button">'
+      + '<span class="cmtext"><b>Delete</b>'
+      + '<small>You can undo it for a few minutes</small></span></button></div>');
+    $("#chipPop").querySelector(".crmenudel").addEventListener("click", () => {
+      closeChipPop();
+      deleteConversation(c, more);
+    });
   });
+  return more;
 }
 
-function convQuery() {
-  return `api/chat/conversations?source=${encodeURIComponent(convFilter.source)}`;
-}
-
-// Selection mode: several rows in one press instead of one ✕ each. One
-// mode across both surfaces — the rail and the ⋯ dialog show the same
-// list, and a selection that vanished when you opened the other view would
-// read as a different feature in each place.
-const convSel = { on: false, ids: new Set() };
-
-function convSelToggle(on) {
-  convSel.on = on === undefined ? !convSel.on : !!on;
-  if (!convSel.on) convSel.ids.clear();
-  renderChatRail();
-  renderConvModal();
-}
-
-function convSelFlip(id) {
-  if (convSel.ids.has(id)) convSel.ids.delete(id);
-  else convSel.ids.add(id);
-}
-
-// A row can be selected unless the chat is holding a session for it — the
-// server refuses to delete any of those, not only the one on screen, and
-// offering a checkbox that always answers "skipped" teaches nothing. Card
-// and fix runs are records in the engine's own store, not files this
-// list's delete can reach, so they are not selectable either.
-function convSelectable(rows) {
-  return rows.filter((c) => !c.view_only && !chatState.liveSessions[c.id]
-    && !(chatState.sessionId && c.id === chatState.sessionId));
-}
-
-// The bar above a list in selection mode: the count, Select all, and the
-// one destructive verb. Rebuilt with the list it belongs to; every press
-// repaints from what is already fetched, never a request.
-function convSelBar(rows) {
-  const bar = el("div", "cselbar");
-  const selectable = convSelectable(rows);
-  const n = convSel.ids.size;
-  bar.appendChild(el("span", "cselcount",
-    n ? `${n} selected` : "Select conversations"));
-  const all = el("button", "btn small",
-    selectable.length && selectable.every((c) => convSel.ids.has(c.id))
-      ? "Select none" : "Select all");
-  all.type = "button";
-  all.addEventListener("click", () => {
-    const everything = selectable.length
-      && selectable.every((c) => convSel.ids.has(c.id));
-    if (everything) convSel.ids.clear();
-    else selectable.forEach((c) => convSel.ids.add(c.id));
-    renderChatRail();
-    renderConvModal();
-  });
-  const del = el("button", "btn small primary", "Delete");
-  del.type = "button";
-  del.disabled = !n;
-  del.addEventListener("click", () => deleteSelectedConvs(del));
-  const cancel = el("button", "btn small", "Cancel");
-  cancel.type = "button";
-  cancel.addEventListener("click", () => convSelToggle(false));
-  bar.append(all, del, cancel);
-  return bar;
-}
-
-async function deleteSelectedConvs(btn) {
-  const ids = [...convSel.ids];
-  if (!ids.length) return;
-  btn.disabled = true;
+// Deleting hands back an undo token and the toast grows the button, same as
+// every other press that takes something away.
+async function deleteConversation(c, btn) {
+  if (btn) btn.disabled = true;
+  const remove = () => api(
+    `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
+    { method: "POST" });
   try {
-    const out = await api("api/chat/conversations/delete",
-      { method: "POST", body: JSON.stringify({ ids }) });
-    const n = (out.deleted || []).length;
-    const skipped = (out.skipped || []).length;
-    convSelToggle(false);
-    toast(`${n} conversation${n === 1 ? "" : "s"} deleted`
-      + (skipped ? ` — ${skipped} skipped (still open, or already gone)` : ""),
-      out.undo);
+    let out;
+    try {
+      out = await remove();
+    } catch (e) {
+      // The server refuses to delete a conversation something is
+      // holding open — deleting the ground a live session stands on
+      // either kills it or quietly forks it. A refusal with no way to
+      // satisfy it is a dead end, so this offers the way: close the
+      // session, then delete. Never silently, because closing one that
+      // is mid-answer loses the answer.
+      if (!/close it first/.test(e.message)) throw e;
+      if (!window.confirm(
+        "That conversation still has a live Claude session. Close it and "
+        + "delete? Anything it is still writing is lost.")) {
+        if (btn) btn.disabled = false;
+        return;
+      }
+      await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
+                { method: "POST" });
+      out = await remove();
+    }
+    toast("Conversation deleted", out.undo);
     refreshConversationLists();
   } catch (e) {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
     toast(e.message);
   }
 }
 
-// What the ⋯ dialog is currently showing, kept so selection presses can
-// repaint without refetching the list out from under the checkboxes.
-let convModalRows = [];
-
-async function openConversations() {
-  openBox("#convModal");
-  const list = $("#convList");
-  list.innerHTML = "";
-  $("#convEmpty").classList.add("hidden");
-  let data;
-  try {
-    data = await api(convQuery());
-  } catch (e) {
-    toast(e.message);
-    return;
-  }
-  convFilter.options = data.sources || [];
-  renderConvFilter($("#convFilter"), () => {});
-  convModalRows = data.conversations || [];
-  renderConvModal();
-}
-
-function renderConvModal() {
-  if (!$("#convModal").classList.contains("open")) return;
-  const list = $("#convList");
-  list.innerHTML = "";
-  const rows = convModalRows;
-  $("#convEmpty").classList.toggle("hidden", rows.length > 0);
-  if (convSel.on && rows.length) list.appendChild(convSelBar(rows));
-  rows.forEach((c) => {
-    // Same contract as the rail: the one you are in is marked rather than
-    // hidden, and neither resumable (it is already open) nor deletable
-    // (the server refuses to delete the ground the session stands on).
-    const here = !!chatState.sessionId && c.id === chatState.sessionId;
-    const row = el("div", "crrow");
-    const btn = el("button", "convitem" + (here ? " active" : ""));
-    if (convSel.on && !here && !c.view_only) {
-      btn.classList.add("hascheck");
-      btn.classList.toggle("sel", convSel.ids.has(c.id));
-      btn.appendChild(el("span",
-        "crcheck" + (convSel.ids.has(c.id) ? " on" : "")));
-    }
-    btn.appendChild(el("span", "ctitle", c.title));
-    const chip = sourceChip(c);
-    if (chip) btn.appendChild(chip);
-    const mark = convMark(c);
-    if (mark) btn.appendChild(mark);
-    btn.appendChild(el("span", "cwhen", c.age));
-    if (here) btn.setAttribute("aria-current", "true");
-    if (convSel.on) {
-      if (here || c.view_only) btn.classList.add("inert");
-      else btn.addEventListener("click", () => {
-        convSelFlip(c.id);
-        renderConvModal();
-      });
-    } else if (c.view_only) {
-      btn.addEventListener("click", () => viewConversation(c));
-    } else if (!here) {
-      btn.addEventListener("click", () => resumeConversation(c));
-    }
-    row.appendChild(btn);
-    if (!here && !convSel.on && !c.view_only) row.appendChild(deleteConvButton(c));
-    list.appendChild(row);
-  });
-}
-
-// The ✕ beside a conversation. A row is itself a button, so this cannot be
-// its child — the wrapper the caller puts both in is what keeps them
-// siblings. Deleting hands back an undo token and the toast grows the
-// button, same as every other press that takes something away.
-function deleteConvButton(c) {
-  const del = el("button", "crdel", "✕");
-  del.type = "button";
-  tip(del, "Delete this conversation");
-  del.addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    del.disabled = true;
-    const remove = () => api(
-      `api/chat/conversation/${encodeURIComponent(c.id)}/delete`,
-      { method: "POST" });
-    try {
-      let out;
-      try {
-        out = await remove();
-      } catch (e) {
-        // The server refuses to delete a conversation something is
-        // holding open — deleting the ground a live session stands on
-        // either kills it or quietly forks it. A refusal with no way to
-        // satisfy it is a dead end, so this offers the way: close the
-        // session, then delete. Never silently, because closing one that
-        // is mid-answer loses the answer.
-        if (!/close it first/.test(e.message)) throw e;
-        if (!window.confirm(
-          "That conversation still has a live Claude session. Close it and "
-          + "delete? Anything it is still writing is lost.")) {
-          del.disabled = false;
-          return;
-        }
-        await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
-                  { method: "POST" });
-        out = await remove();
-      }
-      toast("Conversation deleted", out.undo);
-      refreshConversationLists();
-    } catch (e) {
-      del.disabled = false;
-      toast(e.message);
-    }
-  });
-  return del;
-}
-
-// Both surfaces onto the one list: the rail if it is on screen, and the ⋯
-// dialog if it is open.
+// The one list, wherever it is on screen.
 function refreshConversationLists() {
   refreshChatRail();
-  if ($("#convModal").classList.contains("open")) openConversations();
 }
 
-// The wide-screen rail. Same list and same resume as the ⋯ dialog — one
-// source of conversations, two ways to reach it — so a conversation started
-// in the classic terminal shows up here too.
+// The list: a rail beside the transcript on a wide screen, and the page Ask
+// opens on below that (`askShow`). A conversation started in the classic
+// terminal shows up here too.
 //
-// Only fetched when the rail is actually on screen: below the breakpoint it
-// is `display: none`, and a list nobody can see is not worth a request on
-// every tab switch.
+// Only fetched when the list is actually on screen: in a narrow transcript
+// it is `display: none`, and a list nobody can see is not worth a request
+// on every tab switch.
 function railVisible() {
   const rail = $("#chatRail");
   return !!rail && getComputedStyle(rail).display !== "none";
@@ -11553,74 +11559,111 @@ function railVisible() {
 async function refreshChatRail() {
   if (!railVisible()) return;
   try {
-    const data = await api(convQuery());
+    const data = await api(CONV_QUERY);
     chatState.convs = data.conversations || [];
-    convFilter.options = data.sources || [];
   } catch (e) {
     return;  // transient: the rail keeps whatever it last showed
   }
   renderChatRail();
+  renderChatHead();
 }
 
 function renderChatRail() {
   const list = $("#chatRailList");
   if (!list) return;
-  renderConvFilter($("#chatRailFilter"), () => {});
   list.textContent = "";
   if (!chatState.convs.length) {
-    list.appendChild(el("div", "crempty", convFilter.source === "you"
-      ? "No past chats yet." : "Nothing here yet."));
+    const empty = el("div", "crempty");
+    empty.appendChild(el("p", null, "No chats yet."));
+    // On the list page this is the whole screen, so the way to start one
+    // is on it rather than only in the corner.
+    const start = el("button", "btn small primary", "Ask");
+    start.type = "button";
+    start.addEventListener("click", () => $("#chatNew").click());
+    empty.appendChild(start);
+    list.appendChild(empty);
     return;
   }
-  if (convSel.on) list.appendChild(convSelBar(chatState.convs));
   chatState.convs.forEach((c) => {
     // The one you are in is marked rather than hidden: a list that silently
-    // omits the current item makes you wonder where it went.
+    // omits the current item makes you wonder where it went. On the list
+    // page it is also the way back into it.
     const here = !!chatState.sessionId && c.id === chatState.sessionId;
     const row = el("div", "crrow");
     const btn = el("button", "critem" + (here ? " active" : ""));
-    if (convSel.on && !here && !c.view_only) {
-      btn.classList.add("hascheck");
-      btn.classList.toggle("sel", convSel.ids.has(c.id));
-      btn.appendChild(el("span",
-        "crcheck" + (convSel.ids.has(c.id) ? " on" : "")));
-    }
+    btn.type = "button";
     btn.appendChild(el("span", "ctitle", c.title));
     const foot = el("div", "crfoot");
-    const chip = sourceChip(c);
-    if (chip) foot.appendChild(chip);
     const mark = convMark(c);
     if (mark) foot.appendChild(mark);
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
     if (here) btn.setAttribute("aria-current", "true");
-    if (convSel.on) {
-      if (here || c.view_only) btn.classList.add("inert");
-      else btn.addEventListener("click", () => {
-        convSelFlip(c.id);
-        renderChatRail();
-      });
-    } else if (c.view_only) {
+    if (c.view_only) {
       // A card or fix run: a record to read, never a place to type.
       btn.addEventListener("click", () => viewConversation(c));
-    } else if (!here) {
+    } else if (here) {
+      btn.addEventListener("click", () => askShow("chat"));
+    } else {
       btn.addEventListener("click", () => resumeConversation(c));
     }
     row.appendChild(btn);
-    // Not on the open one — the server refuses it anyway ("start a new
-    // chat first"), and a control that only ever answers no is clutter.
-    // Not on card/fix runs either: they live in the engine's own store.
-    if (!here && !convSel.on && !c.view_only) row.appendChild(deleteConvButton(c));
+    // Card and fix runs live in the engine's own store, which this list's
+    // delete cannot reach.
+    if (!c.view_only) row.appendChild(convRowMenu(c));
     list.appendChild(row);
   });
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
-$("#chatRailSel").addEventListener("click", () => convSelToggle());
-$("#convSel").addEventListener("click", () => convSelToggle());
+
+// ------------------------------------------------- the list page (narrow)
+//
+// Below the rail's breakpoint there is no room for a list beside a
+// transcript, and the tab used to open straight into the last transcript
+// with the list two presses deep in ⋯ — the reported "no way back to the
+// list". So Ask opens on the list there, picking a row (or starting a chat)
+// opens the transcript, and the transcript's head carries the way back.
+// On a wide screen none of this applies: the rail is the list.
+const ASK_WIDE = "(min-width: 1100px)";
+
+function askNarrow() {
+  return !window.matchMedia(ASK_WIDE).matches;
+}
+
+function askOnList() {
+  return document.body.classList.contains("ask-list");
+}
+
+function askShow(page) {
+  const list = page === "list" && askNarrow() && chatState.session !== "classic";
+  document.body.classList.toggle("ask-list", list);
+  if (list) refreshChatRail();
+  renderChatHead();
+}
+
+// The transcript's head on a narrow screen: what this conversation is. A
+// discussion is called by its card, which is the link back to it.
+function renderChatHead() {
+  const title = $("#chatHeadTitle");
+  if (!title) return;
+  const f = chatState.finding;
+  const row = chatState.sessionId
+    && (chatState.convs || []).find((c) => c.id === chatState.sessionId);
+  title.textContent = f ? cardTitleOf(f)
+    : row ? row.title
+    : chatLog().childElementCount ? "Chat" : "New chat";
+}
+
+$("#chatBack").addEventListener("click", () => askShow("list"));
+$("#chatOpen").addEventListener("click", () => askShow("list"));
+window.matchMedia(ASK_WIDE).addEventListener("change", () => {
+  if (!askNarrow()) document.body.classList.remove("ask-list");
+  refreshChatRail();
+});
 
 async function resumeConversation(conv) {
-  closeBox("#convModal");
+  askShow("chat");
   // Nothing to wait for when the process is already there — the switch is
   // a change of attachment. A "one moment" toast over something instant is
   // a toast that teaches people to expect a wait.
@@ -11741,12 +11784,6 @@ function renderReplayInto(host, events) {
 $("#convViewClose").addEventListener("click", closeConvView);
 $("#convViewModal").addEventListener("click", (ev) => {
   if (ev.target === $("#convViewModal")) closeConvView();
-});
-
-$("#chatOpen").addEventListener("click", openConversations);
-$("#convClose").addEventListener("click", () => closeBox("#convModal"));
-$("#convModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#convModal")) closeBox("#convModal");
 });
 
 // ------------------------------------------------------- session details
@@ -12121,6 +12158,8 @@ function applyTermMode(mode) {
   const onTab = currentView === "terminal";
   if (classic) {
     chatDisconnect();
+    // One shell, no list: the list page is the chat face's alone.
+    document.body.classList.remove("ask-list");
     const frame = $("#termFrame");
     // Lazy in both directions: no shell for someone who never opens the tab,
     // and no stream for a chat nobody is looking at.

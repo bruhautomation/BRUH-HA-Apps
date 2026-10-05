@@ -23,7 +23,9 @@
 //   * "Stop asking…" opens ⚙ with Terminal & chat open, the switch's row
 //     marked and inside the dialog's visible area;
 //   * at 390 every answer is at least 44px tall, and nothing scrolls
-//     sideways.
+//     sideways;
+//   * in a reply, neither the approval card nor a question card is folded
+//     into the "Worked through N steps" disclosure the tool calls go into.
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -208,6 +210,40 @@ for (const width of WIDTHS) {
     note(where, 'a discussion card offers Always allow');
   }
   if (discussing.stop) note(where, 'a discussion card offers "Stop asking…"');
+
+  // ---- in a reply, the cards stand outside the folded working --------------
+  // Tool calls and thinking fold into one "Worked through N steps" per
+  // reply. An approval card and a question card are questions the CLI is
+  // blocked on, so they must never be inside it.
+  const inReply = await page.evaluate(([offered]) => {
+    chatState.runState = 'busy';
+    chatReset();
+    const log = document.querySelector('#chatLog');
+    const out = {};
+    chatRender({ type: 'user', text: 'Tidy the packages folder' });
+    chatRender({ type: 'tool', id: 't1', name: 'Bash', summary: 'ls', input: '{}' });
+    chatRender({ type: 'tool_result', id: 't1', ok: true, text: 'a.yaml' });
+    chatRender(offered);
+    const perm = log.querySelector('.permcard');
+    out.permFolded = !!(perm && perm.closest('details.steps'));
+    out.permThere = !!perm;
+    chatRender({ type: 'permission_done', id: offered.id, answered: true, allow: true });
+    chatRender({ type: 'tool', id: 't2', name: 'Edit', summary: 'a.yaml', input: '{}' });
+    chatRender({ type: 'permission', id: 'q-1', kind: 'question', tool: 'AskUserQuestion',
+      questions: [{ question: 'Which file?', header: 'File', multi: false,
+        options: [{ label: 'a.yaml', description: '' }] }] });
+    const q = log.querySelector('.qcard');
+    out.questionFolded = !!(q && q.closest('details.steps'));
+    out.questionThere = !!q;
+    out.folds = log.querySelectorAll('details.steps').length;
+    chatState.runState = 'idle';
+    return out;
+  }, [{ ...OFFERED, id: 'perm-r' }]);
+  if (!inReply.permThere) note(where, 'no approval card rendered in a reply');
+  if (inReply.permFolded) note(where, 'the approval card was folded into the steps');
+  if (!inReply.questionThere) note(where, 'no question card rendered in a reply');
+  if (inReply.questionFolded) note(where, 'the question card was folded into the steps');
+  if (inReply.folds !== 1) note(where, `${inReply.folds} step folds for one reply`);
 
   // ---- Stop asking opens ⚙ at the switch ---------------------------------
   try {

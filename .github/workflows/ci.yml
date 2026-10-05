@@ -163,6 +163,13 @@ jobs:
       - name: Measure the resolutions card
         run: node tests/manual/measure-chatres.mjs
 
+      # Ask: your chats only (no run-type chips), one ⋯ per row, the list
+      # first on a phone with a way back, a reply's working folded into one
+      # line while the cards that ask something stay out of it, and no
+      # "Resume" anywhere.
+      - name: Measure the Ask tab
+        run: node tests/manual/measure-ask.mjs
+
       # Upkeep: a house book sentence with no source reads like a cited
       # one, a tidy row with no tick or a room move that does not name the
       # automation it changes is a review nobody can do, and an upgrade
