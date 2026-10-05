@@ -722,7 +722,8 @@ is **not** in that class is pushed **once**, held through quiet hours unless its
 check says it cannot wait.
 
 Everything below the floor is **quiet**: no message, and nothing lost — it is
-on the Findings feed, in the \`todo.brain\` list and in Home Assistant's Repairs.
+on the Findings feed and in Home Assistant's Repairs, and it counts towards
+\`binary_sensor.brain_needs_you\`.
 
 **Your own sentence.** ⚙ → Insights → **What deserves a notification** takes one
 sentence in your own words, for example "wake me for water, smoke, the freezer or
@@ -1297,7 +1298,7 @@ the add-on restarts. **Stop asking…** on a card takes you to the switch.
   \`brain.answer_question\` answers one of the guesses brAIn is waiting on, yes or
   no — exactly as pressing Yes or No on the Findings tab does: a yes files the guess
   as something brAIn knows, a no closes it and keeps the reason after it as a
-  correction. The **Waiting on you** sensor lists the open guesses with their ids.
+  correction. The **Questions waiting** sensor lists the open guesses with their ids.
 
 ## Who may call them, and what a failure looks like
 
@@ -1429,12 +1430,18 @@ act on it without a second lookup:
   event per new one, and an entry on Home Assistant's own **Repairs** page for
   each one waiting on you — and \`findings_notify_service\` pushes the critical
   ones to a phone with no automation at all.
-- The same findings are the **brAIn System To-do** list (\`todo.brain_system_to_do\`;
-  \`todo.brain_system_brain\` on an install that had it before) in Home Assistant's own
-  **To-do** panel and mobile app: one list, two views. Ticking one off is "I've fixed
-  it" and deleting one is "not a problem here" — the Findings feed's own two endings,
-  so answering from your phone teaches brAIn exactly what pressing the button would
-  have.
+- **brAIn to-do** (\`todo.brain_system_to_do\`; \`todo.brain_system_brain\` on an
+  install that had it before) is your list in Home Assistant's own **To-do** panel
+  and mobile app: the findings you added to your list and anything you added
+  yourself — exactly what the panel's list shows, and never an undecided finding.
+  Ticking one off is the panel's **Done**; deleting one takes it off the list.
+- **\`binary_sensor.brain_needs_you\`** is on while anything is waiting for a
+  decision — the same number as the badge in the panel — and **\`sensor.brain_status\`**
+  is the panel's status line: **watching**, **paused** (with when it is back),
+  **needs_restart** (Home Assistant has not loaded the integration the add-on
+  updated), **signed_out** or **degraded**, with the sentence as an attribute. An
+  Urgent card (a leak, an alarm, a freezing pipe) always raises a Repairs entry.
+  **Facts learned** is the same count as House › What it knows.
 - **brAIn System Health** (\`sensor.brain_system_health\`, or
   \`sensor.brain_usage_limits_health\` on an older install) says whether brAIn itself is working, so an
   automation can tell you the add-on is in trouble rather than you noticing the
@@ -2438,15 +2445,14 @@ that run fails you get **Morning**, **Day**, **Evening**, **Night**, which work 
 
 Two places show brAIn's work list, and both of them can end an item.
 
-**\`todo.brain_system_to_do\`** (\`todo.brain_system_brain\` on an older install) is Home Assistant's own To-do panel and mobile app,
-showing both of brAIn's lists as one: the findings it is still asking about, and
-the chores you have already accepted. From the app's side they are the same
-thing — work — so they are one list, and each row does on completion what it
-would have done on its own screen. Completing a finding is the Findings feed's
-**I fixed it** and deleting it is its **Not a problem**; completing a chore is the To-do
-tab's **Done**, which is the moment the memory line is written, and deleting one
-is taking it off the list undone, which lets brAIn report the problem again. No
-new vocabulary: each row's own list already had these.
+**brAIn to-do** (\`todo.brain_system_to_do\`, or \`todo.brain_system_brain\` on an
+older install) is Home Assistant's own To-do panel and mobile app, showing your
+list: the findings you have accepted and anything you added yourself. A finding
+brAIn is still asking about is not on it — that is a decision, and it lives in
+the panel's queue and on the Repairs page until you add it to your list.
+Completing an item is the To-do tab's **Done**, which is the moment the memory
+line is written, and deleting one is taking it off the list undone, which lets
+brAIn report the problem again.
 
 You **can** add an item now, and until 1.53.0 you could not. The old refusal was
 right about what the list then was — an item created against a derived view of

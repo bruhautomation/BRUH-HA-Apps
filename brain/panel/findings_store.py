@@ -279,6 +279,17 @@ def _write(items: list[dict]) -> None:
     _publish_state(items)
 
 
+def _urgent(row: dict) -> bool:
+    """`notify_router.is_urgent`, asked lazily (that module reads this
+    one's severities) and never raising: a mirror row that could not be
+    judged is an ordinary one."""
+    try:
+        import notify_router  # noqa: PLC0415 — panel-local, imports us back
+        return bool(notify_router.is_urgent(row))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _publish_state(items: list[dict]) -> None:
     """Mirror a summary of the live list onto the shared volume.
 
@@ -347,7 +358,12 @@ def _publish_state(items: list[dict]) -> None:
                  # *Add to to-do · Replaced it · Not a problem* on every
                  # surface rather than three different questions.
                  "answers": answers.request_answers(s),
-                 **{k: s[k] for k in ("kind", "claim") if s.get(k)}}
+                 **{k: s[k] for k in ("kind", "claim") if s.get(k)},
+                 # An Urgent card (`notify_router.is_urgent`): the
+                 # integration raises a Repairs entry for it ahead of
+                 # anything else on that page. Only on a row that is one,
+                 # so an ordinary mirror is the file it always was.
+                 **({"urgent": True} if _urgent(s) else {})}
                 for s in live[:STATE_MAX_ROWS]
             ],
             # The same compact shape the watcher's events are built from,
@@ -564,7 +580,7 @@ def _case_fields(entry: dict) -> dict:
     kind = entry.get("kind")
     if kind in CASE_KINDS:
         out["kind"] = kind
-    claim = str(entry.get("claim") or "").strip()[:MAX_CLAIM]
+    claim = textclip.clip(str(entry.get("claim") or "").strip(), MAX_CLAIM)
     if claim:
         out["claim"] = claim
     confidence = entry.get("confidence")

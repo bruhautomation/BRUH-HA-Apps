@@ -7,6 +7,8 @@ no longer there.
 """
 from __future__ import annotations
 
+import numfmt
+
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
                     domain_of, join_names, num, parse_ts, when)
 
@@ -495,9 +497,11 @@ def implausible(snap: dict, now: float) -> list[dict]:
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
-            "detail": f"{value:g}{key[1]} as of {when(st.get('last_updated'))}"
+            "detail": f"{numfmt.quantity(value, key[1])} as of "
+                      f"{when(st.get('last_updated'))}"
                       f"{house.where(eid)}; a {key[0]} sensor cannot read "
-                      f"outside {lo:g}–{hi:g}{key[1]}.",
+                      f"outside {numfmt.number(lo)}–"
+                      f"{numfmt.quantity(hi, key[1])}.",
             "fix": "The sensor is faulty or misconfigured. Check its wiring "
                    "or pairing, and exclude it from automations until it "
                    "reads sanely.",
@@ -560,7 +564,8 @@ def frozen(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} has read exactly the same value "
                     "for a week",
-            "detail": f"{lo:g}{unit} on every one of the last {len(days)} "
+            "detail": f"{numfmt.quantity(lo, unit)} on every one of the "
+                      f"last {len(days)} "
                       f"days{house.where(eid)}. A real sensor moves.",
             "fix": "Check the sensor — it has probably stopped updating "
                    "while its integration keeps repeating the last value.",

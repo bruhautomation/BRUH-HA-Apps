@@ -11,6 +11,8 @@ lives in ``detail`` so the finding refreshes rather than re-files.
 """
 from __future__ import annotations
 
+import numfmt
+
 from . import baseline as baseline_check
 from . import devices
 from ._util import DAY, House, num
@@ -192,18 +194,19 @@ def decline(snap: dict, now: float) -> list[dict]:
             "text": (f"{house.name(eid)} has been drifting "
                      f"{'up' if rising else 'down'} for weeks"),
             "detail": (
-                f"{'+' if rising else ''}{moved['move']:g}{unit} over the "
-                f"last {round(moved['days'])} days "
-                f"({'+' if rising else ''}{moved['per_day']:.3g}{unit} a "
+                f"{numfmt.quantity(moved['move'], unit, signed=True)} over "
+                f"the last {round(moved['days'])} days "
+                f"({numfmt.quantity(moved['per_day'], unit, signed=True)} a "
                 f"day), against a normal wobble of "
-                f"{moved['noise']:.3g}{unit} — {moved['spreads']:g} times "
+                f"{numfmt.quantity(moved['noise'], unit)} — "
+                f"{numfmt.times(abs(moved['spreads']))} "
                 "it. Every single reading has been inside its usual range "
                 "the whole time, which is why nothing else has said so."
                 + (f" {where}." if where else "")),
             "fix": ("Look at what it is measuring before it reaches a "
                     "number that matters. If this is a season, a new "
-                    "appliance or a move brAIn cannot see, press Wrong and "
-                    "say so."),
+                    "appliance or a move brAIn cannot see, press Ignore and "
+                    "say why."),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,

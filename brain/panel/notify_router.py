@@ -67,6 +67,7 @@ import os
 import time
 
 import answers
+import textclip
 
 log = logging.getLogger("brain.notify")
 
@@ -313,6 +314,22 @@ def tier_of(finding: dict, min_severity: str | None = None) -> str:
             or str((finding or {}).get("stakes") or "") == "high"):
         return "escalate"
     return "notify"
+
+
+def is_urgent(finding: dict) -> bool:
+    """Whether this row is an Urgent card: the escalate pair, minus the floor.
+
+    `tier_of`'s own test — `critical` AND (a `now` producer, or a case's
+    `stakes: high`) — asked without the notify floor, because "urgent" is
+    a fact about the row and the floor is a choice about a phone. It is
+    what the Today queue sorts first and what raises a Repairs entry in
+    Home Assistant whatever else is on that page, so a leak, an alarm or a
+    freezing pipe is one rule wherever it is read.
+    """
+    if str((finding or {}).get("severity") or "") != "critical":
+        return False
+    return (urgency_of(finding) == "now"
+            or str((finding or {}).get("stakes") or "") == "high")
 
 
 def classify(findings: list[dict],
@@ -662,7 +679,7 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
         # Counted, never truncated: a list that stops mid-way reads as
         # the whole of what happened.
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 def _ordinal(n: int) -> str:
@@ -699,7 +716,7 @@ def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str
     if last:
         lines.append("brAIn will not ask about this again; it stays on the "
                      "Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 
@@ -721,7 +738,7 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
     a finding, because a change you asked for arriving under "brAIn found
     a problem" is how a notification stops being read.
     """
-    body = str(title or "a change you accepted").strip()[:MESSAGE_MAX]
+    body = textclip.clip(str(title or "a change you accepted").strip(), MESSAGE_MAX)
     if entity_id:
         body = f"{body}\n\nIt is now {entity_id}."
     return "brAIn made a change you accepted", body[:MESSAGE_MAX]
@@ -910,7 +927,7 @@ def hold_timed(entries: list[dict], now: float,
         row["until"] = int(min(float(entry.get("until") or now),
                                now + HOLD_MAX_S))
         title = str(entry.get("title") or "").strip()[:TITLE_MAX]
-        body = str(entry.get("body") or "").strip()[:WORDS_MAX]
+        body = textclip.clip(str(entry.get("body") or "").strip(), WORDS_MAX)
         if title and body:
             row["title"], row["body"] = title, body
         rows.append(row)
@@ -947,7 +964,7 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
         lines.append(f"…and {n - LINES_MAX} more on the Findings tab.")
-    return title, "\n".join(lines)[:MESSAGE_MAX]
+    return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
 # ---------------------------------------------------------------------------
@@ -962,12 +979,12 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
 
 def compose_brief(body: str) -> tuple[str, str]:
     """The morning brief: a paragraph, under a title that says what it is."""
-    return "brAIn this morning", str(body or "").strip()[:MESSAGE_MAX]
+    return "brAIn this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 def compose_weekly(body: str) -> tuple[str, str]:
     """The weekly report, likewise."""
-    return "brAIn: your week", str(body or "").strip()[:MESSAGE_MAX]
+    return "brAIn: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 __all__ = [
