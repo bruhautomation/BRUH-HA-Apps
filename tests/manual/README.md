@@ -105,6 +105,28 @@ to also write a PNG per width.
 CI still fails if the pseudo-element version comes back — it just can't
 measure pixels.
 
+## `measure-tokens.mjs`
+
+The visual standard from `docs/design/ui-redesign-2026-10.md`, read off
+every pane and the ⚙ dialog at 1200px and at a 390px phone, on the real
+markup behind a stubbed fetch. It fails on visible text that is not 12, 14,
+16 or 20px (Help's guide and an insight card's chart frame are left out), a
+label set in capitals or letter-spaced, a `<select>` without `.sel` or with
+the browser's appearance, a native checkbox or slider, and a card (`.card`,
+`.finding`, `.card-x`) whose padding — or a direct child's — is off the 4px
+grid, whose radius is not 12, which has a shadow, or whose left edge differs
+from its right.
+
+```bash
+node tests/manual/measure-tokens.mjs        # TOKENS_VERBOSE=1 for counts
+```
+
+Use the tokens at the top of `style.css` (`--fs-*`, `--sp-*`, `--card-*`,
+`--btn-h`, `--status-*`) and the components at its end (`.card-x`,
+`.chip-status[data-kind]`, `.btn-primary`/`-secondary`/`-tertiary`,
+`select.sel`, `input.tog`, `.empty-line`, `.meta`, `.item-state`) rather
+than a number, and this stays green by construction.
+
 ## `measure-chrome.mjs`
 
 What the panel spends on chrome before content, driven on the real markup

@@ -18,8 +18,57 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
-  --radius: 14px;
+  --radius: 12px;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+
+  /* ------------------------------------------------- the visual standard
+     docs/design/ui-redesign-2026-10.md, "Visual standard". Every size, gap
+     and edge a screen is built from is one of these, so a layout test can
+     assert the scale rather than a list of numbers somebody remembered
+     (tests/manual/measure-tokens.mjs). Four type sizes and no fifth: a
+     size that is not on this list is a straggler, not a style. */
+  --fs-title: 20px;  --lh-title: 28px;  --fw-title: 600;  /* one per screen */
+  --fs-card: 16px;   --lh-card: 24px;   --fw-card: 600;   /* card title */
+  --fs-body: 14px;   --lh-body: 20px;   --fw-body: 400;
+  --fs-meta: 12px;   --lh-meta: 16px;   --fw-meta: 500;
+  /* A form control's size. 14 on a pointer, and 16 on touch — raised in the
+     first `pointer: coarse` block, which is the text floor — so a class rule
+     that sizes a control through this cannot undercut the floor. */
+  --fs-control: 14px;
+  /* 4px spacing grid. Inside a card 16, between cards 12, between sections
+     24, page gutter 24 desktop / 16 phone. */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;  --sp-4: 16px;
+  --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;  --sp-12: 48px;
+  --card-pad: 16px;
+  --card-gap: 12px;
+  --section-gap: 24px;
+  --gutter: 24px;
+  /* One card: a 1px edge, radius 12, the surface, no shadow, no coloured
+     left bar. */
+  --card-radius: 12px;
+  --card-border: 1px solid var(--hairline);
+  --card-bg: var(--surface);
+  /* Controls and buttons. 36 on a pointer, 44 on touch. */
+  --control-radius: 8px;
+  --btn-h: 36px;
+  --btn-pad-x: 16px;
+  --btn-primary-bg: var(--accent);
+  --btn-primary-ink: #ffffff;
+  /* The status chip: an 8px dot and one word. Four kinds and no fifth. */
+  --chip-dot: 8px;
+  --status-urgent: var(--critical);
+  --status-problem: var(--warning);
+  --status-tidy: var(--ink-3);
+  --status-suggestion: var(--accent);
+  /* The toggle and the slider. */
+  --toggle-w: 36px;
+  --toggle-h: 20px;
+  --toggle-off: var(--grid);
+  --toggle-on: var(--accent);
+  --track-h: 4px;
+  --thumb: 16px;
+  /* A select's caret, drawn rather than the browser's (dark scheme). */
+  --sel-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23b9ccdd' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 @media (prefers-color-scheme: light) {
@@ -36,6 +85,7 @@
     --accent: #1e9fe0;
     --accent-2: #0d7fbe;
     --shadow: 0 8px 28px rgba(10, 22, 34, 0.08);
+    --sel-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%2333506a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
 }
 
@@ -47,9 +97,14 @@ html, body {
   background: var(--plane);
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 15px;
+  font-size: var(--fs-body);
   line-height: 1.45;
 }
+/* A form control does not inherit the page's type: the browser draws it at
+   its own 13.33px, which is a fifth size on every screen with a box on it.
+   Bare element selectors, so the 16px touch floor below still outranks
+   this on every one of them. */
+input, select, textarea, button { font-family: inherit; font-size: inherit; }
 
 /* ---------------------------------------------------------------- header */
 
@@ -58,8 +113,7 @@ html, body {
   align-items: center;
   gap: 10px;
   font-weight: 700;
-  font-size: 17px;
-  letter-spacing: 0.2px;
+  font-size: var(--fs-card);
   white-space: nowrap;
 }
 
@@ -97,7 +151,7 @@ html, body {
   border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -122,10 +176,14 @@ html, body {
   border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--ink);
-  border-radius: 10px;
-  padding: 7px 14px;
+  border-radius: var(--control-radius);
+  /* 36px on a pointer and 44px on touch (`--btn-h`); a button centres its
+     own content, so the height is the min-height and nothing else. */
+  min-height: var(--btn-h);
+  padding: 0 var(--btn-pad-x);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
@@ -133,18 +191,22 @@ html, body {
 .btn:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); }
 .btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.45; cursor: default; }
+/* Primary: filled. One per card. */
 .btn.primary {
-  background: linear-gradient(120deg, var(--accent), var(--accent-2));
+  background: var(--btn-primary-bg);
   border-color: transparent;
-  color: #fff;
+  color: var(--btn-primary-ink);
 }
-.btn.primary:hover { filter: brightness(1.1); }
-.btn.small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
+.btn.primary:hover { background: var(--btn-primary-bg); filter: brightness(1.1); }
+.btn.small { padding: 0 var(--sp-3); font-size: var(--fs-meta); }
+/* Secondary is the outline `.btn` itself; ghost is the outline on no fill. */
 .btn.ghost { background: transparent; }
+/* The inline ? beside a hint is a glyph in a sentence, not a button row. */
+.btn.tiny { min-height: 0; }
 .btn.icon {
   padding: 6px 8px;
   line-height: 1;
-  font-size: 14px;
+  font-size: var(--fs-body);
 }
 
 /* ------------------------------------------------------------------ page */
@@ -182,7 +244,7 @@ html, body {
    is the only place both are discoverable. */
 .askhint {
   margin: -8px 0 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   line-height: 1.5;
   max-width: 68ch;
@@ -221,7 +283,7 @@ html, body {
 .fchip {
   appearance: none;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink-2);
   background: var(--surface);
@@ -246,10 +308,9 @@ html, body {
 }
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -275,12 +336,12 @@ html, body {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 2px 10px;
-  padding: 13px 16px 0;
+  padding: var(--card-pad) var(--card-pad) 0;
 }
-.card-head .cicon { font-size: 19px; flex: none; }
+.card-head .cicon { font-size: var(--fs-title); flex: none; }
 .card-head .ctitles { min-width: 0; }
 .card-head .cat {
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--ink-3);
   /* one line, and it is the one that gives way */
@@ -290,9 +351,9 @@ html, body {
 }
 .card-head h3 {
   margin: 1px 0 0;
-  font-size: 17px;
-  line-height: 1.25;
-  font-weight: 700;
+  font-size: var(--fs-card);
+  line-height: var(--lh-card);
+  font-weight: var(--fw-card);
   /* wraps to two lines rather than truncating: the title is what the card
      is, and a card called "Upstair…" is not a card you can pick out */
   display: -webkit-box;
@@ -313,10 +374,10 @@ html, body {
   gap: 6px;
   height: 40px;
   padding: 0 12px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   border-radius: 10px;
 }
-.card-head .cardact .caicon { font-size: 15px; line-height: 1; }
+.card-head .cardact .caicon { font-size: var(--fs-body); line-height: 1; }
 @container card (max-width: 600px) {
   .card-head .cardact { width: 40px; padding: 0; justify-content: center; }
   .card-head .cardact .calabel { display: none; }
@@ -354,17 +415,17 @@ html, body {
   min-height: 44px;
 }
 .cardmenuitem:hover, .cardmenuitem:focus-visible { background: var(--surface-2); }
-.cardmenuitem .cmicon { font-size: 15px; line-height: 1.35; width: 18px; flex: none; }
+.cardmenuitem .cmicon { font-size: var(--fs-body); line-height: 1.35; width: 18px; flex: none; }
 .cardmenuitem .cmtext { display: grid; gap: 1px; min-width: 0; }
-.cardmenuitem .cmtext b { font-size: 13.5px; font-weight: 600; }
-.cardmenuitem .cmtext small { font-size: 11.5px; color: var(--ink-3); }
+.cardmenuitem .cmtext b { font-size: var(--fs-body); font-weight: 600; }
+.cardmenuitem .cmtext small { font-size: var(--fs-meta); color: var(--ink-3); }
 
 /* The answer, first. The contract asks for a summary that opens with it,
    and the panel sets that opening sentence in the card's ink. */
 .card .summary {
-  padding: 10px 16px 0;
+  padding: var(--sp-3) var(--card-pad) 0;
   color: var(--ink-2);
-  font-size: 14.5px;
+  font-size: var(--fs-body);
   line-height: 1.5;
 }
 .card .summary .lead { color: var(--ink); font-weight: 650; }
@@ -399,9 +460,9 @@ html, body {
   padding: 9px 12px;
   min-width: 0;
 }
-.hl .l { font-size: 12px; font-weight: 600; color: var(--ink-3); }
-.hl .v { font-size: 17px; font-weight: 700; line-height: 1.25; margin-top: 2px; overflow-wrap: anywhere; }
-.hl .d { font-size: 11.5px; color: var(--ink-2); margin-top: 2px; }
+.hl .l { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
+.hl .v { font-size: var(--fs-card); font-weight: 700; line-height: 1.25; margin-top: 2px; overflow-wrap: anywhere; }
+.hl .d { font-size: var(--fs-meta); color: var(--ink-2); margin-top: 2px; }
 .hl.status-good .v { color: var(--good); }
 .hl.status-warning .v { color: var(--warning); }
 .hl.status-serious .v { color: var(--serious); }
@@ -414,7 +475,7 @@ html, body {
    from before the contract said so still carries its own background, and
    the rounded corner keeps that tidy. */
 .card .viz {
-  margin: 14px 16px 8px;
+  margin: var(--sp-4) var(--card-pad) var(--sp-2);
   border-radius: 8px;
   overflow: hidden;
   background: transparent;
@@ -440,10 +501,10 @@ html, body {
   gap: 8px;
   row-gap: 4px;
   margin-top: auto;
-  padding: 10px 16px 12px;
+  padding: var(--sp-3) var(--card-pad);
   border-top: 1px solid var(--hairline);
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
 }
 .card .foot .spacer { flex: 1; }
 /* Why this run happened, and why the next one is waiting. Neither is ever
@@ -473,31 +534,16 @@ html, body {
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
   color: var(--accent);
-  font-size: 9.5px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
   vertical-align: 1px;
 }
 .badge.off { border-color: var(--hairline); color: var(--ink-3); }
 
 /* ------------------------------------------------------ insight history */
 .card .foot .hist { display: inline-flex; align-items: center; gap: 4px; }
-.card .foot .histsel {
-  appearance: none;
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--ink-2);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 3px 8px;
-  max-width: 130px;
-  cursor: pointer;
-}
-.card .foot .histsel:focus { border-color: var(--accent); outline: none; }
-.card .foot .hstep { padding: 2px 7px; font-size: 13px; border-radius: 8px; }
+.card .foot .histsel { max-width: 150px; font-weight: 600; color: var(--ink-2); }
+.card .foot .hstep { padding: 2px 7px; font-size: var(--fs-body); border-radius: 8px; }
 
 .histpill {
   display: flex;
@@ -509,12 +555,12 @@ html, body {
   background: color-mix(in srgb, var(--accent) 12%, var(--surface));
   border-radius: 999px;
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
 }
 .histpill span { flex: 1; }
 
-.hl .prev { font-size: 10.5px; color: var(--ink-3); margin-top: 2px; font-style: italic; }
+.hl .prev { font-size: var(--fs-meta); color: var(--ink-3); margin-top: 2px; font-style: italic; }
 
 /* Insight cards carried a yes/no row per guess here (.questions/.qrow) and
    the Memory tab carried the same rows again. Both are gone: guesses are
@@ -539,7 +585,7 @@ html, body {
   gap: 9px;
   padding: 12px 16px 0;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 /* What the run is spending, beside the phase that is spending it. Quieter
@@ -567,18 +613,18 @@ html, body {
 .card .empty, .card .errbox {
   margin: 12px;
   border: 1px dashed var(--hairline);
-  border-radius: 10px;
-  padding: 26px 18px;
+  border-radius: var(--control-radius);
+  padding: var(--sp-6) var(--sp-4);
   text-align: center;
   color: var(--ink-2);
-  font-size: 13.5px;
+  font-size: var(--fs-body);
 }
-.card .empty .big { font-size: 30px; margin-bottom: 6px; }
+.card .empty .big { font-size: var(--fs-title); margin-bottom: 6px; }
 .card .errbox { border-style: solid; border-color: color-mix(in srgb, var(--critical) 45%, var(--hairline)); }
 .card .errbox code {
   display: block;
   margin-top: 8px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   word-break: break-word;
 }
@@ -593,12 +639,12 @@ html, body {
   box-shadow: var(--shadow);
   padding: 30px 32px;
 }
-.setup h2 { margin: 0 0 4px; font-size: 21px; }
-.setup .sub { color: var(--ink-2); margin: 0 0 18px; font-size: 14px; }
+.setup h2 { margin: 0 0 4px; font-size: var(--fs-title); }
+.setup .sub { color: var(--ink-2); margin: 0 0 18px; font-size: var(--fs-body); }
 .setup .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
 .setup .pane { display: none; }
 .setup .pane.active { display: block; }
-.setup label { display: block; font-size: 12.5px; font-weight: 700; color: var(--ink-2); margin: 12px 0 5px; }
+.setup label { display: block; font-size: var(--fs-meta); font-weight: 700; color: var(--ink-2); margin: 12px 0 5px; }
 .setup input[type="text"], .setup input[type="password"] {
   width: 100%;
   padding: 10px 13px;
@@ -611,7 +657,7 @@ html, body {
 }
 .setup input:focus { border-color: var(--accent); }
 .setup .row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
-.setup .hint { font-size: 12.5px; color: var(--ink-3); margin-top: 10px; }
+.setup .hint { font-size: var(--fs-meta); color: var(--ink-3); margin-top: 10px; }
 .setup .hint code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; }
 .setup .urlbox {
   margin-top: 12px;
@@ -619,11 +665,11 @@ html, body {
   border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--plane);
-  font-size: 13px;
+  font-size: var(--fs-body);
   word-break: break-all;
 }
 .setup .urlbox a { color: var(--accent); font-weight: 600; }
-.setup .flowerr { color: var(--critical); font-size: 13px; margin-top: 10px; }
+.setup .flowerr { color: var(--critical); font-size: var(--fs-body); margin-top: 10px; }
 
 /* A standing caution, not an error.
  *
@@ -638,7 +684,7 @@ html, body {
   border-left: 3px solid var(--warning);
   border-radius: 10px;
   background: var(--plane);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.55;
   color: var(--ink-2);
 }
@@ -649,7 +695,7 @@ html, body {
   padding: 1px 6px;
   border-radius: 6px;
 }
-.steps { margin: 0 0 6px; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
+.steps { margin: 0 0 6px; padding-left: 18px; color: var(--ink-2); font-size: var(--fs-body); }
 .steps li { margin: 3px 0; }
 
 /* ---------------------------------------------------------------- modal */
@@ -710,7 +756,7 @@ body.modal-open {
 .edit-body { padding: 16px 18px 18px; overflow-y: auto; }
 .edit-body label {
   display: block;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   font-weight: 700;
   color: var(--ink-2);
   margin: 12px 0 5px;
@@ -726,7 +772,7 @@ body.modal-open {
   width: 100%;
   padding: 10px 13px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   color: var(--ink);
   background: var(--plane);
   border: 1px solid var(--hairline);
@@ -736,13 +782,13 @@ body.modal-open {
 }
 .edit-body textarea:focus, .edit-body input[type="number"]:focus { border-color: var(--accent); }
 .edit-body input[type="number"] { max-width: 130px; }
-.edit-body .hint { font-size: 12.5px; color: var(--ink-3); margin: 10px 0 0; }
+.edit-body .hint { font-size: var(--fs-meta); color: var(--ink-3); margin: 10px 0 0; }
 .edit-body .row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
 .edit-body input[type="text"] {
   width: 100%;
   padding: 10px 13px;
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   color: var(--ink);
   background: var(--plane);
   border: 1px solid var(--hairline);
@@ -753,7 +799,7 @@ body.modal-open {
 .edit-body .row.nowrap { flex-wrap: nowrap; align-items: flex-start; margin-top: 0; }
 .edit-body .row .grow { flex: 1; min-width: 0; }
 .edit-body .iconin { width: 64px; text-align: center; }
-.edit-body .steps { margin: 10px 0 6px; padding-left: 18px; color: var(--ink-2); font-size: 13px; }
+.edit-body .steps { margin: 10px 0 6px; padding-left: 18px; color: var(--ink-2); font-size: var(--fs-body); }
 .edit-body .steps li { margin: 4px 0; }
 .btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, var(--hairline)); }
 .btn.danger:hover { background: color-mix(in srgb, var(--critical) 12%, var(--surface)); }
@@ -768,11 +814,11 @@ body.modal-open {
   background: var(--plane);
   border-radius: 10px;
   padding: 8px 11px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 .fbitem .txt { flex: 1; min-width: 0; word-break: break-word; }
-.fbitem .when { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.fbitem .when { font-size: var(--fs-meta); color: var(--ink-3); margin-top: 2px; }
 
 /* instant tooltips for [data-tip] controls, set via tip() in JS. Native title
    bubbles are slow and easy to miss; these appear on hover and keyboard
@@ -801,7 +847,7 @@ body.modal-open {
   border-radius: 7px;
   background: var(--ink);
   color: var(--surface);
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   line-height: 1.35;
   white-space: normal;
@@ -829,7 +875,7 @@ body.modal-open {
   border-radius: 12px;
   background: var(--surface);
   box-shadow: var(--shadow);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.45;
   /* max-height is measured in positionChipPop from what is left below the
      chip — CSS cannot see where the anchor ended up. */
@@ -839,10 +885,8 @@ body.modal-open {
 .chippop.hidden { display: none; }
 .chippop h4 {
   margin: 0 0 8px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 /* One row per window: what it is and when it rolls over on the left, the
@@ -858,11 +902,11 @@ body.modal-open {
 }
 .chippop .prow + .prow { border-top: 1px solid var(--hairline); }
 .chippop .pname { display: flex; flex-direction: column; color: var(--ink-2); }
-.chippop .pwhen { color: var(--ink-3); font-size: 12px; }
+.chippop .pwhen { color: var(--ink-3); font-size: var(--fs-meta); }
 .chippop .pval {
   flex: none;
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--fs-body);
   font-variant-numeric: tabular-nums;
   color: var(--ink);
 }
@@ -874,7 +918,7 @@ body.modal-open {
   padding-top: 8px;
   border-top: 1px solid var(--hairline);
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .chippop .pnote b { color: var(--ink-2); font-weight: 600; }
 /* Heading for the spend breakdown. The popover holds two lists now — the
@@ -885,10 +929,8 @@ body.modal-open {
   padding-top: 9px;
   border-top: 1px solid var(--hairline);
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
 }
 .chippop .psub + .prow { border-top: 0; }
 
@@ -917,16 +959,16 @@ body.modal-open {
 
 /* knowledge (memory) modal */
 .klist { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
-.kempty { font-size: 13px; color: var(--ink-3); padding: 6px 2px; }
+.kempty { font-size: var(--fs-body); color: var(--ink-3); padding: 6px 2px; }
 /* What the capped list is not showing. The count above is the real one. */
-.kmore { font-size: 12.5px; color: var(--ink-3); padding: 8px 2px 2px; font-style: italic; }
+.kmore { font-size: var(--fs-meta); color: var(--ink-3); padding: 8px 2px 2px; font-style: italic; }
 /* The facts list under the queue: the subject rides as a chip so a row
    about `sensor.hall_temp` and one about the house read differently at a
    glance, and the run link sits in the meta line rather than as a fourth
    button, because a row with three controls is a row nobody reads. */
 .kfactslabel { display: block; margin-top: 18px; }
 .kfact .when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
-.kfactsubj { font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+.kfactsubj { font-family: var(--mono, ui-monospace, monospace); font-size: var(--fs-meta);
   padding: 1px 6px; border-radius: 999px; background: var(--bg-3, rgba(127,127,127,.15));
   color: var(--ink-2); }
 .kfactrun { margin-left: 4px; }
@@ -934,10 +976,10 @@ body.modal-open {
    rather than three cards, because it is read once and then skimmed past. */
 .kguide { max-width: 900px; }
 .kguidelist { margin: 4px 0 0; padding-left: 20px; color: var(--ink-2);
-  font-size: 13.5px; line-height: 1.5; }
+  font-size: var(--fs-body); line-height: 1.5; }
 .kguidelist li { margin: 0 0 6px; }
 .kguidelist b { color: var(--ink); font-weight: 600; }
-.kcount { color: var(--ink-3); font-weight: 500; font-size: 14px; margin-left: 6px; }
+.kcount { color: var(--ink-3); font-weight: 500; font-size: var(--fs-body); margin-left: 6px; }
 /* The facts browser. The bar wraps rather than shrinking: a search box
    squeezed to a sliver beside two selects is the failure a measure can see.
    Neither control sets a font-size — the coarse block's 16px floor has to
@@ -947,14 +989,12 @@ body.modal-open {
   padding: 8px 11px; font-family: inherit; color: var(--ink); background: var(--plane);
   border: 1px solid var(--hairline); border-radius: 9px; outline: none; }
 .kfbar input[type="search"]:focus { border-color: var(--accent); }
-.kfbar select { flex: 0 1 auto; max-width: 100%; min-height: 40px;
-  padding: 6px 10px; font-family: inherit; color: var(--ink);
-  background: var(--plane); border: 1px solid var(--hairline); border-radius: 9px; }
+.kfbar select { flex: 0 1 auto; max-width: 100%; min-height: 40px; }
 /* A subject with a name reads as a name; only a bare id stays monospace. */
-.kfactsubj.named { font-family: inherit; font-size: 11.5px; }
+.kfactsubj.named { font-family: inherit; font-size: var(--fs-meta); }
 .kfchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
-.kfsum { font-size: 12.5px; color: var(--ink-3); padding: 2px 2px 0; }
-.kfgroup { font-size: 12px; font-weight: 700; letter-spacing: .02em;
+.kfsum { font-size: var(--fs-meta); color: var(--ink-3); padding: 2px 2px 0; }
+.kfgroup { font-size: var(--fs-meta); font-weight: 700;
   color: var(--ink-2); margin: 10px 2px 0; overflow-wrap: anywhere; }
 .kfgroup:first-child { margin-top: 0; }
 .kfmore { margin-top: 8px; }
@@ -964,7 +1004,7 @@ body.modal-open {
   min-width: 0;
   padding: 8px 11px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
   background: var(--plane);
   border: 1px solid var(--hairline);
@@ -986,7 +1026,7 @@ body.modal-open {
   padding: 12px 16px;
   max-height: 320px;
   overflow: auto;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
   line-height: 1.55;
 }
@@ -996,8 +1036,8 @@ body.modal-open {
   color: var(--ink);
 }
 .kmd h1 { font-size: 16px; }
-.kmd h2 { font-size: 14px; border-bottom: 1px solid var(--hairline); padding-bottom: 3px; }
-.kmd h3, .kmd h4, .kmd h5, .kmd h6 { font-size: 13px; }
+.kmd h2 { font-size: var(--fs-body); border-bottom: 1px solid var(--hairline); padding-bottom: 3px; }
+.kmd h3, .kmd h4, .kmd h5, .kmd h6 { font-size: var(--fs-body); }
 .kmd h1:first-child, .kmd h2:first-child { margin-top: 0; }
 .kmd p { margin: 5px 0; }
 .kmd ul, .kmd ol { margin: 4px 0 8px; padding-left: 20px; }
@@ -1014,7 +1054,7 @@ body.modal-open {
   min-height: 240px;
   resize: vertical;
   padding: 12px 14px;
-  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ink);
   background: var(--plane);
   border: 1px solid var(--hairline);
@@ -1026,7 +1066,7 @@ body.modal-open {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--accent);
   padding: 4px 0;
@@ -1052,13 +1092,13 @@ body.modal-open {
   border-radius: 8px;
   border-left: 3px solid var(--warning, #b98300);
   background: color-mix(in srgb, var(--warning, #b98300) 12%, transparent);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.45;
   color: var(--ink-2);
 }
 .kstale.hidden { display: none; }
 .kdirty {
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 700;
   color: var(--warning, #b98300);
   border: 1px solid currentColor;
@@ -1113,7 +1153,7 @@ body.modal-open {
   border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--plane);
-  font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--ink);
   white-space: pre;
   overflow-x: auto;
@@ -1141,7 +1181,7 @@ body.modal-open {
   color: var(--ink);
   border-radius: 12px;
   padding: 10px 18px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   font-weight: 600;
   box-shadow: var(--shadow);
   z-index: 200;
@@ -1163,7 +1203,7 @@ body.modal-open {
 .toastundo {
   flex: none;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--accent);
   background: none;
@@ -1186,26 +1226,15 @@ body.modal-open {
 }
 
 /* --------------------------------------------------- settings (⚙) dialog */
-.chip.clickable { cursor: pointer; border: 1px solid var(--hairline); font: inherit; font-size: 12.5px; }
+.chip.clickable { cursor: pointer; border: 1px solid var(--hairline); font: inherit; font-size: var(--fs-meta); }
 .chip.clickable:hover { background: var(--surface-2); }
 
 .edit-body label.bigcheck { align-items: flex-start; margin-bottom: 4px; }
 .edit-body label.bigcheck input { margin-top: 3px; }
-.edit-body label.bigcheck .subtext { font-weight: 400; color: var(--ink-3); font-size: 12.5px; }
+.edit-body label.bigcheck .subtext { font-weight: 400; color: var(--ink-3); font-size: var(--fs-meta); }
 
-.edit-body .selin {
-  width: 100%;
-  max-width: 260px;
-  padding: 9px 12px;
-  font: inherit;
-  font-size: 13.5px;
-  color: var(--ink);
-  background: var(--plane);
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  outline: none;
-}
-.edit-body .selin:focus { border-color: var(--accent); }
+/* The look is `select.sel`'s; a dialog only decides the width. */
+.edit-body .selin { width: 100%; max-width: 260px; }
 
 .edit-body input[type="range"] {
   width: 100%;
@@ -1281,11 +1310,11 @@ body.modal-open {
   transition: transform 0.15s ease;
 }
 .setsec[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
-.setsecname { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.setsecname { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
 /* Bold only when open, so a shut dialog reads as a list of places to go and
    an open one says which place you are in. */
 .setsec[open] > summary .setsecname { font-weight: 700; }
-.setsecsub { font-size: 11.5px; color: var(--ink-3); line-height: 1.3; }
+.setsecsub { font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.3; }
 .setsecbody { padding: 2px 0 16px; }
 
 /* A label and the ? that carries the rest of what used to be under it. The
@@ -1309,7 +1338,7 @@ body.modal-open {
   flex: none;
   width: 26px;
   height: 26px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 700;
   border: 1px solid var(--hairline);
   border-radius: 50%;
@@ -1319,7 +1348,7 @@ body.modal-open {
 .edit-body .hint .btn.icon.tiny {
   width: 22px;
   height: 22px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 700;
   border: 1px solid var(--hairline);
   border-radius: 50%;
@@ -1332,7 +1361,7 @@ body.modal-open {
   margin: 22px 0 0;
   padding-top: 14px;
   border-top: 1px solid var(--hairline);
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   font-weight: 700;
   color: var(--ink);
 }
@@ -1348,13 +1377,12 @@ body.modal-open {
    model's name — and the measure checks every option still fits. */
 #setModal .edit-body .selin { max-width: none; }
 .setgrid .setwide { grid-column: 1 / -1; }
-.edit-body .selin:disabled { opacity: 0.55; cursor: not-allowed; }
 
 /* Claude account — the first section of the ⚙ dialog. No text inputs live
    here on purpose: the sign-in screen owns the boxes you type a token into,
    and duplicating them would be a second place to paste a credential. */
 .sethead.first { margin-top: 0; padding-top: 0; border-top: 0; }
-.authbox { margin: 10px 0 12px; font-size: 13px; }
+.authbox { margin: 10px 0 12px; font-size: var(--fs-body); }
 .authbox p { margin: 0 0 8px; }
 .authbox .subtext { color: var(--ink-2); }
 .authbox .authbad { color: var(--critical); }
@@ -1366,7 +1394,7 @@ body.modal-open {
 .authverdict.busy { color: var(--warning); }
 /* All three stores, always — the panel used to be able to see only its own,
    which is how it reported somebody's working terminal login as nothing. */
-.authstores { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12.5px; }
+.authstores { margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--fs-meta); }
 .authstores li { padding: 2px 0; color: var(--ink-2); }
 .authstores li.on { color: var(--ink); }
 .sharebox {
@@ -1384,7 +1412,7 @@ body.modal-open {
 /* model picker: dropdown of known models + the "Custom model id…" box it
    reveals, which sits directly under it */
 #setModelCustom { margin-top: 6px; }
-.edit-body .hint.tight { margin-top: 4px; font-size: 11.5px; }
+.edit-body .hint.tight { margin-top: 4px; font-size: var(--fs-meta); }
 /* A hint that is reporting something still true rather than explaining a
    control — a terminal session that did not get the permission switch's
    current value. The words carry it; the rule only marks it, so it reads
@@ -1406,7 +1434,7 @@ body.modal-open {
 /* diagnostics block of the ⚙ dialog: rows of label + value, and a short
    list of the failures behind the counts. It is a reading, not a form —
    nothing here is editable, so it is laid out as a definition list. */
-.diag { margin: 10px 0 12px; font-size: 12.5px; }
+.diag { margin: 10px 0 12px; font-size: var(--fs-meta); }
 .diag .drow {
   display: flex;
   gap: 10px;
@@ -1454,9 +1482,9 @@ body.modal-open {
   min-height: 32px;
 }
 .prob .probcheck { flex: none; width: 18px; height: 18px; margin: 0; }
-.prob .probwhen { flex: none; color: var(--ink-2); font-size: 11.5px; white-space: nowrap; }
+.prob .probwhen { flex: none; color: var(--ink-2); font-size: var(--fs-meta); white-space: nowrap; }
 .prob .probhead { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.prob .probcount { color: var(--ink-2); font-size: 11.5px; margin-left: 4px; }
+.prob .probcount { color: var(--ink-2); font-size: var(--fs-meta); margin-left: 4px; }
 .prob .probdel { flex: none; }
 .probbtns { flex-wrap: wrap; gap: 8px; }
 @media (max-width: 520px) {
@@ -1478,7 +1506,7 @@ body.modal-open {
   border-radius: 8px;
   padding: 8px 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   line-height: 1.45;
   white-space: pre;
 }
@@ -1508,7 +1536,7 @@ body.modal-open {
   background: var(--surface);
   color: var(--ink);
   font: inherit;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
 }
 
 .docssearch input:focus {
@@ -1539,12 +1567,12 @@ body.modal-open {
   border-left-color: var(--accent);
 }
 
-.docslinktitle { display: block; font-weight: 600; font-size: 0.92rem; }
+.docslinktitle { display: block; font-weight: 600; font-size: var(--fs-body); }
 
 .docssnippet,
 .docscount {
   display: block;
-  font-size: 0.78rem;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
   margin-top: 3px;
   overflow: hidden;
@@ -1552,7 +1580,7 @@ body.modal-open {
   white-space: nowrap;
 }
 
-.docsempty { color: var(--ink-3); font-size: 0.9rem; padding: 10px 12px; }
+.docsempty { color: var(--ink-3); font-size: var(--fs-body); padding: 10px 12px; }
 
 .docsbody {
   max-width: 62ch;
@@ -1562,21 +1590,21 @@ body.modal-open {
 }
 
 .docsbody h1 {
-  font-size: 1.6rem;
+  font-size: var(--fs-title);
   color: var(--ink);
   margin: 0 0 18px;
   letter-spacing: -0.01em;
 }
 
 .docsbody h2 {
-  font-size: 1.16rem;
+  font-size: var(--fs-card);
   color: var(--ink);
   margin: 34px 0 10px;
   padding-top: 18px;
   border-top: 1px solid var(--hairline);
 }
 
-.docsbody h3 { font-size: 1rem; color: var(--ink); margin: 24px 0 8px; }
+.docsbody h3 { font-size: var(--fs-body); color: var(--ink); margin: 24px 0 8px; }
 .docsbody p { margin: 0 0 14px; }
 .docsbody ul, .docsbody ol { margin: 0 0 14px; padding-left: 22px; }
 .docsbody li { margin-bottom: 6px; }
@@ -1586,7 +1614,7 @@ body.modal-open {
   background: var(--surface-2);
   padding: 0.12em 0.4em;
   border-radius: 5px;
-  font-size: 0.88em;
+  font-size: var(--fs-meta);
 }
 
 .docsbody blockquote {
@@ -1605,7 +1633,7 @@ body.modal-open {
   padding: 14px 16px;
   overflow-x: auto;
   margin: 0 0 16px;
-  font-size: 0.86rem;
+  font-size: var(--fs-meta);
   line-height: 1.55;
 }
 
@@ -1614,7 +1642,7 @@ body.modal-open {
 /* Wide content scrolls inside its own box — the page never scrolls sideways. */
 .doctablewrap { overflow-x: auto; margin: 0 0 16px; }
 
-.doctable { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+.doctable { border-collapse: collapse; width: 100%; font-size: var(--fs-body); }
 
 .doctable th, .doctable td {
   text-align: left;
@@ -1647,7 +1675,7 @@ body.modal-open {
     border-radius: 10px;
     background: var(--surface);
     cursor: pointer;
-    font-size: 13.5px;
+    font-size: var(--fs-body);
   }
   .docsfoldlabel { color: var(--ink-3); flex: none; }
   .docsfoldcur {
@@ -1687,6 +1715,9 @@ body.modal-open {
   input[type="password"], input:not([type]), textarea, select {
     font-size: 16px;
   }
+  /* The same floor, for a class rule that sizes a control through the
+     token rather than a bare selector this block can outrank. */
+  :root { --fs-control: 16px; --btn-h: 44px; --gutter: 16px; }
   /* The conversation filter chips are reachable from the ⋯ dialog on a
      phone, where the rail that normally holds them isn't rendered. */
   .crfilter { min-height: 40px; padding: 8px 14px; }
@@ -1798,7 +1829,7 @@ body.modal-open {
   color: var(--ink-3);
   font: inherit;
   font-weight: 500;
-  font-size: 0.9rem;
+  font-size: var(--fs-body);
   height: 44px;
   min-width: 44px;
   padding: 0 14px;
@@ -1826,7 +1857,7 @@ body.modal-open {
   border-radius: 9px;
   background: var(--accent);
   color: #fff;
-  font-size: 0.7rem;
+  font-size: var(--fs-meta);
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -1869,7 +1900,7 @@ body.modal-open {
   color: var(--ink-3);
   font: inherit;
   font-weight: 500;
-  font-size: 0.86rem;
+  font-size: var(--fs-meta);
   height: 44px;
   min-width: 44px;
   padding: 0 14px;
@@ -1888,7 +1919,7 @@ body.modal-open {
   border-radius: 9px;
   background: var(--accent);
   color: #fff;
-  font-size: 0.7rem;
+  font-size: var(--fs-meta);
   font-weight: 700;
   line-height: 18px;
   text-align: center;
@@ -1898,7 +1929,7 @@ body.modal-open {
    After the badge's own rule, because it overrides it at equal specificity. */
 @media (max-width: 520px) {
   .subtabs { gap: 0; padding: 6px 4px; }
-  .subtab { padding: 0 6px; gap: 4px; font-size: 0.8rem; }
+  .subtab { padding: 0 6px; gap: 4px; font-size: var(--fs-meta); }
   .subtab .badge { min-width: 16px; height: 16px; padding: 0 3px; line-height: 16px; }
 }
 
@@ -1928,8 +1959,8 @@ body.modal-open {
 
 /* 40px: a chip in this bar is a button (both clickables open ⚙), so it is
    sized to be pressed rather than to be small. */
-.topbar .chip { height: 40px; font-size: 0.8rem; padding: 0 14px; border-radius: 999px; }
-.topbar .chip.clickable { font-size: 0.8rem; }
+.topbar .chip { height: 40px; font-size: var(--fs-meta); padding: 0 14px; border-radius: 999px; }
+.topbar .chip.clickable { font-size: var(--fs-meta); }
 
 /* Two windows, each labelled. "19% · 100%" was two unexplained numbers with
    a dot between them — the first is the 5-hour session that gates automatic
@@ -1993,10 +2024,8 @@ body.modal-open {
 }
 .crtitle {
   flex: 1;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .crlist {
@@ -2009,7 +2038,7 @@ body.modal-open {
   flex-direction: column;
   gap: 2px;
 }
-.crempty { padding: 12px 8px; color: var(--ink-3); font-size: 13px; }
+.crempty { padding: 12px 8px; color: var(--ink-3); font-size: var(--fs-body); }
 .critem {
   display: grid;
   gap: 1px;
@@ -2026,7 +2055,7 @@ body.modal-open {
 .critem.active { background: var(--surface-2); cursor: default; }
 .critem.active .ctitle { color: var(--accent); }
 .critem .ctitle {
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.35;
   /* Two lines and then stop: a conversation's title is its first message, so
      without a cap one rambling opener owns the whole rail. */
@@ -2035,7 +2064,7 @@ body.modal-open {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.critem .cwhen { font-size: 11.5px; color: var(--ink-3); }
+.critem .cwhen { font-size: var(--fs-meta); color: var(--ink-3); }
 .critem .crfoot { display: flex; align-items: center; gap: 6px; }
 
 /* Who ran it. Only on rows that were not you — labelling the ordinary case
@@ -2048,10 +2077,8 @@ body.modal-open {
   border: 1px solid var(--hairline);
   background: var(--surface-2);
   color: var(--ink-3);
-  font-size: 10px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 /* What a conversation's own Claude session is doing, on its row in both
@@ -2067,9 +2094,8 @@ body.modal-open {
   flex: none;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 .crbusy {
@@ -2082,7 +2108,6 @@ body.modal-open {
   border: 1px solid var(--warning);
   background: transparent;
   color: var(--warning);
-  text-transform: uppercase;
 }
 @keyframes crpulse {
   0%, 100% { opacity: 1; }
@@ -2111,7 +2136,7 @@ body.modal-open {
   background: var(--surface);
   color: var(--ink-2);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   cursor: pointer;
 }
 .crfilter:hover { border-color: var(--accent); }
@@ -2129,7 +2154,7 @@ body.modal-open {
   align-items: center;
   gap: 10px;
   padding: 0 16px 10px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 /* The model name is also the picker. A button in the meta line, not a
@@ -2161,13 +2186,13 @@ body.modal-open {
   background: none;
   color: var(--ink);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
 }
 .mpick:hover { background: var(--surface-2); }
 .mpick.on { color: var(--accent); font-weight: 600; }
-.mpick .mhint { display: block; font-size: 11.5px; color: var(--ink-3); }
+.mpick .mhint { display: block; font-size: var(--fs-meta); color: var(--ink-3); }
 
 #termFrame {
   width: 100%;
@@ -2261,7 +2286,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .msg.bot p { margin: 0 0 10px; }
 .msg.bot h1, .msg.bot h2, .msg.bot h3, .msg.bot h4 {
   margin: 16px 0 8px;
-  font-size: 1.02rem;
+  font-size: var(--fs-body);
   font-weight: 700;
 }
 .msg.bot ul, .msg.bot ol { margin: 0 0 10px; padding-left: 22px; }
@@ -2270,7 +2295,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   padding: 1px 5px;
   border-radius: 5px;
   background: var(--surface-2);
-  font-size: 0.88em;
+  font-size: var(--fs-meta);
 }
 /* The one place a grid is right, and it keeps one — in its own scroller, so
    a 200-column log line never makes the page itself scroll sideways. */
@@ -2286,7 +2311,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .msg.bot pre code, .chat pre code {
   padding: 0;
   background: none;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   white-space: pre;
 }
@@ -2296,7 +2321,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-left: 3px solid var(--hairline);
   color: var(--ink-2);
 }
-.msg.bot table { border-collapse: collapse; font-size: 13px; }
+.msg.bot table { border-collapse: collapse; font-size: var(--fs-body); }
 .msg.bot th, .msg.bot td {
   padding: 5px 10px;
   border: 1px solid var(--hairline);
@@ -2314,7 +2339,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border: 1px solid var(--hairline);
   border-radius: 10px;
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .toolcall > summary, .think > summary {
   display: flex;
@@ -2353,7 +2378,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 .toolcall .tdot {
@@ -2375,17 +2400,15 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-left: 3px solid var(--warning);
   border-radius: 6px;
   background: var(--surface-2);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   color: var(--ink-2);
 }
 .toolcall .tbody, .think .tbody { padding: 0 12px 10px; }
 .toolcall .tlabel {
   margin: 6px 0 4px;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .think { background: none; border-style: dashed; }
@@ -2401,7 +2424,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-left: 3px solid var(--warning);
   border-radius: 8px;
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 .chatnotice.error { border-left-color: var(--critical); }
@@ -2413,7 +2436,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   width: 100%;
   align-self: center;
   margin-top: -6px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 
@@ -2429,7 +2452,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   align-items: center;
   gap: 7px;
   color: var(--ink-3);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .chatwork i {
   width: 6px;
@@ -2443,7 +2466,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatwork .chatverb { margin-left: 3px; }
 .chatwork .chatelapsed {
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2464,13 +2487,13 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-left: 3px solid var(--accent);
   border-radius: 8px;
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .permcard .permhead { font-weight: 600; color: var(--ink); }
 .permcard .permsum {
   margin-top: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-2);
   overflow-wrap: anywhere;
 }
@@ -2481,7 +2504,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   overflow: auto;
   border-radius: 6px;
   background: var(--surface-2);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 .permcard .permrow {
   display: flex;
@@ -2494,7 +2517,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .permcard .permscope {
   margin-top: 6px;
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   overflow-wrap: anywhere;
 }
 /* "Stop asking…" opens ⚙ at the switch; it is a way out of asking
@@ -2508,7 +2531,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .permcard .permnote {
   margin-top: 10px;
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
 }
 
 /* The question card — AskUserQuestion rendered as the questions themselves,
@@ -2532,10 +2555,8 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--ink-2);
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
 }
 .qcard .qtext { font-weight: 600; color: var(--ink); }
 .qcard .qopts {
@@ -2557,7 +2578,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   background: var(--surface);
   color: var(--ink);
   text-align: left;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 .qcard .qopt:hover, .chatres .cresopt:hover { border-color: var(--accent); }
@@ -2567,7 +2588,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .qcard .qopt .qlabel, .chatres .cresopt .creslabel { font-weight: 600; }
 .qcard .qopt .qdesc,
-.chatres .cresopt .cresdoes { color: var(--ink-2); font-size: 12px; }
+.chatres .cresopt .cresdoes { color: var(--ink-2); font-size: var(--fs-meta); }
 .qcard .qother {
   width: 100%;
   margin-top: 8px;
@@ -2576,7 +2597,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-radius: 8px;
   background: var(--surface);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 /* The resolutions card — the ways the finding under discussion could end,
@@ -2594,7 +2615,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-left: 3px solid var(--warning);
   border-radius: 8px;
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .chatres .creshead { font-weight: 600; color: var(--ink); }
 .chatres .cresbody {
@@ -2603,7 +2624,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   gap: 6px;
   margin-top: 8px;
 }
-.chatres .cresnote { margin: 0; color: var(--ink-3); font-size: 12.5px; }
+.chatres .cresnote { margin: 0; color: var(--ink-3); font-size: var(--fs-meta); }
 
 .chatempty {
   margin: auto;
@@ -2612,8 +2633,8 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   text-align: center;
   color: var(--ink-2);
 }
-.chatempty h3 { margin: 0 0 8px; font-size: 1.1rem; color: var(--ink); }
-.chatempty p { margin: 0 0 16px; font-size: 14px; }
+.chatempty h3 { margin: 0 0 8px; font-size: var(--fs-card); color: var(--ink); }
+.chatempty p { margin: 0 0 16px; font-size: var(--fs-body); }
 .chatseeds { display: flex; flex-direction: column; gap: 8px; }
 .chatseeds .seed {
   padding: 10px 14px;
@@ -2623,7 +2644,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   background: var(--surface);
   color: var(--ink-2);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
 }
@@ -2635,7 +2656,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   border-radius: 8px;
   background: color-mix(in srgb, var(--critical) 16%, transparent);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 
 /* The slash-command palette. The list is the CLI's own — it announces its
@@ -2677,13 +2698,13 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 }
 .chatcmds .cname {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--accent-2);
 }
 .chatcmds .chint {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 /* One line: these descriptions are written for a model to route on and run
@@ -2693,7 +2714,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 
@@ -2731,9 +2752,9 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
 }
-.convitem .cwhen { flex: none; font-size: 11.5px; color: var(--ink-3); }
+.convitem .cwhen { flex: none; font-size: var(--fs-meta); color: var(--ink-3); }
 
 /* Deleting a conversation. A row is itself a button, and a button cannot
    hold another — so every row sits in a wrapper and the ✕ floats over its
@@ -2755,7 +2776,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   background: none;
   color: var(--ink-3);
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1;
   cursor: pointer;
   opacity: 0;
@@ -2794,7 +2815,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   display: grid;
   place-items: center;
   color: #fff;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   line-height: 1;
 }
 .critem.sel, .convitem.sel {
@@ -2815,14 +2836,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .cselbar .cselcount {
   flex: 1;
   min-width: 90px;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   color: var(--ink-2);
 }
 
 /* Session details, in the shared chip popover. */
 .chippop .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 600;
 }
 .chippop .psid {
@@ -2850,10 +2871,8 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .chatfinding .cfhead { display: flex; align-items: baseline; gap: 8px; }
 .chatfinding .cflabel {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .chatfinding .cftext {
@@ -2862,7 +2881,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
 }
 .chatfinding .cfhead .btn.icon { width: 28px; height: 28px; flex: none; }
@@ -2877,7 +2896,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   align-items: center;
   gap: 10px;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--ink-3);
 }
 
@@ -2972,14 +2991,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   background: none;
   color: var(--ink);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   text-align: left;
   cursor: pointer;
 }
 .tmitem:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .tmitem .ico { width: 17px; height: 17px; flex: none; color: var(--ink-3); }
 .tmitem .tmlabel { display: flex; flex-direction: column; gap: 1px; padding: 5px 0; }
-.tmitem .tmsub { font-size: 11.5px; color: var(--ink-3); }
+.tmitem .tmsub { font-size: var(--fs-meta); color: var(--ink-3); }
 /* Chat-only entries: in the classic terminal there is no chat to start, no
    transcript to list and no chat session to describe. */
 body.term-classic #chatNew,
@@ -3144,9 +3163,8 @@ body.term-classic #termMode .ico-out { display: block; }
     height: 52px;
     padding: 0 2px;
     border-radius: 12px 12px 0 0;
-    font-size: 0.66rem;
+    font-size: var(--fs-meta);
     font-weight: 600;
-    letter-spacing: 0.01em;
   }
 
   /* The names come back — this is the width where an unlabelled glyph row
@@ -3171,7 +3189,7 @@ body.term-classic #termMode .ico-out { display: block; }
     height: 16px;
     padding: 0 4px;
     border-radius: 8px;
-    font-size: 0.64rem;
+    font-size: var(--fs-meta);
     line-height: 16px;
   }
 
@@ -3200,7 +3218,7 @@ body.term-classic #termMode .ico-out { display: block; }
    the type does. */
 @media (min-width: 600px) and (max-width: 919px) {
   :root { --bar-h: 109px; }
-  .viewtab { height: 56px; font-size: 0.8rem; gap: 4px; }
+  .viewtab { height: 56px; font-size: var(--fs-meta); gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }
 }
 
@@ -3211,7 +3229,7 @@ body.term-classic #termMode .ico-out { display: block; }
   .wordmark { display: none; }
   .topbar { padding: 4px 6px 0; gap: 4px; }
   .topbar .chip { padding: 0 9px; }
-  .viewtab { font-size: 0.62rem; }
+  .viewtab { font-size: var(--fs-meta); }
 }
 
 /* ------------------------------------------------------------- findings
@@ -3231,11 +3249,11 @@ body.term-classic #termMode .ico-out { display: block; }
   margin-bottom: 18px;
 }
 .findhead > div:first-child { flex: 1 1 420px; min-width: 0; }
-.findhead h2 { margin: 0 0 4px; font-size: 21px; }
-.findhead .sub { color: var(--ink-2); margin: 0; font-size: 14px; max-width: 68ch; }
+.findhead h2 { margin: 0 0 4px; font-size: var(--fs-title); }
+.findhead .sub { color: var(--ink-2); margin: 0; font-size: var(--fs-body); max-width: 68ch; }
 .findfilters { display: flex; gap: 8px; flex-wrap: wrap; }
 .findside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.findscore { color: var(--ink-3); font-size: 12.5px; margin: -8px 0 14px; line-height: 1.5; }
+.findscore { color: var(--ink-3); font-size: var(--fs-meta); margin: -8px 0 14px; line-height: 1.5; }
 .findscore b { color: var(--ink-2); font-weight: 500; }
 /* The two presses on those lines sit inline with the sentence they are
    about; a little air so a row of them does not read as one word. */
@@ -3244,11 +3262,11 @@ body.term-classic #termMode .ico-out { display: block; }
 /* Whose sentence "What you'd need to do" is. Muted because it qualifies the
    instruction rather than being one, and inline because the instruction is
    what the line is for. */
-.findfixby { color: var(--ink-3); font-size: 12px; }
+.findfixby { color: var(--ink-3); font-size: var(--fs-meta); }
 /* The optional box under a reason: one line, a real control, no smaller
    than the note above it so a thumb can find it. */
 .findnotecheck { display: flex; align-items: center; gap: 8px; margin-top: 8px;
-  font-size: 13px; color: var(--ink-2); min-height: 28px; cursor: pointer; }
+  font-size: var(--fs-body); color: var(--ink-2); min-height: 28px; cursor: pointer; }
 .findnotecheck input { width: 18px; height: 18px; margin: 0; }
 
 /* `minmax(0, 1fr)`, not the implicit `auto` column: an auto column is
@@ -3320,46 +3338,37 @@ body.term-classic #termMode .ico-out { display: block; }
 
 .findempty {
   color: var(--ink-3);
-  font-size: 14px;
+  font-size: var(--fs-body);
   padding: 28px 4px;
   max-width: 60ch;
 }
 
 .finding {
-  border: 1px solid var(--hairline);
-  border-left: 4px solid var(--ink-3);
-  border-radius: var(--radius);
-  background: var(--surface);
-  padding: 15px 18px;
+  /* One card: the edge is the same on every side. Severity is said in the
+     meta line's words, never by a coloured bar down the left. */
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  background: var(--card-bg);
+  padding: var(--card-pad);
   /* Entity ids, file paths and service names are one long token each, and
      they sit in the title, the fix and the plan's steps. They break where
      they must rather than widening the card past the screen. */
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.finding.sev-info { border-left-color: var(--ink-3); }
-.finding.sev-warning { border-left-color: var(--warning); }
-.finding.sev-serious { border-left-color: var(--serious); }
-.finding.sev-critical { border-left-color: var(--critical); }
-/* A finished fix is not an archive row — brAIn changed something in the
-   house and nobody has read it yet, so it keeps full weight and takes the
-   colour of a good outcome until the Got it press clears it. */
-.finding.st-fixed { border-left-color: var(--good); }
 /* Legacy: a dismissal from before the settled ledger, waiting for startup
    to move it. Dimmed, because it is already answered. */
-.finding.st-ignored { opacity: 0.72; border-left-color: var(--hairline); }
+.finding.st-ignored { opacity: 0.72; }
 
-.findtitle { margin: 3px 0 0; font-size: 15.5px; line-height: 1.35; }
+.findtitle { margin: 3px 0 0; font-size: var(--fs-card); line-height: 1.35; }
 
 .findmeta {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .sev-warning .findsev { color: var(--warning); }
@@ -3369,12 +3378,12 @@ body.term-classic #termMode .ico-out { display: block; }
 .st-fixing .findstate { color: var(--accent-2); }
 .st-failed .findstate, .st-needsyou .findstate { color: var(--serious); }
 /* Where it came from is context, not status — the quietest thing in the row. */
-/* In the row's uppercase, a source title that is a sentence ("Noticed while
+/* In the row's meta, a source title that is a sentence ("Noticed while
    fixing “…”") shouted across two lines; it is set as written and kept to
    one line, the meta row's job being to be glanced at. */
 .findsrc {
   color: var(--ink-3); font-weight: 600; opacity: 0.75;
-  text-transform: none; letter-spacing: 0; font-size: 12px;
+  text-transform: none; letter-spacing: 0; font-size: var(--fs-meta);
   min-width: 0; max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -3382,40 +3391,39 @@ body.term-classic #termMode .ico-out { display: block; }
    it is a fact about freshness, not about what the row is. */
 .findchecked { color: var(--ink-3); opacity: 0.7; }
 
-.finddetail { margin: 9px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.finddetail { margin: 9px 0 0; font-size: var(--fs-body); color: var(--ink-2); }
 
 .findentity {
   display: inline-block;
   max-width: 100%;
   overflow-wrap: anywhere;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-body);
   background: var(--surface-2);
-  padding: 2px 8px;
+  padding: 0 var(--sp-2);
   border-radius: 6px;
   color: var(--ink-2);
 }
 
 .findfix, .findresult {
-  margin-top: 11px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--control-radius);
   background: var(--surface-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 /* The label is a heading and the sentence under it is a sentence, so they
    stack. They used to sit on one baseline, which is what made the label
    read as a prefix to a `fix` that is already a capitalised imperative. */
-.findfix { display: grid; gap: 3px; }
+.findfix { display: grid; gap: var(--sp-1); }
 .findfixlabel {
   /* A no-op in `.findfix`'s grid and in the block `.caseev`/`.caseacts`,
      and kept so the span still behaves if it is ever put back in a row. */
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .findresult p { margin: 0 0 7px; }
@@ -3439,16 +3447,14 @@ body.term-classic #termMode .ico-out { display: block; }
   border-radius: 10px;
   background: var(--surface-2);
   border-left: 3px solid var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 .findplanlabel {
   display: block;
   margin-bottom: 6px;
-  font-size: 10.5px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 .findplan p { margin: 0 0 7px; }
@@ -3458,7 +3464,7 @@ body.term-classic #termMode .ico-out { display: block; }
 /* Not a colour alone: the sentence opens with "What could go wrong", so
    the shade only reinforces what the words already say. */
 .findrisk { color: var(--warning); }
-.findfixfoot { margin: 8px 0 0; font-size: 12px; color: var(--ink-3); }
+.findfixfoot { margin: 8px 0 0; font-size: var(--fs-meta); color: var(--ink-3); }
 
 .findactions {
   display: flex;
@@ -3490,7 +3496,6 @@ body.term-classic #termMode .ico-out { display: block; }
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--ink-2);
-  letter-spacing: 0.5px;
 }
 .casekind.ck-problem { color: var(--serious); }
 .casekind.ck-opportunity { color: var(--accent); }
@@ -3499,7 +3504,7 @@ body.term-classic #termMode .ico-out { display: block; }
 /* How sure, and how much it matters — in words. Quieter than the pill
    because it qualifies the claim rather than naming what it is. */
 .casecert { color: var(--ink-3); font-weight: 600; opacity: 0.8;
-  text-transform: none; letter-spacing: 0.2px; }
+  text-transform: none; }
 
 /* What was actually READ, and what Do it would do. Both are lists rather
    than paragraphs: they are the halves that make a claim checkable and a
@@ -3509,7 +3514,7 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 10px 12px;
   border-radius: 10px;
   background: var(--surface-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 .caseevlist, .caseactlist { margin: 6px 0 0; padding: 0; list-style: none;
@@ -3518,17 +3523,16 @@ body.term-classic #termMode .ico-out { display: block; }
   display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline;
   min-width: 0;
 }
-.caseevent { font-size: 12px; color: var(--ink-2); word-break: break-word; }
+.caseevent { font-size: var(--fs-meta); color: var(--ink-2); word-break: break-word; }
 .caseevval { color: var(--ink-1); }
-.caseevwhen, .caseactdetail { color: var(--ink-3); font-size: 12px; }
+.caseevwhen, .caseactdetail { color: var(--ink-3); font-size: var(--fs-meta); }
 .caseactlabel { color: var(--ink-1); }
 /* What consent an action needs, said in words beside it: a list of things
    that could happen to a house, where "asks you first" and "no consent
    needed" are the whole difference, is not a list to distinguish by tint. */
 .caseactconsent {
   flex: none;
-  font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
-  text-transform: uppercase; color: var(--ink-3);
+  font-size: var(--fs-meta); font-weight: 700; color: var(--ink-3);
 }
 /* Everything that makes a claim checkable, one disclosure down. The face
    of the card is what you need to ANSWER it; this is what you need to
@@ -3544,7 +3548,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .casemore > summary {
   cursor: pointer;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--ink-3);
   padding: 6px 0;
@@ -3558,7 +3562,7 @@ body.term-classic #termMode .ico-out { display: block; }
   transition: transform 0.15s;
 }
 .casemore[open] > summary::before { transform: rotate(90deg); }
-.casemore .casecert { margin: 4px 0 0; font-size: 12.5px; }
+.casemore .casecert { margin: 4px 0 0; font-size: var(--fs-meta); }
 .casemore .findtriage { margin-top: 10px; }
 /* "More" on a clamped detail: inline with the sentence it opens. */
 .detailmore {
@@ -3572,7 +3576,7 @@ body.term-classic #termMode .ico-out { display: block; }
 /* The Resident's line, under the list it produced. */
 .findfoot {
   margin: 16px 2px 0;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   color: var(--ink-3);
   max-width: 70ch;
@@ -3588,23 +3592,17 @@ body.term-classic #termMode .ico-out { display: block; }
   border-radius: 10px;
   border-left: 3px solid var(--accent);
   background: var(--surface-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
   max-width: 70ch;
 }
-/* An idea is a proposal and not a problem, so it takes the neutral edge
-   rather than a severity colour — `.finding`'s own default, restated here
-   because every card on this page would otherwise read as `info` grey by
-   accident rather than on purpose. */
-.finding.idea { border-left-color: var(--accent); }
-
 /* The reason box, in place of the card's buttons. It sits inside the card
    it is about — you are correcting something, and the thing being corrected
    has to stay readable while you type about it. */
 .findnote { margin-top: 14px; }
 .findnotehint {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
   max-width: 62ch;
 }
@@ -3614,7 +3612,7 @@ body.term-classic #termMode .ico-out { display: block; }
   box-sizing: border-box;
   padding: 9px 12px;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.45;
   color: var(--ink);
   background: var(--plane);
@@ -3635,14 +3633,14 @@ body.term-classic #termMode .ico-out { display: block; }
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 10px 16px 0;
+  padding: var(--sp-3) var(--card-pad) 0;
 }
 
 .tagchip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   color: var(--ink-3);
   background: var(--surface-2);
@@ -3660,20 +3658,20 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 0 0 0 1px;
   margin: 0;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--fs-meta);
   line-height: 1;
   color: var(--ink-3);
   cursor: pointer;
 }
 .tagx:hover { color: var(--critical); }
 
-.tagedit { width: 24px; height: 24px; font-size: 12px; opacity: 0.6; }
+.tagedit { width: 24px; height: 24px; font-size: var(--fs-meta); opacity: 0.6; }
 .tagrow:hover .tagedit, .tagedit:focus { opacity: 1; }
 
 .tagadd { display: inline-flex; }
 .taginput {
   font: inherit;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   width: 96px;
   padding: 2px 9px;
   color: var(--ink);
@@ -3685,7 +3683,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .taginput:focus { border-color: var(--accent); border-style: solid; }
 
 /* --------------------------------------------------------- memory: inbox */
-.kpending { font-size: 12px; color: var(--ink-3); }
+.kpending { font-size: var(--fs-meta); color: var(--ink-3); }
 
 /* ----------------------------------------------------------- onboarding
    The first-run flow. A fresh install has no cards: brAIn studies the home
@@ -3707,7 +3705,7 @@ body.term-classic #termMode .ico-out { display: block; }
   border: 1px solid var(--hairline);
   background: var(--surface);
   color: var(--ink-3);
-  font-size: 0.86rem;
+  font-size: var(--fs-meta);
   text-transform: capitalize;
 }
 
@@ -3739,18 +3737,18 @@ body.term-classic #termMode .ico-out { display: block; }
 
 .obcardbody { min-width: 0; }
 .obcardtitle { font-weight: 600; color: var(--ink); margin-bottom: 3px; }
-.obcardwhy { color: var(--ink-2); font-size: 0.9rem; margin-bottom: 5px; }
+.obcardwhy { color: var(--ink-2); font-size: var(--fs-body); margin-bottom: 5px; }
 
 .obcardfocus {
   color: var(--ink-3);
-  font-size: 0.82rem;
+  font-size: var(--fs-meta);
   line-height: 1.5;
 }
 
 /* One heading per group on a step that has two of them. A step whose two
    lists run together is one list somebody ticks without noticing that half
    of it means something different. */
-.obh3 { margin: 22px 0 2px; font-size: 15px; color: var(--ink); }
+.obh3 { margin: 22px 0 2px; font-size: var(--fs-body); color: var(--ink); }
 .obh3:first-child { margin-top: 0; }
 
 /* Step 0's hour pickers. A row rather than the stacked `.setup label` shape
@@ -3760,7 +3758,7 @@ body.term-classic #termMode .ico-out { display: block; }
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
 }
 .obquiet select { min-width: 84px; }
@@ -3781,7 +3779,7 @@ body.term-classic #termMode .ico-out { display: block; }
   background: var(--plane);
   color: var(--ink);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3805,12 +3803,12 @@ body.term-classic #termMode .ico-out { display: block; }
   margin-bottom: 18px;
 }
 .acthead > div:first-child { flex: 1 1 420px; min-width: 0; }
-.acthead h2 { margin: 0 0 4px; font-size: 21px; }
-.acthead .sub { color: var(--ink-2); margin: 0; font-size: 14px; max-width: 68ch; }
+.acthead h2 { margin: 0 0 4px; font-size: var(--fs-title); }
+.acthead .sub { color: var(--ink-2); margin: 0; font-size: var(--fs-body); max-width: 68ch; }
 .actside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .actfilters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .actnav { display: flex; align-items: center; gap: 10px; }
-.actrange { color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+.actrange { color: var(--ink-2); font-size: var(--fs-body); white-space: nowrap; }
 
 /* When the house was empty. Above the list rather than in it, because it
    is the context every row below is read in — the same reason the
@@ -3826,21 +3824,19 @@ body.term-classic #termMode .ico-out { display: block; }
   border-radius: 10px;
   padding: 10px 14px;
   margin-bottom: 12px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .actawaylabel {
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
   color: var(--ink-3);
 }
 
 /* The press that spends, and the paragraph it buys. */
 .actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.actaskerr { color: var(--warning); font-size: 13px; }
+.actaskerr { color: var(--warning); font-size: var(--fs-body); }
 .actsum {
   border: 1px solid var(--hairline);
   border-left: 3px solid var(--accent);
@@ -3848,14 +3844,14 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 14px 16px;
   margin-bottom: 16px;
 }
-.actsum p { margin: 0; font-size: 14.5px; line-height: 1.65; }
+.actsum p { margin: 0; font-size: var(--fs-body); line-height: 1.65; }
 .actsumfoot {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 10px;
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
 }
 
 /* `minmax(0, 1fr)` and not the implicit `auto`: an auto grid column is
@@ -3876,24 +3872,24 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 0 4px 2px;
   border-bottom: 1px solid var(--hairline);
 }
-.actsechead h3 { margin: 0; font-size: 15px; }
+.actsechead h3 { margin: 0; font-size: var(--fs-body); }
 .actseccount {
   margin-left: auto;
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
 }
 .actsecblurb {
   margin: 6px 4px 8px;
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   max-width: 64ch;
 }
 
 .actfoot {
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.6;
   padding: 4px 4px 0;
   border-top: 1px solid var(--hairline);
@@ -3934,26 +3930,26 @@ body.term-classic #termMode .ico-out { display: block; }
   flex: 0 1 auto;
   min-width: 0;
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-style: italic;
 }
 .actrow .what {
   flex: 1 1 180px;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
 }
 .actrow .what b { font-weight: 600; }
-.actrow .st { color: var(--ink-2); font-size: 12.5px; }
+.actrow .st { color: var(--ink-2); font-size: var(--fs-meta); }
 /* When it happened is the second question and it is tabular, because a
    column of times somebody is scanning down has to line up. */
 .actrow .when {
   flex: none;
   color: var(--ink-2);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3961,7 +3957,7 @@ body.term-classic #termMode .ico-out { display: block; }
   flex: 0 1 auto;
   min-width: 0;
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3976,7 +3972,7 @@ body.term-classic #termMode .ico-out { display: block; }
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--warning);
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3997,14 +3993,14 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 10px 12px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.7;
 }
 .actwhy .t { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
 .actempty {
   color: var(--ink-3);
-  font-size: 14px;
+  font-size: var(--fs-body);
   padding: 28px 4px;
   max-width: 60ch;
 }
@@ -4035,7 +4031,7 @@ body.term-classic #termMode .ico-out { display: block; }
   gap: 4px 14px;
   margin: 0 0 12px;
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
 }
 .today .tseg { display: inline-flex; align-items: center; gap: 6px; }
@@ -4062,7 +4058,7 @@ body.term-classic #termMode .ico-out { display: block; }
   border: 1px solid var(--hairline);
   border-radius: 999px;
   padding: 1px 7px;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
 }
 .today .tsegmore { display: none; }
 /* A phone: one line until asked, and no drawn separators. A separator is
@@ -4097,27 +4093,25 @@ body.term-classic #termMode .ico-out { display: block; }
    A measurement row is a BUTTON at the 44px floor for `.actrow`'s reason: a
    row people miss is a row they stop pressing, on any pointer. */
 .ksec { max-width: 900px; margin: 0 0 26px; }
-.ksec > h2 { margin: 0 0 4px; font-size: 18px; }
+.ksec > h2 { margin: 0 0 4px; font-size: var(--fs-title); }
 .ksec > .hint { margin: 0 0 12px; }
 
 .kbrief { max-width: 68ch; }
 .kbriefwhen {
   color: var(--ink-3);
-  font-size: 12px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
   margin-top: 10px;
 }
 .kbrieftext {
   margin: 4px 0 0;
-  font-size: 14.5px;
+  font-size: var(--fs-body);
   line-height: 1.65;
   color: var(--ink-1);
 }
 /* The states that are not a brief -- off, failed, or nothing worth saying --
    read as the explanations they are rather than as this morning's message. */
-.kbrieftext.off { color: var(--ink-2); font-size: 13.5px; }
+.kbrieftext.off { color: var(--ink-2); font-size: var(--fs-body); }
 
 /* `minmax(0, 1fr)` rather than a bare single column: a grid track is sized
    to its widest item's MIN-CONTENT by default, and the milestone card that
@@ -4142,19 +4136,19 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .krow:hover { background: var(--surface-2); }
 .krow .ktxt { flex: 1 1 auto; min-width: 0; }
-.krow .kname { font-size: 14px; font-weight: 600; }
-.krow .ksum { color: var(--ink-2); font-size: 13px; margin-top: 1px; }
+.krow .kname { font-size: var(--fs-body); font-weight: 600; }
+.krow .ksum { color: var(--ink-2); font-size: var(--fs-body); margin-top: 1px; }
 /* "I could not look" is its own answer and it goes under the summary it
    qualifies -- a state with no reason under it is a state nobody can act
    on. It wraps: this is a sentence, not a chip. */
-.krow .kwhy { color: var(--ink-3); font-size: 12.5px; margin-top: 3px; }
+.krow .kwhy { color: var(--ink-3); font-size: var(--fs-meta); margin-top: 3px; }
 
 .kchip {
   flex: none;
   border: 1px solid var(--hairline);
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   color: var(--ink-2);
   white-space: nowrap;
   max-width: 42%;
@@ -4174,7 +4168,7 @@ body.term-classic #termMode .ico-out { display: block; }
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
   border-radius: 999px;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-meta);
 }
 
 /* A measurement with no card yet. One muted line under its OWN row, so it
@@ -4188,7 +4182,7 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 4px 10px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
 }
 .kpending .kpendmark { color: var(--ink-3); }
 
@@ -4207,16 +4201,16 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 12px 14px;
   border-left: 2px solid var(--hairline);
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
-.kdrillhead { margin: 12px 0 6px; font-size: 13px; color: var(--ink-1); }
+.kdrillhead { margin: 12px 0 6px; font-size: var(--fs-body); color: var(--ink-1); }
 .kdrillhead:first-child { margin-top: 0; }
-.kfoot { margin-top: 8px; color: var(--ink-3); font-size: 12px; }
+.kfoot { margin-top: 8px; color: var(--ink-3); font-size: var(--fs-meta); }
 
 /* A table is wide by nature, so it scrolls inside its own box rather than
    taking the page sideways with it. */
 .ktablewrap { overflow-x: auto; }
-.ktable { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.ktable { border-collapse: collapse; width: 100%; font-size: var(--fs-meta); }
 .ktable th {
   text-align: left;
   font-weight: 600;
@@ -4258,16 +4252,16 @@ body.term-classic #termMode .ico-out { display: block; }
   background: none;
   color: var(--ink-2);
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-meta);
   cursor: pointer;
 }
 .kpick.on { border-color: var(--accent); color: var(--accent); }
-.kflag { color: var(--ink-3); font-size: 11px; }
+.kflag { color: var(--ink-3); font-size: var(--fs-meta); }
 
 .kchart { margin-top: 8px; }
 .kweek { width: 100%; height: auto; display: block; }
 .kweek .kgrid { stroke: var(--hairline); stroke-width: 1; }
-.kweek .ktick { fill: var(--ink-3); font-size: 10px; }
+.kweek .ktick { fill: var(--ink-3); font-size: var(--fs-meta); }
 /* The band is the spread and the line is the median. The band is drawn
    first and translucent, so the line is readable through it in both
    themes -- a solid fill in dark mode swallows its own line. */
@@ -4276,13 +4270,13 @@ body.term-classic #termMode .ico-out { display: block; }
 /* Where we are now. Without it the picture answers "what is normal" and not
    "is this hour unusual", which is the question somebody opened it with. */
 .kweek .know { stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 3 3; }
-.kchartfoot { color: var(--ink-3); font-size: 12px; margin-top: 6px; }
+.kchartfoot { color: var(--ink-3); font-size: var(--fs-meta); margin-top: 6px; }
 
 /* Closures: seven rows of twenty-four. Darker is more often open; a pale
    cell is an hour nothing watched, which is a different claim from an hour
    it was never open in and must not share a colour with it. */
 .kheat { margin-bottom: 14px; }
-.kheatname { color: var(--ink-1); font-size: 12.5px; margin-bottom: 4px; }
+.kheatname { color: var(--ink-1); font-size: var(--fs-meta); margin-bottom: 4px; }
 .kheatgrid {
   display: grid;
   grid-template-columns: 34px repeat(24, minmax(0, 1fr));
@@ -4290,7 +4284,7 @@ body.term-classic #termMode .ico-out { display: block; }
   align-items: center;
   max-width: 560px;
 }
-.kheatday { color: var(--ink-3); font-size: 10.5px; }
+.kheatday { color: var(--ink-3); font-size: var(--fs-meta); }
 .kcell { display: block; height: 12px; border-radius: 2px; background: var(--accent); }
 .kcell.unwatched {
   background: none;
@@ -4298,10 +4292,8 @@ body.term-classic #termMode .ico-out { display: block; }
   height: 10px;
 }
 
-/* An answered problem, on the Findings tab's Answered filter. It carries one
-   press and takes nothing back. */
-.finding.settled { border-left-color: var(--hairline); }
-.findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+/* What was said when a problem was answered, on the Answered filter. */
+.findsaid { margin: 6px 0 0; color: var(--ink-2); font-size: var(--fs-body); }
 
 /* What looked at a finding before it reached the tab, and the way into the
    conversation that did. A held card is drawn quieter than a live one --
@@ -4309,7 +4301,7 @@ body.term-classic #termMode .ico-out { display: block; }
    carried by the words on it ("Not shown", "brAIn checked", "Not checked
    first"), never by the colour alone, which the design system forbids and
    which matters most on a row read at 13px. */
-.finding.held { border-left-color: var(--hairline); opacity: 0.92; }
+.finding.held { opacity: 0.92; }
 .findtriage {
   display: flex;
   flex-wrap: wrap;
@@ -4317,22 +4309,20 @@ body.term-classic #termMode .ico-out { display: block; }
   gap: 6px;
   margin: 8px 0 0;
   color: var(--ink-2);
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.45;
 }
 .findtriagelabel {
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
   color: var(--ink-3, var(--ink-2));
 }
 .findtriage.unchecked .findtriagelabel { color: var(--warning); }
 .findlede {
   margin: 0 0 14px;
   color: var(--ink-2);
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   line-height: 1.5;
   max-width: 62ch;
 }
@@ -4362,9 +4352,9 @@ body.term-classic #termMode .ico-out { display: block; }
 /* The title takes the row and wraps rather than truncating -- the same
    rule the insight card head follows, for the same reason: a proposal
    you cannot read the whole of is one you cannot answer. */
-.proptitle { margin: 0; font-size: 15px; line-height: 1.35; flex: 1 1 240px; }
+.proptitle { margin: 0; font-size: var(--fs-body); line-height: 1.35; flex: 1 1 240px; }
 .pilltrial {
-  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
@@ -4372,14 +4362,14 @@ body.term-classic #termMode .ico-out { display: block; }
    beside it. Same shape again, and the neutral ink rather than a colour:
    it is a fact about what the yes does, not a warning and not a stage. */
 .pilledit {
-  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: var(--plane); color: var(--ink-2);
   border: 1px solid var(--hairline);
 }
 /* A one-off intent. Three states, three colours, and the pill is the only
    thing that distinguishes them at a glance on a list somebody scans. */
 .pillintent {
-  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
 }
@@ -4394,7 +4384,7 @@ body.term-classic #termMode .ico-out { display: block; }
 /* A set of four scenes. Same pill shape again, in the accent's sibling:
    it marks a different KIND of card rather than a stage of one. */
 .pillscene {
-  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--good) 14%, transparent);
   color: var(--good);
 }
@@ -4403,7 +4393,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .propscenes { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
 .propmood {
   display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-  font-size: 13px; padding: 4px 0; border-top: 1px solid var(--hairline);
+  font-size: var(--fs-body); padding: 4px 0; border-top: 1px solid var(--hairline);
 }
 .propmoodname { flex: 1 1 140px; color: var(--ink-2); min-width: 0; }
 .propswatches { display: flex; gap: 6px; flex-wrap: wrap; flex: none; }
@@ -4421,7 +4411,7 @@ body.term-classic #termMode .ico-out { display: block; }
   border-style: dashed; opacity: 0.6;
 }
 .propscenelights {
-  margin: 6px 0 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.5;
+  margin: 6px 0 0; font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.5;
 }
 /* The one control on this tab that asks brAIn for something. */
 .propask {
@@ -4429,26 +4419,14 @@ body.term-classic #termMode .ico-out { display: block; }
   margin: 0 0 14px; padding: 10px 12px;
   background: var(--plane); border: 1px solid var(--hairline); border-radius: var(--radius);
 }
-.propask label { font-size: 13.5px; color: var(--ink-2); flex: none; }
+.propask label { font-size: var(--fs-body); color: var(--ink-2); flex: none; }
 /* `width: auto` sizes a select to its widest option, which is how a picker
    sets a row's min-content and takes the page's width with it. */
 .propask select { min-width: 0; max-width: 100%; flex: 0 1 320px; }
-/* `.selin` outside a dialog: the select every ⚙ form uses, rather than the
-   browser's own grey box, which is what made this tab look borrowed.
-   No `font:` and no font-size here: either one outranks the bare `select`
-   in the 16px touch floor, which is the iOS zoom trap. */
-select.selin {
-  padding: 9px 12px;
-  font-family: inherit;
-  color: var(--ink);
-  background: var(--surface);
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
-  outline: none;
-}
-select.selin:focus { border-color: var(--accent); }
+/* `.selin` is drawn by `select.sel` (the components at the end of this
+   file), which every select in the panel carries. */
 .propasknote {
-  flex: 1 1 100%; margin: 0; font-size: 12.5px; color: var(--ink-3);
+  flex: 1 1 100%; margin: 0; font-size: var(--fs-meta); color: var(--ink-3);
   line-height: 1.5;
 }
 .propwhy { margin: 0 0 8px; color: var(--ink-2); line-height: 1.5; }
@@ -4461,7 +4439,7 @@ select.selin:focus { border-color: var(--accent); }
    than a stage of the same lifecycle: this one has no trial and never
    will. */
 .pillbook {
-  flex: none; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--warning) 18%, transparent);
   color: var(--warning);
 }
@@ -4469,11 +4447,11 @@ select.selin:focus { border-color: var(--accent); }
    evidence on a playbook card — there is no replay to show — so it is
    laid out to be read down rather than squeezed into a sentence. */
 .propbook { margin: 0 0 10px; }
-.propbookset { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+.propbookset { margin: 0 0 8px; font-size: var(--fs-body); color: var(--ink-2); }
 .propbookrows { display: flex; flex-direction: column; gap: 6px; }
 .propgroup {
   display: flex; gap: 10px; flex-wrap: wrap;
-  font-size: 13px; line-height: 1.45; padding: 4px 0;
+  font-size: var(--fs-body); line-height: 1.45; padding: 4px 0;
   border-top: 1px solid var(--hairline);
 }
 /* The verb never shrinks and the names are what give way, because "Every
@@ -4484,7 +4462,7 @@ select.selin:focus { border-color: var(--accent); }
 .propnames { flex: 1 1 160px; min-width: 0; color: var(--ink-2); }
 .propgroup.skipped .propverb { color: var(--warning); }
 .propbooknote {
-  margin: 10px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-3);
+  margin: 10px 0 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-3);
 }
 /* Rehearsal. A disclosure rather than a button, because it reads every
    state in the house and a tab of five playbooks would ask five times
@@ -4493,11 +4471,11 @@ select.selin:focus { border-color: var(--accent); }
    Its own class rather than `.prophint`, which is the trial hint and is
    deliberately rendered once for the whole list. */
 .propnotrial {
-  margin: 0 0 8px; font-size: 12.5px; line-height: 1.45; color: var(--ink-3);
+  margin: 0 0 8px; font-size: var(--fs-meta); line-height: 1.45; color: var(--ink-3);
 }
 .propreh { margin: 0 0 10px; }
 .propreh > summary {
-  cursor: pointer; font-size: 13px; color: var(--accent);
+  cursor: pointer; font-size: var(--fs-body); color: var(--accent);
   padding: 6px 0; list-style: none;
 }
 .propreh > summary::-webkit-details-marker { display: none; }
@@ -4506,7 +4484,7 @@ select.selin:focus { border-color: var(--accent); }
 /* The evidence rows. Monospace numerals so a column of them lines up when
    several proposals are open at once. */
 .propreplay, .proptrial {
-  margin: 0 0 8px; font-size: 13px; color: var(--ink-2);
+  margin: 0 0 8px; font-size: var(--fs-body); color: var(--ink-2);
   font-variant-numeric: tabular-nums;
 }
 .proptrial { color: var(--ink); }
@@ -4514,7 +4492,7 @@ select.selin:focus { border-color: var(--accent); }
    open trials means three cards, and the same sentence on all of them is
    the sentence nobody reads on any of them. */
 .prophint {
-  margin: -4px 0 8px; font-size: 12.5px; line-height: 1.45;
+  margin: -4px 0 8px; font-size: var(--fs-meta); line-height: 1.45;
   color: var(--ink-3);
 }
 /* A yes Home Assistant would not honour. It sits where the buttons were,
@@ -4546,9 +4524,8 @@ select.selin:focus { border-color: var(--accent); }
   flex: none;
   padding: 1px 6px;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.03em;
   white-space: nowrap;
   border: 1px solid var(--hairline);
   background: var(--surface-2);
@@ -4576,7 +4553,7 @@ select.selin:focus { border-color: var(--accent); }
   gap: 8px;
   min-height: 44px;
   padding: 4px 16px 0;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   line-height: 1.35;
   color: var(--ink-3);
 }
@@ -4591,9 +4568,8 @@ select.selin:focus { border-color: var(--accent); }
   border-radius: 999px;
   border: 1px solid var(--hairline);
   background: var(--surface-2);
-  font-size: 10px;
+  font-size: var(--fs-meta);
   font-weight: 700;
-  letter-spacing: 0.03em;
   white-space: nowrap;
 }
 .chatstate .cs-pill:empty { display: none; }
@@ -4671,7 +4647,7 @@ select.selin:focus { border-color: var(--accent); }
      because the rule it has to beat is class-qualified one level deeper and
      order does not settle an unequal specificity. */
   .edit-body .btn.icon.tiny,
-  .edit-body .hint .btn.icon.tiny { width: 44px; height: 44px; font-size: 14px; }
+  .edit-body .hint .btn.icon.tiny { width: 44px; height: 44px; font-size: var(--fs-body); }
   /* The 16px text floor at the top of this file is a bare `select` /
      `input[type=…]` selector, and `.edit-body .selin` (and its siblings) are
      class-qualified 13.5px rules that outrank it — so every dropdown and
@@ -4773,7 +4749,7 @@ select.selin:focus { border-color: var(--accent); }
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 16px; line-height: 1.4; white-space: pre-wrap;
 }
-@media (min-width: 640px) { #editPromptText { font-size: 13px; } }
+@media (min-width: 640px) { #editPromptText { font-size: var(--fs-body); } }
 
 /* The feed's own controls, on touch. The panel's floor is scoped per
    control on purpose — `.findactions .btn` is deliberately not raised for
@@ -4829,12 +4805,12 @@ select.selin:focus { border-color: var(--accent); }
   background: var(--surface);
   color: var(--ink-2);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-body);
   cursor: pointer;
 }
 .refinechip:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); color: var(--ink); }
 .refinefrom b { color: var(--ink-2); }
-.sharehead { margin: 8px 0 6px; font-size: 14px; font-weight: 700; }
+.sharehead { margin: 8px 0 6px; font-size: var(--fs-body); font-weight: 700; }
 .sharehead:first-child { margin-top: 0; }
 .shareshot {
   display: grid;
@@ -4849,7 +4825,7 @@ select.selin:focus { border-color: var(--accent); }
 .shareshot img { display: block; width: 100%; height: auto; }
 .shareshot .hint { padding: 16px; text-align: center; }
 #shareDashWarn {
-  font-size: 13px;
+  font-size: var(--fs-body);
   margin: 6px 0;
   padding: 8px 10px;
   border-radius: 8px;
@@ -4867,7 +4843,7 @@ select.selin:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   min-height: 44px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink-2);
   cursor: pointer;
@@ -4889,7 +4865,7 @@ select.selin:focus { border-color: var(--accent); }
 /* The thermal drill-down's outdoor reference: which one, why, and a picker.
    No font-size on the select, so the 16px touch floor above still holds. */
 .kref { margin-top: 8px; }
-.kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: 12px; }
+.kref .kreflabel { display: block; margin-top: 6px; color: var(--ink-2); font-size: var(--fs-meta); }
 .kref select { display: block; max-width: 100%; margin-top: 4px; min-height: 36px; }
 @media (pointer: coarse) { .kref select { min-height: 44px; } }
 
@@ -4899,9 +4875,9 @@ select.selin:focus { border-color: var(--accent); }
    `.btn` and adds only what those do not have. */
 .upwrap { max-width: 900px; }
 .upbody { display: grid; gap: 10px; }
-.upbody h3 { margin: 12px 0 0; font-size: 15px; }
+.upbody h3 { margin: 12px 0 0; font-size: var(--fs-body); }
 .upactions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.upline { margin: 0; font-size: 14px; color: var(--ink); max-width: 72ch; }
+.upline { margin: 0; font-size: var(--fs-body); color: var(--ink); max-width: 72ch; }
 .upline.muted { color: var(--ink-2); }
 .upline.busy { color: var(--accent-2); }
 .upline.warn {
@@ -4930,7 +4906,7 @@ select.selin:focus { border-color: var(--accent); }
              overflow-wrap: anywhere; }
 .upchip {
   display: inline-block;
-  font-size: 12px;
+  font-size: var(--fs-meta);
   line-height: 1.5;
   color: var(--ink-2);
   background: var(--surface-2);
@@ -4938,9 +4914,9 @@ select.selin:focus { border-color: var(--accent); }
   padding: 1px 7px;
 }
 .upchip.kind { font-weight: 600; }
-.upwhy { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.upwhy { font-size: var(--fs-body); color: var(--ink-2); overflow-wrap: anywhere; }
 .upreach {
-  font-size: 13px;
+  font-size: var(--fs-body);
   color: var(--ink);
   padding: 4px 8px;
   border-radius: 6px;
@@ -4950,19 +4926,19 @@ select.selin:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   min-height: 44px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink-2);
   cursor: pointer;
 }
 .upbatch { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
-           font-size: 14px; }
+           font-size: var(--fs-body); }
 .uplink { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-          font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
+          font-size: var(--fs-body); overflow-wrap: anywhere; min-width: 0; }
 .uplink a { color: var(--accent-2); word-break: break-all; }
 .upbooksec h3 { margin: 14px 0 6px; }
 .upbooklist { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
-.upbooklist li { font-size: 14.5px; line-height: 1.5; }
+.upbooklist li { font-size: var(--fs-body); line-height: 1.5; }
 .upchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .upupdate {
   display: grid;
@@ -4975,7 +4951,7 @@ select.selin:focus { border-color: var(--accent); }
 }
 .upupdatehead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .upverdict { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-             font-size: 14px; }
+             font-size: var(--fs-body); }
 /* The verdict is a word, and the colour only repeats it. */
 .upverdict.safe_tonight .upchip.verdict {
   color: var(--ink); background: color-mix(in srgb, var(--good) 22%, var(--surface)); }
@@ -4987,15 +4963,15 @@ select.selin:focus { border-color: var(--accent); }
   border-left: 3px solid var(--grid);
   display: grid;
   gap: 2px;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   overflow-wrap: anywhere;
   min-width: 0;
   max-width: 100%;
 }
 .upquote code { white-space: pre-wrap; }
-.upedit pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px;
+.upedit pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-body);
               margin: 0; }
-.upsentence { margin: 0; font-size: 15px; max-width: 68ch; }
+.upsentence { margin: 0; font-size: var(--fs-body); max-width: 68ch; }
 
 @media (pointer: coarse) {
   .upsec .btn { min-height: 44px; }
@@ -5010,7 +4986,7 @@ select.selin:focus { border-color: var(--accent); }
   padding: 10px 12px;
   border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
   border-radius: 10px;
-  font-size: 14px;
+  font-size: var(--fs-body);
   line-height: 1.4;
   min-width: 0;
 }
@@ -5018,8 +4994,8 @@ select.selin:focus { border-color: var(--accent); }
 .housenow-mode { font-weight: 600; white-space: nowrap; }
 .housenow-sentence { min-width: 0; overflow-wrap: anywhere; }
 .housenow-sentence.stale { opacity: 0.7; font-style: italic; }
-.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: 13px; overflow-wrap: anywhere; }
-.housenow-cals { margin-top: 6px; font-size: 13px; }
+.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: var(--fs-body); overflow-wrap: anywhere; }
+.housenow-cals { margin-top: 6px; font-size: var(--fs-body); }
 .housenow-cals > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; opacity: 0.8; }
 .housenow-callist { display: grid; gap: 4px; padding: 4px 0 2px; }
 .housenow-cal { display: flex; gap: 8px; align-items: center; min-height: 32px; }
@@ -5035,7 +5011,7 @@ select.selin:focus { border-color: var(--accent); }
   display: flex;
   align-items: center;
   min-height: 44px;
-  font-size: 13px;
+  font-size: var(--fs-body);
   font-weight: 600;
   color: var(--ink-2);
   cursor: pointer;
@@ -5050,7 +5026,7 @@ select.selin:focus { border-color: var(--accent); }
   border: 1px solid var(--hairline);
   border-radius: 10px;
 }
-.setlearnedtext { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.setlearnedtext { flex: 1; min-width: 0; font-size: var(--fs-body); overflow-wrap: anywhere; }
 .setlearnedrow .btn { flex: none; }
 @media (pointer: coarse) {
   .setlearnedrow .btn { min-height: 44px; }
@@ -5079,7 +5055,7 @@ select.selin:focus { border-color: var(--accent); }
 .askexplain-cited {
   margin: 0 0 8px;
   padding-left: 18px;
-  font-size: 0.92em;
+  font-size: var(--fs-meta);
   color: var(--ink-2);
 }
 .askexplain .btn.small { max-width: 100%; white-space: normal; text-align: left; }
@@ -5090,12 +5066,12 @@ select.selin:focus { border-color: var(--accent); }
    rather than widening the card, and closed until somebody asks. */
 .findplan .planeffect,
 .findplan .planreplay,
-.findplan .planverify { margin: 6px 0 0; color: var(--ink-2); font-size: 13px; }
+.findplan .planverify { margin: 6px 0 0; color: var(--ink-2); font-size: var(--fs-body); }
 .findplan .plandiff { margin-top: 8px; }
 .findplan .plandiff summary { cursor: pointer; min-height: 32px; line-height: 32px; }
 .findplan .plandiff pre {
   margin: 6px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto;
-  max-width: 100%; white-space: pre; font-size: 12px; line-height: 1.45;
+  max-width: 100%; white-space: pre; font-size: var(--fs-meta); line-height: 1.45;
   background: var(--surface-2); border-radius: 6px;
 }
 @media (pointer: coarse) { .findplan .plandiff summary { min-height: 44px; line-height: 44px; } }
@@ -5111,14 +5087,12 @@ select.selin:focus { border-color: var(--accent); }
 .kreview { max-width: 68ch; }
 .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .kreviewrun .btn { min-height: 44px; }
-.kreviewcost { margin: 0; color: var(--ink-2); font-size: 13px; line-height: 1.5; flex: 1 1 220px; }
+.kreviewcost { margin: 0; color: var(--ink-2); font-size: var(--fs-body); line-height: 1.5; flex: 1 1 220px; }
 .kreviewone { margin-top: 12px; }
 .kreviewlabel {
   color: var(--ink-3);
-  font-size: 11.5px;
+  font-size: var(--fs-meta);
   font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
 }
 .kreviewobs { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 12px; }
 .kreviewob { border-top: 1px solid var(--hairline); padding-top: 10px; }
@@ -5130,7 +5104,7 @@ select.selin:focus { border-color: var(--accent); }
    decision about privacy rather than a preference. */
 .setcams { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .setcam { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
-.setcam .subtext { color: var(--ink-3); font-size: 12px; }
+.setcam .subtext { color: var(--ink-3); font-size: var(--fs-meta); }
 
 /* Onboarding: what the study sessions have found, as it lands. A short
    list under the progress, newest first; the topic is a small label so a
@@ -5139,8 +5113,8 @@ select.selin:focus { border-color: var(--accent); }
 .obfoundlist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
 .obfoundrow { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline;
   line-height: 1.5; overflow-wrap: anywhere; }
-.obfoundtopic { color: var(--ink-3); font-size: 11.5px; font-weight: 600;
-  letter-spacing: .04em; text-transform: uppercase; flex: none; }
+.obfoundtopic { color: var(--ink-3); font-size: var(--fs-meta); font-weight: 600;
+  flex: none; }
 .obfoundfact { color: var(--ink-1); flex: 1 1 220px; min-width: 0; }
 #obTryBlock { margin-top: 6px; }
 
@@ -5152,3 +5126,229 @@ select.selin:focus { border-color: var(--accent); }
 @media (pointer: coarse) {
   .permcard .permrow .btn, .permcard .permstop { min-height: 44px; padding-inline: 14px; }
 }
+
+/* ======================================================= the components
+   docs/design/ui-redesign-2026-10.md, "Visual standard": one card, one
+   status chip, one empty-state line, three buttons, one select, one toggle
+   and one slider. Built only from the tokens at the top of this file, and
+   appended here — after the first `pointer: coarse` block, which has to
+   stay the 16px text floor. */
+
+/* Type. One title per screen; the rest is card title, body and meta. */
+.t-title { font-size: var(--fs-title); line-height: var(--lh-title); font-weight: var(--fw-title); margin: 0; }
+.t-card  { font-size: var(--fs-card);  line-height: var(--lh-card);  font-weight: var(--fw-card);  margin: 0; }
+.t-body  { font-size: var(--fs-body);  line-height: var(--lh-body);  font-weight: var(--fw-body); }
+.meta    { font-size: var(--fs-meta);  line-height: var(--lh-meta);  font-weight: var(--fw-meta); color: var(--ink-3); }
+
+/* The card: meta line → title → up to three lines of body → Details → one
+   button row. A 1px edge, radius 12, no shadow, no coloured bar. */
+.card-x {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--card-pad);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--card-radius);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card-x > .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.card-x > .card-title { font-size: var(--fs-card); line-height: var(--lh-card); font-weight: var(--fw-card); margin: 0; }
+.card-x > .card-body {
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-x > details > summary {
+  font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: var(--fw-meta);
+  color: var(--ink-3); cursor: pointer;
+}
+.card-x > .card-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-1); }
+.card-list { display: grid; gap: var(--card-gap); }
+
+/* The status chip: an 8px dot and one word. Four kinds and no fifth —
+   Urgent, Problem, Tidy-up, Suggestion — one per card, in the meta line. */
+.chip-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-meta);
+  font-weight: var(--fw-meta);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.chip-status::before {
+  content: "";
+  width: var(--chip-dot);
+  height: var(--chip-dot);
+  border-radius: 50%;
+  background: var(--status-tidy);
+  flex: none;
+}
+.chip-status[data-kind="urgent"]::before { background: var(--status-urgent); }
+.chip-status[data-kind="problem"]::before { background: var(--status-problem); }
+.chip-status[data-kind="tidy"]::before { background: var(--status-tidy); }
+.chip-status[data-kind="suggestion"]::before { background: var(--status-suggestion); }
+
+/* An item's state is plain meta text, never a chip: "Snoozed until Thu",
+   "Applied 4 Oct · Undo", "Ignored". */
+.item-state {
+  font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: var(--fw-meta);
+  color: var(--ink-3);
+}
+
+/* The empty state: one sentence, no explanation, at most one action. */
+.empty-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
+  margin: 0;
+  padding: var(--sp-6) 0;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink-3);
+}
+
+/* Three buttons. Primary filled, secondary outline, tertiary text. 36px on
+   a pointer, 44px on touch. Usable alone or on top of `.btn`. */
+.btn-primary, .btn-secondary, .btn-tertiary {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--btn-h);
+  padding: 0 var(--btn-pad-x);
+  border-radius: var(--control-radius);
+  font: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-primary { background: var(--btn-primary-bg); color: var(--btn-primary-ink); border: 1px solid transparent; }
+.btn-primary:hover { background: var(--btn-primary-bg); filter: brightness(1.1); }
+.btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--hairline); }
+.btn-secondary:hover { background: var(--surface-2); }
+.btn-tertiary { background: transparent; color: var(--accent); border: 1px solid transparent; padding: 0 var(--sp-2); }
+.btn-tertiary:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.btn-primary:disabled, .btn-secondary:disabled, .btn-tertiary:disabled { opacity: 0.45; cursor: default; }
+.btn-primary:focus-visible, .btn-secondary:focus-visible, .btn-tertiary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* The select: the browser's chrome off, a drawn caret on. Sized by the
+   control token, which the touch floor raises to 16px, and by nothing
+   else — a class rule with its own size outranks the floor. */
+select.sel {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: var(--btn-h);
+  padding: 0 32px 0 var(--sp-3);
+  font-family: inherit;
+  font-size: var(--fs-control);
+  line-height: var(--lh-body);
+  color: var(--ink);
+  background-color: var(--surface);
+  background-image: var(--sel-caret);
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--control-radius);
+  outline: none;
+  cursor: pointer;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+select.sel:focus-visible { border-color: var(--accent); }
+select.sel:disabled { opacity: 0.55; cursor: not-allowed; }
+select.sel option { color: var(--ink); background: var(--surface); }
+
+/* The toggle: a checkbox drawn as a switch. Every checkbox loses the
+   browser's chrome; one that is a setting (`.tog`, and the ⚙ `bigcheck`
+   rows) is a switch, and one that picks a row is a drawn tick box. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 2px solid var(--ink-3);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  flex: none;
+  vertical-align: middle;
+}
+input[type="checkbox"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  transform: scale(0);
+  transition: transform 0.1s ease;
+  background: var(--btn-primary-ink);
+  clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+input[type="checkbox"]:checked::before { transform: scale(1); }
+input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="checkbox"]:disabled { opacity: 0.5; cursor: not-allowed; }
+input[type="checkbox"].tog,
+label.check > input[type="checkbox"] {
+  display: inline-block;
+  position: relative;
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  border: 0;
+  border-radius: 999px;
+  background: var(--toggle-off);
+  transition: background 0.15s ease;
+}
+input[type="checkbox"].tog::before,
+label.check > input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--toggle-h) - 4px);
+  height: calc(var(--toggle-h) - 4px);
+  border-radius: 50%;
+  background: #ffffff;
+  clip-path: none;
+  transform: none;
+  transition: transform 0.15s ease;
+}
+input[type="checkbox"].tog:checked,
+label.check > input[type="checkbox"]:checked { background: var(--toggle-on); }
+input[type="checkbox"].tog:checked::before,
+label.check > input[type="checkbox"]:checked::before {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+}
+
+/* The slider: a thin track and a round thumb, in the accent. */
+input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  height: var(--thumb);
+  background: transparent;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: var(--track-h); border-radius: 999px; background: var(--toggle-off);
+}
+input[type="range"]::-moz-range-track {
+  height: var(--track-h); border-radius: 999px; background: var(--toggle-off);
+}
+input[type="range"]::-moz-range-progress { height: var(--track-h); border-radius: 999px; background: var(--accent); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: var(--thumb); height: var(--thumb);
+  margin-top: calc((var(--track-h) - var(--thumb)) / 2);
+  border-radius: 50%; border: 0; background: var(--accent);
+}
+input[type="range"]::-moz-range-thumb {
+  width: var(--thumb); height: var(--thumb); border-radius: 50%; border: 0; background: var(--accent);
+}
+input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }

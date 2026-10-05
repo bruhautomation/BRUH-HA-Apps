@@ -1223,7 +1223,7 @@ function makeHistoryControls(id, insight, view) {
     if (idx >= entries.length - 1) older.classList.add("hidden");
   }
   const sel = document.createElement("select");
-  sel.className = "histsel";
+  sel.className = "sel histsel";
   sel.title = "View a past run";
   const populate = () => {
     sel.textContent = "";
@@ -7334,7 +7334,7 @@ function thermalReference(box, payload) {
   }
   if (cands.length) {
     const label = el("label", "kreflabel", "Outdoor reference ");
-    const sel = el("select");
+    const sel = el("select", "sel");
     sel.appendChild(new Option("Let brAIn choose", ""));
     const listed = new Set();
     cands.forEach((c) => {

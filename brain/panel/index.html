@@ -251,9 +251,9 @@
         <label for="obQuietStart">Don't wake the house</label>
         <div class="obquiet">
           <span>Quiet from</span>
-          <select id="obQuietStart" class="selin"></select>
+          <select id="obQuietStart" class="sel selin"></select>
           <span>until</span>
-          <select id="obQuietEnd" class="selin"></select>
+          <select id="obQuietEnd" class="sel selin"></select>
         </div>
         <p class="hint tight">Anything that can wait is held until the quiet hours
           end and arrives as one message. A freeze warning still comes through.
@@ -524,7 +524,7 @@
          distrust it. -->
     <div class="propask">
       <label for="sceneArea">Design scenes for</label>
-      <select id="sceneArea" class="selin"><option value="">a room…</option></select>
+      <select id="sceneArea" class="sel selin"><option value="">a room…</option></select>
       <button id="sceneGo" class="btn small" disabled>Design them</button>
       <p id="sceneNote" class="propasknote"></p>
     </div>
@@ -1139,7 +1139,7 @@
           </div>
 
           <label for="setPlan">Your Claude subscription</label>
-          <select id="setPlan" class="selin">
+          <select id="setPlan" class="sel selin">
             <option value="pro">Claude Pro</option>
             <option value="max5">Claude Max (5×)</option>
             <option value="max20">Claude Max (20×)</option>
@@ -1171,7 +1171,7 @@
               aria-label="More about how a card gets its data"
               data-tip="Search gives Claude a map of your home — how many entities of each kind, which areas, a few anchors — plus read-only Home Assistant tools, and it goes and looks up what the card actually needs: a question about one room costs a room rather than five hundred entities, and it is the only mode that can afford to pull history for a question you type. Snapshot posts the whole slimmed home in one turn with no tools: predictable, and typically several times the tokens. Search falls back to Snapshot on its own if a lookup run fails, so a card always appears either way. Neither mode can change anything in your house — insight runs get reading tools only.">?</button>
           </div>
-          <select id="setGatherMode" class="selin">
+          <select id="setGatherMode" class="sel selin">
             <option value="search">Search — only what the card needs</option>
             <option value="snapshot">Snapshot — the whole home every run</option>
           </select>
@@ -1235,7 +1235,7 @@
               aria-label="More about the two terminal faces"
               data-tip="Both run the same Claude Code, with the same login, the same /config and the same permissions — the difference is how you see it. Chat reflows to the screen it is on, folds tool calls into one line each, and gives you a normal text box (so dictation and autocorrect behave); it is the one to use on a phone. Classic is a real terminal, which is what you want for anything that draws its own screen — a TUI, htop, an installer — or for running shell commands yourself. You can switch at any time from the ⋯ menu on the Ask tab, and the conversation comes with you; that switch changes this setting too.">?</button>
           </div>
-          <select id="setTerminalUi" class="selin">
+          <select id="setTerminalUi" class="sel selin">
             <option value="chat">Chat — Claude Code as messages</option>
             <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
           </select>
@@ -1248,7 +1248,7 @@
               aria-label="More about how many conversations stay open"
               data-tip="Each open conversation holds its own Claude Code process, the same way a terminal tab does — so switching between them is instant and the one you leave carries on answering. This is how many of those processes brAIn keeps running, not how many conversations you may have: past it, the one you have not touched for longest is closed (never one that is mid-answer) and reopens where it left off the next time you go back to it. Raise it if you keep several going; lower it on a small box.">?</button>
           </div>
-          <select id="setChatSessions" class="selin">
+          <select id="setChatSessions" class="sel selin">
             <option value="1">1 — one at a time</option>
             <option value="2">2</option>
             <option value="3">3 (default)</option>
@@ -1293,7 +1293,7 @@
                   aria-label="More about when a card refreshes"
                   data-tip="When what it reads changes skips a run that would produce the same card — the card's foot then says it is waiting. This one is brAIn's own setting and is not on the Configuration tab.">?</button>
               </div>
-              <select id="setRefreshMode" class="selin">
+              <select id="setRefreshMode" class="sel selin">
                 <option value="changed">When what it reads changes</option>
                 <option value="always">Always, on the interval</option>
                 <option value="never">Never on a schedule</option>
@@ -1313,7 +1313,7 @@
             </div>
             <div class="setwide">
               <label for="setModel">Claude model</label>
-              <select id="setModel" class="selin"></select>
+              <select id="setModel" class="sel selin"></select>
               <input id="setModelCustom" class="hidden" type="text" maxlength="100"
                      autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
               <p class="hint tight">Smaller models cost far fewer tokens per run; the
@@ -1322,7 +1322,7 @@
             </div>
             <div class="setwide">
               <label for="setThinking">How hard brAIn thinks</label>
-              <select id="setThinking" class="selin">
+              <select id="setThinking" class="sel selin">
                 <option value="light">Light — cheaper where it is safe</option>
                 <option value="normal">Normal — tiered by each job</option>
                 <option value="generous">Generous — stronger where it counts</option>
@@ -1544,15 +1544,15 @@
       <div class="sharepick">
         <div>
           <label for="shareDash">Dashboard</label>
-          <select id="shareDash" class="selin"></select>
+          <select id="shareDash" class="sel selin"></select>
         </div>
         <div>
           <label for="shareView">View</label>
-          <select id="shareView" class="selin"></select>
+          <select id="shareView" class="sel selin"></select>
         </div>
         <div>
           <label for="shareShow">Show</label>
-          <select id="shareShow" class="selin">
+          <select id="shareShow" class="sel selin">
             <option value="card">The whole card</option>
             <option value="chart">Just the chart</option>
           </select>
@@ -1694,13 +1694,13 @@
           <input id="kKnownSearch" type="search" autocomplete="off" spellcheck="false"
                  placeholder="Search facts — a device, a room, a word…"
                  aria-label="Search facts">
-          <select id="kKnownSort" aria-label="Sort facts">
+          <select id="kKnownSort" class="sel" aria-label="Sort facts">
             <option value="newest">Newest first</option>
             <option value="subject">Grouped by what it is about</option>
             <option value="oldest">Oldest first</option>
             <option value="certain">Most certain first</option>
           </select>
-          <select id="kKnownSource" aria-label="Who taught it">
+          <select id="kKnownSource" class="sel" aria-label="Who taught it">
             <option value="">Anyone taught it</option>
           </select>
         </div>

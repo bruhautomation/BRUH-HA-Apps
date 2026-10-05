@@ -266,15 +266,16 @@ const subtab = (page, view) => page.click(`.subtab[data-view="${view}"]`);
     const sel = getComputedStyle(document.querySelector('#sceneArea'));
     return {
       left: Math.round(wrap.left), h2: getComputedStyle(head).fontSize,
-      radius: sel.borderTopLeftRadius, padL: sel.paddingLeft,
+      styled: document.querySelector('#sceneArea').classList.contains('sel'),
+      appearance: sel.appearance,
     };
   });
   if (Math.abs(prop.left - feed.left) > 1) {
     note(where, `Proposals starts at ${prop.left}px and Findings at ${feed.left}px`);
   }
   if (prop.h2 !== feed.h2) note(where, `Proposals' heading is ${prop.h2}, Findings' ${feed.h2}`);
-  if (prop.radius !== '10px' || prop.padL !== '12px') {
-    note(where, `the room picker is the browser's own select (${prop.radius}, ${prop.padL})`);
+  if (!prop.styled || prop.appearance !== 'none') {
+    note(where, `the room picker is the browser's own select (appearance ${prop.appearance})`);
   }
   await context.close();
 }

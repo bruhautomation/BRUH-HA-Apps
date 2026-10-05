@@ -407,8 +407,11 @@ for (const width of WIDTHS) {
     document.querySelectorAll('#setModal select').forEach((sel) => {
       const cs = getComputedStyle(sel);
       ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      // A styled select (`.sel`) draws its caret inside its own right
+      // padding; the browser's draws an arrow beyond it.
+      const arrow = cs.appearance === 'none' ? 0 : 20;
       const room = sel.clientWidth - parseFloat(cs.paddingLeft)
-        - parseFloat(cs.paddingRight) - 20;          // the arrow
+        - parseFloat(cs.paddingRight) - arrow;
       const opts = all ? [...sel.options] : [sel.options[sel.selectedIndex]];
       opts.filter(Boolean).forEach((o) => {
         const w = ctx.measureText(o.textContent).width;

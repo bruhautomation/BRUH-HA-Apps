@@ -184,6 +184,12 @@ jobs:
       - name: Measure the fix plan card
         run: node tests/manual/measure-fixplan.mjs
 
+      # The visual standard: four type sizes, sentence case, no browser
+      # chrome on a select or a checkbox, and every card on the 4px grid
+      # with one edge all the way round — read off every pane and ⚙.
+      - name: Measure the visual tokens
+        run: node tests/manual/measure-tokens.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 
