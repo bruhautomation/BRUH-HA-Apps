@@ -997,7 +997,7 @@ const TODAY_CASES = [
     if (!/Baselines rebuilt/.test(t)) return 'no baselines segment';
     if (!/Memory filed/.test(t) || !/3 waiting/.test(t)) return 'no memory segment';
     if (!/1 problem since yesterday/.test(t)) return 'no problems segment';
-    if (!/Problems/.test(t)) return 'the problems segment does not say where';
+    if (!/Diagnostics/.test(t)) return 'the problems segment does not say where';
     if (!/1 Claude run in the last day/.test(t)) return 'no Claude-runs segment';
     return '';
   }],

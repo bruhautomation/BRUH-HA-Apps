@@ -210,6 +210,12 @@ jobs:
       - name: Measure the visual tokens
         run: node tests/manual/measure-tokens.mjs
 
+      # The phone: a 56px header, the three tabs on a bar fixed to the
+      # bottom, no sideways scroll at 390 or 320, and the sweep (no glyph
+      # labels, no ? bubbles) on every pane and in ⚙.
+      - name: Measure the phone layout
+        run: node tests/manual/measure-phone.mjs
+
       - name: Measure BRight's light map
         run: node tests/manual/measure-lightmap.mjs
 

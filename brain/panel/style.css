@@ -2062,6 +2062,19 @@ body.modal-open {
    the same target as a tab, not the 40px an icon inside a dialog gets. */
 .topbar .btn.icon { width: 44px; height: 44px; }
 
+/* The phone's status dot (`#statusDot`): hidden wherever the chips are in
+   the row, shown by the phone band. Its colours are the status line's. */
+.btn.icon.statusdot { display: none; }
+.statusdot .sdot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--good); flex: none;
+}
+.statusdot[data-state="paused"] .sdot,
+.statusdot[data-state="needs_restart"] .sdot { background: var(--warning); }
+.statusdot[data-state="degraded"] .sdot { background: var(--serious); }
+.statusdot[data-state="signed_out"] .sdot { background: var(--critical); }
+.chippop .dotpress { margin: 4px 8px 4px 0; height: 44px; }
+
 /* 40px: a chip in this bar is a button (both clickables open ⚙), so it is
    sized to be pressed rather than to be small. */
 .topbar .chip { height: 40px; font-size: var(--fs-meta); padding: 0 14px; border-radius: 999px; }
@@ -3175,11 +3188,12 @@ body.term-classic #termMode .ico-out { display: block; }
 
 /* The bar never wraps text away to fit, and it never shrinks its own
    controls to fit either. What changes with width is the layout, and there
-   are two layouts:
+   are three layouts:
 
-     >=920    one row, tabs labelled             needs 915px (failed login)
-     390-919  two rows, tabs on their own strip   fits from 390px
-     <390     the same, without the wordmark      fits from 320px
+     >=850    one row, tabs labelled             needs 844px (failed login)
+     641-849  two rows, tabs on their own strip
+     <=640    a phone: a 56px header (logo, status dot, ⚙) and the three
+              tabs on a bar along the bottom     fits from 320px
 
    There used to be a third band — 960 to 1239, one row with the tab labels
    deleted and the tabs shrunk to bare glyphs. That is the width a laptop
@@ -3193,17 +3207,18 @@ body.term-classic #termMode .ico-out { display: block; }
    Measured by tests/manual/measure-topbar.mjs across the three states the
    bar can be in (running, paused, a failed login) — none is a superset of
    the others, and the two trouble states are the ones that put a second
-   chip in the row. Below 920 they simply take a third line rather than
-   costing anyone their tab labels.
+   chip in the row. Between 641 and 849 they simply take a third line
+   rather than costing anyone their tab labels; on a phone they are behind
+   the status dot.
 
    The number moved from 1240 when the Proposals tab arrived, to 1340 when
    the To-do tab did, and to 1430 for the eighth: a tab is ~90px of row, and
    each time the one-row shape stopped fitting the two trouble states at the
-   old number. It came DOWN to 920 when the eight became four groups (Home,
-   Ask, House, Help) with the panes on a strip of their own under the bar —
-   measured at 903 paused and 915 on a failed login, and taken from what the
-   measure reports rather than guessed, which is the whole reason that script
-   exists. Adding a fifth tab will move it again, and the measure is what
+   old number. It came DOWN to 920 when the eight became four groups, and
+   to 850 when the four became three (Today, Ask, House) — measured at 681
+   running, 832 paused and 844 on a failed login, and taken from what the
+   measure reports rather than guessed, which is the whole reason that
+   script exists. Adding a tab will move it again, and the measure is what
    says where to. */
 
 /* Nothing in the bar may shrink; only the spacer flexes. A shrinking chip
@@ -3213,7 +3228,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
-@media (max-width: 919px) {
+@media (max-width: 849px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
      is what made the bar unreadable on the only device where hovering isn't
@@ -3315,25 +3330,80 @@ body.term-classic #termMode .ico-out { display: block; }
   #viewTerminal.active { margin: -12px -12px 0; }
 }
 
-/* Same two-row bar, read from further away. Below 600px the label under the
-   icon is sized to survive a 320px screen — five names across a phone. Above
-   it there is no such pressure, so the tab is typeset like the rest of the
-   panel instead of like a phone's tab bar. The shape does not change; only
-   the type does. */
-@media (min-width: 600px) and (max-width: 919px) {
+/* Same two-row bar, read from further away: above the phone band the tab
+   is typeset like the rest of the panel instead of like a phone's tab bar.
+   The shape does not change; only the type does. */
+@media (min-width: 641px) and (max-width: 849px) {
   :root { --bar-h: 109px; }
   .viewtab { height: 56px; font-size: var(--fs-meta); gap: 4px; }
   .viewtab .ico { width: 22px; height: 22px; }
 }
 
-@media (max-width: 389px) {
-  /* The floor. The wordmark goes — Home Assistant's own panel header says
-     "brAIn" directly above this bar, so it is duplication, and it is the one
-     thing here that isn't a control or a reading. */
-  .wordmark { display: none; }
-  .topbar { padding: 4px 6px 0; gap: 4px; }
-  .topbar .chip { padding: 0 9px; }
-  .viewtab { font-size: var(--fs-meta); }
+/* A phone (docs/design/ui-redesign-2026-10.md, PR 10). The header is the
+   logo, the status dot and ⚙ in one 56px row, and the three tabs are a bar
+   along the bottom where a thumb is — the two-row bar spent a third of a
+   390px screen on chrome before the first card. Four rules:
+
+   * The tabs are the SAME buttons, moved by `position: fixed`, so every
+     handler, badge and measure that finds a `.viewtab` still finds it. A
+     fixed element is laid out against its nearest ancestor with a
+     backdrop-filter rather than the viewport, so the bar gives its blur up
+     here and takes a solid ground.
+   * The chips leave the row for the status dot, which says the worst of
+     them and opens them in words (`fillStatusPop`).
+   * The bottom bar's height (`--tabbar-h`) includes the home indicator's
+     safe area, and the page is padded by exactly that, so the last line of
+     anything is never under the bar; the terminal subtracts it the way it
+     subtracts the header. A folded bar (`term-immersive`, the keyboard up)
+     folds both, and `--tabbar-h` goes to zero with it.
+   * Every tab is a 44px target with its name under its icon — no width
+     gets bare glyphs, here either. */
+@media (max-width: 640px) {
+  :root { --bar-h: 56px; --tabbar-h: calc(58px + env(safe-area-inset-bottom, 0px)); }
+  body.term-immersive { --tabbar-h: 0px; }
+
+  .topbar {
+    flex-wrap: nowrap;
+    height: var(--bar-h);
+    min-height: 0;
+    max-height: 56px;
+    padding: 0 8px 0 12px;
+    row-gap: 0;
+    background: var(--plane);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .topbar .chip { display: none; }
+  .topbar .btn.icon.statusdot { display: inline-flex; }
+
+  .viewtabs {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    order: 0;
+    width: auto;
+    margin: 0;
+    gap: 0;
+    flex-wrap: nowrap;
+    justify-content: space-around;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: var(--plane);
+    border-top: 1px solid var(--hairline);
+  }
+  .viewtab {
+    height: 46px;
+    min-height: 44px;
+    border-radius: 12px;
+  }
+
+  body { padding-bottom: var(--tabbar-h); }
+  #viewTerminal.active {
+    height: calc(100vh - var(--bar-h) - var(--tabbar-h));
+    height: calc(100dvh - var(--bar-h) - var(--tabbar-h));
+  }
+  .toast { bottom: calc(var(--tabbar-h, 0px) + 12px); }
 }
 
 /* ------------------------------------------------------------- findings

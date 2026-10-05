@@ -472,7 +472,11 @@ class TestTopbarLayout(unittest.TestCase):
         body = body[:body.index("\n}\n")]
         self.assertIn("chip.removeAttribute(\"title\")", body)
         self.assertNotIn("chip.title =", body)
+        # The pill's popover and the phone's status dot share one body.
         fill = self.js[self.js.index("function fillUsagePop()"):]
+        fill = fill[:fill.index("\n}\n")]
+        self.assertIn("usagePopHtml()", fill)
+        fill = self.js[self.js.index("function usagePopHtml()"):]
         fill = fill[:fill.index("\n}\n")]
         self.assertIn("resets_at", fill)
         self.assertIn("week_resets_at", fill)

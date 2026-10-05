@@ -341,11 +341,29 @@ for (const width of WIDTHS) {
     const c = document.querySelector('#authChip');
     return { hidden: c.classList.contains('hidden'),
              text: c.textContent.trim(),
+             shown: !!c.offsetParent,
              box: c.getBoundingClientRect().height };
   });
   if (!chip.hidden) {
-    if (chip.box < 40) note(where, `the auth chip is ${Math.round(chip.box)}px tall`);
-    await page.click('#authChip');
+    if (chip.shown) {
+      if (chip.box < 40) note(where, `the auth chip is ${Math.round(chip.box)}px tall`);
+      await page.click('#authChip');
+    } else {
+      // A phone's header carries no chips: the status dot is the route,
+      // and its popover offers the chip's own press.
+      await page.click('#statusDot');
+      const press = '#chipPop [data-press="authChip"]';
+      const found = await page.waitForSelector(press, { timeout: 3000 })
+        .then(() => true).catch(() => false);
+      if (!found) {
+        note(where, 'the status dot offers no way to fix a failed sign-in');
+      } else {
+        const h = await page.evaluate((q) =>
+          document.querySelector(q).getBoundingClientRect().height, press);
+        if (h < 44) note(where, `the dot's sign-in press is ${Math.round(h)}px tall`);
+        await page.click(press);
+      }
+    }
     await page.waitForTimeout(200);
     const opened = await page.evaluate(() =>
       !document.querySelector('#setup').classList.contains('hidden'));

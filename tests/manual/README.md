@@ -24,11 +24,14 @@ one lays out as the shape that width is supposed to have.
 node tests/manual/measure-topbar.mjs
 ```
 
-**The bar has two shapes and no third.** At ≥1240px it is one 56px row. Below
-that it is the two-row bar — status and actions on top, the five tabs on a
-full-width strip beneath, each name under its icon. No width gets a row of
-bare glyphs: nothing in the bar may shrink, so a fit is binary and an overflow
-is something this can see.
+**The bar has three shapes and no fourth.** At ≥850px it is one 56px row.
+From 641 to 849px it is the two-row bar — status and actions on top, the
+three tabs on a full-width strip beneath, each name under its icon. At
+≤640px the header is one 56px row holding the wordmark, the status dot and
+⚙, and the tabs are a bar fixed to the bottom of the screen. No width gets a
+row of bare glyphs: nothing in the bar may shrink, so a fit is binary and an
+overflow is something this can see. Take the breakpoint from what it
+reports (681px running, 832 paused, 844 on a failed login).
 
 It fails on a wrong shape, on any overflow, on a missing tab label, and on any
 target under 44px (chips 40px). Set `TOPBAR_SHOT_DIR=/some/dir` to also write
@@ -172,6 +175,23 @@ node tests/manual/measure-chrome.mjs
 ```
 
 Run it after touching `.viewtabs`, `.subtabs`, the docs nav or `.todaypane`.
+
+## `measure-phone.mjs`
+
+The phone layout and the sweep, on the real panel behind the Today fixture,
+at 390 (touch), 320 (touch) and 1200. On a phone it fails on a header over
+56px or holding anything but the wordmark, the status dot and ⚙; on a tab
+bar that is not fixed to the bottom, not one row, unlabelled or under 44px;
+on a pane whose last pixel hides under that bar; on Ask not opening on its
+list; and on a status dot whose popover does not say what the bar's chips
+would have said. At every width it fails on sideways page scroll (and a row
+that scrolls sideways), a button label carrying an emoji or arrow glyph, a
+`?` bubble, and a header target under 44px — on every pane and in ⚙ with
+every section open. At 1200 it asserts the desktop bar is unchanged.
+
+```bash
+node tests/manual/measure-phone.mjs
+```
 
 ## `measure-today.mjs` and the Today measures
 

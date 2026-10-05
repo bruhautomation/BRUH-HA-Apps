@@ -526,7 +526,7 @@ function renderAuth() {
   $("#setup").classList.toggle("hidden", !signIn);
   $("#setupBack").classList.toggle("hidden", !s.authenticated);
   $("#setupTitle").textContent = s.authenticated
-    ? "Sign in to Claude again" : "Connect your Claude account ✨";
+    ? "Sign in to Claude again" : "Connect your Claude account";
   $("#onboard").classList.toggle("hidden", signIn || obState.onboarded);
   $("#dash").classList.toggle("hidden", !ready);
   $("#settingsBtn").classList.toggle("hidden", !s.authenticated);
@@ -638,6 +638,12 @@ function renderUsageChip() {
 // with its reading and no time rather than left out: the reading is real
 // either way, and a missing row reads as a missing window.
 function fillUsagePop() {
+  setChipPop($("#usageChip"), "Claude usage", usagePopHtml());
+}
+
+// The usage disclosure's body, shared by the pill and the phone's status
+// dot, so a phone reads the same two windows and the same notes.
+function usagePopHtml() {
   const u = (state.status && state.status.usage) || {};
   const rows = [];
   const row = (name, pct, when) =>
@@ -671,7 +677,7 @@ function fillUsagePop() {
         + `your Claude account to you. Asking a question by hand always runs.</p>`);
   }
   rows.push(spendRows(u));
-  setChipPop($("#usageChip"), "Claude usage", rows.join(""));
+  return rows.join("");
 }
 
 // Why the percentage above is an estimate rather than the account's own.
@@ -699,7 +705,7 @@ function limitsNote(u) {
       return say("Your account's real usage is not available.",
         `Nothing has signed in with a Claude subscription yet — the figure `
         + `above is an estimate from brAIn's own runs. Sign in from `
-        + `<b>⚙ → Claude account</b>.`);
+        + `<b>⚙ › Account</b>.`);
     case "api_key_has_no_usage_limits":
       return say("An API key has no usage window.",
         `It bills per token instead, so there is no session or weekly `
@@ -714,7 +720,7 @@ function limitsNote(u) {
         `The saved token runs Claude perfectly, but <b>ha login</b> is built `
         + `on <b>claude setup-token</b>, which asks Anthropic only for `
         + `permission to run Claude — so running it again will not help. `
-        + `Open <b>⚙ → Claude account → Sign in again</b> and choose `
+        + `Open <b>⚙ › Account › Sign in again</b> and choose `
         + `<b>Sign in to your Claude account</b>: it asks for the permission `
         + `this figure needs, no terminal involved, and the real numbers come `
         + `back on the next poll.`);
@@ -730,7 +736,7 @@ function limitsNote(u) {
           + `answer it can use, so something is in the way — the add-on log `
           + `says what. The figure above is an estimate meanwhile. If the log `
           + `says the renewal was refused, sign in again from `
-          + `<b>⚙ → Claude account → Sign in again</b>.`);
+          + `<b>⚙ › Account › Sign in again</b>.`);
       }
       return say("Your sign-in is fine — its token is between refreshes.",
         `An access token lives for a few hours and brAIn renews it itself `
@@ -740,7 +746,7 @@ function limitsNote(u) {
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
-        + `again from <b>⚙ → Claude account → Sign in again</b> is what `
+        + `again from <b>⚙ › Account › Sign in again</b> is what `
         + `usually fixes it.`);
     case "http_429":
       return say("Anthropic is rate-limiting the usage endpoint itself.",
@@ -774,7 +780,7 @@ function limitsNote(u) {
 function spendLabel(id) {
   if (!id) return "Everything else";
   if (id === "onboarding") return "First-run setup";
-  if (id.startsWith("fix-")) return "Fix it (a finding)";
+  if (id.startsWith("fix-")) return "A plan for a finding";
   const insight = insightFor(id);
   if (insight && insight.title) return insight.title;
   const cat = (state.status && state.status.categories || []).find((c) => c.id === id);
@@ -843,7 +849,78 @@ function renderPausedChip() {
   }
   chip.classList.toggle("hidden", !label);
   if (!label && chipPopFor === chip) closeChipPop();
+  renderStatusDot();
 }
+
+// The phone's header holds the logo, one dot and ⚙ (docs/design/ui-
+// redesign-2026-10.md, PR 10): the three chips above are a wider screen's.
+// So the dot carries the worst of what they and the status line would say,
+// and pressing it opens the same disclosure with each of them in words and
+// the press each chip itself is. Nothing the chips report is lost on a
+// phone — it is one press further away, which is where a reading that is
+// not news belongs anyway. Its colour is never the only signal: the label
+// says the state, and the popover says it in a sentence.
+const DOT_RANK = { watching: 0, needs_restart: 1, paused: 1, degraded: 2, signed_out: 3 };
+
+function statusDotState() {
+  const s = state.status || {};
+  let kind = (s.status && s.status.state) || "watching";
+  const raise = (k) => {
+    if ((DOT_RANK[k] || 0) > (DOT_RANK[kind] || 0)) kind = k;
+  };
+  if (!$("#authChip").classList.contains("hidden")) {
+    raise($("#authChip").classList.contains("busy") ? "paused" : "signed_out");
+  }
+  if (!$("#pausedChip").classList.contains("hidden")) raise("paused");
+  const u = s.usage || {};
+  if (!$("#usageChip").classList.contains("hidden") && u.blocked) raise("paused");
+  return kind;
+}
+
+function statusDotSentence() {
+  const st = (state.status && state.status.status) || {};
+  if (st.state === "watching" || !st.state) {
+    return st.last_look_at ? `Watching · last look ${agoWords(st.last_look_at)}` : "Watching";
+  }
+  return (st.sentence || st.label || "Watching").replace(/\.$/, "");
+}
+
+function renderStatusDot() {
+  const dot = $("#statusDot");
+  if (!dot) return;
+  const kind = statusDotState();
+  dot.dataset.state = kind;
+  dot.setAttribute("aria-label", `brAIn: ${statusDotSentence()}. Press for detail.`);
+  if (chipPopFor === dot) fillStatusPop();
+}
+
+function fillStatusPop() {
+  const dot = $("#statusDot");
+  const rows = [`<p class="pnote">${esc(statusDotSentence())}</p>`];
+  const press = (id, text) =>
+    `<button type="button" class="chip clickable dotpress" data-press="${id}">`
+    + `<span class="dot"></span><span>${esc(text)}</span></button>`;
+  if (!$("#authChip").classList.contains("hidden")) {
+    rows.push(press("authChip", $("#authChipText").textContent));
+  }
+  if (!$("#pausedChip").classList.contains("hidden")) {
+    rows.push(press("pausedChip", $("#pausedChipText").textContent));
+  }
+  if (!$("#usageChip").classList.contains("hidden")) rows.push(usagePopHtml());
+  setChipPop(dot, "brAIn", rows.join(""));
+}
+
+$("#statusDot").addEventListener("click", () =>
+  toggleChipPop($("#statusDot"), fillStatusPop));
+// A press inside the dot's disclosure is the chip's own press, so the two
+// routes cannot come to mean different things.
+$("#chipPop").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-press]");
+  if (!b) return;
+  const chip = document.getElementById(b.dataset.press);
+  closeChipPop();
+  if (chip) chip.click();
+});
 
 // ------------------------------------------------------- chip disclosures
 
@@ -1079,7 +1156,7 @@ async function pollSetup() {
     phaseChip.classList.remove("busy");
     phaseChip.classList.add("ok");
     phaseText.textContent = "Connected!";
-    toast("Claude account connected 🎉");
+    toast("Claude account connected");
     resetSetupUI();
     // A sign-in that succeeded is the end of asking for the sign-in screen.
     // Without this the screen is sticky in exactly the case it was added
@@ -1344,14 +1421,14 @@ function cardMenuButton(items) {
 function cardAutomationItems(shown) {
   const opps = Array.isArray(shown.opportunities) ? shown.opportunities : [];
   const items = opps.slice(0, 2).map((opp) => (opp.queued
-    ? ["⚡", "See the automation it suggested",
+    ? ["", "See the automation it suggested",
       `On Today: “${opp.text}”`,
       () => switchView("findings")]
-    : ["⚡", "Make this an automation",
+    : ["", "Make this an automation",
       `“${opp.text}”${opp.why ? ` — not offered yet: ${opp.why}` : ""}`,
       () => seedAsk(opp.sentence || opp.text)]));
   if (!opps.some((opp) => !opp.queued)) {
-    items.push(["⚡", "Make an automation from this",
+    items.push(["", "Make an automation from this",
       "Describe it in the ask bar — brAIn replays it over your history "
       + "before it offers it", () => seedAsk("When ")]);
   }
@@ -1767,7 +1844,7 @@ function renderToday(today) {
     node.dataset.seg = id;
     if (press) {
       node.type = "button";
-      node.appendChild(el("span", "tsegwhere", "⚙ Problems"));
+      node.appendChild(el("span", "tsegwhere", "⚙ › Diagnostics"));
       node.addEventListener("click", press);
     }
     strip.appendChild(node);
@@ -2070,6 +2147,9 @@ async function deleteCard(id, catInfo, name) {
 async function refreshStatus() {
   state.status = await api("api/status");
   renderIfChanged();
+  // The dot reads the status line's own state, which the render key above
+  // does not carry, so it is repainted on every poll — one attribute.
+  renderStatusDot();
 }
 
 async function refreshInsights() {
@@ -4062,7 +4142,7 @@ function openRefine(id, catInfo, insight) {
   const chips = $("#refineChips");
   chips.textContent = "";
   REFINE_IDEAS.forEach((idea) => {
-    const chip = el("button", "refinechip", `＋ ${idea}`);
+    const chip = el("button", "refinechip", idea);
     chip.type = "button";
     chip.addEventListener("click", () => {
       const box = $("#refineText");
@@ -4276,7 +4356,7 @@ async function recheckFinding(f, btns, button) {
   // nothing happening. The control that was pressed says what it is
   // doing, which is the one place somebody is already looking.
   const was = button ? button.textContent : "";
-  if (button) button.textContent = "↻  Checking…";
+  if (button) button.textContent = "Checking…";
   try {
     const data = await api(`api/finding/${f.ts}/recheck`, { method: "POST" });
     takeFindings(data);
@@ -7163,7 +7243,7 @@ function renderPending(n, state) {
     : "nothing waiting";
   label.classList.remove("hidden");
   btn.disabled = busy || !count;
-  btn.textContent = busy ? "Filing…" : "⇪ File into memory now";
+  btn.textContent = busy ? "Filing…" : "File into memory now";
 }
 
 // ---- home memory file: formatted view, raw-markdown edit, Claude merge ----
@@ -7261,7 +7341,7 @@ function renderMemoryProgress(st) {
     ? (st.by === "you"
         ? `Filing these into the memory document now…${since}`
         : `brAIn is filing memory now — this runs daily, and early when the queue builds up.${since}`)
-    : "✨ Queued — it lands at the next consolidation…";
+    : "Queued — it lands at the next consolidation…";
 
   // A queue that has been waiting far longer than the daily pass is not a
   // busy consolidator, it is one that is not running — and that failed
@@ -7274,12 +7354,12 @@ function renderMemoryProgress(st) {
   const trouble = !running && (st.error || stale);
   staleBox.classList.toggle("hidden", !trouble);
   if (st.error) {
-    staleBox.textContent = `⚠ The last attempt to file memory did not finish: `
+    staleBox.textContent = `The last attempt to file memory did not finish: `
       + `${st.error}`;
   } else if (stale) {
     const when = stale >= 48 ? `${Math.round(stale / 24)} days`
                              : `${Math.round(stale)} hours`;
-    staleBox.textContent = `⚠ Nothing has been filed into memory for ${when}, `
+    staleBox.textContent = `Nothing has been filed into memory for ${when}, `
       + `and facts are waiting. Press “File into memory now” — if that doesn't `
       + `clear it, the add-on log shows what the consolidator is hitting.`;
   }
@@ -8566,7 +8646,7 @@ async function propRemoveIntent(ts, refused) {
     }
     propState.data = data;
     if (data.undo) {
-      toast(refused ? "Dismissed" : "Removed it from your automations",
+      toast(refused ? "Ignored" : "Removed it from your automations",
         data.undo);
     }
   } catch (err) {
@@ -13152,7 +13232,7 @@ function renderDeepReview() {
 
   if (!d.authenticated) {
     box.appendChild(el("p", "kbrieftext off",
-      "Connect your Claude account first — ⚙ → Claude account."));
+      "Connect your Claude account first — ⚙ › Account."));
   }
   if (d.last_error) {
     box.appendChild(el("p", "kbrieftext off",

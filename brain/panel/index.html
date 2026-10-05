@@ -86,6 +86,15 @@
   <button id="usageChip" class="chip clickable hidden" aria-expanded="false"><span class="dot"></span><span class="uwin"><span class="ulab">Session</span><span id="usageChipPct"></span></span><span id="usageChipWeek" class="uwin hidden"><span class="ulab">Week</span><span id="usageChipWeekPct"></span></span></button>
   <button id="pausedChip" class="chip clickable warn hidden"><span class="dot"></span><span id="pausedChipText"></span></button>
 
+  <!-- The phone's status: one dot where the chips above sit on a wider
+       screen. A 390px header holds the logo, this and ⚙, and nothing else —
+       the three tabs are a bar along the bottom. The dot is a press, never
+       a hover: it opens the same disclosure as the chips, with the status
+       sentence and whatever they would have said, each with its own
+       press. Hidden above the phone band, where the chips say it. -->
+  <button id="statusDot" class="btn icon statusdot" data-state="watching"
+          aria-expanded="false" aria-label="brAIn status"><span class="sdot" aria-hidden="true"></span></button>
+
   <button id="settingsBtn" class="btn icon hidden" data-tip="Settings">
     <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 8.9 19a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 6.9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg>
   </button>
@@ -102,7 +111,6 @@
   <button class="subtab" data-view="findings" data-group="today" role="tab" hidden>Today</button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
   <button class="subtab" data-view="insights" data-group="house" role="tab">Insights</button>
-  <button class="subtab" data-view="ideas" data-group="house" role="tab">Ideas <span id="ideasBadge" class="badge hidden"></span></button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
   <button class="subtab" data-view="docs" data-group="guide" role="tab">Guide</button>
@@ -153,7 +161,7 @@
          it: a token that died on a Tuesday left the chip saying "Claude auth
          failed" and the panel offering nothing to press. -->
     <div class="row setup-head">
-      <h2 id="setupTitle">Connect your Claude account&nbsp;✨</h2>
+      <h2 id="setupTitle">Connect your Claude account</h2>
       <div class="spacer"></div>
       <button id="setupBack" class="btn ghost hidden">Back</button>
     </div>
