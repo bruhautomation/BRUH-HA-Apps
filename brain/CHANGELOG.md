@@ -44,6 +44,12 @@ lane and "What could go wrong" all work and read as before.
   measurements, the overnight check and run history moved here.
 - The usage pill in the bar appears only past 80% or when paused.
 
+### Phone
+
+- The three tabs move to a bar along the bottom, and the header is one slim
+  row: the logo, a status dot that opens the status line, and ⚙.
+- Nothing scrolls sideways, and every button is a 44px target.
+
 ### Everywhere
 
 - Visual tokens: four type sizes, sentence case, no coloured left bars,

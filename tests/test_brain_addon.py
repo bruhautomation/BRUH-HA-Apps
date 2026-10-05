@@ -890,7 +890,9 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertNotIn("blocked", paused,
                          "the paused chip is reporting usage again")
         # ...and the pill says it, in the one place that now can.
-        fill = self.js[self.js.index("function fillUsagePop()"):]
+        # The popover body is `usagePopHtml`, which both the pill and the
+        # phone's status dot open, so one place says it for both.
+        fill = self.js[self.js.index("function usagePopHtml("):]
         fill = fill[:fill.index("\n}\n")]
         self.assertIn("Automatic insights are paused", fill)
 

@@ -35,6 +35,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -186,6 +187,12 @@ class FixCase(PanelCase):
 
     # -- the two Claude paths ------------------------------------------
     def _analyst(self, prompt, system, *a, **k):
+        # A case that needs the plan genuinely in flight holds it here: the
+        # app starts its own worker, so an instant stub can finish between
+        # two presses and a finished plan is rightly pressable again.
+        gate = getattr(self, "analyst_gate", None)
+        if gate is not None:
+            gate.wait(10)
         self.analyst_prompt = prompt
         self.analyst_system = system
         return {"ok": True, "text": self.analyst_reply, "error": "", "meta": {}}
@@ -258,12 +265,16 @@ class TestPressingFixBuysAPlan(FixCase):
 
     def test_a_second_press_while_it_is_looking_is_refused(self):
         row = self.file_finding()
+        self.analyst_gate = threading.Event()
 
         async def body(client):
-            first = await self.press(row["ts"], "fix", client)
-            self.assertEqual(first.status, 200)
-            again = await self.press(row["ts"], "fix", client)
-            self.assertEqual(again.status, 409)
+            try:
+                first = await self.press(row["ts"], "fix", client)
+                self.assertEqual(first.status, 200)
+                again = await self.press(row["ts"], "fix", client)
+                self.assertEqual(again.status, 409)
+            finally:
+                self.analyst_gate.set()
             await self.work(client)
 
         self.drive(body)
