@@ -185,7 +185,7 @@ for (const { width, touch } of CASES) {
     if (!can.verbs.some((v) => /Apply/i.test(v))) {
       note(`${width}px`, 'a plan brAIn can carry out offers no Apply');
     }
-    if (!can.verbs.some((v) => /Cancel/i.test(v))) {
+    if (!can.verbs.some((v) => /Cancel|Don't change it/i.test(v))) {
       note(`${width}px`, 'a plan offers no way to say no');
     }
   }
@@ -199,7 +199,7 @@ for (const { width, touch } of CASES) {
       note(`${width}px`,
            'a plan that needs a person offers Apply, which cannot help');
     }
-    if (!cannot.verbs.some((v) => /Cancel/i.test(v))) {
+    if (!cannot.verbs.some((v) => /Cancel|Don't change it/i.test(v))) {
       note(`${width}px`, 'a refused plan offers nothing to press');
     }
     if (cannot.steps.length) {

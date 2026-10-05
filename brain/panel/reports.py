@@ -633,7 +633,13 @@ def _faults(diag) -> list[dict]:
         total = int(row.get("total") or 0)
         wrong = int(row.get("wrong") or 0)
         if total >= SCORE_MIN_ENDINGS and wrong > total - wrong:
-            _row(out, f"Producer {row.get('source') or '?'}",
+            # Named by its title where the scorecard carries one, because
+            # the id (`check:auto.conflict`) is what nobody recognises; the
+            # id rides after it, since this is also a bug report.
+            source = str(row.get("source") or "?")
+            title = str(row.get("title") or "")
+            name = f"{title} ({source})" if title and title != source else source
+            _row(out, f"Producer {name}",
                  f"marked Wrong {wrong} of {total} times",
                  "this rule is firing on a healthy house, which is worse "
                  "than not having it")

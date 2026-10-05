@@ -646,7 +646,7 @@ not one rule but a judgement about each thing it looked at, and what you mean on
 one of its cards is *Not a problem*, with the reason.
 The line under the filters says how right each producer has been; one that has
 been wrong three times and right never offers the button, and the box on the
-**Wrong** form offers the same thing for the row in front of you. Muting a
+**Not a problem** form offers the same thing for the row in front of you. Muting a
 producer takes its open cards off the list and files nothing from it again —
 nothing is settled and nothing goes into memory, because this is about the rule
 and not the house — and a *Not raising* line above the list carries the one
@@ -676,7 +676,7 @@ A check's finding clears itself when the check stops finding it — the device
 came back, the battery was changed — and it is simply removed, so it can be
 raised again if the problem returns. What a person ends stays ended, exactly
 as before. And every ending teaches the **scorecard** under the filters: "I
-did it" and "Got it" say the report was right, "Wrong" says it was not, and
+did it" and "Got it" say the report was right, "Not a problem" says it was not, and
 once a producer has a few endings the tab says how right it has been.
 
 Findings reach you outside the panel too. The integration exposes an
@@ -886,7 +886,7 @@ about an entity the house no longer has are dropped thirty days after it goes. A
 memory export carries the ledger too, so the rules your Wrong presses made travel
 to a new install.
 
-**A correction reaches the rule, not just the wording.** Pressing ✕ Wrong on a
+**A correction reaches the rule, not just the wording.** Pressing **Not a problem** on a
 finding from a house check writes an *exception* into the facts store — this
 sensor, this check — and the check reads it on its next pass and says nothing about
 that sensor again. Before 2.2 a Wrong settled one sentence, and the same rule made
@@ -1936,7 +1936,7 @@ what it would have done. Answered in seconds, before anything is enabled.
 "no"), but a sentence like *"the hall light stays on because my partner works
 nights"* is a fact brAIn did not have, and it stops the same suggestion coming
 back in different words next month. It goes into memory exactly as a finding's
-**Wrong** does.
+**Not a problem** does.
 
 A declined proposal is remembered by the **change** it described, not by the
 sentence describing it — so a miner that rewords its own explanation is still
@@ -2232,7 +2232,7 @@ showing both of brAIn's lists as one: the findings it is still asking about, and
 the chores you have already accepted. From the app's side they are the same
 thing — work — so they are one list, and each row does on completion what it
 would have done on its own screen. Completing a finding is the Findings feed's
-**I fixed it** and deleting it is its **Wrong**; completing a chore is the To-do
+**I fixed it** and deleting it is its **Not a problem**; completing a chore is the To-do
 tab's **Done**, which is the moment the memory line is written, and deleting one
 is taking it off the list undone, which lets brAIn report the problem again. No
 new vocabulary: each row's own list already had these.
@@ -2915,7 +2915,7 @@ would produce the same card at full price, and a dashboard that changes nothing 
 timer teaches people it is a timer.
 
 Every card records **why it was made** — "on its refresh interval", "a finding it
-reads changed", "first run since inputs were tracked" — and a card that skipped a run
+reads changed", "first refresh" — and a card that skipped a run
 records the hold instead, so a quiet dashboard can say which of the two it is.
 
 **When to refresh a card** in ⚙ Settings (`refresh_mode`) picks the rule. It is
@@ -3001,7 +3001,7 @@ brAIn can currently see that is not working, gathered from every surface it has:
 health verdict, runs that failed in the last day, house checks that could not run,
 snapshot keys that could not be fetched, a measurement store that measured nothing,
 the rehearsal and the deep check, notifications that would not deliver, the usage
-tracker's own verdict, the producers you keep marking **Wrong**, and any daemon that
+tracker's own verdict, the producers you keep marking **Not a problem**, and any daemon that
 is down. On a healthy install it is one sentence saying so. A refusal doing its job —
 an overnight repair that stood down on a protected entity, a producer that could not
 read a file — is deliberately not in it, because a list that includes those is one
@@ -3312,7 +3312,7 @@ memory excerpt, the open cases), and the nightly pass labels each one with what
 you did next, so `brain eval first_look` can replay them against today's prompt.
 
 That last part is the whole point. An ending on the Findings feed is already a
-label: **I fixed it** and **Got it** say the report was right, **Wrong** says
+label: **I fixed it** and **Got it** say the report was right, **Not a problem** says
 it was not. Pairing that with the prompt that produced it turns a house into a
 graded example, and a directory of graded examples is something a prompt change
 can be scored against before it ships.

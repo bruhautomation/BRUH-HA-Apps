@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import atomic_write
@@ -34,6 +35,26 @@ def clean_tag(tag: str) -> str:
     """One tag, in the only form the dashboard stores: lowercase, trimmed of
     the decoration people type ("#Batteries " → "batteries")."""
     return str(tag or "").strip().strip("#").strip().lower()[:MAX_TAG_CHARS]
+
+
+_ID_SHAPED = re.compile(r"^[a-z]+[-_]\d{6,}$")
+
+
+def id_shaped(tag: str) -> bool:
+    """Whether a tag is an id rather than a word — `user-1790086614`."""
+    return bool(_ID_SHAPED.match(clean_tag(tag)))
+
+
+def slug(text: str) -> str:
+    """A title as a tag: "Lev & Kaz nights" → "lev-kaz-nights"."""
+    words = re.findall(r"[a-z0-9]+", str(text or "").lower())
+    out = ""
+    for word in words:
+        nxt = f"{out}-{word}" if out else word
+        if len(nxt) > MAX_TAG_CHARS:
+            break
+        out = nxt
+    return out
 
 
 def clean_tags(tags) -> list[str]:
@@ -80,10 +101,15 @@ def base_tags(insight: dict) -> list[str]:
     The category tag is included deliberately — it is a tag like any other on
     the filter bar, so it has to be removable like any other.
     """
-    tags = clean_tags(insight.get("tags"))
+    tags = [t for t in clean_tags(insight.get("tags")) if not id_shaped(t)]
     category = str(insight.get("category") or "")
     if category == "custom":
         own = "asked"
+    elif id_shaped(category):
+        # A category somebody made is filed under a minted id
+        # ("user-1790086614"), which names nothing a person would filter
+        # by. Its title does, so the chip is the title's slug.
+        own = slug(str(insight.get("category_title") or ""))
     else:
         own = clean_tag(category)
     if own and own not in tags:
