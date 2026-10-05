@@ -280,6 +280,38 @@ const subtab = (page, view) => page.click(`.subtab[data-view="${view}"]`);
   await context.close();
 }
 
+// ------------------------------------------------- the header usage pill
+// The session and week numbers live in ⚙ → Usage & schedule. The header
+// carries them only when they are news: past 80% in either window, or with
+// automatic insights paused by the budget (the redesign's PR 9). Driven
+// through the real `renderUsageChip` over the real `state.status`.
+{
+  const where = 'usage pill';
+  const { context, page } = await open(1448, 900, false);
+  const shown = (u) => page.evaluate((usage) => {
+    state.status = { ...(state.status || {}), authenticated: true, usage };
+    renderUsageChip();
+    return !document.querySelector('#usageChip').classList.contains('hidden');
+  }, u);
+  if (await shown({ source: 'account', used_percent: 18, week_percent: 9 })) {
+    note(where, 'the pill shows at 18% with nothing paused');
+  }
+  if (await shown({ source: 'account', used_percent: 80, week_percent: 40 })) {
+    note(where, 'the pill shows at exactly 80%');
+  }
+  if (!await shown({ source: 'account', used_percent: 85, week_percent: 40 })) {
+    note(where, 'the pill stays hidden at 85% of the session');
+  }
+  if (!await shown({ source: 'account', used_percent: 20, week_percent: 91 })) {
+    note(where, 'the pill stays hidden at 91% of the week');
+  }
+  if (!await shown({ source: 'account', used_percent: 30, week_percent: 10, blocked: true,
+                     budget_percent: 25 })) {
+    note(where, 'the pill stays hidden while automatic insights are paused');
+  }
+  await context.close();
+}
+
 await browser.close();
 
 if (failures.length) {

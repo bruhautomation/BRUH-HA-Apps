@@ -20,7 +20,7 @@
 //     the answered card says "Always allowed" with the offer gone;
 //   * a discussion's card (no suggestion, `stop_asking: false`) offers
 //     neither way out;
-//   * "Stop asking…" opens ⚙ with Terminal & chat open, the switch's row
+//   * "Stop asking…" opens ⚙ with Permissions open, the switch's row
 //     marked and inside the dialog's visible area;
 //   * at 390 every answer is at least 44px tall, and nothing scrolls
 //     sideways.
@@ -221,7 +221,7 @@ for (const width of WIDTHS) {
       () => document.querySelector('#setSkipPermsRow').classList.contains('setflash'),
       null, { timeout: 4000 });
     const landed = await page.evaluate(() => {
-      const sec = document.querySelector('#setsecTerminal');
+      const sec = document.querySelector('#setsecPermissions');
       const row = document.querySelector('#setSkipPermsRow').getBoundingClientRect();
       const body = document.querySelector('#setModal .edit-body').getBoundingClientRect();
       return {
@@ -230,7 +230,7 @@ for (const width of WIDTHS) {
         checked: document.querySelector('#setSkipPerms').checked,
       };
     });
-    if (!landed.open) note(where, '"Stop asking…" opened ⚙ with Terminal & chat shut');
+    if (!landed.open) note(where, '"Stop asking…" opened ⚙ with Permissions shut');
     if (!landed.inView) note(where, 'the switch is not in view after "Stop asking…"');
     if (landed.checked) note(where, 'the switch rendered on over a saved off');
   } catch (e) {

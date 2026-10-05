@@ -995,12 +995,35 @@ class TestDocsTab(unittest.TestCase):
     def test_every_section_has_the_fields_the_nav_needs(self):
         import re
         ids = re.findall(r'^\s*id: "([^"]+)"', self.docs, re.M)
-        icons = re.findall(r'^\s*icon: "([^"]+)"', self.docs, re.M)
+        groups = re.findall(r'^\s*group: "([^"]+)"', self.docs, re.M)
         titles = re.findall(r'^\s*title: "([^"]+)"', self.docs, re.M)
         self.assertGreaterEqual(len(ids), 6, "guide is suspiciously short")
-        self.assertEqual(len(ids), len(icons), "a section is missing an icon")
+        self.assertEqual(len(ids), len(groups), "a section is missing a group")
         self.assertEqual(len(ids), len(titles), "a section is missing a title")
         self.assertEqual(len(ids), len(set(ids)), "duplicate section id")
+
+    def test_the_guide_is_eight_groups_with_no_emoji(self):
+        """Sixty-odd sections in one column with an emoji each was a list
+        nobody could find anything in (the redesign's Help row): the nav is
+        eight named groups, every section is assigned one by name rather than
+        falling into the last by default, and no row carries a glyph."""
+        import importlib.util
+        import re
+        spec = importlib.util.spec_from_file_location(
+            "build_docs", PANEL / "build-docs.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        self.assertEqual(len(mod.GROUPS), 8)
+        sections = mod.parse((PANEL.parent / "DOCS.md").read_text(encoding="utf-8"))
+        unassigned = [s["id"] for s in sections if s["id"] not in mod.GROUP_OF]
+        self.assertEqual(unassigned, [], "a guide section has no group")
+        self.assertNotIn("icon:", self.docs)
+        groups = re.findall(r'^\s*group: "([^"]+)"', self.docs, re.M)
+        # Grouped in the file, so the nav can render one heading per group.
+        runs = [g for i, g in enumerate(groups) if i == 0 or groups[i - 1] != g]
+        self.assertEqual(runs, [name for name, _ in mod.GROUPS])
+        self.assertNotIn("already has nerves", self.docs,
+                         "the marketing hero line belongs to the README")
 
     def test_guide_documents_the_current_cli_not_the_retired_one(self):
         for retired in ("ha-memory", "ha-backup", "ha-share-login", "ha-reload",

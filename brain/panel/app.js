@@ -577,11 +577,25 @@ function fmtDayClock(epoch) {
 // which on a phone is a fact that exists and cannot be read — and the phone
 // is where this pill is most often the only thing on screen worth reading.
 // The dot goes warning-coloured once the budget is reached.
+const USAGE_PILL_AT = 80;
+
+function usagePillWanted(u) {
+  if (!u) return false;
+  if (u.blocked) return true;
+  return (Number(u.used_percent) || 0) > USAGE_PILL_AT
+    || (Number(u.week_percent) || 0) > USAGE_PILL_AT;
+}
+
 function renderUsageChip() {
   const s = state.status;
   const chip = $("#usageChip");
   const u = s && s.authenticated && s.usage;
-  if (!u || u.used_percent == null) {
+  // The numbers live in ⚙ → Usage & schedule. The header carries them only
+  // when they are news: past USAGE_PILL_AT in either window, or with
+  // automatic insights paused by the budget. A pill reading "Session 3%"
+  // on every visit is a reading nobody acts on, beside a status line that
+  // already says whether brAIn is working.
+  if (!u || u.used_percent == null || !usagePillWanted(u)) {
     chip.classList.add("hidden");
     if (chipPopFor === chip) closeChipPop();
     return;
@@ -2499,21 +2513,34 @@ function renderUsageMeter(usage, budgetPct) {
   fill.style.width = pct + "%";
   fill.classList.toggle("over", pct >= budgetPct);
   $("#usageMark").style.left = Math.min(100, budgetPct) + "%";
+  const week = usage.week_percent;
+  const weekFill = $("#usageWeekFill");
+  if (weekFill) {
+    weekFill.style.width = (week == null ? 0 : Math.min(100, week)) + "%";
+    weekFill.parentElement.classList.toggle("hidden", week == null);
+    const weekLabel = weekFill.parentElement.previousElementSibling;
+    if (weekLabel) weekLabel.classList.toggle("hidden", week == null);
+  }
   const spent = usage.window_tokens >= 1000
     ? `${Math.round(usage.window_tokens / 1000)}k` : String(usage.window_tokens || 0);
-  const reset = usage.resets_at
-    ? ` Session resets at ${fmtClock(usage.resets_at)}.` : "";
+  const reset = usage.resets_at ? `, resets ${fmtClock(usage.resets_at)}` : "";
   // The weekly window isn't budgeted against, but it is the one that ends a
   // Claude plan's week — so it is stated wherever the session is.
-  const week = usage.week_percent == null ? ""
-    : ` Your week is ${usage.week_percent}% used`
-      + (usage.week_resets_at ? `, resetting ${fmtDayClock(usage.week_resets_at)}.` : ".");
+  const weekLine = week == null ? ""
+    : ` Week ${Math.round(week)}%`
+      + (usage.week_resets_at ? `, resets ${fmtDayClock(usage.week_resets_at)}.` : ".");
   $("#usageText").textContent = (usage.source === "account"
-    ? `${usage.used_percent}% of your account's 5-hour session used (live from Anthropic — `
-      + `all Claude use counts, not just Insights). Budget mark at ${budgetPct}%.`
-    : `≈${spent} tokens spent by Insights in the last 5 h — about ${usage.used_percent}% of a `
-      + `${usage.plan_label} session (rough estimate; sign in with your Claude subscription `
-      + `for live account usage). Budget mark at ${budgetPct}%.`) + reset + week;
+    ? `Session ${Math.round(usage.used_percent || 0)}%${reset}.`
+    : `Session about ${Math.round(usage.used_percent || 0)}% (≈${spent} tokens by brAIn, `
+      + `an estimate)${reset}.`) + weekLine + ` Budget mark at ${budgetPct}%.`;
+  // Why the figure is an estimate, when it is one, and what brAIn's own
+  // runs spent: the same two blocks the header pill's popover carries.
+  const detail = $("#usageDetail");
+  if (detail) {
+    let html = "";
+    try { html = limitsNote(usage) + spendRows(usage); } catch (e) { html = ""; }
+    detail.innerHTML = html;
+  }
 }
 
 // Generation-defaults fields: ⚙ number input id → settings key. These are
@@ -2614,20 +2641,30 @@ function renderSettingsForm(data) {
   renderModelField(data);
   renderNotifyPolicy(data.settings || {});
   $("#setSyncNote").textContent = data.options_synced
-    ? "These are the add-on's own Configuration options — edit them here or on "
-      + "the Configuration tab, it's the same setting either way. Changes apply "
-      + "immediately, no restart."
-    : "The Supervisor isn't reachable, so these are stored in the panel only "
-      + "and override the add-on's Configuration tab until it is.";
+    ? "The same settings as the add-on's Configuration tab."
+    : "Saved in the panel only until the Supervisor answers.";
 }
 
-// ⚙ is six `<details>`, and a section remembers whether it was open —
-// somebody who lives in Advanced should not have to reopen it every visit,
-// and a disclosure that forgets is one people stop using. `prefGet` can
-// throw or answer null (an ingress iframe may be refused storage), so the
-// markup's own `open` is the fallback rather than an assumed shut.
-const SET_SECTIONS = ["account", "insights", "terminal", "defaults", "cameras", "advanced"];
+// ⚙ is eight `<details>`, and a section remembers whether it was open —
+// somebody who lives in Diagnostics should not have to reopen it every
+// visit, and a disclosure that forgets is one people stop using. `prefGet`
+// can throw or answer null (an ingress iframe may be refused storage), so
+// the markup's own `open` is the fallback rather than an assumed shut.
+const SET_SECTIONS = ["account", "usage", "permissions", "sources",
+                      "notifications", "memory", "diagnostics", "guide"];
 const setSectionKey = (name) => "brain.set." + name;
+
+// What opening a section has to fetch. Nothing here runs on the way into
+// the dialog unless its section is already open: a dozen reads for
+// somebody who came to change the model is the cost this arrangement is
+// about.
+const SET_LOADERS = {
+  permissions: () => loadSetHouseRules(),
+  sources: () => { loadCameras(); loadSetCalendars(); },
+  memory: () => loadSetMemory(),
+  diagnostics: () => loadAdvanced(),
+  guide: () => renderSetGuide(),
+};
 
 function restoreSettingsSections() {
   SET_SECTIONS.forEach((name) => {
@@ -2638,24 +2675,20 @@ function restoreSettingsSections() {
     else if (saved === "0") box.open = false;
     box.addEventListener("toggle", () => {
       prefSet(setSectionKey(name), box.open ? "1" : "0");
-      if (name === "advanced" && box.open) loadAdvanced();
-      if (name === "cameras" && box.open) loadCameras();
+      if (box.open && SET_LOADERS[name]) SET_LOADERS[name]();
     });
   });
 }
 
-// The five readings behind Advanced, fetched the first time that section is
-// opened and never on the way into the dialog. Five fetches for somebody who
-// came to change the model is the cost this arrangement is about, and two of
-// them start a 3s poll — so the old shape paid for a request every three
-// seconds behind a section nobody had looked at. `openSettings` is what
-// resets this, not the section closing: a reading that is already on screen
-// is still the reading, and re-fetching it every time the triangle is
-// pressed would be the same bill in smaller instalments. Opening the dialog
-// again DOES reset it, and not only for freshness — `closeBox` stops the
-// deep-check and rehearsal polls, so a second visit with Advanced already
-// open has to ask again or a run in flight goes quiet on the one screen
-// that reports it.
+// The readings behind Diagnostics, fetched the first time that section is
+// opened and never on the way into the dialog. Two of them start a 3s poll,
+// so loading them eagerly paid for a request every three seconds behind a
+// section nobody had looked at. `openSettings` is what resets this, not
+// the section closing: a reading already on screen is still the reading.
+// Opening the dialog again DOES reset it — `closeBox` stops the deep-check
+// and rehearsal polls, so a second visit with Diagnostics already open has
+// to ask again or a run in flight goes quiet on the one screen that
+// reports it.
 let advancedLoaded = false;
 
 function loadAdvanced() {
@@ -2666,6 +2699,10 @@ function loadAdvanced() {
   loadCaptures();
   loadDeep(true);
   loadRehearsal(true);
+  loadDiagAccuracy();
+  loadDiagMeasures();
+  loadDiagUpkeep();
+  loadDiagRuns();
 }
 
 // The line under "Let brAIn act without asking". The switch reaches a
@@ -2675,8 +2712,10 @@ function loadAdvanced() {
 // running (`permission_sessions`, null when it could not look) and this
 // says which open session did not get the current value, and how to end
 // it. Nothing here ends one: a terminal is somebody's work.
-const SKIP_PERMS_NOTE = "Applies to the next terminal session and chat message. "
-  + "Protected entities are refused through brAIn's own tools, not every shell command.";
+// The caveat (protected entities are refused through brAIn's own tools,
+// not every shell command) is its own line under this one and is never
+// replaced: it is the half of the switch that is about safety.
+const SKIP_PERMS_NOTE = "Applies to the next terminal session and chat message.";
 
 function skipPermsStale(data) {
   const on = data.settings && data.settings.dangerously_skip_permissions === true;
@@ -2727,11 +2766,14 @@ async function openSettings() {
   loadAuth();
   advancedLoaded = false;
   camerasLoaded = false;
-  if ($("#setsecCameras") && $("#setsecCameras").open) loadCameras();
-  // Its open state survived the close (it is remembered), so a visit that
-  // lands on an already-expanded Advanced still has to fetch: the section
-  // being open is not the same claim as its rows being current.
-  if ($("#setsecAdvanced").open) loadAdvanced();
+  setCalendarsState.data = null;
+  // A section's open state survived the close (it is remembered), so a
+  // visit that lands on an already-expanded section still has to fetch:
+  // the section being open is not the same claim as its rows being current.
+  SET_SECTIONS.forEach((name) => {
+    const box = document.querySelector(`.setsec[data-sec="${name}"]`);
+    if (box && box.open && SET_LOADERS[name]) SET_LOADERS[name]();
+  });
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -3139,14 +3181,25 @@ async function loadDiagnostics() {
   curiousState(false);
 }
 
-// "Copy for a bug report" writes a report file first and copies THAT: the
-// same single text file a failure would have written (with the full
-// diagnostics appended), so what lands in an issue is one readable file
-// rather than raw JSON, and the same file `brain report` produces.
-// `copyOrSelect` carries the textarea fallback: an ingress iframe may be
-// refused the clipboard outright, and there is no way to ask in advance.
+// Export report (Share) is the one export. With problem files ticked under
+// Developer it copies exactly those, as one text; with none ticked it writes
+// a report file first and copies THAT: the same single text file a failure
+// would have written (with the full diagnostics appended), so what lands in
+// an issue is one readable file rather than raw JSON, and the same file
+// `brain report` produces. It replaced four buttons (Copy selected, Copy
+// all, Write a report now, Copy for a bug report) that were four spellings
+// of one wish. `copyOrSelect` carries the textarea fallback: an ingress
+// iframe may be refused the clipboard outright, and there is no way to ask
+// in advance.
 $("#diagCopy").addEventListener("click", async () => {
   const btn = $("#diagCopy");
+  const ticked = [...document.querySelectorAll("#probBody .probcheck:checked")]
+    .map((box) => box.value);
+  if (ticked.length) {
+    btn.disabled = true;
+    try { await copyReports(ticked); } finally { btn.disabled = false; }
+    return;
+  }
   btn.disabled = true;
   try {
     const made = await api("api/reports/run", { method: "POST", body: "{}" });
@@ -3164,7 +3217,10 @@ $("#diagCopy").addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
-$("#diagRefresh").addEventListener("click", () => { loadDiagnostics(); loadReports(); });
+$("#diagRefresh").addEventListener("click", () => {
+  advancedLoaded = false;
+  loadAdvanced();
+});
 
 // A measurement pass, asked for rather than waited for. Every store on the
 // rows above is written by one nightly pass, so a fix to any of them was
@@ -3180,8 +3236,7 @@ async function measureState(poll) {
     const d = await api("api/baselines");
     const btn = $("#diagMeasure");
     btn.disabled = !!d.running;
-    btn.textContent = d.running
-      ? "Measuring the house…" : "Measure the house now";
+    btn.textContent = d.running ? "Running…" : "Run";
     clearTimeout(measurePoll);
     measurePoll = d.running && poll
       ? setTimeout(() => measureState(true), 5000) : null;
@@ -3189,6 +3244,7 @@ async function measureState(poll) {
       // Finished: the rows above are what the press was about, so they
       // have to be the thing that changes on screen when it lands.
       loadDiagnostics();
+      loadDiagMeasures();
       const last = d.last || {};
       toast(last.error
         ? `Measured, with something missing — ${last.error}`
@@ -3205,7 +3261,7 @@ async function measureState(poll) {
 $("#diagMeasure").addEventListener("click", async () => {
   const btn = $("#diagMeasure");
   btn.disabled = true;
-  btn.textContent = "Measuring the house…";
+  btn.textContent = "Running…";
   try {
     // A 409 means one is already going, which is an answer rather than an
     // error: both presses are watching the same pass.
@@ -3235,12 +3291,20 @@ async function curiousState(poll) {
   try {
     const d = await api("api/curiosity");
     btn.disabled = !!d.running;
-    btn.textContent = d.running ? "Working it out…" : "Ask why now";
+    btn.textContent = d.running ? "Running…" : "Run";
     // Renders only while there is something to ask about — the `Forget`
     // rule: a button that cannot do anything is a control asking to be
     // understood. `curious_total` counts the eligible ones, held or not,
     // because the press deliberately ignores the daily budget.
     btn.hidden = !(d.enabled && (d.curious_total || 0) > 0);
+    const row = btn.closest(".row");
+    if (row) {
+      row.hidden = btn.hidden;
+      const intro = row.previousElementSibling;
+      const head = intro && intro.previousElementSibling;
+      if (intro) intro.hidden = btn.hidden;
+      if (head) head.hidden = btn.hidden;
+    }
     clearTimeout(curiousPoll);
     curiousPoll = d.running && poll
       ? setTimeout(() => curiousState(true), 5000) : null;
@@ -3265,7 +3329,7 @@ async function curiousState(poll) {
 $("#diagCurious")?.addEventListener("click", async () => {
   const btn = $("#diagCurious");
   btn.disabled = true;
-  btn.textContent = "Working it out…";
+  btn.textContent = "Running…";
   try {
     const r = await api("api/curiosity/ask", { method: "POST" });
     toast(r.why ? `Asking: ${r.why}` : "Asking — this takes a few minutes");
@@ -3295,7 +3359,7 @@ function reportRows(data) {
       + `<span class="probwhen">${esc(when)}</span>`
       + `<span class="probhead">${esc(r.headline || r.name)}${count}</span></label>`
       + `<button class="btn tiny probdel" data-prob-del="${esc(r.name)}" `
-      + `aria-label="Delete ${esc(r.name)}" data-tip="Delete this report">✕</button>`
+      + `aria-label="Delete ${esc(r.name)}">Delete</button>`
       + `</div>`;
   }).join("");
 }
@@ -3329,27 +3393,6 @@ async function copyReports(names) {
                            + "copied — paste into the issue");
 }
 
-$("#probCopySel").addEventListener("click", () => {
-  copyReports([...document.querySelectorAll("#probBody .probcheck:checked")]
-    .map((el) => el.value));
-});
-$("#probCopyAll").addEventListener("click", () => {
-  copyReports([...document.querySelectorAll("#probBody .probcheck")]
-    .map((el) => el.value));
-});
-$("#probWrite").addEventListener("click", async () => {
-  const btn = $("#probWrite");
-  btn.disabled = true;
-  try {
-    const made = await api("api/reports/run", { method: "POST", body: "{}" });
-    toast(`Written: ${made.name}`);
-    await loadReports();
-  } catch (e) {
-    toast("Could not write a report: " + e.message);
-  } finally {
-    btn.disabled = false;
-  }
-});
 $("#probBody").addEventListener("click", async (ev) => {
   const del = ev.target.closest("[data-prob-del]");
   if (!del) return;
@@ -3737,32 +3780,29 @@ const AUTH_SOURCE = {
 function renderAuthBox(a) {
   authState = a;
   const rows = [];
+  const c = a.auth_check || {};
   if (!a.authenticated) {
     rows.push('<p class="authbad"><b>Not connected.</b> brAIn cannot analyze anything, '
       + "answer questions, or run the chat until it has a Claude credential.</p>");
   } else {
-    const [where, why] = AUTH_SOURCE[a.source] || ["Signed in", ""];
-    const kind = a.type === "api_key" ? "an Anthropic API key"
-      : a.type === "cli_login" ? "a Claude Code session login"
-      : "a Claude subscription token";
-    const saved = fmtSaved(a.saved_at);
-    rows.push(`<p><b>${esc(where)}</b> — using ${esc(kind)}.`
-      + (saved ? ` Saved ${esc(saved)}.` : "") + `<br><span class="subtext">${esc(why)}</span></p>`);
+    // The answer first, in one line: signed in, and when a real Claude
+    // turn last said so. Where the credential came from and the three
+    // stores are the evidence, so they sit behind Details.
+    const checked = c.checked_at ? ` · checked ${esc(fmtClock(c.checked_at))}` : "";
+    rows.push(`<p class="authline"><b>Signed in</b>${checked}</p>`);
   }
 
   // The verdict, in its own words. A credential that is *shaped* right is
   // not one that works, and the only liveness signal a pasted token has is
   // a 401 when something uses it — so what a real `claude -p` turn last
   // answered is the only honest line here.
-  const c = a.auth_check || {};
   const verdict = {
     ok: ["ok", "Verified with Claude."],
     failed: ["bad", "Claude rejected it: " + (c.error || "no reason given")],
     checking: ["busy", "Verifying with Claude…"],
-    unchecked: ["", "Not verified yet — brAIn checks it the next time you open the panel."],
+    unchecked: ["", "Not verified yet. Recheck asks Claude now."],
   }[c.state] || ["", "Not verified yet."];
-  const when = c.checked_at ? ` (last checked ${esc(fmtSaved(c.checked_at))})` : "";
-  rows.push(`<p class="authverdict ${verdict[0]}">${esc(verdict[1])}${when}</p>`);
+  rows.push(`<p class="authverdict ${verdict[0]}">${esc(verdict[1])}</p>`);
 
   // Every store, not only the one that answered — the same reason
   // `ha login --status` reports three lines. A panel that can see only its
@@ -3771,34 +3811,44 @@ function renderAuthBox(a) {
   const store = (on, name, note) =>
     `<li class="${on ? "on" : "off"}">${on ? "✓" : "—"} ${esc(name)}`
     + (note ? ` <span class="subtext">${esc(note)}</span>` : "") + "</li>";
-  rows.push("<ul class=\"authstores\">"
+  const detail = [];
+  if (a.authenticated) {
+    const [where, why] = AUTH_SOURCE[a.source] || ["Signed in", ""];
+    const kind = a.type === "api_key" ? "an Anthropic API key"
+      : a.type === "cli_login" ? "a Claude Code session login"
+      : "a Claude subscription token";
+    const saved = fmtSaved(a.saved_at);
+    detail.push(`<p><b>${esc(where)}</b>, using ${esc(kind)}.`
+      + (saved ? ` Saved ${esc(saved)}.` : "")
+      + `<br><span class="subtext">${esc(why)}</span></p>`);
+  }
+  detail.push("<ul class=\"authstores\">"
     + store(st.local && st.local.present, "This panel's own store", "/data/secrets")
     + store(st.cli && st.cli.present, "Claude Code's login",
             (st.cli && st.cli.present) ? "live (it refreshes itself)" : "none, or expired")
     + store(st.shared && st.shared.present, "Shared with other add-ons", "/config/.brain/secrets")
     + "</ul>");
+  const wasOpen = !!document.querySelector("#authBody .authdetails[open]");
+  rows.push(`<details class="authdetails"${wasOpen ? " open" : ""}>`
+    + `<summary>Details</summary>${detail.join("")}</details>`);
   $("#authBody").innerHTML = rows.join("");
 
-  // -- the sharing half --
+  // -- the sharing half: one switch, and a line that changes with it --
   const shared = !!(st.shared && st.shared.present);
-  const chip = $("#authShareState");
-  chip.classList.remove("ok", "warn");
-  chip.classList.add(shared ? "ok" : "warn");
-  chip.lastElementChild.textContent = shared ? "Shared" : "Not shared";
-  $("#authShare").classList.toggle("hidden", shared || !a.can_share);
-  $("#authUnshare").classList.toggle("hidden", !shared);
+  const tog = $("#authShareTog");
+  tog.checked = shared;
+  tog.disabled = !shared && !a.can_share;
   $("#authShareNote").textContent = shared
-    ? "Other BRUH add-ons are using this login. Stopping removes the file; the token "
-      + "itself stays valid until you revoke it at claude.ai."
+    ? "Other BRUH add-ons are using this login. The token stays valid until you "
+      + "revoke it at claude.ai."
     : a.can_share
-      ? "One sign-in for the whole family — nothing else has to be signed in separately."
+      ? "One sign-in for the whole family of add-ons."
       // The refusal that has to be a sentence: a Claude Code session token
-      // is live, useful, and unshareable, and a button that failed on press
+      // is live, useful, and unshareable, and a switch that failed on press
       // would read as a broken feature rather than as a real distinction.
       : a.authenticated
-        ? "This login is Claude Code's own session token, which refreshes itself and cannot "
-          + "be shared — a copy would stop working within hours. Use “Mint a shareable "
-          + "token” on the sign-in screen for a long-lived one that can be."
+        ? "This is Claude Code's own session login, which refreshes itself and cannot "
+          + "be shared. Sign in again with a token to share one."
         : "Sign in first.";
   $("#authSignout").classList.toggle("hidden", !a.authenticated);
 }
@@ -3831,18 +3881,18 @@ $("#authRecheck").addEventListener("click", async () => {
   } catch (e) { toast(e.message); }
 });
 
-$("#authShare").addEventListener("click", async () => {
+$("#authShareTog").addEventListener("change", async () => {
+  const tog = $("#authShareTog");
+  const on = tog.checked;
+  tog.disabled = true;
   try {
-    renderAuthBox(await api("api/auth/share", { method: "POST" }));
-    toast("Shared — other BRUH add-ons will pick this login up");
-  } catch (e) { toast(e.message); }
-});
-
-$("#authUnshare").addEventListener("click", async () => {
-  try {
-    renderAuthBox(await api("api/auth/unshare", { method: "POST" }));
-    toast("Stopped sharing");
-  } catch (e) { toast(e.message); }
+    renderAuthBox(await api(on ? "api/auth/share" : "api/auth/unshare", { method: "POST" }));
+    toast(on ? "Shared — other BRUH add-ons will pick this login up" : "Stopped sharing");
+  } catch (e) {
+    tog.checked = !on;
+    tog.disabled = false;
+    toast(e.message);
+  }
 });
 
 // Signing out while a shared copy exists and NOT removing it is a sign-out
@@ -7932,7 +7982,7 @@ function renderDocsNav() {
     hits.forEach(({ sec, count, snippet }) => {
       const b = el("button", "docslink"
         + (sec.id === docsState.section ? " active" : ""));
-      b.appendChild(el("span", "docslinktitle", `${sec.icon}  ${sec.title}`));
+      b.appendChild(el("span", "docslinktitle", sec.title));
       if (snippet) b.appendChild(el("span", "docssnippet", snippet));
       if (count > 1) b.appendChild(el("span", "docscount", `${count} matches`));
       b.addEventListener("click", () => selectDocs(sec.id));
@@ -7941,13 +7991,33 @@ function renderDocsNav() {
     return;
   }
 
-  (window.BRAIN_DOCS || []).forEach((sec) => {
-    const b = el("button", "docslink"
-      + (sec.id === docsState.section ? " active" : ""));
-    b.appendChild(el("span", "docslinktitle", `${sec.icon}  ${sec.title}`));
-    b.addEventListener("click", () => selectDocs(sec.id));
-    nav.appendChild(b);
+  // Eight named groups, each a heading over its pages. No glyph on a row:
+  // the title is what a page is called, and sixty emoji in one column were
+  // sixty more things to read past.
+  docGroups().forEach((g) => {
+    nav.appendChild(el("div", "docsgroup", g.name));
+    g.sections.forEach((sec) => {
+      const b = el("button", "docslink"
+        + (sec.id === docsState.section ? " active" : ""));
+      b.appendChild(el("span", "docslinktitle", sec.title));
+      b.addEventListener("click", () => selectDocs(sec.id));
+      nav.appendChild(b);
+    });
   });
+}
+
+// The guide's sections, grouped as `build-docs.py` emits them (already in
+// group order). A section with no group is shown under "More" rather than
+// dropped: a missing heading must not be a missing page.
+function docGroups() {
+  const out = [];
+  (window.BRAIN_DOCS || []).forEach((sec) => {
+    const name = sec.group || "More";
+    let g = out.find((x) => x.name === name);
+    if (!g) { g = { name, sections: [] }; out.push(g); }
+    g.sections.push(sec);
+  });
+  return out;
 }
 
 // The contents fold. Wherever the nav sits beside the page it is always open
@@ -13455,50 +13525,508 @@ function actingDiagRows(d) {
     + ((hr.not_compiled || []).length ? ` — <i>not understood: `
       + `${(hr.not_compiled || []).map(esc).join("; ")}</i>` : "")
     + (hr.error ? ` — <i>${esc(hr.error)}</i>` : "") + "</li>");
-  const button = t.entities ? "" : '<button class="btn small" id="tripwireMake">'
-    + "Make a tripwire entity</button>";
-  const rules = '<details class="houserules"><summary>Write house rules</summary>'
-    + '<p class="hint">One per line, in your own words — “never turn the heating '
-    + "above 23”, “don’t open the garage after 22:00”. Each is checked against "
-    + "every action brAIn takes, and can only make it more careful.</p>"
-    + '<textarea id="houseRulesText" rows="4"></textarea>'
-    + '<button class="btn small" id="houseRulesSave">Save rules</button></details>';
+  const button = t.entities ? "" : '<button class="btn small" id="tripwireMake" '
+    + 'aria-label="Run: make a tripwire entity">Run</button> '
+    + '<span class="hint">Make a tripwire entity nothing should ever act on.</span>';
   return [diagRow("Changes and the action gate",
-    `<ul>${items.join("")}</ul>${button}${rules}`,
+    `<ul>${items.join("")}</ul>${button}`,
     !!(iv.error || t.file_error || hr.error))];
 }
 
-document.addEventListener("toggle", async (e) => {
-  const det = e.target;
-  if (!(det instanceof HTMLElement) || !det.classList.contains("houserules")
-      || !det.open) return;
+// House rules, in ⚙ → Permissions. Read when that section opens; saved by
+// a press, because a rule is compiled once (one Claude run) on the save.
+async function loadSetHouseRules() {
+  const box = $("#setHouseRules");
+  if (!box || document.activeElement === box) return;
   try {
     const data = await api("api/house-rules");
-    const box = det.querySelector("#houseRulesText");
-    if (box) box.value = (data.rules || []).map((r) => r.text).join("\n");
-  } catch (err) { /* the box stays empty; saving still works */ }
-}, true);
+    box.value = (data.rules || []).map((r) => r.text).join("\n");
+    const missed = (data.rules || []).filter((r) => r.compiled === false);
+    $("#setHouseRulesNote").textContent = missed.length
+      ? `${missed.length} not understood: ${missed[0].error || missed[0].text}` : "";
+  } catch (err) { /* the box stays as it was; saving still works */ }
+}
 
-document.addEventListener("click", async (e) => {
-  const btn = e.target.closest && e.target.closest("#houseRulesSave");
-  if (!btn) return;
-  const box = document.querySelector("#houseRulesText");
-  const rules = (box ? box.value : "").split("\n").map((t) => t.trim())
+$("#setHouseRulesSave").addEventListener("click", async () => {
+  const btn = $("#setHouseRulesSave");
+  const rules = $("#setHouseRules").value.split("\n").map((t) => t.trim())
     .filter(Boolean);
   btn.disabled = true;
   try {
     const data = await api("api/house-rules", {
       method: "POST", body: JSON.stringify({ rules }) });
     const missed = (data.rules || []).filter((r) => !r.compiled);
+    $("#setHouseRulesNote").textContent = missed.length
+      ? `${missed.length} not understood: ${missed[0].error}` : "";
     toast(missed.length
       ? `Saved — ${missed.length} not understood: ${missed[0].error}`
       : "House rules saved");
-    loadDiagnostics();
+    if (advancedLoaded) loadDiagnostics();
   } catch (err) {
     toast("Could not save the rules: " + err);
+  } finally {
     btn.disabled = false;
   }
 });
+
+// ------------------------------------------------- ⚙ → Diagnostics' readings
+// What used to be spread over four other screens — how right brAIn has
+// been (Findings), what it has measured (Knowledge), the overnight check
+// and the access review (Upkeep), and the background runs (the Ask tab's
+// chips) — read here, because they inspect brAIn rather than the house.
+// Each block is its own fetch and its own sentence when that fetch fails:
+// one unreadable reading must not blank the other four.
+
+function diagEmpty(host, text) {
+  host.textContent = "";
+  host.appendChild(el("p", "hint tight", text));
+}
+
+// How right each producer has been, from the endings people gave. A row
+// needs SET_SCORE_MIN endings before it is a track record rather than an
+// anecdote. A producer that has never been right and has been wrong three
+// times is offered Ignore — the mute that stops the rule, where answering
+// each card one at a time only stops one wording.
+const SET_SCORE_MIN = 3;
+
+async function loadDiagAccuracy() {
+  const host = $("#diagAccuracy");
+  if (!host) return;
+  let data;
+  try {
+    data = await api("api/findings");
+  } catch (e) {
+    diagEmpty(host, "Could not read the scorecard: " + e.message);
+    return;
+  }
+  host.textContent = "";
+  const muted = data.muted || [];
+  const mutedIds = new Set(muted.map((m) => m.source));
+  const rows = (data.scorecard || []).filter(
+    (r) => r.total >= SET_SCORE_MIN && !mutedIds.has(r.source));
+  if (!rows.length && !muted.length) {
+    diagEmpty(host, "Not enough answers yet. A producer is scored once you have "
+      + `answered ${SET_SCORE_MIN} of its cards.`);
+    return;
+  }
+  rows.forEach((r) => {
+    const row = el("div", "drow");
+    row.appendChild(el("div", "dk", r.title || r.source || "?"));
+    const v = el("div", "dv" + (!r.confirmed && r.wrong ? " dbad" : ""),
+      `${r.confirmed} of ${r.total} confirmed`);
+    if (r.source && !r.confirmed && r.wrong >= 3) {
+      const stop = el("button", "btn tiny", "Ignore");
+      stop.setAttribute("aria-label", `Ignore: stop raising ${r.title || r.source}`);
+      stop.addEventListener("click", () => setMute(r.source, true, stop));
+      v.appendChild(document.createTextNode(" "));
+      v.appendChild(stop);
+    }
+    row.appendChild(v);
+    host.appendChild(row);
+  });
+  muted.forEach((m) => {
+    const row = el("div", "drow");
+    row.appendChild(el("div", "dk", m.title || m.source));
+    const v = el("div", "dv", "Not raised any more ");
+    const again = el("button", "btn tiny", "Restore");
+    again.setAttribute("aria-label", `Restore: raise ${m.title || m.source} again`);
+    again.addEventListener("click", () => setMute(m.source, false, again));
+    v.appendChild(again);
+    row.appendChild(v);
+    host.appendChild(row);
+  });
+}
+
+async function setMute(source, on, btn) {
+  btn.disabled = true;
+  try {
+    await api(on ? "api/findings/mute" : "api/findings/unmute", {
+      method: "POST", body: JSON.stringify({ source }) });
+    toast(on ? "Not raising these any more" : "brAIn will raise these again");
+  } catch (e) {
+    toast(e.message);
+  }
+  loadDiagAccuracy();
+}
+
+// The seven measurements brAIn builds on its own, one line each: the name,
+// what it says, and how far along it is. "Not started", "still collecting"
+// and "could not look" are three different answers, so each row carries
+// the store's own words rather than a blank.
+const SET_MEASURES = [
+  ["rhythm", "When the house wakes"],
+  ["baselines", "What is normal here"],
+  ["thermal", "How rooms hold heat"],
+  ["closures", "Doors and windows"],
+  ["appliances", "Machines"],
+  ["habits", "Habits"],
+  ["energy", "Energy this week"],
+];
+
+function setMeasureState(st) {
+  const state = String(st.state || "not_started");
+  const when = (epoch) => (Number(epoch) ? timeAgo(new Date(epoch * 1000).toISOString()) : "");
+  if (state === "collecting") {
+    const have = Number(st.have) || 0;
+    const need = Number(st.need) || 0;
+    return need ? `collecting, ${have} of ${need} ${st.unit || "days"}`
+      : `collecting, ${have} ${st.unit || "days"}`;
+  }
+  if (state === "ready") return st.updated_at ? `updated ${when(st.updated_at)}` : "ready";
+  if (state === "stale") return st.updated_at ? `stale since ${when(st.updated_at)}` : "stale";
+  if (state === "unavailable") return "not available";
+  return "not started";
+}
+
+async function loadDiagMeasures() {
+  const host = $("#diagMeasures");
+  if (!host) return;
+  let data;
+  try {
+    data = await api("api/knowledge/house");
+  } catch (e) {
+    diagEmpty(host, "Could not read what brAIn has measured: " + e.message);
+    return;
+  }
+  host.textContent = "";
+  const stores = (data && data.stores) || {};
+  SET_MEASURES.forEach(([id, name]) => {
+    const st = stores[id] || {};
+    const row = el("div", "drow");
+    row.dataset.store = id;
+    row.appendChild(el("div", "dk", name));
+    const said = String(st.summary || st.reason || "").trim();
+    const v = el("div", "dv" + (st.state === "stale" ? " dbad" : ""),
+      setMeasureState(st));
+    if (said) v.appendChild(el("span", "hint", " " + said));
+    row.appendChild(v);
+    host.appendChild(row);
+  });
+}
+
+// The overnight health check and the access review: what each last found,
+// and a Run that starts one now. Both runs take minutes, so the press
+// starts it and this reads the outcome back while it is running.
+const setUpkeep = { sre: null, access: null, poll: 0 };
+
+function setUpkeepLine(host, text, bad) {
+  host.appendChild(el("p", "upline" + (bad ? " warn" : ""), text));
+}
+
+function renderDiagUpkeep() {
+  const sre = setUpkeep.sre || {};
+  const host = $("#diagOvernight");
+  if (host) {
+    host.textContent = "";
+    if (sre.fetch_error) setUpkeepLine(host, "Could not ask the add-on: " + sre.fetch_error, true);
+    if (sre.running) setUpkeepLine(host, "Reading the log and the mesh…");
+    if (sre.last_error) setUpkeepLine(host, "The last run did not finish: " + sre.last_error, true);
+    const last = sre.last;
+    if (last) {
+      const when = timeAgo(new Date(last.at * 1000).toISOString());
+      setUpkeepLine(host, last.note ? `Last run ${when}: ${last.note}.`
+        : `Last run ${when}: ${last.records} record${last.records === 1 ? "" : "s"} read, `
+          + `${last.causes} cause${last.causes === 1 ? "" : "s"} found, `
+          + `${last.filed} new, ${last.cleared} cleared.`);
+    } else if (!sre.running && !sre.fetch_error) {
+      setUpkeepLine(host, "It runs once a night, after 03:00, and costs nothing on a quiet night.");
+    }
+    $("#diagOvernightRun").disabled = !!sre.running;
+  }
+  const access = setUpkeep.access || {};
+  const box = $("#diagAccess");
+  if (box) {
+    box.textContent = "";
+    if (access.fetch_error) setUpkeepLine(box, "Could not ask the add-on: " + access.fetch_error, true);
+    if (access.running) setUpkeepLine(box, "Reviewing…");
+    if (access.last_error) setUpkeepLine(box, "The last review did not finish: " + access.last_error, true);
+    if (access.sentence) {
+      box.appendChild(el("p", "upsentence", access.sentence));
+      if (access.at) {
+        setUpkeepLine(box, "Reviewed " + timeAgo(new Date(access.at * 1000).toISOString()));
+      }
+    } else if (!access.running && !access.fetch_error) {
+      setUpkeepLine(box, "A sentence once a week about users, what voice can reach and "
+        + "add-on privileges.");
+    }
+    if (access.open) {
+      setUpkeepLine(box, `${access.open} security finding${access.open === 1 ? "" : "s"} `
+        + "waiting on you.");
+    }
+    $("#diagAccessRun").disabled = !!access.running;
+  }
+}
+
+async function loadDiagUpkeep() {
+  const get = (path) => api(path).catch((e) => ({ fetch_error: e.message }));
+  const [sre, access] = await Promise.all([get("api/sre"), get("api/access")]);
+  setUpkeep.sre = sre;
+  setUpkeep.access = access;
+  renderDiagUpkeep();
+  clearTimeout(setUpkeep.poll);
+  if ((sre && sre.running) || (access && access.running)) {
+    setUpkeep.poll = setTimeout(() => {
+      if ($("#setModal").classList.contains("open")) loadDiagUpkeep();
+    }, 3000);
+  }
+}
+
+async function runDiagUpkeep(btn, path, said) {
+  btn.disabled = true;
+  try {
+    await api(path, { method: "POST" });
+    toast(said);
+  } catch (e) {
+    toast(e.message || "that didn't work");
+  }
+  loadDiagUpkeep();
+}
+
+$("#diagOvernightRun").addEventListener("click", () => runDiagUpkeep(
+  $("#diagOvernightRun"), "api/sre/run", "Checking — anything it finds arrives as a card"));
+$("#diagAccessRun").addEventListener("click", () => runDiagUpkeep(
+  $("#diagAccessRun"), "api/access/run", "Reviewing…"));
+
+// Runs: every background face that has driven Claude here, with how many
+// conversations it left. The Ask tab lists your own chats only; this is
+// where the voice turns, automation tasks, card and fix runs, the memory
+// passes and the Resident's looks are counted and opened.
+const setRuns = { open: "", rows: {} };
+
+async function loadDiagRuns() {
+  const host = $("#diagRuns");
+  if (!host) return;
+  let data;
+  try {
+    data = await api("api/chat/conversations?source=you");
+  } catch (e) {
+    diagEmpty(host, "Could not read the runs: " + e.message);
+    return;
+  }
+  host.textContent = "";
+  const kinds = (data.sources || []).filter((o) => o.id !== "you" && o.count);
+  if (!kinds.length) {
+    diagEmpty(host, "Nothing but your own chats has run yet.");
+    return;
+  }
+  kinds.forEach((o) => {
+    const det = el("details", "diagrun");
+    det.dataset.source = o.id;
+    if (setRuns.open === o.id) det.open = true;
+    const sum = el("summary", null, `${o.label} `);
+    sum.appendChild(el("span", "kcount", String(o.count)));
+    det.appendChild(sum);
+    if (o.blurb) det.appendChild(el("p", "hint tight", o.blurb));
+    const list = el("div", "diagrunlist");
+    det.appendChild(list);
+    det.addEventListener("toggle", () => {
+      if (!det.open) { if (setRuns.open === o.id) setRuns.open = ""; return; }
+      setRuns.open = o.id;
+      loadDiagRunRows(o.id, list);
+    });
+    if (det.open) loadDiagRunRows(o.id, list);
+    host.appendChild(det);
+  });
+}
+
+async function loadDiagRunRows(source, list) {
+  list.textContent = "Loading…";
+  let data;
+  try {
+    data = await api(`api/chat/conversations?source=${encodeURIComponent(source)}`);
+  } catch (e) {
+    list.textContent = "Could not read them: " + e.message;
+    return;
+  }
+  list.textContent = "";
+  const rows = (data.conversations || []).slice(0, 10);
+  if (!rows.length) { list.appendChild(el("p", "hint tight", "None kept.")); return; }
+  rows.forEach((c) => {
+    const link = el("a", "diagrunrow", c.title || c.id);
+    link.href = "#";
+    link.appendChild(el("span", "hint", ` ${c.age || ""}`));
+    link.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      if (c.view_only && typeof viewConversation === "function") {
+        viewConversation(c);
+      } else if (typeof resumeConversation === "function") {
+        closeBox("#setModal");
+        resumeConversation(c);
+      }
+    });
+    list.appendChild(link);
+  });
+}
+
+// --------------------------------------------------------- ⚙ → Memory
+// The memory document and the queue waiting to be filed into it. The queue
+// files itself once a day (sooner when it grows), so there is no button
+// to force a pass here — only a read-only list and its count, read in one
+// call so the two cannot disagree. The document is edited in place: Edit
+// opens it as text and Save writes it back, and a pass that lands while
+// you are editing never overwrites the box.
+const setMem = { text: "", editing: false, dirty: false };
+
+async function loadSetMemory() {
+  let data;
+  try {
+    data = await api("api/knowledge");
+  } catch (e) {
+    $("#setMemView").textContent = "Could not read memory: " + e.message;
+    return;
+  }
+  const items = data.inbox || [];
+  const pending = Number(data.inbox_pending);
+  const count = Number.isFinite(pending) ? pending : items.length;
+  $("#setMemCount").textContent = String(count);
+  const queue = $("#setMemQueue");
+  queue.textContent = "";
+  if (!items.length) {
+    queue.appendChild(el("p", "hint tight", "Nothing waiting."));
+  }
+  items.slice().reverse().forEach((f) => {
+    const row = el("div", "setmemitem");
+    row.appendChild(el("span", "setmemtext", f.text || ""));
+    if (f.source) row.appendChild(el("span", "hint", ` ${f.source}`));
+    queue.appendChild(row);
+  });
+  const hidden = Math.max(0, count - items.length);
+  if (hidden) queue.appendChild(el("p", "hint tight", `…and ${hidden} more waiting.`));
+  if (setMem.editing) return;
+  setMem.text = data.shared_memory || "";
+  const view = $("#setMemView");
+  if (setMem.text.trim()) {
+    view.innerHTML = mdToHtml(setMem.text);
+  } else {
+    view.textContent = "Nothing learned yet. Edit starts the document.";
+  }
+}
+
+function setMemEditing(on) {
+  setMem.editing = on;
+  setMem.dirty = false;
+  $("#setMemTa").classList.toggle("hidden", !on);
+  $("#setMemView").classList.toggle("hidden", on);
+  $("#setMemEdit").classList.toggle("hidden", on);
+  $("#setMemSave").classList.toggle("hidden", !on);
+  $("#setMemCancel").classList.toggle("hidden", !on);
+}
+
+$("#setMemEdit").addEventListener("click", () => {
+  $("#setMemTa").value = setMem.text.trim() ? setMem.text
+    : (typeof MEM_TEMPLATE === "string" ? MEM_TEMPLATE : "# Home Memory\n");
+  setMemEditing(true);
+  $("#setMemTa").focus();
+});
+$("#setMemTa").addEventListener("input", () => { setMem.dirty = true; });
+$("#setMemCancel").addEventListener("click", () => {
+  if (setMem.dirty && !window.confirm("Discard your unsaved memory edits?")) return;
+  setMemEditing(false);
+  loadSetMemory();
+});
+$("#setMemSave").addEventListener("click", async () => {
+  const text = $("#setMemTa").value;
+  const btn = $("#setMemSave");
+  btn.disabled = true;
+  try {
+    await api("api/memory", { method: "PUT", body: JSON.stringify({ text }) });
+    setMem.text = text;
+    setMemEditing(false);
+    toast("Memory saved");
+    loadSetMemory();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ------------------------------------------------- ⚙ → Sources: calendars
+// Which calendars brAIn may read for what is coming up. Off until somebody
+// ticks one: a calendar is the most personal thing a house holds. Its
+// safety note is on the page beside the list, never behind anything.
+const setCalendarsState = { data: null, saving: false };
+
+async function loadSetCalendars() {
+  const host = $("#setCalendars");
+  if (!host) return;
+  if (setCalendarsState.data) { renderSetCalendars(); return; }
+  try {
+    setCalendarsState.data = await api("api/occasions");
+  } catch (e) {
+    host.textContent = "Could not read the calendars: " + e.message;
+    return;
+  }
+  renderSetCalendars();
+}
+
+function renderSetCalendars() {
+  const host = $("#setCalendars");
+  const data = setCalendarsState.data || {};
+  const available = data.available || [];
+  const chosen = new Set(data.calendars || []);
+  host.textContent = "";
+  if (!available.length) {
+    host.appendChild(el("p", "hint tight", "No calendars found in Home Assistant."));
+    return;
+  }
+  available.forEach((cal) => {
+    const label = el("label", "setcam");
+    const tick = document.createElement("input");
+    tick.type = "checkbox";
+    tick.className = "tog";
+    tick.checked = chosen.has(cal.entity_id);
+    tick.dataset.cal = cal.entity_id;
+    tick.addEventListener("change", saveSetCalendars);
+    label.appendChild(tick);
+    label.appendChild(el("span", null, cal.name || cal.entity_id));
+    host.appendChild(label);
+  });
+}
+
+async function saveSetCalendars() {
+  if (setCalendarsState.saving) return;
+  setCalendarsState.saving = true;
+  const picked = [...document.querySelectorAll("#setCalendars input[data-cal]")]
+    .filter((t) => t.checked).map((t) => t.dataset.cal);
+  try {
+    await api("api/settings", { method: "PUT",
+      body: JSON.stringify({ occasion_calendars: picked }) });
+    if (setCalendarsState.data) setCalendarsState.data.calendars = picked;
+    toast(picked.length ? "brAIn will read those calendars tonight."
+      : "brAIn will not read any calendar.");
+  } catch (err) {
+    toast("Could not save: " + err.message);
+  } finally {
+    setCalendarsState.saving = false;
+  }
+}
+
+// ---------------------------------------------------------- ⚙ → Guide
+// The docs, by group. Help left the tab bar (it is not a daily job), so
+// this is the way in: each group opens the docs pane at its first page.
+function renderSetGuide() {
+  const nav = $("#setGuide");
+  if (!nav || nav.childElementCount) return;
+  docGroups().forEach((g) => {
+    const link = el("a", "setguidelink", g.name);
+    link.href = "#";
+    link.appendChild(el("span", "setguidesub", g.sections.map((x) => x.title)
+      .slice(0, 3).join(" · ") + (g.sections.length > 3 ? " …" : "")));
+    link.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      openGuide(g.sections[0].id);
+    });
+    nav.appendChild(link);
+  });
+}
+
+function openGuide(sectionId) {
+  closeBox("#setModal");
+  switchView("docs");
+  if (sectionId) selectDocs(sectionId);
+  window.scrollTo(0, 0);
+}
 
 // Delegated, because the diagnostics body is rebuilt on every open.
 document.addEventListener("click", async (e) => {

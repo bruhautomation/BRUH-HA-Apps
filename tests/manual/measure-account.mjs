@@ -21,10 +21,14 @@
 //     the verdict of the last real check — three stores, always, because a
 //     surface that can see only its own answers "not signed in" to somebody
 //     who is. That is the bug `ha login --status` had.
-//   * sharing is a control with two states and a note that changes with
-//     them, and the note says what sharing costs (/config is in HA backups).
-//   * a login that CANNOT be shared (Claude Code's own session token) hides
-//     the button and says why, rather than offering a press that fails.
+//   * sharing is a switch (input.tog) with two states and a note that
+//     changes with them, and the box says what sharing costs (a shared login
+//     travels in Home Assistant backups).
+//   * a login that CANNOT be shared (Claude Code's own session token)
+//     disables the switch and says why, rather than offering a press that
+//     fails.
+//   * Recheck is the verb for "ask Claude now", and Sign out is neutral at
+//     rest — a red button is a warning about a press nobody has made.
 //   * every target clears the touch floor and nothing scrolls sideways.
 //
 // Drives the panel's real renderers behind a stubbed fetch. A copy of
@@ -141,11 +145,13 @@ for (const width of WIDTHS) {
     stores: [...document.querySelectorAll('.authstores li')]
       .map((li) => ({ text: li.textContent.trim(), on: li.classList.contains('on') })),
     verdict: (document.querySelector('.authverdict') || {}).className || '',
-    shareChip: document.querySelector('#authShareState').textContent.trim(),
+    shareOn: document.querySelector('#authShareTog').checked,
+    shareDisabled: document.querySelector('#authShareTog').disabled,
+    shareTog: document.querySelector('#authShareTog').classList.contains('tog'),
     shareNote: document.querySelector('#authShareNote').textContent,
-    shareShown: !document.querySelector('#authShare').classList.contains('hidden'),
-    unshareShown: !document.querySelector('#authUnshare').classList.contains('hidden'),
     signoutShown: !document.querySelector('#authSignout').classList.contains('hidden'),
+    signoutCls: document.querySelector('#authSignout').className,
+    recheck: document.querySelector('#authRecheck').textContent.trim(),
     docWidth: document.documentElement.scrollWidth,
     viewport: window.innerWidth,
   }));
@@ -167,10 +173,12 @@ for (const width of WIDTHS) {
   if (!/^authverdict ok$/.test(acct.verdict.trim())) {
     note(where, `the verdict of the last check is missing or unstyled: "${acct.verdict}"`);
   }
-  if (acct.shareChip !== 'Not shared') note(where, `share chip reads "${acct.shareChip}"`);
-  if (!acct.shareShown) note(where, 'a shareable login offers no way to share it');
-  if (acct.unshareShown) note(where, '"Stop sharing" shown with nothing shared');
+  if (!acct.shareTog) note(where, 'sharing is not a toggle');
+  if (acct.shareOn) note(where, 'the share switch reads on with nothing shared');
+  if (acct.shareDisabled) note(where, 'a shareable login offers no way to share it');
   if (!acct.signoutShown) note(where, 'no way to sign out');
+  if (/danger/.test(acct.signoutCls)) note(where, 'Sign out is red at rest');
+  if (acct.recheck !== 'Recheck') note(where, `the re-check button says "${acct.recheck}"`);
   // A credential must never be rendered. This payload is read out loud in
   // bug reports and screenshotted.
   if (/sk-ant/.test(acct.body)) note(where, 'the account section renders a credential');
@@ -187,22 +195,20 @@ for (const width of WIDTHS) {
   }
 
   // ---- sharing is a real two-state control ----------------------------
-  await page.click('#authShare');
-  await page.waitForFunction(() =>
-    !document.querySelector('#authUnshare').classList.contains('hidden'));
+  await page.click('.sharebox label.check');
+  await page.waitForFunction(() => document.querySelector('#authShareTog').checked
+    && !document.querySelector('#authShareTog').disabled);
   const after = await page.evaluate(() => ({
-    chip: document.querySelector('#authShareState').textContent.trim(),
-    shareShown: !document.querySelector('#authShare').classList.contains('hidden'),
+    note: document.querySelector('#authShareNote').textContent,
     sharedStore: [...document.querySelectorAll('.authstores li')]
       .some((li) => /Shared/.test(li.textContent) && li.classList.contains('on')),
   }));
-  if (after.chip !== 'Shared') note(where, `after sharing the chip reads "${after.chip}"`);
-  if (after.shareShown) note(where, '"Share it" still offered after sharing');
+  if (!/using this login/.test(after.note)) note(where, `after sharing the note reads "${after.note}"`);
   if (!after.sharedStore) note(where, 'the store list did not notice the share');
 
-  await page.click('#authUnshare');
-  await page.waitForFunction(() =>
-    !document.querySelector('#authShare').classList.contains('hidden'));
+  await page.click('.sharebox label.check');
+  await page.waitForFunction(() => !document.querySelector('#authShareTog').checked
+    && !document.querySelector('#authShareTog').disabled);
 
   // ---- a login that cannot be shared says so, and offers no button ----
   await page.evaluate(() => { window.__auth = window.__mkAuth('cli'); });
@@ -217,13 +223,13 @@ for (const width of WIDTHS) {
     const data = await resp.json();
     window.renderAuthBox ? window.renderAuthBox(data) : null;
     return {
-      shareShown: !document.querySelector('#authShare').classList.contains('hidden'),
+      shareOffered: !document.querySelector('#authShareTog').disabled,
       note: document.querySelector('#authShareNote').textContent,
     };
   });
   if (cli.note) {
-    if (cli.shareShown) {
-      note(where, 'a session login that cannot be shared still offers the button');
+    if (cli.shareOffered) {
+      note(where, 'a session login that cannot be shared still offers the switch');
     }
     if (!/refresh/i.test(cli.note)) {
       note(where, `the unshareable case never explains itself: "${cli.note.slice(0, 60)}"`);
@@ -240,7 +246,7 @@ for (const width of WIDTHS) {
   // section that a person reaches for on a phone, precisely when the panel
   // has stopped working, would come to have 36px targets in it.
   const small = !touch ? [] : await page.evaluate((floor) =>
-    [...document.querySelectorAll('.authbtns button')]
+    [...document.querySelectorAll('.authbtns button, .sharebox label.check')]
       .filter((b) => b.getBoundingClientRect().height > 0
                   && b.getBoundingClientRect().height < floor)
       .map((b) => `${b.textContent.trim()} @${

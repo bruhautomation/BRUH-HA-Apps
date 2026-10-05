@@ -1,10 +1,5 @@
 # brAIn
 
-**Your house already has nerves. Now give it a brAIn.**
-
-Claude plus a suite of new tools hands it the keys. Stop programming your house — let it
-think.
-
 > ### Back up Home Assistant first — somewhere that isn't this machine.
 >
 > brAIn edits your real configuration: automations, dashboards, helpers, entities. It is
@@ -703,7 +698,7 @@ Everything below the floor is **quiet**: no message, and nothing lost — it is
 on the Findings feed and in Home Assistant's Repairs, and it counts towards
 `binary_sensor.brain_needs_you`.
 
-**Your own sentence.** ⚙ → Insights → *What deserves a notification* takes one
+**Your own sentence.** ⚙ → Notifications → *What deserves a notification* takes one
 sentence in your own words, for example "wake me for water, smoke, the freezer or
 the front door at night; batteries can wait for Saturday". Before brAIn sends
 anything in the middle tier (above your floor, not an emergency), it reads that
@@ -736,7 +731,7 @@ list. Yes adds a line to your sentence, listed under the box in ⚙ with a Remov
 No is remembered. Critical and safety alerts are never counted, and nothing
 changes until you answer.
 
-**Saying it out loud.** ⚙ → Advanced → *Say urgent problems aloud* is off by
+**Saying it out loud.** ⚙ → Notifications → *Say urgent problems aloud* is off by
 default. When it is on, a serious, urgent problem from one of brAIn's own house
 checks is announced on the voice satellite in the room where motion was just seen,
 as well as sent to your phone. It never speaks to an empty house, during quiet
@@ -1156,8 +1151,8 @@ simply because you prefer it.
 By default the terminal and the chat ask before Claude runs a command, edits a file
 or changes something in Home Assistant. Reading is never asked about.
 
-To stop the asking, turn on **Let brAIn act without asking**. It is in ⚙ → Terminal
-& chat and on the add-on's Configuration tab, and they are the same switch. It
+To stop the asking, turn on **Let brAIn act without asking**. It is in ⚙ → Permissions
+and on the add-on's Configuration tab, and they are the same switch. It
 applies to the next terminal session and the chat's next message, with no restart; a
 chat that is in the middle of an answer finishes it first. A terminal session that is
 already open keeps the setting it started with, and reopening the classic terminal goes
@@ -2556,9 +2551,9 @@ household — if the only explanation it can think of is about a person rather
 than about the house, the answer is "could not tell".
 
 You can see what it is curious about, what it has worked out, and how much of
-today's budget is left under **⚙ → Diagnostics**, along with an **Ask why
-now** button that asks the next question without waiting. That button is the
-one control in that dialog that costs a Claude turn, and it says so.
+today's budget is left under **⚙ → Diagnostics**; **Developer → Why somebody
+did something → Run** asks the next question without waiting. It costs one Claude
+turn, and the line beside it says so.
 
 From a terminal:
 
@@ -2814,37 +2809,47 @@ itself always runs, because it is the ingress target.
 
 ### ⚙ Settings
 
-Six sections, and you only open the ones you need.
+Eight sections, and you only open the ones you need.
 
-* **Claude account** *(open)* — who brAIn is signed in as, which of the three
-  credential stores holds it, when it was last verified, and the buttons to
-  sign in again, re-check now or sign out. The box below it shares that login
-  with the other BRUH add-ons, and says what that costs: the file it writes is
-  under `/config`, which rides into Home Assistant backups.
-* **Insights** *(open)* — the switch that pauses all automatic generation, your
-  Claude subscription, the share of each 5-hour session Insights may spend,
-  the meter showing where that session is now, and whether a card fetches what
-  it needs or is handed the whole home.
-* **Terminal & chat** — whether brAIn asks before it acts (**Let brAIn act
-  without asking**, the same switch as the Configuration tab's), which face the Ask
-  tab shows (chat or the full terminal), and how many conversations keep a live
-  Claude Code process.
-* **Generation defaults** — refresh interval, when a card actually refreshes,
-  days of history, timeout, model, and how many past runs are kept. These are
-  the add-on's own Configuration options; editing them here or on the
-  Configuration tab is the same setting either way. **How hard brAIn thinks**
-  is greyed out while a model is chosen, because that model then runs every job.
-* **Cameras** — which cameras brAIn may look at on its own, and how many looks
-  it has used today. A robot vacuum's floor map is published as a camera too;
-  those are left out unless one is already ticked.
-* **Advanced** — Diagnostics (with *Changes and the action gate*: the
-  tripwire and house rules), problem reports, corpus capture, the deep check
-  and the rehearsal. Nothing here is fetched until you open it, because four of
-  those readings cost a request and two of them start a poll.
+* **Account** *(open)* — signed in or not, and when Claude last said the login
+  works. **Recheck** asks again now; **Sign in again** opens the sign-in screen;
+  **Sign out** asks once before it does anything. **Details** shows which of the
+  three credential stores holds the login. The switch below shares that login
+  with the other BRUH add-ons, and the line under it says what that costs: a
+  shared login is stored in Home Assistant backups.
+* **Usage & schedule** *(open)* — this session's and this week's usage, the
+  switch that pauses all automatic generation, your Claude subscription, the
+  share of each 5-hour session automatic insights may spend, and whether a card
+  fetches what it needs or is handed the whole home. **Advanced** holds the
+  generation defaults: refresh interval, when a card actually refreshes, days
+  of history, timeout, model, how hard brAIn thinks (greyed out while a model
+  is chosen, because that model then runs every job) and how many past runs
+  are kept. These are the add-on's own Configuration options; editing them here
+  or on the Configuration tab is the same setting.
+* **Permissions** — **Let brAIn act without asking** (the same switch as the
+  Configuration tab's), with the line that stays under it: protected entities
+  are refused through brAIn's own tools, not every shell command. **House rules**
+  can only make brAIn more careful. **Advanced** holds which face the Ask tab
+  shows and how many conversations keep a live Claude Code process.
+* **Sources** — which cameras brAIn may look at on its own (and how many looks
+  it has used today), and which calendars it may read. A robot vacuum's floor
+  map is published as a camera too; those are left out unless one is already
+  ticked.
+* **Notifications** — what deserves a notification, in your own words, and
+  whether urgent problems are said aloud.
+* **Memory** — the memory document, with **Edit** and **Export**, and what is
+  waiting to be filed into it. The queue files itself once a day.
+* **Diagnostics** — opens on **Anything wrong?**, then how right each kind of
+  report has been, what brAIn has measured, the overnight health check, who
+  can reach the house, and the background runs by kind (voice, automations,
+  cards, fixes, memory passes). **Run** starts a measurement, a check or a
+  review now; **Export report** (**Share**) copies one redacted file for a bug
+  report. **Developer** holds the problem files, corpus capture, the deep check
+  and the rehearsal. Nothing here is fetched until you open it.
+* **Guide** — this guide, in eight groups. Help is no longer a tab.
 
-A section remembers whether you left it open. Where a control's full
-explanation did not fit in a sentence, the rest is on the **?** beside it —
-press it (or tab to it); it is a thumb-sized target on a phone.
+A section remembers whether you left it open. There are no **?** bubbles: every
+hint is on the page.
 
 ### Which model does which job
 
@@ -2857,7 +2862,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 | **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
 | **Fable** | the **deep review** you press for on House → Knowledge | Never from a timer — a scheduler cannot name it |
 
-The **thinking** dial (⚙ → Insights, or `thinking` in `/api/settings`) is
+The **thinking** dial (⚙ → Usage & schedule → Advanced, or `thinking` in `/api/settings`) is
 `light` / `normal` / `generous`. *Light* steps down only the jobs where a
 wrong answer is cheap (a card, a question) and never the apply run;
 *generous* steps up only the reasoning jobs, never a naming call. A typed
@@ -3043,9 +3048,10 @@ one is measured was invisible until the next night. The button starts a pass —
 reads a month of statistics, so it takes a few minutes and the panel tells you when
 it lands — and it costs no Claude turns.
 
-**⚙ > Problems** is the other half. Every incident brAIn has written up is listed
-there with a checkbox; **Copy selected**, **Copy all** and **Write a report now**
-put the text where you can paste it. See [Reports](#reports).
+**⚙ > Diagnostics > Developer > Problems** is the other half. Every incident brAIn
+has written up is listed there with a checkbox; **Export report** (**Share**) copies
+the ticked ones, or with none ticked writes a fresh report and copies that. See
+[Reports](#reports).
 
 ## What brAIn is measuring
 
@@ -3189,8 +3195,8 @@ fixer with `protected_entities` covering the helper it would rename are all
 somebody's conversation to make room for itself.
 
 Run it from the terminal (`brain doctor --deep`, `--json` for the whole object,
-non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics → Run
-deep check**, which fills the stage list in as it goes. The last run's verdict
+non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics → Developer →
+Deep check → Run**, which fills the stage list in as it goes. The last run's verdict
 rides in the diagnostics bundle, so a bug report carries it without anybody
 having to ask.
 
@@ -3230,8 +3236,8 @@ up. And **cleanup is the first thing the plain `brain doctor` verifies on its
 next run**: it warns if any `brain_test_*` automation, entity or helper is still
 there, and names the command that removes it.
 
-**If something was left behind, one press takes it out.** ⚙ → Diagnostics grows a
-**Clear up what was left** button while there is anything to clear, and
+**If something was left behind, one press takes it out.** ⚙ → Diagnostics → Developer
+grows a **Delete** beside the rehearsal while there is anything to clear, and
 `brain doctor --sweep` does the same from the terminal. It creates nothing,
 asks no model and spends nothing — it only ever removes what is already named
 `brain_test_*`. Until it existed, the only way out of a failed cleanup was to run
@@ -3270,15 +3276,16 @@ JSON fields that carry tokens. Prompts and replies are never in them in the firs
 place. Entity names **are** — a report about "a sensor" is not a report — and
 `brain report --no-names` hashes them if that matters to you.
 
-Read them in **⚙ → Problems**: a checkbox each, **Copy selected**, **Copy all**, and
-**Write a report now** for the case where nothing failed but something is wrong.
+Read them in **⚙ → Diagnostics → Developer**: a checkbox each, and **Export report**
+(**Share**), which copies the ticked ones or, with none ticked, writes one for the
+case where nothing failed but something is wrong.
 `brain report` from a terminal writes the same single file and prints its path,
 and it assembles it itself when the panel is down — which is exactly when a report
 is most needed.
 
 While the health verdict is not `ok`, Home Assistant's own **Settings → Repairs**
 carries a *brAIn hit a problem* entry with the reason. It is not fixable from there
-on purpose: the fix is in ⚙ → Problems, where the add-on has already written the
+on purpose: the fix is in ⚙ → Diagnostics, where the add-on has already written the
 file about it. The entry deletes itself when the verdict goes back to `ok`.
 
 These files are on `/share` rather than in `/data` precisely so you can reach them
@@ -3684,7 +3691,7 @@ To keep it from eating the plan you also use for your own work:
 A camera frame is the most private thing your house holds, so brAIn looks
 through one **on its own** — when you ask a voice assistant, when an
 automation runs the **Camera check** insight, or to confirm a safety alarm or
-an open door — only through the cameras you tick under **⚙ → Cameras**. None are ticked to begin with.
+an open door — only through the cameras you tick under **⚙ → Sources**. None are ticked to begin with.
 
 - **A daily limit.** Ticked cameras are looked at a dozen times a day at most,
   across every one of those paths together; the list says how many have been
@@ -3877,12 +3884,13 @@ Claude marked as data, not instructions.
 
 ### Tripwire and house rules
 
-⚙ → Advanced → Diagnostics → *Changes and the action gate*:
+⚙ → Diagnostics → *Changes and the action gate*, and ⚙ → Permissions:
 
-- **Make a tripwire entity** creates a switch nothing should ever touch. If
+- **Run** beside *Make a tripwire entity* (Diagnostics) creates a switch nothing
+  should ever touch. If
   anything tries to act on it, the action is refused and you get a security
   alert straight away, naming the conversation it came from.
-- **Write house rules** takes up to ten rules in your own words. brAIn turns
+- **House rules** (Permissions) takes up to ten rules in your own words. brAIn turns
   each one into a precise check, once, and applies it to every action the gate
   sees. Rules can only make brAIn more careful. A rule it could not understand
   is listed so you can reword it.

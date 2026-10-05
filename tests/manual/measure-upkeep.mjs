@@ -29,7 +29,9 @@ import { openView } from './tabs.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const NOW = Math.floor(Date.now() / 1000);
-const IDS = ['viewUpkeep', 'upBook', 'upTidy', 'upUpdates', 'upHealth'];
+// The overnight health check and the access review moved to ⚙ →
+// Diagnostics (the redesign's PR 9); measure-settings asserts them there.
+const IDS = ['viewUpkeep', 'upBook', 'upTidy', 'upUpdates'];
 
 const BOOK = {
   running: false, last_error: '', last_note: '', held: '', subject: '',
@@ -249,8 +251,6 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   for (const u of v.updates) {
     if (u.right > v.viewport + 1) note(where, 'an update card hangs off the side');
   }
-  if (!/worth a PIN/.test(v.health)) note(where, 'the access review sentence is missing');
-  if (!/12 records read/.test(v.health)) note(where, 'the overnight check does not say what it read');
 
   if (touch) {
     for (const b of v.buttons) {

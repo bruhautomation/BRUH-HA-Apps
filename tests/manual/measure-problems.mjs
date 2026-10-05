@@ -8,11 +8,14 @@
 //     repeat count where there is one, and a delete — a row without its
 //     checkbox cannot be copied with the others, which is the whole reason
 //     there are checkboxes.
-//   * Copy selected sends exactly the ticked names, and Copy all sends all
-//     of them, to /api/reports/copy — the panel asks the server for the
-//     combined text rather than stitching files itself.
-//   * Write a report now POSTs /api/reports/run and the list refreshes.
-//   * ✕ on a row DELETEs that name and the row goes.
+//   * ONE Export report (Share) replaced Copy selected, Copy all, Write a
+//     report now and Copy for a bug report (the redesign's ⚙ cut list):
+//     with files ticked it sends exactly the ticked names to
+//     /api/reports/copy — the panel asks the server for the combined text
+//     rather than stitching files itself — and with none ticked it POSTs
+//     /api/reports/run and the list refreshes with the new file.
+//   * the four retired buttons stay retired.
+//   * Delete on a row DELETEs that name and the row goes.
 //   * the empty state says, in words, when a file would appear.
 //   * on a phone every control clears the touch floor, and nothing scrolls
 //     sideways.
@@ -137,10 +140,11 @@ for (const width of WIDTHS) {
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
 
   await page.click('#settingsBtn');
-  // Problems lives under Advanced, which is shut when the dialog opens and
-  // whose loaders do not run until it is — so opening it is part of reaching
-  // this list, not a detail of the harness.
-  await page.click('#setsecAdvanced > summary');
+  // Problems lives under Diagnostics → Developer. Diagnostics is shut when
+  // the dialog opens and its loaders do not run until it is — so opening it
+  // is part of reaching this list, not a detail of the harness.
+  await page.click('#setsecDiagnostics > summary');
+  await page.click('#setDiagDeveloper > summary');
   await page.waitForSelector('#probBody .prow');
 
   const m = await page.evaluate((min) => {
@@ -164,7 +168,7 @@ for (const width of WIDTHS) {
         right: box.right,
       };
     });
-    const buttons = [...document.querySelectorAll('.probbtns .btn')].map((b) => ({
+    const buttons = [document.querySelector('#diagCopy')].map((b) => ({
       label: b.textContent.trim(),
       h: Math.round(b.getBoundingClientRect().height),
       w: Math.round(b.getBoundingClientRect().width),
@@ -173,7 +177,7 @@ for (const width of WIDTHS) {
     return {
       rows, buttons, bodyRight: bodyBox.right,
       docWidth: document.documentElement.scrollWidth,
-      hint: (document.querySelector('#probBody + .probbtns') ? 'ok' : 'missing'),
+      text: document.querySelector('#setModal').textContent,
     };
   }, MIN_TARGET);
 
@@ -193,7 +197,7 @@ for (const width of WIDTHS) {
       note(where, `${row.name}'s row is ${row.pickH}px, under ${MIN_TARGET}`);
     }
     if (touch && (row.delH < MIN_TARGET || row.delW < MIN_TARGET)) {
-      note(where, `${row.name}'s ✕ is ${row.delW}×${row.delH}, under ${MIN_TARGET}`);
+      note(where, `${row.name}'s Delete is ${row.delW}×${row.delH}, under ${MIN_TARGET}`);
     }
   }
   const repeated = m.rows.find((r) => r.name === REPORTS[0].name);
@@ -201,8 +205,10 @@ for (const width of WIDTHS) {
     note(where, `the repeated report does not show its count ("${repeated.count}")`);
   }
   const labels = m.buttons.map((b) => b.label);
-  for (const want of ['Copy selected', 'Copy all', 'Write a report now']) {
-    if (!labels.includes(want)) note(where, `no "${want}" button`);
+  if (labels.join() !== 'Share') note(where, `Export report's button says "${labels.join()}"`);
+  for (const gone of ['Copy selected', 'Copy all', 'Write a report now',
+                      'Copy for a bug report']) {
+    if (m.text.includes(gone)) note(where, `"${gone}" is back`);
   }
   for (const b of m.buttons) {
     if (!b.visible) note(where, `"${b.label}" is not visible`);
@@ -216,29 +222,25 @@ for (const width of WIDTHS) {
   try {
   await page.check(`#probBody .probcheck[value="${REPORTS[0].name}"]`);
   await page.check(`#probBody .probcheck[value="${REPORTS[2].name}"]`);
-  await page.click('#probCopySel');
+  await page.click('#diagCopy');
   await page.waitForFunction(() => window.__calls.some((c) => c.what === 'copy'));
   await clearCopyBox(page);
   let calls = await page.evaluate(() => window.__calls);
   const sel = calls.find((c) => c.what === 'copy');
   if (!sel || sel.names.join() !== [REPORTS[0].name, REPORTS[2].name].join()) {
-    note(where, `Copy selected sent ${JSON.stringify(sel && sel.names)}`);
+    note(where, `Share with two ticked sent ${JSON.stringify(sel && sel.names)}`);
   }
-  await page.evaluate(() => { window.__calls = []; });
-  await page.click('#probCopyAll');
-  await page.waitForFunction(() => window.__calls.some((c) => c.what === 'copy'));
-  await clearCopyBox(page);
-  calls = await page.evaluate(() => window.__calls);
-  const all = calls.find((c) => c.what === 'copy');
-  if (!all || all.names.length !== REPORTS.length) {
-    note(where, `Copy all sent ${JSON.stringify(all && all.names)}`);
-  }
+  if (calls.some((c) => c.what === 'run')) note(where, 'Share wrote a new report over the ticked ones');
 
-  await page.evaluate(() => { window.__calls = []; });
-  await page.click('#probWrite');
+  // Nothing ticked: Share writes a fresh report and the list grows by it.
+  await page.evaluate(() => {
+    window.__calls = [];
+    document.querySelectorAll('#probBody .probcheck').forEach((c) => { c.checked = false; });
+  });
+  await page.click('#diagCopy');
+  await page.waitForFunction(() => window.__calls.some((c) => c.what === 'run'));
   await page.waitForFunction(() => document.querySelectorAll('#probBody .prow').length === 4);
-  calls = await page.evaluate(() => window.__calls);
-  if (!calls.some((c) => c.what === 'run')) note(where, 'Write a report now sent nothing');
+  await clearCopyBox(page);
 
   await page.evaluate(() => { window.__calls = []; });
   await page.click(`#probBody [data-prob-del="${REPORTS[1].name}"]`);
@@ -247,7 +249,7 @@ for (const width of WIDTHS) {
     REPORTS[1].name);
   calls = await page.evaluate(() => window.__calls);
   if (!calls.some((c) => c.what === 'delete' && c.name === REPORTS[1].name)) {
-    note(where, '✕ did not delete the row it was on');
+    note(where, 'Delete did not delete the row it was on');
   }
   } catch (e) {
     note(where, `driving the controls failed: ${String(e.message).split('\n')[0]}`);
@@ -263,7 +265,8 @@ for (const width of WIDTHS) {
   await page2.addInitScript('window.__empty = true;');
   await page2.goto(`file://${path.join(PANEL, 'index.html')}`);
   await page2.click('#settingsBtn');
-  await page2.click('#setsecAdvanced > summary');
+  await page2.click('#setsecDiagnostics > summary');
+  await page2.click('#setDiagDeveloper > summary');
   await page2.waitForSelector('#probBody .probempty');
   const emptyText = await page2.$eval('#probBody', (el) => el.textContent);
   if (!/No problems recorded/.test(emptyText) || !/one text file appears here/.test(emptyText)) {
