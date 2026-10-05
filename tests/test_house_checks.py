@@ -607,7 +607,7 @@ class TestDeviceChecks(unittest.TestCase):
         snap["states"]["sensor.hall_temp"]["state"] = "99"
         found = devices.implausible(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("99°C", found[0]["detail"])
+        self.assertIn("99 °C", found[0]["detail"])  # numfmt: unit spaced
         snap["states"]["sensor.hall_temp"]["attributes"]["unit_of_measurement"] = "°F"
         self.assertEqual(devices.implausible(snap, NOW), [])
 
@@ -699,7 +699,7 @@ class TestDeviceChecks(unittest.TestCase):
             state="21", last_changed=iso(9 * DAY))
         found = devices.frozen(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("21°C", found[0]["detail"])
+        self.assertIn("21 °C", found[0]["detail"])  # numfmt: unit spaced
         # four days is not a week
         snap["stats"]["sensor.hall_temp"] = snap["stats"]["sensor.hall_temp"][:4]
         self.assertEqual(devices.frozen(snap, NOW), [])

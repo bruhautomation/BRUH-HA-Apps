@@ -811,7 +811,9 @@ class TestTheCasesRoute(RouteCase):
         # store over: the Proposals tab is the one surface it is offered
         # on, and its badge is the one that counts it.
         self.assertEqual(kinds, ["problem", "question"])
-        self.assertEqual(payload["open"], 2)
+        # The badge is the QUEUE (`cases.queue_count`): the suggestion is
+        # a decision too, so it counts even though this feed omits it.
+        self.assertEqual(payload["open"], 3)
         self.assertFalse(any(c["id"].startswith("p:")
                              for c in payload["cases"]))
         # …and the three things the feed's foot line is built from.

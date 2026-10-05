@@ -757,6 +757,32 @@ def open_count(now: float | None = None) -> int:
     return len(list_cases("open", now=now)) + waiting
 
 
+def queue_count(now: float | None = None) -> int:
+    """How many decisions are waiting on a person: THE count.
+
+    The queue is every open finding that needs a decision, every open
+    question and every open suggestion (a proposal) — one list, so one
+    number. It is the badge, `queue_count` on `/api/status`, the `open`
+    on `/api/findings`, the status mirror the integration reads and
+    `binary_sensor.brain_needs_you`. The numbers used to come from three
+    derivations (the findings listing plus the guesses, the cases without
+    the proposals, the mirror's own sum), so a badge said 2 while its list
+    held 4. `open_count` stays for the callers that mean the feed without
+    the proposals; anything a person reads as "how much is waiting on me"
+    asks this.
+
+    A chore is not in it (accepted work is Your list, `list_count`), and
+    neither is anything `watching` or `acting`: nothing there is a
+    decision anybody can make yet. A finding still waiting for its first
+    look past `triage.SHOW_AFTER_S` is, `open_count`'s rule.
+    """
+    try:
+        waiting = findings_store.waiting_look_count(now)
+    except Exception:  # noqa: BLE001 — the cases are the count's floor
+        waiting = 0
+    return len(list_cases("open", now=now, stores=STORES)) + waiting
+
+
 def get(value: str, now: float | None = None) -> dict | None:
     """One case by id, from the one store its prefix names.
 
@@ -954,6 +980,6 @@ __all__ = [
     "MAX_SNOOZED", "UNMUTABLE_SOURCES",
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
-    "list_cases", "more", "open_count", "overflow", "situation",
+    "list_cases", "more", "open_count", "overflow", "queue_count", "situation",
     "snooze_until", "split_id",
 ]

@@ -147,7 +147,7 @@
       "fields": {
         "ts": {
           "name": "Guess id",
-          "description": "The guess's id, from the \"Waiting on you\" sensor's questions. Use this or the question."
+          "description": "The guess's id, from the \"Questions waiting\" sensor's questions. Use this or the question."
         },
         "question": {
           "name": "Question",
@@ -1370,6 +1370,21 @@
         },
         "abort": {
           "cannot_write": "brAIn could not record your answer — the shared folder under /config/.brain could not be written to. The problem is still on the list; try again, or answer it on the brAIn panel's Findings tab."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "watching": "Watching",
+          "paused": "Paused",
+          "needs_restart": "Needs restart",
+          "signed_out": "Signed out",
+          "degraded": "Degraded",
+          "unknown": "Unknown"
         }
       }
     }

@@ -401,11 +401,18 @@ class FindingsWatcher:
         """
         answered = self._answered()
         wanted: dict[int, tuple] = {}
-        for ts in sorted(current):
+        # Urgent cards first (`urgent` on the mirror row — a leak, an
+        # alarm, a freezing pipe): an Urgent card always raises a Repair,
+        # so the cap is spent on them before the oldest of the rest, and
+        # a week of warnings can never be what keeps one off the page.
+        order = sorted(current, key=lambda t: (not current[t].get("urgent"), t))
+        for ts in order:
             if ts in answered:
                 continue
             row = current[ts]
             severity = REPAIR_SEVERITY.get(str(row.get("severity") or "warning"))
+            if row.get("urgent") is True:
+                severity = "CRITICAL"
             if severity is None:
                 continue
             if str(row.get("status") or "open") not in REPAIR_STATUSES:
@@ -441,7 +448,10 @@ class FindingsWatcher:
                 DOMAIN,
                 issue_id_for(ts),
                 is_fixable=True,
-                severity=getattr(ir.IssueSeverity, severity),
+                # CRITICAL for an Urgent card; a core (or a stub) without
+                # it gets ERROR, still the loudest it has.
+                severity=getattr(ir.IssueSeverity, severity, None)
+                or ir.IssueSeverity.ERROR,
                 translation_key="finding",
                 translation_placeholders=dict(placeholders),
                 # What the fix flow is about, so it does not have to go

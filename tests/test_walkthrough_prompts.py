@@ -283,7 +283,26 @@ class TestTheMirroredCard(ServerCase):
         self.assertIn('id="age"', page)
         self.assertIn('data-made="2026-09-24T10:09:00"', page)
         self.assertIn("days old", page)
-        self.assertRegex(page, r"if\(d<2\)return")
+        self.assertRegex(page, r"if\(d<2\)\{e\.hidden=true;return;\}")
+        # And every card says its age prominently, not only an old one:
+        # "Updated 7 h ago" beside the eyebrow, re-worked every minute.
+        self.assertIn('id="upd"', page)
+        self.assertIn('"Updated "+ago(s)', page)
+        self.assertIn("setInterval(tick,60000)", page)
+        # The 11px "analysed …" foot is gone; the age line replaced it.
+        self.assertNotIn('class="f"', page)
+
+    def test_the_page_fits_its_frame_rather_than_scrolling_inside_it(self):
+        page = self.server._whole_card_page(self.INSIGHT)
+        # The page is exactly the frame's height with nothing to scroll,
+        # and the chart takes what is left — a frame sized to the chart's
+        # content inside a fixed-ratio Webpage card was the scrollbar.
+        self.assertIn("html,body{margin:0;height:100%;overflow:hidden;", page)
+        self.assertIn("flex:1 1 auto!important;min-height:0", page)
+        self.assertNotIn("bruh-size", page)
+        # The summary clamps at three lines, so it cannot push the chart
+        # off the bottom of the card.
+        self.assertIn("-webkit-line-clamp:3", page)
 
     def test_a_whole_card_frame_is_tall_enough_for_the_card(self):
         card = self.server._dashboard_card(self.INSIGHT, True, 90)

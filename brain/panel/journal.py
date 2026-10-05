@@ -349,6 +349,8 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     tokens = 0
     failures: list[dict] = []
     failed_by_outcome: dict[str, int] = {}
+    claude_failed = 0
+    claude_failed_by: dict[str, int] = {}
     for r in rows:
         src = str(r.get("source") or "?")
         outcome = outcome_of(r)
@@ -360,6 +362,9 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         if is_failure(r):
             failures.append(r)
             failed_by_outcome[outcome] = failed_by_outcome.get(outcome, 0) + 1
+            if is_claude_run(r):
+                claude_failed += 1
+                claude_failed_by[outcome] = claude_failed_by.get(outcome, 0) + 1
     return {
         "hours": hours,
         "runs": len(rows),
@@ -375,6 +380,14 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         # "everything that is not ok".
         "failed": len(failures),
         "failed_by_outcome": failed_by_outcome,
+        # The same count over `claude_runs` alone — the numerator for the
+        # denominator a person reads. Health's "N of M runs did not
+        # succeed" divides these two, so it is a fraction of one set: it
+        # divided every failed row (a summary row beside each failed card
+        # among them) by every journal line, and a brief reading "677 of
+        # 721 runs failed" sat beside a Diagnostics count of 224 ok.
+        "claude_failed": claude_failed,
+        "claude_failed_by_outcome": claude_failed_by,
         "tokens": tokens,
         "failures": failures[-10:],
     }

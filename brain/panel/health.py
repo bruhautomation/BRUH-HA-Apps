@@ -355,6 +355,18 @@ def problems(diag: dict, options: dict | None = None,
 
     journal = diag.get("journal") or {}
     runs = _num(journal.get("runs")) or 0
+    # Claude runs over Claude runs when the payload carries both: the
+    # sentence says "runs", the status strip and ⚙ count `claude_runs`,
+    # and a rate whose numerator and denominator are two different sets
+    # is how a brief came to say 677 of 721 beside a Diagnostics count of
+    # 224 ok.
+    if (isinstance(journal.get("claude_runs"), (int, float))
+            and isinstance(journal.get("claude_failed"), (int, float))):
+        journal = {**journal, "runs": journal["claude_runs"],
+                   "failed": journal["claude_failed"],
+                   "failed_by_outcome":
+                       journal.get("claude_failed_by_outcome") or {}}
+        runs = _num(journal.get("runs")) or 0
     # `failed` is `journal.is_failure`'s count: a `fallback` still produced
     # a card and a `rate_limited` run is the account saying wait, and
     # counting either as a failure is how one evening's session limit read

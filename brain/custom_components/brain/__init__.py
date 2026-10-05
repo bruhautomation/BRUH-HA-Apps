@@ -747,7 +747,7 @@ def _which_guess(open_guesses: list[dict], ts=None, question=None) -> int:
                 return int(ts)
         raise ServiceValidationError(
             f"No open guess has the id {ts} — it may have been answered "
-            "already or expired. The \"Waiting on you\" sensor lists the "
+            "already or expired. The \"Questions waiting\" sensor lists the "
             "open ones with their ids.")
     want = _normalise_guess(question or "")
     if not want:
@@ -761,11 +761,11 @@ def _which_guess(open_guesses: list[dict], ts=None, question=None) -> int:
         return int(near[0].get("ts") or 0)
     if not near:
         raise ServiceValidationError(
-            f"No open guess matches \"{question}\". The \"Waiting on you\" "
+            f"No open guess matches \"{question}\". The \"Questions waiting\" "
             "sensor lists the open ones with their ids.")
     raise ServiceValidationError(
         f"{len(near)} open guesses match \"{question}\" — answer by ts "
-        "instead, from the \"Waiting on you\" sensor.")
+        "instead, from the \"Questions waiting\" sensor.")
 
 
 # ---------------------------------------------------------------------------

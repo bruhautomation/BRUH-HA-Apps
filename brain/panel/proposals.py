@@ -58,6 +58,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import textclip
 
 STORE = Path(os.environ.get("BRAIN_PROPOSALS_FILE", "/data/proposals.json"))
 SETTLED_FILE = Path(os.environ.get(
@@ -224,8 +225,8 @@ def add(obj: dict) -> dict | None:
         "ts": stamp,
         "key": key,
         "kind": str(obj.get("kind") or "automation")[:40],
-        "title": str(obj.get("title") or "")[:TITLE_MAX],
-        "why": str(obj.get("why") or "")[:1000],
+        "title": textclip.clip(str(obj.get("title") or ""), TITLE_MAX),
+        "why": textclip.clip(str(obj.get("why") or ""), 1000),
         "source": str(obj.get("source") or "")[:60],
         "config": obj.get("config"),
         "replay": obj.get("replay"),
