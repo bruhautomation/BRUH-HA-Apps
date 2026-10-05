@@ -139,6 +139,7 @@ from aiohttp.abc import AbstractAccessLogger
 
 import actions
 import addon_options
+import answers as answers_mod
 import appliances
 import atomic_write
 import automation_writer
@@ -231,6 +232,9 @@ import house_book
 import sre
 import tidy
 import upgrades
+# Today's own two additions: a snooze/ignore for the cards no store owns,
+# and the History drawer's rows.
+import today as today_mod
 # Understanding the house: what each entity is, what it is doing now, and
 # what is coming up.
 import occasions
@@ -6830,13 +6834,71 @@ def _brain_status(settings: dict | None = None, budget: dict | None = None,
         return brain_status.derive(signed_in=True, now=now)
 
 
+# What `/api/upgrades` last read pending, so the queue count and the Today
+# card agree about which assessed updates are waiting without a live Core
+# read on every status poll. In memory: an empty cache after a restart
+# counts no update card until Today's own fetch fills it, which is
+# seconds, and over-counting a card nobody can see is the worse error.
+UPGRADES_SEEN: dict = {"updates": [], "at": 0.0}
+
+
+def _today_cards(now: float | None = None) -> dict:
+    """The Today queue's two cards no store owns, as `{tidy, updates}`.
+
+    `tidy` is the pending names-and-rooms table (or None), `updates` the
+    assessed pending updates — each only while not snoozed or ignored on
+    Today. Read off the stores the Upkeep section already reads, so the
+    card and the count are one derivation. Never raises.
+    """
+    now = time.time() if now is None else now
+    out: dict = {"tidy": None, "updates": []}
+    try:
+        hidden = today_mod.hidden(now)
+    except Exception:  # noqa: BLE001 — nothing hidden shows the card
+        hidden = {}
+    try:
+        data = tidy.load()
+        proposal = data.get("proposal") or None
+        if proposal and (proposal.get("rows") or []):
+            key = today_mod.tidy_key(proposal)
+            if key and key not in hidden:
+                out["tidy"] = {"key": key, "proposal": proposal}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the tidy store for Today: %s", exc)
+    try:
+        rows = upgrades.listing(list(UPGRADES_SEEN["updates"] or []))
+        for row in rows:
+            if not row.get("advice"):
+                continue
+            key = today_mod.update_key(row)
+            if key and key not in hidden:
+                out["updates"].append({"key": key, **row})
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the upgrade verdicts for Today: %s", exc)
+    return out
+
+
+def _queue_count(now: float | None = None) -> int:
+    """THE count (`cases.queue_count`) plus Today's own two cards: the
+    pending tidy table and every assessed update. One number for the
+    badge, `/api/status`, the status mirror and `binary_sensor.brain_needs
+    _you`, because each of those cards is a decision in the same queue."""
+    base = cases.queue_count(now)
+    try:
+        extra = _today_cards(now)
+        base += (1 if extra["tidy"] else 0) + len(extra["updates"])
+    except Exception:  # noqa: BLE001 — the cases are the count's floor
+        pass
+    return base
+
+
 def _counts(now: float | None = None) -> dict:
     """The three numbers a person compares across screens, each from its
     one derivation: the queue (`cases.queue_count`), Your list
     (`todo_store`'s open items) and the facts (`facts_store.count`). A
     store that could not be read is None — "I could not look" — never 0."""
     out: dict = {}
-    for key, fn in (("queue_count", lambda: cases.queue_count(now)),
+    for key, fn in (("queue_count", lambda: _queue_count(now)),
                     ("list_count", lambda: todo_store.counts()["open"]),
                     ("facts_count", lambda: facts_store.count(now))):
         try:
@@ -6903,7 +6965,55 @@ def _status_payload() -> tuple[dict | None, dict]:
         if counts["queue_count"] is not None else cases.open_count(),
         **counts,
         "status": _brain_status(settings, usage, auth),
+        "brief": _brief_link(),
+        "first_look_done": _first_look_done(counts),
     }
+
+
+# A brief older than this is not "this morning's" any more, and the link on
+# Today's status line goes with it.
+BRIEF_LINK_S = 18 * 3600
+FIRST_LOOK_KEY = "first_look_at"
+
+
+def _brief_link(now: float | None = None) -> dict | None:
+    """This morning's brief, for the "Read this morning's brief" link — or
+    None when there is none worth linking."""
+    now = time.time() if now is None else now
+    sent = float(BRIEF_STATE.get("last_sent") or 0)
+    text = str(BRIEF_STATE.get("last_text") or "").strip()
+    if not sent or not text or now - sent > BRIEF_LINK_S:
+        return None
+    return {"sent_at": int(sent), "text": text}
+
+
+def _first_look_done(counts: dict | None = None) -> bool:
+    """Whether the first-run card on Today can go: brAIn has looked at the
+    house at least once. A stamp written by the first checks pass or look
+    and kept on disk, because both in-memory clocks are zero after every
+    restart and a setup card over an established house's queue is the one
+    wrong answer here. An install that has anything at all — a fact, a
+    case waiting — has plainly been looked at."""
+    try:
+        if schedule_store.get(FIRST_LOOK_KEY):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    if (CHECKS_STATE.get("last") or {}).get("finished_at"):
+        return True
+    if RESIDENT_STATE.get("last_look_at"):
+        return True
+    counts = counts or {}
+    return bool((counts.get("facts_count") or 0) or (counts.get("queue_count") or 0))
+
+
+def _note_first_look(now: float | None = None) -> None:
+    """Stamp the first look, once. Never raises."""
+    try:
+        if not schedule_store.get(FIRST_LOOK_KEY):
+            schedule_store.set(FIRST_LOOK_KEY, time.time() if now is None else now)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def h_status(request: web.Request) -> web.Response:
@@ -6957,6 +7067,10 @@ async def h_status(request: web.Request) -> web.Response:
         # sentence, since, back_at, last_look_at}. The same object the
         # status mirror hands `sensor.brain_status`.
         "status": read["status"],
+        # "Read this morning's brief" on Today's status line, and whether
+        # the first-run card may give way to the queue.
+        "brief": read["brief"],
+        "first_look_done": read["first_look_done"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -8062,6 +8176,11 @@ MAINT_WEEK_S = 7 * 86400
 # weekly review needs no snapshot of its own — `_note_registry`'s
 # arrangement, one hook over.
 ACCESS_DIGEST: dict = {"digest": None, "at": 0.0}
+# When each update was last ASKED about on a timer, keyed on
+# `upgrades.key_for` (an entity and a version), so a verdict that keeps
+# failing is asked about every six hours rather than every poll.
+UPGRADE_TRIED: dict = {}
+UPGRADE_RETRY_S = 6 * 3600
 
 
 def _note_access(snapshot: dict, now: float) -> None:
@@ -8238,7 +8357,12 @@ async def h_upgrades(request: web.Request) -> web.Response:
     payload = _maint_status("upgrades")
     if updates is None:
         return web.json_response({**payload, "updates": [], "readable": False})
+    UPGRADES_SEEN.update(updates=list(updates), at=time.time())
     rows = await asyncio.to_thread(upgrades.listing, updates)
+    hidden = await asyncio.to_thread(today_mod.hidden)
+    for row in rows:
+        row["today_key"] = today_mod.update_key(row)
+        row["today_hidden"] = row["today_key"] in hidden
     return web.json_response({**payload, "updates": rows, "readable": True})
 
 
@@ -8556,6 +8680,34 @@ async def _maint_tick(now: float) -> list[str]:
             MAINT_STATE["access"]["held"] = ""
             await asyncio.to_thread(schedule_store.set, ACCESS_TRIED_KEY, now)
             started.append("access")
+
+    # "Is it safe tonight?", asked on its own once per new update rather
+    # than on a press (the design doc's capability decision 5), so an update
+    # arrives on Today already assessed. One per pass, behind the same
+    # gates as every scheduled run, and switched off by the
+    # `upgrade_advice_auto` setting. A failed verdict is not retried more
+    # often than `UPGRADE_RETRY_S`: a guard that refuses has to change the
+    # next attempt.
+    if settings.get("upgrade_advice_auto", True) and not MAINT_STATE["upgrades"]["running"]:
+        updates = await _pending_updates()
+        if updates is not None:
+            UPGRADES_SEEN.update(updates=list(updates), at=now)
+            rows = await asyncio.to_thread(upgrades.listing, updates)
+            waiting = [u for u in updates
+                       if not any(r.get("entity_id") == u.get("entity_id")
+                                  and r.get("advice") for r in rows)
+                       and now - UPGRADE_TRIED.get(upgrades.key_for(u), 0)
+                       >= UPGRADE_RETRY_S]
+            if waiting:
+                if excuse:
+                    MAINT_STATE["upgrades"]["held"] = excuse
+                else:
+                    first = waiting[0]
+                    UPGRADE_TRIED[upgrades.key_for(first)] = now
+                    if _maint_start("upgrades", lambda: _run_advice(first)):
+                        MAINT_STATE["upgrades"]["held"] = ""
+                        MAINT_STATE["upgrades"]["subject"] = first["entity_id"]
+                        started.append("upgrades")
 
     # The house book: weekly, only once somebody has asked for one, and
     # only when what it reads has moved.
@@ -10049,6 +10201,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
+    await asyncio.to_thread(_note_first_look, now)
     try:
         # No tools: this is a LOOK, not a search. What it is asked is
         # whether a signal deserves another thought, which is answerable
@@ -12082,6 +12235,7 @@ async def run_checks(reason: str = "schedule") -> dict:
     finally:
         CHECKS_STATE["running"] = False
     CHECKS_STATE["last"] = summary
+    await asyncio.to_thread(_note_first_look)
     await asyncio.to_thread(publish_diagnostics)
     return summary
 
@@ -14826,12 +14980,16 @@ def _case_todo_done(key):
 
 
 def _case_todo_drop(key):
-    """A chore taken off the list undone, which releases the suppression."""
+    """A chore's Ignore: off the list undone, and — where a finding put it
+    there — the report settled as ignored, so it is not raised again.
+    "Off the list and free to come back" is Snooze now (the design doc's
+    capability decision 7), and the route that releases the key stays for
+    the To-do app's delete."""
     async def run() -> dict:
         item = await asyncio.to_thread(todo_store.get, int(key))
         if item is None:
             return {"error": "no such item"}
-        payload = await _drop_todo(item)
+        payload = await _drop_todo(item, ignore=True)
         return payload if payload is not None else {"error": "no such item"}
     return run
 
@@ -14866,6 +15024,17 @@ def _cases_payload(now: float | None = None) -> dict:
         case["answers"] = cases.answers(case)
         case["more"] = cases.more(case)
         case["situation"] = cases.situation(case)
+        # Today's card: the one status chip (`answers.chip`, with the
+        # Urgent rule `notify_router.is_urgent` owns), and whether "Ignore
+        # all like this" can mute the producer — absent for the producers
+        # that are not a rule (`cases.UNMUTABLE_SOURCES`).
+        try:
+            case["urgent"] = bool(notify_router.is_urgent(case))
+        except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
+            case["urgent"] = False
+        case["chip"] = answers_mod.chip(case, case["urgent"])
+        case["mutable"] = bool(case.get("source")) and (
+            case.get("source") not in cases.UNMUTABLE_SOURCES)
         # Pretty names: the entity the card is about, and every id the
         # prose mentions, so the panel can render words a person reads
         # rather than ids they translate. Only ids the last snapshot saw
@@ -14879,10 +15048,13 @@ def _cases_payload(now: float | None = None) -> dict:
             *(a.get("label") or "" for a in case.get("actions") or [])))
         if row:
             names[case["entity_id"]] = row
+    # Urgent first (a leak, an alarm, a lock), then the server's own band
+    # order: `sorted` is stable, so the rest keep `cases._sort`'s order.
+    rows.sort(key=lambda c: 0 if c.get("urgent") else 1)
     return {
         "cases": rows,
         "names": names,
-        "open": cases.queue_count(now),
+        "open": _queue_count(now),
         "ledger": LEDGER.summary(now),
         "resident": _resident_diagnostics(),
         "eventbus": EVENT_BUS.stats() if EVENT_BUS else {
@@ -14949,6 +15121,97 @@ async def h_case_verb(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def h_case_wake(request: web.Request) -> web.Response:
+    """History's Restore on a Snoozed row: the case back in the queue now."""
+    case_id = request.match_info["id"]
+    woken = await asyncio.to_thread(cases.wake, case_id)
+    if woken is None:
+        raise web.HTTPNotFound(text="no such case")
+    payload = await asyncio.to_thread(_cases_payload)
+    payload.update(woken)
+    return web.json_response(payload)
+
+
+def _history_payload(now: float | None = None) -> dict:
+    """Today's History drawer (`today.history`), from the stores that hold
+    each kind of hidden thing. Never raises: a store that could not be
+    read is a filter with fewer rows, and the reason is logged."""
+    now = time.time() if now is None else now
+
+    def safe(fn, default):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("history: a store could not be read: %s", exc)
+            return default
+
+    listing = safe(findings_store.listing, {"findings": [], "settled": []})
+    todos = safe(todo_store.listing, {"items": [], "done": []})
+    tidy_data = safe(tidy.load, {"batches": []})
+    return today_mod.history(
+        findings=listing.get("findings") or [],
+        settled=listing.get("settled") or [],
+        muted=safe(_muted_rows, []),
+        snoozed_cases=safe(lambda: cases.list_cases(
+            "snoozed", kinds=cases.KINDS, stores=cases.STORES, now=now), []),
+        todo_done=todos.get("done") or [],
+        tidy_batches=safe(lambda: tidy.undoable(
+            tidy_data.get("batches") or [], now), []),
+        hidden_rows=safe(lambda: today_mod.hidden(now), {}),
+        now=now)
+
+
+async def h_history(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_history_payload))
+
+
+def _today_payload() -> dict:
+    """Today's two cards no store owns, in the shape the panel renders."""
+    cards = _today_cards()
+    tidy_card = cards["tidy"]
+    out: dict = {"tidy": None, "updates": cards["updates"]}
+    if tidy_card:
+        proposal = tidy_card["proposal"]
+        out["tidy"] = {"key": tidy_card["key"],
+                       "rows": proposal.get("rows") or [],
+                       "refused": proposal.get("refused") or [],
+                       "at": int(proposal.get("at") or 0),
+                       "undo_days": tidy.UNDO_DAYS}
+    return out
+
+
+async def h_today(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_today_payload))
+
+
+async def h_today_hide(request: web.Request) -> web.Response:
+    """Snooze or Ignore on a Today card no store owns (`today.hide`)."""
+    body = await _json_body(request)
+    key = str((body or {}).get("key") or "")
+    how = str((body or {}).get("how") or "")
+    title = str((body or {}).get("title") or "")
+    row = await asyncio.to_thread(today_mod.hide, key, how, title)
+    if row is None:
+        raise web.HTTPBadRequest(text="that is not a card Today can hide")
+    payload = await asyncio.to_thread(_today_payload)
+    payload["hidden"] = row
+    payload["open"] = await asyncio.to_thread(_queue_count)
+    if how == "snoozed":
+        payload["snoozed_until"] = row["until"]
+    return web.json_response(payload)
+
+
+async def h_today_restore(request: web.Request) -> web.Response:
+    body = await _json_body(request)
+    key = str((body or {}).get("key") or "")
+    ok = await asyncio.to_thread(today_mod.restore, key)
+    if not ok:
+        raise web.HTTPNotFound(text="nothing hidden under that")
+    payload = await asyncio.to_thread(_today_payload)
+    payload["open"] = await asyncio.to_thread(_queue_count)
+    return web.json_response(payload)
+
+
 def _findings_payload() -> dict:
     """What the Findings tab reads — and the ONLY thing it reads.
 
@@ -14974,7 +15237,7 @@ def _findings_payload() -> dict:
     # here on one poll and from `/api/status` on the next, two derivations
     # that disagreed whenever a proposal or a fixed row was waiting.
     try:
-        payload["open"] = cases.queue_count()
+        payload["open"] = _queue_count()
     except Exception:  # noqa: BLE001 — the old sum is the floor
         payload["open"] += len(open_claims)
     payload["queue_count"] = payload["open"]
@@ -15370,8 +15633,22 @@ def _record_exception(finding: dict, note: str) -> list[str]:
 
 
 def _todo_payload() -> dict:
-    """What the To-do tab reads, and the only thing it reads."""
-    return todo_store.listing()
+    """What Your list reads, and the only thing it reads.
+
+    Each open item carries `snoozed_until` off the cases' snooze sidecar
+    (key `t:<id>`), because Snooze on a list item is the case verb and the
+    list has to know which of its items are asleep — a snoozed chore that
+    stayed on Your list would read as a press that did nothing."""
+    payload = todo_store.listing()
+    try:
+        asleep = cases.snoozes()
+    except Exception:  # noqa: BLE001 — nothing snoozed shows the item
+        asleep = {}
+    now = time.time()
+    for item in payload.get("items") or []:
+        until = int(asleep.get(f"t:{item.get('id')}", 0) or 0)
+        item["snoozed_until"] = until if until > now else 0
+    return payload
 
 
 async def h_todo(request: web.Request) -> web.Response:
@@ -15611,14 +15888,34 @@ async def h_todo_delete(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-async def _drop_todo(item: dict) -> dict | None:
-    """Take a chore off the list undone, wherever the press came from."""
+async def h_todo_ignore(request: web.Request) -> web.Response:
+    """Today's Ignore on a list item (`_drop_todo(ignore=True)`)."""
+    item = _todo_or_404(request)
+    payload = await _drop_todo(item, ignore=True)
+    if payload is None:
+        raise web.HTTPNotFound(text="no such item")
+    return web.json_response(payload)
+
+
+async def _drop_todo(item: dict, ignore: bool = False) -> dict | None:
+    """Take a chore off the list undone, wherever the press came from.
+
+    `ignore` is Today's Ignore on a list item: the report a finding moved
+    here is settled as `ignored` rather than released, because "never
+    raise this again" is what the word says. The undo token is the same
+    either way, and its reversal writes the key back to `accepted`."""
 
     def drop() -> tuple[dict | None, bool, dict]:
         removed = todo_store.remove(item["id"])
         unsettled = False
         if removed and removed.get("finding_key"):
-            unsettled = findings_store.unsettle(removed["finding_key"])
+            if ignore:
+                findings_store.remember_answer(
+                    removed["finding_key"], removed["text"], "ignored",
+                    source=removed.get("source", ""),
+                    source_title=removed.get("source_title", ""))
+            else:
+                unsettled = findings_store.unsettle(removed["finding_key"])
         return removed, unsettled, _todo_payload()
 
     removed, unsettled, payload = await asyncio.to_thread(drop)
@@ -15770,6 +16067,12 @@ def _proposals_payload() -> dict:
         # fortnight" is a fact about the clock and a stored one would be
         # a number that stops being true the moment it is written.
         row["overdue"] = intents.expired(row, now)
+    try:
+        asleep = cases.snoozes()
+    except Exception:  # noqa: BLE001 — nothing snoozed shows the card
+        asleep = {}
+    for row in rows:
+        row["snoozed_until"] = int(asleep.get(f"p:{int(row.get('ts') or 0)}", 0))
     return {"proposals": rows, "counts": proposals.counts(rows),
             # What is waiting to happen, what already has, and the
             # sentences brAIn would not arm. Not proposals — nobody owes
@@ -19674,7 +19977,7 @@ def _chat_house_lines() -> list[str]:
     cannot be read is a line that is not there."""
     lines: list[str] = []
     try:
-        waiting = cases.queue_count()
+        waiting = _queue_count()
         lines.append(f"{waiting} thing{'s' if waiting != 1 else ''} waiting "
                      "on the household in brAIn's feed")
     except Exception:  # noqa: BLE001 — a feed that could not be read is a
@@ -20556,7 +20859,13 @@ def make_app() -> web.Application:
     app.router.add_get("/api/findings", h_findings)
     # The feed. One object over the four stores, and three endings on it.
     app.router.add_get("/api/cases", h_cases)
+    # Before the verb route, which would answer `wake` as an unknown ending.
+    app.router.add_post("/api/case/{id}/wake", h_case_wake)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
+    app.router.add_get("/api/history", h_history)
+    app.router.add_get("/api/today", h_today)
+    app.router.add_post("/api/today/hide", h_today_hide)
+    app.router.add_post("/api/today/restore", h_today_restore)
     app.router.add_get("/api/checks", h_checks)
     app.router.add_post("/api/checks/run", h_checks_run)
     app.router.add_get("/api/doctor/deep", h_doctor_deep_get)
@@ -20659,6 +20968,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/todo", h_todo_add)
     app.router.add_post("/api/todo/{id}/done", h_todo_done)
     app.router.add_post("/api/todo/{id}/reopen", h_todo_reopen)
+    app.router.add_post("/api/todo/{id}/ignore", h_todo_ignore)
     app.router.add_delete("/api/todo/{id}", h_todo_delete)
     app.router.add_get("/api/insight/{id}/live", h_insight_live)
     app.router.add_get("/api/insight/{id}/history", h_history_list)

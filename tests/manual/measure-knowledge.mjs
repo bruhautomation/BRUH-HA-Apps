@@ -1079,7 +1079,10 @@ for (const [name, payload, check] of TODAY_CASES) {
           press: s.classList.contains('press'),
           h: Math.round(s.getBoundingClientRect().height),
         })),
-        wrapRight: (document.getElementById('dash') || document.body)
+        // The strip is mounted in the page's own column, which is on screen
+        // whichever pane is in front (Today opens first now, so #dash is
+        // hidden and its right edge reads 0).
+        wrapRight: (document.querySelector('main.wrap') || document.body)
           .getBoundingClientRect().right,
         docWidth: document.documentElement.scrollWidth,
       };

@@ -96,7 +96,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "brain", "setup", "what-to-expect", "the-panel", "what-it-costs",
     ]),
     ("Deciding", [
-        "the-resident", "it-finds-whats-broken-and-fixes-it", "the-to-do-list",
+        "the-resident", "it-finds-whats-broken-and-fixes-it", "your-list",
         "it-checks-the-house-without-spending-a-token",
         "findings-in-home-assistants-repairs", "replying-from-your-phone",
         "answering-without-opening-anything",
@@ -125,7 +125,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "saying-yes-and-taking-it-back", "what-a-replay-can-and-cannot-answer",
         "the-house-acts", "the-condition-it-is-missing", "a-rule-in-a-sentence",
         "something-that-happens-once", "four-scenes-for-a-room",
-        "upkeep-keeping-the-house-itself-in-order",
+        "keeping-the-house-itself-in-order",
     ]),
     ("Other add-ons", [
         "it-manages-your-esphome-devices", "it-runs-music-assistant",

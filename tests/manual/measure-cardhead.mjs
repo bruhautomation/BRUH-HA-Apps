@@ -142,7 +142,7 @@ for (const width of WIDTHS) {
 //     Delete, and a press on the card opens it full size.
 //   * Ask opens the card's dialog, whose links still reach "Make this an
 //     automation" (drafted into the Ask tab's composer, never sent) and
-//     "See the automation it suggested" (Proposals).
+//     "See the automation it suggested" (Today, where suggestions are queued).
 const NOW_ISO = new Date().toISOString();
 const FOOT_STUB = `
 window.EventSource = function () {
@@ -226,6 +226,9 @@ for (const width of [390, 768, 1200]) {
   });
   await page2.addInitScript(FOOT_STUB);
   await page2.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel opens on Today now; the cards are House › Reports.
+  await page2.waitForFunction(() => typeof switchView === 'function');
+  await page2.evaluate(() => switchView('insights'));
   await page2.waitForSelector('.card[data-id="held"] .foot', { timeout: 5000 })
     .catch(() => { console.log('        - no card foot rendered'); failures += 1; });
 
@@ -330,7 +333,7 @@ for (const width of [390, 768, 1200]) {
     return {
       value: input ? input.value : null,
       ask: !!document.querySelector('#viewTerminal.active'),
-      proposals: !!document.querySelector('#viewProposals.active'),
+      today: !!document.querySelector('#viewFindings.active'),
     };
   }, label);
 
@@ -359,7 +362,8 @@ for (const width of [390, 768, 1200]) {
     problems.push(`a card whose suggestion was offered does not point at it (${JSON.stringify(dueAsk.links)})`);
   } else {
     const after = await pressLink('See the automation it suggested');
-    if (!after || !after.proposals) problems.push('"See the automation" did not open Proposals');
+    // A suggestion is a card in Today's queue now; Proposals is not a tab.
+    if (!after || !after.today) problems.push('"See the automation" did not open Today');
   }
 
   console.log(`${problems.length ? 'FAIL' : 'ok  '} ${String(width).padStart(4)}px  `

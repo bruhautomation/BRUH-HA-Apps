@@ -309,10 +309,21 @@ class TestPanelBranding(unittest.TestCase):
     def test_every_view_tab_has_a_pane(self):
         # Named, not counted: a count says nothing about whether the tab
         # added last kept its label.
-        for view in ("insights", "findings", "proposals", "activity",
+        for view in ("insights", "findings", "activity", "housebook",
                      "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
+        # The To-do, Proposals and Upkeep panes are Today's now: one screen
+        # holds the queue (suggestions, the name tidy and the updates
+        # included) and Your list; Ideas is a row on House › Reports.
+        for gone in ("todo", "proposals", "upkeep", "ideas"):
+            self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
+        for gone in ("todo", "proposals", "upkeep"):
+            self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
+            self.assertNotIn(f'data-view="{gone}"', self.html)
+        # Three tabs, and Today has no sub-strip of its own.
+        tabs = re.findall(r'class="viewtab[^"]*"[^>]*data-group="(\w+)"', self.html)
+        self.assertEqual(tabs, ["today", "ask", "house"])
 
     def test_terminal_frame_is_lazy_and_points_at_the_proxy(self):
         self.assertIn('id="termFrame"', self.html)
@@ -927,7 +938,9 @@ class TestChatTerminalPanel(unittest.TestCase):
                          "snoozing changed the finding's status")
         # It comes back, and it is findable while it waits.
         self.assertIn('if status == "snoozed"', store)
-        self.assertIn('{ id: "snoozed", label: "Dismissed"', self.js)
+        # Today's History drawer holds them, under the word the press used.
+        today = (PANEL / "today.py").read_text()
+        self.assertIn('"snoozed": "Snoozed"', today)
 
     def test_the_palette_offers_the_brain_and_ha_commands_too(self):
         """They are not slash commands, so nothing announced them — and
@@ -1076,7 +1089,7 @@ class TestDocsTab(unittest.TestCase):
             "function esc(", "function inlineMd(", "function renderMarkdown(",
             "function docsSearch(", "function renderDocsNav(", "function selectDocs(",
             "function renderDocs(", "function renderMemory(", "function mdInline(",
-            "function mdToHtml(", "function setMemEditing(", "function makeHypothesis(",
+            "function mdToHtml(", "function setMemEditing(", "function makeLooseQuestion(",
             "function switchView(", "function openNoteForm(",
         ]
         missing = [fn for fn in required if fn not in self.app]
@@ -1093,8 +1106,8 @@ class TestDocsTab(unittest.TestCase):
         self.assertNotIn("api/questions/", self.app)
         self.assertNotIn("makeQuestions", self.app)
         self.assertNotIn("#kOpenQs", self.app)
-        self.assertIn('api/hypothesis/${h.ts}/${verb}', self.app)
-        self.assertIn("list.appendChild(makeHypothesis(h))", self.app)
+        self.assertIn('api/hypothesis/${h.ts}/confirm', self.app)
+        self.assertIn("makeLooseQuestion(h)", self.app)
 
     def test_renderer_escapes_before_formatting(self):
         """The content is ours, but a docs renderer is exactly where a lazy
@@ -2867,9 +2880,12 @@ class TestKnowledgeTab(unittest.TestCase):
         """`POST /api/findings/unsettle` existed with no caller at all: the
         one press that removes a settled key was documented and unreachable
         from the panel."""
-        self.assertIn('api("api/findings/unsettle"', self.app)
-        self.assertIn("Let brAIn raise it again", self.app)
-        self.assertIn('JSON.stringify({ key: entry.key })', self.app)
+        # It is History › Ignored's Restore now: the row's press is the
+        # route, and the panel posts whatever route the row carries.
+        today = (PANEL / "today.py").read_text()
+        self.assertIn('"/api/findings/unsettle"', today)
+        self.assertIn('{"key": entry.get("key") or ""}', today)
+        self.assertIn('api(step.route.replace(/^\\//, "")', self.app)
 
 
 if __name__ == "__main__":

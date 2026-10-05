@@ -35,34 +35,28 @@
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
 
-  <!-- Four tabs, not eight. Every pane the panel used to give a tab of its
-       own still exists under its own id and `data-view` — Insights, To-do,
-       Proposals, Activity, Knowledge, Docs — so every handler, measure and
-       deep link under them binds exactly as it did. What changed is the
-       strip: a tab is now a GROUP, and the panes in it are the sub-strip
-       under the bar (`#subtabs`), shown only when a group holds more than
-       one. Home is what is waiting on you and the cards; Ask is the chat
-       and the terminal; House is what brAIn knows and what happened; Help
-       is the docs. Each primary tab's `data-view` is the pane the group
-       opens on, and a second press on the group you are already in goes
-       back to it. -->
+  <!-- Three tabs: Today, Ask, House (docs/design/ui-redesign-2026-10.md,
+       "Proposed structure"). Today is for deciding, Ask for asking, House
+       for reading what brAIn knows; the Guide is ⚙ › Guide. A tab is a
+       GROUP and the panes in it are the sub-strip under the bar
+       (`#subtabs`), shown only where a group holds more than one — Today
+       holds one, so it has no sub-strip at all. Every pane kept its id and
+       its `data-view`, so every handler, measure and deep link under one
+       binds as it did. The one badge counts the cards in Today's queue
+       (`queue_count`), and nothing else carries one. -->
   <nav class="viewtabs" role="tablist">
-    <button class="viewtab active" data-view="findings" data-group="home" role="tab" data-tip="Home">
+    <button class="viewtab active" data-view="findings" data-group="today" role="tab" data-tip="Today">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11.5 12 4l9 7.5M5.5 9.8V20h13V9.8M10 20v-6h4v6"/></svg>
-      <span>Home</span>
+      <span>Today</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
     <button class="viewtab" data-view="terminal" data-group="ask" role="tab" data-tip="Ask">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
       <span>Ask</span>
     </button>
-    <button class="viewtab" data-view="memory" data-group="house" role="tab" data-tip="House">
+    <button class="viewtab" data-view="insights" data-group="house" role="tab" data-tip="House">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
       <span>House</span>
-    </button>
-    <button class="viewtab" data-view="docs" data-group="help" role="tab" data-tip="Help">
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5zM20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
-      <span>Help</span>
     </button>
   </nav>
 
@@ -98,24 +92,20 @@
 </header>
 
 <!-- The panes inside the tab you are on. Hidden while the group holds one
-     pane (Ask, Help), because a strip with one button is a label. The
-     badges that used to sit on the To-do and Proposals tabs sit on their
-     sub-tabs and count what they always counted: Home's is decisions
-     waiting on you, To-do's is work you agreed to, Proposals' is changes
-     waiting on a yes. `data-view` stays the pane's own name, so every
-     handler under `switchView` and every measure that clicks one still
-     finds it. -->
+     pane (Today, Ask), because a strip with one button is a label. House
+     holds what Insights, Ideas, Knowledge, Activity and Upkeep used to be,
+     and the docs pane is reached from ⚙ › Guide — its button stays here in
+     a group of its own so `switchView("docs")` still has a home.
+     `data-view` stays the pane's own name, so every handler under
+     `switchView` and every measure that clicks one still finds it. -->
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
-  <button class="subtab" data-view="findings" data-group="home" role="tab">Findings</button>
-  <button class="subtab" data-view="insights" data-group="home" role="tab">Insights</button>
-  <button class="subtab" data-view="ideas" data-group="home" role="tab">Ideas <span id="ideasBadge" class="badge hidden"></span></button>
-  <button class="subtab" data-view="todo" data-group="home" role="tab">To-do <span id="todoBadge" class="badge hidden"></span></button>
-  <button class="subtab" data-view="proposals" data-group="home" role="tab">Proposals <span id="propBadge" class="badge hidden"></span></button>
+  <button class="subtab" data-view="findings" data-group="today" role="tab" hidden>Today</button>
   <button class="subtab" data-view="terminal" data-group="ask" role="tab">Chat</button>
+  <button class="subtab" data-view="insights" data-group="house" role="tab">Insights</button>
+  <button class="subtab" data-view="ideas" data-group="house" role="tab">Ideas <span id="ideasBadge" class="badge hidden"></span></button>
   <button class="subtab" data-view="memory" data-group="house" role="tab">Knowledge</button>
   <button class="subtab" data-view="activity" data-group="house" role="tab">Activity</button>
-  <button class="subtab" data-view="upkeep" data-group="house" role="tab">Upkeep</button>
-  <button class="subtab" data-view="docs" data-group="help" role="tab">Docs</button>
+  <button class="subtab" data-view="docs" data-group="guide" role="tab">Guide</button>
 </nav>
 
 <!-- What a chip has to say when there is more to it than the chip's own
@@ -152,7 +142,7 @@
   </select>
 </nav>
 
-<div id="viewInsights" class="view active">
+<div id="viewInsights" class="view">
 
   <!-- Connect / setup screen (shown when no credential is stored) -->
   <section id="setup" class="setup hidden">
@@ -354,7 +344,7 @@
            sends the sentence through the ask bar's own path: drafted,
            simulated over this house's history, graded against what the
            household did, then watched for a week. Nothing is written to the
-           house until it is accepted on Home → Proposals. -->
+           house until it is accepted on Today. -->
       <div id="obTryBlock" class="hidden">
         <h3 class="obh3">One automation to try for a week</h3>
         <label class="obcard">
@@ -364,7 +354,7 @@
             <div class="obcardwhy" id="obTryWhy"></div>
             <div class="obcardfocus">brAIn simulates it over your recorded history first,
               then watches it for a week beside what you actually do. Nothing is written to
-              your house until you accept it under Home → Proposals.</div>
+              your house until you apply it on Today.</div>
           </div>
         </label>
       </div>
@@ -422,45 +412,46 @@
   </section>
 </div>
 
-<!-- Findings: the decision list. Memory says what is TRUE of this home; a
-     finding is what is BROKEN in it and a hypothesis is what brAIn might
-     have WRONG about it. Those stay three different kinds of knowledge and
-     three different stores — but the last two are the same job, which is a
-     decision only the person living here can make, and they are shown in
-     one list for that reason. Two lists of decisions meant two badges and
-     neither ever read as done. -->
-<div id="viewFindings" class="view">
-  <section class="findwrap">
-    <div class="findhead">
-      <div>
-        <h2>What's waiting on you</h2>
-        <p class="sub">Everything brAIn wants a decision about, in one list. Every
-          card takes the same answers: <b>Fix it</b> where brAIn can make the
-          change, <b>Add to list</b>, <b>Dismiss</b> (it comes back later) and
-          <b>Not a problem</b> (it never does — say why, and brAIn learns).
-          Work you have accepted lives on the To-do tab.</p>
-      </div>
-      <!-- The house checks read Home Assistant directly and never call
-           Claude, so the button is cheap to press and says so. It sits
-           beside the filters rather than in them because the filters are
-           rebuilt on every render. -->
-      <div class="findside">
-        <div class="findfilters" id="findFilters"></div>
-        <button id="findRunChecks" class="btn small ghost"
-                data-tip="Read the house now — automations, devices, batteries, dashboards. No Claude run, nothing spent.">Run checks now</button>
-      </div>
+<!-- Today: the one screen for deciding (docs/design/ui-redesign-2026-10.md,
+     "The first screen"). Top to bottom: a safety banner only while
+     something is urgent, the status line, the queue — every finding,
+     question, suggestion, name tidy and assessed update as one card type —
+     Your list, and the History drawer. A first-time owner sees the setup
+     card where the queue goes until the first look has finished. The pane
+     keeps its old id and `data-view="findings"`, and `#findList` is still
+     the queue, so every handler and measure that binds to them still does.
+     The sign-in and onboarding sections are moved into `#todaySetupBody`
+     at startup (`adoptSetupScreens`), the Memory pane's arrangement: one
+     copy of each, under the ids every handler is bound to. -->
+<div id="viewFindings" class="view active">
+  <section class="todaypane findwrap">
+    <div id="todayBanner" class="todaybanner" role="alert" hidden></div>
+    <div class="todaystatus">
+      <span id="todayStatus" class="todaystatusline" data-state="watching"><span class="sdot" aria-hidden="true"></span><span id="todayStatusText">Watching</span></span>
+      <span id="todayStatusMenuHost"></span>
     </div>
-    <!-- How right each producer has been, from the endings people gave.
-         Hidden until a producer has enough endings to mean something. -->
-    <div id="findScore" class="findscore" hidden></div>
-    <!-- The producers switched off with "Stop raising these", each with
-         the press that turns it back on. Hidden while nothing is muted. -->
-    <div id="findMuted" class="findscore findmuted" hidden></div>
-    <div id="findList" class="findlist"></div>
-    <!-- What the Resident did today, under the list it produced. Three
-         numbers and the state of the subscription, because a quiet feed and
-         a loop that has stopped look identical from here otherwise. -->
-    <p id="findFoot" class="findfoot" hidden></p>
+    <div id="todayBrief" class="todaybrief" hidden></div>
+    <section id="todaySetup" class="card-x todaysetup" hidden aria-labelledby="todaySetupTitle">
+      <h2 id="todaySetupTitle" class="card-title">Set up brAIn</h2>
+      <ol id="todaySetupSteps" class="todaysteps"></ol>
+      <div id="todaySetupBody"></div>
+    </section>
+    <div id="findList" class="findlist todayqueue"></div>
+    <button id="todayMore" class="btn-tertiary todaymore" hidden></button>
+    <section class="todaysec" aria-labelledby="todayListHead">
+      <h2 id="todayListHead" class="t-card">Your list</h2>
+      <form id="todoAdd" class="todoadd">
+        <input id="todoText" type="text" maxlength="200" autocomplete="off"
+               placeholder="Add to your list…" aria-label="Add to your list">
+        <button type="submit" class="btn-secondary">Add to list</button>
+      </form>
+      <div id="todoList" class="todolist"></div>
+    </section>
+    <details id="todayHistory" class="todayhistory">
+      <summary>History</summary>
+      <div id="histFilters" class="histfilters" role="tablist" aria-label="History"></div>
+      <div id="histList" class="histlist"></div>
+    </details>
   </section>
 </div>
 
@@ -474,68 +465,6 @@
      way, so "unattributed" is the honest answer for both, and a timeline
      that guessed between them would be a timeline nobody could use as
      evidence. -->
-<!-- Work you have accepted. A finding is brAIn asking a question; an item
-     here is one you have already answered with "yes, and I'll do it", so
-     nothing on this list is a decision — it is a chore with the evidence
-     still attached to it. The card that raised it is gone, which is why
-     every word of it was copied here when it moved. -->
-
-<div id="viewTodo" class="view">
-  <section class="findwrap">
-    <div class="findhead">
-      <div>
-        <h2>What you're going to do</h2>
-        <p class="sub">Findings you've accepted as real work, plus anything you add
-          yourself. brAIn won't raise an accepted one again while it sits here —
-          and if you take it off without doing it, it's free to find it again.</p>
-      </div>
-      <div class="findside">
-        <div class="findfilters" id="todoFilters"></div>
-      </div>
-    </div>
-    <form id="todoAdd" class="todoadd">
-      <input id="todoText" type="text" maxlength="200" autocomplete="off"
-             placeholder="Something else that needs doing…" aria-label="Add a to-do">
-      <button type="submit" class="btn small primary">Add</button>
-    </form>
-    <div id="todoList" class="findlist"></div>
-  </section>
-</div>
-
-<div id="viewProposals" class="view">
-  <!-- The Findings tab's own column and head, so the Home group reads as
-       one app: it used to be a narrower centred column with a heading of
-       its own. -->
-  <section class="propwrap findwrap">
-    <div class="prophead findhead">
-      <div>
-        <h2>What could be better</h2>
-        <p class="sub">Changes brAIn thinks would suit this house, each with the
-          evidence behind it and what it would have done over the last month of
-          your own history. A trial replays the change over the days since you
-          started it and grades each firing against what you actually did —
-          nothing is called and nothing is switched on. Accepting one writes a
-          real automation into your <code>automations.yaml</code> and reloads
-          Home Assistant; Undo takes it straight back out. Saying no teaches
-          brAIn more than saying nothing.</p>
-      </div>
-    </div>
-    <!-- The one producer a person addresses by name. Every other card on
-         this tab arrives because brAIn watched something; four scenes are
-         asked for, so there is a control for asking. The list is the
-         panel's own — only rooms brAIn can actually compose for, because
-         a picker offering a choice its own rule refuses teaches people to
-         distrust it. -->
-    <div class="propask">
-      <label for="sceneArea">Design scenes for</label>
-      <select id="sceneArea" class="sel selin"><option value="">a room…</option></select>
-      <button id="sceneGo" class="btn small" disabled>Design them</button>
-      <p id="sceneNote" class="propasknote"></p>
-    </div>
-    <div id="propList" class="proplist"></div>
-  </section>
-</div>
-
 <div id="viewActivity" class="view">
   <section class="actwrap">
     <!-- The top line is what the house is doing now ("Someone's home",
@@ -560,43 +489,6 @@
          arithmetic over one fetch of the logbook. -->
     <div id="actSummary" class="actsummary"></div>
     <div id="actList" class="actlist"></div>
-  </section>
-</div>
-
-<!-- Upkeep: Home Assistant ITSELF, looked after. The house book, tidier
-     names and rooms, whether each waiting update is safe tonight, and what
-     the overnight health check and the access review found. Every press
-     here spends one Claude run and STARTS it — the section reads the
-     outcome back — and nothing changes in Home Assistant until a person
-     ticks rows and presses Apply. -->
-<div id="viewUpkeep" class="view">
-  <section class="upwrap">
-    <div class="findhead">
-      <div>
-        <h2>Upkeep</h2>
-        <p class="sub">Home Assistant itself, looked after: tidier names and rooms, whether each
-          waiting update is safe to install, and what the overnight check
-          found. Each button spends one Claude run; nothing in Home Assistant
-          changes until you tick it and press Apply.</p>
-      </div>
-    </div>
-    <section class="ksec upsec">
-      <h2>Names, rooms and aliases</h2>
-      <p class="hint tight">brAIn suggests names in this house's own style,
-        a room for devices in none, and the words people actually say. Tick
-        what you want; Undo works for 30 days.</p>
-      <div id="upTidy" class="upbody"></div>
-    </section>
-    <section class="ksec upsec">
-      <h2>Updates waiting</h2>
-      <p class="hint tight">brAIn reads each update's release notes against
-        your configuration. It never installs anything.</p>
-      <div id="upUpdates" class="upbody"></div>
-    </section>
-    <section class="ksec upsec">
-      <h2>Overnight health and access</h2>
-      <div id="upHealth" class="upbody"></div>
-    </section>
   </section>
 </div>
 

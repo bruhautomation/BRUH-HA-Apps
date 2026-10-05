@@ -116,7 +116,7 @@ jobs:
       - name: Measure the first-run flow
         run: node tests/manual/measure-onboarding.mjs
 
-      - name: Measure the proposals tab
+      - name: Measure the suggestions on Today
         run: node tests/manual/measure-proposals.mjs
 
       - name: Measure the Claude account surfaces
@@ -149,7 +149,7 @@ jobs:
 
       # A chore you cannot finish from the screen it is on is
       # indistinguishable from one nobody has got round to.
-      - name: Measure the To-do tab
+      - name: Measure Your list
         run: node tests/manual/measure-todo.mjs
 
       # An idea is a proposal to spend a run every refresh interval for
@@ -170,11 +170,12 @@ jobs:
       - name: Measure the Ask tab
         run: node tests/manual/measure-ask.mjs
 
-      # Upkeep and the house book: a book sentence with no source reads
-      # like a cited one, a tidy row with no tick or a room move that does not name the
-      # automation it changes is a review nobody can do, and an upgrade
-      # verdict without both quotes is an opinion.
-      - name: Measure the Upkeep pane
+      # The tidy and update cards on Today, and the house book: a book
+      # sentence with no source reads like a cited one, a tidy row with no
+      # tick or a room move that does not name the automation it changes is
+      # a review nobody can do, and an upgrade verdict without both quotes
+      # is an opinion.
+      - name: Measure the tidy, updates and house book
         run: node tests/manual/measure-upkeep.mjs
 
       # House: four segments on one control (a select on a phone), the
@@ -184,18 +185,24 @@ jobs:
         run: node tests/manual/measure-house.mjs
 
       # A card nothing checked must not read like one something did.
-      - name: Measure the triage view
+      - name: Measure what a card says about being looked at
         run: node tests/manual/measure-triage.mjs
 
-      # One list of cases over four stores: a case whose ending is missing
-      # is work with nowhere to go and a badge that can never read as done.
-      - name: Measure the Home feed
+      # Every kind of card on Today offers its own row and sends its own
+      # route: a case whose ending is missing is work with nowhere to go.
+      - name: Measure the cards' presses
         run: node tests/manual/measure-home.mjs
 
       # What a fix would change, read before it changes it — and what it
       # did change, read before the undo beside it is pressed.
       - name: Measure the fix plan card
         run: node tests/manual/measure-fixplan.mjs
+
+      # Today, the one screen for deciding: no sub-tab bar, the first card
+      # near the top, what fits and "Show N more", one card standard, the
+      # status line, Your list, History and the first-run setup card.
+      - name: Measure Today
+        run: node tests/manual/measure-today.mjs
 
       # The visual standard: four type sizes, sentence case, no browser
       # chrome on a select or a checkbox, and every card on the 4px grid

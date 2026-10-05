@@ -591,11 +591,15 @@ class TestOneVocabulary(unittest.TestCase):
                          {"open", "triaging"})
 
     def test_the_panel_filters_on_the_status_the_store_writes(self):
-        self.assertIn('{ id: "held", label: "Looked at", '
-                      'match: (f) => f.status === "held" }', self.js)
+        # History › Set aside by brAIn reads the rows the store wrote as
+        # held — the store's own word, not a second one.
+        today = (PANEL_DIR / "today.py").read_text()
+        self.assertIn('if f.get("status") != "held":', today)
+        self.assertIn('"aside": "Set aside by brAIn"', today)
 
     def test_the_panel_presses_the_route_the_server_serves(self):
-        self.assertIn("api/finding/${f.ts}/elevate", self.js)
+        today = (PANEL_DIR / "today.py").read_text()
+        self.assertIn('f"/api/finding/{f.get(\'ts\')}/elevate"', today)
         server_src = (PANEL_DIR / "server.py").read_text()
         self.assertIn('"/api/finding/{ts}/elevate"', server_src)
 

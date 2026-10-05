@@ -16,7 +16,9 @@ export async function openView(page, view) {
   const group = (await sub.count()) ? await sub.getAttribute('data-group')
     : (house ? 'house' : null);
   if (!group) {
-    await page.click(`.viewtab[data-view="${view}"]`);
+    const own = page.locator(`.viewtab[data-view="${view}"]`);
+    if (await own.count()) await own.first().click();
+    else await page.evaluate((v) => switchView(v), view);
     return;
   }
   const tab = page.locator(`.viewtab[data-group="${group}"]`);
@@ -33,5 +35,9 @@ export async function openView(page, view) {
     }
     return;
   }
+  // Today and House show no sub-strip, and Help's guide has no tab at all
+  // (⚙ › Guide opens it), so a pane with no visible button is switched to
+  // the way its own button would.
   if (await sub.isVisible()) await sub.click();
+  else await page.evaluate((v) => switchView(v), view);
 }

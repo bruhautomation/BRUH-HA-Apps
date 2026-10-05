@@ -753,8 +753,8 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # actionable notifications can tell whose button was pressed, and short
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
-ACTION_LABELS = (("todo", "Add to list"), ("fixed", "I've fixed it"),
-                 ("wrong", "Not a problem"), ("snooze", "Dismiss"),
+ACTION_LABELS = (("todo", "Add to list"), ("fixed", "Done"),
+                 ("wrong", "Ignore"), ("snooze", "Snooze"),
                  ("reply", "Reply"))
 # The one button that opens a text box rather than pressing a verb: the
 # companion app renders `behavior: textInput` as a reply field on both

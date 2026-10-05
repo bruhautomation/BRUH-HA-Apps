@@ -1,7 +1,7 @@
 # Browser checks
 
 Checks that need a real browser, so they can't run inside the pytest suite.
-The four `measure-*.mjs` scripts run in CI as the **layout** job on every
+The `measure-*.mjs` scripts run in CI as the **layout** job on every
 PR; run them by hand too when you touch what they measure — the failure
 output is far easier to read next to your editor than in a CI log. The
 screenshot pipeline (`demo_panel.py` + `shoot-panel.mjs`) stays manual: it
@@ -161,19 +161,55 @@ than a number, and this stays green by construction.
 ## `measure-chrome.mjs`
 
 What the panel spends on chrome before content, driven on the real markup
-behind a stubbed fetch. At a 390px phone: the sub-tab strip never scrolls
-sideways and Home's five panes fit on one row, the status strip over the
-cards is one segment and a "+N more" with no separator bars, and Help opens
-on the guide with its sixty-section contents behind a fold. At 1448px: the
-Findings feed lays cards two abreast and uses the width, and Proposals sits
-in the same column under the same heading as Findings with a styled select.
+behind a stubbed fetch. At a 390px phone: the three tabs fit one row at 44px
+each, Today and House show no sub-tab strip, no status strip sits over the
+reports, and the guide (⚙ › Guide) opens with its sixty-section contents
+behind a fold. At 1448px: Today's queue and Your list share one column that
+uses the width, and no Proposals or To-do pane has come back beside it.
 
 ```bash
 node tests/manual/measure-chrome.mjs
 ```
 
-Run it after touching `.subtabs`, `.today`, the docs nav, `.findwrap` /
-`.findlist`, or `#viewProposals`.
+Run it after touching `.viewtabs`, `.subtabs`, the docs nav or `.todaypane`.
+
+## `measure-today.mjs` and the Today measures
+
+Today is the one screen for deciding (`docs/design/ui-redesign-2026-10.md`,
+"The first screen"). Every measure of it drives the panel's real renderers
+behind `today-fixture.mjs`, one house in the server's own shapes, so the
+measures of the card, the list, the suggestions and the plan read the same
+house; `openToday` opens it and `posts` reads back what each press sent.
+
+* `measure-today.mjs` — the screen at 390 (touch) and 1190: no sub-tab bar,
+  the first card within 360/240px of the top, 1 card on a phone and 3 on a
+  desktop with "Show N more" revealing exactly the rest, one status chip of
+  the four per card, at most one primary, labels from the action vocabulary
+  only, Snooze before Ignore, a closed Details, a body of at most three
+  lines, "What could go wrong" on every Apply card, what Undo puts back on a
+  change, the cut text staying cut, the status line and its ⋯, the urgent
+  banner, the badge equal to the counted cards, Your list, the History
+  drawer's four filters, the one-line empty state and the three-step setup
+  card.
+* `measure-home.mjs` — what each kind of card offers (Plan, Add to list,
+  Apply, Yes · No · Snooze, Done · Undo) and what each press sends,
+  including Ignore's reason and "Ignore all like this" reaching the mute.
+* `measure-todo.mjs` — Your list: Done with its note, the row's ⋯, the add
+  box at 16px on touch, the empty line.
+* `measure-proposals.mjs` — suggestions: evidence on the face, the three
+  trial sentences, a refused accept keeping its reason on the card, a landed
+  one offering Undo, playbooks, one-offs.
+* `measure-triage.mjs` — "Unchecked" in words, the look's reason under
+  Details, and Set aside by brAIn with Restore.
+* `measure-fixplan.mjs` — the plan, the risk, the out-of-date and refused
+  plans, the run in flight, and what Undo puts back.
+* `measure-upkeep.mjs` — the tidy and update cards on Today, and the house
+  book.
+
+```bash
+node tests/manual/measure-today.mjs
+SHOT_DIR=/tmp node tests/manual/measure-today.mjs   # with screenshots
+```
 
 ## `measure-house.mjs`
 

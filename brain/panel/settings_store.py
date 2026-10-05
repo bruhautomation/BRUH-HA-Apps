@@ -196,6 +196,11 @@ DEFAULTS = {
     # week, and then off again — a Configuration-tab option would cost a
     # restart at each end of that.
     "capture": False,
+    # "Is it safe tonight?" asked on its own, once per new update, so an
+    # update reaches Today already assessed (the redesign's capability
+    # decision 5). On by default — the doc's recommendation — and the one
+    # switch that turns the scheduled run back into a press.
+    "upgrade_advice_auto": True,
     # Producers whose findings are not wanted: a check id as `check:<id>`
     # or an insight category's id. "Stop raising these" on the Findings
     # tab writes one here; `triage.gate` drops a row from any of them
@@ -304,6 +309,8 @@ def load() -> dict:
         out["auto_enabled"] = data["auto_enabled"]
     if isinstance(data.get("capture"), bool):
         out["capture"] = data["capture"]
+    if isinstance(data.get("upgrade_advice_auto"), bool):
+        out["upgrade_advice_auto"] = data["upgrade_advice_auto"]
     if data.get("plan") in PLANS:
         out["plan"] = data["plan"]
     if data.get("terminal_ui") in TERMINAL_UIS:
@@ -471,6 +478,10 @@ def save(fields: dict) -> dict:
         elif key == "capture":
             if not isinstance(value, bool):
                 raise ValueError("capture must be a boolean")
+            clean[key] = value
+        elif key == "upgrade_advice_auto":
+            if not isinstance(value, bool):
+                raise ValueError("upgrade_advice_auto must be a boolean")
             clean[key] = value
         elif key == "muted_sources":
             clean[key] = clean_sources(value)

@@ -116,6 +116,10 @@ for (const width of WIDTHS) {
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  // The panel opens on Today; the cards' grid is House › Reports, and a card
+  // drawn into a hidden pane has no size to measure.
+  await page.waitForFunction(() => typeof switchView === 'function').catch(() => {});
+  await page.evaluate(() => switchView('insights')).catch(() => {});
   const at = (s) => `${width}px ${s}`;
   // Noted rather than thrown. An exception here would abandon every
   // finding already gathered, which is how the first run of this measure

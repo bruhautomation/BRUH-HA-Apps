@@ -3396,7 +3396,7 @@ body.term-classic #termMode .ico-out { display: block; }
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
   }
-  #findList > :not(.finding):not(.propcard),
+  #findList > :not(.finding):not(.propcard):not(.qcard),
   #ideasList > :not(.finding):not(.propcard),
   #propList > :not(.propcard) { grid-column: 1 / -1; }
 }
@@ -5074,32 +5074,6 @@ body.term-classic #termMode .ico-out { display: block; }
   .upsec .btn { min-height: 44px; }
 }
 
-/* ------------------------------------------------------------ the house now
-   One quiet line above the Findings feed (`renderHouseNow` in app.js): the
-   mode as a word, the sentence, what is coming up. Small on purpose — it is
-   context for the list under it, not a card. */
-.housenow {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
-  border-radius: 10px;
-  font-size: var(--fs-body);
-  line-height: 1.4;
-  min-width: 0;
-}
-.housenow-top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
-.housenow-mode { font-weight: 600; white-space: nowrap; }
-.housenow-sentence { min-width: 0; overflow-wrap: anywhere; }
-.housenow-sentence.stale { opacity: 0.7; font-style: italic; }
-.housenow-reason, .housenow-coming { margin-top: 4px; opacity: 0.8; font-size: var(--fs-body); overflow-wrap: anywhere; }
-.housenow-cals { margin-top: 6px; font-size: var(--fs-body); }
-.housenow-cals > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; opacity: 0.8; }
-.housenow-callist { display: grid; gap: 4px; padding: 4px 0 2px; }
-.housenow-cal { display: flex; gap: 8px; align-items: center; min-height: 32px; }
-@media (pointer: coarse) {
-  .housenow-cals > summary, .housenow-cal { min-height: 44px; }
-}
-
 /* The household's notification sentence (W2D). The learned lines sit under
    it one per row, each with its own Remove: a clause spliced into the
    sentence would be one nobody could find again to take back. */
@@ -5449,6 +5423,132 @@ input[type="range"]::-moz-range-thumb {
   width: var(--thumb); height: var(--thumb); border-radius: 50%; border: 0; background: var(--accent);
 }
 input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* ============================================================== Today
+   docs/design/ui-redesign-2026-10.md, "The first screen": the banner, the
+   status line, the queue of one card type, Your list and History. Built
+   from the components above and nothing else — a 1px edge, the four type
+   sizes, no coloured bar — and appended after the first `pointer: coarse`
+   block, which has to stay the 16px text floor. */
+.todaypane { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); }
+/* `[hidden]` is the browser's weakest rule and `.card-x` is a grid, so a
+   hidden setup card would still take its row and two gaps. */
+.todaypane [hidden] { display: none !important; }
+.todaybanner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-3) var(--card-pad);
+  border: 1px solid var(--status-urgent);
+  border-radius: var(--card-radius);
+  background: color-mix(in srgb, var(--status-urgent) 10%, var(--surface));
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink);
+}
+.todaystatus { display: flex; align-items: center; gap: var(--sp-2); min-height: var(--btn-h); }
+.todaystatusline {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
+}
+.todaystatusline .sdot {
+  width: var(--chip-dot); height: var(--chip-dot); border-radius: 50%;
+  background: var(--good); flex: none;
+}
+.todaystatusline[data-state="paused"] .sdot,
+.todaystatusline[data-state="needs_restart"] .sdot { background: var(--warning); }
+.todaystatusline[data-state="degraded"] .sdot { background: var(--serious); }
+.todaystatusline[data-state="signed_out"] .sdot { background: var(--critical); }
+.todaystatus .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
+.todaybrief {
+  padding: var(--sp-3) var(--card-pad);
+  border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
+  white-space: pre-wrap;
+}
+.todaysetup .todaysteps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.todaystep {
+  display: flex; justify-content: space-between; gap: var(--sp-3);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-3);
+}
+.todaystep.now { color: var(--ink); font-weight: 600; }
+.todaystep.done { color: var(--ink-2); }
+#todaySetupBody { display: grid; gap: var(--sp-3); min-width: 0; }
+.todayqueue { gap: var(--card-gap); }
+.todaymore { justify-self: start; margin-top: calc(var(--sp-3) * -1); }
+
+/* The one card: the parts under the title. */
+.qcard p { margin: 0; }
+.qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
+.qfixhead {
+  font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--ink-3);
+}
+.qfixtext {
+  margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.qplan .qfixtext { -webkit-line-clamp: unset; display: block; }
+.qplan .findsteps { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-body); line-height: var(--lh-body); }
+.qplan .findrisk, .qcard .qundoline {
+  margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
+}
+p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
+.qdetails[open] { display: grid; gap: var(--sp-2); }
+.qdetails > summary { min-height: 24px; display: flex; align-items: center; }
+.qdline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
+.qdlabel { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); margin-right: var(--sp-2); }
+.qdid { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.qdpre { margin: 0; font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
+.qerror { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--serious); }
+.qtidylist { display: grid; gap: var(--sp-2); }
+.qtidyrow { display: flex; align-items: center; gap: var(--sp-2);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); cursor: pointer; }
+.qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
+.qcard .findnote { margin-top: 0; }
+
+/* Your list: rows to tick, not cards to weigh. */
+.todaysec { display: grid; gap: var(--sp-3); }
+.todaysec .todoadd { margin: 0; }
+.todolist { display: grid; gap: var(--sp-2); }
+.todorow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3) var(--card-pad);
+  border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
+}
+.todotext { flex: 1 1 240px; min-width: 0; display: grid; gap: 2px; }
+.todotitle { font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink); }
+.todofix { font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-3); }
+.todoactions { display: flex; align-items: center; gap: var(--sp-2); }
+.todorow .findnote { flex-basis: 100%; margin-top: 0; }
+
+/* History: one closed line, four filters, one-line rows with one press. */
+.todayhistory > summary {
+  font-size: var(--fs-body); line-height: var(--lh-body); font-weight: 600; color: var(--ink-2);
+  cursor: pointer; min-height: var(--btn-h); display: flex; align-items: center;
+}
+.todayhistory[open] { display: grid; gap: var(--sp-3); }
+.histfilters { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.histfilter { font-size: var(--fs-body); color: var(--ink-2); }
+.histfilter.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.histlist { display: grid; gap: var(--sp-2); }
+.histrow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) 0; border-bottom: 1px solid var(--hairline);
+}
+.histtext { flex: 1 1 240px; min-width: 0; display: grid; gap: 2px; }
+.histtitle {
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Today on a phone: every press a thumb target, and the text boxes on the
+   16px floor (a class rule here would otherwise outrank it). */
+@media (pointer: coarse) {
+  .todaypane .btn-primary, .todaypane .btn-secondary, .todaypane .btn-tertiary,
+  .todaypane .btn.icon, .todaypane .findnoteactions .btn { min-height: 44px; }
+  .todaypane .btn.icon { min-width: 44px; }
+  .todayhistory > summary, .qdetails > summary { min-height: 44px; }
+  .qdetails .btn { min-height: 44px; }
+  .todaypane .findnotecheck { min-height: 44px; }
+  .todaypane .todoadd input, .todaypane .findnotebox { font-size: 16px; min-height: 44px; }
+  .qtidyrow { min-height: 44px; }
+}
 
 /* Ask on a finger: the row's ⋯ is always there and a thumb's size, and the
    fold, the strip and "Save as report" are targets, not text. After the
