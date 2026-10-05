@@ -19210,8 +19210,25 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
     no window between "what the transcript was" and "what happened next" —
     a reconnect that has to stitch two requests together is a reconnect that
     drops an event eventually.
+
+    It never answers with an error status. Opening Ask is the first thing
+    that asks for the attached session, which on a fresh install or after
+    a close is a conversation nobody has started — and an error there is
+    the panel's EventSource retrying into the same answer, logged as a
+    failure on every visit, about a state that is simply "nothing yet".
+    Whatever goes wrong building the session or its snapshot is answered
+    with an empty snapshot carrying the reason, on a 200 stream.
     """
-    session = _chat()
+    def empty(exc: Exception) -> dict:
+        log.warning("chat stream: no session to show yet: %s", exc)
+        return {"type": "snapshot", "session_id": None, "events": [],
+                "state": "idle", "error": _refusal(exc)}
+
+    first = None
+    try:
+        session = _chat()
+    except Exception as exc:   # noqa: BLE001 — see the docstring
+        session, first = None, empty(exc)
     resp = web.StreamResponse(headers={
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache, no-transform",
@@ -19220,15 +19237,23 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         "X-Accel-Buffering": "no",
     })
     await resp.prepare(request)
-    queue = session.subscribe()
+    # With no session, a queue nothing feeds: the stream stays open rather
+    # than ending into a reconnect loop, and asks again every couple of
+    # seconds (below) until there is a session to hand the panel over to.
+    queue = session.subscribe() if session is not None else asyncio.Queue()
 
     async def send(payload: dict) -> None:
         await resp.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
 
     try:
-        await send(_chat_snapshot(session))
+        if first is None:
+            try:
+                first = _chat_snapshot(session)
+            except Exception as exc:   # noqa: BLE001 — see the docstring
+                first = empty(exc)
+        await send(first)
         registry = chat_session.registry()
-        if registry.attached() is not session:
+        if session is not None and registry.attached() is not session:
             # Attached somewhere else between picking the session and
             # subscribing to it. The `switched` event that would have said
             # so went to the queue this stream does not hold, so it is
@@ -19239,8 +19264,19 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
                         "session_id": registry.attached().session_id or ""})
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=20)
+                event = await asyncio.wait_for(
+                    queue.get(), timeout=20 if session is not None else 2)
             except asyncio.TimeoutError:
+                if session is None:
+                    # Nothing to subscribe to was the problem; the moment
+                    # there is, the panel reconnects to it the way it does
+                    # after any switch.
+                    try:
+                        await send({"type": "switched",
+                                    "session_id": _chat().session_id or ""})
+                        break
+                    except Exception:   # noqa: BLE001 — still nothing
+                        pass
                 # A comment frame: proves the connection to both ends and
                 # keeps any intermediary from reaping an idle stream.
                 await resp.write(b": ping\n\n")
@@ -19256,7 +19292,8 @@ async def h_chat_stream(request: web.Request) -> web.StreamResponse:
         # there is no longer anyone to send to.
         pass
     finally:
-        session.unsubscribe(queue)
+        if session is not None:
+            session.unsubscribe(queue)
     return resp
 
 
@@ -19275,8 +19312,12 @@ async def h_chat_send(request: web.Request) -> web.Response:
     body = await request.json()
     if not isinstance(body, dict):
         raise web.HTTPBadRequest(text="expected an object")
+    session = _chat()
     try:
-        return web.json_response(await _chat().send(body.get("text") or ""))
+        # A conversation opened to be read has no process yet; the one this
+        # message starts is counted against the cap like any other spawn.
+        await _chat_registry().room_for(session)
+        return web.json_response(await session.send(body.get("text") or ""))
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
@@ -19683,8 +19724,13 @@ async def h_chat_resume(request: web.Request) -> web.Response:
         # notices that explain how it got here.
         replay = await asyncio.to_thread(
             conversations.transcript, chat_session.WORK_DIR, session_id)
+    # `spawn: false` is the rail's: a conversation opened to be read gets
+    # its transcript and no process, and the first message starts one.
+    # Anything that does not say so keeps the old meaning — "Resume now"
+    # and every older caller want the process up straight away.
+    spawn = body.get("spawn") is not False
     try:
-        out = await registry.open(session_id, replay)
+        out = await registry.open(session_id, replay, spawn=spawn)
     except ValueError as exc:
         raise web.HTTPBadRequest(reason=str(exc))
     except RuntimeError as exc:

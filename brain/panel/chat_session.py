@@ -61,6 +61,7 @@ from pathlib import Path
 import engine
 
 import atomic_write
+import conversations
 import journal
 import permission_mode
 import settings_store
@@ -1003,7 +1004,8 @@ class ChatSession:
         if isinstance(data, dict):
             events = data.get("events")
             if isinstance(events, list):
-                self.events = [e for e in events if isinstance(e, dict)][-MAX_EVENTS:]
+                self.events = _reclassified(
+                    [e for e in events if isinstance(e, dict)])[-MAX_EVENTS:]
                 self._seq = max((e.get("seq") or 0) for e in self.events) if self.events else 0
             self.meta = _clean_meta(data.get("meta"))
             self.finding_ts = int(self.meta.get("finding_ts") or 0)
@@ -1971,7 +1973,8 @@ class ChatSession:
             "command": f"claude --resume {session_id}" if session_id else "claude",
         }
 
-    async def resume(self, session_id: str, replay: list[dict]) -> dict:
+    async def resume(self, session_id: str, replay: list[dict],
+                     spawn: bool = True) -> dict:
         """Take up an existing conversation — including one from the terminal.
 
         This is what makes the two faces interchangeable rather than merely
@@ -1987,6 +1990,14 @@ class ChatSession:
         a settled session instead of shooting the first one's spawn — which
         used to end with a fresh, invisible conversation wearing the second
         one's transcript.
+
+        ``spawn=False`` opens it to be READ: the transcript is on screen and
+        the session is pointed at the conversation, but no process starts
+        until something is sent — `send` already starts a stopped session
+        with ``--resume``. Opening an old chat to look at it used to cost a
+        Claude process, which is a lot to pay for scrolling. ``resumed`` is
+        then None, because whether the CLI still holds the conversation is
+        only learned by asking it, and that is the first message's job.
         """
         if not session_id:
             raise ValueError("no conversation given")
@@ -2017,6 +2028,12 @@ class ChatSession:
                             "Resumed. Claude has this conversation's history — "
                             "this pane starts from here."})
             self._persist()
+            if not spawn:
+                self.resume_fell_back = False
+                if self.state != "idle":
+                    self._set_state("idle")
+                return {"ok": True, "session_id": self.session_id,
+                        "resumed": None, "events": len(replay)}
             await self.start()
             # start() may have discovered the CLI no longer holds this
             # conversation and opened a fresh session instead. Saying so is
@@ -2101,6 +2118,27 @@ class ChatSession:
 # Normalising the CLI's stream into something a browser can render
 # ---------------------------------------------------------------------------
 
+def _reclassified(events: list[dict]) -> list[dict]:
+    """A saved scrollback with the CLI's injected turns taken out of `user`.
+
+    A transcript written before `conversations.injected_events` existed
+    holds a background task's notification as a `user` bubble — the replay
+    put it there — and it would go on rendering as something the person
+    typed for as long as the file lives. Read through the same classifier
+    the replay now uses, so an old file and a new one say the same thing.
+    """
+    out = []
+    for event in events:
+        if event.get("type") == "user":
+            injected = conversations.injected_events(str(event.get("text") or ""))
+            if injected is not None:
+                out.extend({**e, "seq": event.get("seq")} if "seq" in event
+                           else e for e in injected)
+                continue
+        out.append(event)
+    return out
+
+
 def _normalise(event: dict) -> list[dict]:
     """Turn one stream-json event into zero or more transcript events.
 
@@ -2108,7 +2146,7 @@ def _normalise(event: dict) -> list[dict]:
     — permission requests and their answers — is the one exception, handled
     in the read loop because it is state, not transcript). The panel only
     ever sees: text, text_delta, thinking, thinking_delta, tool,
-    tool_result, result, notice.
+    tool_result, background, result, notice.
     """
     etype = event.get("type")
 
@@ -2165,10 +2203,21 @@ def _normalise(event: dict) -> list[dict]:
 
     if etype == "user":
         # A "user" event coming *from* the CLI is a tool result being fed
-        # back, not something the person typed.
+        # back, or a turn the CLI injected itself (a background task
+        # finishing) — never something the person typed, which `send`
+        # emits on its own.
+        content = (event.get("message") or {}).get("content")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
         out = []
-        for block in (event.get("message") or {}).get("content") or []:
-            if not isinstance(block, dict) or block.get("type") != "tool_result":
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                out.extend(conversations.injected_events(
+                    block.get("text") or "") or [])
+                continue
+            if block.get("type") != "tool_result":
                 continue
             content = block.get("content")
             if isinstance(content, list):
@@ -2716,22 +2765,33 @@ class SessionRegistry:
                           "it straight back up."})
             victim._persist()
 
-    async def open(self, session_id: str, replay: list[dict]) -> dict:
+    async def open(self, session_id: str, replay: list[dict],
+                   spawn: bool = True) -> dict:
         """Attach to this conversation, opening a process for it if needed.
 
         Instant when we already hold it — no stop, no spawn, no replay,
         just a change of which session the stream serves.
+
+        ``spawn=False`` is the rail's: a conversation opened to be read is
+        attached with its transcript and no process, and the first message
+        starts one (`room_for`, then `send`'s own start). A process per
+        glance at an old chat was a Claude run nobody asked for.
         """
         if not session_id:
             raise ValueError("no conversation given")
         async with self._lock:
             existing = self.get(session_id)
             if existing is not None:
+                spawned = False
+                if not spawn and not existing.alive():
+                    self._attach_locked(existing)
+                    return {"ok": True, "session_id": existing.session_id,
+                            "resumed": None, "events": len(existing.events),
+                            "attached": True, "spawned": False}
                 await self._make_room(existing)
                 # Reopened: whatever the cap did to it is over (start()
                 # clears the transcript's copy once the process is up).
                 self._evicted_ids.pop(session_id, None)
-                spawned = False
                 if not existing.alive():
                     # Held but stopped — by the cap, or by a handoff. The
                     # transcript is already right, so this is a start, not
@@ -2751,8 +2811,10 @@ class SessionRegistry:
                         "spawned": spawned}
             session = self._adopt(ChatSession())
             try:
-                await self._make_room(session)
-                out = await session.resume(session_id, list(replay))
+                if spawn:
+                    await self._make_room(session)
+                out = await session.resume(session_id, list(replay),
+                                           spawn=spawn)
             except BaseException:
                 # Never leave a half-opened session in the listing: it has
                 # no process, no transcript worth keeping, and it would
@@ -2762,8 +2824,22 @@ class SessionRegistry:
                 raise
             self._attach_locked(session)
             out["attached"] = True
-            out["spawned"] = True
+            out["spawned"] = spawn
             return out
+
+    async def room_for(self, session: ChatSession) -> None:
+        """Make room for a stopped session that is about to be spoken to.
+
+        A conversation opened to be read has no process, and neither does
+        one the cap paused; the next message starts one. Asked here first,
+        so that start counts against the cap like every other spawn rather
+        than slipping past it because it came in through `send`.
+        """
+        if session.alive():
+            return
+        async with self._lock:
+            await self._make_room(session)
+            self._evicted_ids.pop(session.session_id or "", None)
 
     async def new(self, finding_ts: int = 0) -> dict:
         """Start a conversation, leaving whatever else is open alone.

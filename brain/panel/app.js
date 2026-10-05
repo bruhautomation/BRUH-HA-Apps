@@ -3489,7 +3489,8 @@ $("#deepRun").addEventListener("click", async () => {
     // A 409 means one is already going — which is an answer, not an error:
     // both presses are watching the same run.
     await api("api/doctor/deep", { method: "POST" });
-    toast("Deep check started — it spends a few Claude turns");
+    toast("Deep check started — it spends a few Claude turns and makes "
+      + "one reversible change to a test helper it creates");
   } catch (e) {
     toast(e.message);
   }
@@ -9767,6 +9768,26 @@ function chatToolNode(ev) {
   return box;
 }
 
+// A turn Claude Code injected itself — a backgrounded task finishing. It
+// lives in the person's half of the conversation, which is why it used to
+// render as a bubble of raw XML "they" had typed; the server classifies it
+// (conversations.injected_event) and this draws it as one collapsed row in
+// the tool calls' shape, with the task's own report as markdown inside.
+function chatBackgroundNode(ev) {
+  const failed = /fail|error|kill/i.test(ev.status || "");
+  const box = el("details", "toolcall bgtask " + (failed ? "bad" : "ok"));
+  const sum = el("summary");
+  sum.appendChild(el("span", "tdot"));
+  sum.appendChild(el("span", "tname",
+                     failed ? "Background task failed" : "Background task finished"));
+  sum.appendChild(el("span", "tsum", ev.summary || ""));
+  box.appendChild(sum);
+  const body = el("div", "tbody");
+  body.innerHTML = renderMarkdown(String(ev.text || ""));
+  box.appendChild(body);
+  return box;
+}
+
 function chatToolResult(ev) {
   const box = chatState.tools.get(ev.id);
   if (!box) return;
@@ -10163,6 +10184,10 @@ function chatRender(ev) {
     case "tool_result":
       chatToolResult(ev);
       chatStatus("Working…");
+      break;
+    case "background":
+      chatSealLive();
+      chatAppend(chatBackgroundNode(ev));
       break;
     case "resolutions":
       chatCloseLiveThink();
@@ -11367,8 +11392,12 @@ async function resumeConversation(conv) {
   const held = chatState.liveSessions[conv.id];
   if (!held) toast("Opening that conversation…");
   try {
+    // `spawn: false`: opening a conversation is reading it. Its transcript
+    // comes over now and the Claude process starts with the first message
+    // you send — not one per conversation you happened to look at.
     const out = await api("api/chat/resume", {
-      method: "POST", body: JSON.stringify({ session_id: conv.id }) });
+      method: "POST",
+      body: JSON.stringify({ session_id: conv.id, spawn: false }) });
     // The row's state rides back so the composer line is right before the
     // reconnect's snapshot lands — and a fallback is a state on the line
     // ("Context lost") rather than only the toast below, which vanishes.
@@ -11443,6 +11472,8 @@ function renderReplayInto(host, events) {
       host.appendChild(row);
     } else if (ev.type === "text") {
       host.appendChild(chatMarkdown(ev.text));
+    } else if (ev.type === "background") {
+      host.appendChild(chatBackgroundNode(ev));
     } else if (ev.type === "thinking") {
       const box = el("details", "think");
       box.appendChild(el("summary", null, "Thinking"));

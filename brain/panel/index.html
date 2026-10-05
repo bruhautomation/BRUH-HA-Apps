@@ -1426,10 +1426,11 @@
 
           <h4 class="sethead">Deep check</h4>
           <p class="hint">Everything above is what brAIn <em>recorded</em>; this walks every face
-            with a live round trip each and says which of them works right now.
+            with a live round trip each and says which of them works right now. It makes one
+            reversible change: a test helper it creates, renames with a real fix, and removes.
             <button type="button" class="btn icon tiny"
               aria-label="More about the deep check"
-              data-tip="It drives a plain Claude run, the analyst's tools, a chat turn, an automation task, Assist, memory, findings and one real fix. It spends about five Claude turns and takes a few minutes; it never runs on its own, only when you press this. Everything it creates it removes, and it checks that it did.">?</button></p>
+              data-tip="It drives a plain Claude run, the analyst's tools, a chat turn, an automation task, Assist, memory, findings and one real fix. The fix renames an input_boolean named brain_test_*, which the check creates first and deletes afterwards; nothing of yours is touched, and the chat turn is filed as the check's, not shown among your chats. It spends about five Claude turns and takes a few minutes; it never runs on its own, only when you press this. Everything it creates it removes, and it checks that it did.">?</button></p>
           <div class="row">
             <button id="deepRun" class="btn">Run deep check</button>
             <span id="deepLast" class="hint tight"></span>
