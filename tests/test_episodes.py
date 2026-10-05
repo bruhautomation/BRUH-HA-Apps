@@ -353,8 +353,9 @@ class TestTheParagraph(unittest.TestCase):
             self.assertNotIn(forbidden, src, forbidden)
 
 
-class TestTheTab(unittest.TestCase):
-    """The route, over a real client, with the logbook stubbed."""
+class _TabHarness(unittest.TestCase):
+    """The route, over a real client, with the logbook stubbed. No tests
+    of its own, so a class built on it does not run TestTheTab's twice."""
 
     @classmethod
     def setUpClass(cls):
@@ -367,7 +368,7 @@ class TestTheTab(unittest.TestCase):
         base = Path(self.tmp.name)
         self._olds = (settings_store.SETTINGS_FILE, engine.run_claude,
                       engine.run_analyst, engine.get_auth,
-                      self.server._activity, self.server._device_classes,
+                      self.server._activity, self.server._house_now,
                       self.server.INSIGHTS_DIR, self.server.CARD_TOKEN_FILE,
                       self.server.WWW_CARD_DIR)
         settings_store.SETTINGS_FILE = os.path.join(self.tmp.name, "settings.json")
@@ -389,14 +390,18 @@ class TestTheTab(unittest.TestCase):
             return {"available": True, "error": "", "start": NOW,
                     "end": NOW + 11_000, "actions": list(self.rows),
                     "capped": False, "overrides": [], "conflicts": [],
-                    "moves": {},
+                    "moves": {}, "lifecycle": list(self.lifecycle),
                     "counts": {c: 0 for c in __import__("actions").CAUSES}}
 
-        async def classes():
-            return {"binary_sensor.back": "door"}
+        self.lifecycle = []
+        self.house = {"classes": {"binary_sensor.back": "door"}, "live": {},
+                      "people_trackers": None, "platforms": {}}
+
+        async def house_now():
+            return self.house
 
         self.server._activity = activity
-        self.server._device_classes = classes
+        self.server._house_now = house_now
         self.runs = []
 
         def run_analyst(prompt, system, *a, **k):
@@ -412,7 +417,7 @@ class TestTheTab(unittest.TestCase):
         import engine
         import settings_store
         (settings_store.SETTINGS_FILE, engine.run_claude, engine.run_analyst,
-         engine.get_auth, self.server._activity, self.server._device_classes,
+         engine.get_auth, self.server._activity, self.server._house_now,
          self.server.INSIGHTS_DIR, self.server.CARD_TOKEN_FILE,
          self.server.WWW_CARD_DIR) = self._olds
         self.server._ACTIVITY_SUMMARIES.clear()
@@ -429,6 +434,8 @@ class TestTheTab(unittest.TestCase):
                 await client.close()
         return asyncio.run(run())
 
+
+class TestTheTab(_TabHarness):
     def test_the_tab_answers_with_what_happened_and_not_with_rows(self):
         async def body(client):
             res = await client.get("/api/activity")
@@ -528,6 +535,250 @@ class TestTheTab(unittest.TestCase):
 
         self.drive(body)
         self.assertEqual(self.runs, [])
+
+
+class TestTheRowAgreesWithTheHouseNow(unittest.TestCase):
+    """B7: "Downstairs heat_cool since 08:36 PM · 17h so far" about a
+    thermostat that had been unavailable since 11:11 AM. The logbook missed
+    the transition; the live state did not."""
+
+    def test_an_open_episode_ends_where_the_live_state_changed(self):
+        rows = [act(0, "climate.downstairs", "heat_cool")]
+        live = {"climate.downstairs": {"state": "unavailable",
+                                       "last_changed": NOW + 52_000}}
+        g = episodes.group(rows, {}, NOW + 63_000, live=live)
+        old, new = sorted(only(g, "climate.downstairs"),
+                          key=lambda e: e["started"])
+        self.assertFalse(old["open"], "heat_cool is not still going")
+        self.assertEqual(old["ended"], NOW + 52_000)
+        self.assertEqual(old["duration_s"], 52_000)
+        self.assertEqual(old["live"], "unavailable")
+        self.assertEqual(new["first"], "unavailable")
+        self.assertTrue(new["open"])
+        self.assertTrue(new["from_live"])
+        self.assertEqual(new["started"], NOW + 52_000)
+        self.assertEqual(new["duration_s"], 11_000)
+        self.assertEqual(new["count"], 0, "no logbook change stands for it")
+
+    def test_a_live_state_that_agrees_changes_nothing(self):
+        rows = [act(0, "climate.downstairs", "heat_cool")]
+        live = {"climate.downstairs": {"state": "heat_cool",
+                                       "last_changed": NOW}}
+        g = episodes.group(rows, {}, NOW + 600, live=live)
+        [ep] = only(g, "climate.downstairs")
+        self.assertTrue(ep["open"])
+        self.assertNotIn("live", ep)
+
+    def test_a_contradiction_it_cannot_place_still_stops_claiming_since(self):
+        rows = [act(0, "light.hall", "on")]
+        live = {"light.hall": {"state": "off", "last_changed": NOW - 50}}
+        g = episodes.group(rows, {}, NOW + 600, live=live)
+        [ep] = only(g, "light.hall")
+        self.assertFalse(ep["open"])
+        self.assertEqual(ep["live"], "off")
+
+    def test_without_live_the_grouping_is_what_it_was(self):
+        rows = [act(0, "climate.downstairs", "heat_cool")]
+        [ep] = only(episodes.group(rows, {}, NOW + 600), "climate.downstairs")
+        self.assertTrue(ep["open"])
+
+
+class TestHomeAssistantRestarting(unittest.TestCase):
+    """B7's other half: the restart at ~11:10 appeared nowhere, so forty
+    rows going unavailable in the same minute had no explanation."""
+
+    def test_the_logbook_lines_are_read_out_of_the_entries(self):
+        import actions
+        entries = [
+            {"when": "2026-10-04T15:10:02+00:00", "name": "Home Assistant",
+             "message": "stopped", "domain": "homeassistant"},
+            {"when": "2026-10-04T15:11:30+00:00", "name": "Home Assistant",
+             "message": "started", "domain": "homeassistant"},
+            {"when": "2026-10-04T15:11:31+00:00", "entity_id": "light.x",
+             "state": "on", "domain": "homeassistant", "message": "started"},
+            {"when": "2026-10-04T15:12:00+00:00", "name": "Kitchen",
+             "message": "triggered", "domain": "automation"},
+        ]
+        got = actions.lifecycle(entries)
+        self.assertEqual([e["event"] for e in got], ["stopped", "started"])
+        self.assertEqual(got[1]["ts"] - got[0]["ts"], 88)
+
+    def test_a_stop_and_the_start_after_it_are_one_row(self):
+        g = episodes.group([], {}, NOW, lifecycle=[
+            {"ts": NOW, "event": "stopped"},
+            {"ts": NOW + 90, "event": "started"}])
+        [row] = g["episodes"]
+        self.assertEqual(row["subject"], "system")
+        self.assertEqual(row["name"], "Home Assistant restarted")
+        self.assertEqual(row["duration_s"], 90)
+        self.assertEqual((row["first"], row["last"]), ("stopped", "started"))
+
+    def test_a_start_with_no_stop_is_still_a_row(self):
+        """A power cut leaves no stop behind it."""
+        [row] = episodes.restart_episodes([{"ts": NOW, "event": "started"}])
+        self.assertEqual(row["name"], "Home Assistant started")
+
+    def test_what_nothing_caused_around_it_is_marked(self):
+        rows = [act(100, "climate.downstairs", "unavailable"),
+                act(120, "light.porch", "on", cause="automation",
+                    by_name="Startup lights"),
+                act(5_000, "light.hall", "on")]
+        g = episodes.group(rows, {}, NOW + 6_000, lifecycle=[
+            {"ts": NOW, "event": "stopped"},
+            {"ts": NOW + 60, "event": "started"}])
+        self.assertEqual(only(g, "climate.downstairs")[0]["near_restart"],
+                         NOW + 60)
+        self.assertNotIn("near_restart", only(g, "light.porch")[0],
+                         "an automation that ran at startup has its own cause")
+        self.assertNotIn("near_restart", only(g, "light.hall")[0])
+
+    def test_it_gets_a_section_of_its_own_ahead_of_the_rest(self):
+        g = episodes.group([act(0, "lock.front", "locked")], {}, NOW,
+                           lifecycle=[{"ts": NOW, "event": "started"}])
+        self.assertEqual([s["id"] for s in episodes.sections(g)],
+                         ["system", "security"])
+
+
+class TestABurstIsOneThing(unittest.TestCase):
+    """D13: "23 devices from UniFi went unavailable → home at 12:43 PM",
+    as one row rather than twenty-three."""
+
+    def reload(self, n=23, cause="unattributed"):
+        rows = []
+        for i in range(n):
+            rows.append(act(0.1 + i / 1000, f"device_tracker.ap_{i}",
+                            "unavailable", cause=cause))
+            rows.append(act(12.2, f"device_tracker.ap_{i}", "home",
+                            cause=cause))
+        return rows
+
+    def test_a_reload_is_one_row_naming_the_integration(self):
+        rows = self.reload()
+        platforms = {f"device_tracker.ap_{i}": "unifi" for i in range(23)}
+        g = episodes.group(rows, {}, NOW + 60, platforms=platforms)
+        [row] = g["episodes"]
+        self.assertEqual(row["kind"], "mass")
+        self.assertEqual(row["subject"], "system")
+        self.assertEqual(row["name"], "23 devices from UniFi")
+        self.assertEqual((row["first"], row["last"]), ("unavailable", "home"))
+        self.assertEqual(row["count"], 46)
+        self.assertEqual(row["devices"], 23)
+        self.assertFalse(row["open"])
+        self.assertEqual(sum(e["count"] for e in g["episodes"]), 46,
+                         "no change is lost by collapsing")
+
+    def test_no_shared_integration_is_not_named(self):
+        g = episodes.group(self.reload(), {}, NOW + 60)
+        self.assertEqual(g["episodes"][0]["name"], "23 devices")
+
+    def test_a_few_together_are_still_rows_of_their_own(self):
+        g = episodes.group(self.reload(n=episodes.MASS_MIN - 1), {}, NOW + 60)
+        self.assertNotIn("mass", [e.get("kind") for e in g["episodes"]])
+
+    def test_a_scene_is_somebody_doing_something_not_a_reload(self):
+        rows = [act(0, f"light.l{i}", "on", cause="scene", by_name="Evening")
+                for i in range(10)]
+        g = episodes.group(rows, {}, NOW + 60)
+        self.assertEqual(len(g["episodes"]), 10)
+
+
+class TestWhoIsAPerson(unittest.TestCase):
+    """D13: "People · 40 of 106" was UniFi access points, the gateway and
+    Wi-Fi plugs, because every device_tracker landed there."""
+
+    def test_a_house_with_people_has_its_people_in_them(self):
+        rows = [act(0, "person.ben", "home"),
+                act(5, "device_tracker.kitchen_3_wifi", "home")]
+        g = episodes.group(rows, {}, NOW + 60)
+        self.assertEqual(only(g, "person.ben")[0]["subject"], "people")
+        self.assertEqual(only(g, "device_tracker.kitchen_3_wifi")[0]["subject"],
+                         "other")
+
+    def test_a_person_known_only_from_the_house_still_counts(self):
+        rows = [act(5, "device_tracker.gateway", "home")]
+        g = episodes.group(rows, {}, NOW + 60, live={
+            "person.ben": {"state": "home", "last_changed": NOW - 999}})
+        self.assertEqual(g["episodes"][0]["subject"], "other")
+
+    def test_with_no_person_only_a_phone_is_somebody(self):
+        rows = [act(0, "device_tracker.bens_phone", "home"),
+                act(5, "device_tracker.office_ap", "home")]
+        g = episodes.group(rows, {}, NOW + 60,
+                           people_trackers={"device_tracker.bens_phone"})
+        self.assertEqual(only(g, "device_tracker.bens_phone")[0]["subject"],
+                         "people")
+        self.assertEqual(only(g, "device_tracker.office_ap")[0]["subject"],
+                         "other")
+
+
+class TestTheRouteReadsTheHouseNow(_TabHarness):
+    """The corrections reach the payload, and only for a window that ends
+    now — a day paged back is not contradicted by this afternoon."""
+
+    def setUp(self):
+        super().setUp()
+        import time as _time
+        self.at = _time.time()
+        self.rows = [{"ts": self.at - 60_000, "entity_id": "climate.downstairs",
+                      "name": "Downstairs", "state": "heat_cool",
+                      "cause": "unattributed", "by_name": ""}]
+        self.lifecycle = [{"ts": self.at - 11_000, "event": "stopped"},
+                          {"ts": self.at - 10_900, "event": "started"}]
+        self.house["live"] = {"climate.downstairs": {
+            "state": "unavailable", "last_changed": self.at - 10_850}}
+        outer = self.server._activity
+
+        async def activity(start, end, entity_id=""):
+            data = await outer(start, end, entity_id)
+            data["end"] = self.end
+            return data
+        self.end = self.at
+        self.server._activity = activity
+
+    def fetch(self):
+        async def body(client):
+            return await (await client.get("/api/activity")).json()
+        return self.drive(body)
+
+    def test_the_payload_agrees_with_the_house_and_names_the_restart(self):
+        data = self.fetch()
+        ids = [s["id"] for s in data["sections"]]
+        self.assertEqual(ids, ["system", "climate"])
+        [climate] = [s for s in data["sections"] if s["id"] == "climate"]
+        now_row = climate["episodes"][0]
+        self.assertEqual(now_row["first"], "unavailable")
+        self.assertTrue(now_row["open"])
+        self.assertEqual(now_row["near_restart"], self.at - 10_900)
+        self.assertFalse(climate["episodes"][1]["open"])
+
+    def test_a_window_paged_back_is_not_rewritten_by_now(self):
+        self.end = self.at - 86_400
+        data = self.fetch()
+        [climate] = [s for s in data["sections"] if s["id"] == "climate"]
+        self.assertEqual(len(climate["episodes"]), 1)
+        self.assertNotIn("live", climate["episodes"][0])
+
+
+class TestThePanelSaysEachThingOnce(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.js = (PANEL_DIR / "app.js").read_text()
+
+    def body(self, name):
+        start = self.js.index(f"function {name}(")
+        return self.js[start:self.js.index("\n}\n", start)]
+
+    def test_a_rolling_window_is_not_called_today(self):
+        self.assertNotIn('"Today"', self.body("actDayLabel"))
+        self.assertIn("Last ${h} hours", self.body("actDayLabel"))
+
+    def test_no_cause_is_said_once_and_not_on_every_row(self):
+        self.assertNotIn("CAUSE_WORDS.unattributed", self.body("epCause"))
+        self.assertIn("counts || {}).unattributed", self.body("renderActivity"))
+
+    def test_the_rows_say_what_the_house_says_now(self):
+        self.assertIn("ep.from_live", self.js)
+        self.assertIn("ep.near_restart", self.js)
 
 
 class TestOneVocabulary(unittest.TestCase):

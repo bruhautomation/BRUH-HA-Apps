@@ -334,6 +334,38 @@ def mine(entries: list[dict], users: dict[str, str] | None = None,
             "counts": count_causes(actions)}
 
 
+# What Core's logbook calls its own start and stop. Both are rows with no
+# ``entity_id`` (``mine`` drops them, correctly: they change no entity),
+# carrying ``domain: homeassistant`` and a message of "started" or
+# "stopped" — the ``EVENT_HOMEASSISTANT_START``/``STOP`` humanifiers in
+# Core's logbook. "shutting down" is an older wording of the second.
+LIFECYCLE_MESSAGES = {"started": "started", "stopped": "stopped",
+                      "shutting down": "stopped"}
+
+
+def lifecycle(entries: list[dict]) -> list[dict]:
+    """Home Assistant's own starts and stops in a window, oldest first.
+
+    The one event that explains a minute in which forty entities went
+    unavailable together, and the one thing the miner deliberately does
+    not keep — so it is read out of the same entries rather than fetched
+    a second time.
+    """
+    out: list[dict] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict) or entry.get("entity_id"):
+            continue
+        if str(entry.get("domain") or "") != "homeassistant":
+            continue
+        event = LIFECYCLE_MESSAGES.get(
+            str(entry.get("message") or "").strip().lower())
+        ts = parse_when(entry.get("when"))
+        if event and ts is not None:
+            out.append({"ts": ts, "event": event})
+    out.sort(key=lambda e: e["ts"])
+    return out
+
+
 def count_causes(actions: list[dict]) -> dict[str, int]:
     counts = {c: 0 for c in CAUSES}
     for a in actions:
@@ -584,6 +616,7 @@ async def collect(session, start: float, end: float,
     if entries is None:
         return {"available": False, "error": "logbook could not be read",
                 "actions": [], "overrides": [], "conflicts": [],
+                "lifecycle": [],
                 "moves": {}, "counts": count_causes([]),
                 "capped": False, "start": start, "end": end}
     mined = mine(entries, users, read_ledger(start))
@@ -595,6 +628,7 @@ async def collect(session, start: float, end: float,
         "actions": mined["actions"],
         "capped": mined["capped"],
         "counts": mined["counts"],
+        "lifecycle": lifecycle(entries),
         "overrides": find_overrides(mined["actions"]),
         "conflicts": find_conflicts(mined["actions"]),
         # The denominator rides beside the overrides rather than being

@@ -9093,12 +9093,16 @@ function actTime(ts) {
     { hour: "2-digit", minute: "2-digit" });
 }
 
-function actDayLabel(end) {
-  const d = new Date((end || Date.now() / 1000) * 1000);
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  if (sameDay) return "Today";
-  return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+// The window is a rolling one — `hours` back from `end` — so it is named as
+// one. It was labelled "Today" and opened on yesterday evening's rows,
+// which is the label lying about the list under it.
+function actDayLabel(end, hours) {
+  const h = hours || 24;
+  if (!end) return `Last ${h} hours`;
+  const d = new Date(end * 1000);
+  return `${h} hours to `
+    + d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
+    + ", " + actTime(end);
 }
 
 async function refreshActivity() {
@@ -9185,12 +9189,29 @@ function epStates(ep) {
   return `${ep.first} → ${ep.last}`;
 }
 
+// Empty for a row nothing claims. That was "No cause recorded" on every
+// such row — 14,249 of 15,098 on a real house — which is one fact said
+// fourteen thousand times; the foot says it once instead. A row nothing
+// caused that began around a restart says so, because that IS its cause.
 function epCause(ep) {
-  if (!ep.cause || ep.cause === "unattributed") return CAUSE_WORDS.unattributed;
+  if (!ep.cause || ep.cause === "unattributed") {
+    return ep.near_restart ? "Around the Home Assistant restart" : "";
+  }
   return (CAUSE_WORDS[ep.cause] || ep.cause) + (ep.by_name ? ": " + ep.by_name : "");
 }
 
-function epKey(ep) { return ep.entity_id + "|" + Math.round(ep.started); }
+// What the house says now, where it disagrees with the logbook. A row
+// read off `/states` rather than the logbook says where it came from,
+// because the change it stands for is one the logbook did not record.
+function epNote(ep) {
+  if (ep.from_live) return "Home Assistant's current state — the logbook has no row for it";
+  if (ep.live) return `now ${ep.live}`;
+  return "";
+}
+
+function epKey(ep) {
+  return (ep.entity_id || ep.kind || "") + "|" + Math.round(ep.started);
+}
 
 // When the house was empty — the one thing on this tab that Home Assistant
 // holds every fact for and has never said, and the reason it is above the
@@ -9285,7 +9306,7 @@ function renderActivity() {
   const list = $("#actList");
   if (!list) return;
   const data = actState.data;
-  $("#actRange").textContent = actDayLabel(actState.end);
+  $("#actRange").textContent = actDayLabel(actState.end, actState.hours);
   // "Later" is meaningless on the window that already ends now.
   $("#actNext").disabled = !actState.end;
   const head = $("#actSummary");
@@ -9336,6 +9357,14 @@ function renderActivity() {
     ? `${shown}. ${data.dropped.toLocaleString()} sensor readings are not `
       + `listed — a reading is not something that happened.`
     : `${shown}.`;
+  // Once, here, rather than on every row it is true of.
+  const orphans = (data.counts || {}).unattributed || 0;
+  if (orphans) {
+    foot.textContent += ` ${orphans.toLocaleString()} of the changes have no `
+      + `recorded cause: a wall switch and a device's own integration reach `
+      + `Home Assistant the same way, so a row with nothing beside it is one `
+      + `the logbook could not attribute.`;
+  }
   frag.appendChild(foot);
   list.innerHTML = "";
   list.appendChild(frag);
@@ -9357,21 +9386,39 @@ function actSection(sec) {
     row.className = "actrow";
     row.dataset.cause = ep.cause;
     row.dataset.key = key;
-    row.dataset.entity = ep.entity_id;
+    row.dataset.entity = ep.entity_id || "";
+    if (ep.kind) row.dataset.kind = ep.kind;
+    const cause = epCause(ep);
+    const note = epNote(ep);
     row.innerHTML = `<span class="what"><b>${esc(ep.name)}</b>`
       + `<span class="st">${esc(epStates(ep))}</span></span>`
       + `<span class="when">${esc(epWhen(ep, sec.reads))}</span>`
-      + `<span class="cause">${esc(epCause(ep))}</span>`
+      + (cause ? `<span class="cause">${esc(cause)}</span>` : "")
+      + (note ? `<span class="actnote">${esc(note)}</span>` : "")
       + (ep.undid
          ? `<span class="actundid">a person undid ${esc(ep.undid)}</span>` : "");
+    // A restart names no entity, so there is no history to open under it.
+    if (!ep.entity_id && ep.kind !== "mass") row.disabled = true;
     box.appendChild(row);
     if (actState.open === key) {
       const why = el("div", "actwhy");
-      why.innerHTML = actWhyHtml(ep);
+      why.innerHTML = ep.kind === "mass" ? actMassHtml(ep) : actWhyHtml(ep);
       box.appendChild(why);
     }
   });
   return box;
+}
+
+// A collapsed burst opens onto the entities it collapsed — already in the
+// payload, so nothing is fetched.
+function actMassHtml(ep) {
+  const ids = ep.entities || [];
+  const more = (ep.devices || ids.length) - ids.length;
+  return `<div>${esc(String(ep.devices || ids.length))} entities changed `
+    + `together, with nothing recorded as the cause — an integration `
+    + `reloading or reconnecting does this:</div>`
+    + ids.map((id) => `<div><code>${esc(id)}</code></div>`).join("")
+    + (more > 0 ? `<div>and ${esc(String(more))} more</div>` : "");
 }
 
 function actWhyHtml(ep) {
@@ -9403,6 +9450,8 @@ async function actOpenRow(key, entityId) {
   actState.open = key;
   actState.why = null;
   renderActivity();
+  // A collapsed burst carries its own list; there is no one entity to ask.
+  if (!entityId) return;
   const q = new URLSearchParams({ hours: String(actState.hours) });
   if (actState.end) q.set("end", String(Math.round(actState.end)));
   try {

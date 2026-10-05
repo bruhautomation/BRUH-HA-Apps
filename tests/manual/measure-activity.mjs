@@ -19,9 +19,13 @@
 //   * sensor readings are not rows at ALL, and the tab says how many it
 //     left out. A list that silently drops nine tenths of its input is the
 //     thing this replaced.
-//   * every row still names a cause — the automation's name, the person's,
-//     or "no cause recorded" in as many words — and it survives a phone
-//     width rather than being deleted.
+//   * every row something caused names it — the automation's name, the
+//     person's — and it survives a phone width rather than being deleted.
+//     A row nothing caused says nothing; the foot says so ONCE.
+//   * Home Assistant restarting is a row, a reload's burst is one row
+//     naming the integration, and a row the logbook lost track of agrees
+//     with the house now.
+//   * the window is called what it is — "Last 24 hours", never "Today".
 //   * a row a person undid says so on the row, in words.
 //   * "nobody home" is shown when it is known and absent when it is not.
 //   * the paragraph is a PRESS and says it costs something; it is never
@@ -55,6 +59,35 @@ const ep = (over) => ({
 });
 
 const SECTIONS = [
+  // Home Assistant restarting, and an integration moving all its devices
+  // at once — one row each, not a page of them.
+  { id: 'system', label: 'Home Assistant', reads: 'span', total: 2,
+    changes: 48, blurb: 'Home Assistant itself stopping and starting.',
+    episodes: [
+      ep({ subject: 'system', kind: 'restart', entity_id: '',
+           name: 'Home Assistant restarted', first: 'stopped',
+           last: 'started', count: 2, started: NOW - 11000,
+           ended: NOW - 10910, duration_s: 90 }),
+      ep({ subject: 'system', kind: 'mass', entity_id: '',
+           name: '23 devices from UniFi', first: 'unavailable', last: 'home',
+           count: 46, devices: 23, integration: 'UniFi',
+           entities: ['device_tracker.office_ap', 'device_tracker.gateway'],
+           started: NOW - 4000, ended: NOW - 3988, duration_s: 12 }),
+    ] },
+  // The thermostat the logbook lost track of: its old episode closed at
+  // the live last_changed, and the live state as a row of its own.
+  { id: 'climate', label: 'Heating & cooling', reads: 'span', total: 2,
+    changes: 1, blurb: 'What each room was asked to be.',
+    episodes: [
+      ep({ subject: 'climate', entity_id: 'climate.downstairs',
+           name: 'Downstairs', first: 'unavailable', last: 'unavailable',
+           count: 0, open: true, from_live: true, near_restart: NOW - 10910,
+           started: NOW - 10850, ended: NOW - 10850, duration_s: 10850 }),
+      ep({ subject: 'climate', entity_id: 'climate.downstairs',
+           name: 'Downstairs', first: 'heat_cool', last: 'heat_cool',
+           live: 'unavailable', started: NOW - 60000, ended: NOW - 10850,
+           duration_s: 49150 }),
+    ] },
   { id: 'people', label: 'People', reads: 'moment', total: 1, changes: 1,
     blurb: 'Who came and went.',
     episodes: [ep({ subject: 'people', entity_id: 'person.ben', name: 'Ben',
@@ -197,6 +230,9 @@ for (const width of WIDTHS) {
           return {
             entity: r.dataset.entity,
             kind: r.dataset.cause,
+            rkind: r.dataset.kind || '',
+            disabled: r.disabled,
+            note: r.querySelector('.actnote')?.textContent.trim() || '',
             causeText: cause ? cause.textContent.trim() : '',
             causeShown: !!(cs && cs.display !== 'none' && cs.visibility !== 'hidden'),
             when: r.querySelector('.when')?.textContent.trim() || '',
@@ -208,6 +244,7 @@ for (const width of WIDTHS) {
         }),
       })),
       away: document.querySelector('.actaway')?.textContent.trim() || '',
+      range: document.querySelector('#actRange')?.textContent.trim() || '',
       askLabel: document.querySelector('.actask button')?.textContent.trim() || '',
       summaryShown: !!document.querySelector('.actsum'),
       foot: document.querySelector('.actfoot')?.textContent.trim() || '',
@@ -252,9 +289,18 @@ for (const width of WIDTHS) {
     note(`${width}px`, `${rows.length} rows for ${TOTAL_ROWS} episodes`);
   }
   for (const row of rows) {
-    if (!row.causeText) note(`${width}px`, `${row.entity} renders no cause`);
-    if (!row.causeShown) {
-      note(`${width}px`, `${row.entity}'s cause is hidden rather than moved`);
+    const label = row.entity || row.rkind;
+    // A row something caused names it; a row nothing caused says nothing,
+    // because the foot says it once — 14,249 rows each reading "No cause
+    // recorded" was one fact said fourteen thousand times.
+    if (row.kind !== 'unattributed' && !row.causeText) {
+      note(`${width}px`, `${label} renders no cause`);
+    }
+    if (row.causeText && !row.causeShown) {
+      note(`${width}px`, `${label}'s cause is hidden rather than moved`);
+    }
+    if (/no cause/i.test(row.causeText)) {
+      note(`${width}px`, `${label} repeats "no cause recorded" on the row`);
     }
     if (!row.when) note(`${width}px`, `${row.entity} does not say when`);
     if (row.h < MIN_TARGET) {
@@ -285,11 +331,44 @@ for (const width of WIDTHS) {
   if (ben && !/^since /.test(ben.when)) {
     note(`${width}px`, `an arrival reads "${ben.when}"`);
   }
-  // The unattributed row has to say so in words. A row with nothing beside
-  // it is one a person reads as "brAIn does not know how to show this".
-  const orphan = rows.find((r) => r.kind === 'unattributed');
-  if (orphan && !/no cause/i.test(orphan.causeText)) {
-    note(`${width}px`, `unattributed row says "${orphan.causeText}"`);
+  // ...and the foot says it once, in words.
+  if (!/no\s+recorded cause/i.test(m.foot)) {
+    note(`${width}px`, 'the foot does not say once that some changes have no cause');
+  }
+  // A rolling window is named as one: "Today" over yesterday's rows was
+  // the label lying about the list under it.
+  if (m.range !== 'Last 24 hours') {
+    note(`${width}px`, `the window is labelled "${m.range}"`);
+  }
+  // The restart is a row, and what began around it says so.
+  const restart = rows.find((r) => r.rkind === 'restart');
+  if (!restart || !/restarted/.test(restart.words)) {
+    note(`${width}px`, 'the Home Assistant restart is not a row');
+  }
+  if (restart && !restart.disabled) {
+    note(`${width}px`, 'the restart row offers a history it does not have');
+  }
+  const nowRow = rows.find((r) => r.entity === 'climate.downstairs'
+    && /unavailable/.test(r.words) && !/heat_cool/.test(r.words));
+  if (!nowRow || !/restart/i.test(nowRow.causeText)) {
+    note(`${width}px`, 'the unavailable thermostat does not name the restart');
+  }
+  if (nowRow && !/current state/i.test(nowRow.note)) {
+    note(`${width}px`, 'a row read off the live state does not say so');
+  }
+  if (nowRow && !/^since /.test(nowRow.when)) {
+    note(`${width}px`, `the live state reads "${nowRow.when}", not "since"`);
+  }
+  const stale = rows.find((r) => /heat_cool/.test(r.words));
+  if (stale && /so far/.test(stale.when)) {
+    note(`${width}px`, `heat_cool still claims to be going: "${stale.when}"`);
+  }
+  if (stale && !/now unavailable/.test(stale.note)) {
+    note(`${width}px`, 'the stale episode does not say what it is now');
+  }
+  const mass = rows.find((r) => r.rkind === 'mass');
+  if (!mass || !/23 devices from UniFi/.test(mass.words)) {
+    note(`${width}px`, 'a reload is not one row naming the integration');
   }
   // An override is on the row, in words — not a count in a block above it.
   const undone = rows.find((r) => r.entity === 'light.kitchen');
@@ -322,7 +401,24 @@ for (const width of WIDTHS) {
   }
 
   // Tapping a row opens that entity's history, and tapping it again closes it.
-  await page.locator('.actrow').first().click();
+  // A collapsed burst opens onto what it collapsed, with no fetch.
+  // Noted rather than thrown when it is missing, like every wait here: a
+  // throw abandons everything else this pass would have found.
+  const massRow = page.locator('.actrow[data-kind="mass"]');
+  if (await massRow.count()) {
+    await massRow.click();
+    await page.waitForSelector('.actwhy');
+    const massWhy = await page.evaluate(
+      () => document.querySelector('.actwhy')?.textContent || '');
+    if (!/device_tracker\.office_ap/.test(massWhy)) {
+      note(`${width}px`, 'the burst does not list what it collapsed');
+    }
+    await massRow.click();
+    await page.waitForTimeout(80);
+  }
+
+  const benRow = '.actrow[data-entity="person.ben"]';
+  await page.locator(benRow).click();
   await page.waitForSelector('.actwhy');
   // The pane appears on 'Reading…' and fills when the fetch lands, so
   // settling is what is being waited for.
@@ -344,7 +440,7 @@ for (const width of WIDTHS) {
   if (settled && !/person\.ben/.test(why.text)) {
     note(`${width}px`, 'history pane does not name the entity');
   }
-  await page.locator('.actrow').first().click();
+  await page.locator(benRow).click();
   await page.waitForTimeout(80);
   if (await page.locator('.actwhy').count()) {
     note(`${width}px`, 'a second tap did not close the history pane');

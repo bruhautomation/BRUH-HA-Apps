@@ -3825,6 +3825,19 @@ body.term-classic #termMode .ico-out { display: block; }
   cursor: pointer;
 }
 .actrow:hover { background: var(--surface-2); }
+/* A restart names no entity, so there is nothing to open under it — but it
+   is a row like the others and must not read as a greyed-out control. */
+.actrow:disabled { cursor: default; color: inherit; opacity: 1; }
+.actrow:disabled:hover { background: none; }
+.actrow[data-kind="restart"] { border-left-color: var(--warning); }
+/* What the house says now, where the logbook says something else. */
+.actnote {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-style: italic;
+}
 .actrow .what {
   flex: 1 1 180px;
   min-width: 0;
