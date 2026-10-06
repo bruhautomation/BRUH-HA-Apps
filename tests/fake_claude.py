@@ -77,7 +77,7 @@ if log_path:
     # a reader into a half-written JSON line. And one SYSCALL, not one
     # buffered write: argv carries the system prompt, so a line runs past a
     # text file's 8 KB buffer and went out in pieces a reader could catch.
-    _fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    _fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(_fd, (json.dumps(argv) + "\n"
                  + "ENV BRAIN_DENIED_SERVICES="
