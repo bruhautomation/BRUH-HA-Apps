@@ -197,6 +197,17 @@ def test_process_delta_cb_direct(tmp_path, monkeypatch):
         shutdown(pool)
 
 
+def logged_argvs(tmp_path):
+    """Every argv the fake CLI logged, less a line still being written.
+
+    The pool pre-warms a spare in the background, so another fake CLI may be
+    appending while this reads; only a line that ends in a newline is whole.
+    """
+    text = (tmp_path / "argv.log").read_text()
+    lines = text.split("\n")[:-1]
+    return [json.loads(line) for line in lines if not line.startswith("ENV ")]
+
+
 def test_an_agent_that_never_chose_is_scoped(tmp_path, monkeypatch):
     # No access on the request is the narrowest level: there is no
     # add-on-wide option to fall back to any more.
@@ -206,9 +217,7 @@ def test_an_agent_that_never_chose_is_scoped(tmp_path, monkeypatch):
     pool = mod.Pool()
     try:
         pool.handle(make_request("scoped"))
-        spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()
-                  if not line.startswith("ENV ")]
+        spawns = logged_argvs(tmp_path)
         argv = spawns[-1]
         assert "--settings" in argv
         assert argv[argv.index("--settings") + 1] == mod.ASSIST_SETTINGS_FILE
@@ -223,9 +232,7 @@ def test_full_admin_agent_skips_settings_flag(tmp_path, monkeypatch):
     pool = mod.Pool()
     try:
         pool.handle(make_request("unscoped", access="admin"))
-        spawns = [json.loads(line) for line in
-                  (tmp_path / "argv.log").read_text().splitlines()
-                  if not line.startswith("ENV ")]
+        spawns = logged_argvs(tmp_path)
         assert "--settings" not in spawns[-1]
     finally:
         shutdown(pool)
