@@ -577,19 +577,21 @@
        stream-json output as DOM, so text reflows to the screen it is on;
        classic is ttyd over tmux, which is a character grid and is the right
        answer for anything that draws one (a TUI, htop, an installer). -->
-  <!-- The conversations you started, and nothing else. On a wide screen
-       it is a rail beside the transcript; below the breakpoint it is the
-       page Ask opens on, and a transcript has a back button to it. brAIn's
-       own runs (voice, cards, fixes, the memory pass…) are not here: they
-       are records of what brAIn did, and ⚙ › Diagnostics › Runs reads the
-       same listing with `?source=`. -->
+  <!-- Every Claude conversation on this house, one kind at a time. Your
+       own chats lead and are the default; the pills under the head switch
+       to what brAIn ran by itself (voice, automations, cards, fixes, the
+       memory pass…), the same listing read with `?source=`. On a wide
+       screen it is a rail beside the transcript; below the breakpoint it
+       is the page Ask opens on, and a transcript has a back button to it. -->
   <aside id="chatRail" class="chatrail" aria-label="Conversations">
     <div class="crhead">
-      <span class="crtitle">Your chats</span>
+      <span id="chatRailTitle" class="crtitle">Your chats</span>
       <button id="chatRailNew" class="btn icon" data-tip="New chat" aria-label="New chat">
         <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
+    <div id="chatRailKinds" class="pillseg crkinds" role="group" aria-label="Show"></div>
+    <p id="chatRailHint" class="crhint" hidden></p>
     <div id="chatRailList" class="crlist"></div>
   </aside>
 
@@ -1341,9 +1343,6 @@
             <button id="diagAccessRun" class="btn"
               aria-label="Run the access review now">Run</button>
           </div>
-
-          <h4 class="sethead">Runs</h4>
-          <div id="diagRuns" class="diag">Loading…</div>
 
           <!-- One export for a bug report. Tick problem files below to send
                those; with none ticked it writes a fresh report and copies

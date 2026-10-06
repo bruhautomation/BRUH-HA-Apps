@@ -1558,13 +1558,15 @@ same \`/config\`, with the same permissions — what differs is only how you see
   (Old conversations that Claude Code itself has pruned can no longer be picked up
   mid-thought: reopening one shows its transcript and says plainly that the next
   message starts fresh, instead of erroring on every send.)
-- **Only yours.** brAIn runs Claude in \`/config\` for voice, automation tasks,
-  filing memory, cards and fixes, so those conversations live beside yours — but
-  they are records of what brAIn did, not chats you started, so Ask does not list
-  them. They are under ⚙ › Diagnostics › Runs, where a card or fix run opens as a
-  record: exactly what brAIn sent to Claude about your house, every tool call it
-  made, and what came back — read-only, because those runs happened under the
-  analyst's (or the fixer's) rules. Each row's time is when something last
+- **Yours first, and brAIn's one press away.** brAIn runs Claude in \`/config\`
+  for voice, automation tasks, filing memory, cards and fixes, so those
+  conversations live beside yours. The list opens on **your chats**; the pills
+  under its heading — **Chats**, **Voice**, **Automation**, **Cards**… each with
+  how many there are — switch it to one kind of run at a time, and brAIn
+  remembers which you picked. Only kinds that have actually run on your house get
+  a pill. A card or fix run opens as a record: exactly what brAIn sent to Claude
+  about your house, every tool call it made, and what came back — read-only,
+  because those runs happened under the analyst's (or the fixer's) rules. Each row's time is when something last
   **happened in** the conversation — opening one just to look at it doesn't bump it
   to the top.
 - **The input is a real text box**, so dictation, autocorrect and selection behave.

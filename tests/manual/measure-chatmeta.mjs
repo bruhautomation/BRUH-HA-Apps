@@ -75,7 +75,7 @@ function probe() {
 // for the width. The list is the rail beside the transcript on a wide
 // screen and the page Ask opens on below 1100px, so it is one renderer
 // measured at both widths. A card run's "Record" is not in it: the list is
-// your conversations only (⚙ › Diagnostics › Runs is where those are).
+// your conversations by default (the pills over the list reach the rest).
 //
 // Unlike the pass above this drives the panel's REAL renderers behind a
 // stubbed fetch (the same arrangement measure-activity.mjs uses): a copy of
