@@ -325,7 +325,10 @@ function timeUntil(epochS) {
 }
 
 // Height auto-sizing: a script appended to every srcdoc posts its content
-// height; sandboxed frames can't be measured from outside.
+// height; sandboxed frames can't be measured from outside. It measures the
+// body's CHILDREN, not the body: a chart that styles `html,body{height:100%}`
+// reports the frame's own height back, the frame never grows, and the
+// chart below the fold sat behind a scrollbar inside the card.
 
 // JSON is not script-safe on its own: `JSON.stringify` leaves `<` alone, so
 // an id containing `</script>` would close the tag it is embedded in and the
@@ -333,7 +336,7 @@ function timeUntil(epochS) {
 // and `<!--` in one go, and `<` is still the same string to the parser.
 const jsonInScript = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
 
-const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var h=Math.ceil(Math.max(b.offsetHeight,b.getBoundingClientRect().height));if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{new ResizeObserver(post).observe(document.body);}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
+const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var bottom=0,kids=b.children;for(var i=0;i<kids.length;i++){var r=kids[i].getBoundingClientRect();if(!r.width&&!r.height)continue;bottom=Math.max(bottom,Math.max(r.bottom,r.top+kids[i].scrollHeight)+(parseFloat(getComputedStyle(kids[i]).marginBottom)||0));}var cs=getComputedStyle(b);var h=bottom>0?bottom+window.scrollY+(parseFloat(cs.paddingBottom)||0):Math.max(b.offsetHeight,b.getBoundingClientRect().height);h=Math.ceil(h);if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{var ro=new ResizeObserver(post);ro.observe(document.body);window.addEventListener("load",function(){for(var i=0;i<document.body.children.length;i++)ro.observe(document.body.children[i]);});}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
 
 // The other direction, and the reason issue #300 asked for one: a card is
 // one Claude run rendered to a document, written once — so a card about
@@ -469,7 +472,10 @@ window.addEventListener("message", (ev) => {
   // any other opaque-origin window that happens to post at us. Window
   // identity can, and it is the same rule the keyboard message follows.
   if (!frame || ev.source !== frame.contentWindow) return;
-  frame.style.height = Math.min(Math.max(d.h, 120), 760) + "px";
+  // The expanded view may be as tall as the screen allows; a card in the
+  // grid stops at 760 so one tall chart cannot push the rest off the page.
+  const cap = frame.id === "modalFrame" ? Math.max(320, window.innerHeight - 160) : 760;
+  frame.style.height = Math.min(Math.max(d.h, 120), cap) + "px";
 });
 
 // ------------------------------------------------------------------ auth UI
@@ -2209,6 +2215,8 @@ function openModal(insight, live = true) {
   const frame = $("#modalFrame");
   const frameId = `modal-${state.frameSeq++}`;
   frame.dataset.frame = frameId;
+  // A reused element keeps the last card's height until this one reports.
+  frame.style.height = "";
   frame.srcdoc = insight.html + SIZE_SNIPPET(frameId) + LIVE_SNIPPET(frameId);
   openBox("#modal");
   // The expanded view is where a live card is most worth being live —
@@ -2935,8 +2943,10 @@ function renderDiagnostics(d) {
   }
   rows.push(diagRow("Add-on version",
     esc((d.versions || {}).addon || "unknown")));
+  // `claude --version` answers "2.1.290 (Claude Code)", which under a row
+  // called Claude Code says its own name twice.
   rows.push(diagRow("Claude Code",
-    esc((d.versions || {}).claude_cli || "not found"),
+    esc(String((d.versions || {}).claude_cli || "not found").replace(/\s*\(Claude Code\)\s*$/, "")),
     !(d.versions || {}).claude_cli));
   rows.push(diagRow("Claude sign-in",
     esc((d.auth || {}).state || "unknown"),
@@ -4816,9 +4826,21 @@ function caseConfidence(value) {
 
 // What the meta line says after the chip: where it came from, and the
 // item's state as words — "Snoozed until Wed", "Unchecked", "Applying".
+// A guess's topic is the id of the card it came out of ("user-1790086617"
+// for one you asked), which is what the store keeps and nothing a person
+// has ever seen. The card it names is on the Insights tab, by its title.
+function sourceTitleText(title) {
+  const t = String(title || "");
+  if (!t) return "";
+  const card = state.insights.find((i) => i.id === t || i.category === t);
+  if (card) return card.eyebrow || card.category_title || card.title || t;
+  if (/^user-\d+$/.test(t)) return "Your question";
+  return t;
+}
+
 function caseMeta(row) {
   const out = [];
-  if (row.source_title) out.push(row.source_title);
+  if (row.source_title) out.push(sourceTitleText(row.source_title));
   const fs = row.finding_status;
   if (fs === "planning") out.push("Planning");
   else if (fs === "planned") out.push("Plan ready");
@@ -4868,7 +4890,7 @@ function casePlanNode(row) {
 // came from, why, what was read, the full steps and diff of a plan, the
 // entity's id, and any rows a run refused.
 function caseDetailsBody(box, row) {
-  qDetailLine(box, "Source", row.source_title || row.source || "");
+  qDetailLine(box, "Source", sourceTitleText(row.source_title) || row.source || "");
   if (row.detail && row.detail.length > 180) qDetailLine(box, "In full", row.detail);
   const why = [caseConfidence(row.confidence), CASE_STAKES[row.stakes] || ""]
     .filter(Boolean).join(" · ");
@@ -6205,7 +6227,11 @@ const FACT_SUBJECT_WORDS = { house: "The house" };
 function factSubjectLabel(subject) {
   const s = String(subject || "house");
   if (FACT_SUBJECT_WORDS[s]) return FACT_SUBJECT_WORDS[s];
-  if (s.startsWith("area:")) return s.slice(5).replace(/_/g, " ");
+  if (s.startsWith("area:")) {
+    // A folded facet carries every id it covers ("area:a|area:b"); the first names it.
+    const words = s.split("|")[0].slice(5).replace(/_/g, " ");
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
   if (s.startsWith("person:")) return s.slice(7);
   return s;
 }
@@ -9097,7 +9123,25 @@ function renderActNarrow(data) {
     const kinds = data.kinds || [];
     host.hidden = kinds.length < 2 && !actState.kind;
     const total = kinds.reduce((a, k) => a + k.count, 0);
-    [{ id: "", label: "Everything", count: total }].concat(kinds).forEach((k) => {
+    const all = [{ id: "", label: "Everything", count: total }].concat(kinds);
+    // On a phone the same choice is one select: nine pills wrapped to five
+    // rows, and with the filters above them the first screen of the tab
+    // held no events at all.
+    const pick = el("select", "sel actkindsel");
+    pick.setAttribute("aria-label", "What kind of thing");
+    all.forEach((k) => {
+      const opt = el("option", null, `${k.label} (${k.count})`);
+      opt.value = k.id;
+      pick.appendChild(opt);
+    });
+    pick.value = actState.kind || "";
+    pick.addEventListener("change", () => {
+      actState.kind = pick.value;
+      actState.open = "";
+      refreshActivity();
+    });
+    host.appendChild(pick);
+    all.forEach((k) => {
       const on = actState.kind === k.id;
       const b = el("button", "pill" + (on ? " active" : ""));
       b.type = "button";
@@ -9255,8 +9299,11 @@ async function refreshActNow() {
   const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
   node.appendChild(el("b", "actnowmode", HOUSE_MODE_WORDS[mode]));
   if (d.sentence) {
+    const names = d.names || {};
+    const said = prettyText(String(d.sentence).replace(/\b[a-z_]+\.[a-z0-9_]+\b/g,
+      (id) => names[id] || id));
     node.appendChild(el("span", "actnowsaid" + (d.sentence_stale ? " stale" : ""),
-      d.sentence_stale ? `Earlier: ${d.sentence}` : d.sentence));
+      d.sentence_stale ? `Earlier: ${said}` : said));
   }
   node.hidden = false;
 }
@@ -9992,12 +10039,45 @@ function chatUserNode(text) {
   return row;
 }
 
+// What a tool call is called on screen. The CLI names a Home Assistant
+// read `mcp__home-assistant__get_all_states`, which is a wire name — the
+// person reading the steps wants "Get all states". The raw name stays in
+// the tooltip, because it is what a log, a permission rule and a bug
+// report all key on.
+const TOOL_WORDS = {
+  Bash: "Command", Read: "Read file", Write: "Write file", Edit: "Edit file",
+  MultiEdit: "Edit file", NotebookEdit: "Edit notebook", Glob: "Find files",
+  Grep: "Search files", LS: "List folder", WebFetch: "Fetch page",
+  WebSearch: "Web search", TodoWrite: "Plan", Task: "Sub-task",
+  Agent: "Sub-task", ToolSearch: "Load tools", AskUserQuestion: "Question",
+};
+
+function toolDisplayName(name) {
+  const raw = String(name || "tool");
+  if (TOOL_WORDS[raw]) return TOOL_WORDS[raw];
+  const m = raw.match(/^mcp__[^_].*?__(.+)$/);
+  const bare = (m ? m[1] : raw).replace(/[_-]+/g, " ").trim();
+  if (!m && !/[_-]/.test(raw)) return raw;
+  return bare ? bare.charAt(0).toUpperCase() + bare.slice(1) : raw;
+}
+
+function toolDisplaySummary(name, summary) {
+  const s = String(summary || "");
+  if (name !== "ToolSearch") return s;
+  const sel = s.match(/^select:(.*)$/);
+  if (!sel) return s;
+  return sel[1].split(",").map((t) => toolDisplayName(t.trim()).toLowerCase())
+    .filter(Boolean).join(", ");
+}
+
 function chatToolNode(ev) {
   const box = el("details", "toolcall running");
   const sum = el("summary");
   sum.appendChild(el("span", "tdot"));
-  sum.appendChild(el("span", "tname", ev.name || "tool"));
-  sum.appendChild(el("span", "tsum", ev.summary || ""));
+  const tname = el("span", "tname", toolDisplayName(ev.name));
+  if (ev.name && toolDisplayName(ev.name) !== ev.name) tname.title = ev.name;
+  sum.appendChild(tname);
+  sum.appendChild(el("span", "tsum", toolDisplaySummary(ev.name, ev.summary)));
   box.appendChild(sum);
   const body = el("div", "tbody");
   if (ev.input && ev.input !== "{}") {
@@ -11568,7 +11648,7 @@ $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
 // list". So Ask opens on the list there, picking a row (or starting a chat)
 // opens the transcript, and the transcript's head carries the way back.
 // On a wide screen none of this applies: the rail is the list.
-const ASK_WIDE = "(min-width: 1100px)";
+const ASK_WIDE = "(min-width: 900px)";
 
 function askNarrow() {
   return !window.matchMedia(ASK_WIDE).matches;
@@ -11675,6 +11755,41 @@ async function viewConversation(conv) {
   }
 }
 
+// A machine run's opening turn is the prompt brAIn built — a card run's is
+// pages of focus, measurements and data — and drawn as a bubble it buried
+// the answer several screens down. A long one is its first line with the
+// rest one press away, `chatUserNode`'s shape for a Discuss opener.
+const REPLAY_PROMPT_FOLD = 400;
+
+// A line cut to `max` characters at a word, with an ellipsis that says it
+// was cut. Slicing mid-word ("Every sensor it builds t") reads as a typo.
+function clipWords(text, max) {
+  const t = String(text || "");
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.—-]+$/, "") + "…";
+}
+
+function replayUserNode(text) {
+  const t = String(text || "");
+  if (t.length <= REPLAY_PROMPT_FOLD) {
+    const row = el("div", "msg user");
+    row.appendChild(el("div", "bubble", t));
+    return row;
+  }
+  const row = el("div", "msg user");
+  const bubble = el("div", "bubble discuss");
+  const first = t.split("\n").find((line) => line.trim()) || t;
+  bubble.appendChild(el("div", "dtitle", clipWords(first.trim(), 160)));
+  const more = el("details", "dmore");
+  more.appendChild(el("summary", null, "What brAIn asked Claude"));
+  more.appendChild(el("div", "dbody", t));
+  bubble.appendChild(more);
+  row.appendChild(bubble);
+  return row;
+}
+
 function closeConvView() {
   closeBox("#convViewModal");
   chatState.record = null;
@@ -11688,9 +11803,7 @@ function renderReplayInto(host, events) {
   const tools = new Map();
   events.forEach((ev) => {
     if (ev.type === "user") {
-      const row = el("div", "msg user");
-      row.appendChild(el("div", "bubble", ev.text));
-      host.appendChild(row);
+      host.appendChild(replayUserNode(ev.text));
     } else if (ev.type === "text") {
       host.appendChild(chatMarkdown(ev.text));
     } else if (ev.type === "background") {

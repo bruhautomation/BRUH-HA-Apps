@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from ._util import House, age_days, domain_of, join_names
+from ._util import House, age_days, counted_names, domain_of, join_names
 
 # A house is "using areas" past this many. Below it, "not in an area" is
 # how the house is set up, not a finding.
@@ -236,7 +236,7 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
     orphans.sort()
     return [{
         "text": "Some devices are left in the registry with no entities",
-        "detail": f"{len(orphans)}: " + join_names(orphans)
+        "detail": counted_names(orphans)
                   + ". They are usually what is left after an integration "
                     "was reconfigured or a device was replaced.",
         "fix": "Remove them from Settings > Devices & services > Devices, "

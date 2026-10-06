@@ -2,6 +2,56 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.14.2
+
+A pass over the whole panel from a screen-by-screen audit.
+
+### Insights
+- **Charts no longer sit behind a scrollbar inside the card.** A chart that
+  set its page to full height reported the frame's own height back, so the
+  frame never grew; the panel now measures what the chart drew.
+- **The expanded card is as tall as its chart**, with a margin, instead of a
+  short chart at the top of a mostly blank box.
+- **New cards keep their labels readable on a phone** and give every series
+  its own colour: the card rules now say that a viewBox shrinks its text and
+  that a status colour is not a series colour.
+- **Wide monitors get a third column** of cards (and more room for Ask)
+  instead of a 1400px strip in the middle of the screen.
+
+### Needs you and History
+- Two cards side by side fill their row, with their buttons on the same line.
+- A question that came out of a card you asked says **Your question** (or the
+  card's name), not `user-1790086617`.
+- Z-Wave and similar cards say the device's name, not "1: name".
+- A shortened "Set aside" reason ends in an ellipsis rather than mid-word.
+
+### Ask
+- Steps read **Get all states**, **Load tools**, **Command** — not
+  `mcp__home-assistant__get_all_states`. The raw name is in the tooltip.
+- Card runs are listed by their card ("Septic Pump: Gallons per Cycle") or
+  question, not "INSIGHT CATEGORY: …", and opening one shows the prompt
+  folded under its first line.
+- The conversation list sits beside the chat from 900px (was 1100px), and is
+  wider on large screens.
+- The card dialog's second button says **Ask in chat**, not a bare "Ask".
+
+### Memory
+- **Knowledge** lists a room once: "Irrigation, Irrigation" and "Laundry,
+  laundry room" are each one room, holding every fact filed under either.
+- **Timeline** names devices in its top line instead of entity ids, and on a
+  phone its filters take three rows and the kinds one select, so events show
+  on the first screen.
+- **House book** has a heading like the other pages.
+
+### Settings and the guide
+- Camera and calendar switches are compact rows with a gap before the name.
+- **Export** in Memory looks like the button beside it; **Advanced** and
+  **Developer** show their disclosure arrow.
+- The Claude Code version no longer repeats its own name.
+- The header wraps instead of pushing ⚙ off the screen when several status
+  chips show at once.
+- The guide marks the page you are on clearly and uses a wider column.
+
 ## 2.14.1
 
 ### Ask

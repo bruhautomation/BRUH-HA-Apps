@@ -10,7 +10,8 @@ from __future__ import annotations
 import numfmt
 
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
-                    domain_of, join_names, num, parse_ts, when)
+                    counted_names, domain_of, join_names, num,
+                    parse_ts, when)
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
@@ -638,7 +639,7 @@ def zwave_dead(snap: dict, now: float) -> list[dict]:
     dead.sort()
     return [{
         "text": "Z-Wave nodes are marked dead by the controller",
-        "detail": f"{len(dead)}: " + join_names(dead)
+        "detail": counted_names(dead)
                   + ". The controller has stopped getting answers from "
                     "them, so nothing they do reaches Home Assistant.",
         "fix": "Wake a battery node (its button usually does it). For a "
@@ -677,7 +678,7 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
     longest, first = rows[0]
     return [{
         "text": "Zigbee devices have stopped checking in",
-        "detail": f"{len(rows)}: " + join_names([n for _, n in rows])
+        "detail": counted_names([n for _, n in rows])
                   + f". The quietest is {first}, last seen "
                     f"{when(max(0.0, now - longest * 86400))} "
                     f"({int(longest)} days ago).",

@@ -253,6 +253,41 @@ def _is_prompt(entry: dict) -> bool:
 
 def title_of(path: Path) -> str:
     """The conversation's first genuine user message, as a one-line title."""
+    return _first_prompt(path)[:MAX_TITLE_CHARS]
+
+
+# A machine run opens with the prompt brAIn built, not with anything a
+# person typed, so its first message is the worst possible title: every
+# card run reads "INSIGHT CATEGORY: …", every asked card "The user asked
+# this question about their home — …", and the list of them is a column of
+# identical openers cut off before the part that tells them apart. These
+# pull out the part that does. Display only — `title_of` stays the literal
+# opener, because `adopt_machine_runs` classifies by it.
+_CARD_TITLE_RE = re.compile(r"^INSIGHT CATEGORY:\s*(.+?)(?:\s+ANALYSIS FOCUS:|$)")
+_QUESTION_RE = re.compile(r"\bQUESTION:\s*(.+?)(?:\s+Choose the most fitting|$)")
+_FIXED_TITLES = (
+    ("Propose insight cards worth adding", "Ideas for new cards"),
+)
+
+
+def display_title(path: Path) -> str:
+    """The title a person should read for a conversation in the list."""
+    text = _first_prompt(path)
+    m = _CARD_TITLE_RE.match(text)
+    if m:
+        return m.group(1).strip()[:MAX_TITLE_CHARS]
+    if text.startswith("The user asked this question"):
+        m = _QUESTION_RE.search(text)
+        if m:
+            return m.group(1).strip()[:MAX_TITLE_CHARS]
+    for prefix, title in _FIXED_TITLES:
+        if text.startswith(prefix):
+            return title
+    return text[:MAX_TITLE_CHARS]
+
+
+def _first_prompt(path: Path) -> str:
+    """The first genuine user message, whitespace folded, uncut."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             for count, line in enumerate(fh):
@@ -266,8 +301,7 @@ def title_of(path: Path) -> str:
                 except ValueError:
                     continue
                 if _is_prompt(entry):
-                    text = " ".join(_message_text(entry).split())
-                    return text[:MAX_TITLE_CHARS]
+                    return " ".join(_message_text(entry).split())
     except OSError:
         # A transcript that cannot be read has no title to offer.
         pass
@@ -336,7 +370,7 @@ def listing(cwd: str, limit: int = 30,
             continue
         out.append({
             "id": row["id"],
-            "title": title_of(row["path"]) or "(no opening message)",
+            "title": display_title(row["path"]) or "(no opening message)",
             "modified": row["modified"],
             "age": _age(row["modified"]),
             "source": source,

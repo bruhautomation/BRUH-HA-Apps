@@ -255,12 +255,12 @@ class ListingCase(unittest.TestCase):
         (self.project / "stub.jsonl").write_text("{}\n")
 
         reads = []
-        original = self.mod.title_of
-        self.mod.title_of = lambda path: reads.append(path) or original(path)
+        original = self.mod._first_prompt
+        self.mod._first_prompt = lambda path: reads.append(path) or original(path)
         try:
             counts = self.mod.source_counts(self.cwd)
         finally:
-            self.mod.title_of = original
+            self.mod._first_prompt = original
         self.assertEqual(counts, {"voice": 5, "you": 1})
         self.assertEqual(reads, [])
 

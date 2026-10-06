@@ -332,6 +332,11 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
         when = int(((f.get("triage") or {}).get("at")) or f.get("ts") or 0)
         meta = f"Set aside {_day(when)}".strip()
         if reason:
+            # A reason stored before the stores clipped on a word boundary
+            # was a bare slice ("Every sensor it builds t"). Saying it was
+            # shortened is the honest repair for a row nobody will rewrite.
+            if reason[-1] not in ".!?…)\"'”’":
+                reason = reason.rstrip(" ,;:-–—") + "…"
             meta += f" · {reason}"
         raw["aside"].append({
             "title": f.get("text") or "",
