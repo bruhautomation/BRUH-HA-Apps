@@ -349,7 +349,16 @@ def parse(answer: dict | None, dig: dict, snap: dict,
     for eid in house.states:
         existing.setdefault(eid.split(".", 1)[0], set()).add(_key(house.name(eid)))
 
+    seen_refusals: set[tuple] = set()
+
     def refuse(row: dict, why: str) -> None:
+        # One refusal per subject and value: the same row twice in a reply
+        # is one thing that was not done, not two lines on the card.
+        key = (row.get("target"), row.get("subject"), row.get("kind"),
+               _key(str(row.get("value") or "")), why)
+        if key in seen_refusals:
+            return
+        seen_refusals.add(key)
         refused.append({**row, "refused": why})
 
     for raw in rows_in if isinstance(rows_in, list) else []:
@@ -482,10 +491,66 @@ def save_proposal(result: dict, *, run_id: str = "", error: str = "",
                 "rows": result.get("rows") or [],
                 "refused": result.get("refused") or [],
                 "dropped": int(result.get("dropped") or 0),
+                "areas": [a for a in result.get("areas") or []
+                          if isinstance(a, dict) and a.get("id")],
                 "error": str(error or "")[:300]}
     data["proposal"] = proposal
     _save(data, path)
     return proposal
+
+
+def revise(row_id: str, value: str, dig: dict, snap: dict,
+           patterns: list[str], path: str | None = None) -> dict:
+    """Change one proposed row to what the person typed instead.
+
+    "No, call it this" is an answer to a proposal, not a new run: the
+    value goes through exactly the rules `parse` holds the model's to — an
+    offered id, a room that exists, no protected entity, no hardware
+    name, no name somebody else answers to — and also through the names
+    the other rows on the table already propose, because two rows giving
+    two things one name is the collision the parse refuses. The row keeps
+    its id, so a tick on it stays a tick, and carries `edited` so the card
+    can say whose value it is. Returns `{ok, row, error, proposal}`.
+    """
+    data = load(path)
+    proposal = data.get("proposal") or {}
+    rows = list(proposal.get("rows") or [])
+    old = next((r for r in rows if r.get("id") == row_id), None)
+    if old is None:
+        return {"ok": False, "error": "That row is no longer on the table.",
+                "row": None, "proposal": proposal}
+    value = _norm(value)
+    if not value:
+        return {"ok": False, "error": "Type what it should be instead.",
+                "row": None, "proposal": proposal}
+    answer = {"rows": [{"kind": old["kind"], "target": old["target"],
+                        "id": old["subject"], "value": value,
+                        "why": "you chose this"}]}
+    parsed = parse(answer, dig, snap, patterns)
+    if parsed["refused"]:
+        return {"ok": False, "error": "brAIn can't use that: "
+                + parsed["refused"][0]["refused"] + ".",
+                "row": None, "proposal": proposal}
+    if not parsed["rows"]:
+        return {"ok": False, "error": "That is what it is already — untick "
+                "the row if you want it left as it is.",
+                "row": None, "proposal": proposal}
+    new = {**parsed["rows"][0], "id": row_id, "edited": True}
+    if new["kind"] == "name":
+        domain = new["subject"].split(".", 1)[0] if new["target"] == "entity" else "device"
+        for other in rows:
+            if other is old or other.get("kind") != "name":
+                continue
+            o_domain = (other["subject"].split(".", 1)[0]
+                        if other.get("target") == "entity" else "device")
+            if o_domain == domain and _key(other.get("value", "")) == _key(new["value"]):
+                return {"ok": False, "error": "Another row on this table "
+                        "already proposes that name.", "row": None,
+                        "proposal": proposal}
+    proposal["rows"] = [new if r is old else r for r in rows]
+    data["proposal"] = proposal
+    _save(data, path)
+    return {"ok": True, "row": new, "error": "", "proposal": proposal}
 
 
 def discard(path: str | None = None) -> None:

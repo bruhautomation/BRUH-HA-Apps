@@ -431,7 +431,7 @@
      "The first screen"). Top to bottom: a safety banner only while
      something is urgent, the status line, the queue — every finding,
      question, suggestion, name tidy and assessed update as one card type —
-     Your list, and the History drawer. A first-time owner sees the setup
+     To Do, and the History drawer. A first-time owner sees the setup
      card where the queue goes until the first look has finished. The pane
      keeps its old id and `data-view="findings"`, and `#findList` is still
      the queue, so every handler and measure that binds to them still does.
@@ -454,11 +454,11 @@
     <div id="findList" class="findlist todayqueue"></div>
     <button id="todayMore" class="btn-tertiary todaymore" hidden></button>
     <section class="todaysec" aria-labelledby="todayListHead">
-      <h2 id="todayListHead" class="t-card">Your list</h2>
+      <h2 id="todayListHead" class="t-card">To Do</h2>
       <form id="todoAdd" class="todoadd">
         <input id="todoText" type="text" maxlength="200" autocomplete="off"
-               placeholder="Add to your list…" aria-label="Add to your list">
-        <button type="submit" class="btn-secondary">Add to list</button>
+               placeholder="Add to To Do…" aria-label="Add to To Do">
+        <button type="submit" class="btn-secondary">Add to To Do</button>
       </form>
       <div id="todoList" class="todolist"></div>
     </section>
@@ -476,7 +476,7 @@
       <div>
         <h1 class="panetitle">History</h1>
         <p class="panesub">What you've already answered. <b>Restore</b> puts
-          something back on your list; <b>Delete</b> clears it from this
+          something back on To Do; <b>Delete</b> clears it from this
           record — your answer stands, so brAIn won't raise it again.</p>
       </div>
     </header>
@@ -801,7 +801,12 @@
           room or a device to see what it knows about it, and delete anything
           that's wrong.</p>
       </div>
+      <button id="kCleanup" class="btn small" type="button"
+              data-tip="brAIn reads its memory and lists what looks wrong, useless or mistaken. Nothing is removed until you tick it.">Clean up</button>
     </header>
+    <!-- Clean up: what brAIn proposes to remove from its own memory, one
+         tick per line, with the reason. Filled by renderCleanup. -->
+    <div id="kCleanupBox" class="kclean" hidden></div>
     <form id="kAddForm" class="kadd">
       <input id="kAddInput" type="text" maxlength="500" autocomplete="off"
              placeholder="Tell brAIn something about the house…" aria-label="Tell brAIn something">

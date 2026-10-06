@@ -1,6 +1,6 @@
 // One house, in the server's own shapes, for every measure that drives
 // Today: the cases (`_cases_payload`), the findings under them, the
-// suggestions (`/api/proposals`), Your list (`/api/todo`), the two cards no
+// suggestions (`/api/proposals`), To Do (`/api/todo`), the two cards no
 // store owns (`/api/today`), History (`/api/history`) and the status line
 // (`/api/status`). Kept in one file so the measures of the card, the list,
 // the suggestions, the plan and the queue read the same house — a fixture
@@ -51,7 +51,7 @@ export const FEED = [
     entity_name: 'Kitchen Leak', area: 'Kitchen', source: 'safety',
     source_title: 'Safety', mutable: false, fix: 'Turn off the water at the stopcock.',
     origin: { store: 'findings', key: 1100 },
-    answers: trio('f:1100', A('todo', 'Add to list', '/api/case/f:1100/do',
+    answers: trio('f:1100', A('todo', 'Add to To Do', '/api/case/f:1100/do',
       { primary: true, request: 'todo' })),
     more: [ask(1100), done(1100)],
   }),
@@ -115,7 +115,7 @@ export const FEED = [
             summary: 'The condition is doing what it was written to do.' },
     source: 'check:auto.condition_never_passes', source_title: 'Automation check',
     origin: { store: 'findings', key: 1105 },
-    answers: trio('f:1105', A('todo', 'Add to list', '/api/case/f:1105/do',
+    answers: trio('f:1105', A('todo', 'Add to To Do', '/api/case/f:1105/do',
       { primary: true, request: 'todo' }), true),
     more: [ask(1105)],
   }),
@@ -299,10 +299,10 @@ window.fetch = async (url, opts) => {
 
 // Every label a button on Today may carry: the design doc's vocabulary,
 // plus Yes and No — the answer to a question rather than a verb.
-export const VOCAB = new Set(['Apply', 'Plan', 'Add to list', 'Snooze', 'Ignore',
+export const VOCAB = new Set(['Apply', 'Plan', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
-  'Delete', 'Yes', 'No', 'Cancel']);
+  'Delete', 'Yes', 'No', 'Cancel', 'Change']);
 
 // What the redesign cut from the face of a card, and must stay cut. Allowed
 // inside Details, nowhere else on Today.

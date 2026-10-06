@@ -118,6 +118,10 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # decides whether somebody installs tonight, so it may not.
     "tidy":            ("sonnet", "low",    True,  False),
     "house_book":      ("sonnet", "medium", True,  False),
+    # Reviewing what brAIn remembers: every row is a proposal a person
+    # ticks, so it may step down — and it reads the house to check a line
+    # before calling it wrong, which is reasoning, so it may step up.
+    "memory_cleanup":  ("sonnet", "medium", True,  True),
     "sre":             ("sonnet", "medium", True,  True),
     "upgrade_advice":  ("sonnet", "high",   False, True),
     # Acts — changes a house or decides what a person acts on.

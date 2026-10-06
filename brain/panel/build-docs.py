@@ -96,7 +96,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "brain", "setup", "what-to-expect", "the-panel", "what-it-costs",
     ]),
     ("Deciding", [
-        "the-resident", "it-finds-whats-broken-and-fixes-it", "your-list",
+        "the-resident", "it-finds-whats-broken-and-fixes-it", "to-do",
         "it-checks-the-house-without-spending-a-token",
         "findings-in-home-assistants-repairs", "replying-from-your-phone",
         "answering-without-opening-anything",

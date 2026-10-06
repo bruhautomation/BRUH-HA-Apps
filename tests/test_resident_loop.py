@@ -430,18 +430,62 @@ class TestWhatTheVerdictsDo(LoopCase):
         self.assertEqual(findings_store.list_all(), [])
         self.assertEqual(resident.watched(), {})
 
-    def test_watch_watches_and_elevates_the_row(self):
-        """A watch says *keep an eye on this*, which is not a reason to hide
-        a row a rule filed — silence surfaces."""
+    def test_watch_on_a_filed_row_looks_into_it_before_asking(self):
+        """"It might be something" about a row a rule filed is a question
+        brAIn's own tools can usually answer, so it is investigated rather
+        than shown — and when the investigation cannot settle it, the row
+        is shown with the look's own reason, exactly as before."""
         row = self.file_check_row()
         self.looks.append(reply([{
             "id": 1, "verdict": "watch",
             "why": "one reading is not enough to say it is stuck"}]))
-        self.tick()
+        self.investigations.append({"ok": True, "error": "",
+                                    "text": json.dumps({"claim": ""}),
+                                    "meta": {"session_id": "inv-1"}})
+        out = self.tick()
+        self.assertEqual(out["investigated"], 1)
         shown = findings_store.get(row["ts"])
         self.assertEqual(shown["status"], "open")
         self.assertEqual(shown["triage"]["verdict"], "elevated")
-        self.assertIn("binary_sensor.pantry", resident.watched())
+        self.assertIn("one reading", shown["triage"]["reason"])
+        self.assertEqual([r["ts"] for r in self.announced], [row["ts"]])
+
+    def test_a_row_the_investigation_dismisses_is_never_put_to_anybody(self):
+        """The self-resolution: brAIn looked, found the answer, and nobody
+        was asked. Held with its reason, announced to nobody, counted."""
+        row = self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "probably a passing blip"}]))
+        self.investigations.append(case_reply(
+            claim="", dismiss=True, evidence=[],
+            detail="It dropped off for a minute and has reported since."))
+        out = self.tick()
+        fresh = findings_store.get(row["ts"])
+        self.assertEqual(fresh["status"], "held")
+        self.assertEqual(self.announced, [])
+        self.assertEqual(out["resolved"], 1)
+        self.assertGreaterEqual(self.server.RESIDENT_STATE["resolved"], 1)
+
+    def test_a_rewritten_row_is_shown_in_the_words_of_the_run_that_looked(self):
+        row = self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "its history would settle this"}]))
+        self.investigations.append(case_reply(
+            evidence=[{"entity": "binary_sensor.pantry", "value": "off",
+                       "when": "3 Sep"}]))
+        self.tick()
+        [told] = self.announced
+        self.assertEqual(told["ts"], row["ts"])
+        self.assertEqual(told["claim"], json.loads(case_reply()["text"])["claim"])
+
+    def test_a_failed_investigation_still_shows_the_row(self):
+        row = self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "worth a look"}]))
+        self.investigations.append({"ok": False, "error": "timed out", "meta": {}})
+        self.tick()
+        self.assertEqual(findings_store.get(row["ts"])["status"], "open")
+        self.assertEqual([r["ts"] for r in self.announced], [row["ts"]])
 
     def test_investigate_rewrites_the_row_it_was_sent_to_look_at(self):
         """The deeper look CORRECTS the cheaper one. It used to be told the
@@ -465,7 +509,7 @@ class TestWhatTheVerdictsDo(LoopCase):
         # The prompt carries the row as its subject, the sentence, the
         # look's reason and the clock — and does NOT list the row as a
         # thing it may not claim.
-        self.assertIn("ALREADY ON THE HOMEOWNER'S LIST", call["prompt"])
+        self.assertIn("IT IS ABOUT A ROW BRAIN FILED", call["prompt"])
         self.assertIn("its history would settle this", call["prompt"])
         self.assertIn("IT IS NOW:", call["prompt"])
         self.assertIn("Sensors frozen", call["prompt"])
@@ -602,6 +646,12 @@ class TestTheLedgerRations(LoopCase):
         self.assertEqual(why, "worth a look")
         self.assertTrue(refines)
         self.assertEqual(self.server.RESIDENT_STATE["queue_len"], 0)
+        # A spent allowance is a reason to wait, never to hide the row: it
+        # is shown now with the look's reason, and the parked run refines
+        # it in place later.
+        [row] = findings_store.list_all()
+        self.assertEqual(row["status"], "open")
+        self.assertEqual([r["ts"] for r in self.announced], [row["ts"]])
 
     def test_the_cheap_tier_is_never_stopped_by_the_ledger(self):
         now = time.time()

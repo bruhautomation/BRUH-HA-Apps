@@ -315,7 +315,7 @@ class TestPanelBranding(unittest.TestCase):
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
         # The To-do, Proposals and Upkeep panes are Today's now: one screen
         # holds the queue (suggestions, the name tidy and the updates
-        # included) and Your list; Ideas is a row on House › Reports.
+        # included) and To Do; Ideas is a row on House › Reports.
         for gone in ("todo", "proposals", "upkeep", "ideas"):
             self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
         for gone in ("todo", "proposals", "upkeep"):

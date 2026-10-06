@@ -3,7 +3,7 @@ sensor read, with no Home Assistant import.
 
 The add-on publishes `/config/.brain/status.json` every minute: the status
 line the panel's Today screen shows (`panel/brain_status.py`) and the three
-counts a person compares across screens — the queue, Your list and the
+counts a person compares across screens — the queue, To Do and the
 facts — each from its one derivation in the panel. These entities read
 that file and nothing else, so Home Assistant and the panel cannot give
 two answers to "is brAIn working" or "how many things are waiting on me".

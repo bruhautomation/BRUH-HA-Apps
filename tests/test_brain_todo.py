@@ -327,7 +327,7 @@ class TestTheItems(unittest.TestCase):
 
 
 class TestTheList(WriterCase):
-    """`todo.brain` is Your list — accepted to-dos and your own items —
+    """`todo.brain` is To Do — accepted to-dos and your own items —
     and nothing else. It used to list the open findings too, so the app
     held five where the panel's list held four and an undecided finding
     sat among agreed work."""

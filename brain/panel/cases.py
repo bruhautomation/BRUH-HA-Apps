@@ -250,7 +250,7 @@ _ENDINGS: dict[tuple[str, str], tuple[str, str]] = {
 # worked was Dismiss.
 _STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
     # An improvement brAIn noticed: yes, I will do it — onto the list,
-    # exactly as a problem's *Add to list*.
+    # exactly as a problem's *Add to To Do*.
     ("findings", "opportunity", "do"): ("finding_todo", ""),
     ("findings", "opportunity", "wrong"): ("end_finding", "wrong"),
     # A question only the homeowner can answer: Yes files what the case
@@ -771,7 +771,7 @@ def queue_count(now: float | None = None) -> int:
     the proposals; anything a person reads as "how much is waiting on me"
     asks this.
 
-    A chore is not in it (accepted work is Your list, `list_count`), and
+    A chore is not in it (accepted work is To Do, `list_count`), and
     neither is anything `watching` or `acting`: nothing there is a
     decision anybody can make yet. A finding still waiting for its first
     look past `triage.SHOW_AFTER_S` is, `open_count`'s rule.
@@ -972,7 +972,7 @@ def overflow(case: dict) -> list[dict]:
             add("discuss", "Ask", f"/api/finding/{key}/discuss")
             return out
         if kind == "problem":
-            # The claim *Add to list* deliberately does not make. It is
+            # The claim *Add to To Do* deliberately does not make. It is
             # rarer than agreeing to do something and it writes a memory
             # line that is only true once the work is finished.
             add("done", "Done", f"/api/finding/{key}/done")

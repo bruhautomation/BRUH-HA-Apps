@@ -662,7 +662,7 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # actionable notifications can tell whose button was pressed, and short
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
-ACTION_LABELS = (("todo", "Add to list"), ("fixed", "Done"),
+ACTION_LABELS = (("todo", "Add to To Do"), ("fixed", "Done"),
                  ("wrong", "Ignore"), ("snooze", "Snooze"),
                  ("reply", "Reply"))
 # The one button that opens a text box rather than pressing a verb: the
@@ -723,7 +723,7 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
 
     **The buttons are the card's own answers**, decided once in
     `answers.request_answers` off the row itself — the feed's fixed row
-    less the one press a phone cannot start (a plan run), so *Add to list
+    less the one press a phone cannot start (a plan run), so *Add to To Do
     · Dismiss · Not a problem* — capped at `MAX_ANSWER_BUTTONS`, and then
     Dismiss, which answers nothing and only closes the notification, always
     sits in the third slot so Android (which renders three) shows it; Snooze

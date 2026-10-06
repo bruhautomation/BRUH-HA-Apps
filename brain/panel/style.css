@@ -1031,6 +1031,20 @@ body.modal-open {
   color: var(--ink-2); margin: 10px 2px 0; overflow-wrap: anywhere; }
 .kfgroup:first-child { margin-top: 0; }
 .kfmore { margin-top: 8px; }
+/* Clean up: what brAIn proposes to remove from its memory, one tick a line. */
+.kclean { display: grid; gap: var(--sp-2); margin: 0 0 var(--sp-4);
+  padding: var(--sp-3); border: 1px solid var(--hairline); border-radius: var(--r-card, 12px);
+  background: var(--surface); }
+.kclean h2 { margin: 0; }
+.kclean .panesub { margin: 0; }
+.kcleanlist { display: grid; gap: var(--sp-2); }
+.kcleanrow { display: flex; align-items: flex-start; gap: var(--sp-2); cursor: pointer;
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); min-width: 0; }
+.kcleanrow input { margin-top: 4px; flex: none; }
+.kcleanbody { display: grid; gap: 2px; min-width: 0; }
+.kcleanhead { display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: baseline; min-width: 0; }
+.kcleantext { overflow-wrap: anywhere; color: var(--ink); }
+.kclean .card-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .kadd { display: flex; gap: 7px; margin: 4px 0 8px; }
 .kadd input {
   flex: 1;
@@ -5605,7 +5619,7 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 
 /* ============================================================== Today
    docs/design/ui-redesign-2026-10.md, "The first screen": the banner, the
-   status line, the queue of one card type, Your list and History. Built
+   status line, the queue of one card type, To Do and History. Built
    from the components above and nothing else — a 1px edge, the four type
    sizes, no coloured bar — and appended after the first `pointer: coarse`
    block, which has to stay the 16px text floor. */
@@ -5678,10 +5692,17 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qtidylist { display: grid; gap: var(--sp-2); }
 .qtidyrow { display: flex; align-items: center; gap: var(--sp-2);
   font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); cursor: pointer; }
+.qtidyline { display: flex; align-items: center; justify-content: space-between;
+  gap: var(--sp-2); min-width: 0; }
+.qtidyline .qtidyrow { min-width: 0; flex: 1 1 auto; }
+.qtidychange { flex: none; font-size: var(--fs-meta); }
+.qtidyedit { display: grid; gap: var(--sp-2); padding: var(--sp-2) 0 var(--sp-2) 28px; }
+.qtidyedit input, .qtidyedit select { width: 100%; max-width: 360px; }
+.qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious); }
 .qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
 .qcard .findnote { margin-top: 0; }
 
-/* Your list: rows to tick, not cards to weigh. */
+/* To Do: rows to tick, not cards to weigh. */
 .todaysec { display: grid; gap: var(--sp-3); }
 .todaysec .todoadd { margin: 0; }
 .todolist { display: grid; gap: var(--sp-2); }
@@ -5720,6 +5741,8 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   .todaypane .findnotecheck { min-height: 44px; }
   .todaypane .todoadd input, .todaypane .findnotebox { font-size: 16px; min-height: 44px; }
   .qtidyrow { min-height: 44px; }
+  .qtidychange { min-height: 44px; padding: 0 var(--sp-2); }
+  .qtidyedit input, .qtidyedit select { font-size: 16px; min-height: 44px; }
 }
 
 /* Ask on a finger: the row's ⋯ is always there and a thumb's size, and the
@@ -6189,4 +6212,9 @@ button.kfactsubj:hover { color: var(--accent-2);
 }
 @media (max-width: 640px) {
   .acthead .actnav { width: 100%; }
+}
+
+/* Clean up rows take a thumb. After the text floor, never before it. */
+@media (pointer: coarse) {
+  .kcleanrow { min-height: 44px; }
 }

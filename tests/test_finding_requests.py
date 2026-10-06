@@ -226,7 +226,7 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
     def test_one_finding_gets_the_cards_own_answers_and_a_reply(self):
         """The buttons are the row's own answers (`answers.py`): the feed's
         fixed row less the one press a phone cannot start (a plan run), so
-        *Add to list · Ignore* on every problem, then Dismiss in the third
+        *Add to To Do · Ignore* on every problem, then Dismiss in the third
         slot (Android renders three), Snooze after it, and Reply last."""
         got = notify_router.actions_for([{"ts": 1720, "text": "a"}],
                                         "notify.mobile_app_pixel")
@@ -235,7 +235,7 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
                           "brain.dismiss.1720", "brain.snooze.1720",
                           "brain.reply.1720"])
         self.assertEqual([a["title"] for a in got],
-                         ["Add to list", "Ignore", "Dismiss", "Snooze", "Reply"])
+                         ["Add to To Do", "Ignore", "Dismiss", "Snooze", "Reply"])
         hands = notify_router.actions_for(
             [{"ts": 1720, "text": "a", "fixable": False}],
             "notify.mobile_app_pixel")

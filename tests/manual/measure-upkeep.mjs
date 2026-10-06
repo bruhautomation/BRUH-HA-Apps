@@ -13,7 +13,7 @@
 //     Details names the automation; what brAIn refused is listed;
 //   * an update card shows its verdict as a word, and Details carries BOTH
 //     quotes it rests on and the line that brAIn never installs an update;
-//     Add to list puts it on Your list and takes the card off the queue;
+//     Add to To Do puts it on To Do and takes the card off the queue;
 //   * Snooze and Ignore on either card hide it through `today/hide`;
 //   * a house book sentence with no source chip under it reads exactly
 //     like a cited one — the citation is the half that makes it a manual
@@ -280,6 +280,10 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       note(where, 'Details does not name the automation the room move changes');
     }
     if (!/Conservatory/.test(v.tidy.details)) note(where, 'what brAIn refused is not listed');
+    // A room row names the thing that moves, not just the two rooms.
+    if (!v.tidy.rows.some((r) => /Reading lamp: no room → Lounge/.test(r.text))) {
+      note(where, `the room row does not say what moves: ${v.tidy.rows.map((r) => r.text)}`);
+    }
     if (v.tidy.presses.join('|') !== 'Apply|Snooze|Ignore') {
       note(where, `the tidy card offers ${v.tidy.presses.join(' · ')}`);
     }
@@ -294,7 +298,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     if (!/never installs an update itself/.test(v.update.details)) {
       note(where, 'the update card does not say brAIn never installs');
     }
-    if (v.update.presses.join('|') !== 'Add to list|Snooze|Ignore') {
+    if (v.update.presses.join('|') !== 'Add to To Do|Snooze|Ignore') {
       note(where, `the update card offers ${v.update.presses.join(' · ')}`);
     }
     if (v.update.right > v.viewport + 1) note(where, 'the update card hangs off the side');
@@ -315,7 +319,32 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     '[data-case-id="update:update.core:2026.11.0"] .card-actions button')]
     .find((b) => b.textContent.trim() === 'Snooze').click());
   await page.waitForTimeout(150);
+  // "No, do this instead": Change on a row opens an editor, and Save sends
+  // the new value for that row and nothing else.
+  await page.evaluate(() => {
+    const t = document.querySelector('[data-case-id="tidy:1700000000"]');
+    t.querySelector('details').open = true;
+    t.querySelector('.qtidychange').click();
+  });
+  const editor = await page.evaluate(() => {
+    const f = document.querySelector('[data-case-id="tidy:1700000000"] .qtidyedit');
+    return f ? { input: !!f.querySelector('input, select'),
+                 save: [...f.querySelectorAll('button')].map((b) => b.textContent.trim()) } : null;
+  });
+  if (!editor || !editor.input) note(where, 'Change opens no editor');
+  else if (editor.save.join('|') !== 'Save|Cancel') note(where, `the editor offers ${editor.save}`);
+  await page.evaluate(() => {
+    const f = document.querySelector('[data-case-id="tidy:1700000000"] .qtidyedit');
+    const i = f.querySelector('input');
+    if (i) { i.value = 'TV plug'; }
+    [...f.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Save').click();
+  });
+  await page.waitForTimeout(150);
   const sent = await posts(page);
+  const revise = sent.find((p) => /api\/tidy\/row\/r0$/.test(p.url));
+  if (!revise || revise.body.value !== 'TV plug') {
+    note(where, `Change sent ${JSON.stringify(revise && revise.body)}`);
+  }
   const apply = sent.find((p) => /api\/tidy\/apply$/.test(p.url));
   if (!apply || JSON.stringify(apply.body.ids) !== JSON.stringify(['r1', 'r2'])) {
     note(where, `Apply sent ${JSON.stringify(apply && apply.body)}`);
@@ -337,13 +366,13 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   await context.close();
 }
 
-// Add to list on an update card: on Your list, and off the queue.
+// Add to To Do on an update card: on To Do, and off the queue.
 {
   const { context, page } = await openToday(browser, PANEL, { width: 1200,
     over: { extras: EXTRAS }, onError: (m) => note('add to list', `page error: ${m}`) });
   await page.evaluate(() => [...document.querySelectorAll(
     '[data-case-id="update:update.core:2026.11.0"] .card-actions button')]
-    .find((b) => b.textContent.trim() === 'Add to list').click());
+    .find((b) => b.textContent.trim() === 'Add to To Do').click());
   await page.waitForTimeout(200);
   const sent = await posts(page);
   const todo = sent.find((p) => /api\/todo$/.test(p.url));

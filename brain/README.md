@@ -46,7 +46,7 @@ cools" with humidity and temperature charts](https://raw.githubusercontent.com/b
 | | |
 | --- | --- |
 | **Runs Home Assistant** | 89 native tools for reading and controlling (ESPHome devices, Music Assistant, BRUH Minecraft, BRight and BRUH Print included), 69 registry-management services for the parts that normally live behind the Settings UI, and a real shell in `/config` for everything that's still YAML. Areas, floors, labels, devices, entities, integrations, helpers, zones, people, users, dashboards, blueprints, statistics — create, rename, move, disable, delete. |
-| **Finds what's broken** | A dead battery, a sensor that quietly stopped reporting, a device stuck unavailable, an automation that can never fire. Every card takes the same answers: **Fix it** (it shows you the plan first and changes nothing until **Apply**, and **Undo** puts the files back), **Add to list**, **Dismiss** and **Not a problem** — say why, and it never makes that mistake again in new words. Every one waiting on you is also on Home Assistant's own Repairs page and your phone, with the same buttons. |
+| **Finds what's broken** | A dead battery, a sensor that quietly stopped reporting, a device stuck unavailable, an automation that can never fire. Every card takes the same answers: **Fix it** (it shows you the plan first and changes nothing until **Apply**, and **Undo** puts the files back), **Add to To Do**, **Dismiss** and **Not a problem** — say why, and it never makes that mistake again in new words. Every one waiting on you is also on Home Assistant's own Repairs page and your phone, with the same buttons. |
 | **Explains your house** | Ask anything and get a card: the answer first, the numbers it rests on, and a chart drawn for your data. **Refine** a card by saying what should change; **Share** it as a picture or add it to a dashboard in one press. **Ideas** suggests the cards your house is missing. |
 | **Remembers** | One editable document of durable facts about your home — nicknames, household rhythms, the devices that are meant to behave oddly. Learned from conversations, insight runs and study sessions, and read by every part of brAIn. |
 | **Measures** | Seven things it works out for itself, overnight, from what Home Assistant already records and with no Claude run at all: when the house gets up, what each reading normally is at this hour of this week, how fast each room loses heat, how much of each hour a door is open, what each machine's own power looks like, what you keep doing by hand, and what the electricity did. The **Knowledge** tab shows all seven and how far along each one is — because every one has a floor under it, and weeks of honest silence looks exactly like something being broken. |
@@ -57,7 +57,7 @@ cools" with humidity and temperature charts](https://raw.githubusercontent.com/b
 
 ![The Findings tab, headed "What's waiting on you": a "Back door battery has reported nothing
 since 26 July" card and a "Two loft sensors never rejoined after the Zigbee channel change"
-card, each with its evidence, how you'd fix it, and Add to list, Dismiss and Not a
+card, each with its evidence, how you'd fix it, and Add to To Do, Dismiss and Not a
 problem](https://raw.githubusercontent.com/bruhautomation/BRUH-HA-Apps/main/docs/images/panel-findings.webp)
 
 ## Try it in one line

@@ -1,6 +1,6 @@
 """Today — the hidden half of the one screen, and the cards no store owns.
 
-Today is the queue, Your list and a History drawer (docs/design/
+Today is the queue, To Do and a History drawer (docs/design/
 ui-redesign-2026-10.md, "Where hidden things live"). Everything on it is
 read out of the stores that already exist; this module adds exactly two
 things those stores could not hold.
@@ -42,7 +42,7 @@ import atomic_write
 HIDDEN_FILE = Path(os.environ.get("BRAIN_TODAY_HIDDEN_FILE",
                                   "/data/today-hidden.json"))
 KEY_RE = re.compile(r"^(tidy|update):[A-Za-z0-9_.:\-]{1,160}$")
-# `listed` is an update somebody put on Your list: off the queue for good,
+# `listed` is an update somebody put on To Do: off the queue for good,
 # and NOT in History, because the list is where it lives now — the same
 # card in two places is the pile the redesign was written against.
 HOWS = ("snoozed", "ignored", "listed")
@@ -282,7 +282,7 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
     for entry in settled or []:
         kind = entry.get("kind")
         if kind not in ("ignored", "fixed"):
-            # `accepted` is on Your list already; History would be the same
+            # `accepted` is on To Do already; History would be the same
             # card in two places.
             continue
         when = int(entry.get("ts") or 0)

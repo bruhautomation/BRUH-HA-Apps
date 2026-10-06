@@ -87,7 +87,7 @@ class TestFixItWaitsForAPlanThatCouldWork(unittest.TestCase):
 
     def test_no_plan_offers_fix_it(self):
         # One primary, then Check again (a check's row), Dismiss, Snooze
-        # and Ignore; Add to list is the lead only where brAIn cannot act.
+        # and Ignore; Add to To Do is the lead only where brAIn cannot act.
         self.assertEqual(self._verbs({}),
                          ["fix", "recheck", "dismiss", "not_now", "wrong"])
 

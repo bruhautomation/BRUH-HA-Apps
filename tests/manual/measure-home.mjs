@@ -6,11 +6,11 @@
 // a closed Details, three lines of body). This one asserts what each kind of
 // card OFFERS and what each press SENDS, which is where the old row went
 // wrong — "Yes/no questions have a 'do it' button… I don't always see a
-// dismiss" — and then wrong again with Fix it · Add to list · Dismiss · Not a
+// dismiss" — and then wrong again with Fix it · Add to To Do · Dismiss · Not a
 // problem on every card whether or not brAIn could act:
 //
 //   * a problem brAIn could act on leads with Plan; one only a person can
-//     fix leads with Add to list and offers no Plan; a plan waiting for
+//     fix leads with Add to To Do and offers no Plan; a plan waiting for
 //     consent leads with Apply; a question is Yes · No · Snooze and never a
 //     verb; a change brAIn made is Done · Undo and nothing else;
 //   * every card a person answers carries Snooze and a way to say no
@@ -46,12 +46,12 @@ const KEPT_IDS = ['viewFindings', 'findList', 'findBadge', 'todayMore', 'todoLis
 
 // What each case in the fixture must lead with, and what it may never offer.
 const ROWS = {
-  'f:1100': { lead: 'Add to list', never: ['Plan', 'Apply'] },
+  'f:1100': { lead: 'Add to To Do', never: ['Plan', 'Apply'] },
   'f:1101': { lead: 'Plan', never: ['Apply'] },
   'f:1102': { lead: 'Apply', never: ['Plan'] },
   'h:1103': { lead: 'Yes', exact: ['Yes', 'No', 'Snooze'] },
   'f:1104': { lead: 'Done', exact: ['Done', 'Undo'] },
-  'f:1105': { lead: 'Add to list', never: ['Plan', 'Apply'] },
+  'f:1105': { lead: 'Add to To Do', never: ['Plan', 'Apply'] },
   'f:1106': { lead: 'Plan', never: ['Apply'] },
 };
 

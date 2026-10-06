@@ -167,7 +167,7 @@ What the panel spends on chrome before content, driven on the real markup
 behind a stubbed fetch. At a 390px phone: the three tabs fit one row at 44px
 each, Today and House show no sub-tab strip, no status strip sits over the
 reports, and the guide (⚙ › Guide) opens with its sixty-section contents
-behind a fold. At 1448px: Today's queue and Your list share one column that
+behind a fold. At 1448px: Today's queue and To Do share one column that
 uses the width, and no Proposals or To-do pane has come back beside it.
 
 ```bash
@@ -208,13 +208,13 @@ house; `openToday` opens it and `posts` reads back what each press sent.
   only, Snooze before Ignore, a closed Details, a body of at most three
   lines, "What could go wrong" on every Apply card, what Undo puts back on a
   change, the cut text staying cut, the status line and its ⋯, the urgent
-  banner, the badge equal to the counted cards, Your list, the History
+  banner, the badge equal to the counted cards, To Do, the History
   drawer's four filters, the one-line empty state and the three-step setup
   card.
-* `measure-home.mjs` — what each kind of card offers (Plan, Add to list,
+* `measure-home.mjs` — what each kind of card offers (Plan, Add to To Do,
   Apply, Yes · No · Snooze, Done · Undo) and what each press sends,
   including Ignore's reason and "Ignore all like this" reaching the mute.
-* `measure-todo.mjs` — Your list: Done with its note, the row's ⋯, the add
+* `measure-todo.mjs` — To Do: Done with its note, the row's ⋯, the add
   box at 16px on touch, the empty line.
 * `measure-proposals.mjs` — suggestions: evidence on the face, the three
   trial sentences, a refused accept keeping its reason on the card, a landed

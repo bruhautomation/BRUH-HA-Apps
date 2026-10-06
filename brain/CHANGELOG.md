@@ -2,6 +2,50 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.16.0
+
+### brAIn works out what it can before it asks you
+- **A finding brAIn thinks is worth a look is now looked into before it reaches
+  you.** Before, a finding was shown to you first and investigated afterwards,
+  if at all. Now it stays off your list while brAIn reads the history, the
+  logbook and the device itself. Then one of three things happens:
+  - it **rewrites the card** with what it found;
+  - it **sets it aside** with its reason, if the problem has already cleared,
+    was a passing blip, or is normal for that device (still in History › Set
+    aside by brAIn if you disagree);
+  - or, if the look could not run, **shows it to you exactly as before**.
+  Safety alerts and urgent problems are still shown straight away.
+- **"Might be something" findings are looked into too**, instead of being put in
+  front of you as-is.
+- **The investigation no longer asks you what it could read itself.** It
+  doesn't tell you to "check" something its tools can check. And it asks a
+  question only for things no sensor records, like what you meant or what you
+  prefer.
+- brAIn may now look into 16 findings a day on the default setting (it was 8),
+  up to 3 per look. Your usage budget still applies.
+
+### Tidy-up cards you can correct
+- **Every row on a name-and-room tidy card has Change**, so you can say "no,
+  call it this" or "no, it's in the garage" instead of only unticking it. What
+  you type goes through the same checks as brAIn's own suggestion.
+- A room row now says **which device** moves ("Onkyo Receiver: no room →
+  Garage"), not just the two rooms.
+- The same refusal listed twice is now one line, the title reads properly
+  ("Put 1 thing in a room"), and Apply no longer starts greyed out after a new
+  suggestion arrives.
+
+### To Do
+- **Your list is now called To Do**, and the button is **Add to To Do**.
+- **Every To Do item has Delete**: it comes off the list and nothing is written
+  to memory. If brAIn sees the problem again, it comes back.
+
+### Memory clean-up
+- **Knowledge › Clean up** has brAIn read its own memory and list what looks
+  wrong, of no value, a mistake, said twice or out of date. Each line comes with
+  the reason, and brAIn checks a line against your house before calling it
+  wrong. Nothing is removed until you tick it and press Apply. Things you told
+  brAIn yourself and the rules you set are never offered for removal.
+
 ## 2.15.2
 
 ### Dismiss in Home Assistant clears the card in brAIn too

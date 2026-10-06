@@ -270,6 +270,18 @@ window.fetch = async (url, opts) => {
   const p = String(url);
   const answer = (body, status) => new Response(JSON.stringify(body), {
     status: status || 200, headers: { 'Content-Type': 'application/json' } });
+  // Memory clean-up: a proposal to review, and the presses recorded.
+  if (p.includes('api/memory/cleanup')) {
+    if (opts && opts.method === 'POST') {
+      (window.__cleanupPosts = window.__cleanupPosts || []).push(
+        { url: p, body: opts.body ? JSON.parse(opts.body) : null });
+      if (p.includes('/apply')) {
+        return answer({ ...(window.__cleanup || {}), proposal: null,
+                        result: { facts: 1, lines: 1, consolidating: true } });
+      }
+    }
+    return answer(window.__cleanup || { running: false, proposal: null });
+  }
   // The deep review: the run press records itself and answers running.
   if (p.includes('api/deep-review/run')) {
     window.__reviewPresses = (window.__reviewPresses || 0) + 1;
@@ -1418,6 +1430,69 @@ for (const width of WIDTHS) {
   }
   if (!/lands under Insights/.test(after.toast)) note(at, `the press said "${after.toast}"`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
+  await context.close();
+}
+
+// ------------------------------------------------------- memory clean-up
+// Knowledge › Clean up: the lines brAIn proposes to remove, each with its
+// reason in words, every one ticked to start; untick one and Apply sends
+// exactly the ticked ids. A row takes a thumb and nothing scrolls sideways.
+const CLEANUP = {
+  running: false, last_error: '', last_note: '',
+  reasons: { wrong: 'Wrong', useless: 'No value', error: 'An error',
+             duplicate: 'Said twice', stale: 'Out of date' },
+  proposal: { at: NOW - 60, rows: [
+    { id: 'doc:3', kind: 'doc', reason: 'useless',
+      text: 'The lamp was on at 9pm on Tuesday.', why: 'A one-off evening.' },
+    { id: 'fact:ab12', kind: 'fact', reason: 'wrong',
+      text: 'The boiler is switch.boiler_relay.',
+      why: 'There is no switch.boiler_relay in the registry.' },
+  ] },
+};
+for (const width of WIDTHS) {
+  const touch = width < 800;
+  const at = `clean up ${width}px`;
+  const { context, page } = await openPanel(width,
+    `window.__cleanup = ${JSON.stringify(CLEANUP)};`, touch);
+  await openView(page, 'memory');
+  await page.waitForSelector('#kCleanupBox .kcleanrow', { timeout: 5000 })
+    .catch(() => note(at, 'the clean-up list never rendered'));
+  const c = await page.evaluate(() => {
+    const box = document.getElementById('kCleanupBox');
+    const rows = [...box.querySelectorAll('.kcleanrow')];
+    return {
+      button: (document.getElementById('kCleanup') || {}).textContent || '',
+      rows: rows.map((r) => ({ text: r.textContent, ticked: r.querySelector('input').checked,
+                               h: Math.round(r.getBoundingClientRect().height),
+                               right: Math.round(r.getBoundingClientRect().right) })),
+      presses: [...box.querySelectorAll('.card-actions button')].map((b) => b.textContent.trim()),
+      docWidth: document.documentElement.scrollWidth,
+    };
+  });
+  if (c.button.trim() !== 'Clean up') note(at, `the press reads "${c.button.trim()}"`);
+  if (c.rows.length !== 2) note(at, `${c.rows.length} clean-up rows, not 2`);
+  for (const r of c.rows) {
+    if (!r.ticked) note(at, 'a proposed removal starts unticked');
+    if (touch && r.h < MIN_TARGET) note(at, `a clean-up row is ${r.h}px tall`);
+    if (r.right > width + 0.5) note(at, 'a clean-up row hangs off the side');
+  }
+  if (!c.rows.some((r) => /No value/.test(r.text) && /one-off evening/.test(r.text))) {
+    note(at, 'a row does not carry its reason in words and its why');
+  }
+  if (c.presses.join('|') !== 'Apply|Discard') note(at, `the box offers ${c.presses}`);
+  if (c.docWidth > width + 0.5) note(at, `page scrolls sideways (${c.docWidth}px)`);
+  await page.evaluate(() => {
+    document.querySelector('#kCleanupBox .kcleanrow input').click();
+    [...document.querySelectorAll('#kCleanupBox .card-actions button')]
+      .find((b) => b.textContent.trim() === 'Apply').click();
+  });
+  await page.waitForTimeout(200);
+  const posts = await page.evaluate(() => window.__cleanupPosts || []);
+  const apply = posts.find((p) => /apply$/.test(p.url));
+  if (!apply || JSON.stringify(apply.body.ids) !== JSON.stringify(['fact:ab12'])) {
+    note(at, `Apply sent ${JSON.stringify(apply && apply.body)}`);
+  }
+  console.log(`${failures.length ? 'ok? ' : 'ok  '}clean up ${String(width).padStart(4)}px`);
   await context.close();
 }
 

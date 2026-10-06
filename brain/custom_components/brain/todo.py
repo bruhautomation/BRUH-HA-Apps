@@ -1,12 +1,12 @@
 """brAIn's work list, in Home Assistant's own To-do app.
 
-**It holds exactly Your list — accepted to-dos and your own items — and
+**It holds exactly To Do — accepted to-dos and your own items — and
 no findings.** It used to show the open findings too, so the app's list
 held five where the panel's list held four, and an undecided finding sat
 in a list of agreed work as if it had been agreed. A finding is a
 decision, and decisions are the panel's queue (and Settings → Repairs,
 and `binary_sensor.brain_needs_you`); a finding joins this list the moment
-somebody presses Add to list. `item_for` still turns a finding into an
+somebody presses Add to To Do. `item_for` still turns a finding into an
 item and a stale `f:` uid is still answered, for an app that polled
 before the change — nothing new is listed from the findings mirror.
 
@@ -199,8 +199,8 @@ def item_for_todo(row: dict) -> TodoItem | None:
 class BrainTodoList(TodoListEntity):
     """The work waiting on a person, as Home Assistant's own to-do items.
 
-    Your list: the chores somebody has accepted and the items they added.
-    A finding is not on it until somebody presses Add to list.
+    To Do: the chores somebody has accepted and the items they added.
+    A finding is not on it until somebody presses Add to To Do.
     """
 
     # Named "brAIn to-do" whole, not under the device's name: with the
@@ -251,9 +251,9 @@ class BrainTodoList(TodoListEntity):
         return self._read_one
 
     async def async_update(self) -> None:
-        """Your list, off the to-do mirror. Missing is not an empty list.
+        """To Do, off the to-do mirror. Missing is not an empty list.
 
-        Exactly the items the panel's Your list shows: the to-do mirror's
+        Exactly the items the panel's To Do shows: the to-do mirror's
         open items and nothing from the findings mirror (see the module
         docstring). A mirror that could not be read keeps what the list
         already held — the add-on restarting for ten seconds must not read

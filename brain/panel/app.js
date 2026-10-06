@@ -4771,7 +4771,7 @@ function planRefused(plan) {
 // ===================================================================== Today
 // docs/design/ui-redesign-2026-10.md, "The first screen". One screen for
 // deciding: a safety banner only while something is urgent, the status
-// line, the queue, Your list and the History drawer. Every finding,
+// line, the queue, To Do and the History drawer. Every finding,
 // question, suggestion, name tidy and assessed update is the SAME card —
 // a meta line with one status chip, a title, at most three lines of body,
 // the fix in two, one Details disclosure and one row of presses — because
@@ -4845,7 +4845,7 @@ function qCard({ id, chip, meta, title, body, counted = true }) {
 }
 
 // "Fix", then what to do in two lines. Who would do it is said by the
-// primary button under it (Plan, Apply or Add to list), so the heading is
+// primary button under it (Plan, Apply or Add to To Do), so the heading is
 // one word.
 function qFix(text) {
   const box = el("div", "qfix");
@@ -5102,7 +5102,7 @@ function absorbAnswer(data) {
 }
 
 // Everything a press can have moved, read together before the screen is
-// painted: the queue, the findings it is derived from, Your list and the
+// painted: the queue, the findings it is derived from, To Do and the
 // suggestions — a row moved by a press must not be drawn off a stale copy
 // of the list it left.
 async function refreshToday() {
@@ -5253,8 +5253,8 @@ function makeLooseFinding(f) {
     actions.appendChild(b);
     b.addEventListener("click", fn);
   };
-  press("Add to list", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
-    "On your list", btns));
+  press("Add to To Do", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
+    "Added to To Do", btns));
   if (String(f.source || "").startsWith("check:")) {
     press("Check again", false, (ev) => recheckFinding(f, btns, ev.currentTarget));
   }
@@ -5460,22 +5460,96 @@ const TIDY_KIND_WORDS = { name: "Rename", area: "Room", alias: "Alias" };
 
 function tidyRowText(row) {
   const after = row.kind === "area" ? row.area_name : row.value;
-  const before = row.kind === "area" ? (row.from_area || "no room") : row.label;
-  return row.kind === "alias"
-    ? `${row.label}: also answer to “${after}”`
-    : `${before} → ${after}`;
+  if (row.kind === "alias") return `${row.label}: also answer to “${after}”`;
+  // A room row says WHICH thing moves: "no room → Garage" on its own is a
+  // move with nothing named, which is how somebody ticks a row they could
+  // not read.
+  if (row.kind === "area") return `${row.label}: ${row.from_area || "no room"} → ${after}`;
+  return `${row.label} → ${after}`;
+}
+
+// What the table holds, said in words: "Room 1." read as a fragment.
+function tidyTitle(counts, total) {
+  const kinds = Object.keys(counts);
+  if (kinds.length === 1 && kinds[0] === "area") {
+    return total === 1 ? "Put 1 thing in a room" : `Put ${total} things in rooms`;
+  }
+  if (kinds.length === 1 && kinds[0] === "name") {
+    return total === 1 ? "Rename 1 thing" : `Rename ${total} things`;
+  }
+  if (kinds.length === 1 && kinds[0] === "alias") {
+    return total === 1 ? "Add 1 voice alias" : `Add ${total} voice aliases`;
+  }
+  return `Tidy ${total} names and rooms`;
+}
+
+// "No, do this instead": the row's value changed in place. The server runs
+// it through every rule the proposal itself had to pass, so a room that
+// does not exist or a name something else already answers to is refused
+// with the reason on the row.
+function tidyEditRow(t, row, holder, onDone) {
+  holder.textContent = "";
+  const form = el("div", "qtidyedit");
+  let input;
+  if (row.kind === "area" && (t.areas || []).length) {
+    input = document.createElement("select");
+    input.className = "sel";
+    (t.areas || []).forEach((a) => {
+      const o = document.createElement("option");
+      o.value = a.id;
+      o.textContent = a.name || a.id;
+      if (a.id === row.value) o.selected = true;
+      input.appendChild(o);
+    });
+  } else {
+    input = document.createElement("input");
+    input.type = "text";
+    input.value = row.kind === "area" ? (row.area_name || "") : (row.value || "");
+    input.placeholder = row.kind === "area" ? "Room name" : "What it should be called";
+  }
+  input.setAttribute("aria-label", `Instead of ${tidyRowText(row)}`);
+  form.appendChild(input);
+  const err = el("p", "qtidyerr");
+  err.hidden = true;
+  const save = qButton("Save", true);
+  const cancel = qButton("Cancel", false);
+  save.addEventListener("click", async () => {
+    save.disabled = cancel.disabled = true;
+    try {
+      await api(`api/tidy/row/${row.id}`, {
+        method: "POST", body: JSON.stringify({ value: input.value }) });
+      await refreshToday();
+      renderFindings();
+      toast("Changed — Apply when you're ready");
+    } catch (e) {
+      err.textContent = e.message || "that didn't work";
+      err.hidden = false;
+      save.disabled = cancel.disabled = false;
+    }
+  });
+  cancel.addEventListener("click", onDone);
+  const btns = el("div", "card-actions");
+  btns.appendChild(save);
+  btns.appendChild(cancel);
+  form.appendChild(btns);
+  form.appendChild(err);
+  holder.appendChild(form);
+  input.focus();
 }
 
 function makeTidyCard(t) {
   const rows = t.rows || [];
-  if (!todayState.ticked) todayState.ticked = new Set(rows.map((r) => r.id));
+  // The ticks belong to THIS table: a new run is a new key, and a set kept
+  // from the last one ticks ids that now name different rows.
+  if (!todayState.ticked || todayState.tickedKey !== t.key) {
+    todayState.ticked = new Set(rows.map((r) => r.id));
+    todayState.tickedKey = t.key;
+  }
   const counts = {};
   rows.forEach((r) => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
-  const body = Object.entries(counts).map(([k, n]) =>
-    `${TIDY_KIND_WORDS[k] || k} ${n}`).join(", ");
   const card = qCard({ id: t.key, chip: "tidy", meta: ["Change ready"],
-    title: `Tidy ${rows.length} name${rows.length === 1 ? "" : "s"} and rooms`,
-    body: `${body}. Untick any you disagree with under Details.` });
+    title: tidyTitle(counts, rows.length),
+    body: "Change any you'd do differently, or untick it, under Details." });
   const reach = rows.filter((r) => (r.reach || []).length).length;
   if (reach) {
     card.appendChild(el("p", "qfixtext", reach === 1
@@ -5485,6 +5559,7 @@ function makeTidyCard(t) {
   const more = qDetails();
   const list = el("div", "qtidylist");
   rows.forEach((row) => {
+    const line = el("div", "qtidyline");
     const label = el("label", "qtidyrow");
     const box = document.createElement("input");
     box.type = "checkbox";
@@ -5496,14 +5571,40 @@ function makeTidyCard(t) {
     });
     label.appendChild(box);
     const text = el("span", null, `${TIDY_KIND_WORDS[row.kind] || row.kind}: ${tidyRowText(row)}`);
+    text.title = row.subject || "";
     label.appendChild(text);
-    list.appendChild(label);
+    if (row.edited) label.appendChild(el("span", "item-state", " · your change"));
+    line.appendChild(label);
+    const change = el("button", "linkish qtidychange", "Change");
+    change.type = "button";
+    const editHolder = el("div", "qtidyeditwrap");
+    change.addEventListener("click", () => {
+      change.hidden = true;
+      tidyEditRow(t, row, editHolder, () => {
+        editHolder.textContent = "";
+        change.hidden = false;
+      });
+    });
+    line.appendChild(change);
+    list.appendChild(line);
+    list.appendChild(editHolder);
     (row.reach || []).forEach((r) => list.appendChild(el("p", "qdline",
       `Changes what “${r.alias}” reaches: it ${r.change} (${r.area}).`)));
   });
   more.appendChild(list);
-  (t.refused || []).forEach((r) => qDetailLine(more, "Refused",
-    `${r.label || r.subject} → ${r.value}: ${r.refused}`));
+  // The same sentence about the same proposal is one line with a count:
+  // two entities sharing a device's name read as one refusal twice.
+  const refused = new Map();
+  (t.refused || []).forEach((r) => {
+    const textLine = `${r.label || r.subject} → ${r.value}: ${r.refused}`;
+    const got = refused.get(textLine) || { n: 0, ids: [] };
+    got.n += 1;
+    if (r.subject) got.ids.push(r.subject);
+    refused.set(textLine, got);
+  });
+  refused.forEach((v, textLine) => {
+    qDetailLine(more, "Refused", v.n > 1 ? `${textLine} (${v.n} entities)` : textLine);
+  });
   qDetailLine(more, "Undo", `For ${t.undo_days || 30} days, from History › Done. `
     + "It puts back each field that still holds what brAIn wrote.");
   card.appendChild(more);
@@ -5552,7 +5653,7 @@ function makeUpdateCard(u) {
   card.appendChild(more);
   const actions = el("div", "card-actions");
   const btns = [];
-  const list = qButton("Add to list", true);
+  const list = qButton("Add to To Do", true);
   list.addEventListener("click", async () => {
     btns.forEach((b) => { b.disabled = true; });
     try {
@@ -5563,7 +5664,7 @@ function makeUpdateCard(u) {
         key: u.key, how: "listed", title: u.title || "" }) });
       await refreshToday();
       renderFindings();
-      toast("On your list");
+      toast("Added to To Do");
     } catch (e) {
       toast(e.message || "that didn't work");
       btns.forEach((b) => { b.disabled = false; });
@@ -5793,13 +5894,13 @@ $("#todayMore")?.addEventListener("click", () => {
   renderFindings();
 });
 
-// ---- Your list -----------------------------------------------------------
+// ---- To Do -----------------------------------------------------------
 
 async function refreshTodo() {
   try {
     takeTodo(await api("api/todo"));
   } catch (err) {
-    console.warn("could not load Your list", err);
+    console.warn("could not load To Do", err);
   }
 }
 
@@ -5811,7 +5912,7 @@ function takeTodo(data) {
   if (data.findings) state.findings = data.findings;
 }
 
-// The tab badge is the queue's; Your list carries no badge of its own.
+// The tab badge is the queue's; To Do carries no badge of its own.
 function updateTodoBadge() {}
 
 async function todoAction(item, path, method, message, btns, body) {
@@ -5838,7 +5939,7 @@ function renderTodo() {
   const rows = (state.todo || []).filter((i) =>
     !((Number(i.snoozed_until) || 0) * 1000 > Date.now()));
   if (!rows.length) {
-    list.appendChild(el("p", "empty-line", "Nothing on your list."));
+    list.appendChild(el("p", "empty-line", "Nothing to do."));
     return;
   }
   rows.forEach((i) => list.appendChild(makeTodo(i)));
@@ -5866,6 +5967,15 @@ function makeTodo(item) {
       placeholder: "Replaced the CR2032 — it's a 3-monthly job on that one.",
       send: "Done",
     }));
+  // Delete takes it off the list and writes nothing anywhere: no memory
+  // line, no settled answer. A moved finding's report is released, so it
+  // comes back only if brAIn sees it again — Dismiss's rule, on a chore.
+  const del = qButton("Delete", false);
+  del.title = "Off the list. Nothing goes into memory; if brAIn sees the problem again it comes back.";
+  btns.push(del);
+  actions.appendChild(del);
+  del.addEventListener("click", () => todoAction(item, `api/todo/${item.id}`, "DELETE",
+    "Deleted — nothing written to memory", btns));
   const menu = cardMenuButton([
     ["", "Snooze", "Off the list for a week; it comes back by itself.",
       () => todoAction(item, `api/case/t:${item.id}/not_now`, "POST", "Snoozed", btns)],
@@ -5895,7 +6005,7 @@ async function refreshHistory() {
 const HIST_HINTS = {
   snoozed: "Put off for now — each comes back by itself on the date shown. Restore brings it back now.",
   ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them.",
-  done: "Things you finished or brAIn fixed. Restore puts one back on your list.",
+  done: "Things you finished or brAIn fixed. Restore puts one back on To Do.",
   aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
 };
 
@@ -6722,12 +6832,144 @@ function takeQueue(inbox, pending) {
   renderPending(pending, memState.lastState);
 }
 
+// ---- Memory clean-up -------------------------------------------------------
+//
+// brAIn reads its memory document and its stored facts and proposes what to
+// remove — wrong, of no value, an error, said twice, out of date — each with
+// the sentence that says why. Nothing is removed until a line is ticked and
+// Apply pressed; document lines are removed by the consolidator (a FORGET
+// request), facts straight from the store.
+const cleanupState = { data: null, ticked: null, tickedAt: 0, poll: 0 };
+
+async function loadCleanup() {
+  try {
+    cleanupState.data = await api("api/memory/cleanup");
+  } catch (e) {
+    cleanupState.data = { error: e.message };
+  }
+  renderCleanup();
+}
+
+function cleanupPoll() {
+  clearTimeout(cleanupState.poll);
+  const d = cleanupState.data || {};
+  if (d.running) cleanupState.poll = setTimeout(loadCleanup, 3000);
+}
+
+function renderCleanup() {
+  const box = $("#kCleanupBox");
+  const btn = $("#kCleanup");
+  if (!box) return;
+  const d = cleanupState.data || {};
+  box.textContent = "";
+  if (btn) {
+    btn.disabled = !!d.running;
+    btn.textContent = d.running ? "Reading memory…" : "Clean up";
+  }
+  const p = d.proposal;
+  const rows = (p && p.rows) || [];
+  if (d.running) {
+    box.hidden = false;
+    box.appendChild(el("p", "empty-line",
+      "brAIn is reading its memory and checking it against the house. This takes a minute or two."));
+    cleanupPoll();
+    return;
+  }
+  if (d.last_error) {
+    box.hidden = false;
+    box.appendChild(el("p", "qerror", `The last clean-up could not finish: ${d.last_error}`));
+  }
+  if (!rows.length) {
+    if (p && !d.last_error) {
+      box.hidden = false;
+      box.appendChild(el("p", "empty-line",
+        d.last_note || "Nothing in memory looks wrong or useless."));
+    } else if (!d.last_error) {
+      box.hidden = true;
+    }
+    return;
+  }
+  box.hidden = false;
+  if (!cleanupState.ticked || cleanupState.tickedAt !== p.at) {
+    cleanupState.ticked = new Set(rows.map((r) => r.id));
+    cleanupState.tickedAt = p.at;
+  }
+  box.appendChild(el("h2", "t-card", rows.length === 1
+    ? "1 line to remove" : `${rows.length} lines to remove`));
+  box.appendChild(el("p", "panesub",
+    "Untick anything you want kept. Apply removes the rest from brAIn's memory."));
+  const words = d.reasons || {};
+  const list = el("div", "kcleanlist");
+  rows.forEach((r) => {
+    const label = el("label", "kcleanrow");
+    const box2 = document.createElement("input");
+    box2.type = "checkbox";
+    box2.checked = cleanupState.ticked.has(r.id);
+    box2.addEventListener("change", () => {
+      if (box2.checked) cleanupState.ticked.add(r.id); else cleanupState.ticked.delete(r.id);
+      apply.disabled = !cleanupState.ticked.size;
+    });
+    label.appendChild(box2);
+    const body = el("span", "kcleanbody");
+    const head = el("span", "kcleanhead");
+    head.appendChild(el("span", "chip-status", words[r.reason] || r.reason));
+    head.appendChild(el("span", "kcleantext", prettyText(r.text)));
+    body.appendChild(head);
+    body.appendChild(el("span", "item-state", r.why));
+    label.appendChild(body);
+    list.appendChild(label);
+  });
+  box.appendChild(list);
+  const actions = el("div", "card-actions");
+  const apply = qButton("Apply", true);
+  apply.disabled = !cleanupState.ticked.size;
+  const discard = qButton("Discard", false);
+  apply.addEventListener("click", async () => {
+    apply.disabled = discard.disabled = true;
+    try {
+      const out = await api("api/memory/cleanup/apply", {
+        method: "POST", body: JSON.stringify({ ids: [...cleanupState.ticked] }) });
+      cleanupState.data = out;
+      cleanupState.ticked = null;
+      const res = out.result || {};
+      const n = (res.facts || 0) + (res.lines || 0);
+      toast(n === 1 ? "Removed 1 line from memory" : `Removed ${n} lines from memory`);
+      renderCleanup();
+      loadFacts(true);
+    } catch (e) {
+      toast(e.message || "that didn't work");
+      apply.disabled = discard.disabled = false;
+    }
+  });
+  discard.addEventListener("click", async () => {
+    try {
+      cleanupState.data = await api("api/memory/cleanup/discard", { method: "POST" });
+      cleanupState.ticked = null;
+      renderCleanup();
+    } catch (e) { toast(e.message || "that didn't work"); }
+  });
+  actions.appendChild(apply);
+  actions.appendChild(discard);
+  box.appendChild(actions);
+}
+
+if ($("#kCleanup")) {
+  $("#kCleanup").addEventListener("click", async () => {
+    try {
+      cleanupState.data = await api("api/memory/cleanup/run", { method: "POST" });
+      cleanupState.ticked = null;
+      renderCleanup();
+    } catch (e) { toast(e.message || "could not start the clean-up"); }
+  });
+}
+
 async function renderKnowledge() {
   // What it knows is one list: the facts, searched and filtered on the
   // server. The memory document and its filing queue are brAIn's own
   // machinery and are read only where they are mounted (⚙ › Memory), so
   // the knowledge payload is fetched only when that markup is present.
   loadFacts(true);
+  loadCleanup();
   if (!$("#kMemView") && !$("#kFacts")) return;
   let data;
   try {
@@ -9773,7 +10015,7 @@ function switchView(name) {
 
   if (name === "findings") {
     // Draw what we have, then again once every list the screen reads has
-    // landed: the queue, the findings under it, the suggestions, Your list
+    // landed: the queue, the findings under it, the suggestions, To Do
     // and the two cards no store owns.
     renderFindings();
     refreshToday().then(renderFindings);
@@ -12993,7 +13235,7 @@ document.addEventListener("visibilitychange", () => {
   render();
   fastPoll();
   // Today is where the panel lands, so its lists are fetched at boot: the
-  // queue, the findings under it, the suggestions, Your list and the two
+  // queue, the findings under it, the suggestions, To Do and the two
   // cards no store owns. The badge is the queue's count.
   refreshToday().then(() => { if (currentView === "findings") renderFindings(); });
   // Reports' two rows under the grid are read when Reports is opened; at
