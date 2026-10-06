@@ -202,6 +202,75 @@ class TestAnAreaMoveSaysWhatItChanges(unittest.TestCase):
         self.assertEqual(out["rows"][0]["reach"][0]["alias"], "Lounge lights out")
 
 
+class TestOneRefusalPerThing(unittest.TestCase):
+    def test_the_same_refused_row_twice_is_one_line(self):
+        snap = house()
+        dup = row("name", "entity", "light.lamp", "Kitchen ceiling")
+        out = tidy.parse({"rows": [dup, dict(dup)]}, tidy.digest(snap), snap, [])
+        self.assertEqual(len(out["refused"]), 1)
+
+
+class TestDoThisInstead(unittest.TestCase):
+    """A row changed to what the person typed, through the same rules."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(Path(self.tmp.name) / "tidy.json")
+        self.snap = house()
+        self.dig = tidy.digest(self.snap)
+        parsed = tidy.parse({"rows": [
+            row("name", "entity", "switch.plug_00158d0004a1b2c3", "Lounge plug"),
+            row("area", "device", "dev-lamp", "hall"),
+            row("name", "entity", "light.lamp", "Reading light"),
+            row("name", "entity", "light.kitchen_ceiling", "Big light"),
+        ]}, self.dig, self.snap, [])
+        parsed["areas"] = self.dig["areas"]
+        tidy.save_proposal(parsed, path=self.path, now=1000.0)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def revise(self, rid, value, patterns=()):
+        return tidy.revise(rid, value, self.dig, self.snap, list(patterns),
+                           path=self.path)
+
+    def test_a_new_name_replaces_the_row_and_keeps_its_id(self):
+        out = self.revise("r0", "TV plug")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["row"]["id"], "r0")
+        self.assertEqual(out["row"]["value"], "TV plug")
+        self.assertTrue(out["row"]["edited"])
+        stored = tidy.load(self.path)["proposal"]
+        self.assertEqual([r["id"] for r in stored["rows"]], ["r0", "r1", "r2", "r3"])
+        self.assertEqual(stored["rows"][0]["value"], "TV plug")
+        self.assertEqual(len(stored["areas"]), 3)
+
+    def test_a_different_room_lands_as_its_id(self):
+        out = self.revise("r1", "Kitchen")
+        self.assertTrue(out["ok"], out)
+        self.assertEqual(out["row"]["value"], "kitchen")
+        self.assertEqual(out["row"]["area_name"], "Kitchen")
+
+    def test_every_rule_the_proposal_passed_holds_for_the_change(self):
+        self.assertIn("does not exist", self.revise("r1", "Attic")["error"])
+        self.assertIn("hardware", self.revise("r0", "Plug 00:15:8d:00:04:a1")["error"])
+        self.assertIn("already called", self.revise("r2", "Kitchen ceiling")["error"])
+        refused = self.revise("r1", "hall", patterns=["light.lamp"])
+        self.assertIn("protected", refused["error"])
+
+    def test_a_name_another_row_already_proposes_is_refused(self):
+        out = self.revise("r2", "big LIGHT")
+        self.assertFalse(out["ok"])
+        self.assertIn("Another row", out["error"])
+        # A switch and a light are not one Assist target, so that stands.
+        self.assertTrue(self.revise("r0", "Big light")["ok"])
+
+    def test_nothing_typed_and_no_change_are_refusals_that_say_so(self):
+        self.assertFalse(self.revise("r0", "  ")["ok"])
+        self.assertIn("already", self.revise("r2", "Lamp")["error"])
+        self.assertIn("no longer", self.revise("r9", "x")["error"])
+
+
 class StoreCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()

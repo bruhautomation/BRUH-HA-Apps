@@ -138,17 +138,17 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         Ignore — the same words in the same places on a battery, a quiet
         device, a stuck sensor and a Resident's case, so a row of buttons
         can be read without reading the words. The primary is Plan where
-        brAIn could act and Add to list where a person's hands are
+        brAIn could act and Add to To Do where a person's hands are
         needed. "The dismiss and check again buttons are useful": an old
         card that is no longer true is the commonest card there is."""
         tail = [("dismiss", "Dismiss"), ("not_now", "Snooze"), ("wrong", "Ignore")]
         check = [("recheck", "Check again")] + tail
         for name in ("battery", "unplugged", "stuck", "automation"):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
-            self.assertEqual(got, [("todo", "Add to list")] + check, name)
+            self.assertEqual(got, [("todo", "Add to To Do")] + check, name)
         for name in ("hands", "fix_failed"):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
-            self.assertEqual(got, [("todo", "Add to list")] + tail, name)
+            self.assertEqual(got, [("todo", "Add to To Do")] + tail, name)
         got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES["generic"])]
         self.assertEqual(got, [("fix", "Plan")] + tail)
         got = [(a["verb"], a["label"]) for a in answers.answers(
@@ -169,7 +169,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
         button's label is one of these words and nothing else — Yes and No
         being the answer to a question rather than a verb."""
-        vocab = {"Apply", "Plan", "Add to list", "Snooze", "Ignore", "Done",
+        vocab = {"Apply", "Plan", "Add to To Do", "Snooze", "Ignore", "Done",
                  "Restore", "Undo", "Ask", "Send", "Recheck", "Check again",
                  "Dismiss", "Run", "Save",
                  "Share", "Delete", "Yes", "No"}
@@ -302,13 +302,13 @@ class TestWhatGoesBehindTheDots(unittest.TestCase):
         self.assertEqual([(m["verb"], m["label"]) for m in got], [("trial", "Run")])
 
     def test_the_row_press_a_card_leaves_off_is_behind_the_dots(self):
-        """A chore check leads with Done and shows no Add to list; the
+        """A chore check leads with Done and shows no Add to To Do; the
         list is still reachable, behind the ⋯. Nowhere else on a problem
         is a press of the fixed row missing from both."""
         shape = SHAPES["chore_check"]
         more = answers.more(shape, answers.answers(shape), [])
         self.assertEqual([(m["verb"], m["label"]) for m in more][0],
-                         ("todo", "Add to list"))
+                         ("todo", "Add to To Do"))
         for name in ("planned", "change", "chore_done", "watching"):
             shape = SHAPES[name]
             more = answers.more(shape, answers.answers(shape), [])
@@ -335,7 +335,7 @@ class TestWhatAPhoneCanCarry(unittest.TestCase):
                                        "source": "check:dev.unavailable",
                                        "fixable": False})
         self.assertEqual([(g["action"], g["label"]) for g in got],
-                         [("todo", "Add to list"), ("snooze", "Snooze"),
+                         [("todo", "Add to To Do"), ("snooze", "Snooze"),
                           ("wrong", "Ignore")])
 
     def test_a_change_is_got_it_alone_and_a_run_in_flight_is_nothing(self):

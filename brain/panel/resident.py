@@ -645,13 +645,21 @@ Answer with ONE JSON object and nothing else. What it means:
   every reading — those belong in "evidence".
 - "kind" — "problem" if something is wrong, "opportunity" if something
   could be better, "question" if the honest answer is that you need to
-  ask the person something only they can answer.
+  ask the person something only they can answer. That is rare: a
+  question is for intent, preference or a physical fact no sensor in the
+  house records ("is the shed heater meant to run all winter?"). Anything
+  a state, the history, the logbook, a trace, the registry or brAIn's
+  measurements can answer is NOT a question — go and read it, and claim
+  what you found.
 - "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — what to DO about it, in one or two sentences, specific to this
   house: the entity, the integration, the automation, the setting. Never
   a category and never generic advice restated. If the honest answer is
-  that there is nothing to do but wait, say that and why.
+  that there is nothing to do but wait, say that and why. Never tell the
+  person to check, look at or confirm something your tools can read —
+  read it first and write what you found: not "check whether the hub is
+  online" but "the hub has been unavailable since 14:10, so restart it".
 - NAME things the way the person does. Call a device or an automation by
   its friendly name ("the laundry room countertop light", "Motion -
   Laundry Room") in "claim", "detail" and "fix"; the entity id goes in
@@ -675,8 +683,13 @@ Answer with ONE JSON object and nothing else. What it means:
 - "escalate" — true only if you are genuinely unsure AND being wrong would
   matter. It asks for a stronger model to look again; it is not a way to
   say something is important.
-- "dismiss" — only when you were sent a ROW THAT IS ALREADY ON THE LIST
-  (below): true if, having looked, it is not worth anybody's attention.
+- "dismiss" — only when you were sent a ROW (below): true if, having
+  looked, it is not worth anybody's attention — the problem has already
+  cleared, it was a moment that passed (a device that dropped off and came
+  back, a reading during a restart), it is normal for what this thing is,
+  or brAIn already knows it. Settling these yourself is most of the job:
+  every row you dismiss with a good reason is one the person never has to
+  read.
   Leave "claim" empty and say why in "detail". The row is then held back
   with your reason on it, where the homeowner can still see it and put it
   back. If the row IS worth attention, write the claim, detail and fix as
@@ -747,8 +760,10 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     if why.strip():
         parts.append("WHY IT WAS SENT HERE: " + why.strip() + "\n")
     if isinstance(refining, dict) and refining.get("text"):
-        parts.append("IT IS ABOUT A ROW ALREADY ON THE HOMEOWNER'S LIST — "
-                     "rewrite it or dismiss it; do not file beside it:")
+        parts.append("IT IS ABOUT A ROW BRAIN FILED — rewrite it as it should "
+                     "read, or dismiss it if, having looked, nobody needs to "
+                     "be asked; do not file beside it. Find the answer "
+                     "yourself before you put it to the homeowner:")
         parts.append(f"- says: {refining.get('text')}")
         if refining.get("detail"):
             parts.append(f"- detail: {str(refining['detail'])[:400]}")
@@ -1064,7 +1079,12 @@ LEDGER_FILE = Path(os.environ.get("BRAIN_RESIDENT_LEDGER_FILE",
 # because it has no ceiling: the whole plan rests on looking being cheap
 # enough to do freely, and a look that stops because a counter filled is a
 # house nobody is watching for the rest of the day.
-SONNET_PER_DAY = {"light": 4, "normal": 8, "generous": 16}
+#
+# Doubled in 2.16 when filed rows began to be looked into BEFORE they are
+# shown: an investigation that sets a row aside is a card nobody has to
+# read, so the allowance is the difference between brAIn answering what it
+# can and handing it over. The usage budget still gates every run.
+SONNET_PER_DAY = {"light": 6, "normal": 16, "generous": 32}
 # And what may never be reached on a timer past. `fable` shares this
 # ceiling and is additionally never allowed unattended at all, which is
 # `model_plan.PRESS_ONLY` read from the budget's side.

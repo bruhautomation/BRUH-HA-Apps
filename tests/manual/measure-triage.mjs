@@ -65,7 +65,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     if (!/brAIn has not looked at this one yet/.test(loose.details)) {
       note(where, 'Details does not say nothing has looked at it');
     }
-    if (loose.presses.join('|') !== 'Add to list|Check again|Dismiss|Snooze|Ignore') {
+    if (loose.presses.join('|') !== 'Add to To Do|Check again|Dismiss|Snooze|Ignore') {
       note(where, `the unchecked card offers ${loose.presses.join(' · ')}`);
     }
     if (loose.cut.length) note(where, `the unchecked card carries ${loose.cut.join(', ')}`);
@@ -89,7 +89,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
   await page.waitForTimeout(150);
   await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Snooze")').click();
   await page.waitForTimeout(150);
-  await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Add to list")').click();
+  await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Add to To Do")').click();
   await page.waitForTimeout(150);
   await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Ignore")').click();
   const form = page.locator('[data-case-id="f:2001"] .findnote');

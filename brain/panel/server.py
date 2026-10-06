@@ -230,6 +230,7 @@ import weekly
 # overnight health check and the upgrade advisor.
 import house_book
 import sre
+import memory_cleanup
 import tidy
 import upgrades
 # Today's own two additions: a snooze/ignore for the cards no store owns,
@@ -778,6 +779,7 @@ RESIDENT_STATE: dict = {
     "investigations_waiting": 0,
     "dropped": 0,            # signals the cap took, counted rather than quiet
     "duplicates": 0,         # cases the store already held
+    "resolved": 0,           # filed rows looked into and set aside, unasked
     "last_error": "",
 }
 # What producers hand signals to. A module global bound to whichever loop
@@ -871,7 +873,7 @@ ESCALATE_JOB = "synthesis"
 # How many investigations one look may start. Each is a Sonnet run with
 # tools, so this is the runaway guard and the ledger is the budget; the
 # surplus stays queued and says so rather than being dropped.
-MAX_INVESTIGATIONS_PER_LOOK = 2
+MAX_INVESTIGATIONS_PER_LOOK = 3
 # How long a signal may wait in the pending list before it is dropped as a
 # fact about a house that has moved on. A day: the look runs every ten
 # minutes, so anything still here is something a gate held, and a week-old
@@ -6907,7 +6909,7 @@ def _queue_count(now: float | None = None) -> int:
 
 def _counts(now: float | None = None) -> dict:
     """The three numbers a person compares across screens, each from its
-    one derivation: the queue (`cases.queue_count`), Your list
+    one derivation: the queue (`cases.queue_count`), To Do
     (`todo_store`'s open items) and the facts (`facts_store.count`). A
     store that could not be read is None — "I could not look" — never 0."""
     out: dict = {}
@@ -7071,7 +7073,7 @@ async def h_status(request: web.Request) -> web.Response:
         # the old sum did not.
         "findings_open": read["findings_open"],
         # One source for every count (`_counts`): the queue the badge
-        # shows, Your list, and the facts House › What it knows totals.
+        # shows, To Do, and the facts House › What it knows totals.
         # None means the store could not be read, never zero.
         "queue_count": read["queue_count"],
         "list_count": read["list_count"],
@@ -8162,7 +8164,7 @@ async def h_card_info(request: web.Request) -> web.Response:
 # diagnostics, because "it did not run" and "it ran and found nothing" are
 # different silences.
 
-MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access")
+MAINT_JOBS = ("tidy", "upgrades", "sre", "book", "access", "memory_cleanup")
 MAINT_STATE: dict = {
     name: {"running": False, "started_at": 0.0, "finished_at": 0.0,
            "last_error": "", "last_note": "", "held": "", "subject": ""}
@@ -8267,6 +8269,7 @@ async def _run_tidy() -> None:
     if answer is None:
         raise RuntimeError("the reply could not be read")
     parsed = tidy.parse(answer, dig, snap, automation_writer.protected_patterns())
+    parsed["areas"] = dig.get("areas") or []
     await asyncio.to_thread(tidy.save_proposal, parsed, run_id=_run_id(result))
     MAINT_STATE["tidy"]["last_note"] = (
         f"{len(parsed['rows'])} suggestion(s) to review"
@@ -8307,6 +8310,24 @@ async def h_tidy_apply(request: web.Request) -> web.Response:
              len(result["skipped"]))
     return web.json_response({**await asyncio.to_thread(_tidy_payload),
                               "result": result})
+
+
+async def h_tidy_revise(request: web.Request) -> web.Response:
+    """A proposed row changed to what the person typed instead."""
+    row_id = request.match_info["row"]
+    if not re.fullmatch(r"r\d{1,4}", row_id):
+        raise web.HTTPNotFound(text="no such row")
+    body = await _json_body(request)
+    value = str(body.get("value") or "")[:tidy.MAX_NAME + 20]
+    snap = await checks.snapshot.collect_rooms(time.time())
+    dig = tidy.digest(snap)
+    result = await asyncio.to_thread(
+        tidy.revise, row_id, value, dig, snap,
+        automation_writer.protected_patterns())
+    if not result["ok"]:
+        raise web.HTTPConflict(text=result["error"])
+    return web.json_response({**await asyncio.to_thread(_tidy_payload),
+                              "row": result["row"]})
 
 
 async def h_tidy_discard(request: web.Request) -> web.Response:
@@ -8902,9 +8923,14 @@ def _maintainer_diagnostics() -> dict:
 
 
 def _maint_routes(app: web.Application) -> None:
+    app.router.add_get("/api/memory/cleanup", h_memory_cleanup)
+    app.router.add_post("/api/memory/cleanup/run", h_memory_cleanup_run)
+    app.router.add_post("/api/memory/cleanup/apply", h_memory_cleanup_apply)
+    app.router.add_post("/api/memory/cleanup/discard", h_memory_cleanup_discard)
     app.router.add_get("/api/tidy", h_tidy)
     app.router.add_post("/api/tidy/run", h_tidy_run)
     app.router.add_post("/api/tidy/apply", h_tidy_apply)
+    app.router.add_post("/api/tidy/row/{row}", h_tidy_revise)
     app.router.add_post("/api/tidy/discard", h_tidy_discard)
     app.router.add_post("/api/tidy/undo/{batch}", h_tidy_undo)
     app.router.add_get("/api/upgrades", h_upgrades)
@@ -10413,6 +10439,8 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     # `(signal, why, row it refines or 0)`: the look's reason travels with
     # the signal, because the investigation was sent to answer it.
     to_investigate: list[tuple[dict, str, int]] = []
+    # Filed rows held back until their investigation answers: {ts: why}.
+    looked_into: dict[int, str] = {}
     requeue: list[dict] = []
     filed_cases = 0
     let_go: list[dict] = []
@@ -10427,6 +10455,21 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
                 decided[ts] = ("held", why)
+            continue
+        safety = bool(signal.get("safety")) or _is_safety_signal(signal)
+        if ts and not safety and not answer.get("fallback") and (
+                verdict in ("watch", "investigate")
+                or (verdict == "act" and not signal.get("hot"))):
+            # A row already filed that the look thinks is worth more than
+            # nothing is LOOKED INTO before anybody is asked about it:
+            # "it might be something" and "worth going and looking" are
+            # both questions brAIn's own tools can usually answer, and a
+            # card shown first and refined later is a card the person
+            # read in its rule's generic words. It stays `triaging` until
+            # the investigation rewrites it, sets it aside, or could not
+            # run — `_settle_looked_into` shows it then, exactly as before.
+            looked_into[ts] = why
+            to_investigate.append((signal, why, ts))
             continue
         if ts:
             decided[ts] = ("elevated", why)
@@ -10443,7 +10486,6 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             await asyncio.to_thread(resident.watch, signal, why, now)
             let_go.extend(_signal_decisions([signal], "look_watch", why))
             continue
-        safety = bool(signal.get("safety")) or _is_safety_signal(signal)
         lane_ts = _safety_case_for(signal) if safety else 0
         if verdict == "act" and signal.get("hot") and safety:
             if lane_ts:
@@ -10475,8 +10517,17 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         await _announce_findings(shown)
     RESIDENT_INFLIGHT.clear()
 
+    # Only a row nobody has been shown yet can be held back: one already on
+    # the list keeps its place, and its investigation refines it in place.
+    if looked_into:
+        before = await asyncio.to_thread(findings_store.statuses, list(looked_into))
+        for ts in [t for t in looked_into if before.get(t) != "triaging"]:
+            looked_into.pop(ts)
     investigated = await _resident_investigations(
         to_investigate, now, settings, thinking)
+    settled = await _settle_looked_into(looked_into, run_id, now)
+    held_first = len(moved) - len(shown)
+    shown = shown + settled["shown"]
     log.info("first look: %d signal(s) — %d ignored, %d watched, %d to "
              "investigate, %d acted on; %d finding(s) shown, %d held",
              len(batch), counts["ignore"], counts["watch"],
@@ -10484,10 +10535,61 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
              len(moved) - len(shown))
     return {"looked": True, "ok": True, "batch": len(batch),
             "verdicts": counts, "shown": len(shown),
-            "held": len(moved) - len(shown), "watched": watched,
+            "held": held_first + settled["held"], "watched": watched,
+            "resolved": settled["held"],
             "cases": filed_cases + investigated["filed"],
             "investigated": investigated["ran"],
             "surfaced": surfaced + len(shown)}
+
+
+async def _settle_looked_into(looked_into: dict[int, str], run_id: str,
+                              now: float) -> dict:
+    """Show what an investigation was sent to answer, once it has answered.
+
+    Three endings, read off the store rather than off the investigation's
+    return value, because the row is the truth and an investigation that
+    raised still left it somewhere:
+
+      * **rewritten** (`refine` moved it to `open`) — shown and announced
+        now, in the words of the run that looked;
+      * **set aside** (`hold_after_look`: the run said it is not worth
+        anybody's attention) — stays `held` with its reason, announced to
+        nobody, still in History where the homeowner can put it back. This
+        is the self-resolution: brAIn found the answer and nobody had to be
+        asked;
+      * **still `triaging`** — the run failed, made no claim, reached a
+        duplicate, or was PARKED because today's allowance is spent. The
+        row is shown with the first look's reason, exactly what happened
+        before this existed, and a parked investigation still refines it
+        later (`REFINABLE` includes `open`). An allowance that is spent is
+        a reason to wait, never a reason to hide a row.
+
+    Returns ``{shown, held}`` — the rows shown, and how many were resolved
+    without asking.
+    """
+    if not looked_into:
+        return {"shown": [], "held": 0}
+    statuses = await asyncio.to_thread(findings_store.statuses,
+                                       list(looked_into))
+    waiting = {ts: ("elevated", why) for ts, why in looked_into.items()
+               if statuses.get(ts) == "triaging"}
+    moved = await asyncio.to_thread(
+        findings_store.record_triage, waiting, run_id, now) if waiting else []
+    refined = []
+    for ts, status in statuses.items():
+        if status == "open" and ts not in waiting:
+            row = await asyncio.to_thread(findings_store.get, ts)
+            if row:
+                refined.append(row)
+    shown = [f for f in moved if f["status"] != "held"] + refined
+    if shown:
+        await _announce_findings(shown)
+    held = sum(1 for s in statuses.values() if s == "held")
+    RESIDENT_STATE["resolved"] = RESIDENT_STATE.get("resolved", 0) + held
+    if held:
+        log.info("the Resident looked into %d finding(s) and set them aside "
+                 "without asking", held)
+    return {"shown": shown, "held": held}
 
 
 # What a case filed straight off a hot safety signal says it wants done.
@@ -15422,6 +15524,7 @@ def _today_payload() -> dict:
         out["tidy"] = {"key": tidy_card["key"],
                        "rows": proposal.get("rows") or [],
                        "refused": proposal.get("refused") or [],
+                       "areas": proposal.get("areas") or [],
                        "at": int(proposal.get("at") or 0),
                        "undo_days": tidy.UNDO_DAYS}
     return out
@@ -15603,7 +15706,7 @@ FINDING_VERBS = {
     # true about the house — the battery is still flat — so the fact is
     # written when the chore is actually done and not when it is accepted.
     # The key is settled all the same, because a report you have agreed to
-    # act on must not be raised at you again while it sits on your list.
+    # act on must not be raised at you again while it sits on To Do.
     # `h_finding_todo` is what routes here; the spec is the ending half.
     "todo": {"kind": "accepted", "memory": "", "label": "accepted"},
     # "Yes" to a question the Resident filed as a finding. The case said
@@ -15870,7 +15973,7 @@ def _record_exception(finding: dict, note: str) -> list[str]:
 #
 #   * the row is deleted     — it is not a decision any more
 #   * the key is settled     — as `accepted`, so nothing re-raises it while
-#                              it sits on your list
+#                              it sits on To Do
 #   * the fact is NOT written — because none is true yet. `done` on this
 #                              tab writes the line `done` on the Findings
 #                              tab would have, at the moment it becomes true
@@ -15880,12 +15983,12 @@ def _record_exception(finding: dict, note: str) -> list[str]:
 
 
 def _todo_payload() -> dict:
-    """What Your list reads, and the only thing it reads.
+    """What To Do reads, and the only thing it reads.
 
     Each open item carries `snoozed_until` off the cases' snooze sidecar
     (key `t:<id>`), because Snooze on a list item is the case verb and the
     list has to know which of its items are asleep — a snoozed chore that
-    stayed on Your list would read as a press that did nothing."""
+    stayed on To Do would read as a press that did nothing."""
     payload = todo_store.listing()
     try:
         asleep = cases.snoozes()
@@ -19618,6 +19721,92 @@ async def _consolidate_task() -> None:
         MEMORY_STATE.update(error=str(exc), filed=0)
     finally:
         MEMORY_STATE.update(merging=False, done_at=int(time.time()))
+
+
+# -- memory clean-up: what brAIn knows that is wrong, useless or an error ----
+
+async def _run_memory_cleanup() -> None:
+    document = await asyncio.to_thread(_read_shared_memory)
+    facts = await asyncio.to_thread(facts_store.export_rows)
+    dig = memory_cleanup.digest(document, facts)
+    state = MAINT_STATE["memory_cleanup"]
+    if not dig["doc"] and not dig["facts"]:
+        await asyncio.to_thread(memory_cleanup.save, {"rows": []})
+        state["last_note"] = "brAIn has nothing in memory to review yet."
+        return
+    result = await _claude(
+        engine.run_analyst, memory_cleanup.frame(dig), memory_cleanup.SYSTEM,
+        "", memory_cleanup.TIMEOUT_S, 40, "maintenance",
+        job=memory_cleanup.JOB, schema=memory_cleanup.SCHEMA,
+        priority=run_queue.PRESS)
+    if not result.get("ok"):
+        raise RuntimeError(str(result.get("error") or "no reply"))
+    answer = _answer(result)
+    if answer is None:
+        raise RuntimeError("the reply could not be read")
+    parsed = memory_cleanup.parse(answer, dig)
+    await asyncio.to_thread(memory_cleanup.save, parsed, run_id=_run_id(result))
+    n = len(parsed["rows"])
+    state["last_note"] = (f"{n} line(s) to review" if n else
+                          "Nothing in memory looks wrong or useless.")
+
+
+def _memory_cleanup_payload() -> dict:
+    data = memory_cleanup.load()
+    return {**_maint_status("memory_cleanup"), "proposal": data["proposal"],
+            "unreadable": data["unreadable"],
+            "reasons": memory_cleanup.REASON_WORDS}
+
+
+async def h_memory_cleanup(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_memory_cleanup_payload))
+
+
+async def h_memory_cleanup_run(request: web.Request) -> web.Response:
+    """Start a review of memory. Started, not awaited — it reads the house."""
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("memory_cleanup", _run_memory_cleanup)
+    return web.json_response({**await asyncio.to_thread(_memory_cleanup_payload),
+                              "started": started})
+
+
+async def h_memory_cleanup_apply(request: web.Request) -> web.Response:
+    """Remove the ticked lines: facts from the store at once, document lines
+    as `FORGET:` requests the consolidator carries out — it stays the one
+    writer of memory.md — with a pass started so it happens now."""
+    body = await _json_body(request)
+    ids = [str(i) for i in (body.get("ids") or []) if isinstance(i, str)]
+    ids = ids[:memory_cleanup.MAX_ROWS]
+    taken = await asyncio.to_thread(memory_cleanup.take, ids)
+    if not taken:
+        raise web.HTTPConflict(text="Nothing ticked is still on the list.")
+    fact_ids = [r["id"].split(":", 1)[1] for r in taken if r["kind"] == "fact"]
+    lines = [r["text"] for r in taken if r["kind"] == "doc"]
+    removed = await asyncio.to_thread(facts_store.forget_ids, fact_ids) if fact_ids else 0
+    for text in lines:
+        await asyncio.to_thread(_queue_memory_fact,
+                                memory_cleanup.forget_line(text), "cleanup")
+    started = False
+    if lines and not (MEMORY_STATE.get("merging")
+                      or await asyncio.to_thread(_consolidation_running)):
+        MEMORY_STATE.update(merging=True, error="", filed=0)
+        task = asyncio.create_task(_consolidate_task())
+        request.app.setdefault("consolidations", set()).add(task)
+        task.add_done_callback(lambda t: request.app["consolidations"].discard(t))
+        started = True
+    log.info("memory clean-up: %d fact(s) removed, %d document line(s) "
+             "queued to forget", removed, len(lines))
+    return web.json_response({
+        **await asyncio.to_thread(_memory_cleanup_payload),
+        "result": {"facts": removed, "lines": len(lines),
+                   "consolidating": started}})
+
+
+async def h_memory_cleanup_discard(request: web.Request) -> web.Response:
+    await asyncio.to_thread(memory_cleanup.discard)
+    return web.json_response(await asyncio.to_thread(_memory_cleanup_payload))
 
 
 async def h_memory_consolidate(request: web.Request) -> web.Response:

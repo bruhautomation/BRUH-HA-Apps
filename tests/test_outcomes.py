@@ -319,7 +319,11 @@ class TestTheLogIsWrittenByTheLoop(OutcomesLoop):
         self.tick(time.time())
         self.end(wrong["ts"], "wrong", "it is a cupboard nobody opens")
         self.end(right["ts"], "done")
-        graded = {g["finding_ts"]: g for g in self.out.load_graded()}
+        # The look's own verdicts: a watched row is looked into since 2.16,
+        # and that investigation's row (a run that made no claim) grades
+        # nothing of its own.
+        graded = {g["finding_ts"]: g for g in self.out.load_graded()
+                  if g.get("stage") == "look"}
         self.assertEqual(graded[wrong["ts"]]["outcome"], "wrong")
         self.assertEqual(graded[wrong["ts"]]["note"],
                          "it is a cupboard nobody opens")
@@ -861,7 +865,10 @@ class TestTheNightlyPass(OutcomesLoop):
                          "automatic runs are paused")
         self.assertFalse(state["reflect"]["ran"])
         self.assertTrue(state["joined_at"])
-        self.assertEqual(state["summary"]["rows"], 4)
+        # Four looks and the four investigations they sent: a watched row
+        # is looked into before it is shown (2.16), and both verdicts are
+        # written down.
+        self.assertEqual(state["summary"]["rows"], 8)
 
     def test_learning_off_writes_no_judgement(self):
         self.plant_wrongs()
@@ -937,7 +944,7 @@ class TestTheNightlyPass(OutcomesLoop):
     def test_diagnostics_carry_the_row(self):
         self.plant_wrongs(n=1)
         diag = self.server._outcomes_diagnostics()
-        self.assertEqual(diag["log_rows"], 1)
+        self.assertEqual(diag["log_rows"], 2)  # the look and its investigation
         self.assertIn("reflect", diag)
         payload = self.server._diagnostics_payload()
         self.assertIn("outcomes", payload)

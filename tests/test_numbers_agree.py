@@ -328,7 +328,7 @@ class TestOneCountForTheQueue(ServerStoresCase):
         self.file_question()
         self.file_suggestion()
         self.file_chore()
-        # Three decisions; the chore is Your list, not the queue.
+        # Three decisions; the chore is To Do, not the queue.
         self.assertEqual(self.server.cases.queue_count(), 3)
         # The old feed count left the suggestion out, which is how one
         # badge and one list disagreed.

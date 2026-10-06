@@ -1,20 +1,21 @@
-// Your list, on Today: the work somebody agreed to do (docs/design/
-// ui-redesign-2026-10.md, "The first screen" — Your list sits under the
+// To Do, on Today: the work somebody agreed to do (docs/design/
+// ui-redesign-2026-10.md, "The first screen" — To Do sits under the
 // queue; the To-do tab is gone).
 //
 // A chore you cannot finish from the screen it is on is indistinguishable
 // from one nobody has got round to, and a list whose Done sits under the
 // touch floor is one people stop using on the device they read it on. So:
 //
-//   * the section is headed "Your list" and carries no filter chips and no
+//   * the section is headed "To Do" and carries no filter chips and no
 //     badge of its own — the badge on Today is the queue's;
 //   * a snoozed item is off the list until it comes back, and every row
 //     shown says where it came from;
-//   * every row carries exactly one press on its face, Done, and a ⋯
-//     holding Snooze and Ignore;
+//   * every row carries two presses on its face, Done and Delete, and a ⋯
+//     holding Snooze and Ignore; Delete takes it off the list and writes
+//     nothing to memory;
 //   * Done asks what was done (optional) and sends it with the press;
 //     Snooze sends the item's not_now, Ignore its ignore;
-//   * the add box says "Add to your list…", is 16px on touch (or iOS zooms
+//   * the add box says "Add to To Do…", is 16px on touch (or iOS zooms
 //     the ingress frame in and never back out — the bug this measure caught
 //     on its first run), is not squeezed to a sliver, and sends the text;
 //   * an empty list is one line;
@@ -67,14 +68,14 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
       wide: document.documentElement.scrollWidth > innerWidth + 1,
     };
   });
-  if (m.head !== 'Your list') note(where, `the section is headed "${m.head}"`);
-  if (m.chips) note(where, `Your list carries ${m.chips} filter chips`);
-  if (m.badge) note(where, 'Your list grew a badge of its own');
+  if (m.head !== 'To Do') note(where, `the section is headed "${m.head}"`);
+  if (m.chips) note(where, `To Do carries ${m.chips} filter chips`);
+  if (m.badge) note(where, 'To Do grew a badge of its own');
   const open = TODO.items.filter((i) => !(i.snoozed_until > Date.now() / 1000));
   if (m.rows.length !== open.length) note(where, `${m.rows.length} rows for ${open.length} open items`);
   if (m.rows.some((r) => /snoozed chore/i.test(r.title))) note(where, 'a snoozed item is shown');
   for (const r of m.rows) {
-    if (r.presses.join('|') !== 'Done') note(where, `row ${r.id} offers ${r.presses.join(' · ')}`);
+    if (r.presses.join('|') !== 'Done|Delete') note(where, `row ${r.id} offers ${r.presses.join(' · ')}`);
     if (!r.menu) note(where, `row ${r.id} has no ⋯`);
     if (!r.meta) note(where, `row ${r.id} does not say where it came from`);
     if (touch && r.heights.some((h) => h < MIN_TARGET)) {
@@ -86,10 +87,10 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
   if (fromFinding && !/Device check/.test(fromFinding.meta)) {
     note(where, `a moved finding reads "${fromFinding.meta}"`);
   }
-  if (m.input.placeholder !== 'Add to your list…') note(where, `add box says "${m.input.placeholder}"`);
+  if (m.input.placeholder !== 'Add to To Do…') note(where, `add box says "${m.input.placeholder}"`);
   if (touch && m.input.font < 16) note(where, `add box is ${m.input.font}px on touch`);
   if (m.input.w < 160) note(where, `add box squeezed to ${m.input.w}px`);
-  if (m.input.btn !== 'Add to list') note(where, `add press reads "${m.input.btn}"`);
+  if (m.input.btn !== 'Add to To Do') note(where, `add press reads "${m.input.btn}"`);
   if (touch && (m.input.btnH < MIN_TARGET || m.input.h < MIN_TARGET)) {
     note(where, `add box ${m.input.h}px / press ${m.input.btnH}px on touch`);
   }
@@ -126,6 +127,10 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
   await form.locator('.findnoteactions button', { hasText: 'Done' }).click();
   await page.waitForTimeout(150);
 
+  // Delete takes it off the list, and says nothing goes into memory.
+  await page.locator('#todoList .todorow[data-todo-id="2"] button:text-is("Delete")').click();
+  await page.waitForTimeout(150);
+
   // The add box sends what was typed.
   await page.fill('#todoText', 'Descale the kettle');
   await page.click('#todoAdd button');
@@ -137,6 +142,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
     /^api\/todo\/1\/ignore /,
     /^api\/todo\/1\/done \{"note":"Swapped the CR2032\."\}$/,
     /^api\/todo \{"text":"Descale the kettle"\}$/,
+    /^api\/todo\/2 null$/,
   ];
   for (const re of want) {
     if (!sent.some((s) => re.test(s))) note(where, `no press matched ${re} in ${JSON.stringify(sent)}`);
@@ -148,7 +154,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
     over: { todo: { items: [], done: [], open: 0, done_count: 0 } } });
   const lines = await empty.page.evaluate(() =>
     [...document.querySelectorAll('#todoList > *')].map((e) => e.textContent));
-  if (lines.join('|') !== 'Nothing on your list.') note(where, `an empty list reads ${JSON.stringify(lines)}`);
+  if (lines.join('|') !== 'Nothing to do.') note(where, `an empty list reads ${JSON.stringify(lines)}`);
   await empty.context.close();
   console.log(`${failures.length ? 'FAIL' : 'ok  '} ${where}`);
 }

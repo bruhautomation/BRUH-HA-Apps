@@ -20,7 +20,7 @@
 //     holds Recheck and the morning brief;
 //   * the safety banner shows only while something is urgent;
 //   * the badge equals the counted cards;
-//   * Your list hides a snoozed item, History opens on four filters with a
+//   * To Do hides a snoozed item, History opens on four filters with a
 //     duplicate rendered once with its count, and Undo's confirmation says
 //     what it puts back;
 //   * the empty state is one line, "Nothing needs you.";
@@ -249,7 +249,7 @@ for (const { width, touch, top, fits } of CASES) {
     if (form.check !== 'Ignore all like this') note(where, `Ignore's tick reads "${form.check}"`);
   }
 
-  // Your list.
+  // To Do.
   const list = await page.evaluate(() => ({
     rows: [...document.querySelectorAll('#todoList .todorow .todotitle')].map((t) => t.textContent),
     buttons: [...document.querySelectorAll('#todoList .todorow button:not(.icon)')]
@@ -259,9 +259,9 @@ for (const { width, touch, top, fits } of CASES) {
   }));
   if (list.rows.some((r) => /snoozed chore/i.test(r))) note(where, 'a snoozed list item shows');
   if (list.rows.length !== 2) note(where, `${list.rows.length} list rows, not 2`);
-  if (list.buttons.some((b) => b !== 'Done')) note(where, `list rows carry ${list.buttons.join(' | ')}`);
-  if (list.placeholder !== 'Add to your list…') note(where, `add box says "${list.placeholder}"`);
-  if (touch && list.addH < MIN_TARGET) note(where, `Add to list is ${list.addH}px`);
+  if (list.buttons.some((b) => b !== 'Done' && b !== 'Delete')) note(where, `list rows carry ${list.buttons.join(' | ')}`);
+  if (list.placeholder !== 'Add to To Do…') note(where, `add box says "${list.placeholder}"`);
+  if (touch && list.addH < MIN_TARGET) note(where, `Add to To Do is ${list.addH}px`);
 
   if (touch) {
     const small = await page.evaluate((min) => [...document.querySelectorAll(

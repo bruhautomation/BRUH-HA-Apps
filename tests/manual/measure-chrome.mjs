@@ -20,7 +20,7 @@
 //       fold whose summary names the section, the page starts above the
 //       fold, and the fold opens to the links.
 //   wide (1448):
-//     * Today's queue and Your list share one column that uses the width,
+//     * Today's queue and To Do share one column that uses the width,
 //       and there is no Proposals pane beside it with a heading and a
 //       column of its own — a suggestion is a card in that queue.
 import { chromium } from 'playwright';
@@ -159,7 +159,7 @@ async function open(width, height, touch) {
   });
   if (today.share < 0.9) note(where, `Today's queue uses ${Math.round(today.share * 100)}% of the width`);
   if (today.left !== today.mineLeft) {
-    note(where, `the queue starts at ${today.left}px and Your list at ${today.mineLeft}px`);
+    note(where, `the queue starts at ${today.left}px and To Do at ${today.mineLeft}px`);
   }
   if (today.cards !== 3) note(where, `${today.cards} cards before "Show more", not 3`);
   if (today.proposals) note(where, 'a Proposals pane is back beside Today');

@@ -12,7 +12,7 @@ What is driven, and against what:
     different card, so last month's ignore cannot hide this month's;
   * `history`: the four filters, each row's one press, the duplicate
     folded into one row with its count and its first date, a card put on
-    Your list kept out of History, an `accepted` ending kept out too, and
+    To Do kept out of History, an `accepted` ending kept out too, and
     Undo carrying the sentence that says what it puts back;
   * the server's `_today_cards` and `_queue_count`: a hidden card leaves
     both, so the badge and the queue cannot disagree about it.

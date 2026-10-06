@@ -26,7 +26,7 @@ and that order** (docs/design/ui-redesign-2026-10.md, "One queue, one
 card"), so a row of buttons can be read without reading the words. The
 primary is the one press that fits the card: *Plan* where brAIn could
 work out a change (a read-only run that changes nothing), *Apply* once a
-plan is on the card, *Add to list* where it needs a person's hands, *Done*
+plan is on the card, *Add to To Do* where it needs a person's hands, *Done*
 on a chore check, *Send* on a house-book question. A problem also shows
 *Check again* (on a check's row) and *Dismiss* between the primary and
 the pair, because a card that is old or no longer true is the commonest
@@ -183,7 +183,7 @@ def situation(case: dict) -> str:
     # Resident filed into the findings store has no config behind it, so
     # *Make the change* and *Try it for a week* were presses with nothing
     # to write or replay; it gets a finding's row instead (Fix it where
-    # brAIn could, Add to list, Dismiss, Not a problem).
+    # brAIn could, Add to To Do, Dismiss, Not a problem).
     if store == "proposals" or (kind == "opportunity" and store != "findings"):
         return "opportunity"
     if kind == "change" or fstatus == "fixed":
@@ -311,11 +311,11 @@ def _snooze(case_id: str, question: bool = False) -> dict:
 
 def _todo(case_id: str, primary: bool = False) -> dict:
     return _answer(
-        "todo", "Add to list",
-        "You'll handle it. It goes on Your list, and brAIn won't raise it "
+        "todo", "Add to To Do",
+        "You'll handle it. It goes on To Do, and brAIn won't raise it "
         "again while it's there.",
         route=f"/api/case/{case_id}/do", request="todo", primary=primary,
-        done="On your list")
+        done="Added to To Do")
 
 
 def _done(key, primary: bool = False) -> dict:
@@ -484,9 +484,9 @@ def answers(case: dict) -> list[dict]:
         ]
 
     if sit == "chore_done":
-        return [_answer("reopen", "Restore", "Back onto Your list, "
+        return [_answer("reopen", "Restore", "Back onto To Do, "
                         "undone.", route=f"/api/todo/{key}/reopen",
-                        primary=True, done="Back on your list")]
+                        primary=True, done="Back on To Do")]
 
     if sit == "watching":
         return [
@@ -592,7 +592,7 @@ def request_answers(row: dict) -> list[dict]:
     written by the store and the store cannot import `cases`. The
     situation is read the same way; only the presses HA can carry back as
     a request survive. A phone cannot start a plan run, so a problem whose
-    card leads with *Plan* is offered *Add to list* in its place — the
+    card leads with *Plan* is offered *Add to To Do* in its place — the
     lock screen's way of saying "I'll handle it" — and *Snooze* rides at
     the end of any row that somehow left it off, because "not this
     minute" is the lock-screen answer.
@@ -615,7 +615,7 @@ def request_answers(row: dict) -> list[dict]:
     actions = {a["action"] for a in out}
     if (out and "todo" not in actions and case["kind"] == "problem"
             and situation(case) != "chore_check"):
-        out.insert(0, {"action": "todo", "label": "Add to list"})
+        out.insert(0, {"action": "todo", "label": "Add to To Do"})
         actions.add("todo")
     if out and "snooze" not in actions and case["kind"] != "change":
         out.append({"action": "snooze", "label": "Snooze"})

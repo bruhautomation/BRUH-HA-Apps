@@ -485,7 +485,7 @@ class TestButtonsOnTheMessage(NotifyCase):
         # The card's own answers and one turn: Reply is the last button and
         # the one that settles nothing (`test_finding_requests` drives the
         # drain it lands in). A phone gets the feed's fixed row less the
-        # plan run it cannot start — Add to list, Ignore — then Dismiss in
+        # plan run it cannot start — Add to To Do, Ignore — then Dismiss in
         # the third slot (Android shows three) and Snooze after it.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
@@ -499,7 +499,7 @@ class TestButtonsOnTheMessage(NotifyCase):
                           f"brain.snooze.{row['ts']}",
                           f"brain.reply.{row['ts']}"])
         self.assertEqual([a["title"] for a in actions],
-                         ["Add to list", "Ignore", "Dismiss", "Snooze", "Reply"])
+                         ["Add to To Do", "Ignore", "Dismiss", "Snooze", "Reply"])
 
     def test_any_other_notifier_gets_the_payload_it_always_did(self):
         # Not an empty `data` either: several notifiers treat the key's
@@ -1591,7 +1591,7 @@ class TestFindingsUI(unittest.TestCase):
         tooltips carry the meaning the labels no longer spell out.
 
         Since the walkthrough the row is the one the header promises and
-        `answers.py` builds for the feed — Fix it, Add to list, Dismiss,
+        `answers.py` builds for the feed — Fix it, Add to To Do, Dismiss,
         Not a problem — on a card no case covers as on one it does, with
         "I've already fixed it" behind the ⋯ beside the other rare presses.
         """
@@ -1611,11 +1611,11 @@ class TestFindingsUI(unittest.TestCase):
         self.assertIn('"Check again"', answers_src)
 
     def test_the_row_matches_the_one_the_header_promises(self):
-        """The header says "Fix it, Add to list, Dismiss, Not a problem";
+        """The header says "Fix it, Add to To Do, Dismiss, Not a problem";
         a card that showed Discuss · I fixed it · Remind me later · Wrong
         beside them was a second vocabulary for the same row."""
-        # A loose card's own row is the feed's: Add to list, Snooze, Ignore.
-        for label in ('"Add to list"', '"Snooze"', '"Ignore"'):
+        # A loose card's own row is the feed's: Add to To Do, Snooze, Ignore.
+        for label in ('"Add to To Do"', '"Snooze"', '"Ignore"'):
             self.assertIn(label, self.js)
         # As a label: a comment may still name the flow it used to be.
         for gone in ('"Fix it")', '"Dismiss")', '"Not a problem")'):
