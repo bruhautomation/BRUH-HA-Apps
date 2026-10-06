@@ -2,9 +2,10 @@
 // panel's REAL renderers behind a stubbed fetch, at a phone (390, touch) and
 // a desktop (1200), and assert the shape the redesign gave it.
 //
-//   * The list is your conversations and nothing else: no row of run-type
-//     chips (Chats · Automation · Cards · Voice…), no selection mode, no ✕
-//     on every row. Each row has one ⋯, and its Delete hands back an Undo.
+//   * The list opens on your conversations, and a row of pills under its
+//     head (Chats · Voice · …, each with its count) switches to what brAIn
+//     ran by itself, one kind at a time — and back. No selection mode, no
+//     ✕ on every row. Each row has one ⋯, and its Delete hands back an Undo.
 //   * On a phone Ask opens on the list, a row opens the transcript, and the
 //     transcript has a visible way back. On a desktop the list is a rail
 //     beside the transcript.
@@ -51,6 +52,12 @@ const CONVS = [
     age: '3 d ago', source: 'you', live: false, busy: false, needs_ok: false,
     row_state: rs('paused') },
 ];
+const VOICE_CONVS = [
+  { id: 'v-1', title: 'Turn the kitchen lights off', modified: 0, age: '5 min ago',
+    source: 'voice', live: false, busy: false, needs_ok: false, row_state: rs('paused') },
+  { id: 'v-2', title: 'What is the temperature upstairs', modified: 0, age: '1 h ago',
+    source: 'voice', live: false, busy: false, needs_ok: false, row_state: rs('paused') },
+];
 const FINDING = {
   ts: FINDING_TS, text: CARD_TITLE, detail: 'since 3 Sep', fix: 'Replace it',
   severity: 'warning', status: 'open', entity_id: 'sensor.garage_battery',
@@ -73,7 +80,10 @@ window.fetch = async (url, opts = {}) => {
     return answer({ deleted: 'c-old', undo: 'tok-1' });
   }
   if (p.includes('api/chat/conversations')) {
-    return answer({ conversations: ${JSON.stringify(CONVS)}, current: 'c-here',
+    window.__convAsked = (window.__convAsked || []).concat([p]);
+    const voice = /source=voice/.test(p);
+    return answer({ conversations: voice ? ${JSON.stringify(VOICE_CONVS)} : ${JSON.stringify(CONVS)},
+                    current: 'c-here',
                     sources: [{ id: 'you', label: 'Chats', count: 3 },
                               { id: 'voice', label: 'Voice', count: 55 }],
                     sessions: [], max_sessions: 3 });
@@ -102,7 +112,7 @@ window.fetch = async (url, opts = {}) => {
 
 // The words the redesign cut, which must stay cut on this tab.
 const CUT = [/Resume now/, /resumes this conversation/i, /Select conversations/,
-  /Discussing/, /\bAutomation \d/, /\bVoice \d/, /\bChats \d/];
+  /Discussing/];
 // The verbs a button on this tab may say (the redesign's vocabulary, plus
 // the approval card's own answers, which are the CLI's question).
 const STRIP_VERBS = new Set(['Plan', 'Done', 'Snooze', 'Ignore']);
@@ -159,7 +169,13 @@ for (const { width, touch } of CASES) {
           moreShown: !!m && Number(getComputedStyle(m).opacity) > 0,
         };
       }),
-      chips: document.querySelectorAll('.crfilter, .crfilters, .csrc').length,
+      pills: [...document.querySelectorAll('#chatRailKinds .crkind')].map((b) => ({
+        source: b.dataset.source,
+        on: b.classList.contains('active'),
+        h: Math.round(b.getBoundingClientRect().height),
+        shown: b.getBoundingClientRect().width > 0,
+      })),
+      railTitle: document.querySelector('#chatRailTitle').textContent,
       select: document.querySelectorAll('.crcheck, .cselbar, #chatRailSel, #convSel').length,
       del: document.querySelectorAll('.crdel').length,
       modal: !!document.querySelector('#convModal'),
@@ -175,7 +191,40 @@ for (const { width, touch } of CASES) {
     if (!list.chatShown) note(where, 'no transcript beside the rail');
   }
   if (list.rows.length !== 3) note(where, `${list.rows.length} rows of 3`);
-  if (list.chips) note(where, `${list.chips} run-type chip(s) on Ask`);
+  if (list.pills.map((b) => b.source).join() !== 'you,voice') {
+    note(where, `the kind pills are ${JSON.stringify(list.pills.map((b) => b.source))}`);
+  }
+  if (!(list.pills[0] || {}).on) note(where, 'Ask does not open on your chats');
+  if (list.railTitle !== 'Your chats') note(where, `the list is headed "${list.railTitle}"`);
+  for (const b of list.pills) {
+    if (!b.shown) note(where, `the ${b.source} pill is not on screen`);
+    if (touch && b.h < MIN_TARGET) note(where, `the ${b.source} pill is ${b.h}px`);
+  }
+
+  // ---- a pill switches the list to that kind, and back ----------------
+  try {
+    await page.click('#chatRailKinds .crkind[data-source="voice"]');
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll('#chatRailList .ctitle')]
+        .some((t) => /kitchen lights/.test(t.textContent)), null, { timeout: 4000 });
+    const v = await page.evaluate(() => ({
+      asked: (window.__convAsked || []).slice(-1)[0] || '',
+      rows: document.querySelectorAll('#chatRailList .crrow').length,
+      title: document.querySelector('#chatRailTitle').textContent,
+      on: document.querySelector('#chatRailKinds .crkind.active')?.dataset.source,
+      wide: document.documentElement.scrollWidth > window.innerWidth + 1,
+    }));
+    if (!/source=voice/.test(v.asked)) note(where, `Voice asked for ${v.asked}`);
+    if (v.rows !== 2) note(where, `Voice lists ${v.rows} rows of 2`);
+    if (v.title !== 'Voice') note(where, `under Voice the list is headed "${v.title}"`);
+    if (v.on !== 'voice') note(where, 'the Voice pill did not light');
+    if (v.wide) note(where, 'the pills scroll the page sideways');
+    await page.click('#chatRailKinds .crkind[data-source="you"]');
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#chatRailList .crrow').length === 3, null, { timeout: 4000 });
+  } catch (e) {
+    note(where, `switching kinds failed: ${e.message.split('\n')[0]}`);
+  }
   if (list.select) note(where, 'a selection mode is still offered');
   if (list.del) note(where, `${list.del} ✕ on the rows`);
   if (list.modal) note(where, 'the old conversations dialog is still in the page');

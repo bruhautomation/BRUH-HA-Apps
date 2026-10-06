@@ -2194,6 +2194,23 @@ body.modal-open {
   font-weight: 700;
   color: var(--ink-3);
 }
+/* What the list shows: your chats, or one kind of run brAIn made itself.
+   They wrap rather than scroll — a pill that slides off the side of a
+   248px rail is one nobody knows is there. */
+.pillseg.crkinds {
+  flex: none;
+  padding: 10px 12px 2px;
+  gap: 6px;
+}
+.crkinds .pill { font-size: var(--fs-meta); }
+.crhint {
+  flex: none;
+  margin: 0;
+  padding: 6px 16px 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.crhint[hidden] { display: none; }
 .crlist {
   flex: 1;
   min-height: 0;

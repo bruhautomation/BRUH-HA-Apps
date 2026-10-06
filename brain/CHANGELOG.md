@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.14.1
+
+### Ask
+- **The conversation pills are back.** The list under Ask opens on your own
+  chats as before, and a row of pills under its heading — **Chats**, **Voice**,
+  **Automation**, **Cards**… each with its count — switches it to what brAIn ran
+  by itself, one kind at a time. The kind you picked is remembered. They had
+  been moved to ⚙ › Diagnostics › Runs, which was too far away to find; that
+  block is gone, so there is one place to read them.
+
 ## 2.14.0
 
 **Insights · Ask · Memory.** The three tabs are renamed and regrouped so the

@@ -2723,7 +2723,6 @@ function loadAdvanced() {
   loadDiagAccuracy();
   loadDiagMeasures();
   loadDiagUpkeep();
-  loadDiagRuns();
 }
 
 // The line under "Let brAIn act without asking". The switch reaches a
@@ -11299,13 +11298,13 @@ async function chooseResolution(ev, option, finding, btns, paint) {
 // session started in the classic terminal is here beside one started in the
 // chat, and picking either replays it into this pane and carries on.
 //
-// It is YOUR conversations and nothing else. The same store holds every
-// run the add-on makes there — voice, the automation listener, the memory
-// pass, the Resident — and those are records of what brAIn did, not chats
-// anybody started. They used to sit behind a row of filter chips here,
-// which made the list of your conversations the place to audit the
-// machines; that audit is ⚙ › Diagnostics › Runs now, over the same route
-// (`api/chat/conversations?source=…`). This asks for the default, "you".
+// It opens on YOUR conversations. The same store holds every run the
+// add-on makes there — voice, the automation listener, the memory pass,
+// the Resident, card and fix runs — and those are reached from the pills
+// under the list's head (`api/chat/conversations?source=…`), one kind at a
+// time, so your own chats are never buried under machine prompts and the
+// machines' are one press away rather than inside ⚙. The kind you picked
+// is remembered; the server only offers kinds that have actually run here.
 
 // What a conversation row says about itself: the pill for its
 // `row_state`, which the server derives once for the rail, the composer
@@ -11349,7 +11348,15 @@ function convMark(row) {
   return el("span", cls, rs.label);
 }
 
-const CONV_QUERY = "api/chat/conversations";
+// Which kind of conversation the list shows: "you" (the default), or one
+// of the background faces the server names in `sources`.
+const CONV_SOURCE_KEY = "brain.ask.source";
+chatState.convSource = prefGet(CONV_SOURCE_KEY) || "you";
+chatState.convSources = [];
+
+function convQuery() {
+  return `api/chat/conversations?source=${encodeURIComponent(chatState.convSource || "you")}`;
+}
 
 // A row's ⋯. One item today — Delete — and a menu rather than a ✕ on every
 // row: a column of ✕s is a column of the most destructive control in the
@@ -11437,19 +11444,77 @@ function railVisible() {
 async function refreshChatRail() {
   if (!railVisible()) return;
   try {
-    const data = await api(CONV_QUERY);
+    const data = await api(convQuery());
     chatState.convs = data.conversations || [];
+    chatState.convSources = data.sources || [];
   } catch (e) {
     return;  // transient: the rail keeps whatever it last showed
   }
+  // A kind remembered from a visit when it had runs, and none now (the
+  // store prunes): back to your chats rather than an empty list with no
+  // pill lit to explain it.
+  if (chatState.convSource !== "you"
+      && !chatState.convSources.some((o) => o.id === chatState.convSource)) {
+    pickConvSource("you");
+    return;
+  }
+  renderConvKinds();
   renderChatRail();
   renderChatHead();
+}
+
+function pickConvSource(id) {
+  chatState.convSource = id;
+  prefSet(CONV_SOURCE_KEY, id);
+  chatState.convs = [];
+  renderConvKinds();
+  renderChatRail();
+  refreshChatRail();
+}
+
+// The pills: Chats first, then every background face that has run here,
+// each with its count. A house where nothing but you has driven Claude
+// gets no pill row at all — one pill is a label, not a choice.
+function renderConvKinds() {
+  const host = $("#chatRailKinds");
+  if (!host) return;
+  const kinds = chatState.convSources.filter((o) => o.id === "you" || o.count);
+  const current = kinds.find((o) => o.id === chatState.convSource);
+  const title = $("#chatRailTitle");
+  if (title) {
+    title.textContent = !current || current.id === "you" ? "Your chats" : current.label;
+  }
+  const hint = $("#chatRailHint");
+  if (hint) {
+    const blurb = current && current.id !== "you" ? current.blurb || "" : "";
+    hint.textContent = blurb ? blurb.charAt(0).toUpperCase() + blurb.slice(1) : "";
+    hint.hidden = !blurb;
+  }
+  host.textContent = "";
+  host.hidden = kinds.length < 2;
+  if (host.hidden) return;
+  kinds.forEach((o) => {
+    const on = o.id === chatState.convSource;
+    const b = el("button", "pill crkind" + (on ? " active" : ""));
+    b.type = "button";
+    b.dataset.source = o.id;
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.appendChild(document.createTextNode(o.label));
+    b.appendChild(el("span", "pillcount", String(o.count)));
+    if (o.blurb) b.title = o.blurb;
+    b.addEventListener("click", () => { if (!on) pickConvSource(o.id); });
+    host.appendChild(b);
+  });
 }
 
 function renderChatRail() {
   const list = $("#chatRailList");
   if (!list) return;
   list.textContent = "";
+  if (!chatState.convs.length && chatState.convSource !== "you") {
+    list.appendChild(el("div", "crempty", "None kept."));
+    return;
+  }
   if (!chatState.convs.length) {
     const empty = el("div", "crempty");
     empty.appendChild(el("p", null, "No chats yet."));
@@ -13258,77 +13323,6 @@ $("#diagOvernightRun").addEventListener("click", () => runDiagUpkeep(
   $("#diagOvernightRun"), "api/sre/run", "Checking — anything it finds arrives as a card"));
 $("#diagAccessRun").addEventListener("click", () => runDiagUpkeep(
   $("#diagAccessRun"), "api/access/run", "Reviewing…"));
-
-// Runs: every background face that has driven Claude here, with how many
-// conversations it left. The Ask tab lists your own chats only; this is
-// where the voice turns, automation tasks, card and fix runs, the memory
-// passes and the Resident's looks are counted and opened.
-const setRuns = { open: "", rows: {} };
-
-async function loadDiagRuns() {
-  const host = $("#diagRuns");
-  if (!host) return;
-  let data;
-  try {
-    data = await api("api/chat/conversations?source=you");
-  } catch (e) {
-    diagEmpty(host, "Could not read the runs: " + e.message);
-    return;
-  }
-  host.textContent = "";
-  const kinds = (data.sources || []).filter((o) => o.id !== "you" && o.count);
-  if (!kinds.length) {
-    diagEmpty(host, "Nothing but your own chats has run yet.");
-    return;
-  }
-  kinds.forEach((o) => {
-    const det = el("details", "diagrun");
-    det.dataset.source = o.id;
-    if (setRuns.open === o.id) det.open = true;
-    const sum = el("summary", null, `${o.label} `);
-    sum.appendChild(el("span", "kcount", String(o.count)));
-    det.appendChild(sum);
-    if (o.blurb) det.appendChild(el("p", "hint tight", o.blurb));
-    const list = el("div", "diagrunlist");
-    det.appendChild(list);
-    det.addEventListener("toggle", () => {
-      if (!det.open) { if (setRuns.open === o.id) setRuns.open = ""; return; }
-      setRuns.open = o.id;
-      loadDiagRunRows(o.id, list);
-    });
-    if (det.open) loadDiagRunRows(o.id, list);
-    host.appendChild(det);
-  });
-}
-
-async function loadDiagRunRows(source, list) {
-  list.textContent = "Loading…";
-  let data;
-  try {
-    data = await api(`api/chat/conversations?source=${encodeURIComponent(source)}`);
-  } catch (e) {
-    list.textContent = "Could not read them: " + e.message;
-    return;
-  }
-  list.textContent = "";
-  const rows = (data.conversations || []).slice(0, 10);
-  if (!rows.length) { list.appendChild(el("p", "hint tight", "None kept.")); return; }
-  rows.forEach((c) => {
-    const link = el("a", "diagrunrow", c.title || c.id);
-    link.href = "#";
-    link.appendChild(el("span", "hint", ` ${c.age || ""}`));
-    link.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      if (c.view_only && typeof viewConversation === "function") {
-        viewConversation(c);
-      } else if (typeof resumeConversation === "function") {
-        closeBox("#setModal");
-        resumeConversation(c);
-      }
-    });
-    list.appendChild(link);
-  });
-}
 
 // --------------------------------------------------------- ⚙ → Memory
 // The memory document and the queue waiting to be filed into it. The queue

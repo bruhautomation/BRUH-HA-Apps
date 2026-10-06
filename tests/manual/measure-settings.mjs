@@ -84,7 +84,7 @@ const IDS = [
   'setHouseRules', 'setHouseRulesSave', 'setCameras', 'setCalendars',
   'setCalendarsNote', 'setMemView', 'setMemEdit', 'setMemExport', 'setMemTa',
   'setMemQueue', 'setMemCount', 'diagAccuracy', 'diagMeasures', 'diagOvernight',
-  'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'diagRuns', 'setGuide',
+  'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
 ];
 
 // The sections, in order, and whether the shipped markup opens them.
@@ -103,7 +103,7 @@ const SECTIONS = [
 // lazy load not being lazy.
 const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/capture',
                    'api/doctor/deep', 'api/doctor/rehearse', 'api/sre',
-                   'api/access', 'api/knowledge/house', 'api/chat/conversations'];
+                   'api/access', 'api/knowledge/house'];
 
 const CUT = ['Copy selected', 'Copy all', 'Write a report now',
              'Copy for a bug report', 'File into memory now', 'Check it now',
@@ -523,8 +523,6 @@ for (const width of WIDTHS) {
     await page.click('#setsecDiagnostics > summary');
     await page.waitForFunction(() => /12 records read/.test(
       document.querySelector('#diagOvernight').textContent), null, { timeout: 5000 });
-    await page.waitForFunction(() => document.querySelectorAll('#diagRuns .diagrun').length > 0,
-      null, { timeout: 5000 });
     const late = await page.evaluate(
       (urls) => urls.filter((x) => !window.__fetched.some((u) => u.includes(x))), DIAG_URLS);
     if (late.length) note(where, `opening Diagnostics never fetched: ${late.join(', ')}`);
@@ -534,7 +532,7 @@ for (const width of WIDTHS) {
       measures: document.querySelectorAll('#kStores .krow').length,
       measureText: document.querySelector('#diagMeasures').textContent,
       access: document.querySelector('#diagAccess').textContent,
-      runs: [...document.querySelectorAll('#diagRuns .diagrun')].map((r) => r.dataset.source),
+      runs: !!document.querySelector('#diagRuns'),
       share: document.querySelector('#diagCopy').textContent.trim(),
       dev: document.querySelector('#setDiagDeveloper').open,
       buttons: window.__visibleButtons(),
@@ -547,7 +545,7 @@ for (const width of WIDTHS) {
     if (d.measures !== 7) note(where, `${d.measures} measurement rows, not 7`);
     if (!/4 of 10 days/.test(d.measureText)) note(where, 'a collecting measurement does not say how far');
     if (!/worth a PIN/.test(d.access)) note(where, 'the access review sentence is missing');
-    if (d.runs.join(',') !== 'voice,card') note(where, `runs listed: ${d.runs.join(',')}`);
+    if (d.runs) note(where, 'Runs is still in Diagnostics (it lives on Ask now)');
     if (d.share !== 'Share') note(where, `Export report's button says "${d.share}"`);
     if (d.dev) note(where, 'Developer opens expanded');
     for (const label of d.buttons) {
@@ -558,9 +556,6 @@ for (const width of WIDTHS) {
     }
     if (d.bubbles) note(where, `${d.bubbles} "?" bubbles in Diagnostics`);
 
-    // A run kind opens to its rows.
-    await page.click('#diagRuns .diagrun[data-source="voice"] > summary');
-    await page.waitForSelector('#diagRuns .diagrunrow', { timeout: 4000 });
     // Export report: a ticked problem file is what Share copies.
     await page.click('#setDiagDeveloper > summary');
     await page.check('#probBody .probcheck');
