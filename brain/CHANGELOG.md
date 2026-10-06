@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.15.0
+
+### Settings is a page
+- **⚙ opens Settings as a page of its own**, not a small dialog. Its eight
+  sections — Account, Usage & schedule, Permissions, Sources, Notifications,
+  Memory, Diagnostics and Guide — sit on one segmented control like the
+  Insights tab's (a picker on a narrow screen), one at a time, and it
+  remembers the one you were on. Press ⚙ again to go back.
+
+### Notifications in Home Assistant
+- **Every finding notification has a Dismiss button.** It closes the
+  notification and leaves the card on Needs you, untouched. It is always one
+  of the first three buttons, so Android shows it; Snooze moves after it.
+- **Repairs entries offer "Dismiss — keep it in brAIn's Needs you"**, which
+  hides the entry under Repairs' own ignored list and tells brAIn nothing.
+
+### Memory
+- **Knowledge:** the room and device list beside the facts is its own
+  scroller — its card fills its whole height, nothing spills out of it, and
+  the search box and the first rooms stay in reach however far down you go.
+- **Timeline filters are one system**, Knowledge's: search, a room, a cause
+  and the window on one row, the kinds of thing as pills, and what is in
+  force as tags with **Clear all**. Every count is taken under the other
+  filters, so picking a room shows only the kinds and causes that room has,
+  with their counts, and nothing offered would empty the list.
+- **The house book documents the house.** It reads *How this house works*,
+  in nine chapters (what runs on its own, lights and scenes, heating, locks
+  and security, alarms, shutoffs, appliances, media and voice, worth
+  knowing). **Add info** — at the top and on every chapter — opens a box:
+  type what you want documented and brAIn writes it in, cited to you, or
+  leave it blank and brAIn fills the book or that chapter in itself. Every
+  line has **Edit** and **Delete**, and what you wrote or corrected is kept
+  when the book is rewritten. Search, a room filter and chapter pills narrow
+  it; chapters with nothing yet are listed under *Not written yet*. Sharing
+  moved behind ⋯.
+
 ## 2.14.2
 
 A pass over the whole panel from a screen-by-screen audit.

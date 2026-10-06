@@ -259,14 +259,13 @@ for (const width of WIDTHS) {
     const landed = await page.evaluate(() => {
       const sec = document.querySelector('#setsecPermissions');
       const row = document.querySelector('#setSkipPermsRow').getBoundingClientRect();
-      const body = document.querySelector('#setModal .edit-body').getBoundingClientRect();
       return {
-        open: sec.open,
-        inView: row.top >= body.top - 1 && row.bottom <= body.bottom + 1,
+        open: !sec.hidden,
+        inView: row.top >= -1 && row.bottom <= window.innerHeight + 1,
         checked: document.querySelector('#setSkipPerms').checked,
       };
     });
-    if (!landed.open) note(where, '"Stop asking…" opened ⚙ with Permissions shut');
+    if (!landed.open) note(where, '"Stop asking…" opened ⚙ on another section than Permissions');
     if (!landed.inView) note(where, 'the switch is not in view after "Stop asking…"');
     if (landed.checked) note(where, 'the switch rendered on over a saved off');
   } catch (e) {

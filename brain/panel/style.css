@@ -1314,41 +1314,38 @@ body.modal-open {
    WebKit pseudo-element, which ignores it) takes the browser's triangle out,
    and the chevron is two borders on a pseudo-element so `textContent` of a
    summary stays the section's name — which is what the measure reads. */
-.setsec { border-top: 1px solid var(--hairline); }
-.setsec:first-child { border-top: 0; }
-.setsec > summary {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  min-height: 44px;
-  padding: 8px 4px 8px 22px;
-  position: relative;
-  cursor: pointer;
-  list-style: none;
-  -webkit-tap-highlight-color: transparent;
+/* Settings is a page: a title, the eight sections on one segmented
+   control (the select on a narrow screen, where eight labels do not fit a
+   row), and the one section in front as a card — wide enough to read on a
+   desktop, which the 640px dialog was not. */
+.setpage { max-width: 920px; }
+.setpage .setpagehead { margin-bottom: var(--sp-3); }
+.setnav { margin: 0 0 var(--sp-4); }
+.setnav .segbtns { flex-wrap: nowrap; max-width: 100%; }
+.setnav .segbtn { white-space: nowrap; }
+/* Ids, because `.segnav .segbtns` and `.segnav .segsel` come later in the
+   file at the same specificity and would otherwise win. */
+@media (max-width: 1000px) {
+  #setNav .segbtns { display: none; }
+  #setNav .segsel { display: block; max-width: 420px; }
 }
-.setsec > summary::-webkit-details-marker { display: none; }
-.setsec > summary:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
-.setsec > summary::before {
-  content: "";
-  position: absolute;
-  left: 5px;
-  top: calc(50% - 5px);
-  width: 6px;
-  height: 6px;
-  border-right: 2px solid var(--ink-3);
-  border-bottom: 2px solid var(--ink-3);
-  transform: rotate(-45deg);
-  transition: transform 0.15s ease;
+.setbody.edit-body { padding: 0; overflow: visible; }
+.setsec {
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
 }
-.setsec[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
-.setsecname { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
-/* Bold only when open, so a shut dialog reads as a list of places to go and
-   an open one says which place you are in. */
-.setsec[open] > summary .setsecname { font-weight: 700; }
-.setsecsub { font-size: var(--fs-meta); color: var(--ink-3); line-height: 1.3; }
-.setsecbody { padding: 2px 0 16px; }
+.setsec[hidden] { display: none; }
+.setsechead { display: grid; gap: 2px; margin: 0 0 var(--sp-3);
+  padding-bottom: var(--sp-3); border-bottom: 1px solid var(--hairline); }
+.setsecname { font-size: var(--fs-title, 18px); font-weight: 600; color: var(--ink); }
+.setsecsub { font-size: var(--fs-body); color: var(--ink-3); line-height: 1.4; }
+.setsecbody { padding: 0; }
+.setsecbody > label:first-child, .setsecbody > .setrow:first-child { margin-top: 0; }
+@media (max-width: 640px) {
+  .setsec { padding: var(--sp-3) var(--sp-3) var(--sp-4); }
+}
+#settingsBtn.active { background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-2); }
 
 /* A disclosure inside a section ("Advanced", "Developer"): the rarer half
    of a section, shut until asked for. Smaller than a section's summary and
@@ -5937,16 +5934,27 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .kknow { max-width: 1180px; }
 .kbrowse { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: var(--sp-6);
   align-items: start; margin-top: var(--sp-4); }
+/* The rail is its own scroller. It is sticky under the bar and never
+   taller than what is left of the viewport, and the LIST inside it is what
+   scrolls — so the search box and the first rooms stay in reach however
+   far down the rail somebody has gone, and the card's background is the
+   rail's whole height. As a grid with auto rows the list grew past the
+   max-height and painted outside its own box, and scrolling it was
+   scrolling the page. */
 .ksubjects {
   position: sticky; top: calc(var(--bar-h, 56px) + var(--sp-3));
-  display: grid; gap: var(--sp-2);
-  max-height: calc(100vh - var(--bar-h, 56px) - 48px);
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  max-height: calc(100vh - var(--bar-h, 56px) - 2 * var(--sp-3));
+  max-height: calc(100dvh - var(--bar-h, 56px) - 2 * var(--sp-3));
+  min-height: 0; overflow: hidden;
   padding: var(--sp-3); border: var(--card-border); border-radius: var(--card-radius);
   background: var(--card-bg);
 }
-.ksubfind { width: 100%; }
-.ksublist { overflow-y: auto; display: grid; gap: 1px; margin: 0 calc(-1 * var(--sp-1));
-  padding: 0 var(--sp-1); align-content: start; }
+.ksubfind { width: 100%; flex: none; }
+.ksublist { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 1px; margin: 0 calc(-1 * var(--sp-1));
+  padding: 0 var(--sp-1) var(--sp-1); scrollbar-width: thin; }
+.ksublist > * { flex: none; }
 .ksubhead { font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600;
   color: var(--ink-3);
   margin: var(--sp-3) var(--sp-2) var(--sp-1); }
@@ -6021,18 +6029,16 @@ button.kfactsubj:hover { color: var(--accent-2);
 .actfilters .sel { max-width: 220px; }
 .actkinds { margin: 0 0 var(--sp-4); }
 .actkindsel { display: none; }
+#actActive { margin-top: calc(-1 * var(--sp-2)); }
 @media (max-width: 640px) {
   .actfilters .sel { flex: 1 1 calc(50% - var(--sp-2)); max-width: none; min-width: 0; }
-  .actfilters .actcause { flex: 1 1 100%; min-width: 0; }
-  .actfilters .actcause select.sel { flex: 1 1 auto; min-width: 0; width: 100%; }
   .actsearch { flex-basis: 100%; }
-  /* Room and window share a row; the cause, with its label, takes the next.
-     In source order the cause sat between them, so each took a row alone. */
+  /* Search on its own row; room and cause share the next; the window the
+     one after, beside nothing, so no select is squeezed to its caret. */
   .actfilters .actsearch { order: 0; }
   .actfilters #actArea { order: 1; }
-  .actfilters #actHours { order: 2; }
-  .actfilters .actcause { order: 3; }
-  .actcause > span { white-space: nowrap; }
+  .actfilters #actCause { order: 2; }
+  .actfilters #actHours { order: 3; flex-basis: 100%; }
   .actkinds .pill { display: none; }
   .actkinds .actkindsel { display: block; width: 100%; }
 }
@@ -6107,25 +6113,80 @@ button.kfactsubj:hover { color: var(--accent-2);
 .actnow .actnowmode { font-weight: 600; color: var(--ink); }
 .actnow .actnowsaid { color: var(--ink-2); }
 .actnow .actnowsaid.stale { color: var(--ink-3); }
-.actcause {
-  display: inline-flex; align-items: center; gap: var(--sp-2);
-  font-size: var(--fs-body); color: var(--ink-2); min-width: 0;
-}
-.actcause select.sel { max-width: 220px; }
 
-/* The house book: Run and Share, and the sentence a sitter is told too. */
-.bookwrap .bookactions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
-.bookwrap .booksafe { margin: var(--sp-2) 0 var(--sp-3); }
+/* The house book: Add info leads the head, ⋯ holds sharing, one muted
+   line says when and what was left out, and every chapter is a card whose
+   lines can be corrected where they stand. */
+.bookwrap { max-width: 1000px; }
+.bookhead { align-items: flex-start; }
+.bookhead > .bookheadacts { display: flex; align-items: center; gap: var(--sp-2);
+  flex: none; margin-left: auto; }
+.bookmeta { display: grid; gap: var(--sp-1); margin: 0 0 var(--sp-4); }
+.bookmeta .upline { font-size: var(--fs-meta); line-height: var(--lh-meta); max-width: none; }
+.bookmeta .uplink { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.bookfilters[hidden] { display: none; }
+.bookfbar { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0 0 var(--sp-3); }
+.bookfbar .booksearch { flex: 1 1 260px; min-width: 0; }
+.bookfbar .sel { max-width: 240px; }
+.bookfbar .sel[hidden] { display: none; }
+.bookfilters .actkinds { margin: 0 0 var(--sp-3); }
+.bookbody { display: grid; gap: var(--sp-4); }
+.bookbody .upbooksec {
+  padding: var(--sp-3) var(--sp-4) var(--sp-2); border: var(--card-border);
+  border-radius: var(--card-radius); background: var(--card-bg);
+}
+.booksechead { display: flex; align-items: center; gap: var(--sp-2);
+  margin: 0 0 var(--sp-2); }
+.booksechead h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
+.booksechead .bookseccount { color: var(--ink-3); font-size: var(--fs-meta); }
+.booksechead .booksecadd { margin-left: auto; }
+.bookbody .upbooklist { list-style: none; padding: 0; gap: 0; }
+.bookentry {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--sp-3);
+  padding: var(--sp-2) 0; border-top: 1px solid var(--hairline);
+}
+.bookentry:first-child { border-top: 0; }
+.bookentry .booktext { grid-column: 1; color: var(--ink); }
+.bookentry .upchips { grid-column: 1; }
+.bookentry .bookacts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 2px;
+  align-self: start; opacity: .55; transition: opacity .12s ease; }
+.bookentry:hover .bookacts, .bookentry:focus-within .bookacts { opacity: 1; }
+.bookentry .bookact { width: 32px; height: 32px; }
+.bookentry .bookedit { grid-column: 1 / -1; width: 100%; font: inherit;
+  font-size: var(--fs-control); padding: var(--sp-2); border-radius: 8px;
+  border: 1px solid var(--accent); background: var(--surface); color: var(--ink); }
+.bookentry .bookeditrow { grid-column: 1 / -1; display: flex; gap: var(--sp-2);
+  margin-top: var(--sp-2); }
+.upchip.you { color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.bookgaps h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-meta); font-weight: 600;
+  color: var(--ink-3); }
+.bookgaprow { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.bookempty { padding: var(--sp-5); border: 1px dashed var(--hairline);
+  border-radius: var(--card-radius); }
+.bookempty p { margin: 0 0 var(--sp-2); }
+.bookempty .muted { color: var(--ink-2); max-width: 60ch; }
+#bookAddSecRow[hidden] { display: none; }
+#bookAddModal textarea { width: 100%; }
+@media (max-width: 640px) {
+  .bookfbar .sel { flex: 1 1 100%; max-width: none; }
+  .bookfilters .actkinds .pill { display: none; }
+  .bookfilters .actkinds .actkindsel { display: block; width: 100%; }
+  .bookentry .bookacts { opacity: 1; }
+}
+@media (pointer: coarse) {
+  .bookentry .bookact { width: 44px; height: 44px; }
+  .bookentry .bookacts { opacity: 1; }
+}
 
 /* Touch targets for House's own controls, after the text floor. */
 @media (pointer: coarse) {
   .segnav .segbtn, .segnav .segsel, .reportsearch, .pill, .filtertag, .ksub,
   .archsearch, .actsearch, .ksubfind, .histdel, .factdel, .needstrip,
-  .kfact .kfactopen, .actcause select.sel { min-height: 44px; }
+  .kfact .kfactopen, .actfilters select.sel { min-height: 44px; }
   .reportrow .btn, .bookwrap .btn, .card .cardask { min-height: 44px; }
   .refinelink { display: inline-flex; align-items: center; min-height: 44px; }
 }
 @media (max-width: 640px) {
-  .acthead .actnav, .actcause { width: 100%; }
-  .actcause select.sel { flex: 1; max-width: none; }
+  .acthead .actnav { width: 100%; }
 }

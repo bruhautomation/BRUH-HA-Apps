@@ -140,10 +140,11 @@ for (const width of WIDTHS) {
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
 
   await page.click('#settingsBtn');
+  await page.waitForSelector('#setModal.open');
   // Problems lives under Diagnostics → Developer. Diagnostics is shut when
   // the dialog opens and its loaders do not run until it is — so opening it
   // is part of reaching this list, not a detail of the harness.
-  await page.click('#setsecDiagnostics > summary');
+  await page.evaluate(() => showSettingsSection('diagnostics'));
   await page.click('#setDiagDeveloper > summary');
   await page.waitForSelector('#probBody .prow');
 
@@ -265,7 +266,8 @@ for (const width of WIDTHS) {
   await page2.addInitScript('window.__empty = true;');
   await page2.goto(`file://${path.join(PANEL, 'index.html')}`);
   await page2.click('#settingsBtn');
-  await page2.click('#setsecDiagnostics > summary');
+  await page2.waitForSelector('#setModal.open');
+  await page2.evaluate(() => showSettingsSection('diagnostics'));
   await page2.click('#setDiagDeveloper > summary');
   await page2.waitForSelector('#probBody .probempty');
   const emptyText = await page2.$eval('#probBody', (el) => el.textContent);

@@ -150,10 +150,14 @@ class TestNarrowingTheTimeline(unittest.TestCase):
 
     def _grouped(self):
         return {"episodes": [
-            {"entity_id": "light.kitchen", "name": "Kitchen light", "subject": "lights"},
-            {"entity_id": "light.lounge", "name": "Lounge lamp", "subject": "lights"},
-            {"entity_id": "binary_sensor.back_door", "name": "Back door", "subject": "doors"},
-            {"entity_id": "", "name": "Home Assistant restarted", "subject": "system"},
+            {"entity_id": "light.kitchen", "name": "Kitchen light", "subject": "lights",
+             "cause": "automation", "causes": {"automation": 2, "person": 1}},
+            {"entity_id": "light.lounge", "name": "Lounge lamp", "subject": "lights",
+             "cause": "person", "causes": {"person": 1}},
+            {"entity_id": "binary_sensor.back_door", "name": "Back door", "subject": "doors",
+             "cause": "unattributed", "causes": {"unattributed": 3}},
+            {"entity_id": "", "name": "Home Assistant restarted", "subject": "system",
+             "cause": "unattributed", "causes": {}},
         ]}
 
     def _narrow(self, **q):
@@ -162,7 +166,8 @@ class TestNarrowingTheTimeline(unittest.TestCase):
                  "binary_sensor.back_door": {"name": "Back door", "area": "Kitchen"}}
         grouped = self._grouped()
         with unittest.mock.patch.dict(self.server._NAMES, names, clear=True):
-            areas, kinds = self.server._activity_narrow(grouped, q)
+            areas, kinds, causes = self.server._activity_narrow(grouped, q)
+        self.causes = {c["id"]: c["count"] for c in causes}
         return grouped, areas, kinds
 
     def test_a_room_keeps_only_what_is_in_it(self):
@@ -181,6 +186,31 @@ class TestNarrowingTheTimeline(unittest.TestCase):
         grouped, _, kinds = self._narrow(kind="lights", q="lounge")
         self.assertEqual([e["entity_id"] for e in grouped["episodes"]], ["light.lounge"])
         self.assertIn("lights", {k["id"] for k in kinds})
+
+    def test_each_facet_is_counted_under_the_other_filters(self):
+        """Faceted search: a room narrows the kind and cause counts, and a
+        kind that room holds nothing of drops out — while the room facet is
+        still counted without the room, so picking one never hides the
+        others."""
+        _, areas, kinds = self._narrow(area="Lounge")
+        self.assertEqual({k["id"]: k["count"] for k in kinds}, {"lights": 1})
+        self.assertEqual(self.causes, {"person": 1})
+        self.assertEqual({a["id"]: a["count"] for a in areas},
+                         {"Kitchen": 2, "Lounge": 1, "-": 1})
+        _, areas, _ = self._narrow(kind="doors")
+        self.assertEqual({a["id"]: a["count"] for a in areas}, {"Kitchen": 1})
+
+    def test_a_cause_matches_any_change_in_the_episode(self):
+        grouped, areas, _ = self._narrow(cause="person")
+        self.assertEqual({e["entity_id"] for e in grouped["episodes"]},
+                         {"light.kitchen", "light.lounge"})
+        self.assertEqual({a["id"]: a["count"] for a in areas},
+                         {"Kitchen": 1, "Lounge": 1})
+        # Counted without itself: every cause the window holds.
+        self.assertEqual(self.causes,
+                         {"automation": 1, "person": 2, "unattributed": 2})
+        grouped, _, _ = self._narrow(cause="explode")
+        self.assertEqual(len(grouped["episodes"]), 4)
 
     def test_no_filter_touches_nothing(self):
         grouped, _, _ = self._narrow()

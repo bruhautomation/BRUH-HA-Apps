@@ -347,5 +347,134 @@ class TestTheWeeklyRegeneration(BookPassCase):
         self.assertIn("book", self.tick())
 
 
+class TestABookPeopleWriteIn(unittest.TestCase):
+    """Every line can be edited and every section takes more, and what a
+    person wrote survives the run that rewrites the book."""
+
+    def setUp(self):
+        self.dig = house_book.digest(snap())
+        self.book = {"at": 1, "sections": house_book.parse(reply(), self.dig)["sections"]}
+
+    def test_every_entry_has_a_stable_id(self):
+        [entry] = self.book["sections"][0]["entries"]
+        self.assertEqual(entry["id"], house_book.entry_id("alarms", entry["text"]))
+        again = house_book.parse(reply(), self.dig)["sections"][0]["entries"][0]
+        self.assertEqual(again["id"], entry["id"])
+
+    def test_an_edited_line_survives_a_rewrite(self):
+        eid = self.book["sections"][0]["entries"][0]["id"]
+        edited = house_book.edit_entry(self.book, eid, "The leak alarm shuts the water.")
+        entry = edited["sections"][0]["entries"][0]
+        self.assertTrue(entry["edited"])
+        # ...its sources are kept: it is still about the same things.
+        self.assertEqual(len(entry["sources"]), 2)
+        fresh = house_book.parse(reply(), self.dig)["sections"]
+        merged = house_book.merge(edited, fresh, "rewrite")
+        texts = [e["text"] for e in merged[0]["entries"]]
+        self.assertIn("The leak alarm shuts the water.", texts)
+
+    def test_a_rewrite_replaces_what_nobody_touched(self):
+        fresh = house_book.parse(reply(sections=[{"key": "heating", "entries": [
+            {"text": "Heat comes on at six.",
+             "sources": [{"kind": "automation", "id": "brain_playbook_leak"}]}]}],
+            questions=[]), self.dig)["sections"]
+        merged = house_book.merge(self.book, fresh, "rewrite")
+        self.assertEqual([s["key"] for s in merged], ["heating"])
+
+    def test_an_addition_only_adds(self):
+        fresh = house_book.parse(reply(sections=[{"key": "shutoffs", "entries": [
+            {"text": "The stopcock is under the kitchen sink.",
+             "sources": [{"kind": "note", "id": "request"}]}]}], questions=[]),
+            self.dig, request="the stopcock is under the sink")["sections"]
+        merged = house_book.merge(self.book, fresh, "add")
+        self.assertEqual([s["key"] for s in merged], ["alarms", "shutoffs"])
+        [entry] = merged[1]["entries"]
+        self.assertEqual(entry["sources"][0]["label"], house_book.NOTE_LABEL)
+
+    def test_a_note_citation_needs_somebody_to_have_typed_one(self):
+        out = house_book.parse(reply(sections=[{"key": "shutoffs", "entries": [
+            {"text": "The stopcock is under the sink.",
+             "sources": [{"kind": "note", "id": "request"}]}]}], questions=[]),
+            self.dig)
+        self.assertEqual(out["uncited"], 1)
+
+    def test_a_section_run_files_everything_in_that_section_and_leaves_the_rest(self):
+        fresh = house_book.parse(reply(sections=[{"key": "other", "entries": [
+            {"text": "The water main is in the utility room.",
+             "sources": [{"kind": "entity", "id": "switch.mains_valve"}]}]}],
+            questions=[]), self.dig, only="shutoffs")["sections"]
+        self.assertEqual([s["key"] for s in fresh], ["shutoffs"])
+        merged = house_book.merge(self.book, fresh, "section", "shutoffs")
+        self.assertEqual([s["key"] for s in merged], ["alarms", "shutoffs"])
+
+    def test_a_line_written_by_hand_is_cited_to_the_person(self):
+        book = house_book.add_written(self.book, "other", "Bins go out on Thursday.")
+        entry = book["sections"][-1]["entries"][0]
+        self.assertEqual(entry["by"], house_book.YOU_KEY)
+        merged = house_book.merge(book, [], "rewrite")
+        self.assertIn("Bins go out on Thursday.",
+                      [e["text"] for s in merged for e in s["entries"]])
+        with self.assertRaises(ValueError):
+            house_book.add_written(self.book, "gossip", "x")
+
+    def test_an_edit_is_redacted_too(self):
+        eid = self.book["sections"][0]["entries"][0]["id"]
+        edited = house_book.edit_entry(self.book, eid, "The alarm code is 4821.")
+        self.assertNotIn("4821", edited["sections"][0]["entries"][0]["text"])
+
+    def test_delete_takes_the_line_and_an_empty_section_with_it(self):
+        eid = self.book["sections"][0]["entries"][0]["id"]
+        self.assertEqual(house_book.delete_entry(self.book, eid)["sections"], [])
+        with self.assertRaises(KeyError):
+            house_book.delete_entry(self.book, "nope")
+
+    def test_the_frame_carries_the_request_and_what_is_written(self):
+        frame = house_book.frame(self.dig, request="the gate code is on the fridge",
+                                 section="shutoffs", book=self.book)
+        self.assertIn("ALREADY IN THE BOOK", frame)
+        self.assertIn("the gate code is on the fridge", frame)
+        self.assertIn('"shutoffs"', frame)
+
+
+class TestTheRoutes(BookPassCase):
+    def test_add_info_with_words_runs_and_appends(self):
+        asyncio.run(self.server._run_book("pressed", snap()))
+        self.replies = [{"ok": True, "meta": {"session_id": "hb2"}, "data": reply(
+            sections=[{"key": "shutoffs", "entries": [
+                {"text": "The stopcock is under the kitchen sink.",
+                 "sources": [{"kind": "note", "id": "request"}]}]}], questions=[])}]
+        asyncio.run(self.server._run_book("added", snap(),
+                                          request="stopcock under the sink",
+                                          section="shutoffs"))
+        self.assertIn("stopcock under the sink", self.calls[-1]["prompt"])
+        keys = [s["key"] for s in house_book.load()["book"]["sections"]]
+        self.assertEqual(keys, ["alarms", "shutoffs"])
+
+    def test_edit_delete_and_write_go_through_the_routes(self):
+        asyncio.run(self.server._run_book("pressed", snap()))
+        eid = house_book.load()["book"]["sections"][0]["entries"][0]["id"]
+
+        async def go(client):
+            bad = await client.post(f"/api/house_book/entry/{eid}", json={"text": " "})
+            gone = await client.post("/api/house_book/entry/abcdef123456", json={"text": "x"})
+            ok = await client.post(f"/api/house_book/entry/{eid}",
+                                   json={"text": "Edited by hand."})
+            body = await ok.json()
+            wrote = await client.post("/api/house_book/write",
+                                      json={"section": "other", "text": "Bins: Thursday."})
+            dele = await client.post(f"/api/house_book/entry/{eid}", json={"delete": True})
+            nosec = await client.post("/api/house_book/add", json={"section": "gossip"})
+            return (bad.status, gone.status, ok.status, wrote.status, dele.status,
+                    nosec.status, body)
+
+        bad, gone, ok, wrote, dele, nosec, body = drive_app(self.server.make_app, go)
+        self.assertEqual((bad, gone, ok, wrote, dele, nosec), (400, 404, 200, 200, 200, 400))
+        self.assertEqual(body["book"]["sections"][0]["entries"][0]["text"], "Edited by hand.")
+        self.assertIn("rooms", body["book"]["sections"][0]["entries"][0])
+        self.assertEqual(len(body["sections"]), len(house_book.SECTIONS))
+        keys = [s["key"] for s in house_book.load()["book"]["sections"]]
+        self.assertEqual(keys, ["other"])
+
+
 if __name__ == "__main__":
     unittest.main()

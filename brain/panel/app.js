@@ -211,15 +211,11 @@ function openBox(sel) {
 }
 
 function closeBox(sel) {
+  // Settings is a page, not a dialog: "closing" it is going back to the
+  // view it was opened from.
+  if (sel === "#setModal") { leaveSettings(); return; }
   $(sel).classList.remove("open");
   syncModalLock();
-  // A poll behind a dialog nobody has open is a request per viewer per
-  // interval for an answer nobody is reading — the same rule the
-  // Diagnostics section itself follows.
-  if (sel === "#setModal" && typeof stopDeepPoll === "function") {
-    stopDeepPoll();
-    stopRehearsePoll();
-  }
 }
 
 // How long an undoable toast stays up. Longer than a plain one, because a
@@ -2674,19 +2670,19 @@ function renderSettingsForm(data) {
     : "Saved in the panel only until the Supervisor answers.";
 }
 
-// ⚙ is eight `<details>`, and a section remembers whether it was open —
-// somebody who lives in Diagnostics should not have to reopen it every
-// visit, and a disclosure that forgets is one people stop using. `prefGet`
-// can throw or answer null (an ingress iframe may be refused storage), so
-// the markup's own `open` is the fallback rather than an assumed shut.
+// ⚙ is a page of eight sections on one segmented control, one shown at a
+// time, and the page remembers which — somebody who lives in Diagnostics
+// should land there every visit. `prefGet` can throw or answer null (an
+// ingress iframe may be refused storage), so Account is the fallback.
 const SET_SECTIONS = ["account", "usage", "permissions", "sources",
                       "notifications", "memory", "diagnostics", "guide"];
-const setSectionKey = (name) => "brain.set." + name;
+const SET_SECTION_KEY = "brain.set.section";
 
-// What opening a section has to fetch. Nothing here runs on the way into
-// the dialog unless its section is already open: a dozen reads for
-// somebody who came to change the model is the cost this arrangement is
-// about.
+// What showing a section has to fetch. Nothing here runs for a section
+// that has not been shown: a dozen reads for somebody who came to change
+// the model is the cost this arrangement is about. Once per visit to the
+// page, not once ever — a reading on screen is the reading, and a second
+// visit asks again.
 const SET_LOADERS = {
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
@@ -2695,18 +2691,77 @@ const SET_LOADERS = {
   guide: () => renderSetGuide(),
 };
 
-function restoreSettingsSections() {
-  SET_SECTIONS.forEach((name) => {
-    const box = document.querySelector(`.setsec[data-sec="${name}"]`);
-    if (!box) return;
-    const saved = prefGet(setSectionKey(name));
-    if (saved === "1") box.open = true;
-    else if (saved === "0") box.open = false;
-    box.addEventListener("toggle", () => {
-      prefSet(setSectionKey(name), box.open ? "1" : "0");
-      if (box.open && SET_LOADERS[name]) SET_LOADERS[name]();
-    });
+let setSection = "";
+const setShown = new Set();
+// The view the page was opened from, so leaving Settings goes back there.
+let settingsReturn = "insights";
+
+function savedSettingsSection() {
+  const saved = prefGet(SET_SECTION_KEY);
+  return SET_SECTIONS.includes(saved) ? saved : "account";
+}
+
+// Show one section: its pane, its button pressed, the select on a phone,
+// remembered, and its readings fetched the first time it is shown this
+// visit.
+function showSettingsSection(name, load = true) {
+  if (!SET_SECTIONS.includes(name)) name = "account";
+  setSection = name;
+  document.querySelectorAll("#setModal .setsec").forEach((sec) => {
+    sec.hidden = sec.dataset.sec !== name;
   });
+  document.querySelectorAll("#setNav .segbtn").forEach((b) => {
+    const on = b.dataset.sec === name;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  const sel = $("#setNavSel");
+  if (sel) sel.value = name;
+  prefSet(SET_SECTION_KEY, name);
+  if (load && !setShown.has(name)) {
+    setShown.add(name);
+    if (SET_LOADERS[name]) SET_LOADERS[name]();
+  }
+}
+
+function restoreSettingsSections() {
+  const sel = $("#setNavSel");
+  if (sel) {
+    sel.textContent = "";
+    document.querySelectorAll("#setNav .segbtn").forEach((b) => {
+      const opt = el("option", null, b.textContent.trim());
+      opt.value = b.dataset.sec;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", () => showSettingsSection(sel.value));
+  }
+  document.querySelectorAll("#setNav .segbtn").forEach((b) =>
+    b.addEventListener("click", () => showSettingsSection(b.dataset.sec)));
+  // The markup ships every section hidden; the first paint shows one, and
+  // fetches nothing — that waits for somebody to open the page.
+  showSettingsSection(savedSettingsSection(), false);
+}
+
+// Entering and leaving the page. `open` on the root is what every guard
+// reads ("is Settings showing"); leaving stops the polls only Settings
+// reads, because a poll behind a page nobody has open is a request per
+// viewer per interval for an answer nobody is reading.
+function settingsEntered(on) {
+  const root = $("#setModal");
+  if (root) root.classList.toggle("open", on);
+  const gear = $("#settingsBtn");
+  if (gear) {
+    gear.classList.toggle("active", on);
+    gear.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  if (!on && typeof stopDeepPoll === "function") {
+    stopDeepPoll();
+    stopRehearsePoll();
+  }
+}
+
+function leaveSettings() {
+  if (currentView === "settings") switchView(settingsReturn || "insights");
 }
 
 // The readings behind Diagnostics, fetched the first time that section is
@@ -2781,7 +2836,9 @@ async function openSettingsAt(id) {
   const target = document.getElementById(id);
   if (!target) return;
   const sec = target.closest(".setsec");
-  if (sec && !sec.open) sec.open = true;
+  if (sec) showSettingsSection(sec.dataset.sec);
+  const sub = target.closest("details");
+  if (sub && !sub.open) sub.open = true;
   const row = target.closest(".setrow") || target;
   row.scrollIntoView({ block: "center" });
   try { target.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
@@ -2790,18 +2847,19 @@ async function openSettingsAt(id) {
 }
 
 async function openSettings() {
-  openBox("#setModal");
+  if (currentView !== "settings") {
+    settingsReturn = currentView;
+    switchView("settings");
+  }
+  window.scrollTo(0, 0);
   loadAuth();
   advancedLoaded = false;
   camerasLoaded = false;
   setCalendarsState.data = null;
-  // A section's open state survived the close (it is remembered), so a
-  // visit that lands on an already-expanded section still has to fetch:
-  // the section being open is not the same claim as its rows being current.
-  SET_SECTIONS.forEach((name) => {
-    const box = document.querySelector(`.setsec[data-sec="${name}"]`);
-    if (box && box.open && SET_LOADERS[name]) SET_LOADERS[name]();
-  });
+  // Every visit asks again for the section in front: the page being open
+  // is not the same claim as its rows being current.
+  setShown.clear();
+  showSettingsSection(setSection || savedSettingsSection());
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -2852,7 +2910,11 @@ async function saveSettings(fields, note) {
   }
 }
 
-$("#settingsBtn").addEventListener("click", openSettings);
+// ⚙ is a press both ways: it opens Settings, and on Settings it goes back.
+$("#settingsBtn").addEventListener("click", () => {
+  if (currentView === "settings") leaveSettings();
+  else openSettings();
+});
 // Once, at load: the sections are static markup, so their listeners are not
 // something a render can leak.
 restoreSettingsSections();
@@ -4074,10 +4136,6 @@ $("#setModelCustom").addEventListener("change", () =>
   saveSettings({ model: $("#setModelCustom").value.trim() }));
 $("#setThinking").addEventListener("change", () =>
   saveSettings({ thinking: $("#setThinking").value }));
-$("#setClose").addEventListener("click", () => closeBox("#setModal"));
-$("#setModal").addEventListener("click", (ev) => {
-  if (ev.target === $("#setModal")) closeBox("#setModal");
-});
 
 // ------------------------------------------------------------ refine modal
 // Editing a card by saying what should be different. A card is a Claude run
@@ -9072,37 +9130,45 @@ async function refreshActivity() {
   renderActivity();
 }
 
-function renderActFilters(counts) {
-  // One "Caused by" picker, no counts: the list under it is the count, and
-  // a cause this window holds nothing for is left out because picking it
-  // could only ever empty the list. The one somebody picked stays, so a
-  // window that no longer holds it still shows what is selected.
+// The cause picker, counted under the room, kind and words in force
+// (`cause_facets`, from the server). A cause this selection holds nothing
+// of is left out, because picking it could only ever empty the list; the
+// one somebody picked stays, so a selection that no longer holds it still
+// shows what is selected. An older server sends only the window's raw
+// change counts, which are read as presence without a number.
+function renderActFilters(data) {
   const sel = $("#actCause");
   if (!sel) return;
-  const kinds = Object.keys(CAUSE_WORDS)
-    .filter((k) => (counts[k] || 0) > 0 || actState.cause === k);
+  const facets = Array.isArray(data.cause_facets) ? data.cause_facets : null;
+  const counts = {};
+  if (facets) facets.forEach((c) => { counts[c.id] = c.count; });
+  else Object.entries(data.counts || {}).forEach(([k, n]) => { if (n) counts[k] = null; });
   sel.textContent = "";
-  const all = el("option", null, "Anything");
+  const all = el("option", null, "Any cause");
   all.value = "";
   sel.appendChild(all);
-  kinds.forEach((k) => {
-    const opt = el("option", null, CAUSE_WORDS[k]);
-    opt.value = k;
-    sel.appendChild(opt);
-  });
+  Object.keys(CAUSE_WORDS)
+    .filter((k) => k in counts || actState.cause === k)
+    .forEach((k) => {
+      const n = counts[k];
+      const opt = el("option", null, CAUSE_WORDS[k] + (Number.isFinite(n) ? ` (${n})` : ""));
+      opt.value = k;
+      sel.appendChild(opt);
+    });
   sel.value = actState.cause;
 }
 
 // The room picker and the kind pills, off the window's own facets, which the
-// server counts before those two filters — so a picker never offers only
-// what is already on screen. A room or kind somebody picked stays listed
-// when the window no longer holds it.
+// server counts under every OTHER filter — so a picker never offers only
+// what is already on screen, and a pill the room holds nothing of is not
+// offered at all. A room or kind somebody picked stays listed when the
+// selection no longer holds it.
 function renderActNarrow(data) {
   const sel = $("#actArea");
   if (sel) {
     const areas = data.areas || [];
     sel.textContent = "";
-    const all = el("option", null, "Every room");
+    const all = el("option", null, "Any room");
     all.value = "";
     sel.appendChild(all);
     areas.forEach((a) => {
@@ -9120,9 +9186,12 @@ function renderActNarrow(data) {
   const host = $("#actKinds");
   if (host) {
     host.textContent = "";
-    const kinds = data.kinds || [];
+    const kinds = (data.kinds || []).slice();
+    if (actState.kind && !kinds.some((k) => k.id === actState.kind)) {
+      kinds.push({ id: actState.kind, label: actKindLabel(actState.kind), count: 0 });
+    }
     host.hidden = kinds.length < 2 && !actState.kind;
-    const total = kinds.reduce((a, k) => a + k.count, 0);
+    const total = (data.kinds || []).reduce((a, k) => a + k.count, 0);
     const all = [{ id: "", label: "Everything", count: total }].concat(kinds);
     // On a phone the same choice is one select: nine pills wrapped to five
     // rows, and with the filters above them the first screen of the tab
@@ -9149,13 +9218,64 @@ function renderActNarrow(data) {
       b.appendChild(el("span", "pillcount", String(k.count)));
       b.setAttribute("aria-pressed", on ? "true" : "false");
       b.addEventListener("click", () => {
-        actState.kind = k.id;
+        // Pressing the pill that is on turns it off: a pill is a toggle.
+        actState.kind = on && k.id ? "" : k.id;
         actState.open = "";
         refreshActivity();
       });
       host.appendChild(b);
     });
   }
+  renderActActive(data);
+}
+
+// The kind's own word, remembered off the last payload that named it.
+const ACT_KIND_NAMES = {};
+function actKindLabel(id) {
+  return ACT_KIND_NAMES[id] || id;
+}
+
+// What is in force, as tags that take themselves off, and Clear all once
+// there is more than one — Knowledge's arrangement, so the two tabs filter
+// the same way.
+function renderActActive(data) {
+  (data.kinds || []).forEach((k) => { ACT_KIND_NAMES[k.id] = k.label; });
+  const box = $("#actActive");
+  if (!box) return;
+  box.textContent = "";
+  const parts = [];
+  if (actState.q) parts.push(["Words", `“${actState.q}”`, () => {
+    actState.q = ""; const i = $("#actSearch"); if (i) i.value = "";
+  }]);
+  if (actState.area) parts.push(["Room", actState.area === "-" ? "No room" : actState.area,
+    () => { actState.area = ""; }]);
+  if (actState.kind) parts.push(["Kind", actKindLabel(actState.kind), () => { actState.kind = ""; }]);
+  if (actState.cause) parts.push(["Caused by", CAUSE_WORDS[actState.cause] || actState.cause,
+    () => { actState.cause = ""; }]);
+  box.hidden = !parts.length;
+  parts.forEach(([label, value, clear]) => {
+    const tag = el("button", "filtertag");
+    tag.type = "button";
+    tag.appendChild(el("span", "ftlabel", label));
+    tag.appendChild(el("span", null, value));
+    tag.appendChild(el("span", "ftx", "✕"));
+    tag.setAttribute("aria-label", `Remove filter ${label}: ${value}`);
+    tag.addEventListener("click", () => { clear(); actState.open = ""; refreshActivity(); });
+    box.appendChild(tag);
+  });
+  if (parts.length > 1) {
+    const all = el("button", "btn-tertiary", "Clear all");
+    all.type = "button";
+    all.addEventListener("click", clearActFilters);
+    box.appendChild(all);
+  }
+}
+
+function clearActFilters() {
+  actState.q = ""; actState.area = ""; actState.kind = ""; actState.cause = "";
+  actState.open = "";
+  const i = $("#actSearch"); if (i) i.value = "";
+  refreshActivity();
 }
 
 // How long an episode covered, in the units a person would say it in.
@@ -9326,6 +9446,7 @@ function renderActivity() {
 
   if (!data.available) {
     renderActFilters({});
+    renderActActive({});
     list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
       + `read, so nothing here can say what happened or what caused it.`
       + (data.error ? ` <code>${esc(data.error)}</code>` : "")
@@ -9335,7 +9456,7 @@ function renderActivity() {
     return;
   }
 
-  renderActFilters(data.counts || {});
+  renderActFilters(data);
   renderActNarrow(data);
   const sections = data.sections || [];
   if (head) {
@@ -9343,9 +9464,12 @@ function renderActivity() {
     if (sections.length) renderSummary(head);
   }
 
-  if (!sections.length && (actState.area || actState.kind || actState.q)) {
+  if (!sections.length && (actState.area || actState.kind || actState.q || actState.cause)) {
     list.innerHTML = `<div class="actempty">Nothing matches in this window. `
-      + `Try another room, a longer window, or clear the search.</div>`;
+      + `Try a longer window, or <button type="button" class="btn-tertiary actclear">`
+      + `clear the filters</button>.</div>`;
+    const btn = list.querySelector(".actclear");
+    if (btn) btn.addEventListener("click", clearActFilters);
     return;
   }
   if (!sections.length) {
@@ -9631,7 +9755,9 @@ function switchView(name) {
       !window.confirm("Discard your unsaved memory edits?")) return;
   if (currentView === "memory" && memState.editing) setMemEditing(false);
 
+  if (currentView === "settings" && name !== "settings") settingsEntered(false);
   currentView = name;
+  if (name === "settings") settingsEntered(true);
   // The terminal takes the viewport, so the page behind it stops scrolling
   // — two scrollers stacked is why a swipe sometimes moved the wrong one.
   document.body.classList.toggle("term-open", name === "terminal");
@@ -12967,78 +13093,429 @@ function upButton(label, hint, primary) {
 }
 
 // -- the house book
+// How this house works, chapter by chapter. Add info leads — for the whole
+// book, or on each chapter — and opens a box where what is typed is handed
+// to brAIn to write in (nothing typed asks it to fill the book in by
+// itself). Every line can be corrected in place or taken out, and what a
+// person wrote survives the run that rewrites the book (the server's
+// `house_book.merge`). Sharing a copy is behind ⋯, because it is rarer.
+const bookView = { q: "", section: "", room: "", editing: "", addFor: "" };
+
+function bookChapters(st) {
+  const list = (st && st.sections) || [];
+  if (list.length) return list;
+  return ((st && st.book && st.book.sections) || []).map((s) => ({ key: s.key, title: s.title }));
+}
+
+function bookEntryMatches(e, skip) {
+  if (skip !== "room" && bookView.room && !(e.rooms || []).includes(bookView.room)) return false;
+  const words = bookView.q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length) {
+    const hay = (e.text + " " + (e.sources || []).map((x) => x.label).join(" ")).toLowerCase();
+    if (!words.every((w) => hay.includes(w))) return false;
+  }
+  return true;
+}
+
 function renderUpBook() {
   const host = $("#upBook");
   if (!host) return;
   const st = upState.book || {};
-  host.textContent = "";
-  host.appendChild(upStatus(st, "Writing the house book…"));
   const book = st.book;
-  // Two presses. Run writes it (or rewrites it); Share puts a copy at a
-  // private address for a sitter's phone. The sentence under Share is what
-  // that sitter is told too, so it is on screen whether or not it is shared.
-  const actions = el("div", "upactions bookactions");
-  const run = upButton("Run",
-    book ? "Rewrite the house book now — one Claude run"
-      : "Write the house book — one Claude run over your automations, "
-        + "scripts, scenes and what brAIn has learned", !book);
-  run.disabled = !!st.running;
-  run.addEventListener("click", () => upPress(run, "book", "api/house_book/run", null,
-    () => "Writing — it takes a minute or two"));
-  actions.appendChild(run);
-  if (book && !st.published) {
-    const pub = upButton("Share",
-      "Puts a copy at a private address Home Assistant serves, for a sitter's phone");
-    pub.addEventListener("click", () => upPress(pub, "book", "api/house_book/publish", null,
-      () => "Shared — the link is below"));
-    actions.appendChild(pub);
+  const chapters = bookChapters(st);
+  const titleOf = (key) => (chapters.find((c) => c.key === key) || {}).title || key;
+
+  // Status: a run in flight, a run that failed, a schedule that held.
+  const status = $("#bookStatus");
+  const fresh = upStatus(st, st.subject
+    ? `Writing the house book — ${titleOf(st.subject)}…`
+    : "Writing the house book…");
+  fresh.id = "bookStatus";
+  if (status) status.replaceWith(fresh);
+  const add = $("#bookAdd");
+  if (add) add.disabled = !!st.running;
+
+  // ⋯: sharing a copy, which is a rarer thing than reading or adding.
+  const moreHost = $("#bookMoreHost");
+  if (moreHost) {
+    moreHost.textContent = "";
+    if (book) {
+      moreHost.appendChild(cardMenuButton(() => bookMenuItems(upState.book || {})));
+    }
   }
-  host.appendChild(actions);
-  host.appendChild(upLine("Every sentence names what it came from; codes and "
-    + "passwords are left out.", "muted booksafe"));
+
+  // The meta line: when, what was left out, and the safety sentence a
+  // sitter is told too — on screen whether or not the book is shared.
+  const meta = $("#bookMeta");
+  meta.textContent = "";
+  const line = el("p", "upline muted");
+  if (book && book.at) {
+    line.appendChild(el("span", null, `Updated ${timeAgo(new Date(book.at * 1000).toISOString())}`));
+    if (book.uncited) {
+      line.appendChild(el("span", null, ` · ${book.uncited} sentence${book.uncited === 1 ? "" : "s"} `
+        + "left out for citing nothing brAIn could check"));
+    }
+    line.appendChild(el("span", null, " · "));
+  }
+  line.appendChild(el("span", "booksafe",
+    "Every sentence names what it came from; codes and passwords are left out."));
+  meta.appendChild(line);
   if (st.published) {
-    const wrap = el("div", "uplink");
+    const wrap = el("p", "upline muted uplink");
+    wrap.appendChild(el("span", null, "Shared at "));
     const url = location.origin + st.published.path;
     const a = el("a", null, url);
     a.href = url;
     a.target = "_blank";
     a.rel = "noopener";
     wrap.appendChild(a);
-    const revoke = upButton("Delete",
-      "Takes the link down: deletes the copy and changes the address, so the "
-      + "old link stops working even for somebody who saved it");
-    revoke.addEventListener("click", () => {
-      if (!window.confirm("Delete the shared link? Anybody who has it loses "
-        + "the house book; the book itself stays here.")) return;
-      upPress(revoke, "book", "api/house_book/revoke", null,
-        () => "Link deleted — it no longer works");
-    });
+    const revoke = el("button", "btn small ghost", "Stop sharing");
+    tip(revoke, "Takes the link down: deletes the copy and changes the address, so "
+      + "the old link stops working even for somebody who saved it");
+    revoke.addEventListener("click", () => bookRevoke(revoke));
     wrap.appendChild(revoke);
-    host.appendChild(wrap);
+    meta.appendChild(wrap);
   }
-  if (!book) {
-    if (!st.running) host.appendChild(upLine("No house book yet.", "muted"));
+
+  const body = $("#bookBody");
+  body.textContent = "";
+  const filters = $("#bookFilters");
+  const sections = (book && book.sections) || [];
+  const total = sections.reduce((n, sec) => n + sec.entries.length, 0);
+  if (!book || !total) {
+    filters.hidden = true;
+    if (!st.running) {
+      const empty = el("div", "bookempty");
+      empty.appendChild(el("p", null, "No house book yet."));
+      empty.appendChild(el("p", "muted",
+        "Press Add info and leave the box blank, and brAIn writes one from your "
+        + "automations, devices and what it has learned. Or type what you want "
+        + "documented, and it writes that in."));
+      body.appendChild(empty);
+    }
     return;
   }
-  const when = book.at ? timeAgo(new Date(book.at * 1000).toISOString()) : "";
-  host.appendChild(upLine(`Updated ${when}`
-    + (book.uncited ? ` · ${book.uncited} sentence${book.uncited === 1 ? "" : "s"} left out for citing nothing brAIn could check` : ""), "muted"));
-  for (const section of book.sections || []) {
-    const sec = el("div", "upbooksec");
-    sec.appendChild(el("h3", null, section.title));
+  filters.hidden = false;
+  renderBookFilters(sections, titleOf);
+
+  const filtering = !!(bookView.q || bookView.room || bookView.section);
+  let shown = 0;
+  for (const section of sections) {
+    if (bookView.section && section.key !== bookView.section) continue;
+    const entries = section.entries.filter((e) => bookEntryMatches(e));
+    if (!entries.length) continue;
+    shown += entries.length;
+    const sec = el("section", "upbooksec");
+    sec.dataset.section = section.key;
+    const head = el("div", "booksechead");
+    head.appendChild(el("h3", null, section.title));
+    head.appendChild(el("span", "bookseccount", String(entries.length)));
+    const more = el("button", "btn small ghost booksecadd", "Add info");
+    tip(more, `Add to “${section.title}”, or have brAIn fill it in`);
+    more.disabled = !!st.running;
+    more.addEventListener("click", () => openBookAdd(section.key));
+    head.appendChild(more);
+    sec.appendChild(head);
     const ul = el("ul", "upbooklist");
-    for (const entry of section.entries || []) {
-      const li = el("li");
-      li.appendChild(el("span", null, entry.text));
-      const chips = el("span", "upchips");
-      for (const src of entry.sources || []) chips.appendChild(el("span", "upchip", src.label));
-      li.appendChild(chips);
-      ul.appendChild(li);
-    }
+    for (const entry of entries) ul.appendChild(bookEntryNode(entry));
     sec.appendChild(ul);
-    host.appendChild(sec);
+    body.appendChild(sec);
+  }
+  if (!shown) {
+    const none = el("div", "actempty");
+    none.appendChild(document.createTextNode("Nothing in the house book matches. "));
+    const clear = el("button", "btn-tertiary", "Clear the filters");
+    clear.type = "button";
+    clear.addEventListener("click", clearBookFilters);
+    none.appendChild(clear);
+    body.appendChild(none);
+  }
+  // The chapters nothing is written in yet, as presses: a book that is
+  // meant to document the house says what it has not covered.
+  if (!filtering) {
+    const have = new Set(sections.map((sec) => sec.key));
+    const missing = chapters.filter((c) => !have.has(c.key));
+    if (missing.length) {
+      const box = el("div", "bookgaps");
+      box.appendChild(el("h3", null, "Not written yet"));
+      const row = el("div", "bookgaprow");
+      missing.forEach((c) => {
+        const b = el("button", "pill", "＋ " + c.title);
+        b.type = "button";
+        b.disabled = !!st.running;
+        b.addEventListener("click", () => openBookAdd(c.key));
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+      body.appendChild(box);
+    }
   }
 }
+
+function bookMenuItems(st) {
+  const items = [];
+  if (!st.published) {
+    items.push(["↗", "Share a copy",
+      "A private address Home Assistant serves, for a sitter's phone",
+      () => upPress($("#bookAdd"), "book", "api/house_book/publish", null,
+        () => "Shared — the link is under the title")]);
+  } else {
+    items.push(["⧉", "Copy the link", "The address of the shared copy",
+      () => copyText(location.origin + st.published.path)
+        .then((ok) => toast(ok ? "Link copied" : "Could not copy — the link is under the title"))]);
+    items.push(["✕", "Stop sharing", "Deletes the copy and changes the address",
+      () => bookRevoke(null)]);
+  }
+  items.push(["↻", "Rewrite the whole book",
+    "One run over the house; the lines you wrote or corrected stay",
+    () => startBookAdd("", "")]);
+  return items;
+}
+
+function bookRevoke(btn) {
+  if (!window.confirm("Delete the shared link? Anybody who has it loses the "
+    + "house book; the book itself stays here.")) return;
+  upPress(btn || $("#bookAdd"), "book", "api/house_book/revoke", null,
+    () => "Link deleted — it no longer works");
+}
+
+function renderBookFilters(sections, titleOf) {
+  const all = sections.flatMap((sec) => sec.entries.map((e) => ({ ...e, _sec: sec.key })));
+  // The room picker, counted under the words and the chapter; the chapter
+  // pills, counted under the words and the room. Each facet never counts
+  // its own filter, so picking one never hides the others.
+  const roomSel = $("#bookRoom");
+  const rooms = new Map();
+  all.filter((e) => (!bookView.section || e._sec === bookView.section)
+    && bookEntryMatches(e, "room"))
+    .forEach((e) => (e.rooms || []).forEach((r) => rooms.set(r, (rooms.get(r) || 0) + 1)));
+  roomSel.textContent = "";
+  const anyRoom = el("option", null, "Any room");
+  anyRoom.value = "";
+  roomSel.appendChild(anyRoom);
+  [...rooms.keys()].sort((a, b) => a.localeCompare(b)).forEach((r) => {
+    const opt = el("option", null, `${r} (${rooms.get(r)})`);
+    opt.value = r;
+    roomSel.appendChild(opt);
+  });
+  if (bookView.room && !rooms.has(bookView.room)) {
+    const opt = el("option", null, bookView.room);
+    opt.value = bookView.room;
+    roomSel.appendChild(opt);
+  }
+  roomSel.value = bookView.room;
+  roomSel.hidden = !rooms.size && !bookView.room;
+
+  const host = $("#bookSecs");
+  host.textContent = "";
+  const counts = sections.map((sec) => ({
+    id: sec.key, label: sec.title,
+    count: sec.entries.filter((e) => bookEntryMatches(e)).length,
+  })).filter((c) => c.count || c.id === bookView.section);
+  const pills = [{ id: "", label: "Everything", count: counts.reduce((n, c) => n + c.count, 0) }]
+    .concat(counts);
+  const pick = el("select", "sel actkindsel");
+  pick.setAttribute("aria-label", "Chapter");
+  pills.forEach((k) => {
+    const opt = el("option", null, `${k.label} (${k.count})`);
+    opt.value = k.id;
+    pick.appendChild(opt);
+  });
+  pick.value = bookView.section;
+  pick.addEventListener("change", () => { bookView.section = pick.value; renderUpBook(); });
+  host.appendChild(pick);
+  pills.forEach((k) => {
+    const on = bookView.section === k.id;
+    const b = el("button", "pill" + (on ? " active" : ""));
+    b.type = "button";
+    b.appendChild(el("span", null, k.label));
+    b.appendChild(el("span", "pillcount", String(k.count)));
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.addEventListener("click", () => {
+      bookView.section = on && k.id ? "" : k.id;
+      renderUpBook();
+    });
+    host.appendChild(b);
+  });
+
+  const box = $("#bookActive");
+  box.textContent = "";
+  const parts = [];
+  if (bookView.q) parts.push(["Words", `“${bookView.q}”`, () => {
+    bookView.q = ""; $("#bookSearch").value = "";
+  }]);
+  if (bookView.room) parts.push(["Room", bookView.room, () => { bookView.room = ""; }]);
+  if (bookView.section) parts.push(["Chapter", titleOf(bookView.section),
+    () => { bookView.section = ""; }]);
+  box.hidden = !parts.length;
+  parts.forEach(([label, value, clear]) => {
+    const tag = el("button", "filtertag");
+    tag.type = "button";
+    tag.appendChild(el("span", "ftlabel", label));
+    tag.appendChild(el("span", null, value));
+    tag.appendChild(el("span", "ftx", "✕"));
+    tag.setAttribute("aria-label", `Remove filter ${label}: ${value}`);
+    tag.addEventListener("click", () => { clear(); renderUpBook(); });
+    box.appendChild(tag);
+  });
+  if (parts.length > 1) {
+    const clearAll = el("button", "btn-tertiary", "Clear all");
+    clearAll.type = "button";
+    clearAll.addEventListener("click", clearBookFilters);
+    box.appendChild(clearAll);
+  }
+}
+
+function clearBookFilters() {
+  bookView.q = ""; bookView.room = ""; bookView.section = "";
+  const i = $("#bookSearch"); if (i) i.value = "";
+  renderUpBook();
+}
+
+// One line of the book: its words, what they came from, and the two
+// presses every line has — correct it, or take it out.
+function bookEntryNode(entry) {
+  const li = el("li", "bookentry");
+  li.dataset.id = entry.id || "";
+  if (bookView.editing && bookView.editing === entry.id) {
+    const box = el("textarea", "bookedit");
+    box.value = entry.text;
+    box.rows = Math.min(6, Math.max(2, Math.ceil(entry.text.length / 70)));
+    box.maxLength = 400;
+    box.setAttribute("aria-label", "Edit this line");
+    li.appendChild(box);
+    const row = el("div", "bookeditrow");
+    const save = el("button", "btn small primary", "Save");
+    const cancel = el("button", "btn small ghost", "Cancel");
+    save.addEventListener("click", async () => {
+      const text = box.value.trim();
+      if (!text) { toast("Type the line first — or Delete it"); return; }
+      save.disabled = true;
+      try {
+        upState.book = { ...upState.book, ...await api(
+          `api/house_book/entry/${encodeURIComponent(entry.id)}`,
+          { method: "POST", body: JSON.stringify({ text }) }) };
+        bookView.editing = "";
+        renderUpBook();
+        toast("Saved — a rewrite keeps your wording");
+      } catch (e) { save.disabled = false; toast(e.message); }
+    });
+    cancel.addEventListener("click", () => { bookView.editing = ""; renderUpBook(); });
+    box.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") cancel.click();
+      if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) save.click();
+    });
+    row.append(save, cancel);
+    li.appendChild(row);
+    setTimeout(() => { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }, 0);
+    return li;
+  }
+  li.appendChild(el("span", "booktext", entry.text));
+  const chips = el("span", "upchips");
+  for (const src of entry.sources || []) {
+    chips.appendChild(el("span", "upchip" + (src.key === "you" ? " you" : ""), src.label));
+  }
+  if (entry.edited) chips.appendChild(el("span", "upchip you", "Edited by you"));
+  li.appendChild(chips);
+  const acts = el("span", "bookacts");
+  const edit = el("button", "btn icon bookact");
+  edit.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/></svg>';
+  edit.setAttribute("aria-label", "Edit this line");
+  tip(edit, "Edit this line");
+  edit.addEventListener("click", () => { bookView.editing = entry.id; renderUpBook(); });
+  const del = el("button", "btn icon bookact");
+  del.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  del.setAttribute("aria-label", "Delete this line");
+  tip(del, "Delete this line");
+  del.addEventListener("click", async () => {
+    if (!window.confirm("Take this line out of the house book?")) return;
+    try {
+      upState.book = { ...upState.book, ...await api(
+        `api/house_book/entry/${encodeURIComponent(entry.id)}`,
+        { method: "POST", body: JSON.stringify({ delete: true }) }) };
+      renderUpBook();
+      toast("Taken out");
+    } catch (e) { toast(e.message); }
+  });
+  acts.append(edit, del);
+  li.appendChild(acts);
+  return li;
+}
+
+// The Add info box, for the whole book or one chapter.
+function openBookAdd(section) {
+  const st = upState.book || {};
+  const chapters = bookChapters(st);
+  bookView.addFor = section || "";
+  const title = section ? (chapters.find((c) => c.key === section) || {}).title : "";
+  $("#bookAddTitle").textContent = title ? `Add to “${title}”` : "Add to the house book";
+  const sel = $("#bookAddSec");
+  sel.textContent = "";
+  const auto = el("option", null, "Let brAIn choose");
+  auto.value = "";
+  sel.appendChild(auto);
+  chapters.forEach((c) => {
+    const opt = el("option", null, c.title);
+    opt.value = c.key;
+    sel.appendChild(opt);
+  });
+  sel.value = section || "";
+  $("#bookAddSecRow").hidden = !!section;
+  $("#bookAddText").value = "";
+  syncBookAdd();
+  openBox("#bookAddModal");
+  setTimeout(() => $("#bookAddText").focus(), 50);
+}
+
+function syncBookAdd() {
+  const text = $("#bookAddText").value.trim();
+  const section = bookView.addFor || $("#bookAddSec").value;
+  const where = section ? "this chapter" : "the book";
+  $("#bookAddGo").textContent = text ? "Add" : (section ? "Fill it in" : "Write the book");
+  $("#bookAddAsIs").hidden = !text;
+  $("#bookAddHint").textContent = text
+    ? "brAIn writes this into the book in plain sentences, cited to you — one Claude run."
+    : `Leave it blank and brAIn fills ${where} in from your automations, devices `
+      + "and what it has learned — one Claude run. Lines you wrote or corrected stay.";
+}
+
+async function startBookAdd(text, section) {
+  const btn = $("#bookAdd");
+  const data = await upPress(btn, "book", "api/house_book/add", { text, section },
+    () => (text ? "Adding it — a minute or so" : "Writing — it takes a minute or two"));
+  if (data) closeBox("#bookAddModal");
+}
+
+$("#bookAdd")?.addEventListener("click", () => openBookAdd(""));
+$("#bookAddClose")?.addEventListener("click", () => closeBox("#bookAddModal"));
+$("#bookAddModal")?.addEventListener("click", (ev) => {
+  if (ev.target === $("#bookAddModal")) closeBox("#bookAddModal");
+});
+$("#bookAddText")?.addEventListener("input", syncBookAdd);
+$("#bookAddSec")?.addEventListener("change", syncBookAdd);
+$("#bookAddGo")?.addEventListener("click", () => startBookAdd(
+  $("#bookAddText").value.trim(), bookView.addFor || $("#bookAddSec").value));
+$("#bookAddAsIs")?.addEventListener("click", async () => {
+  const text = $("#bookAddText").value.trim();
+  if (!text) return;
+  const section = bookView.addFor || $("#bookAddSec").value || "other";
+  try {
+    upState.book = { ...upState.book, ...await api("api/house_book/write", {
+      method: "POST", body: JSON.stringify({ text, section }) }) };
+    closeBox("#bookAddModal");
+    renderUpBook();
+    toast("Added as written");
+  } catch (e) { toast(e.message); }
+});
+(function wireBookSearch() {
+  const input = $("#bookSearch");
+  if (!input) return;
+  input.addEventListener("input", () => { bookView.q = input.value.trim(); renderUpBook(); });
+  $("#bookRoom").addEventListener("change", (ev) => {
+    bookView.room = ev.currentTarget.value;
+    renderUpBook();
+  });
+})();
 
 // The names-and-rooms table and the assessed updates are cards in Today's
 // queue (makeTidyCard / makeUpdateCard); the overnight check and the access

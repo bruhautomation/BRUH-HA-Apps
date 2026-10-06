@@ -541,6 +541,10 @@ class EventBus:
                 payload, self._refresh_context(now), now,
                 rhythm_payload=self._rhythm_now(), tz=self._tz)
         if event_type == "mobile_app_notification_action":
+            # Dismiss answers nothing — it closes the notification and the
+            # card stays where it is — so it is not a reply to look at.
+            if str(payload.get("action") or "").startswith("brain.dismiss."):
+                return None
             return signals.from_reply({**payload, "via": "notification"}, now)
         return None
 

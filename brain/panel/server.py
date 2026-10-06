@@ -3580,7 +3580,13 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     failure in the second half is caught here rather than by the bus.
     """
     _note_safety(event_type, data)
-    if event_type == "mobile_app_notification_cleared":
+    dismissed = (event_type == "mobile_app_notification_action"
+                 and isinstance(data, dict)
+                 and str(data.get("action") or "").startswith(
+                     f"{notify_router.ACTION_PREFIX}.{notify_router.DISMISS_ACTION}."))
+    # A Dismiss press is the message cleared on purpose: the one route an
+    # iPhone, which never reports a swipe, has to say so.
+    if event_type == "mobile_app_notification_cleared" or dismissed:
         try:
             deliveries.note_cleared(data if isinstance(data, dict) else {})
         except Exception as exc:  # noqa: BLE001 — accounting, never the bus
@@ -8476,13 +8482,28 @@ async def _book_snapshot() -> dict:
     return snap
 
 
-async def _run_book(reason: str = "pressed", snap: dict | None = None) -> None:
+async def _run_book(reason: str = "pressed", snap: dict | None = None,
+                    request: str = "", section: str = "") -> None:
+    """One Claude run over the house, merged into the book.
+
+    With nothing typed and no section it is the whole book written again;
+    with a section, that section filled in again; with words, those words
+    added (`house_book.merge`). Every mode keeps the lines a person wrote
+    or corrected, and the merge is made against the book as it is when the
+    run LANDS, so an edit made while it ran is not lost.
+    """
     now = time.time()
+    request = str(request or "").strip()[:house_book.MAX_REQUEST]
+    section = section if section in house_book.SECTIONS else ""
+    mode = "add" if request else ("section" if section else "rewrite")
     snap = snap if snap is not None else await _book_snapshot()
     dig = house_book.digest(snap)
     fp = house_book.fingerprint(snap)
+    current = (await asyncio.to_thread(house_book.load)).get("book")
     result = await _claude(
-        engine.run_claude, house_book.frame(dig), house_book.SYSTEM, "",
+        engine.run_claude,
+        house_book.frame(dig, request=request, section=section, book=current),
+        house_book.SYSTEM, "",
         house_book.TIMEOUT_S, 4, "maintenance", job="house_book",
         schema=house_book.SCHEMA)
     if not result.get("ok"):
@@ -8490,16 +8511,19 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None) -> None:
     answer = _answer(result)
     if answer is None:
         raise RuntimeError("the reply could not be read")
-    parsed = house_book.parse(answer, dig)
+    parsed = house_book.parse(answer, dig, request=request, only=section)
 
     def store() -> list[dict]:
         state = house_book.load()
-        state["book"] = {"at": int(now), "reason": reason,
-                         "sections": parsed["sections"],
+        before = state.get("book")
+        state["book"] = {**(before or {}), "at": int(now), "reason": reason,
+                         "sections": house_book.merge(before, parsed["sections"],
+                                                      mode, section),
                          "uncited": parsed["uncited"],
                          "redacted": parsed["redacted"],
                          "run_id": _run_id(result)}
-        state["fingerprint"] = fp
+        if mode == "rewrite":
+            state["fingerprint"] = fp
         state["opted_in"] = True
         state["held"] = ""
         state["last_error"] = ""
@@ -8510,31 +8534,62 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None) -> None:
         for row in rows:
             state.setdefault("asked", []).append(row.pop("_subject"))
         created = findings_store.add_many(triage.gate(rows))
-        # A published book is kept current: the person already chose to
-        # put it on the URL, and a stale copy there is the one they shared.
-        if state.get("published"):
-            try:
-                state["published"] = {
-                    "at": int(now),
-                    "path": house_book.publish(state["book"], WWW_CARD_DIR)}
-            except OSError as exc:
-                log.warning("could not republish the house book: %s", exc)
+        _republish_book(state, now)
         house_book.save(state)
         return created
 
     created = await asyncio.to_thread(store)
     if created:
         _offer_findings(created, now)
+    added = sum(len(s["entries"]) for s in parsed["sections"])
     MAINT_STATE["book"]["last_note"] = (
-        f"{sum(len(s['entries']) for s in parsed['sections'])} entries"
+        f"{added} entr{'y' if added == 1 else 'ies'}"
         + (f", {parsed['uncited']} dropped for citing nothing"
            if parsed["uncited"] else "")
         + (f", {len(created)} question(s) filed" if created else ""))
+    MAINT_STATE["book"]["last_added"] = added
+
+
+def _republish_book(state: dict, now: float) -> None:
+    """A published book is kept current: the person already chose to put
+    it on the URL, and a stale copy there is the one they shared."""
+    if not state.get("published") or not state.get("book"):
+        return
+    try:
+        state["published"] = {
+            "at": int(now),
+            "path": house_book.publish(state["book"], WWW_CARD_DIR)}
+    except OSError as exc:
+        log.warning("could not republish the house book: %s", exc)
+
+
+def _book_rooms(entry: dict) -> list[str]:
+    """The rooms one entry is about, for the book's room filter: an area it
+    cites by name, and the room of every entity it cites (off the last
+    checks pass, `_NAMES` — never a fetch of its own)."""
+    rooms: list[str] = []
+    for src in entry.get("sources") or []:
+        key = str(src.get("key") or "")
+        room = ""
+        if key.startswith("area:"):
+            room = str(src.get("label") or "")
+        elif key.startswith("entity:"):
+            row = _NAMES.get(key.split(":", 1)[1]) or {}
+            room = str(row.get("area") or "") if isinstance(row, dict) else ""
+        if room and room not in rooms:
+            rooms.append(room)
+    return rooms
 
 
 def _book_payload() -> dict:
     state = house_book.load()
-    return {**_maint_status("book"), "book": state.get("book"),
+    book = house_book.normalize(state.get("book"))
+    if book:
+        for sec in book["sections"]:
+            for e in sec["entries"]:
+                e["rooms"] = _book_rooms(e)
+    return {**_maint_status("book"), "book": book,
+            "sections": [{"key": k, "title": t} for k, t in house_book.SECTIONS.items()],
             "published": state.get("published"),
             "opted_in": bool(state.get("opted_in")),
             "held": state.get("held") or MAINT_STATE["book"]["held"],
@@ -8552,6 +8607,73 @@ async def h_book_run(request: web.Request) -> web.Response:
     started = _maint_start("book", lambda: _run_book("pressed"))
     return web.json_response({**await asyncio.to_thread(_book_payload),
                               "started": started})
+
+
+async def h_book_add(request: web.Request) -> web.Response:
+    """Add info: what somebody typed, for the whole book or one section —
+    and nothing typed asks brAIn to fill it in by itself. A run; started,
+    never awaited (`h_baselines_run`'s clock)."""
+    body = await _json_body(request)
+    text = str(body.get("text") or "").strip()[:house_book.MAX_REQUEST]
+    section = str(body.get("section") or "").strip()
+    if section and section not in house_book.SECTIONS:
+        raise web.HTTPBadRequest(text="There is no such section in the house book.")
+    excuse = _maint_pressed_refusal()
+    if excuse:
+        raise web.HTTPBadRequest(text=excuse)
+    started = _maint_start("book", lambda: _run_book(
+        "added" if text else ("filled in" if section else "pressed"),
+        request=text, section=section))
+    if started:
+        MAINT_STATE["book"]["subject"] = section
+    return web.json_response({**await asyncio.to_thread(_book_payload),
+                              "started": started})
+
+
+async def h_book_entry(request: web.Request) -> web.Response:
+    """One line, rewritten by hand — or, with `"delete": true`, taken out."""
+    eid = request.match_info["id"]
+    if not re.fullmatch(r"[0-9a-f]{6,40}", eid):
+        raise web.HTTPNotFound(text="no such entry")
+    body = await _json_body(request)
+
+    def change() -> dict:
+        state = house_book.load()
+        if not house_book.find_entry(state.get("book"), eid):
+            raise web.HTTPNotFound(text="That line is not in the house book any more.")
+        try:
+            if body.get("delete"):
+                state["book"] = house_book.delete_entry(state["book"], eid)
+            else:
+                state["book"] = house_book.edit_entry(
+                    state["book"], eid, str(body.get("text") or ""))
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text="Type the line first.") from exc
+        _republish_book(state, time.time())
+        house_book.save(state)
+        return _book_payload()
+
+    return web.json_response(await asyncio.to_thread(change))
+
+
+async def h_book_write(request: web.Request) -> web.Response:
+    """A line typed straight into a section, as written — no run."""
+    body = await _json_body(request)
+
+    def write() -> dict:
+        state = house_book.load()
+        try:
+            state["book"] = house_book.add_written(
+                state.get("book"), str(body.get("section") or ""),
+                str(body.get("text") or ""))
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc).capitalize() + ".") from exc
+        state["opted_in"] = True
+        _republish_book(state, time.time())
+        house_book.save(state)
+        return _book_payload()
+
+    return web.json_response(await asyncio.to_thread(write))
 
 
 async def h_book_publish(request: web.Request) -> web.Response:
@@ -8779,6 +8901,9 @@ def _maint_routes(app: web.Application) -> None:
     app.router.add_post("/api/sre/run", h_sre_run)
     app.router.add_get("/api/house_book", h_book)
     app.router.add_post("/api/house_book/run", h_book_run)
+    app.router.add_post("/api/house_book/add", h_book_add)
+    app.router.add_post("/api/house_book/write", h_book_write)
+    app.router.add_post("/api/house_book/entry/{id}", h_book_entry)
     app.router.add_post("/api/house_book/publish", h_book_publish)
     app.router.add_post("/api/house_book/revoke", h_book_revoke)
     app.router.add_post("/api/house_book/question/{ts}/answer", h_book_answer)
@@ -14239,11 +14364,10 @@ async def h_activity(request: web.Request) -> web.Response:
     now = time.time()
 
     def shape() -> dict:
-        rows = mined["actions"]
-        cause = (request.query.get("cause") or "").strip()
-        if cause and cause in actions.CAUSES:
-            rows = [a for a in rows if a["cause"] == cause]
-        grouped = _group_activity(mined, rows, house, now)
+        # Grouped over every change, and narrowed by cause afterwards with
+        # the other filters (`_activity_narrow`), so the cause picker can be
+        # counted the way the room and kind pickers are.
+        grouped = _group_activity(mined, mined["actions"], house, now)
         # On the row it happened in, never in a block above the list: a
         # count of "somebody put things back 4×" is not something anybody
         # can act on, where *this* row being the one they undid is.
@@ -14252,7 +14376,7 @@ async def h_activity(request: web.Request) -> web.Response:
         # any room or name narrows it: a span is about people, and a
         # filter on the lounge must not invent one.
         away = episodes.away_spans(grouped, now)
-        areas, kinds = _activity_narrow(grouped, request.query)
+        areas, kinds, causes = _activity_narrow(grouped, request.query)
         return {
             "available": True,
             "error": "",
@@ -14266,11 +14390,13 @@ async def h_activity(request: web.Request) -> web.Response:
             # When the house was empty — the one thing here Home Assistant
             # holds every fact for and has never said.
             "away": away,
-            # Every room and kind this window holds something in, with how
-            # many, counted before the room and search filters so a picker
-            # never offers only what is already on screen.
+            # Every room, kind and cause this window holds something in,
+            # with how many — each counted under the OTHER filters in
+            # force, never its own, so a picker never offers only what is
+            # already on screen and never offers what would empty it.
             "areas": areas,
             "kinds": kinds,
+            "cause_facets": causes,
             "counts": mined["counts"],
             "causes": list(actions.CAUSES),
             "capped": mined.get("capped", False),
@@ -14284,34 +14410,47 @@ async def h_activity(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(shape))
 
 
-def _activity_narrow(grouped: dict, query) -> tuple[list[dict], list[dict]]:
+def _activity_narrow(grouped: dict, query) -> tuple[list[dict], list[dict], list[dict]]:
     """Stamp each episode with its room and narrow the window to a room, a
-    kind of thing and words, in place — before `episodes.sections` caps each
-    block, or a filter would search only the rows that survived the cap.
+    kind of thing, a cause and words, in place — before `episodes.sections`
+    caps each block, or a filter would search only the rows that survived
+    the cap.
 
     The room is off the last checks pass's registry (`_NAMES`), never a
     fetch of its own; an entity nobody has put in a room is in none, and the
     filter for "No room" is how somebody finds what needs one.
-    Returns the room and kind facets, counted before those two filters.
+
+    Returns the room, kind and cause facets, each **counted under every
+    OTHER filter in force and never its own** — ordinary faceted search.
+    Pick the kitchen and the kind pills count what is in the kitchen, and a
+    kind the kitchen holds nothing of drops out, while the room picker still
+    lists every room (counted under the kind and the words), so picking one
+    never shrinks the list of others. A cause matches an episode when any
+    change in it had that cause.
     """
     area = str(query.get("area") or "").strip()[:120]
     kind = str(query.get("kind") or "").strip()[:40]
+    cause = str(query.get("cause") or "").strip()[:40]
+    if cause not in actions.CAUSES:
+        cause = ""
     words = [w for w in str(query.get("q") or "").lower().split() if w][:8]
     eps = grouped.get("episodes") or []
     for ep in eps:
         row = _NAMES.get(ep.get("entity_id") or "") or {}
         ep["area"] = str(row.get("area") or "") if isinstance(row, dict) else ""
-    area_counts: dict[str, int] = {}
-    kind_counts: dict[str, int] = {}
-    for ep in eps:
-        key = ep["area"] or "-"
-        area_counts[key] = area_counts.get(key, 0) + 1
-        kind_counts[ep.get("subject") or ""] = kind_counts.get(ep.get("subject") or "", 0) + 1
 
-    def keep(ep: dict) -> bool:
-        if area and (ep["area"] or "-") != area:
+    def causes_of(ep: dict) -> set[str]:
+        got = {c for c, n in (ep.get("causes") or {}).items() if n}
+        if ep.get("cause"):
+            got.add(str(ep["cause"]))
+        return got or {"unattributed"}
+
+    def passes(ep: dict, skip: str = "") -> bool:
+        if skip != "area" and area and (ep["area"] or "-") != area:
             return False
-        if kind and ep.get("subject") != kind:
+        if skip != "kind" and kind and ep.get("subject") != kind:
+            return False
+        if skip != "cause" and cause and cause not in causes_of(ep):
             return False
         if words:
             hay = " ".join([str(ep.get("name") or ""), str(ep.get("entity_id") or ""),
@@ -14320,15 +14459,31 @@ def _activity_narrow(grouped: dict, query) -> tuple[list[dict], list[dict]]:
                 return False
         return True
 
-    if area or kind or words:
-        grouped["episodes"] = [e for e in eps if keep(e)]
+    area_counts: dict[str, int] = {}
+    kind_counts: dict[str, int] = {}
+    cause_counts: dict[str, int] = {}
+    for ep in eps:
+        if passes(ep, "area"):
+            key = ep["area"] or "-"
+            area_counts[key] = area_counts.get(key, 0) + 1
+        if passes(ep, "kind"):
+            subj = ep.get("subject") or ""
+            kind_counts[subj] = kind_counts.get(subj, 0) + 1
+        if passes(ep, "cause"):
+            for c in causes_of(ep):
+                cause_counts[c] = cause_counts.get(c, 0) + 1
+
+    if area or kind or cause or words:
+        grouped["episodes"] = [e for e in eps if passes(e)]
     areas = [{"id": k, "label": "No room" if k == "-" else k, "count": n}
              for k, n in sorted(area_counts.items(),
                                 key=lambda kv: (kv[0] == "-", kv[0].lower()))]
     kinds = [{"id": spec["id"], "label": spec["label"],
               "count": kind_counts[spec["id"]]}
              for spec in episodes.SUBJECTS if kind_counts.get(spec["id"])]
-    return areas, kinds
+    causes = [{"id": c, "count": cause_counts[c]}
+              for c in actions.CAUSES if cause_counts.get(c)]
+    return areas, kinds, causes
 
 
 # One paragraph per window, kept against the window it is about. Pressing
