@@ -195,25 +195,28 @@ export const HISTORY = {
     { id: 'aside', label: 'Set aside by brAIn', count: 1 },
   ],
   rows: {
-    snoozed: [{ title: 'Cooling time yesterday', meta: '6 times since 15 Sep',
+    snoozed: [{ id: 'snoozed|cooling time yesterday', deletable: false,
+                title: 'Cooling time yesterday', meta: '6 times since 15 Sep',
                 at: NOW, since: NOW - 20 * 86400, count: 6,
                 press: { label: 'Restore', steps: [{ label: 'Restore',
                   route: '/api/case/f:9/wake', body: {} }] } }],
     ignored: [
-      { title: 'Bathroom fan ran long', meta: 'Ignored 4 Oct · You said: it is on a timer',
+      { id: 'ignored|bathroom fan ran long', deletable: true, title: 'Bathroom fan ran long', meta: 'Ignored 4 Oct · You said: it is on a timer',
         at: NOW, since: NOW, count: 1, press: { label: 'Restore', steps: [
           { label: 'Restore', route: '/api/findings/unsettle', body: { key: 'k' } }] } },
-      { title: 'Everything like this: Sensors frozen on one value',
+      { id: 'ignored|everything like this', deletable: true,
+        title: 'Everything like this: Sensors frozen on one value',
         meta: 'Ignored · not raised at all', at: 0, since: 0, count: 1,
         press: { label: 'Restore', steps: [{ label: 'Restore',
           route: '/api/findings/unmute', body: { source: 'check:dev.frozen' } }] } },
     ],
-    done: [{ title: 'Tidied 4 names and rooms', meta: 'Applied 4 Oct', at: NOW,
+    done: [{ id: 'done|tidied 4 names and rooms', deletable: true, title: 'Tidied 4 names and rooms', meta: 'Applied 4 Oct', at: NOW,
              since: NOW, count: 1, press: { label: 'Undo', steps: [{ label: 'Undo',
                route: '/api/tidy/undo/b1', body: {},
                confirm: 'Puts back each field that still holds what brAIn wrote. '
                  + 'A field you changed since is left alone.' }] } }],
-    aside: [{ title: 'Heating ran 14 hours yesterday', meta: 'Set aside 3 Oct · a '
+    aside: [{ id: 'aside|heating ran 14 hours yesterday', deletable: true,
+              title: 'Heating ran 14 hours yesterday', meta: 'Set aside 3 Oct · a '
                 + 'routine HVAC runtime summary', at: NOW, since: NOW, count: 1,
               press: { label: 'Restore', steps: [{ label: 'Restore',
                 route: '/api/finding/7/elevate', body: {} }] } }],
@@ -321,6 +324,9 @@ export async function openToday(browser, panelDir, { width, touch = false, over 
   // A measure's own answers for a route, wrapped round the stub's fetch.
   if (extra) await page.addInitScript(extra);
   await page.goto(`file://${panelDir}/index.html`);
+  // The panel lands on the insight cards; the queue is Insights › Needs you.
+  await page.waitForFunction(() => typeof switchView === 'function');
+  await page.evaluate(() => switchView('findings'));
   await page.waitForFunction(() => document.querySelector('#findList')
     && (document.querySelector('#findList .qcard')
         || document.querySelector('#findList .empty-line')

@@ -71,6 +71,11 @@ env = {
     "BRAIN_CHAT_WORKDIR": str(DEMO / "config"),
     "BRAIN_CONTEXT_FILE": str(DEMO / "CLAUDE.md"),
     "BRAIN_ENABLE_TERMINAL": "true",
+    # Knowledge and History read these; left at their defaults they would
+    # point under /config and /data, which a demo cannot write — and a
+    # Knowledge pane with no facts is a screenshot of an empty house.
+    "BRAIN_FACTS_FILE": str(DEMO / "memory" / "facts.json"),
+    "BRAIN_TODAY_HIDDEN_FILE": str(DEMO / "today-hidden.json"),
     "BIND_PORT": PORT,
     "SUPERVISOR_TOKEN": "demo",
 }
@@ -189,9 +194,25 @@ Path(env["BRAIN_CHAT_TRANSCRIPT"]).write_text(json.dumps({
     "session_id": "demo-session", "events": demo.chat_events()},
     ensure_ascii=False), encoding="utf-8")
 
+# Facts about rooms and devices, so Knowledge has something to browse, and
+# a few answered findings, so History has something to restore or delete.
+import facts_store  # noqa: E402
+
+for text, subject in demo.FACTS:
+    facts_store.add(text, subject=subject, source="study")
+for key, text, kind, note in demo.SETTLED:
+    findings_store.remember_answer(key, text, kind, note=note,
+                                   source="check:dev.unavailable",
+                                   source_title="Device check")
+
 print(f"seeded {DEMO}", file=sys.stderr)
 
 import server  # noqa: E402
+
+# What the last checks pass would have read off the registry: names and
+# rooms, so the browser shows "Kitchen ceiling" rather than an id.
+server._NAMES.update(demo.NAMES)
+server._FACTS_CTX["areas"].update(demo.AREAS)
 from aiohttp import web  # noqa: E402
 
 web.run_app(server.make_app(), host="127.0.0.1", port=int(PORT), print=None)

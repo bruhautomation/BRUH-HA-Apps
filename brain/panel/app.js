@@ -536,15 +536,18 @@ function renderAuth() {
   // Proposals, which the checks pass fills too and which is now the one
   // surface a proposal is offered on.
   const insightsOn = s.insights_enabled !== false;
-  document.querySelectorAll('.subtab[data-view="insights"]')
+  document.querySelectorAll('.subtab[data-view="insights"], #segNav .segbtn[data-view="insights"]')
     .forEach((b) => b.classList.toggle("gone", !insightsOn));
-  document.querySelectorAll('#houseSeg [data-view="insights"], #houseSegSel option[value="insights"]')
-    .forEach((b) => { b.hidden = !insightsOn; });
-  if (!insightsOn && currentView === "insights") {
-    switchView("memory");
+  document.querySelectorAll('.viewtab[data-group="insights"]')
+    .forEach((b) => { b.dataset.view = insightsOn ? "insights" : "findings"; });
+  // Signing in and the first run live where the decisions go (Needs you),
+  // so a panel that is not ready yet lands there rather than on an empty
+  // grid of cards.
+  if ((!insightsOn || !ready) && currentView === "insights") {
+    switchView("findings");
   } else {
     syncTabs(currentView);
-    syncHouseSeg(currentView);
+    syncSegNav(currentView);
   }
   renderUsageChip();
   renderPausedChip();
@@ -1896,7 +1899,7 @@ function render() {
     const list = $("#findList");
     if (list && list.hidden !== !$("#todaySetup").hidden) renderFindings();
   }
-  syncHouseSeg();
+  syncSegNav();
   if (!s.authenticated) return;
 
   // A search field once there are more reports than a screen or two holds.
@@ -4294,7 +4297,29 @@ function updateFindBadge(n) {
   if (!badge) return;
   badge.textContent = n ? String(n) : "";
   badge.classList.toggle("hidden", !n);
+  const seg = $("#segNeedsCount");
+  if (seg) { seg.textContent = n ? String(n) : ""; seg.hidden = !n; }
+  // The line over the insight cards: the cards are what the tab opens on,
+  // and a decision that only lived one press away would be one nobody saw.
+  state.needsCount = n || 0;
+  renderNeedsStrip();
 }
+
+function renderNeedsStrip() {
+  const strip = $("#needsStrip");
+  if (!strip) return;
+  const n = state.needsCount || 0;
+  strip.hidden = !n;
+  if (!n) return;
+  const cases = state.cases || [];
+  const urgent = cases.filter((c) => c.urgent);
+  strip.classList.toggle("urgent", urgent.length > 0);
+  $("#needsStripCount").textContent =
+    `${n} thing${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} you`;
+  const lead = (urgent[0] || cases[0] || {}).claim;
+  $("#needsStripSub").textContent = lead ? prettyText(lead) : "Problems, questions and suggestions to decide on";
+}
+$("#needsStrip")?.addEventListener("click", () => switchView("findings"));
 
 // Every finding button goes through here: all six endpoints answer with the
 // same {findings, hypotheses, open}, so there is one place that knows what
@@ -5558,6 +5583,7 @@ function renderTodayChrome() {
 }
 
 function renderTodayBanner() {
+  renderNeedsStrip();
   const box = $("#todayBanner");
   if (!box) return;
   const urgent = (state.cases || []).filter((c) => c.urgent);
@@ -5780,47 +5806,117 @@ async function refreshHistory() {
   }
 }
 
-function renderHistory() {
-  const drawer = $("#todayHistory");
-  if (!drawer || !drawer.open) return;
+// What each filter holds, said once above its rows, so the list explains
+// itself rather than being a pile of titles under a word.
+const HIST_HINTS = {
+  snoozed: "Put off for now — each comes back by itself on the date shown. Restore brings it back now.",
+  ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them.",
+  done: "Things you finished or brAIn fixed. Restore puts one back on your list.",
+  aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
+};
+
+function histRowsShown() {
   const data = todayState.history;
+  if (!data) return [];
+  const rows = (data.rows || {})[todayState.histFilter] || [];
+  const q = (todayState.histQuery || "").trim().toLowerCase();
+  if (!q) return rows;
+  const words = q.split(/\s+/).filter(Boolean);
+  return rows.filter((r) => {
+    const hay = `${r.title || ""} ${r.meta || ""}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+function renderHistory() {
   const chips = $("#histFilters");
   const list = $("#histList");
+  if (!chips || !list) return;
+  const data = todayState.history;
   chips.textContent = "";
   list.textContent = "";
+  const hint = $("#histHint");
+  const clearBtn = $("#histClear");
   if (!data) {
     list.appendChild(el("p", "empty-line", "Loading…"));
+    if (clearBtn) clearBtn.hidden = true;
     return;
   }
-  (data.filters || []).forEach((f) => {
-    const b = el("button", "btn-tertiary histfilter"
-      + (todayState.histFilter === f.id ? " active" : ""), `${f.label} · ${f.count}`);
+  // Land on the first filter that holds something, rather than an empty
+  // one, until somebody picks.
+  const filters = data.filters || [];
+  if (!todayState.histPicked) {
+    const first = filters.find((f) => f.count > 0);
+    if (first) todayState.histFilter = first.id;
+  }
+  filters.forEach((f) => {
+    const on = todayState.histFilter === f.id;
+    const b = el("button", "pill" + (on ? " active" : ""));
+    b.type = "button";
+    b.appendChild(el("span", null, f.label));
+    b.appendChild(el("span", "pillcount", String(f.count)));
     b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", todayState.histFilter === f.id ? "true" : "false");
+    b.setAttribute("aria-selected", on ? "true" : "false");
     b.dataset.filter = f.id;
-    b.addEventListener("click", () => { todayState.histFilter = f.id; renderHistory(); });
+    b.addEventListener("click", () => {
+      todayState.histFilter = f.id;
+      todayState.histPicked = true;
+      renderHistory();
+    });
     chips.appendChild(b);
   });
-  const rows = (data.rows || {})[todayState.histFilter] || [];
+  if (hint) hint.textContent = HIST_HINTS[todayState.histFilter] || "";
+  const rows = histRowsShown();
+  const deletable = rows.filter((r) => r.deletable);
+  if (clearBtn) {
+    clearBtn.hidden = !deletable.length;
+    clearBtn.textContent = todayState.histQuery
+      ? `Delete ${deletable.length} shown` : `Delete all ${deletable.length}`;
+  }
   if (!rows.length) {
-    list.appendChild(el("p", "empty-line", "Nothing here."));
+    const empty = el("div", "emptystate");
+    empty.appendChild(el("div", "emptyico", "✓"));
+    empty.appendChild(el("p", null, todayState.histQuery
+      ? "Nothing here matches." : "Nothing here."));
+    list.appendChild(empty);
     return;
   }
   rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
 }
 
+async function deleteHistory(rows, btns) {
+  btns.forEach((b) => { b.disabled = true; });
+  try {
+    todayState.history = await api("api/history/clear", {
+      method: "POST",
+      body: JSON.stringify({ items: rows.map((r) => ({ id: r.id, at: r.at || 0 })) }),
+    });
+    renderHistory();
+    toast(rows.length === 1 ? "Deleted from history" : `Deleted ${rows.length} from history`);
+  } catch (e) {
+    toast(e.message || "that didn't work");
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘" };
+
 function makeHistoryRow(r) {
   const row = el("div", "histrow");
+  row.dataset.filter = todayState.histFilter;
+  row.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
   const text = el("div", "histtext");
   text.appendChild(el("span", "histtitle", prettyText(r.title)));
   text.appendChild(el("span", "item-state", r.meta || ""));
   row.appendChild(text);
   const press = r.press || {};
+  const actions = el("div", "histactions");
   const btn = qButton(press.label || "Restore", false);
+  const btns = [btn];
   btn.addEventListener("click", async () => {
     const confirmText = (press.steps || []).map((s) => s.confirm).find(Boolean);
     if (confirmText && !window.confirm(confirmText)) return;
-    btn.disabled = true;
+    btns.forEach((b) => { b.disabled = true; });
     try {
       for (const step of press.steps || []) {
         await api(step.route.replace(/^\//, ""), {
@@ -5834,19 +5930,44 @@ function makeHistoryRow(r) {
       toast(press.label === "Undo" ? "Put back" : "Restored");
     } catch (e) {
       toast(e.message || "that didn't work");
-      btn.disabled = false;
+      btns.forEach((b) => { b.disabled = false; });
     }
   });
-  row.appendChild(btn);
+  actions.appendChild(btn);
+  if (r.deletable) {
+    const del = el("button", "btn icon histdel");
+    del.type = "button";
+    del.setAttribute("aria-label", "Delete from history");
+    tip(del, "Delete from history — your answer stands");
+    del.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+    btns.push(del);
+    del.addEventListener("click", () => deleteHistory([r], btns));
+    actions.appendChild(del);
+  }
+  row.appendChild(actions);
   return row;
 }
 
-$("#todayHistory")?.addEventListener("toggle", async () => {
-  if (!$("#todayHistory").open) return;
-  renderHistory();
-  await refreshHistory();
-  renderHistory();
-});
+(function wireHistory() {
+  const search = $("#histSearch");
+  if (search) {
+    search.addEventListener("input", () => {
+      todayState.histQuery = search.value;
+      renderHistory();
+    });
+  }
+  const clearBtn = $("#histClear");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      const rows = histRowsShown().filter((r) => r.deletable);
+      if (!rows.length) return;
+      if (!window.confirm(`Delete ${rows.length} item${rows.length === 1 ? "" : "s"} `
+        + "from history?\n\nYour answers stand — brAIn won't raise them again. "
+        + "This only clears the record.")) return;
+      deleteHistory(rows, [clearBtn]);
+    });
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // Ideas — proposed cards, on their own page
@@ -6081,7 +6202,7 @@ function makeQueuedRow(f) {
 // the source says who taught it, and a run id the ledger knows becomes a
 // button that opens that run in the reader every other engine-store run
 // opens in — provenance a person can follow rather than a hash in a file.
-const FACT_SUBJECT_WORDS = { house: "the house" };
+const FACT_SUBJECT_WORDS = { house: "The house" };
 function factSubjectLabel(subject) {
   const s = String(subject || "house");
   if (FACT_SUBJECT_WORDS[s]) return FACT_SUBJECT_WORDS[s];
@@ -6104,9 +6225,9 @@ const FACT_KIND_WORDS = {
   "": "All", house: "House", area: "Rooms", entity: "Devices",
   person: "People", rule: "Rules you set",
 };
-// The three a person narrows by. A rule you set is an Ignore answer, and
-// lives with the other answers in Today's History.
-const FACT_CHIPS = ["area", "entity", "house"];
+// What a person narrows by. "All" is the chip that clears the others, and a
+// kind this house holds nothing of is left out.
+const FACT_CHIPS = ["", "area", "entity", "house", "rule"];
 
 function makeFactRow(f) {
   // The fact, and what it is about. Who taught it, when, and the run it
@@ -6119,10 +6240,15 @@ function makeFactRow(f) {
   open.type = "button";
   open.setAttribute("aria-expanded", "false");
   open.appendChild(el("span", "kfacttext", f.text));
-  const subj = el("span", "kfactsubj" + (factSubjectText(f) !== String(f.subject || "") ? " named" : ""),
-    factSubjectText(f));
-  open.appendChild(subj);
   txt.appendChild(open);
+  // What it is about, as a chip that narrows the list to it — the quickest
+  // way from one fact to everything else brAIn knows about that thing.
+  const subj = el("button", "kfactsubj" + (factSubjectText(f) !== String(f.subject || "") ? " named" : ""),
+    factSubjectText(f));
+  subj.type = "button";
+  tip(subj, `Show everything about ${factSubjectText(f)}`);
+  subj.addEventListener("click", () => pickFactSubject(String(f.subject || "house")));
+  txt.appendChild(subj);
   const detail = el("div", "when kfactdetail hidden");
   const bits = [kSourceLabel(f.source)];
   if (f.observed) bits.push(f.observed);
@@ -6162,9 +6288,15 @@ function makeFactRow(f) {
       toast(e.message);
     }
   };
-  row.appendChild(cardMenuButton([
-    ["", "Delete", "brAIn stops using this fact", forget],
-  ]));
+  // Delete is on the row, never behind a menu: a fact that is wrong is
+  // the commonest reason anybody opens this list.
+  const del = el("button", "btn icon factdel");
+  del.type = "button";
+  del.setAttribute("aria-label", "Delete this fact");
+  tip(del, "Delete — brAIn stops using this fact");
+  del.innerHTML = '<svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  del.addEventListener("click", forget);
+  row.appendChild(del);
   return row;
 }
 
@@ -6173,17 +6305,26 @@ function makeFactRow(f) {
 // already on screen.
 const FACTS_PAGE = 50;
 const factsView = {
-  // Newest first, from anybody: the sort and "who taught it" pickers are
-  // gone from House, and the row's detail says who taught each one.
-  q: "", kind: "", source: "", sort: "newest",
+  q: "", kind: "", source: "", sort: "newest", subject: "",
   rows: [], total: 0, all: 0, facets: null, seq: 0, error: "",
+  subjectFind: "",
 };
+
+function pickFactSubject(subject) {
+  factsView.subject = factsView.subject === subject ? "" : subject;
+  loadFacts(true);
+  const host = $("#kKnown");
+  if (host && host.scrollIntoView && window.matchMedia("(max-width: 899px)").matches) {
+    host.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+}
 
 async function loadFacts(reset = true) {
   if (!$("#kKnown")) return;
   const seq = ++factsView.seq;
   const params = new URLSearchParams({
     q: factsView.q, kind: factsView.kind, source: factsView.source,
+    subject: factsView.subject,
     sort: factsView.sort, limit: String(FACTS_PAGE),
     offset: String(reset ? 0 : factsView.rows.length),
   });
@@ -6211,23 +6352,176 @@ function paintFactChips() {
   const host = $("#kKnownKinds");
   if (!host) return;
   host.textContent = "";
-  // Three ways to narrow and no count on any of them: a chip is a filter,
-  // and the list under it says how many there are. Pressing the one that
-  // is on turns it off, which is how you get back to everything.
+  // A chip is a filter and the list under it says how many there are; the
+  // count on each is how many a press would show.
   const kinds = (factsView.facets || {}).kinds || {};
+  const total = Object.values(kinds).reduce((a, b) => a + (Number(b) || 0), 0);
   FACT_CHIPS.forEach((k) => {
-    const n = Number(kinds[k]) || 0;
-    if (!n && factsView.kind !== k) return;
-    const chip = el("button", "fchip" + (factsView.kind === k ? " active" : ""),
-      FACT_KIND_WORDS[k]);
+    const n = k ? (Number(kinds[k]) || 0) : total;
+    if (k && !n && factsView.kind !== k) return;
+    const on = factsView.kind === k;
+    const chip = el("button", "pill" + (on ? " active" : ""));
     chip.type = "button";
-    chip.setAttribute("aria-pressed", factsView.kind === k ? "true" : "false");
+    chip.appendChild(el("span", null, FACT_KIND_WORDS[k]));
+    chip.appendChild(el("span", "pillcount", String(n)));
+    chip.setAttribute("aria-pressed", on ? "true" : "false");
     chip.addEventListener("click", () => {
-      factsView.kind = factsView.kind === k ? "" : k;
+      factsView.kind = k;
       loadFacts(true);
     });
     host.appendChild(chip);
   });
+}
+
+const FACT_SOURCE_NONE = "Anyone";
+function paintFactSources() {
+  const sel = $("#kKnownSource");
+  if (!sel) return;
+  const sources = (factsView.facets || {}).sources || {};
+  sel.textContent = "";
+  const all = el("option", null, `Taught by: ${FACT_SOURCE_NONE}`);
+  all.value = "";
+  sel.appendChild(all);
+  Object.entries(sources).forEach(([src, n]) => {
+    if (!src) return;
+    const opt = el("option", null, `${kSourceLabel(src)} (${n})`);
+    opt.value = src;
+    sel.appendChild(opt);
+  });
+  if (factsView.source && !(factsView.source in sources)) {
+    const opt = el("option", null, kSourceLabel(factsView.source));
+    opt.value = factsView.source;
+    sel.appendChild(opt);
+  }
+  sel.value = factsView.source;
+}
+
+function factSubjectName(s) {
+  return s.name || factSubjectLabel(s.id);
+}
+
+// Every room and device brAIn has said something about, with how many: a
+// rail on a wide screen and a select on a phone. Devices sit under the room
+// they are in, so "what does it know about the kitchen" is one look.
+function paintFactSubjects() {
+  const subjects = ((factsView.facets || {}).subjects || []).slice();
+  const rail = $("#kSubjects");
+  const sel = $("#kSubjectSel");
+  const find = (factsView.subjectFind || "").trim().toLowerCase();
+  const byName = (a, b) => factSubjectName(a).localeCompare(factSubjectName(b));
+  const rooms = subjects.filter((s) => s.kind === "area").sort(byName);
+  const house = subjects.filter((s) => s.kind === "house" || s.kind === "person" || s.kind === "check");
+  const devices = subjects.filter((s) => s.kind === "entity");
+  const byArea = new Map();
+  devices.forEach((d) => {
+    const k = d.area || "";
+    if (!byArea.has(k)) byArea.set(k, []);
+    byArea.get(k).push(d);
+  });
+  const areaNames = [...byArea.keys()].sort((a, b) => (a === "") - (b === "") || a.localeCompare(b));
+  if (sel) {
+    sel.textContent = "";
+    const all = el("option", null, "About: anything");
+    all.value = "";
+    sel.appendChild(all);
+    const addGroup = (label, rows) => {
+      if (!rows.length) return;
+      const g = document.createElement("optgroup");
+      g.label = label;
+      rows.forEach((r) => {
+        const opt = el("option", null, `${factSubjectName(r)} (${r.count})`);
+        opt.value = r.id;
+        g.appendChild(opt);
+      });
+      sel.appendChild(g);
+    };
+    addGroup("House", house);
+    addGroup("Rooms", rooms);
+    areaNames.forEach((a) => addGroup(a ? `Devices · ${a}` : "Devices · no room",
+      byArea.get(a).slice().sort(byName)));
+    if (factsView.subject && !subjects.some((s) => s.id === factsView.subject)) {
+      const opt = el("option", null, factSubjectLabel(factsView.subject));
+      opt.value = factsView.subject;
+      sel.appendChild(opt);
+    }
+    sel.value = factsView.subject;
+  }
+  if (!rail) return;
+  rail.textContent = "";
+  const match = (s) => !find || factSubjectName(s).toLowerCase().includes(find)
+    || String(s.id).toLowerCase().includes(find) || String(s.area || "").toLowerCase().includes(find);
+  const item = (s, indent) => {
+    const on = factsView.subject === s.id;
+    const b = el("button", "ksub" + (on ? " active" : "") + (indent ? " dev" : ""));
+    b.type = "button";
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.appendChild(el("span", "ksubname", factSubjectName(s)));
+    b.appendChild(el("span", "ksubcount", String(s.count)));
+    if (s.name && s.name !== s.id) tip(b, s.id);
+    b.addEventListener("click", () => pickFactSubject(s.id));
+    return b;
+  };
+  const allBtn = el("button", "ksub" + (factsView.subject ? "" : " active"));
+  allBtn.type = "button";
+  allBtn.appendChild(el("span", "ksubname", "Everything"));
+  allBtn.appendChild(el("span", "ksubcount", String(factsView.total && !factsView.subject
+    ? factsView.total : subjects.reduce((a, s) => a + s.count, 0))));
+  allBtn.addEventListener("click", () => { factsView.subject = ""; loadFacts(true); });
+  rail.appendChild(allBtn);
+  let any = false;
+  const section = (label, rows, indent) => {
+    const shown = rows.filter(match);
+    if (!shown.length) return;
+    any = true;
+    rail.appendChild(el("div", "ksubhead", label));
+    shown.forEach((r) => rail.appendChild(item(r, indent)));
+  };
+  section("House", house, false);
+  section("Rooms", rooms, false);
+  areaNames.forEach((a) => section(a ? a : "Devices with no room",
+    byArea.get(a).slice().sort(byName), true));
+  if (!any) {
+    rail.appendChild(el("div", "kempty small", find ? "No room or device matches."
+      : "Nothing is filed under a room or device yet."));
+  }
+}
+
+function paintFactActive() {
+  const box = $("#kActive");
+  if (!box) return;
+  box.textContent = "";
+  const parts = [];
+  if (factsView.subject) {
+    const s = ((factsView.facets || {}).subjects || []).find((x) => x.id === factsView.subject);
+    parts.push(["About", s ? factSubjectName(s) : factSubjectLabel(factsView.subject),
+      () => { factsView.subject = ""; }]);
+  }
+  if (factsView.kind) parts.push(["Kind", FACT_KIND_WORDS[factsView.kind], () => { factsView.kind = ""; }]);
+  if (factsView.source) parts.push(["Taught by", kSourceLabel(factsView.source), () => { factsView.source = ""; }]);
+  if (factsView.q) parts.push(["Words", `“${factsView.q}”`, () => {
+    factsView.q = ""; const i = $("#kKnownSearch"); if (i) i.value = "";
+  }]);
+  box.hidden = !parts.length;
+  parts.forEach(([label, value, clear]) => {
+    const tag = el("button", "filtertag");
+    tag.type = "button";
+    tag.appendChild(el("span", "ftlabel", label));
+    tag.appendChild(el("span", null, value));
+    tag.appendChild(el("span", "ftx", "✕"));
+    tag.setAttribute("aria-label", `Remove filter ${label}: ${value}`);
+    tag.addEventListener("click", () => { clear(); loadFacts(true); });
+    box.appendChild(tag);
+  });
+  if (parts.length > 1) {
+    const all = el("button", "btn-tertiary", "Clear all");
+    all.type = "button";
+    all.addEventListener("click", () => {
+      factsView.subject = ""; factsView.kind = ""; factsView.source = ""; factsView.q = "";
+      const i = $("#kKnownSearch"); if (i) i.value = "";
+      loadFacts(true);
+    });
+    box.appendChild(all);
+  }
 }
 
 function paintFacts() {
@@ -6235,6 +6529,9 @@ function paintFacts() {
   if (!host) return;
   host.textContent = "";
   paintFactChips();
+  paintFactSources();
+  paintFactSubjects();
+  paintFactActive();
   const more = $("#kKnownMore");
   if (factsView.error) {
     host.appendChild(el("div", "kempty", factsView.error));
@@ -6242,7 +6539,7 @@ function paintFacts() {
     return;
   }
   const rows = factsView.rows;
-  const filtered = factsView.q || factsView.kind || factsView.source;
+  const filtered = factsView.q || factsView.kind || factsView.source || factsView.subject;
   if (!rows.length) {
     host.appendChild(el("div", "kempty", filtered
       ? "No facts match."
@@ -6302,6 +6599,16 @@ function paintFacts() {
   });
   const more = $("#kKnownMore");
   if (more) more.addEventListener("click", () => loadFacts(false));
+  const subjSel = $("#kSubjectSel");
+  if (subjSel) subjSel.addEventListener("change", () => {
+    factsView.subject = subjSel.value;
+    loadFacts(true);
+  });
+  const find = $("#kSubjectFind");
+  if (find) find.addEventListener("input", () => {
+    factsView.subjectFind = find.value;
+    paintFactSubjects();
+  });
 })();
 
 // The list and its count, drawn from the one payload that carries both.
@@ -8671,6 +8978,9 @@ const actState = {
   end: null,        // epoch seconds; null means "up to now"
   hours: 24,
   cause: "",
+  area: "",         // a room's name, or "-" for the things in none
+  kind: "",         // an episodes subject: lights, doors, people…
+  q: "",            // words in a device's name
   data: null,
   loading: false,
   open: "",         // "entity_id|started" of the row whose history is expanded
@@ -8722,6 +9032,9 @@ async function refreshActivity() {
   const q = new URLSearchParams({ hours: String(actState.hours) });
   if (actState.end) q.set("end", String(Math.round(actState.end)));
   if (actState.cause) q.set("cause", actState.cause);
+  if (actState.area) q.set("area", actState.area);
+  if (actState.kind) q.set("kind", actState.kind);
+  if (actState.q) q.set("q", actState.q);
   try {
     actState.data = await api("api/activity?" + q.toString());
   } catch (e) {
@@ -8753,6 +9066,53 @@ function renderActFilters(counts) {
     sel.appendChild(opt);
   });
   sel.value = actState.cause;
+}
+
+// The room picker and the kind pills, off the window's own facets, which the
+// server counts before those two filters — so a picker never offers only
+// what is already on screen. A room or kind somebody picked stays listed
+// when the window no longer holds it.
+function renderActNarrow(data) {
+  const sel = $("#actArea");
+  if (sel) {
+    const areas = data.areas || [];
+    sel.textContent = "";
+    const all = el("option", null, "Every room");
+    all.value = "";
+    sel.appendChild(all);
+    areas.forEach((a) => {
+      const opt = el("option", null, `${a.label} (${a.count})`);
+      opt.value = a.id;
+      sel.appendChild(opt);
+    });
+    if (actState.area && !areas.some((a) => a.id === actState.area)) {
+      const opt = el("option", null, actState.area === "-" ? "No room" : actState.area);
+      opt.value = actState.area;
+      sel.appendChild(opt);
+    }
+    sel.value = actState.area;
+  }
+  const host = $("#actKinds");
+  if (host) {
+    host.textContent = "";
+    const kinds = data.kinds || [];
+    host.hidden = kinds.length < 2 && !actState.kind;
+    const total = kinds.reduce((a, k) => a + k.count, 0);
+    [{ id: "", label: "Everything", count: total }].concat(kinds).forEach((k) => {
+      const on = actState.kind === k.id;
+      const b = el("button", "pill" + (on ? " active" : ""));
+      b.type = "button";
+      b.appendChild(el("span", null, k.label));
+      b.appendChild(el("span", "pillcount", String(k.count)));
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.addEventListener("click", () => {
+        actState.kind = k.id;
+        actState.open = "";
+        refreshActivity();
+      });
+      host.appendChild(b);
+    });
+  }
 }
 
 // How long an episode covered, in the units a person would say it in.
@@ -8930,12 +9290,18 @@ function renderActivity() {
   }
 
   renderActFilters(data.counts || {});
+  renderActNarrow(data);
   const sections = data.sections || [];
   if (head) {
     renderAwayBand(head, data.away);
     if (sections.length) renderSummary(head);
   }
 
+  if (!sections.length && (actState.area || actState.kind || actState.q)) {
+    list.innerHTML = `<div class="actempty">Nothing matches in this window. `
+      + `Try another room, a longer window, or clear the search.</div>`;
+    return;
+  }
   if (!sections.length) {
     list.innerHTML = `<div class="actempty">Nothing happened in this window.`
       + (data.dropped
@@ -9065,6 +9431,30 @@ async function actOpenRow(key, entityId) {
   if (actState.open === key) renderActivity();
 }
 
+$("#actArea")?.addEventListener("change", (ev) => {
+  actState.area = ev.currentTarget.value;
+  actState.open = "";
+  refreshActivity();
+});
+$("#actHours")?.addEventListener("change", (ev) => {
+  actState.hours = Number(ev.currentTarget.value) || 24;
+  actState.open = "";
+  refreshActivity();
+});
+(function wireActSearch() {
+  const input = $("#actSearch");
+  if (!input) return;
+  let timer = 0;
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      actState.q = input.value.trim();
+      actState.open = "";
+      refreshActivity();
+    }, 300);
+  });
+})();
+
 $("#actCause")?.addEventListener("change", (ev) => {
   actState.cause = ev.currentTarget.value;
   actState.open = "";
@@ -9095,27 +9485,33 @@ $("#actNext").addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------- views
-// Today / Ask / House, and the Guide behind ⚙. The Memory pane reuses the
+// Insights / Ask / Memory, and the Guide behind ⚙. The Memory pane reuses the
 // knowledge dialog's markup verbatim — it is relocated out of the modal at
 // startup rather than duplicated, so every id (and every handler bound to
-// one) keeps working untouched. Today is the pane the panel lands on.
-let currentView = "findings";
-// House's four panes, in the order the segmented control shows them.
-const HOUSE_VIEWS = ["insights", "memory", "housebook", "activity"];
+// one) keeps working untouched. The insight cards are the pane the panel
+// lands on.
+let currentView = "insights";
+// The groups that navigate on the segmented control under the bar, and the
+// panes in each, in the order the control shows them.
+const SEG_GROUPS = {
+  insights: ["insights", "findings", "archive"],
+  memory: ["memory", "activity", "housebook"],
+};
 
-// Which of the three tabs a pane lives under: a tab is a group and the
-// panes in it are the sub-strip under the bar. Read off the markup rather
-// than written down twice — `data-group` on each sub-tab is the one place
-// the grouping is spelled. Today holds one pane, so it has no sub-strip.
+// Which of the three tabs a pane lives under: a tab is a group. Read off the
+// markup rather than written down twice — `data-group` on each sub-tab is
+// the one place the grouping is spelled.
 function groupOf(name) {
   const sub = document.querySelector(`.subtab[data-view="${name}"]`);
   if (sub) return sub.dataset.group;
-  return HOUSE_VIEWS.includes(name) ? "house" : "today";
+  for (const [g, views] of Object.entries(SEG_GROUPS)) {
+    if (views.includes(name)) return g;
+  }
+  return "insights";
 }
-// The pane each group was last on, so pressing Ask after House brings the
+// The pane each group was last on, so pressing Ask after Memory brings the
 // chat back rather than the group's opening pane; pressing the group you
-// are already in goes to that opening pane, which is how you get back to
-// the feed from a card.
+// are already in goes to that opening pane.
 const groupLast = {};
 
 function syncTabs(name) {
@@ -9134,43 +9530,56 @@ function syncTabs(name) {
     b.classList.toggle("active", b.dataset.view === name);
     b.setAttribute("aria-selected", b.dataset.view === name ? "true" : "false");
   });
-  // A strip with one button is a label, not navigation — and House's
-  // navigation is its own segmented control (`#houseSeg`), so the strip
-  // steps aside there too. Ask is the one tab that can still show it.
+  // A strip with one button is a label, not navigation — and the two
+  // groups with more than one pane navigate on their own segmented control.
   const strip = $("#subtabs");
-  const show = shown >= 2 && group !== "house" && group !== "today";
+  const show = shown >= 2 && !SEG_GROUPS[group];
   strip.hidden = !show;
   document.body.classList.toggle("has-subtabs", show);
 }
 
-// The segmented control over House. Shown on its four panes and nowhere
-// else — and not over the sign-in or first-run screens, which share the
-// Reports pane and are not a place to navigate from. On a House pane it is
-// the navigation, so the sub-strip under the bar steps aside.
-function syncHouseSeg(name = currentView) {
-  const seg = $("#houseSeg");
+// The segmented control over the tab you are on. Shown on a group's panes
+// and nowhere else — and not over the sign-in or first-run screens, which
+// are not a place to navigate from.
+function syncSegNav(name = currentView) {
+  const seg = $("#segNav");
   if (!seg) return;
-  const gated = name === "insights" && $("#dash")
-    && $("#dash").classList.contains("hidden");
-  const on = HOUSE_VIEWS.includes(name) && !gated;
+  const group = groupOf(name);
+  const views = SEG_GROUPS[group];
+  const gated = name === "findings" && $("#todaySetup") && !$("#todaySetup").hidden;
+  const on = !!views && !gated;
   seg.hidden = !on;
-  document.body.classList.toggle("house-view", on);
+  seg.dataset.group = group;
+  document.body.classList.toggle("house-view", on && group === "memory");
+  document.body.classList.toggle("seg-view", on);
   if (!on) return;
+  const sel = $("#segNavSel");
+  if (sel) sel.textContent = "";
   seg.querySelectorAll(".segbtn").forEach((b) => {
+    const inGroup = b.dataset.group === group;
+    const gone = b.classList.contains("gone");
+    b.hidden = !inGroup || gone;
     const mine = b.dataset.view === name;
     b.classList.toggle("active", mine);
     b.setAttribute("aria-selected", mine ? "true" : "false");
+    if (inGroup && !gone && sel) {
+      // The label only: the count beside "Needs you" is not part of its name.
+      const opt = el("option", null, (b.childNodes[0] || b).textContent.trim());
+      opt.value = b.dataset.view;
+      sel.appendChild(opt);
+    }
   });
-  const sel = $("#houseSegSel");
   if (sel) sel.value = name;
 }
-
 function switchView(name) {
-  // The To-do, Proposals and Upkeep panes are Today's now: a deep link, a toast or
-  // an older caller that names either lands on the one screen holding both.
+  // The To-do, Proposals and Upkeep panes are Needs you's now: a deep link, a
+  // toast or an older caller that names either lands on the one screen
+  // holding both.
   if (name === "todo" || name === "proposals" || name === "upkeep") name = "findings";
-  // Ideas are a row on Reports now, so a link to the old pane lands there.
+  // Ideas are a row on Insights now, so a link to the old pane lands there.
   if (name === "ideas") name = "insights";
+  // History was a drawer on Today; it is a pane of its own now.
+  if (name === "history") name = "archive";
   if (name === currentView) return;
   if (currentView === "memory" && memState.editing && memState.dirty &&
       !window.confirm("Discard your unsaved memory edits?")) return;
@@ -9181,7 +9590,7 @@ function switchView(name) {
   // — two scrollers stacked is why a swipe sometimes moved the wrong one.
   document.body.classList.toggle("term-open", name === "terminal");
   syncTabs(name);
-  syncHouseSeg(name);
+  syncSegNav(name);
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
@@ -9227,6 +9636,10 @@ function switchView(name) {
     refreshDeepReview();
   }
   if (name === "memory") renderKnowledge();
+  if (name === "archive") {
+    renderHistory();
+    refreshHistory().then(renderHistory);
+  }
   if (name === "housebook") {
     renderUpBook();
     api("api/house_book").catch((e) => ({ fetch_error: e.message }))
@@ -9262,11 +9675,12 @@ document.querySelectorAll(".viewtab").forEach((b) =>
   }));
 document.querySelectorAll(".subtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
-document.querySelectorAll("#houseSeg .segbtn").forEach((b) =>
+document.querySelectorAll("#segNav .segbtn").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
-$("#houseSegSel")?.addEventListener("change", (ev) =>
+$("#segNavSel")?.addEventListener("change", (ev) =>
   switchView(ev.currentTarget.value));
 syncTabs(currentView);
+syncSegNav(currentView);
 
 // Add one by hand. Nothing here is required beyond the sentence: a to-do
 // list that made you pick a severity before it would take a note is a form,
@@ -13283,7 +13697,7 @@ async function runDeepReview(btn) {
       toast(body.error || `Could not start a review (HTTP ${resp.status})`);
     } else {
       reviewState.data = body;
-      toast("Reviewing the house — it lands under Reports in a few minutes");
+      toast("Reviewing the house — it lands under Insights in a few minutes");
     }
   } catch (e) {
     toast(e.message);

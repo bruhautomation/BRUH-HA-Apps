@@ -753,9 +753,16 @@ def _kind_of(row: dict) -> str:
     return "area" if kind == "check" else kind
 
 
+# How many subjects the browser's room-and-device list carries. A house
+# with more than this many things anybody has said something about is
+# searched rather than scrolled.
+SUBJECT_FACET_MAX = 400
+
+
 def browse(*, query: str = "", kind: str = "", source: str = "",
            subject: str = "", sort: str = "newest", offset: int = 0,
            limit: int = 50, names: dict | None = None,
+           subject_areas: dict | None = None,
            now: float | None = None) -> dict:
     """Every live fact, filtered, searched and sorted for a person.
 
@@ -767,7 +774,12 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
     person typing two words wants the rows with both.
 
     ``facets`` counts each kind and source over the rows the OTHER
-    filters leave, so the chips say how many a press would show.
+    filters leave, so the chips say how many a press would show — and
+    ``subjects`` is every room and device with facts under the search,
+    kind and source in force (never the subject filter itself), which is
+    what lets somebody browse what brAIn knows one thing at a time.
+    ``subject_areas`` names the room a device subject is in, so the
+    browser can put a device under its room.
     """
     now = time.time() if now is None else float(now)
     names = names or {}
@@ -801,6 +813,23 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
         if not kind or _kind_of(row) == kind:
             src = str(row.get("source") or "")
             sources[src] = sources.get(src, 0) + 1
+    subject_counts: dict[str, int] = {}
+    for row in live:
+        if not matches_query(row):
+            continue
+        if kind and _kind_of(row) != kind:
+            continue
+        if source and str(row.get("source") or "") != source:
+            continue
+        subj = str(row.get("subject") or "house")
+        subject_counts[subj] = subject_counts.get(subj, 0) + 1
+    areas_of = subject_areas or {}
+    subjects = sorted(
+        ({"id": subj, "name": label(subj) or "",
+          "kind": subject_kind(subj),
+          "area": str(areas_of.get(subj) or ""), "count": n}
+         for subj, n in subject_counts.items()),
+        key=lambda r: (-r["count"], (r["name"] or r["id"]).lower()))[:SUBJECT_FACET_MAX]
     rows = [r for r in base
             if (not kind or _kind_of(r) == kind)
             and (not source or str(r.get("source") or "") == source)]
@@ -834,7 +863,8 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
             "offset": offset, "limit": limit, "sort": sort,
             "facets": {"kinds": kinds,
                        "sources": dict(sorted(sources.items(),
-                                              key=lambda kv: (-kv[1], kv[0])))}}
+                                              key=lambda kv: (-kv[1], kv[0]))),
+                       "subjects": subjects}}
 
 
 def exceptions(entity_id: str, check_id: str, now: float | None = None) -> list[dict]:

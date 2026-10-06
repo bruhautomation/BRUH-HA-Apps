@@ -583,7 +583,7 @@ for (const width of WIDTHS) {
                      "How brAIn's memory works", 'Memory document',
                      'Waiting to be filed', 'File into memory now',
                      'Edit markdown', 'Export', 'Anyone taught it',
-                     'Rules you set', 'Newest first']) {
+                     'Newest first']) {
     if (m.house.includes(cut)) note(`${width}px`, `"${cut}" is back on What it knows`);
   }
   if (m.docWidth > width + 0.5) {
@@ -812,7 +812,7 @@ for (const width of WIDTHS) {
     const hostBox = host.getBoundingClientRect();
     return {
       rows: [...host.querySelectorAll('.kfact')].map((r) => {
-        const del = r.querySelector('.btn.icon');
+        const del = r.querySelector('.factdel');
         const detail = r.querySelector('.kfactdetail');
         const run = r.querySelector('.kfactrun');
         const subj = r.querySelector('.kfactsubj');
@@ -822,7 +822,7 @@ for (const width of WIDTHS) {
           text: (r.querySelector('.kfacttext') || {}).textContent || '',
           meta: (detail || {}).textContent || '',
           metaShown: seen(detail),
-          more: del ? del.textContent.trim() : '',
+          more: del ? del.getAttribute('aria-label') || '' : '',
           subject: subj ? subj.textContent.trim() : '',
           subjectShown: seen(subj),
           hasRun: !!run,
@@ -832,9 +832,9 @@ for (const width of WIDTHS) {
         };
       }),
       more: (host.querySelector('.kmore') || {}).textContent || '',
-      chips: [...document.querySelectorAll('#kKnownKinds .fchip')]
-        .map((c) => c.textContent.trim()),
-      pickers: document.querySelectorAll('#viewMemory select').length,
+      chips: [...document.querySelectorAll('#kKnownKinds .pill')]
+        .map((c) => c.querySelector('span').textContent.trim()),
+      browse: !!document.getElementById('kSubjects') && !!document.getElementById('kSubjectSel'),
       teach: {
         placeholder: (document.getElementById('kAddInput') || {}).placeholder || '',
         send: ((document.querySelector('#kAddForm button') || {}).textContent || '').trim(),
@@ -857,7 +857,7 @@ for (const width of WIDTHS) {
       note(at, `row ${i} shows no subject chip`);
     }
     if (!row.metaShown) note(at, `row ${i}'s detail does not open on a press`);
-    if (row.more !== '⋯') note(at, `row ${i}'s menu button reads "${row.more}"`);
+    if (!/^Delete/.test(row.more)) note(at, `row ${i}'s delete button reads "${row.more}"`);
     if (!/correction|study/i.test(row.meta)) {
       note(at, `row ${i} does not name who taught it: "${row.meta}"`);
     }
@@ -873,7 +873,7 @@ for (const width of WIDTHS) {
     }
     if (touch) {
       if (row.delH < MIN_TARGET || row.delW < MIN_TARGET) {
-        note(at, `row ${i} ⋯ is ${row.delW}x${row.delH}, under ${MIN_TARGET}`);
+        note(at, `row ${i} delete is ${row.delW}x${row.delH}, under ${MIN_TARGET}`);
       }
       if (row.hasRun && row.runH < MIN_TARGET) {
         note(at, `row ${i} run link is ${row.runH}px, under ${MIN_TARGET}`);
@@ -902,16 +902,17 @@ for (const width of WIDTHS) {
   if (f.docWidth > width + 0.5) {
     note(at, `page scrolls sideways (${f.docWidth}px)`);
   }
-  // Rooms · Devices · House and nothing else, no counts, no pickers.
-  const allowed = ['Rooms', 'Devices', 'House'];
-  if (f.chips.some((c) => !allowed.includes(c))) {
+  // All · Rooms · Devices · House · Rules you set, each with its count, and
+  // a way to browse by room and device (a rail, or a select on a phone).
+  const allowed = ['All', 'Rooms', 'Devices', 'House', 'Rules you set'];
+  if (f.chips.some((c) => !allowed.includes(c)) || f.chips[0] !== 'All') {
     note(at, `the chips are ${f.chips.join(' | ')}`);
   }
-  if (f.pickers) note(at, `${f.pickers} select(s) are back on What it knows`);
-  if (f.teach.placeholder !== 'Tell brAIn something…') {
+  if (!f.browse) note(at, 'Knowledge cannot be browsed by room or device');
+  if (f.teach.placeholder !== 'Tell brAIn something about the house…') {
     note(at, `the teach box reads "${f.teach.placeholder}"`);
   }
-  if (f.teach.send !== 'Send') note(at, `the teach box's button reads "${f.teach.send}"`);
+  if (f.teach.send !== 'Teach') note(at, `the teach box's button reads "${f.teach.send}"`);
 
   // Search narrows the list on the server, and a kind chip does too.
   await page.fill('#kKnownSearch', 'porch');
@@ -924,7 +925,7 @@ for (const width of WIDTHS) {
     (n) => document.querySelectorAll('#kKnown .kfact').length === n,
     FACTS.length, { timeout: 5000 })
     .catch(() => note(at, 'clearing the search did not bring every fact back'));
-  const roomChip = await page.$('#kKnownKinds .fchip:has-text("Rooms")');
+  const roomChip = await page.$('#kKnownKinds .pill:has-text("Rooms")');
   if (!roomChip) {
     note(at, 'no Rooms chip for a store holding a room fact');
   } else {
@@ -933,24 +934,18 @@ for (const width of WIDTHS) {
       () => document.querySelectorAll('#kKnown .kfact').length === 1,
       null, { timeout: 5000 })
       .catch(() => note(at, 'the Rooms chip did not narrow to the one room fact'));
-    // The chips are rebuilt on every paint; pressing the one that is on
-    // turns it off, which is how you get back to everything.
-    await page.click('#kKnownKinds .fchip:has-text("Rooms")');
+    // The chips are rebuilt on every paint; All is how you get back to
+    // everything.
+    await page.click('#kKnownKinds .pill:has-text("All")');
     await page.waitForFunction(
       (n) => document.querySelectorAll('#kKnown .kfact').length === n,
       FACTS.length, { timeout: 5000 })
-      .catch(() => note(at, 'pressing Rooms again did not bring every fact back'));
+      .catch(() => note(at, 'pressing All did not bring every fact back'));
   }
 
-  // ⋯ › Delete forgets (after one confirm), the list repaints from the
-  // answer, and the count follows.
-  await page.click('#kKnown .kfact .btn.icon');
-  const items = await page.evaluate(() => [...document.querySelectorAll(
-    '#chipPop .cardmenuitem b')].map((b) => b.textContent));
-  if (JSON.stringify(items) !== JSON.stringify(['Delete'])) {
-    note(at, `a fact's ⋯ holds ${JSON.stringify(items)}, not Delete`);
-  }
-  await page.click('#chipPop .cardmenuitem');
+  // The bin on the row forgets (after one confirm), the list repaints from
+  // the answer, and the count follows.
+  await page.click('#kKnown .kfact .factdel');
   await page.waitForFunction(
     (n) => document.querySelectorAll('#kKnown .kfact').length === n,
     FACTS.length - 1, { timeout: 5000 })
@@ -980,7 +975,7 @@ for (const width of WIDTHS) {
     { timeout: 5000 }).catch(() => note(at, 'Send did not teach it anything'));
 
   console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(4)}px  `
-    + `facts: ${f.rows.length} rows with provenance, ⋯ › Delete repaints, Send teaches`);
+    + `facts: ${f.rows.length} rows with provenance, Delete repaints, Teach teaches`);
   await context.close();
 }
 
@@ -1378,7 +1373,7 @@ for (const width of WIDTHS) {
     .catch(() => note(at, 'the deep review section never rendered'));
   const onReports = await page.evaluate(
     () => !!document.querySelector('#viewInsights #kReview'));
-  if (!onReports) note(at, 'the deep review is not a row on House › Reports');
+  if (!onReports) note(at, 'the deep review is not a row under the insight cards');
   const r = await page.evaluate(() => {
     const box = document.getElementById('kReview');
     const btn = box && box.querySelector('.kreviewrun .btn');
@@ -1420,7 +1415,7 @@ for (const width of WIDTHS) {
   if (!/Running/.test(after.btn) || !after.disabled) {
     note(at, 'a running review does not say so on its own button');
   }
-  if (!/lands under Reports/.test(after.toast)) note(at, `the press said "${after.toast}"`);
+  if (!/lands under Insights/.test(after.toast)) note(at, `the press said "${after.toast}"`);
   console.log(`${failures.length ? 'ok? ' : 'ok  '}deep review ${String(width).padStart(4)}px`);
   await context.close();
 }

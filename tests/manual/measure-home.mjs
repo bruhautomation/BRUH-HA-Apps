@@ -42,7 +42,7 @@ const MIN_TARGET = 44;
 const CUT_IDS = ['findFilters', 'findRunChecks', 'findScore', 'findMuted', 'findFoot',
                  'viewTodo', 'viewProposals', 'todoBadge', 'propBadge'];
 const KEPT_IDS = ['viewFindings', 'findList', 'findBadge', 'todayMore', 'todoList',
-                  'todoAdd', 'todoText', 'todayHistory', 'todayStatus'];
+                  'todoAdd', 'todoText', 'todayStatus'];
 
 // What each case in the fixture must lead with, and what it may never offer.
 const ROWS = {

@@ -24,14 +24,14 @@ one lays out as the shape that width is supposed to have.
 node tests/manual/measure-topbar.mjs
 ```
 
-**The bar has three shapes and no fourth.** At ≥850px it is one 56px row.
-From 641 to 849px it is the two-row bar — status and actions on top, the
+**The bar has three shapes and no fourth.** At ≥870px it is one 56px row.
+From 641 to 869px it is the two-row bar — status and actions on top, the
 three tabs on a full-width strip beneath, each name under its icon. At
 ≤640px the header is one 56px row holding the wordmark, the status dot and
 ⚙, and the tabs are a bar fixed to the bottom of the screen. No width gets a
 row of bare glyphs: nothing in the bar may shrink, so a fit is binary and an
 overflow is something this can see. Take the breakpoint from what it
-reports (681px running, 832 paused, 844 on a failed login).
+reports (681px running, 832 paused, 859 on a failed login).
 
 It fails on a wrong shape, on any overflow, on a missing tab label, and on any
 target under 44px (chips 40px). Set `TOPBAR_SHOT_DIR=/some/dir` to also write

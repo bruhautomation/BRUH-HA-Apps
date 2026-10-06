@@ -351,10 +351,10 @@ for (const width of [390, 768, 1200]) {
   }
   await page2.evaluate(() => {
     document.getElementById('chatInput').value = '';
-    document.querySelector('.viewtab[data-group="house"]').click();
+    document.querySelector('.viewtab[data-group="insights"]').click();
   });
   await page2.evaluate(() => {
-    const b = document.querySelector('#houseSeg .segbtn[data-view="insights"]');
+    const b = document.querySelector('#segNav .segbtn[data-view="insights"]');
     if (b) b.click();
   });
   const dueAsk = await ask('due');

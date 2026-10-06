@@ -450,3 +450,37 @@ def chat_events():
                  "so `brain undo` puts it back if you'd rather it didn't fade."})
     add({"type": "result", "duration_ms": 24100, "turns": 6})
     return ev
+
+
+# ---- Knowledge and History (the Memory and Insights › History panes) ----
+AREAS = {"kitchen": "Kitchen", "lounge": "Lounge", "loft": "Loft",
+         "utility": "Utility room", "hall": "Hallway"}
+NAMES = {
+    "light.kitchen_ceiling": {"name": "Kitchen ceiling", "area": "Kitchen"},
+    "sensor.fridge_temperature": {"name": "Fridge temperature", "area": "Kitchen"},
+    "switch.dehumidifier": {"name": "Dehumidifier", "area": "Utility room"},
+    "sensor.loft_temperature": {"name": "Loft temperature", "area": "Loft"},
+    "binary_sensor.back_door": {"name": "Back door", "area": "Hallway"},
+    "light.hallway": {"name": "Hallway light", "area": "Hallway"},
+    "media_player.lounge_tv": {"name": "Lounge TV", "area": "Lounge"},
+}
+FACTS = [
+    ("The kitchen ceiling light is on a smart switch, not smart bulbs.", "light.kitchen_ceiling"),
+    ("The fridge sits at 3–4 °C; above 6 °C for an hour means the door was left open.", "sensor.fridge_temperature"),
+    ("The dehumidifier runs on a humidity trigger since July, not a timer.", "switch.dehumidifier"),
+    ("The loft is unheated and drops to 8 °C on winter nights; that is normal.", "sensor.loft_temperature"),
+    ("The back door sensor runs on a CR2032 that lasts about three months.", "binary_sensor.back_door"),
+    ("The hallway light comes on at 15% after 23:00 for the night run.", "light.hallway"),
+    ("The lounge TV is usually off by 23:30 on weeknights.", "media_player.lounge_tv"),
+    ("Nobody uses the kitchen before 06:30 on weekdays.", "area:kitchen"),
+    ("The utility room gets damp when laundry dries indoors.", "area:utility"),
+    ("Bins go out on Thursday evenings.", "house"),
+    ("The house is empty most weekdays between 09:00 and 16:30.", "house"),
+]
+SETTLED = [
+    ("demo-1", "Automation 'Notification - Vacuum Live Activity' failed the last time it ran",
+     "fixed", ""),
+    ("demo-2", "Some devices are not assigned to an area", "fixed", ""),
+    ("demo-3", "Loft Mini is a name someone set by hand", "ignored", "We moved it on purpose"),
+    ("demo-4", "Lounge TV draws 14 W in standby", "ignored", ""),
+]

@@ -14240,6 +14240,11 @@ async def h_activity(request: web.Request) -> web.Response:
         # count of "somebody put things back 4×" is not something anybody
         # can act on, where *this* row being the one they undid is.
         episodes.mark_overrides(grouped, mined.get("overrides") or [])
+        # When the house was empty is read over the whole window, before
+        # any room or name narrows it: a span is about people, and a
+        # filter on the lounge must not invent one.
+        away = episodes.away_spans(grouped, now)
+        areas, kinds = _activity_narrow(grouped, request.query)
         return {
             "available": True,
             "error": "",
@@ -14252,7 +14257,12 @@ async def h_activity(request: web.Request) -> web.Response:
             "sections": episodes.sections(grouped),
             # When the house was empty — the one thing here Home Assistant
             # holds every fact for and has never said.
-            "away": episodes.away_spans(grouped, now),
+            "away": away,
+            # Every room and kind this window holds something in, with how
+            # many, counted before the room and search filters so a picker
+            # never offers only what is already on screen.
+            "areas": areas,
+            "kinds": kinds,
             "counts": mined["counts"],
             "causes": list(actions.CAUSES),
             "capped": mined.get("capped", False),
@@ -14264,6 +14274,53 @@ async def h_activity(request: web.Request) -> web.Response:
         }
 
     return web.json_response(await asyncio.to_thread(shape))
+
+
+def _activity_narrow(grouped: dict, query) -> tuple[list[dict], list[dict]]:
+    """Stamp each episode with its room and narrow the window to a room, a
+    kind of thing and words, in place — before `episodes.sections` caps each
+    block, or a filter would search only the rows that survived the cap.
+
+    The room is off the last checks pass's registry (`_NAMES`), never a
+    fetch of its own; an entity nobody has put in a room is in none, and the
+    filter for "No room" is how somebody finds what needs one.
+    Returns the room and kind facets, counted before those two filters.
+    """
+    area = str(query.get("area") or "").strip()[:120]
+    kind = str(query.get("kind") or "").strip()[:40]
+    words = [w for w in str(query.get("q") or "").lower().split() if w][:8]
+    eps = grouped.get("episodes") or []
+    for ep in eps:
+        row = _NAMES.get(ep.get("entity_id") or "") or {}
+        ep["area"] = str(row.get("area") or "") if isinstance(row, dict) else ""
+    area_counts: dict[str, int] = {}
+    kind_counts: dict[str, int] = {}
+    for ep in eps:
+        key = ep["area"] or "-"
+        area_counts[key] = area_counts.get(key, 0) + 1
+        kind_counts[ep.get("subject") or ""] = kind_counts.get(ep.get("subject") or "", 0) + 1
+
+    def keep(ep: dict) -> bool:
+        if area and (ep["area"] or "-") != area:
+            return False
+        if kind and ep.get("subject") != kind:
+            return False
+        if words:
+            hay = " ".join([str(ep.get("name") or ""), str(ep.get("entity_id") or ""),
+                            ep["area"]]).lower()
+            if not all(w in hay for w in words):
+                return False
+        return True
+
+    if area or kind or words:
+        grouped["episodes"] = [e for e in eps if keep(e)]
+    areas = [{"id": k, "label": "No room" if k == "-" else k, "count": n}
+             for k, n in sorted(area_counts.items(),
+                                key=lambda kv: (kv[0] == "-", kv[0].lower()))]
+    kinds = [{"id": spec["id"], "label": spec["label"],
+              "count": kind_counts[spec["id"]]}
+             for spec in episodes.SUBJECTS if kind_counts.get(spec["id"])]
+    return areas, kinds
 
 
 # One paragraph per window, kept against the window it is about. Pressing
@@ -15165,6 +15222,19 @@ def _history_payload(now: float | None = None) -> dict:
 
 async def h_history(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_history_payload))
+
+
+async def h_history_clear(request: web.Request) -> web.Response:
+    """Delete rows from History. A record somebody cannot prune is a pile;
+    deleting changes no decision (`today.clear`), so it needs no undo."""
+    body = await _json_body(request)
+    items = (body or {}).get("items")
+    if not isinstance(items, list) or not items or len(items) > 500:
+        raise web.HTTPBadRequest(text="items must be a list of 1–500 rows")
+    n = await asyncio.to_thread(today_mod.clear, items)
+    payload = await asyncio.to_thread(_history_payload)
+    payload["deleted"] = n
+    return web.json_response(payload)
 
 
 def _today_payload() -> dict:
@@ -19147,7 +19217,10 @@ def _facts_browse_payload(q) -> dict:
         subject=str(q.get("subject") or "")[:255],
         sort=str(q.get("sort") or "newest")[:16],
         offset=num("offset", 0), limit=num("limit", 50),
-        names=_fact_subject_names())
+        names=_fact_subject_names(),
+        subject_areas={eid: str(row.get("area") or "")
+                       for eid, row in _NAMES.items()
+                       if isinstance(row, dict) and row.get("area")})
     known = run_sources.lookup([r.get("run_id") for r in got["facts"]
                                 if r.get("run_id")])
     for row in got["facts"]:
@@ -20893,6 +20966,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/case/{id}/wake", h_case_wake)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
     app.router.add_get("/api/history", h_history)
+    app.router.add_post("/api/history/clear", h_history_clear)
     app.router.add_get("/api/today", h_today)
     app.router.add_post("/api/today/hide", h_today_hide)
     app.router.add_post("/api/today/restore", h_today_restore)

@@ -51,7 +51,11 @@ HOWS = ("snoozed", "ignored", "listed")
 # everywhere else (`cases.SNOOZE_BY_STAKES["low"]`).
 SNOOZE_S = 7 * 86400
 MAX_HIDDEN = 200
+# Deleted History rows remembered, oldest forgotten first. Forgetting one
+# costs nothing worse than an old row reappearing.
+MAX_CLEARED = 2000
 TITLE_MAX = 160
+CLEARED_RE = re.compile(r"^(snoozed|ignored|done|aside)\|[^\n]{1,200}$")
 
 FILTERS = ("snoozed", "ignored", "done", "aside")
 FILTER_LABELS = {
@@ -88,11 +92,66 @@ def _read() -> dict:
     return out
 
 
-def _write(rows: dict) -> None:
+def _read_cleared() -> dict:
+    """`{row id: stamp}` — the History rows somebody deleted, and how new
+    the newest thing in that row was when they did."""
+    try:
+        data = json.loads(HIDDEN_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    rows = data.get("cleared") if isinstance(data, dict) else None
+    if not isinstance(rows, dict):
+        return {}
+    out = {}
+    for key, at in rows.items():
+        if not CLEARED_RE.match(str(key)):
+            continue
+        try:
+            out[str(key)] = int(at)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _write(rows: dict, cleared: dict | None = None) -> None:
     if len(rows) > MAX_HIDDEN:
         rows = dict(sorted(rows.items(), key=lambda kv: kv[1]["at"])[-MAX_HIDDEN:])
+    cleared = _read_cleared() if cleared is None else cleared
+    if len(cleared) > MAX_CLEARED:
+        cleared = dict(sorted(cleared.items(), key=lambda kv: kv[1])[-MAX_CLEARED:])
     HIDDEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write.write_json(HIDDEN_FILE, {"hidden": rows})
+    atomic_write.write_json(HIDDEN_FILE, {"hidden": rows, "cleared": cleared})
+
+
+def clear(items: list) -> int:
+    """Delete History rows: `[{"id": "<filter>|<key>", "at": stamp}]`.
+
+    Deleting a row takes it off the record and changes nothing else — an
+    ignored finding stays settled, a finished chore stays finished — so it
+    is never a way back into the queue. The stamp is what keeps it gone:
+    the row comes back only when something NEWER lands under the same
+    title (the same problem ignored again next month is a new answer, and
+    one somebody may want to see). Snoozed rows are not deletable; they
+    come back on their own date whatever this list says. Returns how many
+    were recorded.
+    """
+    cleared = _read_cleared()
+    n = 0
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        rid = str(item.get("id") or "")
+        if not CLEARED_RE.match(rid) or rid.startswith("snoozed|"):
+            continue
+        try:
+            at = int(item.get("at") or 0)
+        except (TypeError, ValueError):
+            continue
+        cleared[rid] = max(at, cleared.get(rid, 0))
+        n += 1
+    if n:
+        _write(_read(), cleared)
+    return n
 
 
 def hidden(now: float | None = None) -> dict:
@@ -186,6 +245,7 @@ def _press(label: str, route: str, body: dict | None = None,
 def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
             snoozed_cases: list[dict], todo_done: list[dict],
             tidy_batches: list[dict], hidden_rows: dict | None = None,
+            cleared: dict | None = None,
             now: float | None = None) -> dict:
     """The drawer's four filters, each a list of grouped one-line rows.
 
@@ -196,6 +256,7 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
     this module's own hidden cards.
     """
     now = time.time() if now is None else now
+    cleared = _read_cleared() if cleared is None else cleared
     raw: dict[str, list[dict]] = {f: [] for f in FILTERS}
 
     for case in snoozed_cases or []:
@@ -297,7 +358,14 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
                 g["since"] = row["at"]
             if row["at"] > g["at"]:
                 g["at"], g["meta"] = row["at"], row["meta"]
-        rows = sorted(groups.values(), key=lambda g: g["at"], reverse=True)
+        rows = []
+        for key, g in groups.items():
+            g["id"] = f"{name}|{key}"[:210]
+            if g["id"] in cleared and cleared[g["id"]] >= g["at"]:
+                continue
+            g["deletable"] = name != "snoozed"
+            rows.append(g)
+        rows.sort(key=lambda g: g["at"], reverse=True)
         for g in rows:
             if g["count"] > 1:
                 g["meta"] = (f"{g['count']} times since {_day(g['since'])}"
@@ -313,5 +381,5 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
 
 
 __all__ = ["FILTERS", "FILTER_LABELS", "HIDDEN_FILE", "KEY_RE", "SNOOZE_S",
-           "hidden", "hide", "history", "is_hidden", "restore", "tidy_key",
+           "clear", "hidden", "hide", "history", "is_hidden", "restore", "tidy_key",
            "update_key"]

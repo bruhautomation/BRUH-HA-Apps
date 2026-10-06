@@ -74,9 +74,12 @@ log_path = os.environ.get("FAKE_CLAUDE_LOG")
 if log_path:
     # One write per invocation: the pool pre-warms a spare in the background,
     # so two fake CLIs can append at once, and three writes interleave with
-    # a reader into a half-written JSON line.
-    with open(log_path, "a") as fh:
-        fh.write(json.dumps(argv) + "\n"
+    # a reader into a half-written JSON line. And one SYSCALL, not one
+    # buffered write: argv carries the system prompt, so a line runs past a
+    # text file's 8 KB buffer and went out in pieces a reader could catch.
+    _fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.write(_fd, (json.dumps(argv) + "\n"
                  + "ENV BRAIN_DENIED_SERVICES="
                  + os.environ.get("BRAIN_DENIED_SERVICES", "") + "\n"
                  + "ENV BRAIN_EXPOSED_ONLY="
@@ -86,7 +89,10 @@ if log_path:
                  + "ENV CLAUDE_CODE_DISABLE_AUTO_MEMORY="
                  + os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "") + "\n"
                  + "ENV CLAUDE_CODE_DISABLE_ADVISOR_TOOL="
-                 + os.environ.get("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "") + "\n")
+                 + os.environ.get("CLAUDE_CODE_DISABLE_ADVISOR_TOOL", "") + "\n"
+                 ).encode())
+    finally:
+        os.close(_fd)
 
 mode = os.environ.get("FAKE_MODE", "ok")
 

@@ -309,7 +309,7 @@ class TestPanelBranding(unittest.TestCase):
     def test_every_view_tab_has_a_pane(self):
         # Named, not counted: a count says nothing about whether the tab
         # added last kept its label.
-        for view in ("insights", "findings", "activity", "housebook",
+        for view in ("insights", "findings", "archive", "activity", "housebook",
                      "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
@@ -321,9 +321,10 @@ class TestPanelBranding(unittest.TestCase):
         for gone in ("todo", "proposals", "upkeep"):
             self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
             self.assertNotIn(f'data-view="{gone}"', self.html)
-        # Three tabs, and Today has no sub-strip of its own.
+        # Three tabs: what brAIn has to tell you, the conversation, and what
+        # it holds about the house.
         tabs = re.findall(r'class="viewtab[^"]*"[^>]*data-group="(\w+)"', self.html)
-        self.assertEqual(tabs, ["today", "ask", "house"])
+        self.assertEqual(tabs, ["insights", "ask", "memory"])
 
     def test_terminal_frame_is_lazy_and_points_at_the_proxy(self):
         self.assertIn('id="termFrame"', self.html)
@@ -2801,13 +2802,14 @@ class TestKnowledgeTab(unittest.TestCase):
         moved. `data-view` did not: every id and handler under it is the
         memory pane's, and renaming that would be a rename of the wiring to
         match a label."""
-        # The pane is a sub-tab under House now, labelled by its visible text
-        # rather than a tooltip; its `data-view` is still the memory pane's.
+        # The pane is called Knowledge on the Memory tab's segmented
+        # control; its `data-view` is still the memory pane's.
         self.assertRegex(self.html,
                          r'<button class="subtab" data-view="memory"[^>]*>Knowledge</button>')
-        self.assertIn('data-view="memory"', self.html)
-        self.assertNotIn("<span>Memory</span>", self.html)
-        self.assertNotIn(">Memory</button>", self.html)
+        self.assertRegex(self.html,
+                         r'<button type="button" class="segbtn" data-view="memory"[^>]*>Knowledge</button>')
+        self.assertRegex(self.html,
+                         r'class="viewtab[^"]*" data-view="memory" data-group="memory"')
 
     def test_the_panel_and_the_server_name_the_same_seven_stores(self):
         """A store the panel does not name is a measurement nobody can ask

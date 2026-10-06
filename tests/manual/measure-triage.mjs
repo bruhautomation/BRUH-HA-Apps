@@ -107,17 +107,14 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     if (!hit || !ok(hit.body)) note(where, `no press matched ${re} (${JSON.stringify(hit)})`);
   }
 
-  // Set aside by brAIn: in History, with Restore.
-  await page.evaluate(() => {
-    const d = document.getElementById('todayHistory');
-    d.scrollIntoView();
-    d.querySelector('summary').click();
-  });
+  // Set aside by brAIn: in Insights › History, with Restore (and Delete,
+  // which clears the record and changes no decision).
+  await page.evaluate(() => switchView('archive'));
   await page.waitForSelector('#histFilters button[data-filter="aside"]');
   await page.evaluate(() => document.querySelector('#histFilters button[data-filter="aside"]').click());
   const aside = await page.evaluate(() => [...document.querySelectorAll('#histList .histrow')]
     .map((r) => ({ title: r.querySelector('.histtitle').textContent,
-                   presses: [...r.querySelectorAll('button')].map((b) => b.textContent.trim()) })));
+                   presses: [...r.querySelectorAll('button:not(.histdel)')].map((b) => b.textContent.trim()) })));
   if (aside.length !== 1 || aside[0].presses.join('|') !== 'Restore') {
     note(where, `Set aside by brAIn reads ${JSON.stringify(aside)}`);
   } else {
