@@ -247,7 +247,7 @@ under the bar at all.
 
 | Tab | What's there |
 | --- | --- |
-| **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **Your list**. Every card leads with one press (**Plan**, **Apply**, **Add to list**, **Yes** or **Done**) beside **Snooze** and **Ignore**. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
+| **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **Your list**. Every card leads with one press (**Plan**, **Apply**, **Add to list**, **Yes** or **Done**) beside **Snooze** and **Ignore**; a problem also has **Check again** and **Dismiss** for a card that is old or no longer true. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **Memory** | What brAIn holds about the house. **Knowledge** is a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
 
@@ -713,10 +713,12 @@ it to sleep: brAIn asks something else meanwhile and asks again later.
 Snooze and Ignore are on every answerable card — one is "not now" and the other
 is "you have this wrong", and only the second teaches: the reason goes into
 memory and into what every future run knows about your house, and on a check's
-row it tells that rule to stop making the same mistake about that entity. The
-rare presses — **Done** (I've already fixed it), **Recheck**, **Ask** (talk it
-through) — sit behind the **⋯**, at most three, because each is right for one
-card in twenty. Nothing was removed underneath: the stores are the same four
+row it tells that rule to stop making the same mistake about that entity. A
+problem also carries **Check again** (on a row a house check raised) and
+**Dismiss**, because the commonest card is one that is old or no longer true:
+Check again asks the check whether it still sees it, and Dismiss clears the card
+without recording anything. The rare presses — **Done** (I've already fixed it)
+and **Ask** (talk it through) — sit behind the **⋯**. Nothing was removed underneath: the stores are the same four
 stores, the settled ledger is the same ledger, and every key you have ever
 answered is still remembered.
 
@@ -821,7 +823,7 @@ The presses are the ones above; this is what each does in more detail.
 - **Done** (under **⋯**) — you handled it yourself. brAIn remembers that you did,
   and there is an optional box for **how** ("replaced the CR2032 — it's a 3-monthly
   job on that one"), which goes into memory beside the fact.
-- **Recheck** (under **⋯**) — run the one house check that filed this, right now.
+- **Check again** — run the one house check that filed this, right now.
   The only press on a finding that says nothing about your house: a check reads a
   single instant, so it can report something that was true while a hub rebooted or
   a printer was hot and has since passed. Rather than making you claim you fixed it
@@ -831,6 +833,12 @@ The presses are the ones above; this is what each does in more detail.
   and the card keeps a **confirmed just now** mark. If the check could not look
   this time, nothing changes and it says why: "I could not look" and "it went away"
   are different answers. It appears only on findings a house check raised.
+- **Dismiss** — it's old or no longer relevant. The card leaves the list and
+  nothing is recorded: no memory line, no rule, nothing brAIn learns from. That
+  is the difference from **Ignore** (never raise this again) and **Done** (I
+  fixed it): a card about something that has since passed is neither right nor
+  wrong. If the problem is still real, the next look that sees it puts it back.
+  The toast's **Undo** restores the card.
 - **Snooze** — not now. Not a decision: the finding stays exactly as open as it
   was and simply stops asking, and it waits under History › **Snoozed** with the
   date it comes back. It teaches the analyst nothing, which is the whole

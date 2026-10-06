@@ -29,6 +29,11 @@ from test_cases import StoresCase  # noqa: E402
 
 NO = {"wrong", "no", "decline", "drop", "cancel"}
 
+# A problem's row after its primary: *Check again* on a check's row,
+# *Dismiss*, then *Snooze · Ignore*.
+TAIL = ["dismiss", "not_now", "wrong"]
+CHECK_TAIL = ["recheck"] + TAIL
+
 
 def case(**over) -> dict:
     base = {
@@ -117,37 +122,53 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
                 self.assertNotIn("not_now", verbs, name)
                 continue
             self.assertIn("not_now", verbs, name)
-            # Second, after the one primary — except on a question, where
-            # Yes and No are the answer and Snooze follows them.
-            self.assertEqual(verbs.index("not_now"), 2 if name == "question" else 1,
-                             name)
+            # Second to last, just before Ignore — except on a question,
+            # where Yes and No are the answer and Snooze follows them.
+            if name == "question":
+                self.assertEqual(verbs.index("not_now"), 2, name)
+            else:
+                self.assertEqual(verbs[-2:], ["not_now", verbs[-1]], name)
             dismiss = [a for a in got if a["verb"] == "not_now"][0]
             self.assertEqual(dismiss["label"], "Snooze")
             self.assertEqual(dismiss["request"], "snooze")
             self.assertFalse(dismiss["note"], "a snooze asks for no reason")
 
     def test_every_problem_takes_the_same_row_in_the_same_order(self):
-        """One primary, then Snooze · Ignore — the same words in the same
-        places on a battery, a quiet device, a stuck sensor and a Resident's
-        case, so a row of buttons can be read without reading the words.
-        The primary is Plan where brAIn could act and Add to list where a
-        person's hands are needed."""
-        tail = [("not_now", "Snooze"), ("wrong", "Ignore")]
-        for name in ("battery", "unplugged", "stuck", "hands", "automation",
-                     "fix_failed"):
+        """One primary, then Check again (a check's row), Dismiss, Snooze ·
+        Ignore — the same words in the same places on a battery, a quiet
+        device, a stuck sensor and a Resident's case, so a row of buttons
+        can be read without reading the words. The primary is Plan where
+        brAIn could act and Add to list where a person's hands are
+        needed. "The dismiss and check again buttons are useful": an old
+        card that is no longer true is the commonest card there is."""
+        tail = [("dismiss", "Dismiss"), ("not_now", "Snooze"), ("wrong", "Ignore")]
+        check = [("recheck", "Check again")] + tail
+        for name in ("battery", "unplugged", "stuck", "automation"):
+            got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
+            self.assertEqual(got, [("todo", "Add to list")] + check, name)
+        for name in ("hands", "fix_failed"):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
             self.assertEqual(got, [("todo", "Add to list")] + tail, name)
-        for shape in (SHAPES["generic"],
-                      case(source="check:auto.dead_ref", fixable=True)):
-            got = [(a["verb"], a["label"]) for a in answers.answers(shape)]
-            self.assertEqual(got, [("fix", "Plan")] + tail)
+        got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES["generic"])]
+        self.assertEqual(got, [("fix", "Plan")] + tail)
+        got = [(a["verb"], a["label"]) for a in answers.answers(
+            case(source="check:auto.dead_ref", fixable=True))]
+        self.assertEqual(got, [("fix", "Plan")] + check)
+
+    def test_dismiss_clears_the_row_and_records_nothing(self):
+        got = [a for a in answers.answers(SHAPES["battery"])
+               if a["verb"] == "dismiss"][0]
+        self.assertEqual((got["method"], got["route"]), ("DELETE", "/api/finding/1"))
+        self.assertFalse(got["note"], "a dismiss asks for no reason")
+        self.assertIsNone(got["request"], "Home Assistant carries no Dismiss")
 
     def test_every_label_is_a_vocabulary_word(self):
         """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
         button's label is one of these words and nothing else — Yes and No
         being the answer to a question rather than a verb."""
         vocab = {"Apply", "Plan", "Add to list", "Snooze", "Ignore", "Done",
-                 "Restore", "Undo", "Ask", "Send", "Recheck", "Run", "Save",
+                 "Restore", "Undo", "Ask", "Send", "Recheck", "Check again",
+                 "Dismiss", "Run", "Save",
                  "Share", "Delete", "Yes", "No"}
         for name, shape in SHAPES.items():
             got = answers.answers(shape)
@@ -177,7 +198,7 @@ class TestTheButtonsThatFit(unittest.TestCase):
 
     def test_a_battery_leads_with_the_to_do_list_and_never_a_plan_run(self):
         got = answers.answers(SHAPES["battery"])
-        self.assertEqual([a["verb"] for a in got], ["todo", "not_now", "wrong"])
+        self.assertEqual([a["verb"] for a in got], ["todo"] + CHECK_TAIL)
         self.assertTrue(got[0]["primary"])
         self.assertNotIn("fix", self.verbs(SHAPES["battery"]))
         # ...even when the row claims brAIn could act: a battery is hands
@@ -186,16 +207,14 @@ class TestTheButtonsThatFit(unittest.TestCase):
                                                 fixable=True)))
 
     def test_hands_are_never_led_by_a_run(self):
-        self.assertEqual(self.verbs(SHAPES["hands"]), ["todo", "not_now", "wrong"])
-        self.assertEqual(self.verbs(SHAPES["generic"]),
-                         ["fix", "not_now", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["hands"]), ["todo"] + TAIL)
+        self.assertEqual(self.verbs(SHAPES["generic"]), ["fix"] + TAIL)
         # An automation brAIn could change leads with the plan; one it
         # could not leads with the list.
         self.assertEqual(self.verbs(case(source="check:auto.dead_ref",
                                          fixable=True)),
-                         ["fix", "not_now", "wrong"])
-        self.assertEqual(self.verbs(SHAPES["automation"]),
-                         ["todo", "not_now", "wrong"])
+                         ["fix"] + CHECK_TAIL)
+        self.assertEqual(self.verbs(SHAPES["automation"]), ["todo"] + CHECK_TAIL)
 
     def test_the_situation_decides_the_reason_and_never_the_buttons(self):
         """A quiet device's "Not a problem" opens with "off on purpose"
@@ -211,9 +230,10 @@ class TestTheButtonsThatFit(unittest.TestCase):
         self.assertIn("on purpose", quiet["prefill"])
         self.assertIn("normal for this sensor", stuck["prefill"])
         self.assertEqual(plain["prefill"], "")
-        # "It's back" is Check again, behind the ⋯ now — the situation
-        # no longer puts a recheck on the row.
-        self.assertNotIn("recheck", self.verbs(SHAPES["unplugged"]))
+        # "It's back" is Check again, on every check's row whatever the
+        # situation — the situation decides the reason, not the buttons.
+        self.assertIn("recheck", self.verbs(SHAPES["unplugged"]))
+        self.assertIn("recheck", self.verbs(SHAPES["battery"]))
 
     def test_a_question_is_yes_or_no_and_can_be_put_off(self):
         got = answers.answers(SHAPES["question"])
@@ -224,10 +244,10 @@ class TestTheButtonsThatFit(unittest.TestCase):
         self.assertTrue(got[1]["route"].endswith("/wrong"))
 
     def test_a_plan_offers_apply_only_where_it_can_fix(self):
-        self.assertEqual(self.verbs(SHAPES["planned"]), ["apply", "not_now", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["planned"]), ["apply"] + CHECK_TAIL)
         # A plan brAIn will not carry out is a pair of hands.
         refused = case(finding_status="planned", plan={"can_fix": False})
-        self.assertEqual(self.verbs(refused), ["todo", "not_now", "wrong"])
+        self.assertEqual(self.verbs(refused), ["todo"] + CHECK_TAIL)
         # A plan written before plans were operations is out of date, and
         # the remedy is to plan again — never an Apply over nothing.
         legacy = case(finding_status="planned", fixable=True, plan={
@@ -249,7 +269,7 @@ class TestTheButtonsThatFit(unittest.TestCase):
         self.assertEqual(self.verbs(SHAPES["watching"]), ["elevate", "wrong"])
         # A chore check leads with Done — the work is minutes — and the
         # list is one press further away.
-        self.assertEqual(self.verbs(SHAPES["chore_check"]), ["done", "not_now", "wrong"])
+        self.assertEqual(self.verbs(SHAPES["chore_check"]), ["done"] + CHECK_TAIL)
         got = answers.answers(SHAPES["chore_check"])
         self.assertEqual(got[0]["label"], "Done")
 
@@ -269,7 +289,8 @@ class TestWhatGoesBehindTheDots(unittest.TestCase):
                          [("discuss", "Ask"), ("done", "Done")])
         quiet = SHAPES["unplugged"]
         got = answers.more(quiet, answers.answers(quiet), [])
-        self.assertEqual([m["label"] for m in got], ["Ask", "Recheck", "Done"])
+        # Check again is on the row now, so the ⋯ does not offer it twice.
+        self.assertEqual([m["label"] for m in got], ["Ask", "Done"])
         # A suggestion's week-long trial is the one verb read off the
         # overflow, and it is called Run.
         opp = SHAPES["opportunity"]
@@ -349,7 +370,7 @@ class TestTheRealRowRoundTrip(StoresCase):
             payload = server._cases_payload()
         kase = [c for c in payload["cases"] if c["id"] == f"f:{row['ts']}"][0]
         self.assertEqual([a["verb"] for a in kase["answers"]],
-                         ["todo", "not_now", "wrong"])
+                         ["todo"] + CHECK_TAIL)
         self.assertIn("done", [m["verb"] for m in kase["more"]])
         self.assertLessEqual(len(kase["more"]), answers.MAX_MORE)
         # Today's card: one status chip, and whether "Ignore all like this"

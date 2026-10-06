@@ -1401,6 +1401,26 @@ class TestFindingRoutes(ServerCase):
 
         asyncio.run(run())
 
+    def test_dismiss_waits_for_a_run_on_the_row(self):
+        """A plan or a fix run is about to write onto the row; taking it
+        away underneath loses what the run was paid for."""
+        findings_store.add("Sensor stuck")
+        ts = findings_store.list_all()[0]["ts"]
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            # After startup, which demotes a run nothing is driving.
+            findings_store.set_status(ts, "fixing")
+            try:
+                return (await client.delete(f"/api/finding/{ts}")).status
+            finally:
+                await client.close()
+
+        self.assertEqual(asyncio.run(run()), 409)
+        self.assertEqual(len(findings_store.list_all()), 1)
+        self.assertEqual(findings_store.settled_listing(), [])
+
     def test_fix_queues_a_job_and_never_runs_on_its_own(self):
         """Nothing may change the house except a press — and this press is
         no longer the one that does.
@@ -1582,8 +1602,13 @@ class TestFindingsUI(unittest.TestCase):
         self.assertIn('"Snooze"', answers_src)
         self.assertIn('"Ignore"', answers_src)
         self.assertIn('hint: "Why? (helps brAIn learn)"', self.js)
-        for gone in ("I did it", '"✕  Wrong"', '"Not a problem"', '"Dismiss"'):
+        for gone in ("I did it", '"✕  Wrong"', '"Not a problem"'):
             self.assertNotIn(gone, self.js)
+        # Dismiss is back, and it is not Snooze: it clears the row and
+        # records nothing ("the dismiss and check again buttons are
+        # useful"), where Snooze hides it for a while.
+        self.assertIn('"Dismiss"', answers_src)
+        self.assertIn('"Check again"', answers_src)
 
     def test_the_row_matches_the_one_the_header_promises(self):
         """The header says "Fix it, Add to list, Dismiss, Not a problem";

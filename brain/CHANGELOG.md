@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.15.1
+
+### Dismiss and Check again are back on problem cards
+- **Every problem card has Dismiss.** For a card that is old or no longer
+  relevant: it leaves the list and nothing is recorded — no memory line, no
+  rule — so brAIn learns nothing untrue from it, and the card comes back only if
+  the problem is reported again. Undo on the toast restores it.
+- **Check again is on the face of every card a house check raised**, not behind
+  the ⋯. It runs that check now; if the problem has gone, so does the card.
+- A problem's row is now **primary · Check again · Dismiss · Snooze · Ignore**.
+  On a phone it wraps to two lines.
+
 ## 2.15.0
 
 ### Settings is a page

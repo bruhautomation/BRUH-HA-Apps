@@ -5164,7 +5164,7 @@ function askThenRun(row, answer, btns) {
     });
 }
 
-// The ⋯: at most three of Ask, Recheck, Done, Plan, Run — the server's
+// The ⋯: at most three of Ask, Check again, Done, Plan, Run — the server's
 // `more`, as words with no glyph in front of them.
 function caseOverflow(row, btns) {
   const items = (row.more || []).map((item) => [
@@ -5255,6 +5255,11 @@ function makeLooseFinding(f) {
   };
   press("Add to list", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
     "On your list", btns));
+  if (String(f.source || "").startsWith("check:")) {
+    press("Check again", false, (ev) => recheckFinding(f, btns, ev.currentTarget));
+  }
+  press("Dismiss", false, () => looseAction(`api/finding/${f.ts}`, null,
+    "Dismissed", btns, "DELETE"));
   press("Snooze", false, () => looseAction(`api/finding/${f.ts}/snooze`,
     { for: "week" }, "Snoozed", btns));
   press("Ignore", false, () => openNoteForm(card, actions, (note, formBtns) =>
@@ -5289,11 +5294,11 @@ function makeLooseQuestion(h) {
   return card;
 }
 
-async function looseAction(path, body, done, btns) {
+async function looseAction(path, body, done, btns, method = "POST") {
   btns.forEach((b) => { b.disabled = true; });
   try {
     const data = await api(path, {
-      method: "POST", ...(body ? { body: JSON.stringify(body) } : {}) });
+      method, ...(body ? { body: JSON.stringify(body) } : {}) });
     absorbAnswer(data);
     await refreshToday();
     renderFindings();

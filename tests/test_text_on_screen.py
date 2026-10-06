@@ -86,16 +86,18 @@ class TestFixItWaitsForAPlanThatCouldWork(unittest.TestCase):
         return [a["verb"] for a in answers.answers(self._case(plan))]
 
     def test_no_plan_offers_fix_it(self):
-        # One primary, then Snooze and Ignore; Add to list is the lead only
-        # where brAIn cannot act (docs/design/ui-redesign-2026-10.md).
-        self.assertEqual(self._verbs({}), ["fix", "not_now", "wrong"])
+        # One primary, then Check again (a check's row), Dismiss, Snooze
+        # and Ignore; Add to list is the lead only where brAIn cannot act.
+        self.assertEqual(self._verbs({}),
+                         ["fix", "recheck", "dismiss", "not_now", "wrong"])
 
     def test_a_plan_that_refused_takes_fix_it_away(self):
         refused = {"can_fix": False, "needs_you": False, "steps": [],
                    "summary": "brAIn would not make this change itself.",
                    "at": 1_790_000_000}
         self.assertTrue(answers.plan_refused(refused))
-        self.assertEqual(self._verbs(refused), ["todo", "not_now", "wrong"])
+        self.assertEqual(self._verbs(refused),
+                         ["todo", "recheck", "dismiss", "not_now", "wrong"])
 
     def test_a_plan_with_ops_that_was_cancelled_still_offers_it(self):
         ok = {"can_fix": True, "ops": [{"op": "reload", "domain": "light"}],

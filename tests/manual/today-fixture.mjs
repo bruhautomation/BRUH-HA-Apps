@@ -31,11 +31,15 @@ export const kase = (over) => ({
 
 const ask = (key) => ({ verb: 'discuss', label: 'Ask', route: `/api/finding/${key}/discuss`,
   method: 'POST', hint: 'Talk it through with brAIn.' });
-const recheck = (key) => ({ verb: 'recheck', label: 'Recheck',
+const recheck = (key) => ({ verb: 'recheck', label: 'Check again',
   route: `/api/finding/${key}/recheck`, method: 'POST', hint: 'Look again.' });
 const done = (key) => ({ verb: 'done', label: 'Done', route: `/api/finding/${key}/done`,
   method: 'POST', hint: "It's handled." });
-const trio = (id, lead) => [lead,
+// A problem's row (`answers._problem_row`): the primary, Check again on a
+// check's row, Dismiss, then Snooze · Ignore.
+const trio = (id, lead, check = false) => [lead,
+  ...(check ? [recheck(id.slice(2))] : []),
+  A('dismiss', 'Dismiss', `/api/finding/${id.slice(2)}`, { method: 'DELETE' }),
   A('not_now', 'Snooze', `/api/case/${id}/not_now`, { request: 'snooze' }),
   A('wrong', 'Ignore', `/api/case/${id}/wrong`, { note: true, request: 'wrong' })];
 
@@ -66,8 +70,8 @@ export const FEED = [
     origin: { store: 'findings', key: 1101 },
     triage: { verdict: 'elevated', reason: 'A real drift.', run_id: 'look-1', at: NOW - 600 },
     evidence: [{ entity: 'sensor.garage_freezer', value: '-12.4 °C', when: '15 Sep 08:10' }],
-    answers: trio('f:1101', A('fix', 'Plan', '/api/finding/1101/fix', { primary: true })),
-    more: [ask(1101), recheck(1101), done(1101)],
+    answers: trio('f:1101', A('fix', 'Plan', '/api/finding/1101/fix', { primary: true }), true),
+    more: [ask(1101), done(1101)],
   }),
   kase({
     id: 'f:1102', situation: 'planned', finding_status: 'planned', fixable: true,
@@ -79,8 +83,8 @@ export const FEED = [
               + 'come on until the new sensor first reports.' },
     source: 'check:auto.dead_ref', source_title: 'Automation check',
     origin: { store: 'findings', key: 1102 },
-    answers: trio('f:1102', A('apply', 'Apply', '/api/finding/1102/apply', { primary: true })),
-    more: [ask(1102), recheck(1102)],
+    answers: trio('f:1102', A('apply', 'Apply', '/api/finding/1102/apply', { primary: true }), true),
+    more: [ask(1102)],
   }),
   kase({
     id: 'h:1103', kind: 'question', chip: 'suggestion', situation: 'question',
@@ -112,8 +116,8 @@ export const FEED = [
     source: 'check:auto.condition_never_passes', source_title: 'Automation check',
     origin: { store: 'findings', key: 1105 },
     answers: trio('f:1105', A('todo', 'Add to list', '/api/case/f:1105/do',
-      { primary: true, request: 'todo' })),
-    more: [ask(1105), recheck(1105)],
+      { primary: true, request: 'todo' }), true),
+    more: [ask(1105)],
   }),
   kase({
     id: 'f:1106', situation: 'planned', finding_status: 'planned', fixable: true,
@@ -123,7 +127,7 @@ export const FEED = [
               + 'as an operation it can carry out, so there is nothing to approve' },
     source: 'check:reg.no_area', source_title: 'Registry check',
     origin: { store: 'findings', key: 1106 },
-    answers: trio('f:1106', A('fix', 'Plan', '/api/finding/1106/fix', { primary: true })),
+    answers: trio('f:1106', A('fix', 'Plan', '/api/finding/1106/fix', { primary: true }), true),
     more: [ask(1106)],
   }),
 ];
@@ -296,7 +300,8 @@ window.fetch = async (url, opts) => {
 // Every label a button on Today may carry: the design doc's vocabulary,
 // plus Yes and No — the answer to a question rather than a verb.
 export const VOCAB = new Set(['Apply', 'Plan', 'Add to list', 'Snooze', 'Ignore',
-  'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Run', 'Save', 'Share',
+  'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
+  'Run', 'Save', 'Share',
   'Delete', 'Yes', 'No', 'Cancel']);
 
 // What the redesign cut from the face of a card, and must stay cut. Allowed
