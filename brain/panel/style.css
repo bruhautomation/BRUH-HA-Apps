@@ -3318,6 +3318,10 @@ body.term-classic #termMode .ico-out { display: block; }
     height: auto;
     min-height: var(--bar-h);
     row-gap: 4px;
+    /* 6px, not 8: at exactly 870 with the sign-in chip showing, CI's fonts
+       left the row within a pixel of full, and a wrap is binary — the
+       measured one-row shapes keep ~10px of slack this way. */
+    column-gap: 6px;
     align-content: center;
   }
 }
