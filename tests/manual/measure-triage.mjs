@@ -11,7 +11,7 @@
 //   * a card a look elevated carries what that look said, under Details —
 //     "brAIn checked" and its reason — and nothing about it on the face;
 //   * the unchecked card offers the same row every finding has, Add to
-//     list · Snooze · Ignore, and each press sends the finding's own route
+//     list · Check again · Dismiss · Snooze · Ignore, and each press sends the finding's own route
 //     (Ignore with the reason typed into "Why? (helps brAIn learn)");
 //   * a row a look set aside is in History › "Set aside by brAIn" with one
 //     press, Restore, which sends the row's elevate — a verdict nothing can
@@ -65,7 +65,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     if (!/brAIn has not looked at this one yet/.test(loose.details)) {
       note(where, 'Details does not say nothing has looked at it');
     }
-    if (loose.presses.join('|') !== 'Add to list|Snooze|Ignore') {
+    if (loose.presses.join('|') !== 'Add to list|Check again|Dismiss|Snooze|Ignore') {
       note(where, `the unchecked card offers ${loose.presses.join(' · ')}`);
     }
     if (loose.cut.length) note(where, `the unchecked card carries ${loose.cut.join(', ')}`);
@@ -84,7 +84,9 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     }
   }
 
-  // The three presses on the unchecked card, each to its own route.
+  // The presses on the unchecked card, each to its own route.
+  await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Dismiss")').click();
+  await page.waitForTimeout(150);
   await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Snooze")').click();
   await page.waitForTimeout(150);
   await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Add to list")').click();
@@ -97,6 +99,8 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
   await form.locator('.findnoteactions button', { hasText: 'Ignore' }).click();
   await page.waitForTimeout(150);
   const sent = await posts(page);
+  if (!(await posts(page)).some((p) => /api\/finding\/2001$/.test(p.url)
+      && p.method === 'DELETE')) note(where, 'Dismiss did not DELETE the finding');
   const want = [
     [/api\/finding\/2001\/snooze$/, (b) => b && b.for === 'week'],
     [/api\/finding\/2001\/todo$/, () => true],

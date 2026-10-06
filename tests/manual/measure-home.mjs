@@ -107,7 +107,9 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
         note(where, `${id} has no way to say no on its face`);
       }
     }
-    if (card.labels.length > 4) note(where, `${id} carries ${card.labels.length} presses`);
+    // Five on a problem (primary, Check again, Dismiss, Snooze, Ignore)
+    // plus the ⋯; three anywhere else.
+    if (card.labels.length > 6) note(where, `${id} carries ${card.labels.length} presses`);
     if (touch && card.heights.some((h) => h < MIN_TARGET)) {
       note(where, `${id} has a press under ${MIN_TARGET}px (${card.heights.join(',')})`);
     }
@@ -144,6 +146,18 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   for (const m of menu) if (!VOCAB.has(m)) note(where, `the ⋯ offers "${m}"`);
   await page.keyboard.press('Escape');
   await page.evaluate(() => document.body.click());
+
+  // Dismiss clears the row and records nothing: a DELETE of the finding.
+  await page.locator('[data-case-id="f:1100"] .card-actions button:text-is("Dismiss")').click();
+  await page.waitForTimeout(150);
+  let gone = await posts(page);
+  if (!gone.some((p) => /api\/finding\/1100$/.test(p.url) && p.method === 'DELETE')) {
+    note(where, `Dismiss sent ${JSON.stringify(gone)}`);
+  }
+  // Check again is on the face of a check's row, not behind the ⋯.
+  const checkAgain = await page.locator(
+    '[data-case-id="f:1101"] .card-actions button:text-is("Check again")').count();
+  if (!checkAgain) note(where, 'the freezer card has no Check again on its face');
 
   // Snooze sends the case's not_now.
   await page.locator('[data-case-id="f:1102"] .card-actions button:text-is("Snooze")').click();

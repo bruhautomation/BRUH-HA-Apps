@@ -27,8 +27,11 @@ card"), so a row of buttons can be read without reading the words. The
 primary is the one press that fits the card: *Plan* where brAIn could
 work out a change (a read-only run that changes nothing), *Apply* once a
 plan is on the card, *Add to list* where it needs a person's hands, *Done*
-on a chore check, *Send* on a house-book question. Everything rarer —
-*Ask*, *Recheck*, *Done*, *Plan* — is behind the ⋯, at most three. The
+on a chore check, *Send* on a house-book question. A problem also shows
+*Check again* (on a check's row) and *Dismiss* between the primary and
+the pair, because a card that is old or no longer true is the commonest
+card there is and those are the two presses that answer it. Everything
+rarer — *Ask*, *Done*, *Plan* — is behind the ⋯, at most three. The
 first cut of this module gave each situation its own vocabulary
 (*Replaced it*, *It's back*, *It's off on purpose*) and what it taught
 was that the row changed from card to card and had to be read every
@@ -56,7 +59,7 @@ is applied only by the *Apply* you press on the plan.
 not hold a second table of what a verb does, and the HA side can carry
 the same press back as a request (`request` is `finding_requests`'
 action name, or None for a press only the panel can make, like a plan
-run whose progress has to be watched). *Done*, *Recheck* and *Ask* sit
+run whose progress has to be watched). *Done* and *Ask* sit
 behind the ⋯ (`more`), because each is right for one card in twenty and
 a row is what somebody reads on every one. The wire actions never change
 with a label: Home Assistant's Repairs and the notification buttons key
@@ -115,11 +118,14 @@ AUTOMATION_PREFIX = "auto."
 # module and the integration reads the mirror.
 REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
 
-# How many presses a card shows before the ⋯. Three: one primary, then
-# *Snooze · Ignore* (docs/design/ui-redesign-2026-10.md, "One queue, one
-# card"). It was four while the row also carried *Add to list* beside
-# *Fix it*, and a fourth button is the one a phone wraps out of sight.
-MAX_VISIBLE = 3
+# How many presses a card shows before the ⋯. Five, on a problem: the
+# primary, *Check again*, *Dismiss*, then *Snooze · Ignore*. The redesign
+# cut it to three and put Check again behind the ⋯ and Dismiss nowhere,
+# and the commonest card on a real house is one that is old or no longer
+# true — so the two presses that answer that were the two missing ("the
+# dismiss and check again buttons are useful"). Every other kind of card
+# still shows three. On a phone the row wraps to two lines.
+MAX_VISIBLE = 5
 
 # The situations whose Ignore box opens with a reason already in
 # it — the commonest correction for that kind of row, offered so the press
@@ -280,7 +286,7 @@ def _wrong(case_id: str, prefill: str = "", label: str = "Ignore",
         prefill=prefill, done="Ignored — brAIn won't raise this again")
 
 
-def _dismiss(case_id: str, question: bool = False) -> dict:
+def _snooze(case_id: str, question: bool = False) -> dict:
     """The snooze. Off the list for now, nothing settled, nothing taught,
     and brAIn picks when it comes back.
 
@@ -341,8 +347,33 @@ def _ask(key) -> dict:
 
 def _recheck(key) -> dict:
     return _answer(
-        "recheck", "Recheck", "Run the check that found this again, now.",
+        "recheck", "Check again", "Run the check that found this again, "
+        "now. If the problem has gone, the card goes with it.",
         route=f"/api/finding/{key}/recheck", done="Checked again")
+
+
+def _dismiss(key) -> dict:
+    """Off the list, nothing recorded. For a card that is old or no longer
+    relevant: it is neither right nor wrong, so it teaches nothing and
+    comes back only if something reports it again."""
+    return _answer(
+        "dismiss", "Dismiss",
+        "Clear it off — it's old or no longer relevant. Nothing is "
+        "recorded, and it comes back only if it's reported again.",
+        route=f"/api/finding/{key}", method="DELETE", done="Dismissed")
+
+
+def _problem_row(case: dict, lead: dict, prefill: str = "") -> list[dict]:
+    """A problem's row: the primary, then *Check again* (a check's row —
+    it is free and answers "is this still true" on the spot), *Dismiss*
+    (old or no longer relevant), then *Snooze · Ignore*."""
+    cid = str(case.get("id") or "")
+    key = _finding_key(case)
+    out = [lead]
+    if str(case.get("source") or "").startswith("check:"):
+        out.append(_recheck(key))
+    out += [_dismiss(key), _snooze(cid), _wrong(cid, prefill=prefill)]
+    return out[:MAX_VISIBLE]
 
 
 def answers(case: dict) -> list[dict]:
@@ -375,7 +406,7 @@ def answers(case: dict) -> list[dict]:
         else:
             # brAIn will not make this change: a person's hands.
             lead = _todo(cid, primary=True)
-        return [lead, _dismiss(cid), _wrong(cid)]
+        return _problem_row(case, lead)
 
     if sit == "change":
         out = [_answer(
@@ -399,16 +430,15 @@ def answers(case: dict) -> list[dict]:
         answer["ask"] = ("Your answer goes into memory exactly as you write "
                          "it — never type a code or a password here.")
         answer["placeholder"] = "Behind the boiler, the red lever."
-        return [answer, _dismiss(cid),
+        return [answer, _snooze(cid),
                 _wrong(cid, hint="This doesn't apply to this house.")]
 
     if sit == "tidy":
-        return [_answer(
+        return _problem_row(case, _answer(
             "fix", "Plan", "brAIn suggests names, rooms and aliases in this "
             "house's own style, as one card to review. Nothing changes "
             "until you press Apply on it.", route="/api/tidy/run",
-            primary=True, done="Suggesting — they arrive as one card here"),
-            _dismiss(cid), _wrong(cid)]
+            primary=True, done="Suggesting — they arrive as one card here"))
 
     if sit == "question":
         return [
@@ -425,7 +455,7 @@ def answers(case: dict) -> list[dict]:
                     "reason retires every guess built on the same "
                     "misreading.", route=f"/api/case/{cid}/wrong",
                     request="wrong", note=True, done="Noted"),
-            _dismiss(cid, question=(case.get("origin") or {}).get("store")
+            _snooze(cid, question=(case.get("origin") or {}).get("store")
                      == "hypotheses"),
         ]
 
@@ -435,7 +465,7 @@ def answers(case: dict) -> list[dict]:
                     "reload. Undo takes it straight back out.",
                     route=f"/api/case/{cid}/do", primary=True,
                     done="Applied — Undo puts it back"),
-            _dismiss(cid),
+            _snooze(cid),
             _answer("decline", "Ignore", "Not for this house. Say why if "
                     "you like, and the reason reaches every future "
                     "suggestion.", route=f"/api/case/{cid}/wrong", note=True,
@@ -447,7 +477,7 @@ def answers(case: dict) -> list[dict]:
             _answer("complete", "Done", "Tick it off. This is the moment "
                     "the fact goes into memory.", route=f"/api/case/{cid}/do",
                     primary=True, done="Done — written into memory"),
-            _dismiss(cid),
+            _snooze(cid),
             _answer("drop", "Ignore", "Take it off the list for good: "
                     "brAIn will not raise it again.",
                     route=f"/api/case/{cid}/wrong", done="Ignored"),
@@ -473,14 +503,13 @@ def answers(case: dict) -> list[dict]:
     # putting it on a list is sillier than doing it. Everything else leads
     # with Plan where brAIn could act and the list where it could not.
     if sit == "chore_check":
-        return [_done(key, primary=True), _dismiss(cid), _wrong(cid)]
+        return _problem_row(case, _done(key, primary=True))
     if (sit not in HANDS and sit != "fix_failed" and case.get("fixable")
             and not plan_refused(plan)):
         lead = _plan(key, primary=True)
     else:
         lead = _todo(cid, primary=True)
-    return [lead, _dismiss(cid),
-            _wrong(cid, prefill=PREFILL.get(sit, ""))][:MAX_VISIBLE]
+    return _problem_row(case, lead, prefill=PREFILL.get(sit, ""))
 
 
 # The one status chip on a card (docs/design/ui-redesign-2026-10.md,
@@ -508,8 +537,8 @@ def chip(case: dict, urgent: bool = False) -> str:
 
 
 def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
-    """What goes behind the ⋯: at most `MAX_MORE` of Ask, Recheck, Done
-    and Plan — the design doc's four, chosen per kind — never one already
+    """What goes behind the ⋯: at most `MAX_MORE` of Ask, Check again
+    (where the row has no room for it), Done and Plan — the design doc's four, chosen per kind — never one already
     on the row.
 
     `overflow` (`cases.overflow`'s whole list) is read only for the verb

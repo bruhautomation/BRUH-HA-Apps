@@ -61,7 +61,7 @@ POST /api/finding/{ts}/snooze — remind me later; NOT a decision, so the
                                 status is untouched and it comes back
 POST /api/finding/{ts}/discuss — open it as a conversation in the chat
 POST /api/findings/unsettle  — {key}: let brAIn raise an answered one again
-DELETE /api/finding/{ts}     — forget it (unlike ignore, it can return)
+DELETE /api/finding/{ts}     — Dismiss: off the list, nothing recorded (it can return)
 
 GET  /api/todo               — the work you have accepted, open and done
 POST /api/todo               — add one by hand
@@ -18413,8 +18413,23 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
 
 
 async def h_finding_delete(request: web.Request) -> web.Response:
-    """Forget it entirely — unlike Wrong, it can be reported again."""
+    """Dismiss: clear it off the list because it is old or no longer
+    relevant, and record nothing about it.
+
+    No memory line, no settled key, no rule, no label on the capture — a
+    card about a state that has since passed is neither right nor wrong,
+    and teaching brAIn either from it would teach it something untrue. If
+    the problem is still real, the next pass that sees it files it again
+    (`clear_resolved`'s ending, reached by a press). The toast's Undo puts
+    the row back.
+    """
     finding = _finding_or_404(request)
+    if finding.get("status") in ("planning", "fixing"):
+        # Taking the row away under a run that is about to write its plan
+        # or its report onto it loses what the run was paid for.
+        raise web.HTTPConflict(
+            text="brAIn is working on this one right now — wait for it to "
+                 "finish, then dismiss it")
 
     def forget() -> dict:
         findings_store.remove(finding["ts"])

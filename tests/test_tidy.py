@@ -417,7 +417,7 @@ class TestThePress(unittest.TestCase):
         # Plan, never Apply: the run drafts a table and changes nothing.
         self.assertEqual(got[0]["label"], "Plan")
         self.assertEqual([a["verb"] for a in got],
-                         ["fix", "not_now", "wrong"])
+                         ["fix", "recheck", "dismiss", "not_now", "wrong"])
 
 
 if __name__ == "__main__":
