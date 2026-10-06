@@ -1358,7 +1358,7 @@
               "wrong": "Not a problem here",
               "snooze": "Remind me tomorrow",
               "ack": "Got it",
-              "dismiss": "Dismiss — keep it in brAIn's Needs you"
+              "dismiss": "Dismiss — clear it from brAIn too (it comes back if it happens again)"
             }
           },
           "wrong": {
@@ -1370,9 +1370,7 @@
           }
         },
         "abort": {
-          "cannot_write": "brAIn could not record your answer — the shared folder under /config/.brain could not be written to. The problem is still on the list; try again, or answer it on the brAIn panel's Findings tab.",
-          "dismissed": "Dismissed. brAIn still has it under Insights → Needs you; it is listed under Repairs → ⋮ → Show ignored repairs if you want it back here.",
-          "cannot_dismiss": "This version of Home Assistant cannot hide a repair. Close this dialog to leave it as it is — nothing was sent to brAIn."
+          "cannot_write": "brAIn could not record your answer — the shared folder under /config/.brain could not be written to. The problem is still on the list; try again, or answer it on the brAIn panel's Findings tab."
         }
       }
     }

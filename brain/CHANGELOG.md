@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.15.2
+
+### Dismiss in Home Assistant clears the card in brAIn too
+- **The Dismiss button on a phone notification and "Dismiss" in Repairs now do
+  what the panel's Dismiss does**: the card leaves brAIn's list and nothing is
+  recorded — no memory line, no rule — so it comes back only if brAIn sees the
+  problem again. Made for the transient ones, like a device that went offline
+  for a minute. Before, they only closed the notification or hid the Repairs
+  entry and left the card in brAIn.
+
 ## 2.15.1
 
 ### Dismiss and Check again are back on problem cards

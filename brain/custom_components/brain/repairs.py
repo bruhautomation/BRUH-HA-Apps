@@ -193,23 +193,11 @@ class FindingRepairFlow(RepairsFlow):
     async def async_step_dismiss(
         self, user_input: dict[str, str] | None = None
     ) -> data_entry_flow.FlowResult:
-        """Close it without answering: Repairs' own Ignore, and nothing
-        sent to brAIn.
-
-        It ends in an ABORT rather than an entry, because the repairs flow
-        manager deletes the issue when a flow creates an entry — and a
-        deleted issue is raised again on the watcher's next poll, while an
-        ignored one stays ignored (an ignored issue keeps its dismissal when
-        it is created again). It comes back to the main list only if the
-        row leaves brAIn and is reported afresh.
-        """
-        ignore = getattr(ir, "async_ignore_issue", None)
-        if ignore is None:
-            # A core without it cannot hide an issue; say so rather than
-            # pretend, and leave the issue where it was.
-            return self.async_abort(reason="cannot_dismiss")
-        ignore(self.hass, DOMAIN, issue_id_for(self._ts), True)
-        return self.async_abort(reason="dismissed")
+        """The panel's own Dismiss: the card leaves brAIn as well, and
+        nothing is recorded — no memory line, no rule — so it comes back
+        only if brAIn sees the problem again. For the transient ones: a
+        device that went offline for a minute, a reading that passed."""
+        return await self._answer(DISMISS)
 
     async def _answer(self, action: str, note: str = "",
                       hours: float = 0) -> data_entry_flow.FlowResult:

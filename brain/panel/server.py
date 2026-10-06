@@ -2354,6 +2354,16 @@ async def _apply_finding_requests() -> list[dict]:
                 result["ok"] = ok
                 if not ok:
                     result["why"] = why
+        elif action == "dismiss":
+            # The panel's own Dismiss, from a notification or Repairs: off
+            # the list and nothing recorded, so it comes back only if
+            # something reports it again.
+            finding = await asyncio.to_thread(findings_store.get, ts)
+            if finding:
+                ok, why = await asyncio.to_thread(_dismiss_finding, finding)
+                result["ok"] = ok
+                if not ok:
+                    result["why"] = why
         elif action == "undo":
             # The Undo on a confirmation a reply was answered with
             # (`_reply_routes`): the toast's own token, found by the row's
@@ -3580,13 +3590,10 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     failure in the second half is caught here rather than by the bus.
     """
     _note_safety(event_type, data)
-    dismissed = (event_type == "mobile_app_notification_action"
-                 and isinstance(data, dict)
-                 and str(data.get("action") or "").startswith(
-                     f"{notify_router.ACTION_PREFIX}.{notify_router.DISMISS_ACTION}."))
-    # A Dismiss press is the message cleared on purpose: the one route an
-    # iPhone, which never reports a swipe, has to say so.
-    if event_type == "mobile_app_notification_cleared" or dismissed:
+    # A Dismiss press is an answer now (it clears the card), and arrives
+    # through the request drain like every other button, so only a swipe
+    # is recorded here.
+    if event_type == "mobile_app_notification_cleared":
         try:
             deliveries.note_cleared(data if isinstance(data, dict) else {})
         except Exception as exc:  # noqa: BLE001 — accounting, never the bus
@@ -18412,6 +18419,23 @@ async def h_finding_unfix(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _dismiss_finding(finding: dict) -> tuple[bool, str]:
+    """Dismiss, from any surface: the row goes and nothing is recorded.
+
+    One implementation for the panel's button, a notification's and the
+    Repairs dialog's, `_end_finding`'s reason: the same press must mean
+    the same thing wherever it is given.
+    """
+    if finding.get("status") in ("planning", "fixing"):
+        # Taking the row away under a run that is about to write its plan
+        # or its report onto it loses what the run was paid for.
+        return False, ("brAIn is working on this one right now — wait for "
+                       + "it to finish, then dismiss it")
+    if not findings_store.remove(finding["ts"]):
+        return False, "no such finding"
+    return True, ""
+
+
 async def h_finding_delete(request: web.Request) -> web.Response:
     """Dismiss: clear it off the list because it is old or no longer
     relevant, and record nothing about it.
@@ -18424,15 +18448,11 @@ async def h_finding_delete(request: web.Request) -> web.Response:
     the row back.
     """
     finding = _finding_or_404(request)
-    if finding.get("status") in ("planning", "fixing"):
-        # Taking the row away under a run that is about to write its plan
-        # or its report onto it loses what the run was paid for.
-        raise web.HTTPConflict(
-            text="brAIn is working on this one right now — wait for it to "
-                 "finish, then dismiss it")
 
     def forget() -> dict:
-        findings_store.remove(finding["ts"])
+        ok, why = _dismiss_finding(finding)
+        if not ok:
+            raise web.HTTPConflict(text=why)
         return _findings_payload()
 
     payload = await asyncio.to_thread(forget)

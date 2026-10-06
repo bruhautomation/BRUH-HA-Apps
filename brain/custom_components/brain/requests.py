@@ -51,7 +51,10 @@ _LOGGER = logging.getLogger(__name__)
 # and a notification offer what the card offers. `undo` is the Undo on
 # the confirmation a reply is answered with ("Got it — I'll stop flagging
 # it until October"), which the panel resolves to the toast's own token.
-ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
+# `dismiss` is the panel's own Dismiss: the card leaves brAIn and nothing
+# is recorded, so it comes back only if brAIn sees the problem again.
+ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo",
+           "dismiss")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a
@@ -59,11 +62,10 @@ ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 # is why the writer takes both and checks which the action needs.
 TODO_ACTIONS = ("done", "drop", "add")
 
-# The notification button that answers nothing: pressing it closes the
-# notification and the card stays on brAIn's Today. It is read off the
-# event (so it is not mistaken for somebody else's button) and then
-# nothing is written — which is why it is not in ACTIONS, the list of
-# things a request can carry.
+# The notification button that clears the card in brAIn too, exactly as
+# the panel's own Dismiss does: off the list, nothing recorded, back only
+# if brAIn sees the problem again. "I don't need a memory for that. I just
+# want to dismiss it" — a transient thing, a device that went offline.
 DISMISS_ACTION = "dismiss"
 
 # Breaks the tie between answers given inside one millisecond.
@@ -88,7 +90,7 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
     parts = str(identifier or "").split(".")
     if len(parts) != 3 or parts[0] != ACTION_PREFIX:
         return None
-    if parts[1] not in ACTIONS and parts[1] != DISMISS_ACTION:
+    if parts[1] not in ACTIONS:
         return None
     try:
         return parts[1], int(parts[2])

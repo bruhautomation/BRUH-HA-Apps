@@ -801,13 +801,14 @@ brAIn made — whichever of those fit that finding. Answering here is
 answering on the tab: it is the same ending, written the same way, so brAIn
 learns the same thing either way.
 
-Every entry also offers **Dismiss — keep it in brAIn's Needs you**, which
-answers nothing: it moves the entry under Repairs' own *Show ignored
-repairs* and tells brAIn nothing, so the card stays on the panel exactly as
-it was. A phone notification about one finding carries a **Dismiss** button
-for the same reason — it closes the notification and leaves the card where
-it is. It is always one of the first three buttons, because Android shows
-only three; Snooze moves after it when there is no room.
+Every entry also offers **Dismiss — clear it from brAIn too**, and a phone
+notification about one finding carries a **Dismiss** button. Both are the
+panel's own Dismiss: the card leaves brAIn's list and nothing is recorded
+(no memory line, no rule), so it comes back only if brAIn sees the problem
+again. That is the answer for the transient ones, such as a device that went
+offline for a minute. On a phone it is always one of the first three
+buttons, because Android shows only three; Snooze moves after it when there
+is no room.
 
 What does **not** appear there: findings marked `info` (there is nothing to
 do about them), a finding brAIn is already running a fix for, and one it

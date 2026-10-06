@@ -160,7 +160,10 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
                if a["verb"] == "dismiss"][0]
         self.assertEqual((got["method"], got["route"]), ("DELETE", "/api/finding/1"))
         self.assertFalse(got["note"], "a dismiss asks for no reason")
-        self.assertIsNone(got["request"], "Home Assistant carries no Dismiss")
+        # Home Assistant offers its own Dismiss on every dialog and every
+        # notification (`request` `dismiss`), so the row's answers need
+        # not carry it.
+        self.assertIsNone(got["request"])
 
     def test_every_label_is_a_vocabulary_word(self):
         """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
