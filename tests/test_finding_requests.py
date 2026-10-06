@@ -524,6 +524,39 @@ class TestBothFrontDoorsSettleTheSame(RequestCase):
         # "Not now" is not a decision, so it teaches nothing.
         self.assertEqual(self.facts(), [])
 
+    def test_a_dismiss_clears_the_card_and_records_nothing(self):
+        """Dismiss from a phone or Repairs is the panel's own Dismiss: the
+        row goes, no ledger key, no memory line — so the same problem seen
+        again is a card again ("bring it back up if you see it again")."""
+        entry = self.a_finding()
+        self.drop("001.json", {"ts": entry["ts"], "action": "dismiss",
+                               "via": "notification"})
+        [got] = asyncio.run(self.server._apply_finding_requests())
+        self.assertTrue(got["ok"], got)
+        self.assertIsNone(findings_store.get(entry["ts"]))
+        self.assertEqual(findings_store.settled_listing(), [])
+        self.assertFalse(findings_store.is_known(entry["text"]))
+        self.assertEqual(self.facts(), [])
+        again, created = findings_store.add(
+            entry["text"], source="check:dev.unavailable")
+        self.assertTrue(created)
+        self.assertIsNotNone(again)
+
+    def test_the_two_dismisses_are_one_implementation(self):
+        """The panel's press and the request do exactly the same thing,
+        including refusing while brAIn is working on the row."""
+        entry = self.a_finding()
+        findings_store.set_status(entry["ts"], "fixing")
+        self.drop("001.json", {"ts": entry["ts"], "action": "dismiss",
+                               "via": "repairs"})
+        [got] = asyncio.run(self.server._apply_finding_requests())
+        self.assertFalse(got["ok"])
+        self.assertIn("working on this one", got["why"])
+        row = findings_store.get(entry["ts"])
+        self.assertIsNotNone(row)
+        self.assertEqual(self.server._dismiss_finding(row)[0], False)
+        self.assertIsNotNone(findings_store.get(entry["ts"]))
+
     def test_an_answer_for_a_finding_that_is_gone_is_an_ordinary_race(self):
         # Somebody ticks an item off while the panel has already cleared
         # it. Nothing is resurrected, nothing is retried, and it is not

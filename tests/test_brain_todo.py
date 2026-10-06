@@ -229,12 +229,10 @@ class TestTheTwoSidesAgree(WriterCase):
                 verb = button["action"].split(".")[1]
                 self.assertEqual(brain_requests.parse_action(button["action"]),
                                  (verb, ts))
-                # Dismiss parses (it is ours) and is the one button that
-                # carries no request: the integration writes nothing for it.
-                if verb == brain_requests.DISMISS_ACTION:
-                    self.assertNotIn(verb, brain_requests.ACTIONS)
-                    continue
+                # Dismiss included: it is a request now, the panel's own
+                # Dismiss, applied on the add-on's side.
                 self.assertIn(verb, brain_requests.ACTIONS)
+                self.assertIn(verb, finding_requests.ACTIONS)
 
     def test_the_reader_rejects_every_other_button_in_the_house(self):
         # The companion app fires this event for every actionable

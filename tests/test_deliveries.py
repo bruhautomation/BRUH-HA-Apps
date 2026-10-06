@@ -188,10 +188,18 @@ class TestTheServerWritesAndReadsIt(DispatchCase):
         [line] = self.deliveries.fold()
         self.assertEqual(line["outcome"], "cleared")
 
-    def test_a_dismiss_press_is_the_message_cleared(self):
-        """Dismiss answers nothing: the companion app has already cleared
-        the notification, and the press is how an iPhone (which never
-        reports a swipe) says so. It is a clear, never an answer."""
+    def test_a_dismiss_press_is_an_answer_and_clears_the_card(self):
+        """Dismiss on a phone is the panel's own Dismiss: it arrives as a
+        request, the row leaves the list with nothing settled, and the
+        message's outcome is an answer. The bus event itself records
+        nothing (a swipe is the only thing it records), or one press
+        would be counted twice."""
+        import finding_requests
+        import findings_store
+        old = finding_requests.REQUEST_DIR
+        finding_requests.REQUEST_DIR = Path(self.tmp.name) / "requests"
+        finding_requests.REQUEST_DIR.mkdir()
+        self.addCleanup(setattr, finding_requests, "REQUEST_DIR", old)
         [row] = self.file(NOTIFY_ROW)
         self.announce([row])
         tag = self.sent[0]["data"]["tag"]
@@ -199,7 +207,17 @@ class TestTheServerWritesAndReadsIt(DispatchCase):
             "mobile_app_notification_action",
             {"action": f"brain.dismiss.{row['ts']}", "tag": tag})
         [line] = self.deliveries.fold()
-        self.assertEqual(line["outcome"], "cleared")
+        self.assertEqual(line["outcome"], "pending")
+        (finding_requests.REQUEST_DIR / f"{int(time.time() * 1000)}-0.json"
+         ).write_text(json.dumps({"ts": row["ts"], "action": "dismiss",
+                                  "via": "notification"}))
+        [result] = asyncio.run(self.server._apply_finding_requests())
+        self.assertTrue(result["ok"], result)
+        self.assertIsNone(findings_store.get(row["ts"]))
+        self.assertEqual(findings_store.settled_listing(), [])
+        [line] = self.deliveries.fold()
+        self.assertEqual((line["outcome"], line["action"]),
+                         ("answered", "dismiss"))
         # ...and somebody else's button is still nobody's business.
         self.server._on_bus_event("mobile_app_notification_action",
                                   {"action": "other.thing.1", "tag": "x"})

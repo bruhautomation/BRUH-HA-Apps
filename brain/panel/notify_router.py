@@ -672,14 +672,11 @@ ACTION_LABELS = (("todo", "Add to list"), ("fixed", "Done"),
 # a look at the house, and the answer arrives as the next notification,
 # carrying the same buttons, so "why?" works from a lock screen.
 ACTION_BEHAVIOUR = {"reply": "textInput"}
-# The one button that answers nothing. "Dismiss" closes the notification
-# and leaves the card exactly where it is, on Today, for whenever there is
-# time — every other button records an answer, and a lock screen with no
-# way to say "not now, and nothing else" teaches people to press Snooze or
-# Ignore when they meant neither. The companion app clears a notification
-# whenever one of its buttons is pressed, so the press itself is the
-# dismissal; the add-on records it as the message being cleared and the
-# integration writes no request.
+# The panel's own Dismiss, on a lock screen: the card leaves brAIn and
+# nothing is recorded — no memory line, no rule — so it comes back only if
+# brAIn sees the problem again. Every other button records an answer, and
+# the commonest card is a transient one (a device offline for a minute)
+# that needs no answer at all. It travels as a request like the rest.
 DISMISS_ACTION = "dismiss"
 DISMISS_LABEL = "Dismiss"
 # Android renders the first three buttons and drops the rest; iOS shows

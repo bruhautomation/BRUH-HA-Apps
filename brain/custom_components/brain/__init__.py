@@ -58,7 +58,6 @@ except ImportError:
 from .bridge import BrainRunError, ClaudeBridge
 from .findings import FindingsWatcher
 from .learning import LearningWatcher, read_open_hypotheses
-from .requests import DISMISS_ACTION
 from .requests import parse_action as parse_notification_action
 from .requests import write_request as write_finding_request
 from .const import (
@@ -327,11 +326,6 @@ def _make_action_handler(hass: HomeAssistant):
             # this fires for every button in the house.
             return
         action, ts = parsed
-        if action == DISMISS_ACTION:
-            # "Dismiss": the app has already cleared the notification, and
-            # the card stays on Today. Nothing is an answer, so nothing is
-            # written; the add-on reads the press off the bus itself.
-            return
         # A text-input action carries what was typed here: the Reply
         # button's box (2.3). For the three verbs it is empty and is
         # carried as the note, exactly as a reason typed on the tab is.

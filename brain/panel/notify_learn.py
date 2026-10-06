@@ -132,11 +132,11 @@ def tally(folded: list[dict], now: float) -> list[dict]:
 
     def score(group: list[dict]) -> dict:
         dismissed = sum(1 for d in group if d.get("outcome") == "answered"
-                        and d.get("action") == "snooze")
+                        and d.get("action") in ("snooze", "dismiss"))
         cleared = sum(1 for d in group if d.get("outcome") == "cleared")
         quick = sum(1 for d in group if d.get("outcome") in ("cleared",
                                                               "answered")
-                    and d.get("action") in ("", "snooze", None)
+                    and d.get("action") in ("", "snooze", "dismiss", None)
                     and int(d.get("after_s") or 1e9) <= QUICK_S)
         return {"sends": len(group), "dismissed": dismissed,
                 "cleared": cleared, "negative": dismissed + cleared,
