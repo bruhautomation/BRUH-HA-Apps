@@ -263,9 +263,10 @@ for (const [width, height, touch] of [[1200, 900, false], [390, 791, true]]) {
   const where = `${width}px settings`;
   try {
     await page.click('#settingsBtn');
-    await page.waitForSelector('#setModal:not(.hidden)', { timeout: 3000 });
+    await page.waitForSelector('#setModal.open', { timeout: 3000 });
     await page.evaluate(() => {
       for (const d of document.querySelectorAll('#setModal details')) d.open = true;
+        for (const s of document.querySelectorAll('#setModal .setsec')) s.hidden = false;
     });
     await page.waitForTimeout(300);
     await check(page, where);

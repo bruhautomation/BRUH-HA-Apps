@@ -17,10 +17,13 @@
 //   * Snooze and Ignore on either card hide it through `today/hide`;
 //   * a house book sentence with no source chip under it reads exactly
 //     like a cited one — the citation is the half that makes it a manual
-//     rather than a story, so every entry must render at least one; its
-//     two presses are Run and Share, and the one line a sitter is told —
-//     "codes and passwords are left out" — is on screen whether or not the
-//     book is shared, because it is a safety line and never folded away;
+//     rather than a story, so every entry must render at least one; the
+//     head reads "How this house works", its first press is Add info
+//     (sharing is behind ⋯), every chapter has its own Add info, every
+//     line can be edited and deleted where it stands, the chapter pills
+//     filter and count, and the one line a sitter is told — "codes and
+//     passwords are left out" — is on screen whether or not the book is
+//     shared, because it is a safety line and never folded away;
 //   * a run in flight says so on the page, not only by greying a button.
 //
 // Nothing scrolls sideways at 390 and every press is 44px on touch. It
@@ -52,10 +55,20 @@ const BOOK = {
                     { key: 'entity:switch.mains_valve', label: 'Mains valve' }] }] },
       { key: 'heating', title: 'Heating and cooling', entries: [
         { text: 'The hall thermostat warms the house from 06:30 on weekdays.',
+          rooms: ['Hall'],
           sources: [{ key: 'automation:warm', label: 'Warm before wake' }] }] },
     ],
   },
+  sections: [
+    { key: 'automations', title: 'What the house does on its own' },
+    { key: 'heating', title: 'Heating and cooling' },
+    { key: 'alarms', title: 'If an alarm goes off' },
+    { key: 'shutoffs', title: 'Shutoffs and where things are' },
+  ],
 };
+BOOK.book.sections[0].entries[0].id = 'aaaaaaaaaaaa';
+BOOK.book.sections[0].entries[0].rooms = ['Utility'];
+BOOK.book.sections[1].entries[0].id = 'bbbbbbbbbbbb';
 
 const TIDY = {
   running: false, last_error: '', last_note: '', held: '', subject: '',
@@ -115,8 +128,10 @@ window.__up = ${JSON.stringify(bodies)};
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.fetch = async (url, opts) => {
   const p = String(url);
+  (window.__posts = window.__posts || []).push({ url: p,
+    method: (opts && opts.method) || 'GET', body: opts && opts.body ? JSON.parse(opts.body) : null });
   const answer = (b) => new Response(JSON.stringify(b), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
   if (p.includes('api/tidy')) return answer(window.__up.tidy);
@@ -342,8 +357,9 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   await context.close();
 }
 
-// House › House book: a pane of its own, Run and Share, the cited entries,
-// and the safety line under Share.
+// House › House book: a pane of its own, Add info leading, sharing behind
+// ⋯, the cited entries with their own Edit and Delete, the chapter pills,
+// and the safety line.
 const SAFETY = 'Every sentence names what it came from; codes and passwords are left out.';
 for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
   const where = `book ${width}px`;
@@ -355,18 +371,25 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       const box = (n) => n.getBoundingClientRect();
       const q = (s) => [...document.querySelectorAll(s)];
       return {
-        missing: ['viewHousebook', 'upBook'].filter((i) => !document.getElementById(i)),
+        missing: ['viewHousebook', 'upBook', 'bookAdd', 'bookAddModal']
+          .filter((i) => !document.getElementById(i)),
         visible: !!document.querySelector('#viewHousebook.active'),
+        sub: (document.querySelector('#viewHousebook .panesub') || {}).textContent || '',
         entries: q('#upBook .upbooklist li').map((li) => ({
           text: li.firstChild ? li.firstChild.textContent : '',
           chips: li.querySelectorAll('.upchip').length,
+          acts: [...li.querySelectorAll('.bookact')].map((b) => b.getAttribute('aria-label')),
         })),
+        secAdds: q('#upBook .booksecadd').length,
+        gaps: q('#upBook .bookgaps .pill').map((b) => b.textContent),
+        pills: q('#bookSecs .pill').map((b) => b.textContent),
         link: (document.querySelector('#upBook .uplink a') || {}).textContent || '',
         text: (document.getElementById('upBook') || {}).textContent || '',
         safe: [...document.querySelectorAll('#upBook .booksafe')].map((n) => ({
           text: n.textContent.trim(), shown: box(n).height > 0 })),
         buttons: q('#viewHousebook button').filter((b) => b.offsetParent).map((b) => ({
-          label: b.textContent.trim(), h: Math.round(box(b).height) })),
+          label: (b.textContent.trim() || b.getAttribute('aria-label') || ''),
+          h: Math.round(box(b).height) })),
         seg: !document.getElementById('houseSeg')?.hidden,
         docWidth: document.documentElement.scrollWidth,
         viewport: window.innerWidth,
@@ -375,28 +398,47 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     if (v.missing.length) note(where, `element id(s) gone: ${v.missing.join(', ')}`);
     if (!v.visible) note(where, 'House book is not the pane in front');
     if (!v.seg) note(where, 'the House segmented control is not shown over the book');
+    if (v.sub.trim() !== 'How this house works.') note(where, `the head says "${v.sub}"`);
+    if (/sitter|partner/i.test(v.sub)) note(where, 'the head still names a sitter or a partner');
     if (v.entries.length !== 2) note(where, `${v.entries.length} book entries, not 2`);
     for (const e of v.entries) {
       if (!e.chips) note(where, `a book sentence carries no source: "${e.text.slice(0, 50)}"`);
+      if (e.acts.join('|') !== 'Edit this line|Delete this line') {
+        note(where, `a line offers ${JSON.stringify(e.acts)}, not Edit and Delete`);
+      }
+    }
+    if (v.secAdds !== 2) note(where, `${v.secAdds} chapters carry their own Add info, not 2`);
+    if (v.gaps.length !== 2) note(where, `the unwritten chapters read ${JSON.stringify(v.gaps)}`);
+    if (width > 640 && v.pills.length !== 3) {
+      note(where, `the chapter pills read ${JSON.stringify(v.pills)}`);
     }
     if (!/left out for citing nothing/.test(v.text)) {
       note(where, 'the book does not say a sentence was left out uncited');
     }
     if (v.safe.length !== 1 || v.safe[0].text !== SAFETY || !v.safe[0].shown) {
-      note(where, `${state}: the safety line under Share reads ${JSON.stringify(v.safe)}`);
+      note(where, `${state}: the safety line reads ${JSON.stringify(v.safe)}`);
     }
     const labels = v.buttons.map((b) => b.label);
-    if (labels[0] !== 'Run') note(where, `${state}: the first press is "${labels[0]}", not Run`);
-    if (state === 'not shared' && !labels.includes('Share')) {
-      note(where, 'an unshared book offers no Share');
+    if (labels[0] !== 'Add info') note(where, `${state}: the first press is "${labels[0]}", not Add info`);
+    if (labels.includes('Run') || labels.includes('Share')) {
+      note(where, `${state}: Run or Share is back on the page (${labels.join(' · ')})`);
+    }
+    // Sharing is behind ⋯.
+    await page.click('#bookMoreHost button');
+    const menu = await page.evaluate(() => [...document.querySelectorAll('#chipPop .cardmenuitem b')]
+      .map((b) => b.textContent));
+    if (state === 'not shared' && !menu.includes('Share a copy')) {
+      note(where, `⋯ offers ${JSON.stringify(menu)}, no Share a copy`);
     }
     if (state === 'shared') {
       if (!/house-book-/.test(v.link)) note(where, 'the shared link is not shown');
-      if (!labels.includes('Delete')) note(where, 'no way to take the shared link down');
-      if (labels.includes('Share')) note(where, 'Share is offered over a book already shared');
+      if (!labels.includes('Stop sharing')) note(where, 'no way to take the shared link down');
+      if (menu.includes('Share a copy')) note(where, 'Share is offered over a book already shared');
     }
+    await page.keyboard.press('Escape');
+    await page.mouse.click(5, 300);
     for (const cut of [/Rewrite it now/, /Publish a link/, /Take the link down/,
-                       /Write the house book/]) {
+                       /Write the house book —/]) {
       if (cut.test(v.text)) note(where, `cut label is back: ${cut}`);
     }
     if (touch) {
@@ -406,6 +448,54 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     }
     if (v.docWidth > v.viewport + 1) {
       note(where, `page scrolls sideways (${v.docWidth} > ${v.viewport})`);
+    }
+    if (state === 'not shared') {
+      // A chapter pill narrows the book to that chapter and shows its tag.
+      if (width > 640) {
+        await page.evaluate(() => [...document.querySelectorAll('#bookSecs .pill')]
+          .find((b) => /Heating/.test(b.textContent)).click());
+        const n = await page.evaluate(() => ({
+          lis: document.querySelectorAll('#upBook .upbooklist li').length,
+          tag: document.querySelector('#bookActive')?.hidden === false,
+        }));
+        if (n.lis !== 1 || !n.tag) note(where, `a chapter pill shows ${n.lis} lines, tag ${n.tag}`);
+        await page.evaluate(() => document.querySelector('#bookActive .filtertag').click());
+      }
+      // Edit is in place, and Save posts the new words for that line.
+      await page.click('#upBook li[data-id="aaaaaaaaaaaa"] .bookact');
+      const editing = await page.evaluate(() => !!document.querySelector('#upBook textarea.bookedit'));
+      if (!editing) note(where, 'Edit opened no box in place');
+      await page.fill('#upBook textarea.bookedit', 'The leak alarm shuts the water.');
+      await page.evaluate(() => [...document.querySelectorAll('#upBook .bookeditrow button')]
+        .find((b) => b.textContent === 'Save').click());
+      await page.waitForTimeout(200);
+      const sent = await page.evaluate(() => window.__posts.filter((x) => x.method === 'POST'));
+      const edit = sent.find((x) => /house_book\/entry\/aaaaaaaaaaaa$/.test(x.url));
+      if (!edit || edit.body.text !== 'The leak alarm shuts the water.') {
+        note(where, `Save sent ${JSON.stringify(edit)}`);
+      }
+      // Add info on a chapter opens the box for that chapter, and blank asks
+      // brAIn to fill it in.
+      await page.evaluate(() => document.querySelector('#upBook .booksecadd').click());
+      const dlg = await page.evaluate(() => ({
+        open: document.querySelector('#bookAddModal').classList.contains('open'),
+        title: document.querySelector('#bookAddTitle').textContent,
+        ph: document.querySelector('#bookAddText').placeholder,
+        go: document.querySelector('#bookAddGo').textContent,
+      }));
+      if (!dlg.open || !/Add to/.test(dlg.title)) note(where, `Add info opened ${JSON.stringify(dlg)}`);
+      if (!/leave this blank/i.test(dlg.ph)) note(where, `the box says "${dlg.ph}"`);
+      await page.click('#bookAddGo');
+      await page.waitForTimeout(200);
+      const adds = await page.evaluate(() => window.__posts.filter((x) => /house_book\/add$/.test(x.url)));
+      if (!adds.length || adds[0].body.text !== '' || !adds[0].body.section) {
+        note(where, `a blank chapter Add info sent ${JSON.stringify(adds)}`);
+      }
+    }
+    if (process.env.UPKEEP_SHOT_DIR) {
+      await page.evaluate(() => document.querySelectorAll('.modal.open').forEach((m) => m.classList.remove('open')));
+      await page.screenshot({ path: path.join(process.env.UPKEEP_SHOT_DIR,
+        `book-${width}-${state.replace(' ', '')}.png`), fullPage: true });
     }
     console.log(`${String(width).padStart(5)}  book (${state}): ${v.entries.length} entries  `
       + `presses ${labels.join(' · ')}`);
@@ -424,8 +514,8 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (!/Writing the house book/.test(v.bookText)) {
     note('running', 'nothing on the page says the book is being written');
   }
-  const run = v.bookButtons.find((b) => b.label === 'Run');
-  if (!run || !run.disabled) note('running', 'Run is still pressable while the book is written');
+  const run = v.bookButtons.find((b) => b.label === 'Add info');
+  if (!run || !run.disabled) note('running', 'Add info is still pressable while the book is written');
   await context.close();
 }
 await browser.close();

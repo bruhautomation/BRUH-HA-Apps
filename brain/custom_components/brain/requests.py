@@ -59,6 +59,13 @@ ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo")
 # is why the writer takes both and checks which the action needs.
 TODO_ACTIONS = ("done", "drop", "add")
 
+# The notification button that answers nothing: pressing it closes the
+# notification and the card stays on brAIn's Today. It is read off the
+# event (so it is not mistaken for somebody else's button) and then
+# nothing is written — which is why it is not in ACTIONS, the list of
+# things a request can carry.
+DISMISS_ACTION = "dismiss"
+
 # Breaks the tie between answers given inside one millisecond.
 # A restart resets it, which cannot matter: the millisecond
 # stamp in front of it has moved on by then.
@@ -81,7 +88,7 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
     parts = str(identifier or "").split(".")
     if len(parts) != 3 or parts[0] != ACTION_PREFIX:
         return None
-    if parts[1] not in ACTIONS:
+    if parts[1] not in ACTIONS and parts[1] != DISMISS_ACTION:
         return None
     try:
         return parts[1], int(parts[2])

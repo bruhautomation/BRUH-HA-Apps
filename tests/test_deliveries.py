@@ -188,6 +188,22 @@ class TestTheServerWritesAndReadsIt(DispatchCase):
         [line] = self.deliveries.fold()
         self.assertEqual(line["outcome"], "cleared")
 
+    def test_a_dismiss_press_is_the_message_cleared(self):
+        """Dismiss answers nothing: the companion app has already cleared
+        the notification, and the press is how an iPhone (which never
+        reports a swipe) says so. It is a clear, never an answer."""
+        [row] = self.file(NOTIFY_ROW)
+        self.announce([row])
+        tag = self.sent[0]["data"]["tag"]
+        self.server._on_bus_event(
+            "mobile_app_notification_action",
+            {"action": f"brain.dismiss.{row['ts']}", "tag": tag})
+        [line] = self.deliveries.fold()
+        self.assertEqual(line["outcome"], "cleared")
+        # ...and somebody else's button is still nobody's business.
+        self.server._on_bus_event("mobile_app_notification_action",
+                                  {"action": "other.thing.1", "tag": "x"})
+
     def test_the_safety_lane_is_still_the_first_thing_the_hook_does(self):
         calls = []
         srv = self.server

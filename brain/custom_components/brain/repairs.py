@@ -50,6 +50,13 @@ _LOGGER = logging.getLogger(__name__)
 # add-on carries no list and gets `DEFAULT_ACTIONS`, the classic three.
 FLOW_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
 DEFAULT_ACTIONS = ("fixed", "wrong", "snooze")
+# The one option that answers nothing, last on every menu: it puts the
+# issue under Repairs' own "ignored" list (Home Assistant's Ignore, the
+# same thing its ⋮ menu does for an issue with no dialog) and writes no
+# request, so the card stays in brAIn's Needs you exactly as it was. Every
+# other option is an answer, and a dialog with no way to close it without
+# one teaches people to press "Not a problem here" when they meant later.
+DISMISS = "dismiss"
 
 # "Remind me tomorrow", in hours. The same default the panel's own snooze
 # uses; a box asking for a number would be a form in front of the one
@@ -130,7 +137,7 @@ class FindingRepairFlow(RepairsFlow):
         classic three otherwise. Never empty — a dialog with no way to
         answer is a row nobody can clear."""
         chosen = [a for a in FLOW_ACTIONS if a in self._answers]
-        return chosen or list(DEFAULT_ACTIONS)
+        return (chosen or list(DEFAULT_ACTIONS)) + [DISMISS]
 
     async def async_step_init(
         self, user_input: dict[str, str] | None = None
@@ -182,6 +189,27 @@ class FindingRepairFlow(RepairsFlow):
                 description_placeholders={"text": self._text},
             )
         return await self._answer("wrong", note=str(user_input.get("note") or ""))
+
+    async def async_step_dismiss(
+        self, user_input: dict[str, str] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """Close it without answering: Repairs' own Ignore, and nothing
+        sent to brAIn.
+
+        It ends in an ABORT rather than an entry, because the repairs flow
+        manager deletes the issue when a flow creates an entry — and a
+        deleted issue is raised again on the watcher's next poll, while an
+        ignored one stays ignored (an ignored issue keeps its dismissal when
+        it is created again). It comes back to the main list only if the
+        row leaves brAIn and is reported afresh.
+        """
+        ignore = getattr(ir, "async_ignore_issue", None)
+        if ignore is None:
+            # A core without it cannot hide an issue; say so rather than
+            # pretend, and leave the issue where it was.
+            return self.async_abort(reason="cannot_dismiss")
+        ignore(self.hass, DOMAIN, issue_id_for(self._ts), True)
+        return self.async_abort(reason="dismissed")
 
     async def _answer(self, action: str, note: str = "",
                       hours: float = 0) -> data_entry_flow.FlowResult:

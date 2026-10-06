@@ -234,9 +234,10 @@ for (const { width, touch } of [
     try {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.click('#settingsBtn');
-      await page.waitForSelector('#setModal:not(.hidden)', { timeout: 3000 });
+      await page.waitForSelector('#setModal.open', { timeout: 3000 });
       await page.evaluate(() => {
         for (const d of document.querySelectorAll('#setModal details')) d.open = true;
+        for (const s of document.querySelectorAll('#setModal .setsec')) s.hidden = false;
       });
       await page.waitForTimeout(300);
       const r = await page.evaluate(readScreen, { min: MIN_TARGET });
@@ -244,13 +245,8 @@ for (const { width, touch } of [
       for (const s of new Set(r.sideways)) note(where, `a row scrolls sideways: ${s}`);
       for (const g of new Set(r.glyphs)) note(where, `a button label carries a glyph: ${g}`);
       for (const b of new Set(r.bubbles)) note(where, `a "?" bubble: ${b}`);
-      await page.keyboard.press('Escape');
-      await page.evaluate(() => {
-        const m = document.querySelector('#setModal');
-        if (m && !m.classList.contains('hidden')) {
-          (m.querySelector('[data-close], .close, #setClose') || {}).click?.();
-        }
-      });
+      // ⚙ again goes back to the view Settings was opened from.
+      await page.click('#settingsBtn');
     } catch (e) {
       note(where, `could not open ⚙: ${e.message.split('\n')[0]}`);
     }

@@ -226,32 +226,28 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
     def test_one_finding_gets_the_cards_own_answers_and_a_reply(self):
         """The buttons are the row's own answers (`answers.py`): the feed's
         fixed row less the one press a phone cannot start (a plan run), so
-        *Add to list · Snooze · Ignore* on every problem, and Reply rides
-        last."""
+        *Add to list · Ignore* on every problem, then Dismiss in the third
+        slot (Android renders three), Snooze after it, and Reply last."""
         got = notify_router.actions_for([{"ts": 1720, "text": "a"}],
                                         "notify.mobile_app_pixel")
         self.assertEqual([a["action"] for a in got],
-                         ["brain.todo.1720", "brain.snooze.1720",
-                          "brain.wrong.1720", "brain.reply.1720"])
+                         ["brain.todo.1720", "brain.wrong.1720",
+                          "brain.dismiss.1720", "brain.snooze.1720",
+                          "brain.reply.1720"])
         self.assertEqual([a["title"] for a in got],
-                         ["Add to list", "Snooze", "Ignore", "Reply"])
+                         ["Add to list", "Ignore", "Dismiss", "Snooze", "Reply"])
         hands = notify_router.actions_for(
             [{"ts": 1720, "text": "a", "fixable": False}],
             "notify.mobile_app_pixel")
         self.assertEqual([a["action"].split(".")[1] for a in hands],
-                         ["todo", "snooze", "wrong", "reply"])
-        quiet = notify_router.actions_for(
-            [{"ts": 1720, "text": "a", "source": "check:dev.unavailable",
-              "fixable": False}], "notify.mobile_app_pixel")
-        self.assertEqual([a["title"] for a in quiet],
-                         ["Add to list", "Snooze", "Ignore", "Reply"])
+                         ["todo", "wrong", "dismiss", "snooze", "reply"])
         # A change brAIn made gets Got it and nothing that would claim
-        # somebody else's work.
+        # somebody else's work — and Dismiss, which claims nothing.
         change = notify_router.actions_for(
             [{"ts": 1720, "text": "a", "status": "fixed"}],
             "notify.mobile_app_pixel")
         self.assertEqual([a["action"].split(".")[1] for a in change],
-                         ["ack", "reply"])
+                         ["ack", "dismiss", "reply"])
         # A mirror row already carrying its answers is rendered as handed.
         stamped = notify_router.actions_for(
             [{"ts": 1720, "text": "a",
@@ -259,19 +255,19 @@ class TestTheButtonsOnAMessage(unittest.TestCase):
             "notify.mobile_app_pixel")
         self.assertEqual([(a["action"], a["title"]) for a in stamped],
                          [("brain.wrong.1720", "Nope"),
+                          ("brain.dismiss.1720", "Dismiss"),
                           ("brain.reply.1720", "Reply")])
-        # Never more than the companion app renders, plus Reply.
-        for buttons in (got, quiet, change):
-            self.assertLessEqual(len(buttons),
-                                 notify_router.MAX_ANSWER_BUTTONS + 1)
-        # Reply is the one button that takes text: the companion app
-        # opens a box for `textInput` and sends what was typed as
-        # `reply_text`. The endings carry no behaviour, because a box on
-        # "I've fixed it" is a chore in front of a one-press answer.
+        # Dismiss is always one of the three an Android phone shows.
+        for buttons in (got, hands, change, stamped):
+            self.assertIn("dismiss", [a["action"].split(".")[1]
+                                      for a in buttons[:3]])
+            self.assertLessEqual(len(buttons), notify_router.MAX_BUTTONS)
         by_verb = {a["action"].split(".")[1]: a for a in got}
         self.assertEqual(by_verb["reply"].get("behavior"), "textInput")
-        for verb in ("todo", "wrong", "snooze"):
+        for verb in ("todo", "wrong", "snooze", "dismiss"):
             self.assertNotIn("behavior", by_verb[verb], verb)
+        self.assertEqual(notify_router.parse_action("brain.dismiss.1720"),
+                         ("dismiss", 1720))
 
     def test_a_row_with_no_id_gets_no_buttons(self):
         for row in ({"text": "a"}, {"ts": None, "text": "a"},

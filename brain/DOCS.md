@@ -793,6 +793,14 @@ brAIn made — whichever of those fit that finding. Answering here is
 answering on the tab: it is the same ending, written the same way, so brAIn
 learns the same thing either way.
 
+Every entry also offers **Dismiss — keep it in brAIn's Needs you**, which
+answers nothing: it moves the entry under Repairs' own *Show ignored
+repairs* and tells brAIn nothing, so the card stays on the panel exactly as
+it was. A phone notification about one finding carries a **Dismiss** button
+for the same reason — it closes the notification and leaves the card where
+it is. It is always one of the first three buttons, because Android shows
+only three; Snooze moves after it when there is no room.
+
 What does **not** appear there: findings marked `info` (there is nothing to
 do about them), a finding brAIn is already running a fix for, and one it
 has already fixed and is waiting for you to read — that one's only honest
@@ -2443,15 +2451,32 @@ Four jobs keep Home Assistant itself tidy. Two of them end in a card on
 
 ### The house book
 
-**Memory → House book** is a short manual written from your own automations,
-scripts, scenes and what brAIn has learned — something to hand a house-sitter.
-Every sentence names what it came from; codes and passwords are left out, and
-that line is always on the page. **Run** writes it (or rewrites it). Questions
-it cannot answer from the house appear on Needs you, and your answer goes
-into memory. **Share** gives you a private link to a read-only copy; **Delete**
-takes the copy down and changes the link, so a link somebody kept stops working.
-After the first one, brAIn rewrites the book weekly, but only when something it
-reads has changed.
+**Memory → House book** is how this house works, chapter by chapter — what
+runs on its own, lights and scenes, heating and cooling, locks and security,
+what to do when an alarm goes off, shutoffs and where things are, appliances,
+media and voice, and anything else worth knowing. It is written from your own
+automations, scripts, scenes and what brAIn has learned. Every sentence names
+what it came from; codes and passwords are left out, and that line is always
+on the page.
+
+- **Add info** (top right, and on every chapter) opens a box. Type what you
+  want documented — *the stopcock is under the kitchen sink*, *explain the
+  bedtime routine* — and brAIn writes it into the book, cited to you. Leave it
+  blank and brAIn fills the book (or that chapter) in from the house by
+  itself. **Add as written** puts your exact words in without a run.
+- Every line has **Edit** and **Delete**. A line you wrote or corrected is
+  kept when brAIn rewrites the book; only the lines nobody touched are
+  replaced.
+- Search, a room picker and the chapter pills narrow the book, each counted
+  under the others, with the filters in force as tags and **Clear all**.
+  Chapters with nothing in them yet are listed under *Not written yet*.
+- **⋯** holds sharing: **Share a copy** gives you a private link to a
+  read-only copy; **Stop sharing** takes it down and changes the link, so a
+  link somebody kept stops working. A shared copy is kept current.
+
+Questions it cannot answer from the house appear on Needs you, and your
+answer goes into memory. After the first book, brAIn rewrites it weekly, but
+only when something it reads has changed.
 
 ### It knows what happened, and what caused it
 
@@ -2811,7 +2836,7 @@ under the bar at all.
 | --- | --- |
 | **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **Your list**. Every card leads with one press (**Plan**, **Apply**, **Add to list**, **Yes** or **Done**) beside **Snooze** and **Ignore**. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
-| **Memory** | What brAIn holds about the house. **Knowledge** is a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), fetched fresh every visit and never cached. **House book** is the manual brAIn writes for a house-sitter, with **Run** and **Share**. |
+| **Memory** | What brAIn holds about the house. **Knowledge** is a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
 
 This guide is ⚙ → Guide. Older links that name a pane that has moved — the
 Findings, To-do, Proposals or Upkeep tab — open Insights → Needs you, one that
@@ -3035,6 +3060,12 @@ it is waiting for.
 Paging back to an older run (the `‹ ›` controls in the foot) shows `Generated …` and no
 live line at all. A past run is a record of what the card said then, so brAIn does not
 overlay today's readings on it.
+
+**⚙ Settings** is a page of its own: press ⚙ to open it and ⚙ again to go back.
+Its eight sections — Account, Usage & schedule, Permissions, Sources,
+Notifications, Memory, Diagnostics and Guide — sit on one segmented control
+(a picker on a narrow screen), one in front at a time, and the page remembers
+which one you were on.
 
 **⚙ > Diagnostics** opens with **Anything wrong?** — one flat list of everything
 brAIn can currently see that is not working, gathered from every surface it has: the
@@ -3503,7 +3534,7 @@ as it was.
 
 ## Configuration options
 
-**Seven of these are also editable from the panel's ⚙ Settings dialog**, which writes
+**Seven of these are also editable from the panel's ⚙ Settings page**, which writes
 them back through the Supervisor so both screens always show the same value:
 `auto_refresh_hours`, `history_days`, `history_keep_runs`, `history_keep_days`,
 `model`, `generation_timeout_minutes` and `dangerously_skip_permissions`.

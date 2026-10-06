@@ -188,7 +188,8 @@ class TestTheThreeEndings(FlowCase):
         still has to be answerable."""
         got = asyncio.run(self.flow().async_step_init())
         self.assertEqual(got["type"], "menu")
-        self.assertEqual(got["menu_options"], list(repairs.DEFAULT_ACTIONS))
+        self.assertEqual(got["menu_options"],
+                         list(repairs.DEFAULT_ACTIONS) + [repairs.DISMISS])
         # Every action a request can carry except Reply, which is a turn
         # in the conversation rather than an ending and needs a text box
         # a Repairs menu has no room for: a reply is a phone's button. And
@@ -207,7 +208,7 @@ class TestTheThreeEndings(FlowCase):
         flow = repairs.FindingRepairFlow(1720, "a", ("wrong", "todo", "bogus"))
         flow.hass = self.hass
         got = asyncio.run(flow.async_step_init())
-        self.assertEqual(got["menu_options"], ["todo", "wrong"])
+        self.assertEqual(got["menu_options"], ["todo", "wrong", "dismiss"])
         for option in got["menu_options"]:
             self.assertTrue(hasattr(flow, f"async_step_{option}"), option)
         # The flow built by `async_create_fix_flow` carries what the
@@ -216,11 +217,33 @@ class TestTheThreeEndings(FlowCase):
             self.hass, "finding_1720", {"ts": 1720, "text": "a",
                                         "answers": ["ack"]}))
         built.hass = self.hass
-        self.assertEqual(built.menu(), ["ack"])
+        self.assertEqual(built.menu(), ["ack", "dismiss"])
         # A change brAIn made is answered with Got it, and the request
         # is the ack the panel's own button writes.
         asyncio.run(built.async_step_ack())
         self.assertEqual(self.written()[-1]["action"], "ack")
+
+    def test_dismiss_answers_nothing_and_ignores_the_issue(self):
+        """Dismiss is the way out that is not an answer: no request is
+        written, the issue is put under Repairs' own ignored list, and the
+        flow ABORTS — an entry would have the flow manager delete the issue,
+        and the watcher would raise it again on its next poll."""
+        ignored = []
+        REGISTRY.async_ignore_issue = (
+            lambda hass, domain, issue_id, ignore: ignored.append((issue_id, ignore)))
+        try:
+            got = asyncio.run(self.flow(ts=1720).async_step_dismiss())
+        finally:
+            del REGISTRY.async_ignore_issue
+        self.assertEqual(got["type"], "abort")
+        self.assertEqual(got["reason"], "dismissed")
+        self.assertEqual(ignored, [("finding_1720", True)])
+        self.assertEqual(self.written(), [])
+
+    def test_dismiss_on_a_core_that_cannot_ignore_says_so(self):
+        got = asyncio.run(self.flow(ts=1720).async_step_dismiss())
+        self.assertEqual(got["reason"], "cannot_dismiss")
+        self.assertEqual(self.written(), [])
 
     def test_add_to_my_to_do_list_is_the_feeds_own_press(self):
         got = asyncio.run(self.flow(ts=1720).async_step_todo())
@@ -309,7 +332,9 @@ class TestTheStringsExist(unittest.TestCase):
             step = issue["fix_flow"]["step"]
             self.assertIn("init", step)
             self.assertEqual(set(step["init"]["menu_options"]),
-                             set(repairs.FLOW_ACTIONS))
+                             set(repairs.FLOW_ACTIONS) | {repairs.DISMISS})
+            self.assertIn("dismissed", issue["fix_flow"]["abort"])
+            self.assertIn("cannot_dismiss", issue["fix_flow"]["abort"])
             self.assertIn("wrong", step)
             self.assertIn("note", step["wrong"]["data"])
             self.assertIn("cannot_write", issue["fix_flow"]["abort"])

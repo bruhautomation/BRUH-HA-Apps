@@ -672,6 +672,20 @@ ACTION_LABELS = (("todo", "Add to list"), ("fixed", "Done"),
 # a look at the house, and the answer arrives as the next notification,
 # carrying the same buttons, so "why?" works from a lock screen.
 ACTION_BEHAVIOUR = {"reply": "textInput"}
+# The one button that answers nothing. "Dismiss" closes the notification
+# and leaves the card exactly where it is, on Today, for whenever there is
+# time — every other button records an answer, and a lock screen with no
+# way to say "not now, and nothing else" teaches people to press Snooze or
+# Ignore when they meant neither. The companion app clears a notification
+# whenever one of its buttons is pressed, so the press itself is the
+# dismissal; the add-on records it as the message being cleared and the
+# integration writes no request.
+DISMISS_ACTION = "dismiss"
+DISMISS_LABEL = "Dismiss"
+# Android renders the first three buttons and drops the rest; iOS shows
+# them all on a long-press. Dismiss is always within the first three, so it
+# is the one answer every phone can give.
+DISMISS_SLOT = 2
 
 
 def can_answer(service: str) -> bool:
@@ -696,6 +710,9 @@ def can_answer(service: str) -> bool:
 # is what the companion app renders on Android; the fourth would be the
 # one that never appears, so the row is the feed's own three.
 MAX_ANSWER_BUTTONS = 3
+# Everything a message can carry: the answers, Dismiss and Reply. Past the
+# third only iOS shows them, which is why their order is decided above.
+MAX_BUTTONS = 5
 
 
 def actions_for(rows: list[dict], service: str) -> list[dict]:
@@ -711,8 +728,10 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
     `answers.request_answers` off the row itself — the feed's fixed row
     less the one press a phone cannot start (a plan run), so *Add to list
     · Dismiss · Not a problem* — capped at `MAX_ANSWER_BUTTONS`, and then
-    Reply. A row that answers with nothing — a run in flight — gets
-    Reply alone. The classic labels in `ACTION_LABELS` are what a row's
+    Dismiss, which answers nothing and only closes the notification, always
+    sits in the third slot so Android (which renders three) shows it; Snooze
+    is what moves past it when there is no room. Reply rides last. A row
+    that answers with nothing — a run in flight — gets Dismiss and Reply. The classic labels in `ACTION_LABELS` are what a row's
     action is called when the answers carry no label of their own.
     """
     if len(rows) != 1 or not can_answer(service):
@@ -731,7 +750,7 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
         if not isinstance(item, dict):
             continue
         verb = str(item.get("action") or "")
-        if not verb or verb in seen or verb == "reply":
+        if not verb or verb in seen or verb in ("reply", DISMISS_ACTION):
             continue
         seen.add(verb)
         title = str(item.get("label") or fallback.get(verb) or verb)
@@ -739,10 +758,20 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
                     "title": title[:40]})
         if len(out) >= MAX_ANSWER_BUTTONS:
             break
+    dismiss = {"action": f"{ACTION_PREFIX}.{DISMISS_ACTION}.{int(ts)}",
+               "title": DISMISS_LABEL}
+    # Snooze is the answer closest to Dismiss, so it is the one moved past
+    # the third slot when there is no room for both on an Android phone.
+    if len(out) > DISMISS_SLOT:
+        snooze = [b for b in out if b["action"].split(".")[1] == "snooze"]
+        if snooze and out.index(snooze[0]) < DISMISS_SLOT + 1:
+            out.remove(snooze[0])
+            out.append(snooze[0])
+    out.insert(min(DISMISS_SLOT, len(out)), dismiss)
     button = {"action": f"{ACTION_PREFIX}.reply.{int(ts)}", "title": "Reply"}
     button["behavior"] = ACTION_BEHAVIOUR["reply"]
     out.append(button)
-    return out
+    return out[:MAX_BUTTONS]
 
 
 def open_link(service: str, path: str | None) -> dict:
@@ -777,7 +806,7 @@ def parse_action(identifier: str) -> tuple[str, int] | None:
     verb = parts[1]
     # Every action a button can carry: the classic four, and the two the
     # answers row added (`todo`, `ack`) — one list, `answers.py`'s.
-    if verb not in ("reply", *answers.REQUEST_ACTIONS):
+    if verb not in ("reply", DISMISS_ACTION, *answers.REQUEST_ACTIONS):
         return None
     try:
         return verb, int(parts[2])
@@ -897,7 +926,8 @@ def compose_weekly(body: str) -> tuple[str, str]:
 
 
 __all__ = [
-    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX",
+    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX", "DISMISS_ACTION",
+    "DISMISS_LABEL", "MAX_BUTTONS",
     "DEFAULT_MIN_SEVERITY", "DEFAULT_URGENCY", "ESCALATION_FILE",
     "ESCALATION_MAX_ROWS", "ESCALATION_S", "PRODUCER_URGENCY", "QUEUE_FILE",
     "TIERS", "URGENCY", "actions_for", "begin_escalation", "can_answer",

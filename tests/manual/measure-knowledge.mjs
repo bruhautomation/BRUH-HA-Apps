@@ -452,9 +452,8 @@ async function openMeasurements(page) {
   // PR 9), inside a dialog that is shut until somebody opens it.
   await page.evaluate(() => {
     if (document.querySelector('#setModal #kStores')) {
-      openBox('#setModal');
-      const sec = document.querySelector('#setsecDiagnostics');
-      if (sec) sec.open = true;
+      showSettingsSection('diagnostics', false);
+      switchView('settings');
     }
   });
   await page.evaluate(() => refreshHouse());

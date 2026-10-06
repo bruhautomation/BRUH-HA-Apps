@@ -31,8 +31,13 @@
 //   * the top line is what the house is doing now (the situation reading),
 //     and the tab's intro and each group's blurb stay cut (House ›
 //     What happened): a group is its name.
-//   * the cause filter is ONE "Caused by" select with no counts, never a
-//     row of counted chips — the row that scrolled sideways on a phone.
+//   * the filters are ONE system, Knowledge's: words, a room select and a
+//     "Caused by" select on one row, the kinds as pills, and what is in
+//     force as removable tags with Clear all. Every count is the server's
+//     own (each facet counted under the OTHER filters), a cause or kind
+//     this selection holds nothing of is not offered, and picking one
+//     shows its tag and takes it off again — never a row of counted cause
+//     chips, the row that scrolled sideways on a phone.
 //   * the paragraph is a PRESS and says it costs something; it is never
 //     fetched on arrival.
 //   * tapping a row opens that entity's own history, and closes it again.
@@ -144,6 +149,10 @@ window.__activity = {
   away: [{ start: ${NOW - 20000}, end: ${NOW - 1800} }],
   counts: ${JSON.stringify(COUNTS)},
   causes: ['brain','automation','script','scene','voice','person','unattributed'],
+  cause_facets: ${JSON.stringify(Object.entries(COUNTS).filter(([, n]) => n)
+    .map(([id, count]) => ({ id, count })))},
+  areas: [{ id: 'Kitchen', label: 'Kitchen', count: 3 }, { id: '-', label: 'No room', count: 2 }],
+  kinds: ${JSON.stringify(SECTIONS.map((s) => ({ id: s.id, label: s.label, count: s.total })))},
   capped: false, dropped: 1842, changes: 20, episodes: ${TOTAL_ROWS},
 };
 window.__empty = false;
@@ -222,6 +231,14 @@ for (const width of WIDTHS) {
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
   await openView(page, 'activity');
   await page.waitForSelector('.actrow');
+  if (process.env.ACTIVITY_SHOT_DIR) {
+    await page.selectOption('#actArea', 'Kitchen');
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: path.join(process.env.ACTIVITY_SHOT_DIR,
+      `activity-${width}.png`) });
+    await page.selectOption('#actArea', '');
+    await page.waitForSelector('.actrow');
+  }
 
   const m = await page.evaluate(() => {
     const wrap = document.querySelector('.actwrap').getBoundingClientRect();
@@ -265,6 +282,8 @@ for (const width of WIDTHS) {
       foot: document.querySelector('.actfoot')?.textContent.trim() || '',
       filters: [...document.querySelectorAll('#actCause option')]
         .map((b) => b.textContent.trim()),
+      areaFirst: document.querySelector('#actArea option')?.textContent.trim() || '',
+      activeHidden: document.querySelector('#actActive')?.hidden,
       wrapRight: wrap.right,
       docWidth: document.documentElement.scrollWidth,
       summaryCalls: window.__summaryCalls,
@@ -419,15 +438,25 @@ for (const width of WIDTHS) {
 
   if (!m.selectIsSel) note(`${width}px`, 'no "Caused by" select.sel rendered');
   if (m.chips) note(`${width}px`, `${m.chips} filter chips are back`);
-  if (m.filters[0] !== 'Anything') {
+  if (m.filters[0] !== 'Any cause') {
     note(`${width}px`, `the select opens on "${m.filters[0]}"`);
   }
-  if (m.filters.some((f) => /\d|·/.test(f))) {
-    note(`${width}px`, `a cause carries a count: ${m.filters.join(' | ')}`);
+  if (m.areaFirst !== 'Any room') {
+    note(`${width}px`, `the room select opens on "${m.areaFirst}"`);
+  }
+  // Each cause carries the server's own count, and one the selection holds
+  // nothing of is not offered at all.
+  const causeWant = Object.entries(COUNTS).filter(([, n]) => n);
+  if (m.filters.length !== causeWant.length + 1) {
+    note(`${width}px`, `the cause select offers ${m.filters.join(' | ')}`);
+  }
+  for (const f of m.filters.slice(1)) {
+    if (!/ \(\d+\)$/.test(f)) note(`${width}px`, `a cause carries no count: ${f}`);
   }
   if (m.filters.some((f) => /^Scene/.test(f))) {
     note(`${width}px`, 'a filter is offered for a cause with no rows');
   }
+  if (!m.activeHidden) note(`${width}px`, 'filter tags shown with no filter in force');
   if (m.docWidth > width + 0.5) {
     note(`${width}px`, `page scrolls sideways (${m.docWidth}px)`);
   }
@@ -438,7 +467,36 @@ for (const width of WIDTHS) {
   await page.waitForFunction(() => (window.__activityQueries || [])
     .some((q) => /cause=automation/.test(q)), null, { timeout: 5000 })
     .catch(() => note(`${width}px`, 'picking a cause asked the server nothing'));
-  await page.selectOption('#actCause', '');
+  // ...and is shown as a tag that takes itself off.
+  const tag = await page.evaluate(() => {
+    const box = document.querySelector('#actActive');
+    return box && !box.hidden ? box.textContent : '';
+  });
+  if (!/Caused by/.test(tag) || !/Automation/.test(tag)) {
+    note(`${width}px`, `no "Caused by" tag after picking one ("${tag}")`);
+  }
+  // Two filters in force grow a Clear all, and it clears both.
+  await page.evaluate(() => {
+    const pill = [...document.querySelectorAll('#actKinds .pill')]
+      .find((b) => b.offsetParent && /Lights/.test(b.textContent));
+    if (pill) pill.click();
+    else {
+      const sel = document.querySelector('#actKinds .actkindsel');
+      sel.value = 'lights';
+      sel.dispatchEvent(new Event('change'));
+    }
+  });
+  await page.waitForFunction(() => /Clear all/.test(
+    document.querySelector('#actActive')?.textContent || ''), null, { timeout: 5000 })
+    .catch(() => note(`${width}px`, 'two filters in force show no Clear all'));
+  await page.evaluate(() => {
+    const b = [...document.querySelectorAll('#actActive button')]
+      .find((x) => /Clear all/.test(x.textContent));
+    if (b) b.click();
+  });
+  await page.waitForFunction(() => document.querySelector('#actActive')?.hidden
+    && document.querySelector('#actCause')?.value === '', null, { timeout: 5000 })
+    .catch(() => note(`${width}px`, 'Clear all left a filter in force'));
   await page.waitForSelector('.actrow');
 
   // Tapping a row opens that entity's history, and tapping it again closes it.

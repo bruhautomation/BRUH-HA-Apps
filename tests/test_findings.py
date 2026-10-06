@@ -485,8 +485,8 @@ class TestButtonsOnTheMessage(NotifyCase):
         # The card's own answers and one turn: Reply is the last button and
         # the one that settles nothing (`test_finding_requests` drives the
         # drain it lands in). A phone gets the feed's fixed row less the
-        # plan run it cannot start — Add to list, Snooze, Ignore — in the
-        # row's own order.
+        # plan run it cannot start — Add to list, Ignore — then Dismiss in
+        # the third slot (Android shows three) and Snooze after it.
         os.environ["BRAIN_FINDINGS_NOTIFY"] = "notify.mobile_app_pixel"
         row, _ = findings_store.add("The hall sensor has stopped")
         self._announce([row])
@@ -494,11 +494,12 @@ class TestButtonsOnTheMessage(NotifyCase):
         actions = self.payloads[0]["actions"]
         self.assertEqual([a["action"] for a in actions],
                          [f"brain.todo.{row['ts']}",
-                          f"brain.snooze.{row['ts']}",
                           f"brain.wrong.{row['ts']}",
+                          f"brain.dismiss.{row['ts']}",
+                          f"brain.snooze.{row['ts']}",
                           f"brain.reply.{row['ts']}"])
         self.assertEqual([a["title"] for a in actions],
-                         ["Add to list", "Snooze", "Ignore", "Reply"])
+                         ["Add to list", "Ignore", "Dismiss", "Snooze", "Reply"])
 
     def test_any_other_notifier_gets_the_payload_it_always_did(self):
         # Not an empty `data` either: several notifiers treat the key's
@@ -2547,8 +2548,13 @@ class TestTheThreeTiersInThePanel(NotifyCase):
         live = findings_store.get(ts)
         wanted = [f"brain.{a['action']}.{ts}"
                   for a in answers.request_answers(live)][:notify_router.MAX_ANSWER_BUTTONS]
-        self.assertEqual([a["action"] for a in data["actions"]],
-                         wanted + [f"brain.reply.{ts}"])
+        got = [a["action"] for a in data["actions"]]
+        # Dismiss is added beside them (third, so Android shows it), and
+        # Reply rides last.
+        self.assertEqual(got[2], f"brain.dismiss.{ts}")
+        self.assertEqual(sorted(a for a in got if ".dismiss." not in a),
+                         sorted(wanted + [f"brain.reply.{ts}"]))
+        self.assertEqual(got[-1], f"brain.reply.{ts}")
         self.assertIn(f"brain.wrong.{ts}", wanted)
         self.assertEqual(data["url"], "/hassio/ingress/local_brain")
 
