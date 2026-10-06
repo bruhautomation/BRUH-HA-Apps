@@ -800,8 +800,12 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
                        + [normalize(label(s)) for s in subjects])
         return all(w in hay for w in words)
 
+    # A facet that folded several spellings of one room together hands
+    # every id back joined by "|" — see `_fold_rooms` below.
+    wanted = {s for s in str(subject or "").split("|") if s}
+
     def matches_subject(row: dict) -> bool:
-        return not subject or subject in _subjects_of(row)
+        return not wanted or bool(wanted & set(_subjects_of(row)))
 
     base = [r for r in live if matches_query(r) and matches_subject(r)]
     kinds: dict[str, int] = {k: 0 for k in BROWSE_KINDS}
@@ -825,10 +829,10 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
         subject_counts[subj] = subject_counts.get(subj, 0) + 1
     areas_of = subject_areas or {}
     subjects = sorted(
-        ({"id": subj, "name": label(subj) or "",
-          "kind": subject_kind(subj),
-          "area": str(areas_of.get(subj) or ""), "count": n}
-         for subj, n in subject_counts.items()),
+        _fold_rooms([{"id": subj, "name": label(subj) or "",
+                      "kind": subject_kind(subj),
+                      "area": str(areas_of.get(subj) or ""), "count": n}
+                     for subj, n in subject_counts.items()]),
         key=lambda r: (-r["count"], (r["name"] or r["id"]).lower()))[:SUBJECT_FACET_MAX]
     rows = [r for r in base
             if (not kind or _kind_of(r) == kind)
@@ -865,6 +869,50 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
                        "sources": dict(sorted(sources.items(),
                                               key=lambda kv: (-kv[1], kv[0]))),
                        "subjects": subjects}}
+
+
+def _room_key(row: dict) -> str:
+    """What makes two room subjects the same room to a person reading the list.
+
+    A run files a fact under whatever area id it guessed, so one room
+    arrives as ``area:laundry`` (the real area, named "Laundry") and as
+    ``area:laundry_room`` (an id no area has), and two areas can share a
+    name outright. Listed apart, the rail reads "Irrigation, Irrigation"
+    and "Laundry, laundry room": the same room twice with half its facts
+    under each. A trailing "room" is dropped so the invented spelling
+    meets the real one.
+    """
+    text = row.get("name") or str(row.get("id") or "")[5:].replace("_", " ")
+    key = normalize(text)
+    if key.endswith(" room") and len(key) > 5:
+        key = key[:-5].strip()
+    return key
+
+
+def _fold_rooms(rows: list[dict]) -> list[dict]:
+    """One facet per room however many ids it was filed under.
+
+    The folded facet's id is every id joined by "|", which `browse`
+    reads back as "any of these", so picking it shows every fact. The
+    name is the real area's (one with a name) where there is one.
+    """
+    out: list[dict] = []
+    rooms: dict[str, dict] = {}
+    for row in rows:
+        if row.get("kind") != "area":
+            out.append(row)
+            continue
+        key = _room_key(row)
+        have = rooms.get(key)
+        if have is None:
+            rooms[key] = dict(row)
+            out.append(rooms[key])
+            continue
+        have["id"] = f"{have['id']}|{row['id']}"
+        have["count"] += row["count"]
+        if not have.get("name") and row.get("name"):
+            have["name"] = row["name"]
+    return out
 
 
 def exceptions(entity_id: str, check_id: str, now: float | None = None) -> list[dict]:

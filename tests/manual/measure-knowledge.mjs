@@ -892,7 +892,9 @@ for (const width of WIDTHS) {
   if (subjects[1] !== 'binary_sensor.porch_contact') {
     note(at, `an unnamed entity subject renders as "${subjects[1]}"`);
   }
-  if (subjects[2] !== 'garage') {
+  // Capitalised like the area names around it: in the rail an invented
+  // id read "laundry room" under "Laundry", as if they were two rooms.
+  if (subjects[2] !== 'Garage') {
     note(at, `an area subject renders as "${subjects[2]}", not the room's word`);
   }
   // The count is not the list: the row that says so has to be there.

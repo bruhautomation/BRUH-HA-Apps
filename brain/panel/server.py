@@ -12968,7 +12968,15 @@ async def h_situation(request: web.Request) -> web.Response:
     """What the house is doing now, and the frame that says so."""
     store = await asyncio.to_thread(situation.load)
     read = situation.reading(store)
-    return web.json_response({**read, "frame": store.get("frame") or {}})
+    # The sentence may name an entity by its id ("media_player.frame_43
+    # playing in the Kitchen"); the line is read by a person, so the panel
+    # gets the names the last checks pass knew for every id in it.
+    said = str(read.get("sentence") or "")
+    names = {eid: str((_NAMES.get(eid) or {}).get("name") or "")
+             for eid in set(re.findall(r"\b[a-z_]+\.[a-z0-9_]+\b", said))
+             if isinstance(_NAMES.get(eid), dict) and (_NAMES.get(eid) or {}).get("name")}
+    return web.json_response({**read, "names": names,
+                              "frame": store.get("frame") or {}})
 
 
 async def h_occasions(request: web.Request) -> web.Response:
@@ -19214,7 +19222,7 @@ def _facts_browse_payload(q) -> dict:
         query=str(q.get("q") or q.get("query") or "")[:200],
         kind=str(q.get("kind") or "")[:16],
         source=str(q.get("source") or "")[:32],
-        subject=str(q.get("subject") or "")[:255],
+        subject=str(q.get("subject") or "")[:1024],
         sort=str(q.get("sort") or "newest")[:16],
         offset=num("offset", 0), limit=num("limit", 50),
         names=_fact_subject_names(),

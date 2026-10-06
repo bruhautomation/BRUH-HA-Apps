@@ -2654,7 +2654,7 @@ class TestChatChrome(unittest.TestCase):
         self.assertIn('id="chatOpen"', self.html)   # the menu route survives
         self.assertIn('id="chatBack"', self.html)
         self.assertIn(".chatrail {\n  display: none;", self.css)
-        self.assertIn("@media (min-width: 1100px)", self.css)
+        self.assertIn("@media (min-width: 900px)", self.css)
         self.assertIn("body:not(.term-classic).ask-list #viewTerminal.active .chatrail",
                       self.css)
         self.assertIn('askShow("list")', self.js)

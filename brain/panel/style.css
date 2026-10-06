@@ -194,6 +194,13 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
 }
+/* A link that is a button (⚙ › Memory's Export is a real download link)
+   looks like one: no underline, and centred like the button beside it
+   rather than sitting on the text baseline a few pixels lower. */
+a.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  text-decoration: none; box-sizing: border-box;
+}
 .btn:hover { background: var(--surface-2); border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline)); }
 .btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.45; cursor: default; }
@@ -220,6 +227,13 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
   max-width: 1400px;
   margin: 0 auto;
   padding: 18px 20px 80px;
+}
+/* A 2560px monitor held the panel to a 1400px column with ~600px of empty
+   page either side and the cards at a size meant for a laptop. Past 1900px
+   the column grows, so the card grid takes a third column and the chat its
+   room; a line of text is still capped by its own pane, never by this. */
+@media (min-width: 1900px) {
+  .wrap { max-width: 1840px; }
 }
 
 /* -------------------------------------------------------------- ask bar */
@@ -760,6 +774,15 @@ body.modal-open {
 }
 .modal .box header .spacer { flex: 1; }
 .modal iframe { border: 0; width: 100%; flex: 1; min-height: 60vh; background: transparent; }
+/* The expanded card is as tall as its chart, the way the card is: held at
+   60vh it drew a short chart at the top of a box that was mostly blank, and
+   the chart's legend sat against the box's edge with no margin. */
+#modalFrame {
+  flex: none;
+  min-height: 160px;
+  width: calc(100% - 2 * var(--card-pad, 16px));
+  margin: 8px var(--card-pad, 16px) var(--card-pad, 16px);
+}
 
 /* prompt-edit modal */
 .modal .box.edit { width: min(640px, 100%); }
@@ -1342,6 +1365,24 @@ body.modal-open {
   color: var(--ink-2);
 }
 .setsub[open] > summary { color: var(--ink); }
+/* `display: flex` takes the browser's disclosure triangle away, so
+   "Advanced" and "Developer" read as plain headings nobody would press.
+   The section summaries' own chevron, smaller. */
+.setsub > summary { position: relative; padding-left: 22px; list-style: none; }
+.setsub > summary::-webkit-details-marker { display: none; }
+.setsub > summary::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: calc(50% - 4px);
+  width: 5px;
+  height: 5px;
+  border-right: 2px solid var(--ink-3);
+  border-bottom: 2px solid var(--ink-3);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.setsub[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
 
 /* ⚙ → Account: the answer in one line, the evidence behind Details. */
 .authline { color: var(--ink); }
@@ -1664,10 +1705,16 @@ body.modal-open {
 
 .docslink:hover { background: var(--surface); color: var(--ink); }
 
+/* The page you are on carries the accent rule: hover and the current page
+   used to be the same white fill, so with the pointer over the nav two rows
+   read as "here". */
 .docslink.active {
   background: var(--surface);
   color: var(--ink);
+  border-left-color: var(--accent);
+  font-weight: 600;
 }
+.docslink:not(.active):hover { background: color-mix(in srgb, var(--surface) 55%, transparent); }
 
 /* A group of guide pages: a heading in the nav, not a row to press. */
 .docsgroup {
@@ -1694,7 +1741,8 @@ body.modal-open {
 .docsempty { color: var(--ink-3); font-size: var(--fs-body); padding: 10px 12px; }
 
 .docsbody {
-  max-width: 62ch;
+  /* 62ch was a 430px column beside 700px of nothing on a laptop. */
+  max-width: 76ch;
   line-height: 1.65;
   color: var(--ink-2);
   padding-bottom: 60px;
@@ -2116,10 +2164,12 @@ body.modal-open {
   margin: -18px -20px 0;
 }
 
-/* The conversations rail. A flex row only once there is room for one — the
+/* The conversations rail. A flex row only once there is room for one —
+   900px, not 1100: at 1024 the rail was a whole page you had to back out
+   of while 700px of transcript width went unused beside it — the
    rail is `display: none` below the breakpoint, so on a phone the tab is
    exactly what it was and ⋯ → Conversations is still the way in. */
-@media (min-width: 1100px) {
+@media (min-width: 900px) {
   body:not(.term-classic):not(.term-immersive) #viewTerminal.active {
     display: flex;
   }
@@ -2133,7 +2183,7 @@ body.modal-open {
    transcript has a head with the way back to it. Neither applies to the
    classic terminal, which is one shell and has no list. */
 .chathead { display: none; }
-@media (max-width: 1099px) {
+@media (max-width: 899px) {
   body:not(.term-classic).ask-list #viewTerminal.active .chatrail {
     display: flex;
     width: 100%;
@@ -2157,7 +2207,7 @@ body.modal-open {
     padding-top: 16px;
   }
 }
-@media (min-width: 1100px) {
+@media (min-width: 900px) {
   /* Beside a rail, the rail is the list: the menu item would open nothing. */
   #chatOpen { display: none; }
 }
@@ -2180,6 +2230,12 @@ body.modal-open {
   min-height: 0;
   border-right: 1px solid var(--hairline);
   background: var(--plane);
+}
+/* With room to spare the rail takes some of it: at 248px a title was two
+   clipped lines and the kind pills four rows, beside a transcript capped at
+   760px with hundreds of pixels either side of it. */
+@media (min-width: 1300px) {
+  .chatrail { width: 320px; }
 }
 .crhead {
   display: flex;
@@ -3250,6 +3306,26 @@ body.term-classic #termMode .ico-out { display: block; }
 .topbar > * { flex: none; }
 .topbar .spacer { flex: 1; min-width: 0; }
 
+/* The one-row bar is measured for each trouble chip on its own; when the
+   usage pill, the paused chip and a sign-in chip all show at once just past
+   the breakpoint, the row ran ~150px past the window and ⚙ — the only way
+   into Settings — was off the screen. The row wraps instead (nothing in it
+   shrinks, so a fit is still binary), the overflow lands on a second line
+   with ⚙ still on it, and `syncBarHeight` remeasures --bar-h. */
+@media (min-width: 870px) {
+  .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--bar-h);
+    row-gap: 4px;
+    /* 6px, not 8: at exactly 870 with the sign-in chip showing, CI's fonts
+       left the row within a pixel of full, and a wrap is binary — the
+       measured one-row shapes keep ~10px of slack this way. */
+    column-gap: 6px;
+    align-content: center;
+  }
+}
+
 @media (max-width: 869px) {
   /* The two-row bar. One row cannot hold five thumb-sized targets and a
      labelled status pill at 320px — and dropping the labels to make it fit
@@ -3491,6 +3567,12 @@ body.term-classic #termMode .ico-out { display: block; }
   #findList > :not(.finding):not(.propcard):not(.qcard),
   #ideasList > :not(.finding):not(.propcard),
   #propList > :not(.propcard) { grid-column: 1 / -1; }
+  /* Two cards share a row, so the shorter one used to end half way down
+     it with a hole under its buttons. Each card fills its row and its
+     buttons sit on the row's floor, so a pair reads as a pair. */
+  #findList { align-items: stretch; }
+  #findList > .qcard { display: flex; flex-direction: column; }
+  #findList > .qcard > .card-actions { margin-top: auto; }
 }
 
 /* Adding something to the to-do list. One row, and it wraps rather than
@@ -5268,6 +5350,14 @@ body.term-classic #termMode .ico-out { display: block; }
 .setcams { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .setcam { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
 .setcam .subtext { color: var(--ink-3); font-size: var(--fs-meta); }
+/* Inside the dialog `.edit-body label` (a field label: block, 12px above)
+   outranks `.setcam`, so each camera row carried a field label's margins —
+   ~70px a row — and a calendar row, which is not also `.check`, lost its
+   flex and drew its switch touching its own name. */
+.edit-body label.setcam {
+  display: flex; margin: 0; gap: 10px; font-size: var(--fs-body); font-weight: 600;
+  color: var(--ink-2); cursor: pointer;
+}
 
 /* Onboarding: what the study sessions have found, as it lands. A short
    list under the progress, newest first; the topic is a small label so a
@@ -5930,11 +6020,21 @@ button.kfactsubj:hover { color: var(--accent-2);
 .actsearch { flex: 1 1 200px; min-width: 0; }
 .actfilters .sel { max-width: 220px; }
 .actkinds { margin: 0 0 var(--sp-4); }
+.actkindsel { display: none; }
 @media (max-width: 640px) {
   .actfilters .sel { flex: 1 1 calc(50% - var(--sp-2)); max-width: none; min-width: 0; }
   .actfilters .actcause { flex: 1 1 100%; min-width: 0; }
   .actfilters .actcause select.sel { flex: 1 1 auto; min-width: 0; width: 100%; }
   .actsearch { flex-basis: 100%; }
+  /* Room and window share a row; the cause, with its label, takes the next.
+     In source order the cause sat between them, so each took a row alone. */
+  .actfilters .actsearch { order: 0; }
+  .actfilters #actArea { order: 1; }
+  .actfilters #actHours { order: 2; }
+  .actfilters .actcause { order: 3; }
+  .actcause > span { white-space: nowrap; }
+  .actkinds .pill { display: none; }
+  .actkinds .actkindsel { display: block; width: 100%; }
 }
 
 /* Reports: the search field (only past eight reports), and two rows under

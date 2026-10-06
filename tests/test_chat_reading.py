@@ -114,6 +114,32 @@ class TestTheReplay(unittest.TestCase):
         self.assertEqual(self.conv.title_of(self.path), "the real question")
 
 
+    def _opened_with(self, text):
+        self.path.write_text(json.dumps(
+            {"type": "user", "cwd": self.tmp.name,
+             "message": {"role": "user", "content": text}}) + "\n")
+
+    def test_a_card_run_is_listed_by_its_card(self):
+        # The Cards list read "INSIGHT CATEGORY: Septic Pump: Gallons pe…"
+        # on every row: the opener, cut before the part that differs.
+        self._opened_with("INSIGHT CATEGORY: Septic Pump: Gallons per Cycle\n"
+                          "ANALYSIS FOCUS: Using daily statistics for sensor.x")
+        self.assertEqual(self.conv.display_title(self.path),
+                         "Septic Pump: Gallons per Cycle")
+        # The literal opener stays what adopt_machine_runs classifies by.
+        self.assertTrue(self.conv.title_of(self.path).startswith("INSIGHT CATEGORY:"))
+
+    def test_an_asked_card_is_listed_by_its_question(self):
+        self._opened_with("The user asked this question about their home — answer it "
+                          "as the insight card:\nQUESTION: Why is the attic so hot?\n"
+                          "Choose the most fitting visualization for the answer.")
+        self.assertEqual(self.conv.display_title(self.path), "Why is the attic so hot?")
+
+    def test_a_person_s_own_words_are_left_alone(self):
+        self._opened_with("INSIGHT into the attic please")
+        self.assertEqual(self.conv.display_title(self.path), "INSIGHT into the attic please")
+
+
 class TestTheLiveStream(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

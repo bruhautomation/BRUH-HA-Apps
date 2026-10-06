@@ -307,8 +307,11 @@ class TestTheCardStylesheet(TestCase):
         # of hex), not a word budget: it moved from 8000 to 8400 for the
         # `opportunities` field's two lines, which is a field, not a palette,
         # and to 8700 for three analysis rules (missing days are not zero,
-        # open questions may be the cause, no internal numbering).
-        self.assertLess(len(categories._CARD_CONTRACT), 8700)
+        # open questions may be the cause, no internal numbering), and to
+        # 9100 for two chart rules the UI audit found broken in the field
+        # (a viewBox shrinking labels to 4px on a phone; two series in one
+        # yellow) — rules about marks, not hex values.
+        self.assertLess(len(categories._CARD_CONTRACT), 9100)
 
     def test_inject_styles_is_placed_in_head_and_is_idempotent(self):
         html = "<!DOCTYPE html><html><head><title>t</title></head><body></body></html>"

@@ -41,7 +41,8 @@ import json
 import os
 import re
 
-from ._util import House, domain_of, join_names, load_yaml_file, parse_ts
+from ._util import (House, counted_names, domain_of, join_names, load_yaml_file,
+                    parse_ts)
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 IP_BANS_FILE = os.environ.get(
@@ -238,7 +239,7 @@ def lock_cloud_voice(snap: dict, now: float) -> list[dict]:
     names = [f"{house.name(eid)} ({' and '.join(who)})" for eid, who in hits]
     return [{
         "text": "A lock or alarm can be controlled by a cloud voice assistant",
-        "detail": f"{len(hits)}: " + join_names(names)
+        "detail": counted_names(names)
                   + ". Home Assistant never exposes these by default, so "
                     "somebody chose to — and anybody who can speak to that "
                     "assistant, or reach its account, can ask.",
@@ -299,7 +300,7 @@ def addon_unprotected(snap: dict, now: float) -> list[dict]:
         return []
     return [{
         "text": "Some add-ons run with Protection mode switched off",
-        "detail": f"{len(hits)}: " + join_names(hits)
+        "detail": counted_names(hits)
                   + ". Protection mode is what stops an add-on that asks for "
                     "full access to the machine from getting it; with it off, "
                     "that add-on can reach the host and every other add-on.",

@@ -115,6 +115,33 @@ class TestBrowsingBySubject(unittest.TestCase):
         self.assertEqual([s["id"] for s in got["facets"]["subjects"]], ["sensor.fridge"])
 
 
+    def test_one_room_filed_under_two_ids_is_one_row(self):
+        # The rail read "Laundry, laundry room" and "Irrigation, Irrigation":
+        # one room twice, with half its facts under each.
+        facts_store.add("The washer drains slowly.", subject="area:laundry")
+        facts_store.add("The dryer vent is long.", subject="area:laundry_room")
+        facts_store.add("Zone 2 is the hedge.", subject="area:irrigation")
+        facts_store.add("Zone 3 is the lawn.", subject="area:irrigation_2")
+        names = {"area:laundry": "Laundry", "area:irrigation": "Irrigation",
+                 "area:irrigation_2": "Irrigation", "area:kitchen": "Kitchen"}
+        got = facts_store.browse(names=names)
+        rooms = [s for s in got["facets"]["subjects"] if s["kind"] == "area"]
+        self.assertEqual(sorted(s["name"] for s in rooms),
+                         ["Irrigation", "Kitchen", "Laundry"])
+        laundry = next(s for s in rooms if s["name"] == "Laundry")
+        self.assertEqual(laundry["count"], 2)
+        picked = facts_store.browse(names=names, subject=laundry["id"])
+        self.assertEqual(sorted(f["text"] for f in picked["facts"]),
+                         ["The dryer vent is long.", "The washer drains slowly."])
+
+    def test_two_different_rooms_are_not_folded(self):
+        facts_store.add("Cold in winter.", subject="area:living_room")
+        got = facts_store.browse(names={"area:living_room": "Living Room",
+                                        "area:kitchen": "Kitchen"})
+        ids = {s["id"] for s in got["facets"]["subjects"] if s["kind"] == "area"}
+        self.assertEqual(ids, {"area:kitchen", "area:living_room"})
+
+
 class TestNarrowingTheTimeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

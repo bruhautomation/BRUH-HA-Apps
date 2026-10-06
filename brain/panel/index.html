@@ -554,6 +554,12 @@
      never folded away. -->
 <div id="viewHousebook" class="view">
   <section class="bookwrap">
+    <header class="panehead">
+      <div>
+        <h1 class="panetitle">House book</h1>
+        <p class="panesub">How this house works, written for a partner or a sitter.</p>
+      </div>
+    </header>
     <div id="upBook" class="upbody"></div>
   </section>
 </div>
@@ -1440,8 +1446,10 @@
       <p id="refineFrom" class="hint refinefrom hidden"></p>
       <div class="row">
         <button id="refineGo" class="btn primary">Send</button>
+        <!-- "Send" beside a bare "Ask", in a dialog itself titled Ask,
+             gave two presses nobody could tell apart. -->
         <button id="refineChat" class="btn ghost" type="button"
-                data-tip="Talk it through in the Ask tab instead">Ask</button>
+                data-tip="Talk it through in the Ask tab instead">Ask in chat</button>
       </div>
       <p class="hint">brAIn makes the report again with your change; the version
         on screen stays under ⋯ › Past versions.</p>

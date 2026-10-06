@@ -444,6 +444,20 @@ def listify(value: Any) -> list:
     return [value]
 
 
+def counted_names(names: Iterable[str], limit: int = 6) -> str:
+    """"2: Hall, Porch" — or just the name when there is one.
+
+    A card under the heading "Z-Wave nodes are marked dead" read
+    "1: Laundry Room Energy Monitor", which looks like a list numbered by
+    somebody who stopped at one. The count only says something when there
+    is more than one thing to count.
+    """
+    names = list(names)
+    if len(names) == 1:
+        return names[0]
+    return f"{len(names)}: " + join_names(names, limit)
+
+
 def join_names(names: Iterable[str], limit: int = 6) -> str:
     names = list(names)
     if len(names) <= limit:

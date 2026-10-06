@@ -73,7 +73,7 @@ function probe() {
 // says "Context lost" — and a plainly paused conversation, the ordinary
 // case, draws nothing. They sit beside a title that is already competing
 // for the width. The list is the rail beside the transcript on a wide
-// screen and the page Ask opens on below 1100px, so it is one renderer
+// screen and the page Ask opens on below 900px, so it is one renderer
 // measured at both widths. A card run's "Record" is not in it: the list is
 // your conversations by default (the pills over the list reach the rest).
 //
