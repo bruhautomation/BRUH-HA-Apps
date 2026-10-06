@@ -8660,14 +8660,19 @@ async def h_book_write(request: web.Request) -> web.Response:
     """A line typed straight into a section, as written — no run."""
     body = await _json_body(request)
 
+    section = str(body.get("section") or "")
+    if section not in house_book.SECTIONS:
+        raise web.HTTPBadRequest(text="There is no such section in the house book.")
+
     def write() -> dict:
         state = house_book.load()
         try:
             state["book"] = house_book.add_written(
-                state.get("book"), str(body.get("section") or ""),
-                str(body.get("text") or ""))
+                state.get("book"), section, str(body.get("text") or ""))
         except ValueError as exc:
-            raise web.HTTPBadRequest(text=str(exc).capitalize() + ".") from exc
+            # A fixed sentence, never the exception's own text: the only
+            # ValueError left here is the empty line.
+            raise web.HTTPBadRequest(text="Type the line first.") from exc
         state["opted_in"] = True
         _republish_book(state, time.time())
         house_book.save(state)
