@@ -592,6 +592,23 @@ class TestTheSwitchReachesTheGate(GateCase):
                        ["open the back door"])
         self.assertEqual((out["decision"], out["path"]), ("deny", "floor"))
 
+    def test_the_switch_path_reads_no_entity_states(self):
+        """States only ever reach the model's prompt; reading forty of them
+        one at a time is how a slow house turned the switch's allow into a
+        timeout, and a timeout into a question."""
+        reads = []
+        state = self.ha_data.entity_state
+
+        async def counted(entity_id, timeout=15):
+            reads.append(entity_id)
+            return await state(entity_id, timeout)
+
+        self.ha_data.entity_state = counted
+        out = self.ask(PFX + "run_script", {"entity_id": "script.night"},
+                       ["run the night script"])
+        self.assertEqual((out["decision"], out["path"]), ("allow", "switch"))
+        self.assertEqual(reads, [])
+
     def test_turning_it_off_is_not_answered_from_the_cache(self):
         args = {"entity_id": "switch.freezer", "action": "off"}
         self.assertEqual(self.ask(PFX + "control_switch", args,

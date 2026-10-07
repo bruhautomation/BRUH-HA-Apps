@@ -526,6 +526,20 @@ _DISCUSS_FREE = frozenset((
 DISCUSS_ASK = tuple(
     [t for t in engine.ANALYST_DENIED if t not in _DISCUSS_FREE]
     + ["MultiEdit"])
+# With "Let brAIn act without asking" on, a discussion asks about CHANGING
+# Home Assistant and nothing else: every acting Home Assistant tool and the
+# file editors (the config is Home Assistant), never the shell or a read.
+# Working out a plan may take any command it needs; making the change
+# waits for the person — an approval card, or the plan's Apply.
+DISCUSS_HA_ASK = tuple(t for t in DISCUSS_ASK if t != "Bash")
+# …and everything else is pre-approved, so nothing between the person and
+# the plan asks. The whole Home Assistant server is allowed by its server
+# rule and the acting tools above are asked anyway, because an ask rule
+# outranks an allow rule in the CLI's own evaluation (deny, ask, allow).
+DISCUSS_FREE_RUN = (
+    "Bash", "Read", "Glob", "Grep", "LS", "NotebookRead", "WebFetch",
+    "WebSearch", "TodoWrite", "Task", "Agent", engine.MCP.rstrip("_"),
+)
 
 # Flags a CLI from before they existed refuses at startup, naming them on
 # stderr. Each is dropped for this add-on run and the spawn retried, so a
@@ -561,9 +575,11 @@ _OPTIONAL_FLAGS = (
 #   way (a heredoc into automations.yaml, a URL built in pieces) now runs
 #   unasked; and a change made by a shell command reaches no undo journal.
 # * **A discussion is spawned with ``--permission-mode default``** whatever
-#   the switch says. Its ask rules outrank an allow anyway, and naming the
-#   mode means a Discuss session never inherits bypass from anywhere — an
-#   agreed change still goes through the plan, Apply and Undo.
+#   the switch says, so it never inherits bypass from anywhere. What the
+#   switch changes there is its RULES (`_discuss_rules`): on, everything is
+#   pre-approved except changing Home Assistant (`DISCUSS_HA_ASK`), so
+#   working out a plan never asks and the change itself still waits for an
+#   approval card or the plan's Apply; off, every acting tool asks.
 #
 # A change reaches an idle conversation on its next message through the
 # respawn `send` already does (`_spawned_mode`, the `_spawned_model` rule);
@@ -1251,8 +1267,17 @@ class ChatSession:
                 "timeout": CONTEXT_HOOK_TIMEOUT,
             }]}]}
         if self.finding_ts:
-            out["permissions"] = {"ask": list(DISCUSS_ASK)}
+            out["permissions"] = self._discuss_rules()
         return out
+
+    def _discuss_rules(self) -> dict:
+        """A discussion's permission rules. Switch off: ask before every
+        acting tool. Switch on: run anything, ask before changing Home
+        Assistant (`DISCUSS_HA_ASK`)."""
+        if self.skip_permissions:
+            return {"allow": list(DISCUSS_FREE_RUN),
+                    "ask": list(DISCUSS_HA_ASK)}
+        return {"ask": list(DISCUSS_ASK)}
 
     def _permission_mode(self) -> str:
         """The `--permission-mode` this conversation should spawn with.
@@ -1347,7 +1372,8 @@ class ChatSession:
             # outright. Failing closed costs a discussion its changes,
             # which the `plan` resolution makes anyway; failing open would
             # be the read-only promise kept by a sentence again.
-            argv += ["--disallowedTools", ",".join(DISCUSS_ASK)]
+            argv += ["--disallowedTools", ",".join(
+                DISCUSS_HA_ASK if self.skip_permissions else DISCUSS_ASK)]
         if self.model:
             # Kept on the argv even when resuming: a resumed session
             # otherwise continues on the model it remembers, which is the

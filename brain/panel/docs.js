@@ -835,9 +835,11 @@ The presses are the ones above; this is what each does in more detail.
   Claude proposes the endings, and none of them touches your house — **Plan** is
   deliberately not one of them and stays on the card.
   Ask opens a **new** conversation beside whatever you were doing in the chat,
-  so an answer being written carries on. In it Claude can read anything but has to
-  ask before it changes anything, even with **Let brAIn act without asking** on:
-  every service call, file edit or shell command shows a permission card first.
+  so an answer being written carries on. In it Claude can read anything. With
+  **Let brAIn act without asking** off, every service call, file edit or shell
+  command shows a permission card first. With it on, Claude runs whatever it needs
+  to work the problem out (shell commands included) without asking, and only
+  changing Home Assistant (a service call or a file edit) still shows a card.
   When you agree what to change, Claude can offer it as a button; pressing it has
   brAIn plan exactly that change, read-only, and put the plan on the card. Nothing
   happens until you press **Apply**, and **Undo** puts it back.
@@ -1706,7 +1708,9 @@ With the switch on, these still hold:
 - **brAIn's own deny-list** still applies.
 - **The action gate** stops asking its own model what you meant,
   but its floors and your house rules still decide.
-- **A conversation about a finding** (Discuss) still asks before every change.
+- **A conversation about a finding** (Ask on a card) still asks before it changes
+  Home Assistant (a service call or a file edit). Everything else, shell commands
+  included, runs without asking.
 - **Edits made with Claude's file tools** can still be undone with \`brain undo\`.
 - **Voice, cards, automation tasks and Fix it** keep their own rules. The switch never
   reaches them.
@@ -4232,7 +4236,7 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 | \`auto_generate_context\` | bool | \`true\` | Regenerate \`/config/CLAUDE.md\` with your HA system context at startup. |
 | \`enable_ha_mcp_server\` | bool | \`true\` | Give Claude native HA access (states, services, history, statistics, registries, dashboards, logs, templates). |
 | \`enable_mobile_ui\` | bool | \`true\` | Splice the mobile toolbar and iOS dictation fix into ttyd's UI. |
-| \`dangerously_skip_permissions\` | bool | \`false\` | **Let brAIn act without asking.** Off: the terminal and the chat ask before running a command, editing a file or changing something in Home Assistant. On: they stop asking, and the action gate stops asking its own model in those two. The same switch is in ⚙ → Terminal & chat, and it applies on the next terminal session or chat message without a restart; a terminal session already open keeps the setting it started with until you end it with \`/exit\`. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one, but a shell command that reaches one some other way is not checked. brAIn's deny-list, your house rules and conversations about a finding hold either way, and voice, cards, automation tasks and Fix it keep their own rules. See Asking before acting. |
+| \`dangerously_skip_permissions\` | bool | \`false\` | **Let brAIn act without asking.** Off: the terminal and the chat ask before running a command, editing a file or changing something in Home Assistant. On: they stop asking, and the action gate stops asking its own model in those two. The same switch is in ⚙ → Terminal & chat, and it applies on the next terminal session or chat message without a restart; a terminal session already open keeps the setting it started with until you end it with \`/exit\`. Still guarded: brAIn's Home Assistant tools refuse protected entities, and so do plain shell service calls and YAML edits made with Claude's file tools that name one, but a shell command that reaches one some other way is not checked. brAIn's deny-list, your house rules and conversations about a finding still ask before changing Home Assistant, and voice, cards, automation tasks and Fix it keep their own rules. See Asking before acting. |
 
 ## Voice and automation
 

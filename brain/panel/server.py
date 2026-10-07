@@ -5201,9 +5201,14 @@ async def _gate_registry() -> dict | None:
     return maps
 
 
-async def _gate_view(tool: str, args: dict, exposed_only: bool
-                     ) -> consequence.View:
-    """What the gate is allowed to know: registries, closed states, members."""
+async def _gate_view(tool: str, args: dict, exposed_only: bool,
+                     states: bool = True) -> consequence.View:
+    """What the gate is allowed to know: registries, closed states, members.
+
+    `states` is the model's half: entity states only ever reach the gate's
+    prompt, so the switch path, which asks no model, does not read them —
+    up to forty REST round trips that could otherwise run the read past
+    GATE_TIMEOUT_S and turn the answer into a question."""
     import aiohttp  # noqa: PLC0415
     import ha_data  # noqa: PLC0415
 
@@ -5254,7 +5259,8 @@ async def _gate_view(tool: str, args: dict, exposed_only: bool
                                                             snap)}
         except Exception as exc:  # noqa: BLE001
             log.debug("gate: exposure unreadable: %s", exc)
-    for eid in [e["entity_id"] for e in resolved["entities"]][:40]:
+    for eid in [e["entity_id"] for e in resolved["entities"]][
+            :40 if states else 0]:
         try:
             view.states[eid] = await ha_data.entity_state(eid) or {}
         except Exception:  # noqa: BLE001 — shown as could not read
@@ -5293,8 +5299,9 @@ async def _gate_decide(body: dict) -> dict:
     if hit:
         return hit
     try:
-        view = await asyncio.wait_for(_gate_view(tool, args, exposed_only),
-                                      GATE_TIMEOUT_S)
+        view = await asyncio.wait_for(
+            _gate_view(tool, args, exposed_only, states=not switch),
+            GATE_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — undecided, never allow
         return gate.undecided(channel, f"could not read the house: "
                                        f"{type(exc).__name__}")

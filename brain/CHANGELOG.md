@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.16.1
+
+### "Let brAIn act without asking" stops the asking in a card's conversation too
+- **A conversation opened from a card (Ask) follows the switch now.** With
+  **Let brAIn act without asking** on, Claude runs whatever it needs to work the
+  problem out (reads, shell commands, web lookups) without a permission card. Only
+  changing Home Assistant (a service call or a file edit) still asks, or goes
+  through the plan's **Apply**. Before, every action in those conversations showed
+  a card whatever the switch said. With the switch off nothing changes: every
+  action there asks first.
+- **The action gate answers faster with the switch on.** It no longer reads the
+  state of every entity an action reaches before saying yes, so a slow Home
+  Assistant is much less likely to turn an allowed action into a question.
+
 ## 2.16.0
 
 ### brAIn works out what it can before it asks you

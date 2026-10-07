@@ -59,7 +59,8 @@ configuration:
       Home Assistant tools refuse protected entities. So do plain shell
       service calls, and YAML edits made with Claude's file tools, that name
       one. A shell command that reaches one some other way is not checked.
-      brAIn's own deny-list holds, conversations about a finding still ask,
+      brAIn's own deny-list holds, conversations about a finding still ask
+      before changing Home Assistant,
       and voice and background runs keep their own rules. Edits made with
       Claude's file
       tools can be undone with brain undo; shell changes cannot. Applies to
