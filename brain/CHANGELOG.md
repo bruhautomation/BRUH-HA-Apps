@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.2
+
+- The development loop's cloud fixer now works through every open report in each run, fixing related reports together in a few pull requests and closing each report with the reason. No change to how brAIn behaves on your house.
+
 ## 2.17.1
 
 - Housekeeping for the development loop: recorded the first UX audit. No change to how brAIn behaves.
