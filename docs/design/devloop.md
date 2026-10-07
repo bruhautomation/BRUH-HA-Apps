@@ -80,26 +80,40 @@ cloud UX audit below covers the screenshot need from fixtures for now.
 ## The cloud half
 
 The house never writes code. A Routine does, in a fresh cloud session every
-two hours, following `.claude/skills/fix-from-house/SKILL.md`. Each run does
-ONE thing:
+two hours, following `.claude/skills/fix-from-house/SKILL.md`. **A run is
+finished when the queue is empty**: every open issue it found ends closed,
+with a comment saying why (fixed in a merged PR, not brAIn's, a duplicate,
+declined, or handed to a person under `needs-human`). In order:
 
-1. **Drive the open `devloop/` PR**: merge `main` into it on a conflict, fix
-   red CI, and merge it (squash, through the GitHub MCP tool) when every
+0. **Take the run lock**, an open `[devloop] run in progress` issue in the
+   reports repo. A drain can outlast the two-hour gap, and two runs
+   batching the same issues would fight over one version number. A lock
+   older than three hours is a run that died and is taken over.
+1. **Finish any open `devloop/` PR**: merge `main` into it on a conflict,
+   fix red CI, and merge it (squash, through the GitHub MCP tool) when every
    check is green. A merge made with Actions' `GITHUB_TOKEN` starts no
    workflows on `main`, which is why the merge is the routine's.
 2. **Follow up on fixes that did not hold**: a *Back again* or *Still
-   happening* after a fix reopens the issue (twice means `needs-human`),
-   and a fix that made things worse is reverted as an ordinary devloop PR.
-3. **The weekly retro and UX audit**, due off the dates in `LESSONS.md`.
-   The retro writes what the week taught into `LESSONS.md` and, for rules
-   every contributor needs, `CLAUDE.md`. The audit drives the panel's
-   measure scripts and Playwright screenshots against the fixtures, guided
-   by the `[House shape]` issue, and files at most five `devloop:ux` issues.
-4. **The next issue**: reproduce as a failing test, fix, bump the patch
-   version, CHANGELOG, open the PR.
+   happening* after a fix reopens the issue for this run's drain (twice is
+   `needs-human`), and a PR that made things worse is reverted whole and
+   its issues reopened.
+3. **The weekly UX audit and retro**, due off the dates in `LESSONS.md`,
+   before the drain because the audit files issues this run then closes.
+4. **Drain the queue**: triage every issue to one outcome first, group the
+   fixes into batches by area (at most eight issues, never a UI change
+   beside a change to what an unattended run may do), and for each batch in
+   turn: failing tests first, the fixes, one patch bump and CHANGELOG entry,
+   open the PR, wait for CI, merge, close its issues.
+   The run itself is Opus and does the judging; each batch's fix goes to a
+   subagent on Sonnet when the cause is plain, Opus when it has to be found,
+   and Fable only after an Opus attempt failed (at most three a run), with a
+   failed tier retried once a tier up before the issue goes to a person.
+5. **Final sweep**: anything filed while the run worked is drained too, up
+   to three sweeps. Then the lock is released.
 
-**One PR at a time**, because two unmerged fixes on top of each other are
-two fixes nobody can tell apart when the house reports back.
+**Batches go one after another, never side by side**, because each bumps
+the version, and a batch is reverted whole: one PR's issues are one
+release, so *Back again* after it says which release to look at.
 
 ### What a model is not trusted to keep
 

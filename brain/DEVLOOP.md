@@ -138,10 +138,11 @@ This repository ships the cloud half:
 
 - `.claude/skills/fix-from-house/SKILL.md`: instructions for a scheduled
   [Claude Code routine](https://code.claude.com/docs/en/claude-code-on-the-web).
-  Each run takes one issue, reproduces it as a failing test, fixes it, bumps
-  the version, opens a pull request, and merges it when CI is green. It
-  then watches the house's *Back again* comments and reverts a fix that did
-  not hold.
+  Each run works until every open issue is closed: it reproduces each one as
+  a failing test, fixes them in a few pull requests grouped by area, and
+  merges each when CI is green. An issue it should not fix is closed with
+  the reason. It also watches the house's *Back again* comments and reverts
+  a fix that did not hold.
 - `.claude/devloop.json`: names the reports repository, and the files an
   automated pull request may never touch (the action gate, protected
   entities, credentials, permissions, the MCP server, and the loop itself).
