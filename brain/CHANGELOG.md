@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.1
+
+- Housekeeping for the development loop: recorded the first UX audit. No change to how brAIn behaves.
+
 ## 2.17.0
 
 ### Help develop brAIn: your faults as issues in your own private repository (off by default)
