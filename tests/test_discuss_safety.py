@@ -223,6 +223,67 @@ class TestADiscussionAsksBeforeItActs(ChatCase):
         self.assertEqual(clean({"finding_ts": 9})["finding_ts"], 9)
 
 
+class TestWithTheSwitchOnADiscussionAsksOnlyBeforeChangingHomeAssistant(ChatCase):
+    """"Let brAIn act without asking" is on: working out a plan may run
+    anything it needs, and changing Home Assistant still waits for the
+    person — an approval card or the plan's Apply."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.reg.skip_permissions = True
+
+    async def test_reads_and_the_shell_are_pre_approved(self):
+        await self.reg.new(finding_ts=1234)
+        argv = (await self.spawns(1))[-1]
+        rules = settings_of(argv)["permissions"]
+        mcp = self.engine.MCP
+        for tool in ("Bash", "Read", "Grep", "WebFetch", mcp.rstrip("_")):
+            self.assertIn(tool, rules["allow"], tool)
+        self.assertNotIn("Bash", rules["ask"])
+
+    async def test_changing_home_assistant_still_asks(self):
+        await self.reg.new(finding_ts=1234)
+        argv = (await self.spawns(1))[-1]
+        ask = settings_of(argv)["permissions"]["ask"]
+        mcp = self.engine.MCP
+        for tool in (f"{mcp}call_service", f"{mcp}control_lock",
+                     f"{mcp}control_light", f"{mcp}run_script",
+                     f"{mcp}reload_config", "Write", "Edit", "MultiEdit"):
+            self.assertIn(tool, ask, tool)
+        # Never bypass: the ask rules are what hold, and a bypass mode is a
+        # mode in which a CLI may skip them.
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "default")
+
+    async def test_every_acting_tool_but_the_shell_is_in_the_ask_list(self):
+        for tool in self.chat_session.DISCUSS_ASK:
+            if tool == "Bash":
+                continue
+            self.assertIn(tool, self.chat_session.DISCUSS_HA_ASK, tool)
+
+    async def test_a_cli_that_refuses_settings_forbids_only_the_changes(self):
+        os.environ["FAKE_CHAT_REFUSE"] = "--settings"
+        await self.reg.new(finding_ts=55)
+        retry = (await self.spawns(2))[1]
+        denied = retry[retry.index("--disallowedTools") + 1].split(",")
+        self.assertEqual(sorted(denied),
+                         sorted(self.chat_session.DISCUSS_HA_ASK))
+        self.assertNotIn("Bash", denied)
+
+    async def test_flipping_the_switch_respawns_into_the_new_rules(self):
+        self.reg.skip_permissions = False
+        await self.reg.new(finding_ts=77)
+        session = self.reg.attached()
+        await session.send("is it real?")
+        await self.until(lambda: session.state != "busy" and session.session_id)
+        self.assertIn("Bash", settings_of((await self.spawns(1))[-1])
+                      ["permissions"]["ask"])
+        session.skip_permissions = True
+        await session.send("go on then")
+        argv = (await self.spawns(2))[-1]
+        self.assertIn("--resume", argv)
+        self.assertIn("Bash", settings_of(argv)["permissions"]["allow"])
+
+
 class TestTheChatIsPrimed(ChatCase):
     async def test_the_system_prompt_rides_the_argv(self):
         self.chat_session.PROMPT_PROVIDER = lambda s: "You are brAIn, here."
