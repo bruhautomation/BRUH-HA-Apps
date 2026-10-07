@@ -1,6 +1,6 @@
 {
-  "_what": "The development loop's cloud half. reports_repo is the private repository brAIn files issues into (owner/name); the routine does nothing until it is set. needs_human_paths are the files an automated PR may not touch: devloop-guard fails any devloop/ PR that does, and the fixer leaves such a PR open with the needs-human label instead of merging it. See docs/design/devloop.md.",
-  "reports_repo": "",
+  "_what": "The development loop's cloud half. reports_repo is the private repository brAIn files issues into (owner/name); the routine does nothing until it is set. needs_human_paths are the files an automated PR may not touch: devloop-guard fails any devloop/ PR that does, and the fixer labels such a PR needs-human and closes it instead of merging it. See docs/design/devloop.md.",
+  "reports_repo": "bruhautomation/brain-house-reports",
   "max_open_prs": 1,
   "needs_human_paths": [
     ".github/",
