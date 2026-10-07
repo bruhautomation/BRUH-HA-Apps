@@ -148,8 +148,8 @@ import brain_status
 import brief
 import capture
 import devloop
-from devloop import upstream as devloop_upstream
-from devloop import github as devloop_github
+import devloop.github
+import devloop.upstream
 import card_tags
 import cases
 from checks._util import House
@@ -15265,19 +15265,19 @@ async def _devloop_tick(force: bool = False) -> dict:
     call time, so switching it off stops the next tick."""
     if not await asyncio.to_thread(devloop.enabled):
         return {"skipped": "off"}
-    due = time.time() - (devloop_upstream.STATE["last_sweep"] or 0) \
-        >= devloop_upstream.SWEEP_INTERVAL_S
-    if not (force or due) or devloop_upstream.STATE["running"]:
+    due = time.time() - (devloop.upstream.STATE["last_sweep"] or 0) \
+        >= devloop.upstream.SWEEP_INTERVAL_S
+    if not (force or due) or devloop.upstream.STATE["running"]:
         return {"skipped": "not due"}
-    devloop_upstream.STATE["running"] = True
+    devloop.upstream.STATE["running"] = True
     try:
         payload = await asyncio.to_thread(_diagnostics_payload)
         swept = await asyncio.to_thread(
-            devloop_upstream.sweep, payload, dict(_NAMES))
-        sent = await asyncio.to_thread(devloop_upstream.send_due)
+            devloop.upstream.sweep, payload, dict(_NAMES))
+        sent = await asyncio.to_thread(devloop.upstream.send_due)
         return {"swept": swept, "sent": sent}
     finally:
-        devloop_upstream.STATE["running"] = False
+        devloop.upstream.STATE["running"] = False
 
 
 def _devloop_payload() -> dict:
@@ -15285,8 +15285,8 @@ def _devloop_payload() -> dict:
         "settings": devloop.load_settings(),
         "streams": devloop.STREAMS,
         "token_set": devloop.token_set(),
-        "status": devloop_upstream.status(),
-        "queue": devloop_upstream.listing(),
+        "status": devloop.upstream.status(),
+        "queue": devloop.upstream.listing(),
     }
 
 
@@ -15333,7 +15333,7 @@ async def h_devloop_test(request: web.Request) -> web.Response:
     if not token or not repo:
         return web.json_response({"ok": False,
                                   "error": "set a repository and a token first"})
-    ok, why = await asyncio.to_thread(devloop_github.check_repo, token, repo)
+    ok, why = await asyncio.to_thread(devloop.github.check_repo, token, repo)
     return web.json_response({"ok": ok, "error": why})
 
 
@@ -15348,7 +15348,7 @@ async def h_devloop_run(request: web.Request) -> web.Response:
 async def h_devloop_item(request: web.Request) -> web.Response:
     """Exactly what would be sent for one fingerprint — composed by the
     function the sender calls, so the preview cannot disagree with it."""
-    doc = await asyncio.to_thread(devloop_upstream.preview,
+    doc = await asyncio.to_thread(devloop.upstream.preview,
                                   request.match_info["fp"])
     if doc is None:
         return web.json_response({"error": "no such report"}, status=404)
@@ -15360,14 +15360,14 @@ async def h_devloop_item_verb(request: web.Request) -> web.Response:
     state = {"send": "ready", "discard": "discarded"}.get(verb)
     if state is None:
         return web.json_response({"error": "unknown action"}, status=404)
-    done = await asyncio.to_thread(devloop_upstream.mark,
+    done = await asyncio.to_thread(devloop.upstream.mark,
                                    request.match_info["fp"], state)
     if not done:
         return web.json_response({"error": "no such report, or already sent"},
                                  status=404)
     out: dict = {}
     if state == "ready":
-        out = await asyncio.to_thread(devloop_upstream.send_due)
+        out = await asyncio.to_thread(devloop.upstream.send_due)
     return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
 
 

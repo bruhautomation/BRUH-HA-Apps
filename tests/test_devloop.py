@@ -33,9 +33,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
 import devloop  # noqa: E402
-from devloop import aliases as aliases_mod  # noqa: E402
-from devloop import github  # noqa: E402
-from devloop import upstream  # noqa: E402
+import devloop.aliases  # noqa: E402
+import devloop.github  # noqa: E402
+import devloop.upstream  # noqa: E402
+
+aliases_mod = devloop.aliases
+github = devloop.github
+upstream = devloop.upstream
 
 TOKEN = "github_pat_" + "A1b2C3d4E5f6G7h8I9j0" * 2
 
@@ -78,14 +82,17 @@ class FakeGitHub:
                     return
                 path = self.path.split("?")[0]
                 if path == "/repos/me/reports":
-                    return self._send(200, {"private": fake.private})
+                    self._send(200, {"private": fake.private})
+                    return
                 if path == "/repos/me/reports/issues":
                     page = int(re.search(r"[?&]page=(\d+)", self.path).group(1))
                     rows = list(reversed(fake.issues))[(page - 1) * 100:page * 100]
-                    return self._send(200, rows)
+                    self._send(200, rows)
+                    return
                 m = re.match(r"^/repos/me/reports/issues/(\d+)$", path)
                 if m:
-                    return self._send(200, fake.issues[int(m.group(1)) - 1])
+                    self._send(200, fake.issues[int(m.group(1)) - 1])
+                    return
                 self._send(404, {"message": "Not Found"})
 
             def do_POST(self):
@@ -99,11 +106,13 @@ class FakeGitHub:
                              "body": body["body"], "labels": body.get("labels"),
                              "html_url": f"https://github.test/me/reports/issues/{n}"}
                     fake.issues.append(issue)
-                    return self._send(201, issue)
+                    self._send(201, issue)
+                    return
                 m = re.match(r"^/repos/me/reports/issues/(\d+)/comments$", self.path)
                 if m:
                     fake.comments.append((int(m.group(1)), body["body"]))
-                    return self._send(201, {"id": len(fake.comments)})
+                    self._send(201, {"id": len(fake.comments)})
+                    return
                 self._send(404, {"message": "Not Found"})
 
             def do_PATCH(self):
@@ -114,7 +123,8 @@ class FakeGitHub:
                 if m:
                     issue = fake.issues[int(m.group(1)) - 1]
                     issue.update(self._body())
-                    return self._send(200, issue)
+                    self._send(200, issue)
+                    return
                 self._send(404, {"message": "Not Found"})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
