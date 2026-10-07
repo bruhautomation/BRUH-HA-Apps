@@ -149,6 +149,7 @@ import brief
 import capture
 import devloop
 import devloop.github
+import devloop.streams
 import devloop.upstream
 import card_tags
 import cases
@@ -15297,8 +15298,13 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
                           pressed: bool = False) -> dict:
     """One stream's pass. Never raises: a stream that failed says so in
     the status line and leaves the others to run."""
-    from devloop import streams as dl_streams  # noqa: PLC0415
+    dl_streams = devloop.streams
     up = devloop.upstream
+    # The name is taken from the catalog's own key, never the caller's
+    # string: the Run route reads it off a request body.
+    stream = next((name for name in devloop.STREAMS if name == stream), "")
+    if not stream:
+        return {"error": "unknown stream"}
     try:
         version = up._version(payload)
         names = dict(_NAMES)
