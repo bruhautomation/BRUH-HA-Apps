@@ -53,24 +53,72 @@ REPO_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$
 # rather than as a 401 an hour later.
 TOKEN_RE = re.compile(r"^(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})$")
 
-# What the loop may report, one switch each. The master switch (`enabled`)
-# gates all of them; a stream is a kind of evidence with its own privacy
-# cost, so each is chosen on its own. Only streams that are BUILT are
-# listed here — a switch that does nothing is a control asking to be
-# understood. `docs/design/devloop.md` is the plan for the rest (real
-# screenshots, a UX audit, code gaps, ideas for features).
-STREAMS = {
-    "faults": "What is broken: the fault list at the top of ⚙ › Diagnostics",
+# What the loop may report, one switch and one schedule each. The master
+# switch (`enabled`) gates all of them; a stream is a kind of evidence with
+# its own privacy cost and its own spend, so each is chosen on its own.
+#
+#   free    — built from what brAIn already measured; costs no Claude run
+#   claude  — one read-only analyst run per pass, counted against the cap
+#   clears  — a fingerprint that stops appearing is told "not seen since"
+#   rolling — ONE issue whose body is rewritten each pass (a scorecard per
+#             release, the house's shape), never a new issue per pass
+#
+# `default_on` is what a house gets when it switches the loop on and has
+# chosen nothing: the streams that carry nothing a person typed. The chat
+# mining and the model streams are a further choice each.
+STREAMS: dict[str, dict] = {
+    "faults": {
+        "label": "Faults: what is broken, from the fault list in ⚙ › Diagnostics",
+        "cost": "free", "clears": True, "rolling": False,
+        "default_on": True, "default_hours": 1},
+    "scorecard": {
+        "label": "Scorecard: how right each rule was, for this release",
+        "cost": "free", "clears": False, "rolling": True,
+        "default_on": True, "default_hours": 24},
+    "wrongs": {
+        "label": "Wrongs: rules you keep marking Wrong, with your reasons",
+        "cost": "free", "clears": True, "rolling": False,
+        "default_on": True, "default_hours": 24},
+    "unmet": {
+        "label": "Unmet requests: things you asked the chat for that brAIn could not do",
+        "cost": "free", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 24},
+    "snapshot": {
+        "label": "House shape: an aliased outline of this house, for UI audits",
+        "cost": "free", "clears": False, "rolling": True,
+        "default_on": False, "default_hours": 168},
+    "gaps": {
+        "label": "Gaps: where brAIn falls short on this house (one Claude run)",
+        "cost": "claude", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 168},
+    "ideas": {
+        "label": "Ideas: features this house would use (one Claude run)",
+        "cost": "claude", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 168},
+    "look": {
+        "label": "Look at…: investigations you ask for (one Claude run each)",
+        "cost": "claude", "clears": False, "rolling": False,
+        "default_on": True, "default_hours": 0},
 }
+# The schedule choices, in hours. 0 is "only when asked" — Run now, the
+# Look at box and `brain devloop` still work.
+HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
+# The two caps that keep an unattended loop from being an unattended bill
+# or an unattended flood. A cap REFUSES rather than queueing: the next day
+# is a fresh allowance, and a backlog filed all at once is the flood.
+CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 
 DEFAULTS = {
     "enabled": False,
-    "streams": {"faults": True},
+    "streams": {k: v["default_on"] for k, v in STREAMS.items()},
+    "schedule": {k: v["default_hours"] for k, v in STREAMS.items()},
     "repo": "",
     # Every new report waits for a press until this is turned off. On by
     # default because the first few reports are how somebody learns what
     # "aliased" means on their own house.
     "review": True,
+    "max_issues_per_day": 10,
+    "max_runs_per_day": 4,
 }
 
 
@@ -99,12 +147,21 @@ def load_settings() -> dict:
     repo = data.get("repo")
     if isinstance(repo, str) and REPO_RE.match(repo):
         out["repo"] = repo
-    streams = data.get("streams")
     out["streams"] = dict(DEFAULTS["streams"])
-    if isinstance(streams, dict):
-        for name, on in streams.items():
-            if name in STREAMS and isinstance(on, bool):
-                out["streams"][name] = on
+    for name, on in (data.get("streams") or {}).items() \
+            if isinstance(data.get("streams"), dict) else []:
+        if name in STREAMS and isinstance(on, bool):
+            out["streams"][name] = on
+    out["schedule"] = dict(DEFAULTS["schedule"])
+    for name, hours in (data.get("schedule") or {}).items() \
+            if isinstance(data.get("schedule"), dict) else []:
+        if name in STREAMS and hours in HOURS_CHOICES:
+            out["schedule"][name] = hours
+    for key, (lo, hi) in CAP_LIMITS.items():
+        value = data.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) \
+                and lo <= value <= hi:
+            out[key] = value
     return out
 
 
@@ -126,6 +183,22 @@ def save_settings(changes: dict) -> dict:
                 if not isinstance(on, bool):
                     raise ValueError(f"streams.{name} must be true or false")
                 current["streams"][name] = on
+        elif key == "schedule":
+            if not isinstance(value, dict):
+                raise ValueError("schedule must be an object")
+            for name, hours in value.items():
+                if name not in STREAMS:
+                    raise ValueError(f"unknown stream: {name}")
+                if hours not in HOURS_CHOICES or isinstance(hours, bool):
+                    raise ValueError(f"schedule.{name} must be one of "
+                                     f"{', '.join(map(str, HOURS_CHOICES))} hours")
+                current["schedule"][name] = hours
+        elif key in CAP_LIMITS:
+            lo, hi = CAP_LIMITS[key]
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or not lo <= value <= hi:
+                raise ValueError(f"{key} must be a whole number from {lo} to {hi}")
+            current[key] = value
         elif key == "repo":
             value = str(value or "").strip()
             if value and not REPO_RE.match(value):
@@ -140,6 +213,11 @@ def save_settings(changes: dict) -> dict:
 def enabled() -> bool:
     """Read at call time, so switching it off stops the next pass."""
     return bool(load_settings().get("enabled"))
+
+
+def catalog() -> list[dict]:
+    """The streams as the panel lists them, in order."""
+    return [{"name": k, **v} for k, v in STREAMS.items()]
 
 
 def stream_on(name: str) -> bool:

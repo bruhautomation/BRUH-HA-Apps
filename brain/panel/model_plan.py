@@ -106,6 +106,10 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # proposes the generic cards the whole page exists to avoid, and the
     # page is the only thing that would show it.
     "ideas":           ("sonnet", "high",   False, True),
+    # The development loop's own runs (gaps, ideas, Look at…): reading this
+    # house to find what brAIn itself should do better. Reasoning work whose
+    # whole value is being specific, so it may not step down.
+    "devloop":         ("sonnet", "high",   False, True),
     "study":           ("sonnet", "medium", True,  True),
     "investigate":     ("sonnet", "high",   False, True),
     "fix_plan":        ("sonnet", "high",   False, True),

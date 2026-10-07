@@ -22,9 +22,20 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - **The token is kept out of backups** and is never shown again after you save
   it. A fine-grained token with *Issues: read and write* on that one repository
   is all it needs.
-- **What it reports is split into streams with their own switches.** Faults is
-  the first. A UI audit, aliased screenshots, code gaps and feature ideas are
-  planned.
+- **Eight streams, each with its own switch, schedule and Run.** Faults,
+  a per-release scorecard of how right each check was, the checks you keep
+  marking Wrong (with your reasons), requests the chat could not do, an
+  outline of the house's shape (counts only), and three read-only Claude
+  runs: gaps, ideas, and **Look at…**, which investigates whatever you type.
+- **Daily caps** on new issues and on Claude runs. Both refuse rather than
+  pile up, and scheduled runs also stop when automatic insights are paused
+  or the budget is spent.
+- **`brain devloop`** in the terminal: `status`, `run [stream]`,
+  `look "<what>"`.
+- **The cloud half ships with it.** A routine skill that fixes reported
+  issues one pull request at a time and checks afterwards that each fix
+  held, and a CI guard that refuses any automated pull request touching
+  the safety-critical files or weakening a test. See `DEVLOOP.md`.
 
 ## 2.16.1
 

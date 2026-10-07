@@ -108,10 +108,11 @@ def find_issue(token: str, repo: str, fp: str) -> tuple[int | None, str]:
     return None, ""
 
 
-def create_issue(token: str, repo: str, title: str, body: str
-                 ) -> tuple[dict | None, str]:
+def create_issue(token: str, repo: str, title: str, body: str,
+                 labels: list[str] | None = None) -> tuple[dict | None, str]:
     status, out = _call(token, "POST", f"/repos/{repo}/issues", {
-        "title": title[:250], "body": body[:MAX_BODY], "labels": [LABEL]})
+        "title": title[:250], "body": body[:MAX_BODY],
+        "labels": labels or [LABEL]})
     if status != 201 or not isinstance(out, dict):
         return None, _message(status, out)
     return out, ""
@@ -135,5 +136,14 @@ def comment(token: str, repo: str, number: int, text: str,
                         f"/repos/{repo}/issues/{int(number)}/comments",
                         {"body": text[:MAX_BODY]})
     if status != 201:
+        return False, _message(status, out)
+    return True, ""
+
+
+def update_issue(token: str, repo: str, number: int, title: str, body: str
+                 ) -> tuple[bool, str]:
+    status, out = _call(token, "PATCH", f"/repos/{repo}/issues/{int(number)}",
+                        {"title": title[:250], "body": body[:MAX_BODY]})
+    if status != 200:
         return False, _message(status, out)
     return True, ""

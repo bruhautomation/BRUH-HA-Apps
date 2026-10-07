@@ -3635,15 +3635,78 @@ function paintDevloop(data) {
   }
   $("#devStatus").textContent = line;
   $("#devQueue").innerHTML = devQueueRows(data);
-  // One switch per stream, from the server's own list: a stream that is not
-  // built yet has no switch, rather than one that does nothing.
+  // One row per stream, from the server's own list: a switch, how often it
+  // runs, and Run. A stream that is not built has no row rather than a
+  // switch that does nothing. "Look at…" has its own box below.
   const on = s.streams || {};
-  $("#devStreams").innerHTML = Object.entries(data.streams || {}).map(([k, label]) =>
-    `<div class="setrow top"><label class="check bigcheck">`
-    + `<input class="tog" type="checkbox" data-dev-stream="${esc(k)}"`
-    + `${on[k] ? " checked" : ""}><span><b>${esc(label)}</b></span></label></div>`
-  ).join("");
+  const sched = s.schedule || {};
+  const hours = data.hours || [0, 1, 3, 6, 12, 24, 168];
+  const last = (data.status || {}).last_run || {};
+  $("#devStreams").innerHTML = (data.streams || [])
+    .filter((st) => st.name !== "look").map((st) => {
+      const when = last[st.name]
+        ? "ran " + timeAgo(new Date(last[st.name] * 1000).toISOString()) : "not run yet";
+      const opts = hours.map((h) => `<option value="${h}"${sched[st.name] === h
+        ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}</option>`).join("");
+      return `<div class="setrow top devstream"><label class="check bigcheck">`
+        + `<input class="tog" type="checkbox" data-dev-stream="${esc(st.name)}"`
+        + `${on[st.name] ? " checked" : ""}><span><b>${esc(st.label)}</b><br>`
+        + `<span class="subtext">${esc(when)}</span></span></label>`
+        + `<div class="row tight"><select class="sel" data-dev-hours="${esc(st.name)}"`
+        + ` aria-label="How often">${opts}</select>`
+        + `<button class="btn tiny" data-dev-run="${esc(st.name)}"`
+        + ` aria-label="Run this stream now">Run</button></div></div>`;
+    }).join("");
+  const looks = data.looks || {};
+  $("#devLookState").textContent = looks.running
+    ? "Looking at: " + looks.running
+    : (looks.last ? "Last look: " + looks.last.topic : "");
+  $("#devLookRun").disabled = !!looks.running;
+  if (document.activeElement !== $("#devCapIssues")) {
+    $("#devCapIssues").value = s.max_issues_per_day ?? 10;
+  }
+  if (document.activeElement !== $("#devCapRuns")) {
+    $("#devCapRuns").value = s.max_runs_per_day ?? 4;
+  }
 }
+
+const DEV_HOURS = { 0: "Only when asked", 1: "Every hour", 3: "Every 3 hours",
+  6: "Every 6 hours", 12: "Every 12 hours", 24: "Daily", 168: "Weekly" };
+
+$("#devStreams").addEventListener("click", async (ev) => {
+  const run = ev.target.closest("[data-dev-run]");
+  if (!run) return;
+  run.disabled = true;
+  const name = run.getAttribute("data-dev-run");
+  const out = await devloopCall("api/devloop/run", { method: "POST",
+    body: JSON.stringify({ stream: name }) });
+  run.disabled = false;
+  if (!out) return;
+  const r = (out.ran || {})[name] || {};
+  toast(r.error || r.skipped || `Ran ${name}: ${r.rows ?? 0} rows, `
+        + `${(out.sent || {}).sent ?? 0} sent`);
+});
+$("#devStreams").addEventListener("change", (ev) => {
+  const sel = ev.target.closest("[data-dev-hours]");
+  if (!sel) return;
+  devloopCall("api/devloop", { method: "PUT", body: JSON.stringify(
+    { schedule: { [sel.getAttribute("data-dev-hours")]: Number(sel.value) } }) });
+});
+$("#devLookRun").addEventListener("click", async () => {
+  const topic = $("#devLook").value.trim();
+  if (!topic) { toast("Say what to look at"); return; }
+  const out = await devloopCall("api/devloop/look", { method: "POST",
+    body: JSON.stringify({ topic }) }, "Looking — what it finds is filed as issues");
+  if (out) {
+    $("#devLook").value = "";
+    // The look runs for minutes; read the line back once it has had time.
+    setTimeout(loadDevloop, 60000);
+  }
+});
+$("#devCapSave").addEventListener("click", () =>
+  devloopCall("api/devloop", { method: "PUT", body: JSON.stringify({
+    max_issues_per_day: Number($("#devCapIssues").value),
+    max_runs_per_day: Number($("#devCapRuns").value) }) }, "Saved"));
 
 $("#devStreams").addEventListener("change", (ev) => {
   const box = ev.target.closest("[data-dev-stream]");

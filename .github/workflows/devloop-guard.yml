@@ -1,0 +1,26 @@
+name: devloop-guard
+
+# What an automated PR from the development loop may not do — touch the
+# safety-critical files, loosen its own guard, or weaken a test. Runs only
+# on PRs whose branch starts with devloop/, and reads the guard's config
+# from the BASE branch so a PR cannot edit the list it is judged by. See
+# .github/scripts/devloop_guard.py and docs/design/devloop.md.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: devloop-guard
+    if: startsWith(github.head_ref, 'devloop/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check what the PR changes
+        run: python3 .github/scripts/devloop_guard.py "origin/${{ github.base_ref }}"

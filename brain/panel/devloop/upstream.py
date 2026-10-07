@@ -41,7 +41,7 @@ import time
 import atomic_write
 import reports
 
-from . import data_dir, enabled, load_settings, read_token, stream_on
+from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
 from . import github
 from .aliases import Aliases
 
@@ -93,6 +93,14 @@ def fingerprint(where: str, what: str) -> str:
     return hashlib.sha256(norm.encode("utf-8", "replace")).hexdigest()[:16]
 
 
+def _digest(text: str) -> str:
+    """An exact hash. A rolling issue's key and body change in exactly the
+    digits `fingerprint` folds away (a version, a count), so folding them
+    would file every release's scorecard into the first one and never
+    rewrite a body whose only change is a number."""
+    return hashlib.sha256(str(text).encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def scrub(text: str) -> str:
     """Everything credential-shaped out: the reports' own rules plus a
     GitHub token, which this package is the first to hold."""
@@ -118,17 +126,33 @@ def _version(diagnostics: dict) -> str:
 
 def sweep(diagnostics: dict, names: dict | None = None,
           now: float | None = None) -> dict:
-    """Fold the current fault list into the queue. Never raises."""
+    """Fold the current fault list into the queue. Never raises.
+
+    The faults stream's own door, kept because it is the one the hourly
+    tick has always called; every stream goes through `ingest`."""
+    from . import streams  # noqa: PLC0415 — streams imports reports too
+    rows = streams.faults(diagnostics) if stream_on("faults") else []
+    return ingest("faults", rows, diagnostics, names, now)
+
+
+def ingest(stream: str, rows: list[dict], diagnostics: dict | None = None,
+           names: dict | None = None, now: float | None = None) -> dict:
+    """File one stream's rows into the queue and stamp the stream as run.
+    Never raises."""
     try:
         with _LOCK:
-            return _sweep(diagnostics, names or {}, now or time.time())
+            return _ingest(stream, rows or [], diagnostics or {}, names or {},
+                           now or time.time())
     except Exception as exc:  # noqa: BLE001 — see the module docstring
-        log.warning("devloop sweep failed: %s", exc)
-        STATE["error"] = f"sweep failed: {exc}"[:300]
+        log.warning("devloop %s pass failed: %s", stream, exc)
+        STATE["error"] = f"{stream} pass failed: {exc}"[:300]
         return {"error": STATE["error"]}
 
 
-def _sweep(diagnostics: dict, names: dict, now: float) -> dict:
+def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
+            now: float) -> dict:
+    if stream not in STREAMS:
+        raise ValueError(f"unknown stream: {stream}")
     settings = load_settings()
     aliases = Aliases.load()
     aliases.learn(names)
@@ -136,24 +160,25 @@ def _sweep(diagnostics: dict, names: dict, now: float) -> dict:
     items: dict = data["items"]
     version = _version(diagnostics)
     health = (diagnostics or {}).get("health") or {}
-    abridged = _abridged(diagnostics)
+    abridged = _abridged(diagnostics) if stream == "faults" else ""
+    rolling = bool(STREAMS[stream].get("rolling"))
     seen_now: set[str] = set()
     added = 0
-    # The fault stream switched off sweeps nothing new; what was already
-    # sent still gets its follow-ups, since those say only when.
-    rows = reports.faults(diagnostics) if stream_on("faults") else []
     for row in rows:
         where, what = str(row.get("where") or ""), str(row.get("what") or "")
-        if not what or where in SKIP_WHERE:
+        if not what:
             continue
-        fp = fingerprint(where, what)
+        # A row that names its own key (a rolling stream's one issue) is
+        # that key; any other is the fault, digits folded.
+        fp = _digest(f"{stream}|{row['key']}") if row.get("key") \
+            else fingerprint(where, what)
         if fp in seen_now:
             continue
         seen_now.add(fp)
         entry = items.get(fp)
         if entry is None:
             entry = items[fp] = {
-                "fp": fp, "first_seen": now, "seen": 0,
+                "fp": fp, "first_seen": now, "seen": 0, "stream": stream,
                 "state": "pending" if settings["review"] else "ready",
             }
             added += 1
@@ -161,8 +186,10 @@ def _sweep(diagnostics: dict, names: dict, now: float) -> dict:
             entry["returned"] = True
             entry["cleared_noted"] = False
         entry.update({
-            "where": where[:200], "what": what[:200],
+            "stream": stream, "rolling": rolling,
+            "where": where[:200], "what": what[:300],
             "detail": str(row.get("detail") or "")[:400],
+            "body": str(row.get("body") or "")[:20_000],
             "last_seen": now, "seen": int(entry.get("seen") or 0) + 1,
             "version": version,
             "health": f"{health.get('state') or '?'}"
@@ -171,10 +198,73 @@ def _sweep(diagnostics: dict, names: dict, now: float) -> dict:
         })
     _prune(items)
     data["swept_at"] = now
+    data.setdefault("last_run", {})[stream] = now
     _save(data)
     aliases.save()
     STATE["last_sweep"] = now
-    return {"faults": len(seen_now), "added": added}
+    return {"stream": stream, "rows": len(seen_now), "added": added}
+
+
+# ---------------------------------------------------------------------------
+# The schedule and the caps
+# ---------------------------------------------------------------------------
+
+def _day(now: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(now))
+
+
+def due_streams(now: float | None = None) -> list[str]:
+    """The streams whose schedule says a pass is owed now."""
+    now = now or time.time()
+    settings = load_settings()
+    if not settings.get("enabled"):
+        return []
+    last = _load().get("last_run") or {}
+    out = []
+    for name in STREAMS:
+        hours = int((settings.get("schedule") or {}).get(name) or 0)
+        if not hours or not (settings.get("streams") or {}).get(name):
+            continue
+        if now - float(last.get(name) or 0) >= hours * 3600:
+            out.append(name)
+    return out
+
+
+def runs_left(now: float | None = None) -> int:
+    """How many Claude-run passes today's cap still allows."""
+    now = now or time.time()
+    used = _load().get("runs") or {}
+    count = int(used.get("count") or 0) if used.get("day") == _day(now) else 0
+    return max(0, int(load_settings().get("max_runs_per_day") or 0) - count)
+
+
+def spend_run(now: float | None = None) -> bool:
+    """Take one Claude-run pass from today's cap, or say there is none."""
+    now = now or time.time()
+    with _LOCK:
+        if runs_left(now) <= 0:
+            return False
+        data = _load()
+        used = data.get("runs") or {}
+        count = int(used.get("count") or 0) if used.get("day") == _day(now) else 0
+        data["runs"] = {"day": _day(now), "count": count + 1}
+        _save(data)
+    return True
+
+
+def mark_run(stream: str, now: float | None = None) -> None:
+    """Stamp a stream as run without filing anything (a pass that found
+    nothing still ran, and must not be asked again until it is due)."""
+    with _LOCK:
+        data = _load()
+        data.setdefault("last_run", {})[stream] = now or time.time()
+        _save(data)
+
+
+def _issues_today(items: dict, now: float) -> int:
+    return sum(1 for e in items.values() if isinstance(e, dict)
+               and now - float(e.get("sent_at") or 0) < 86400
+               and e.get("created_here"))
 
 
 def _prune(items: dict) -> None:
@@ -217,22 +307,27 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     ]
     if entry.get("detail"):
         lines.append(f"**Detail:** {clean(entry['detail'])}")
-    lines += [
-        "",
-        "| | |", "|---|---|",
-        f"| brAIn | {clean(entry.get('version', '?'))} |",
-        f"| First seen | {_date(entry.get('first_seen'))} |",
-        f"| Last seen | {_date(entry.get('last_seen'))} |",
-        f"| Seen on | {int(entry.get('seen') or 0)} hourly passes |",
-        f"| Health | {clean(entry.get('health', '?'))} |",
-        "",
-        "<details><summary>Diagnostics (abridged)</summary>",
-        "",
-        "```json",
-        clean(entry.get("abridged", "{}")),
-        "```",
-        "</details>",
-    ]
+    if entry.get("body"):
+        lines += ["", clean(entry["body"])]
+    lines += ["", "| | |", "|---|---|",
+              f"| brAIn | {clean(entry.get('version', '?'))} |",
+              f"| First seen | {_date(entry.get('first_seen'))} |"]
+    # A rolling issue is rewritten only when what it says changes, so it
+    # carries no per-pass counter: one would make every pass a rewrite.
+    if not entry.get("rolling"):
+        lines += [f"| Last seen | {_date(entry.get('last_seen'))} |",
+                  f"| Seen on | {int(entry.get('seen') or 0)} passes |"]
+    lines += [f"| Health | {clean(entry.get('health', '?'))} |", ""]
+    if entry.get("abridged"):
+        lines += [
+            "<details><summary>Diagnostics (abridged)</summary>",
+            "",
+            "```json",
+            clean(entry["abridged"]),
+            "```",
+            "</details>",
+        ]
+    lines += ["", f"Stream: `{entry.get('stream') or 'faults'}`"]
     return {"title": title, "body": "\n".join(lines)}
 
 
@@ -246,7 +341,7 @@ def listing() -> list[dict]:
         if not isinstance(e, dict):
             continue
         rows.append({k: e.get(k) for k in (
-            "fp", "where", "what", "state", "seen", "first_seen", "last_seen",
+            "fp", "stream", "where", "what", "state", "seen", "first_seen", "last_seen",
             "issue", "issue_url", "error", "cleared_noted")})
     order = {"pending": 0, "ready": 1, "sent": 2, "discarded": 3}
     rows.sort(key=lambda r: (order.get(r["state"], 9), -(r["last_seen"] or 0)))
@@ -311,18 +406,46 @@ def _send_due(now: float) -> dict:
         return {"error": why}
     aliases = Aliases.load()
     sent = updated = 0
+    # The day's cap counts only issues this house CREATED: a fingerprint
+    # found again by its marker, a comment and a rewritten scorecard file
+    # nothing new and cost nobody's attention.
+    room = max(0, int(settings.get("max_issues_per_day") or 0)
+               - _issues_today(items, now))
+    capped = 0
     for entry in sorted(work, key=lambda e: e.get("first_seen") or 0):
         if entry["state"] == "ready":
-            if sent >= MAX_SENDS_PER_PASS:
+            if sent >= min(MAX_SENDS_PER_PASS, room):
+                capped += 1
                 continue
             if _file(token, repo, entry, aliases, now):
                 sent += 1
+        elif entry.get("rolling"):
+            if _rewrite(token, repo, entry, aliases):
+                updated += 1
         elif _follow_up(token, repo, entry, now):
             updated += 1
     _save(data)
     aliases.save()
     STATE.update(last_send=now, error="")
-    return {"sent": sent, "updated": updated}
+    return {"sent": sent, "updated": updated, "capped": capped}
+
+
+def _rewrite(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
+    """A rolling issue is one issue whose body is the current answer: the
+    body is rewritten when what it says has changed, and never commented
+    on — a scorecard with a comment a day is a scorecard nobody reads."""
+    doc = compose(entry, aliases)
+    digest = _digest(doc["body"])
+    if digest == entry.get("body_digest"):
+        return False
+    ok, err = github.update_issue(token, repo, int(entry.get("issue") or 0),
+                                  doc["title"], doc["body"])
+    if not ok:
+        entry["error"] = err
+        return False
+    entry["body_digest"] = digest
+    entry.pop("error", None)
+    return True
 
 
 def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float) -> bool:
@@ -334,7 +457,12 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float) -> b
         issue, err = github.get_issue(token, repo, number)
     else:
         doc = compose(entry, aliases)
-        issue, err = github.create_issue(token, repo, doc["title"], doc["body"])
+        issue, err = github.create_issue(
+            token, repo, doc["title"], doc["body"],
+            labels=[github.LABEL, f"devloop:{entry.get('stream') or 'faults'}"])
+        if issue:
+            entry["created_here"] = True
+            entry["body_digest"] = _digest(doc["body"])
     if err or not issue:
         entry["error"] = err or "GitHub did not return the issue"
         return False
@@ -357,7 +485,12 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
     # "Not seen" is a claim only a sweep that LOOKED can make: with the
     # stream switched off nothing was looking, and silence is not the
     # fault going away (`clear_resolved`'s rule).
-    looked = stream_on("faults")
+    stream = str(entry.get("stream") or "faults")
+    if not STREAMS.get(stream, {}).get("clears"):
+        # A request, an idea or a gap is said once; whether it stopped is
+        # not a question the stream can answer.
+        return False
+    looked = stream_on(stream)
     if looked and absent >= CLEAR_AFTER_S and not entry.get("cleared_noted"):
         text = (f"Not seen since {_date(entry.get('last_seen'))} "
                 f"(brAIn {version}).")
@@ -391,6 +524,8 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
 def status() -> dict:
     data = _load()
     return {
+        "last_run": data.get("last_run") or {},
+        "runs_left": runs_left(),
         "last_sweep": STATE["last_sweep"] or data.get("swept_at") or 0,
         "last_send": STATE["last_send"],
         "error": STATE["error"],

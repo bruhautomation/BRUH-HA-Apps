@@ -12,48 +12,64 @@ never do, brAIn behaves exactly as if it were not there.
 
 ## What it does
 
-Once an hour, brAIn reads its own fault list. That is the same list that opens
-every problem report and the top of ⚙ › Diagnostics: a background service that
-stopped, a run that keeps failing, a house check you keep marking wrong. For
-each fault it:
+brAIn looks at itself on a schedule you set and files what it finds as
+issues. Each kind of evidence is a **stream** with its own switch, its own
+schedule and its own **Run** button:
 
-1. **Files one issue**, and keeps using that issue for as long as the fault
+| Stream | What it files | On by default | Costs |
+|---|---|---|---|
+| **Faults** | The fault list from ⚙ › Diagnostics: a service that stopped, a run that keeps failing | yes, hourly | nothing |
+| **Scorecard** | How right each house check was on this release. One issue per release, rewritten in place | yes, daily | nothing |
+| **Wrongs** | A check you have marked Wrong at least 3 times and at least half the time, with the reasons you typed | yes, daily | nothing |
+| **Unmet requests** | Things you asked the chat for that brAIn said it could not do | no | nothing |
+| **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
+| **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
+| **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
+
+**Look at…** is the eighth: type what you want looked into ("why the brief
+never mentions the boiler") and press **Run**. It is one read-only Claude
+run, and its findings are filed like any other stream's.
+
+Two daily caps keep it in proportion. Both refuse rather than queue up:
+
+- **Issues a day** (default 10): past it, new reports wait for tomorrow.
+- **Claude runs a day** (default 4): covers Gaps, Ideas and Look at.
+  Scheduled runs also stop when automatic insights are paused or the usage
+  budget is spent. A **Run** press skips the budget but still counts
+  against this cap.
+
+For each finding brAIn:
+
+1. **Files one issue**, and keeps using that issue for as long as the finding
    exists. "3 of 12 runs failed" and "4 of 13 runs failed" are the same fault,
    and the number changes in the issue rather than creating a new one.
 2. **Waits for you first.** With *Ask before sending each new report* on (the
    default), a new report sits in ⚙ until you press **Send** or **Delete**.
    **View** shows exactly the text that would be sent. **Delete** means that
-   fault is never reported.
-3. **After that, only says when.** Once an issue exists, brAIn adds short
+   finding is never reported.
+3. **After that, only says when.** For faults and wrongs, brAIn adds short
    comments that contain only dates and version numbers, and these are posted
    without asking:
-   - *Not seen since …*: the fault stopped happening.
-   - *Back again on brAIn x.y.z*: the fault returned. brAIn reopens the issue
-     if you had closed it.
+   - *Not seen since …*: it stopped happening.
+   - *Back again on brAIn x.y.z*: it returned. brAIn reopens the issue if it
+     had been closed.
    - *Still happening on brAIn x.y.z*: an update came out and did not fix it.
 
-   These comments are what tell you whether a fix actually worked on your
-   house.
+   These comments are what tell anyone whether a fix actually worked on your
+   house. A stream you switch off never claims anything stopped: it was not
+   looking.
 
-## What it can report
-
-What the loop reports is split into **streams**, each with its own switch
-under the main one, because each kind of evidence has its own privacy cost and
-its own cost in Claude usage:
-
-- **Faults** (available now): the fault list described above. It costs
-  nothing to run.
-- **Planned:** a UI/UX audit that uses the panel the way you do, aliased
-  screenshots, gaps in the code, and ideas for new features.
-
-The switch for a planned stream appears in ⚙ when that stream ships. Until
-then nothing in brAIn does that work.
+The same controls are in the terminal as `brain devloop status`,
+`brain devloop run [stream]` and `brain devloop look "<what>"`.
 
 ## What leaves your house, and what never does
 
 **Sent**, inside the issue:
 
-- the fault's description;
+- the finding's description;
+- for **Unmet requests**, what you typed into the chat and the sentence
+  brAIn answered with, both aliased like everything else;
+- for **Gaps**, **Ideas** and **Look at**, what the Claude run wrote;
 - brAIn's version and health verdict;
 - an abridged diagnostics summary: versions, run counts by outcome, the last
   checks pass, and which background services are up.
@@ -78,7 +94,8 @@ becomes *Room 3*, and so on.
 - camera images;
 - where people are;
 - your memory document as a whole;
-- screenshots (this version takes none).
+- screenshots. The house takes none. The cloud UX audit described below
+  screenshots brAIn's test fixtures, never your panel.
 
 Even with aliases, a fault list describes the *shape* of a home. That is why
 reports only go to a **private** repository, and brAIn refuses to send to a
@@ -114,12 +131,28 @@ happy to share it, open an issue on
 and paste the parts you are comfortable with. You are never expected to share
 anything; this feature is only here to make that easier if you want to.
 
-## Going further
+## Going further: brAIn fixing itself
 
-Your reports repository is the input to a larger loop. A
-[Claude Code routine](https://code.claude.com/docs/en/claude-code-on-the-web)
-can be pointed at new issues there, reproduce each one as a failing test in a
-fork of this repository, fix it and open a pull request. The *Still happening*
-and *Not seen since* comments then tell you whether the release that followed
-actually fixed it on your house. Setting that up is up to you and lives outside
-the add-on.
+Your reports repository can be the input to a loop that needs nobody in it.
+This repository ships the cloud half:
+
+- `.claude/skills/fix-from-house/SKILL.md`: instructions for a scheduled
+  [Claude Code routine](https://code.claude.com/docs/en/claude-code-on-the-web).
+  Each run takes one issue, reproduces it as a failing test, fixes it, bumps
+  the version, opens a pull request, and merges it when CI is green. It
+  then watches the house's *Back again* comments and reverts a fix that did
+  not hold.
+- `.claude/devloop.json`: names the reports repository, and the files an
+  automated pull request may never touch (the action gate, protected
+  entities, credentials, permissions, the MCP server, and the loop itself).
+- `devloop-guard`: a CI check that fails any `devloop/` pull request that
+  touches one of those files, loosens its own list, changes more than the
+  version in `config.yaml`, or skips or deletes a test. A refused pull
+  request is labelled `needs-human` and left for a person.
+
+With the add-on's **Auto update** on in Home Assistant, a merged fix reaches
+the house that reported it. The house's next *Not seen since* or *Back
+again* says whether it worked. Running that loop against the public
+repository means every fix ships to everybody who installed brAIn, so it is
+for whoever maintains that repository. Anyone else should point it at a
+fork.

@@ -817,7 +817,8 @@ body.modal-open {
 .edit-body input[type="number"] { max-width: 130px; }
 .edit-body .hint { font-size: var(--fs-meta); color: var(--ink-3); margin: 10px 0 0; }
 .edit-body .row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
-.edit-body input[type="text"] {
+.edit-body input[type="text"],
+.edit-body input[type="password"] {
   width: 100%;
   padding: 10px 13px;
   font: inherit;
@@ -828,7 +829,8 @@ body.modal-open {
   border-radius: 10px;
   outline: none;
 }
-.edit-body input[type="text"]:focus { border-color: var(--accent); }
+.edit-body input[type="text"]:focus,
+.edit-body input[type="password"]:focus { border-color: var(--accent); }
 .edit-body .row.nowrap { flex-wrap: nowrap; align-items: flex-start; margin-top: 0; }
 .edit-body .row .grow { flex: 1; min-width: 0; }
 .edit-body .iconin { width: 64px; text-align: center; }
@@ -4936,7 +4938,9 @@ body.term-classic #termMode .ico-out { display: block; }
   #setModal .selin,
   #setModal input[type="number"],
   #setModal input[type="text"],
+  #setModal input[type="password"],
   #setModal textarea { font-size: 16px; }
+  #setModal #devloopBody input { min-height: 44px; }
   /* The rest of ⚙'s presses, to the same floor: the account's Details,
      a run's row, the Recheck/Run/Share/Save buttons under each reading. */
   #setModal .authdetails > summary,
@@ -6218,3 +6222,10 @@ button.kfactsubj:hover { color: var(--accent-2);
 @media (pointer: coarse) {
   .kcleanrow { min-height: 44px; }
 }
+
+/* A development-loop stream row: the switch and its sentence on one line,
+   how often and Run underneath — side by side, a phone gave the sentence a
+   column a word wide. */
+#devStreams .devstream { flex-direction: column; align-items: stretch; gap: 6px; }
+#devStreams .devstream .row.tight { margin-top: 0; flex-wrap: nowrap; }
+#devStreams .devstream select { flex: 1 1 auto; min-width: 0; }
