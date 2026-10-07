@@ -131,6 +131,11 @@ jobs:
       - name: Measure the Settings dialog
         run: node tests/manual/measure-settings.mjs
 
+      # The development loop's section is hidden while the loop is off, which
+      # is the only state measure-settings sees; this drives it switched on.
+      - name: Measure the development loop's controls
+        run: node tests/manual/measure-devloop.mjs
+
       # What the panel spends on chrome before content: the sub-tab strip,
       # the status strip and Help's contents on a phone, and how much of a
       # wide screen the Home group's lists use.

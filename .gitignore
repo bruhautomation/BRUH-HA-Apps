@@ -42,7 +42,12 @@ __pycache__/
 # Operating System Files
 .DS_Store
 Thumbs.db
-.claude/
+
+# Claude Code's local state stays out; the development loop's config and
+# the fixer's skill are shared with the cloud routine, so they are tracked.
+.claude/*
+!.claude/devloop.json
+!.claude/skills/
 
 # Coverage artifacts (local audit runs)
 .coverage

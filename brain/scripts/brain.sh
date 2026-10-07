@@ -22,6 +22,7 @@
 #   brain doctor --sweep           Take out what a rehearsal left behind
 #   brain report                   One redacted text file for a bug report
 #   brain eval <what>              How brAIn's own judgement has held up
+#   brain devloop [run|look]       File what brAIn gets wrong as issues (opt-in)
 #   brain help                     This help
 
 set -uo pipefail
@@ -100,6 +101,9 @@ Usage:
                                  prompt and report agreement with what you
                                  did. Spends Claude runs, capped; changes
                                  nothing
+  brain devloop [run|look]       The development loop (opt-in, ⚙ → Developer)
+      run [stream]               Run every switched-on stream now, or one
+      look "<topic>"             Investigate one thing, file what is found
   brain report [--no-names]      Write one redacted text file to
                                  /share/brain/reports (also under ⚙ → Problems)
   brain login [--status|--share] Sign in to Claude, and share that login with
@@ -158,6 +162,7 @@ case "$action" in
         ;;
     report)     delegate brain-report.sh "$@" ;;
     eval)       delegate brain-eval.sh "$@" ;;
+    devloop)    delegate brain-devloop.sh "$@" ;;
     login)      delegate ha-share-login.sh "$@" ;;
     help|--help|-h) usage ;;
     *)

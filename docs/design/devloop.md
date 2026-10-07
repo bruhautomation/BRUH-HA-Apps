@@ -1,0 +1,126 @@
+# The development loop
+
+brAIn learns a house. This is the loop that lets brAIn **learn about itself**:
+it uses the add-on the way its owner does, notices what is broken, awkward or
+missing, and turns that into evidence a fix can be built from. It is opt-in,
+off by default, and documented to users in [`brain/DEVLOOP.md`](../../brain/DEVLOOP.md).
+
+```
+  the house (add-on)               private repo            Routine (this repo)
+  ──────────────────               ────────────            ───────────────────
+  streams ── sweep, alias ──►  one issue per finding ──►  failing test → fix → PR
+     ▲                                                          │
+     └──── "not seen since 2.18.0" / "still happening" ◄── release ships
+```
+
+## Principles
+
+1. **Every stream is its own switch**, under one master switch. A stream is a
+   kind of evidence with its own privacy cost and its own spend: fault rows cost
+   nothing, a screenshot shows a home, a code audit spends Claude runs. Someone
+   may want the first and never the third. `devloop.STREAMS` lists only streams
+   that are built, so the panel never shows a switch that does nothing.
+2. **One finding, one issue, for its whole life.** Fingerprints are computed over
+   the raw text with digits folded, so a renamed light or a changing count never
+   splits one finding into two issues. A hidden marker in the body
+   (`<!-- brain-devloop-fp: … -->`) finds the issue again after a reinstall.
+3. **Aliased before it leaves, reviewed before the first send.** Entity ids,
+   names and rooms get stable aliases (`devloop/aliases.py`); credentials are
+   scrubbed. Review is on by default, and the preview is built by the same
+   function the sender calls.
+4. **Follow-ups say only when.** *Not seen since*, *Back again*, *Still happening
+   on x.y.z*. These close the loop: a fix is judged by whether the fingerprint
+   stopped on the house that reported it. "Not seen" is claimed only by a stream
+   that is on and looked; silence from a switched-off stream is not a fault going
+   away.
+5. **The house never writes code.** Its token can only file issues in one
+   private repository. Changing code is the job of a Routine in the cloud, with
+   its own access, through pull requests, CI and `devloop-guard`.
+6. **Nothing promotes itself.** A stream reports and a Routine proposes. A
+   person, or a merge policy that person chose for a narrow class of change,
+   decides what ships.
+
+## Streams
+
+Each stream has a switch, a schedule (`HOURS_CHOICES`: never, 1, 3, 6, 12,
+24 or 168 hours) and a Run press. `upstream.due_streams` decides what a tick
+owes, and `_devloop_tick` runs on `_checks_loop`.
+
+| Stream | What it reports | Costs | Default |
+|---|---|---|---|
+| `faults` | The `reports.faults` sweep: dead loops and daemons, failing runs, checks that could not look, the health verdict | nothing | on, hourly |
+| `scorecard` | `findings_store.scorecard()` and the journal's outcomes, as ONE rolling issue per release, its body rewritten (PATCH) when what it says changes | nothing | on, daily |
+| `wrongs` | Producers marked Wrong ≥3 times and ≥50% of the time, with the reasons typed | nothing | on, daily |
+| `unmet` | The person's chat messages the reply said it could not do (`_CANT_RE` on the reply, never the person), last 14 days | nothing | off |
+| `snapshot` | Counts and flags only (domains, rooms, boolean options), as one rolling issue, so a cloud UX audit can match a real house without visiting it | nothing | off, weekly |
+| `gaps` | A read-only `run_analyst` over the faults, scorecard and unmet requests: where brAIn falls short here | one run | off, weekly |
+| `ideas` | The same run asked for features this house would use | one run | off, weekly |
+| `look` | A person's typed topic, investigated by one read-only run (`POST /api/devloop/look`, `brain devloop look`) | one run | pressed only |
+
+Every Claude stream takes the `devloop` job (Sonnet, high) through
+`server._claude`: a scheduled pass answers to `_resident_gate` and takes a
+SCHEDULED seat, a press skips the budget and takes a PRESS seat, and both
+spend one of `max_runs_per_day`. `max_issues_per_day` caps new issues, and a
+report past it waits rather than being dropped. Both caps refuse rather than
+make room.
+
+**A rolling issue's key and body are hashed exactly** (`upstream._digest`),
+never through `fingerprint`, whose digit folding is right for a fault
+("3 of 12" and "4 of 13" are one fault) and wrong here: a release number and
+a count are precisely what changes, so folding them filed every release's
+scorecard into the first issue and never rewrote a body whose only change was
+a number. A rolling body also carries no per-pass counter, or every pass is
+a rewrite.
+
+Still planned, and not in `STREAMS` until built: **outcomes** (Resident
+verdicts the household contradicted, per scope) and **aliased screenshots
+from the house** (an audit mode that paints aliases before the capture). The
+cloud UX audit below covers the screenshot need from fixtures for now.
+
+## The cloud half
+
+The house never writes code. A Routine does, in a fresh cloud session every
+two hours, following `.claude/skills/fix-from-house/SKILL.md`. Each run does
+ONE thing:
+
+1. **Drive the open `devloop/` PR**: merge `main` into it on a conflict, fix
+   red CI, and merge it (squash, through the GitHub MCP tool) when every
+   check is green. A merge made with Actions' `GITHUB_TOKEN` starts no
+   workflows on `main`, which is why the merge is the routine's.
+2. **Follow up on fixes that did not hold**: a *Back again* or *Still
+   happening* after a fix reopens the issue (twice means `needs-human`),
+   and a fix that made things worse is reverted as an ordinary devloop PR.
+3. **The weekly retro and UX audit**, due off the dates in `LESSONS.md`.
+   The retro writes what the week taught into `LESSONS.md` and, for rules
+   every contributor needs, `CLAUDE.md`. The audit drives the panel's
+   measure scripts and Playwright screenshots against the fixtures, guided
+   by the `[House shape]` issue, and files at most five `devloop:ux` issues.
+4. **The next issue**: reproduce as a failing test, fix, bump the patch
+   version, CHANGELOG, open the PR.
+
+**One PR at a time**, because two unmerged fixes on top of each other are
+two fixes nobody can tell apart when the house reports back.
+
+### What a model is not trusted to keep
+
+`devloop-guard` (`.github/workflows/devloop-guard.yml`,
+`.github/scripts/devloop_guard.py`) runs on every PR from a `devloop/` branch
+and fails it on:
+
+- a file on `.claude/devloop.json`'s `needs_human_paths`, read from the
+  **base** branch so a PR cannot edit the list it is judged by (the list
+  holds the guard, the skill, the action gate, the MCP server, protected
+  entities, credentials, permissions, ownership, the fixer, run.sh, the
+  Dockerfile and the loop's own package);
+- any change but the version line in `config.yaml` and `manifest.json`;
+- a deleted test file, a skip or xfail added, or fewer `def test_` than
+  before.
+
+The skill says all of this too. The guard is the half that holds when a
+model does not read it. Issue text is data: the skill forbids acting on
+anything an issue says to do, and nothing from the private repository is
+copied into the public one.
+
+Auto-merging to `main` ships every fix to everybody who installed the
+add-on. That is a choice for whoever maintains the repository. Anyone else
+should run the loop against a fork.

@@ -147,6 +147,10 @@ import baselines
 import brain_status
 import brief
 import capture
+import devloop
+import devloop.github
+import devloop.streams
+import devloop.upstream
 import card_tags
 import cases
 from checks._util import House
@@ -12508,6 +12512,9 @@ async def _checks_loop() -> None:
                 await run_checks("schedule")
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
+            # The development loop, when somebody switched it on: it decides
+            # for itself whether an hour has passed (`_devloop_tick`).
+            await _devloop_tick()
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
             # Warning, not debug: a pass that fails every tick is the house
             # checks stopping, and debug is a level nobody runs at.
@@ -15241,6 +15248,279 @@ async def h_capture_delete(request: web.Request) -> web.Response:
     if not gone:
         return web.json_response({"error": "no such capture"}, status=404)
     return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# The development loop — ⚙ › Diagnostics › Developer, off by default
+# ---------------------------------------------------------------------------
+#
+# Everything here answers about one opt-in feature (`devloop/`, and
+# `brain/DEVLOOP.md` for what it is). The token is accepted and never
+# handed back: GET says whether one is set, and nothing else.
+
+async def _devloop_tick(force: bool = False) -> dict:
+    """Run whichever streams are due, then send what is ready.
+
+    Called on the checks loop's tick; each stream's own schedule decides
+    whether it is owed (`upstream.due_streams`), so this needs no loop of
+    its own. ``force`` runs every switched-on stream that costs nothing,
+    plus the Claude-run ones the day's cap still allows — the Run button.
+    Off is checked at call time, so switching it off stops the next tick.
+    """
+    if not await asyncio.to_thread(devloop.enabled):
+        return {"skipped": "off"}
+    if devloop.upstream.STATE["running"]:
+        return {"skipped": "a pass is already running"}
+    settings = await asyncio.to_thread(devloop.load_settings)
+    if force:
+        due = [k for k, on in settings["streams"].items()
+               if on and k != "look"]
+    else:
+        due = await asyncio.to_thread(devloop.upstream.due_streams)
+    devloop.upstream.STATE["running"] = True
+    ran: dict = {}
+    try:
+        payload = None
+        for stream in due:
+            if payload is None:
+                payload = await asyncio.to_thread(_diagnostics_payload)
+            ran[stream] = await _devloop_stream(stream, payload, pressed=force)
+        sent = await asyncio.to_thread(devloop.upstream.send_due)
+        return {"ran": ran, "sent": sent}
+    finally:
+        devloop.upstream.STATE["running"] = False
+
+
+DEVLOOP_LOOKS: dict = {"running": "", "last": None}
+
+
+async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
+                          pressed: bool = False) -> dict:
+    """One stream's pass. Never raises: a stream that failed says so in
+    the status line and leaves the others to run."""
+    dl_streams = devloop.streams
+    up = devloop.upstream
+    # The name is taken from the catalog's own key, never the caller's
+    # string: the Run route reads it off a request body.
+    stream = next((name for name in devloop.STREAMS if name == stream), "")
+    if not stream:
+        return {"error": "unknown stream"}
+    try:
+        version = up._version(payload)
+        names = dict(_NAMES)
+        if stream == "faults":
+            return await asyncio.to_thread(up.sweep, payload, names)
+        if stream in ("scorecard", "wrongs"):
+            score = await asyncio.to_thread(findings_store.scorecard)
+            rows = (dl_streams.scorecard(score, payload, version)
+                    if stream == "scorecard" else
+                    dl_streams.wrongs(score, await asyncio.to_thread(
+                        findings_store._load_settled)))
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "unmet":
+            rows = await asyncio.to_thread(
+                dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "snapshot":
+            rows = dl_streams.snapshot(names, payload, version)
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        # The Claude-run streams. A scheduled one answers to the three gates
+        # every unattended run answers to; a press needs only a credential.
+        # Both spend from the day's cap, which refuses rather than queues.
+        if not engine.get_auth():
+            return {"skipped": "there is no Claude credential"}
+        if not pressed:
+            held = _resident_gate(await asyncio.to_thread(settings_store.load))
+            if held:
+                return {"skipped": held}
+        if not await asyncio.to_thread(up.spend_run):
+            return {"skipped": "today's run cap is spent"}
+        score = await asyncio.to_thread(findings_store.scorecard)
+        unmet = await asyncio.to_thread(
+            dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
+        context = dl_streams.context_block(payload, score, unmet)
+        result = await _claude(
+            engine.run_analyst,
+            dl_streams.analyst_prompt(stream, context, topic),
+            dl_streams.analyst_system(), eff_model(),
+            TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
+            priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
+        _record_usage(result, "devloop")
+        if not result or not result.get("ok"):
+            await asyncio.to_thread(up.mark_run, stream)
+            return {"error": (result or {}).get("error") or "the run failed"}
+        rows = dl_streams.parse_rows(result.get("text") or "", stream, topic)
+        if not rows:
+            await asyncio.to_thread(up.mark_run, stream)
+            return {"rows": 0}
+        return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+    except Exception as exc:  # noqa: BLE001 — one stream, not the loop
+        log.warning("devloop: the %s stream failed: %s", stream, exc)
+        return {"error": str(exc)[:200]}
+
+
+async def _devloop_look(topic: str) -> None:
+    """A Look at… request, run as a press and sent straight away."""
+    try:
+        payload = await asyncio.to_thread(_diagnostics_payload)
+        out = await _devloop_stream("look", payload, topic=topic, pressed=True)
+        sent = await asyncio.to_thread(devloop.upstream.send_due)
+        DEVLOOP_LOOKS["last"] = {"topic": topic, "at": time.time(),
+                                 "result": out, "sent": sent}
+    finally:
+        DEVLOOP_LOOKS["running"] = ""
+
+
+_DEVLOOP_TASKS: set = set()
+
+
+def _devloop_payload() -> dict:
+    return {
+        "settings": devloop.load_settings(),
+        "streams": devloop.catalog(),
+        "hours": list(devloop.HOURS_CHOICES),
+        "caps": {k: list(v) for k, v in devloop.CAP_LIMITS.items()},
+        "looks": {"running": DEVLOOP_LOOKS["running"],
+                  "last": DEVLOOP_LOOKS["last"]},
+        "token_set": devloop.token_set(),
+        "status": devloop.upstream.status(),
+        "queue": devloop.upstream.listing(),
+    }
+
+
+async def h_devloop_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_put(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected an object"}, status=400)
+    changes = {k: body[k] for k in (
+        "enabled", "repo", "review", "streams", "schedule",
+        *devloop.CAP_LIMITS) if k in body}
+    try:
+        await asyncio.to_thread(devloop.save_settings, changes)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_token(request: web.Request) -> web.Response:
+    if request.method == "DELETE":
+        await asyncio.to_thread(devloop.forget_token)
+        return web.json_response(await asyncio.to_thread(_devloop_payload))
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    try:
+        await asyncio.to_thread(devloop.save_token, (body or {}).get("token"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_test(request: web.Request) -> web.Response:
+    """Whether the token can see the repository, and that it is private.
+    Sends nothing."""
+    token = await asyncio.to_thread(devloop.read_token)
+    repo = (await asyncio.to_thread(devloop.load_settings))["repo"]
+    if not token or not repo:
+        return web.json_response({"ok": False,
+                                  "error": "set a repository and a token first"})
+    ok, why = await asyncio.to_thread(devloop.github.check_repo, token, repo)
+    return web.json_response({"ok": ok, "error": why})
+
+
+async def h_devloop_run(request: web.Request) -> web.Response:
+    """Run now: every switched-on stream, or one named ``{"stream": ...}``."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response({"error": "the development loop is off"},
+                                 status=409)
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except ValueError:
+        body = {}
+    stream = str((body or {}).get("stream") or "")
+    if stream:
+        if stream not in devloop.STREAMS or stream == "look":
+            return web.json_response({"error": f"unknown stream: {stream}"},
+                                     status=400)
+        if devloop.upstream.STATE["running"]:
+            return web.json_response({"error": "a pass is already running"},
+                                     status=409)
+        devloop.upstream.STATE["running"] = True
+        try:
+            payload = await asyncio.to_thread(_diagnostics_payload)
+            ran = {stream: await _devloop_stream(stream, payload, pressed=True)}
+            sent = await asyncio.to_thread(devloop.upstream.send_due)
+        finally:
+            devloop.upstream.STATE["running"] = False
+        out = {"ran": ran, "sent": sent}
+    else:
+        out = await _devloop_tick(force=True)
+    return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
+
+
+async def h_devloop_look(request: web.Request) -> web.Response:
+    """Look at…: one read-only investigation of what somebody named,
+    started and never awaited (a run is minutes; a request is not)."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response({"error": "the development loop is off"},
+                                 status=409)
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    topic = " ".join(str((body or {}).get("topic") or "").split())[:500]
+    if not topic:
+        return web.json_response({"error": "say what to look at"}, status=400)
+    if DEVLOOP_LOOKS["running"]:
+        return web.json_response(
+            {"error": f"already looking at: {DEVLOOP_LOOKS['running']}"},
+            status=409)
+    if await asyncio.to_thread(devloop.upstream.runs_left) <= 0:
+        return web.json_response({"error": "today's run cap is spent"},
+                                 status=409)
+    # Flipped before the task exists: create_task only schedules, so two
+    # presses in one tick would otherwise both pass the guard above.
+    DEVLOOP_LOOKS["running"] = topic
+    task = asyncio.create_task(_devloop_look(topic))
+    _DEVLOOP_TASKS.add(task)
+    task.add_done_callback(_DEVLOOP_TASKS.discard)
+    return web.json_response({"started": topic,
+                              **await asyncio.to_thread(_devloop_payload)},
+                             status=202)
+
+
+async def h_devloop_item(request: web.Request) -> web.Response:
+    """Exactly what would be sent for one fingerprint — composed by the
+    function the sender calls, so the preview cannot disagree with it."""
+    doc = await asyncio.to_thread(devloop.upstream.preview,
+                                  request.match_info["fp"])
+    if doc is None:
+        return web.json_response({"error": "no such report"}, status=404)
+    return web.json_response(doc)
+
+
+async def h_devloop_item_verb(request: web.Request) -> web.Response:
+    verb = request.match_info["verb"]
+    state = {"send": "ready", "discard": "discarded"}.get(verb)
+    if state is None:
+        return web.json_response({"error": "unknown action"}, status=404)
+    done = await asyncio.to_thread(devloop.upstream.mark,
+                                   request.match_info["fp"], state)
+    if not done:
+        return web.json_response({"error": "no such report, or already sent"},
+                                 status=404)
+    out: dict = {}
+    if state == "ready":
+        out = await asyncio.to_thread(devloop.upstream.send_due)
+    return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
 
 
 # ---------------------------------------------------------------------------
@@ -21388,6 +21668,15 @@ def make_app() -> web.Application:
     app.router.add_get("/api/capture/{run_id}", h_capture_get)
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
+    app.router.add_get("/api/devloop", h_devloop_get)
+    app.router.add_put("/api/devloop", h_devloop_put)
+    app.router.add_put("/api/devloop/token", h_devloop_token)
+    app.router.add_delete("/api/devloop/token", h_devloop_token)
+    app.router.add_post("/api/devloop/test", h_devloop_test)
+    app.router.add_post("/api/devloop/run", h_devloop_run)
+    app.router.add_post("/api/devloop/look", h_devloop_look)
+    app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
+    app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
     app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
     app.router.add_get("/api/resident/eval", h_resident_eval_get)
     app.router.add_post("/api/resident/eval", h_resident_eval_start)

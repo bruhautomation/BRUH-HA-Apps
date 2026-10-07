@@ -1287,6 +1287,53 @@
               <span id="rehearseLast" class="hint tight"></span>
             </div>
             <div id="rehearseBody" class="diag" hidden></div>
+
+            <!-- The development loop (devloop/, brain/DEVLOOP.md). Off for
+                 everyone; the controls under the switch render only once it
+                 is on, and nothing is fetched until this section opens. -->
+            <h4 class="sethead">Help develop brAIn</h4>
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
+                <span><b>File this house's faults as issues in a private GitHub repository</b><br>
+                <span class="subtext">Off by default. Names, rooms and entity ids are replaced
+                  with aliases before anything is sent.</span></span></label>
+            </div>
+            <div id="devloopBody" hidden>
+              <label for="devRepo">Private repository</label>
+              <input id="devRepo" type="text" maxlength="140" autocomplete="off"
+                spellcheck="false" placeholder="owner/brain-house-reports">
+              <label for="devToken">Fine-grained token (Issues: read and write, that repository only)</label>
+              <input id="devToken" type="password" autocomplete="off" placeholder="github_pat_…">
+              <div class="row">
+                <button id="devSave" class="btn primary" aria-label="Save the repository and token">Save</button>
+                <button id="devTest" class="btn" aria-label="Check the token can reach the repository">Recheck</button>
+                <button id="devRun" class="btn" aria-label="Sweep the faults and send now">Run</button>
+                <button id="devForget" class="btn" hidden aria-label="Remove the saved token">Remove</button>
+              </div>
+              <p id="devStatus" class="hint tight"></p>
+              <div id="devStreams"></div>
+              <label for="devLook">Look at…</label>
+              <input id="devLook" type="text" maxlength="500" autocomplete="off"
+                placeholder="e.g. why notifications arrive late">
+              <div class="row">
+                <button id="devLookRun" class="btn" aria-label="Investigate this now and file what is found">Run</button>
+                <span id="devLookState" class="hint tight"></span>
+              </div>
+              <p class="hint tight">One read-only Claude run, filed as issues like any other stream.</p>
+              <div class="row">
+                <label for="devCapIssues">New issues a day</label>
+                <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
+                <label for="devCapRuns">Claude runs a day</label>
+                <input id="devCapRuns" type="number" min="0" max="24" inputmode="numeric">
+                <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
+              </div>
+              <div class="setrow top">
+                <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
+                  <span><b>Ask before sending each new report</b><br>
+                  <span class="subtext">View shows exactly what would be sent.</span></span></label>
+              </div>
+              <div id="devQueue" class="diag">Loading…</div>
+            </div>
           </details>
         </div>
       </section>

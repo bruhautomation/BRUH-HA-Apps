@@ -2,6 +2,41 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.0
+
+### Help develop brAIn: your faults as issues in your own private repository (off by default)
+- **A new, optional developer feature** in ⚙ › Diagnostics › Developer ›
+  **Help develop brAIn**. With it on, brAIn files each problem on its fault list
+  as an issue in a **private** GitHub repository you own, keeps using that issue
+  for as long as the problem lasts, and comments on it when the problem stops,
+  comes back, or survives an update.
+- **Off for everyone, and nothing is expected of you.** Nothing runs or
+  connects anywhere until you switch it on. See `DEVLOOP.md` for what it sends
+  and what it never sends.
+- **What leaves is aliased.** Entity ids, names and rooms are replaced with
+  stable stand-ins (`light.light_07`, *Room 3*), and credentials are removed.
+  The map back to real names stays on your box. brAIn refuses to send to a
+  public repository.
+- **Each new report waits for you** until you turn that off. **View** shows
+  exactly what would be sent.
+- **The token is kept out of backups** and is never shown again after you save
+  it. A fine-grained token with *Issues: read and write* on that one repository
+  is all it needs.
+- **Eight streams, each with its own switch, schedule and Run.** Faults,
+  a per-release scorecard of how right each check was, the checks you keep
+  marking Wrong (with your reasons), requests the chat could not do, an
+  outline of the house's shape (counts only), and three read-only Claude
+  runs: gaps, ideas, and **Look at…**, which investigates whatever you type.
+- **Daily caps** on new issues and on Claude runs. Both refuse rather than
+  pile up, and scheduled runs also stop when automatic insights are paused
+  or the budget is spent.
+- **`brain devloop`** in the terminal: `status`, `run [stream]`,
+  `look "<what>"`.
+- **The cloud half ships with it.** A routine skill that fixes reported
+  issues one pull request at a time and checks afterwards that each fix
+  held, and a CI guard that refuses any automated pull request touching
+  the safety-critical files or weakening a test. See `DEVLOOP.md`.
+
 ## 2.16.1
 
 ### "Let brAIn act without asking" stops the asking in a card's conversation too
