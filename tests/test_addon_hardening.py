@@ -382,6 +382,15 @@ def _secret_paths_the_code_writes():
     env_file = _re.search(r'env_file="(/data/[^"]+)"', run_sh).group(1)
     assert "SUPERVISOR_TOKEN" in run_sh[run_sh.index('env_file="'):][:4000]
     found["background env file (run.sh env_file)"] = env_file
+    # The development loop's GitHub token (devloop.TOKEN_FILE).
+    with open(os.path.join(brain, "panel", "devloop", "__init__.py")) as f:
+        devloop_src = f.read()
+    devloop_dir = _re.search(
+        r'"BRAIN_SECRETS", "(/data/[^"]+)"\)\) / "', devloop_src).group(1)
+    devloop_name = _re.search(
+        r'"BRAIN_SECRETS", "/data/[^"]+"\)\) / "([^"]+)"', devloop_src).group(1)
+    found["development loop token (devloop.TOKEN_FILE)"] = (
+        f"{devloop_dir}/{devloop_name}")
     return {why: path[len("/data/"):] for why, path in found.items()}
 
 

@@ -2,6 +2,30 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.0
+
+### Help develop brAIn: your faults as issues in your own private repository (off by default)
+- **A new, optional developer feature** in ⚙ › Diagnostics › Developer ›
+  **Help develop brAIn**. With it on, brAIn files each problem on its fault list
+  as an issue in a **private** GitHub repository you own, keeps using that issue
+  for as long as the problem lasts, and comments on it when the problem stops,
+  comes back, or survives an update.
+- **Off for everyone, and nothing is expected of you.** Nothing runs or
+  connects anywhere until you switch it on. See `DEVLOOP.md` for what it sends
+  and what it never sends.
+- **What leaves is aliased.** Entity ids, names and rooms are replaced with
+  stable stand-ins (`light.light_07`, *Room 3*), and credentials are removed.
+  The map back to real names stays on your box. brAIn refuses to send to a
+  public repository.
+- **Each new report waits for you** until you turn that off. **View** shows
+  exactly what would be sent.
+- **The token is kept out of backups** and is never shown again after you save
+  it. A fine-grained token with *Issues: read and write* on that one repository
+  is all it needs.
+- **What it reports is split into streams with their own switches.** Faults is
+  the first. A UI audit, aliased screenshots, code gaps and feature ideas are
+  planned.
+
 ## 2.16.1
 
 ### "Let brAIn act without asking" stops the asking in a card's conversation too

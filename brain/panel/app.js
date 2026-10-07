@@ -2786,6 +2786,7 @@ function loadAdvanced() {
   loadDiagAccuracy();
   loadDiagMeasures();
   loadDiagUpkeep();
+  loadDevloop();
 }
 
 // The line under "Let brAIn act without asking". The switch reaches a
@@ -3576,6 +3577,170 @@ async function copyOrSelect(text, okMessage) {
   });
   box.addEventListener("blur", () => box.remove());
 }
+
+// ------------------------------------------------------- development loop
+// ⚙ › Diagnostics › Developer › Help develop brAIn (devloop/, DEVLOOP.md).
+// Off for everyone. The token is sent once and never comes back: the server
+// only says whether one is set. View is the first press on a report for the
+// same reason it is on a capture: a Send you could not read is not consent.
+const DEV_STATE_WORDS = {
+  pending: "waiting for you", ready: "will be sent",
+  sent: "sent", discarded: "never sent",
+};
+
+function devQueueRows(data) {
+  const rows = data.queue || [];
+  if (!rows.length) {
+    return "<p class=\"hint tight\">Nothing queued. The next hourly pass files "
+         + "whatever is on the fault list.</p>";
+  }
+  return rows.map((r) => {
+    const when = r.last_seen
+      ? timeAgo(new Date(r.last_seen * 1000).toISOString()) : "";
+    let state = DEV_STATE_WORDS[r.state] || r.state;
+    if (r.state === "sent" && r.cleared_noted) state = "sent · no longer seen";
+    const link = r.issue_url
+      ? ` · <a href="${esc(r.issue_url)}" target="_blank" rel="noopener">#${esc(String(r.issue))}</a>`
+      : "";
+    const err = r.error ? `<div class="hint tight">${esc(r.error)}</div>` : "";
+    const open = r.state === "pending" || r.state === "ready";
+    return `<div class="drow"><div class="dk">${esc(state)}</div>`
+      + `<div class="dv">${esc(r.where || "")}: ${esc(r.what || "")}`
+      + ` <span class="hint tight">seen ${esc(when)}${link}</span>${err}`
+      + `<div class="row tight">`
+      + `<button class="btn tiny" data-dev-view="${esc(r.fp)}">View</button>`
+      + (r.state === "pending"
+        ? `<button class="btn tiny" data-dev-send="${esc(r.fp)}">Send</button>` : "")
+      + (open ? `<button class="btn tiny" data-dev-discard="${esc(r.fp)}"`
+        + ` aria-label="Never send this report">Delete</button>` : "")
+      + `</div></div></div>`;
+  }).join("");
+}
+
+function paintDevloop(data) {
+  const s = data.settings || {};
+  $("#setDevloop").checked = s.enabled === true;
+  $("#devloopBody").hidden = s.enabled !== true;
+  $("#setDevReview").checked = s.review !== false;
+  if (document.activeElement !== $("#devRepo")) $("#devRepo").value = s.repo || "";
+  $("#devToken").placeholder = data.token_set ? "saved — paste a new one to replace it"
+                                              : "github_pat_…";
+  $("#devForget").hidden = !data.token_set;
+  const st = data.status || {};
+  let line = "";
+  if (!s.repo || !data.token_set) line = "Set a private repository and a token to send.";
+  else if (st.error) line = st.error;
+  else if (st.last_sweep) {
+    line = "Last pass " + timeAgo(new Date(st.last_sweep * 1000).toISOString()) + ".";
+  }
+  $("#devStatus").textContent = line;
+  $("#devQueue").innerHTML = devQueueRows(data);
+  // One switch per stream, from the server's own list: a stream that is not
+  // built yet has no switch, rather than one that does nothing.
+  const on = s.streams || {};
+  $("#devStreams").innerHTML = Object.entries(data.streams || {}).map(([k, label]) =>
+    `<div class="setrow top"><label class="check bigcheck">`
+    + `<input class="tog" type="checkbox" data-dev-stream="${esc(k)}"`
+    + `${on[k] ? " checked" : ""}><span><b>${esc(label)}</b></span></label></div>`
+  ).join("");
+}
+
+$("#devStreams").addEventListener("change", (ev) => {
+  const box = ev.target.closest("[data-dev-stream]");
+  if (!box) return;
+  devloopCall("api/devloop", { method: "PUT", body: JSON.stringify(
+    { streams: { [box.getAttribute("data-dev-stream")]: box.checked } }) });
+});
+
+async function loadDevloop() {
+  if (!$("#devQueue")) return;
+  try {
+    paintDevloop(await api("api/devloop"));
+  } catch (e) {
+    $("#devStatus").textContent = "Could not read the development loop: " + e.message;
+  }
+}
+
+async function devloopCall(path, opts, okMessage) {
+  try {
+    const data = await api(path, opts);
+    if (data.settings) paintDevloop(data);
+    if (okMessage) toast(okMessage);
+    return data;
+  } catch (e) {
+    let msg = e.message;
+    try { msg = JSON.parse(msg).error || msg; } catch (_) { /* plain text */ }
+    toast(msg);
+    return null;
+  }
+}
+
+$("#setDevloop").addEventListener("change", () =>
+  devloopCall("api/devloop", { method: "PUT",
+    body: JSON.stringify({ enabled: $("#setDevloop").checked }) }));
+$("#setDevReview").addEventListener("change", () =>
+  devloopCall("api/devloop", { method: "PUT",
+    body: JSON.stringify({ review: $("#setDevReview").checked }) }));
+$("#devSave").addEventListener("click", async () => {
+  const saved = await devloopCall("api/devloop", { method: "PUT",
+    body: JSON.stringify({ repo: $("#devRepo").value.trim() }) });
+  if (!saved) return;
+  const token = $("#devToken").value.trim();
+  if (token) {
+    const ok = await devloopCall("api/devloop/token", { method: "PUT",
+      body: JSON.stringify({ token }) });
+    if (!ok) return;
+    $("#devToken").value = "";
+  }
+  toast("Saved");
+});
+$("#devForget").addEventListener("click", () =>
+  devloopCall("api/devloop/token", { method: "DELETE" }, "Token removed"));
+$("#devTest").addEventListener("click", async () => {
+  const out = await devloopCall("api/devloop/test", { method: "POST" });
+  if (out) $("#devStatus").textContent = out.ok
+    ? "The token can file issues in that private repository."
+    : out.error;
+});
+$("#devRun").addEventListener("click", () =>
+  devloopCall("api/devloop/run", { method: "POST" }, "Pass finished"));
+
+$("#devQueue").addEventListener("click", async (ev) => {
+  const view = ev.target.closest("[data-dev-view]");
+  const send = ev.target.closest("[data-dev-send]");
+  const drop = ev.target.closest("[data-dev-discard]");
+  if (view) {
+    const holder = view.closest(".drow");
+    const already = holder.querySelector(".capview");
+    if (already) { already.remove(); return; }
+    const doc = await devloopCall("api/devloop/item/"
+      + encodeURIComponent(view.getAttribute("data-dev-view")));
+    if (!doc) return;
+    const pre = document.createElement("pre");
+    pre.className = "capview";
+    pre.textContent = doc.title + "\n\n" + doc.body;
+    holder.appendChild(pre);
+    return;
+  }
+  if (send) {
+    const fp = send.getAttribute("data-dev-send");
+    const out = await devloopCall("api/devloop/item/"
+      + encodeURIComponent(fp) + "/send", { method: "POST" });
+    if (!out) return;
+    // The press is accepted before GitHub is asked, so the toast reads the
+    // row afterwards rather than claiming a send that may not have happened.
+    const row = (out.queue || []).find((r) => r.fp === fp);
+    if (row && row.state === "sent") toast("Sent");
+    else toast((row && row.error) || out.error || (out.status || {}).error
+               || "Queued; it goes on the next pass");
+    return;
+  }
+  if (drop) {
+    await devloopCall("api/devloop/item/"
+      + encodeURIComponent(drop.getAttribute("data-dev-discard")) + "/discard",
+      { method: "POST" }, "This report will not be sent");
+  }
+});
 
 // Delegated, because these rows are rebuilt on every load.
 $("#capBody").addEventListener("click", async (ev) => {

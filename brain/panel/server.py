@@ -147,6 +147,9 @@ import baselines
 import brain_status
 import brief
 import capture
+import devloop
+from devloop import upstream as devloop_upstream
+from devloop import github as devloop_github
 import card_tags
 import cases
 from checks._util import House
@@ -12508,6 +12511,9 @@ async def _checks_loop() -> None:
                 await run_checks("schedule")
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
+            # The development loop, when somebody switched it on: it decides
+            # for itself whether an hour has passed (`_devloop_tick`).
+            await _devloop_tick()
         except Exception as exc:  # noqa: BLE001 — never let this kill the loop
             # Warning, not debug: a pass that fails every tick is the house
             # checks stopping, and debug is a level nobody runs at.
@@ -15241,6 +15247,128 @@ async def h_capture_delete(request: web.Request) -> web.Response:
     if not gone:
         return web.json_response({"error": "no such capture"}, status=404)
     return web.json_response({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# The development loop — ⚙ › Diagnostics › Developer, off by default
+# ---------------------------------------------------------------------------
+#
+# Everything here answers about one opt-in feature (`devloop/`, and
+# `brain/DEVLOOP.md` for what it is). The token is accepted and never
+# handed back: GET says whether one is set, and nothing else.
+
+async def _devloop_tick(force: bool = False) -> dict:
+    """Sweep the fault list into the queue and send what is ready.
+
+    Called on the checks loop's tick and decides for itself whether an
+    hour has passed, so it needs no loop of its own. Off is checked at
+    call time, so switching it off stops the next tick."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return {"skipped": "off"}
+    due = time.time() - (devloop_upstream.STATE["last_sweep"] or 0) \
+        >= devloop_upstream.SWEEP_INTERVAL_S
+    if not (force or due) or devloop_upstream.STATE["running"]:
+        return {"skipped": "not due"}
+    devloop_upstream.STATE["running"] = True
+    try:
+        payload = await asyncio.to_thread(_diagnostics_payload)
+        swept = await asyncio.to_thread(
+            devloop_upstream.sweep, payload, dict(_NAMES))
+        sent = await asyncio.to_thread(devloop_upstream.send_due)
+        return {"swept": swept, "sent": sent}
+    finally:
+        devloop_upstream.STATE["running"] = False
+
+
+def _devloop_payload() -> dict:
+    return {
+        "settings": devloop.load_settings(),
+        "streams": devloop.STREAMS,
+        "token_set": devloop.token_set(),
+        "status": devloop_upstream.status(),
+        "queue": devloop_upstream.listing(),
+    }
+
+
+async def h_devloop_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_put(request: web.Request) -> web.Response:
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "expected an object"}, status=400)
+    changes = {k: body[k] for k in ("enabled", "repo", "review", "streams")
+               if k in body}
+    try:
+        await asyncio.to_thread(devloop.save_settings, changes)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_token(request: web.Request) -> web.Response:
+    if request.method == "DELETE":
+        await asyncio.to_thread(devloop.forget_token)
+        return web.json_response(await asyncio.to_thread(_devloop_payload))
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    try:
+        await asyncio.to_thread(devloop.save_token, (body or {}).get("token"))
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(await asyncio.to_thread(_devloop_payload))
+
+
+async def h_devloop_test(request: web.Request) -> web.Response:
+    """Whether the token can see the repository, and that it is private.
+    Sends nothing."""
+    token = await asyncio.to_thread(devloop.read_token)
+    repo = (await asyncio.to_thread(devloop.load_settings))["repo"]
+    if not token or not repo:
+        return web.json_response({"ok": False,
+                                  "error": "set a repository and a token first"})
+    ok, why = await asyncio.to_thread(devloop_github.check_repo, token, repo)
+    return web.json_response({"ok": ok, "error": why})
+
+
+async def h_devloop_run(request: web.Request) -> web.Response:
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response({"error": "the development loop is off"},
+                                 status=409)
+    out = await _devloop_tick(force=True)
+    return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
+
+
+async def h_devloop_item(request: web.Request) -> web.Response:
+    """Exactly what would be sent for one fingerprint — composed by the
+    function the sender calls, so the preview cannot disagree with it."""
+    doc = await asyncio.to_thread(devloop_upstream.preview,
+                                  request.match_info["fp"])
+    if doc is None:
+        return web.json_response({"error": "no such report"}, status=404)
+    return web.json_response(doc)
+
+
+async def h_devloop_item_verb(request: web.Request) -> web.Response:
+    verb = request.match_info["verb"]
+    state = {"send": "ready", "discard": "discarded"}.get(verb)
+    if state is None:
+        return web.json_response({"error": "unknown action"}, status=404)
+    done = await asyncio.to_thread(devloop_upstream.mark,
+                                   request.match_info["fp"], state)
+    if not done:
+        return web.json_response({"error": "no such report, or already sent"},
+                                 status=404)
+    out: dict = {}
+    if state == "ready":
+        out = await asyncio.to_thread(devloop_upstream.send_due)
+    return web.json_response({**out, **await asyncio.to_thread(_devloop_payload)})
 
 
 # ---------------------------------------------------------------------------
@@ -21388,6 +21516,14 @@ def make_app() -> web.Application:
     app.router.add_get("/api/capture/{run_id}", h_capture_get)
     app.router.add_post("/api/capture/{run_id}/export", h_capture_export)
     app.router.add_delete("/api/capture/{run_id}", h_capture_delete)
+    app.router.add_get("/api/devloop", h_devloop_get)
+    app.router.add_put("/api/devloop", h_devloop_put)
+    app.router.add_put("/api/devloop/token", h_devloop_token)
+    app.router.add_delete("/api/devloop/token", h_devloop_token)
+    app.router.add_post("/api/devloop/test", h_devloop_test)
+    app.router.add_post("/api/devloop/run", h_devloop_run)
+    app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
+    app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
     app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
     app.router.add_get("/api/resident/eval", h_resident_eval_get)
     app.router.add_post("/api/resident/eval", h_resident_eval_start)
