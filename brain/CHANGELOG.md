@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.17
+
+- The Usage tracker sensor now shows its state in words in Home Assistant ("Waiting for sign-in to renew", "Usage endpoint rate-limited"…) instead of an internal code. The stored state is unchanged, so automations keep working, and the exact code is also in a new `code` attribute. (reports #86)
+- brAIn's devices have distinct, consistent names: "brAIn Memory" and "brAIn Findings" are capitalised like the rest, and a conversation agent's device is now "<name> Agent", so the default agent no longer shares the name "brAIn" with the add-on. Entity ids and friendly names do not change. (reports #84)
+
 ## 2.17.16
 
 - The "devices left in the registry with no entities" check no longer lists HomeKit Bridge devices, which never have entities of their own and break HomeKit if deleted. (reports #93)

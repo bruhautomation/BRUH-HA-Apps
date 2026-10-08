@@ -208,7 +208,7 @@ class BrainWantsInputSensor(BinarySensorEntity):
     _attr_icon = "mdi:comment-question-outline"
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "brain_memory")},
-        name="brAIn memory",
+        name="brAIn Memory",
         manufacturer="BRUH Automation",
         model="Home memory",
     )
