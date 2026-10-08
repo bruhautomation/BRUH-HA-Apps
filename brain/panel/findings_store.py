@@ -520,6 +520,37 @@ def _clean_plan(value) -> dict:
     return out
 
 
+def echoes(reason, *texts) -> bool:
+    """Whether a look's ``reason`` only repeats the row it is about.
+
+    A reason is what a look CONCLUDED, and the card prints it under
+    "brAIn checked". One identical (normalised) to the row's own text or
+    claim concluded nothing: it is the finding read back to its reader,
+    and printed under that label it says a review happened and wrote a
+    conclusion when neither the sentence nor the run said anything new.
+    So it is not a reason, and a reader of the block treats it as none.
+    """
+    said = normalize(str(reason or ""))
+    if not said:
+        return False
+    return any(said == normalize(str(t or "")) for t in texts if t)
+
+
+def without_echo(record: dict, entry: dict) -> dict:
+    """``record`` (a cleaned triage block) with an echoing reason blanked.
+
+    For the surfaces a person reads. Stored rows written before the echo
+    rule (a Resident case stamps its claim as the verdict that wrote it)
+    keep the field; what is shown is the honest line with no reason.
+    """
+    if not isinstance(record, dict) or not record.get("reason"):
+        return record
+    if echoes(record["reason"], (entry or {}).get("text"),
+              (entry or {}).get("claim")):
+        return {**record, "reason": ""}
+    return record
+
+
 def _clean_triage(value) -> dict:
     """The triage record on a row, normalized — `{}` when nothing looked.
 
@@ -855,6 +886,9 @@ def listing() -> dict:
     per request — on a Pi, for a screen that polls.
     """
     shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
+    for row in shaped:
+        if row.get("triage"):
+            row["triage"] = without_echo(row["triage"], row)
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     now = time.time()
     return {
@@ -1400,9 +1434,19 @@ def refine(ts: int, case: dict, run_id: str = "",
             entry["severity"] = case["severity"]
         if entry.get("status") == "triaging":
             entry["status"] = "open"
+        # The reason is what a look CONCLUDED, and the claim is not that:
+        # it is the card's title, so writing it here printed the finding
+        # back under "brAIn checked". What stands is the reason a look
+        # already gave (the first look's sentence), unless that too only
+        # repeats the row; otherwise there is none.
+        prior = str((entry.get("triage") or {}).get("reason") or "")
+        if echoes(prior, entry.get("text"), entry.get("claim"),
+                  case.get("claim")) or prior in (
+                      triage.UNJUDGED, triage.RUN_FAILED):
+            prior = ""
         entry["triage"] = _clean_triage({
             "verdict": "elevated",
-            "reason": str(case.get("claim") or "")[:MAX_CLAIM],
+            "reason": prior,
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
             "elevated_by_person": bool(
@@ -1437,9 +1481,12 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
         if (entry.get("triage") or {}).get("elevated_by_person"):
             return None
         entry["status"] = "held"
+        said = str(reason or "").strip()
+        if echoes(said, entry.get("text"), entry.get("claim")):
+            said = ""
         entry["triage"] = _clean_triage({
             "verdict": "held",
-            "reason": textclip.clip(str(reason or "").strip(), triage.MAX_REASON),
+            "reason": textclip.clip(said, triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
             "wrote_fix": False, "v": triage.LOOK_VERSION})
@@ -1592,6 +1639,8 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         verdict, reason = verdicts[ts][:2]
         if verdict not in triage.VERDICTS:
             continue
+        if echoes(reason, entry.get("text"), entry.get("claim")):
+            reason = ""
         if late and verdict == "untriaged":
             # "Nothing looked" about a row that already says nothing looked
             # is not a change — and rewriting it would hand the row back to
@@ -2728,7 +2777,95 @@ def restore(shaped: dict) -> dict | None:
 # Prompt injection
 # ---------------------------------------------------------------------------
 
-def prompt_block(exclude_sources=()) -> str:
+# A producer's own rows its next run answers for (`own_reports`): the
+# statuses nothing but brAIn has moved a row to, and how many a prompt
+# lists. A row past the cap is not shown, so it is never cleared by a run
+# that could not have answered for it (`clear_unreported`).
+OWN_STATUSES = ("open", "triaging", "held")
+PROMPT_OWN = 8
+# Producers that are not a card's run and must never be cleared by one:
+# the subject fold's own exclusions, plus the Resident, whose case IS the
+# look and ages out by its own clock (`expire_cases`).
+OWN_EXCLUDED = SUBJECT_FOLD_EXCLUDED | {RESIDENT_SOURCE, "resident"}
+
+
+def _rerun_may_answer(entry: dict) -> bool:
+    """Whether a producer's next run may clear this row by not reporting it.
+
+    Only a row nothing but brAIn has moved: a snooze, a person putting a
+    held row back, a plan somebody asked for (kept after a Cancel), the
+    advice a conversation wrote, a fix in flight or done — each is a person
+    in the row's history, and a run reading the house again is not evidence
+    about what a person decided.
+    """
+    if entry.get("status") not in OWN_STATUSES:
+        return False
+    if int(entry.get("snoozed_until") or 0):
+        return False
+    if (entry.get("triage") or {}).get("elevated_by_person"):
+        return False
+    if entry.get("plan") or entry.get("fix_by") == "chat":
+        return False
+    return True
+
+
+def own_reports(source: str) -> list[dict]:
+    """The live rows ``source`` filed that its next run answers for.
+
+    For a card's run, newest first, capped at `PROMPT_OWN`. Never a check's
+    (a check clears through `clear_resolved`) and never one of
+    `OWN_EXCLUDED`.
+    """
+    source = str(source or "")
+    if not source or ":" in source or source in OWN_EXCLUDED:
+        return []
+    rows = [_shape(e) for e in _load()
+            if e.get("source") == source and _rerun_may_answer(e)]
+    rows = [r for r in rows if r["text"]]
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return rows[:PROMPT_OWN]
+
+
+@_mutates
+def clear_unreported(source: str, shown, keep_keys,
+                     keep_entities=()) -> list[dict]:
+    """Drop the rows a card's successful run was shown and did not report.
+
+    `clear_resolved`'s rule for a producer that is a run rather than a
+    check: the card read the house again, was shown each of these as its
+    own to report again if the data still showed it (`prompt_block`'s
+    ``own``), and did not. Only rows it was shown (``shown``, their ids),
+    only rows still answerable when the run lands — minutes can pass and a
+    person may have pressed something meanwhile — and none it reported
+    again, by its words or by the entity it named. Nothing is written to
+    the settled ledger and no memory line is queued: a problem the data no
+    longer shows is not a fact about the house, and if it comes back the
+    card files it again. Returns the rows removed.
+    """
+    source = str(source or "")
+    if not source or ":" in source or source in OWN_EXCLUDED:
+        return []
+    shown = {int(t) for t in shown or ()}
+    keep_keys = set(keep_keys or ())
+    keep_entities = {e for e in keep_entities or () if e}
+    items = _load()
+    kept: list[dict] = []
+    gone: list[dict] = []
+    for f in items:
+        if (int(f.get("ts") or 0) in shown
+                and f.get("source") == source
+                and _rerun_may_answer(f)
+                and normalize(str(f.get("text") or "")) not in keep_keys
+                and str(f.get("entity_id") or "") not in keep_entities):
+            gone.append(_shape(f))
+            continue
+        kept.append(f)
+    if gone:
+        _write(kept)
+    return gone
+
+
+def prompt_block(exclude_sources=(), own=None) -> str:
     """What the analyst needs to know about findings before it reports more.
 
     ``exclude_sources`` leaves a producer's own live rows out, and exists
@@ -2754,8 +2891,11 @@ def prompt_block(exclude_sources=()) -> str:
     """
     everything = list_all()
     skip = {str(x) for x in exclude_sources or () if x}
+    own = [r for r in own or () if isinstance(r, dict) and r.get("text")]
+    own_ts = {int(r.get("ts") or 0) for r in own}
     live = [f for f in everything if f["status"] in LIVE_STATUSES
-            and f.get("source") not in skip][:PROMPT_OPEN]
+            and f.get("source") not in skip
+            and int(f.get("ts") or 0) not in own_ts][:PROMPT_OPEN]
 
     def _settled(kind: str, limit: int) -> list[tuple[str, str]]:
         seen: set[str] = set()
@@ -2776,6 +2916,22 @@ def prompt_block(exclude_sources=()) -> str:
     ignored = _settled("ignored", PROMPT_IGNORED)
     fixed = _settled("fixed", PROMPT_FIXED)
     parts: list[str] = []
+    if own:
+        # The run's OWN earlier reports, apart from the list it must not
+        # repeat: told never to report them again, a run could not say the
+        # data still showed one, and the row stayed open for ever after
+        # the data stopped supporting it (`clear_unreported`).
+        parts.append(
+            "WHAT THIS CARD REPORTED BEFORE, still on the findings list. "
+            "Report one again in `findings` (its words, or yours with the "
+            "same entity_id) ONLY if what you read now still shows it. One "
+            "you do not report again is taken off the list as no longer "
+            "true — so if you could not check one, report it again rather "
+            "than leave it out:")
+        parts += [f"- {r['text']}"
+                  + (f" ({r['entity_id']})" if r.get("entity_id") else "")
+                  for r in own]
+        parts.append("")
     if live:
         parts.append(
             "PROBLEMS ALREADY ON THE FINDINGS LIST — do NOT report these again:")
