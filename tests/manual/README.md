@@ -7,6 +7,29 @@ output is far easier to read next to your editor than in a CI log. The
 screenshot pipeline (`demo_panel.py` + `shoot-panel.mjs`) stays manual: it
 produces the docs images, not a pass/fail.
 
+**CI runs them as four parallel groups, not one chain** (`layout` in
+`.github/workflows/ci.yml`, a matrix over `group`): run one after another
+they took 4m40s while every other job was done in under a minute.
+`static-a` and `static-b` are brAIn's static-fixture measures split by
+measured time and always run; `bright` boots BRight's demo panel for its
+measures and `print` boots BRUH Print's, and each of those two reports a
+skip on a pull request that changes nothing it reads. A group is just the
+steps whose `if:` names it, so to run one locally run those scripts in
+order — for a booted group, start its demo panel first exactly as its step
+does:
+
+```bash
+# the static-a group, say
+for m in $(grep -A1 "matrix.group == 'static-a'" .github/workflows/ci.yml \
+           | grep -oE 'tests/manual/measure-[a-z-]+\.mjs'); do
+    node "$m" || echo "FAILED: $m"
+done
+```
+
+What a change actually reaches is usually fewer than a group:
+`python3 tests/affected.py --measures` prints the measures for the paths
+your branch moved.
+
 They all need Playwright, resolved from this repo's own `node_modules`:
 
 ```bash

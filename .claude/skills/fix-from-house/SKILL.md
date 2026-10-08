@@ -178,7 +178,8 @@ one of these outcomes before writing any fix:
 
 ### Batch the fixes
 
-Every batch costs one CI cycle (6 to 8 minutes) and one merge, so **fewer,
+Every batch costs one CI cycle (a few minutes now that CI runs the suite
+and the measures in parallel; it was 6 to 8) and one merge, so **fewer,
 fuller batches are faster than many small ones.** Group the issues to fix
 by the part of brAIn they touch: one module, one pane, one check family. A
 batch is the issues one reviewer would want to read together.
@@ -236,9 +237,18 @@ The prompt also carries, word for word:
   `mkdir -p node_modules && ln -sfn /opt/node22/lib/node_modules/playwright node_modules/playwright`,
   then `CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome node tests/manual/measure-<name>.mjs`.
   A measure takes seconds this way. (`node_modules` is git-ignored.)
-- **Run only what the batch can break.** The new tests, the test files for
-  the modules it touched, and the measures for the panes it touched. Never
-  the whole suite: when a batch needs it, the run itself runs it once.
+- **Run only what the batch can break.** The new tests first, then
+  `python3 tests/affected.py --base origin/main --run`, which works out the
+  test files from the paths the batch changed and runs them, and every
+  measure `python3 tests/affected.py --base origin/main --measures` prints:
+  never a hand-picked list, which misses the test file nobody thought of. Always
+  `python3 -m pytest`, never bare `pytest` (the one on PATH cannot see the
+  dependencies). Never the whole suite: when a batch needs it, the run
+  itself runs it once.
+- **The Bash tool kills a command at two minutes** unless its `timeout` is
+  raised (milliseconds, up to 600000) or it runs with `run_in_background`.
+  A test run that is killed says nothing; give anything that may run past
+  two minutes the raised timeout from the start.
 - **End with a report**: the files changed, each issue's failing test and
   whether it now passes, and every check run with its result. A subagent
   that ends without one is continued with SendMessage and asked for it,
@@ -246,7 +256,11 @@ The prompt also carries, word for word:
 
 Give a Sonnet batch about 20 minutes and an Opus batch about 45. A subagent
 still going well past that is usually installing or running something it
-does not need: ask it with SendMessage what it is doing.
+does not need: ask it with SendMessage what it is doing. A subagent that
+says a test run "timed out" with no failure in its output ran it under the
+Bash tool's two-minute default: have it run the same command again with the
+`timeout` raised or in the background, rather than splitting the run up or
+concluding the suite hangs.
 
 ### Pipelining
 
@@ -301,9 +315,11 @@ not depend on the current one's result. So while a pull request is in CI:
 - **Check it.** Every batch, before pushing:
   - `ruff check .`
   - `python3 .github/scripts/devloop_guard.py origin/main`;
-  - the batch's own tests: the new ones and the test files for every
-    module it touched;
-  - every measure for a pane it touched.
+  - the batch's own tests: the new ones, then
+    `python3 tests/affected.py --base origin/main --run` for every test
+    file the changed paths reach;
+  - every measure `python3 tests/affected.py --base origin/main --measures`
+    prints.
 
   That is the whole check for a **light** batch, and CI runs the full suite
   and every measure after it. A batch is light when it touches only
@@ -313,9 +329,14 @@ not depend on the current one's result. So while a pull request is in CI:
   translations. Anything in Python, shell or a check is full-suite tier.
 
   Every other batch is **full-suite tier**: add
-  `python -m pytest tests -q -x` once, by you, after the subagent's
-  targeted run passes. The suite is never run twice for one batch: the
-  subagent runs the targeted tests and you run the suite, not both of you.
+  `python3 -m pytest tests -q -n 4 --dist loadfile` once, by you, after the
+  subagent's targeted run passes. It takes under two minutes, which is
+  exactly the Bash tool's default limit, so run it with the tool's `timeout`
+  raised (600000) or in the background: run plainly, it is killed at 120s
+  with no result, which reads as the suite hanging. The suite is never run
+  twice for one batch: the subagent runs the affected tests and you run the
+  suite, not both of you. CI is the gate; your run is what saves a CI
+  cycle on a failure the suite would have shown in two minutes.
 
   Re-read your diff as a hostile reviewer would. Push only when all of it
   is clean.
@@ -330,7 +351,11 @@ not depend on the current one's result. So while a pull request is in CI:
 
 Poll the pull request's check runs every two or three minutes until none is
 pending. Wait with a background timer or the Monitor tool, never a tight
-loop. Spend the wait preparing the next batch (*Pipelining*), not idle.
+loop, and never a foreground `sleep` or poll loop longer than the Bash
+tool's two-minute default, which kills it with nothing to show. CI runs
+the full suite in parallel and only the tests of the add-ons the pull
+request touches; it is the gate, so a green local run never stands in for
+it, and a red check is read from its log before anything is re-run. Spend the wait preparing the next batch (*Pipelining*), not idle.
 `devloop-guard` must have run and passed: a guard that did not run is not a
 pass, so if it shows as skipped on a `devloop/` branch, stop and say
 so rather than merge.

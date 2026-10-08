@@ -849,6 +849,23 @@ class TestTheManualSocket(PanelCase):
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
+        # Starting a session snapshots every bulb (GetColor) so Stop can put
+        # the room back, and the seeded bulbs are addresses nothing answers
+        # from: each request waited out its whole second, three bulbs in
+        # turn, which was the 3s every test here that starts a session took.
+        # The packet is still sent and the reply is still waited for — just
+        # for no time, which is the same "this bulb did not answer" the
+        # snapshot already gets, without paying a second per bulb for it.
+        engine = self.server.ENGINE
+        real_request = engine.request
+
+        async def request_answered_by_nobody(addr, packet, sequence,
+                                             expect_type, timeout=1.0):
+            return await real_request(addr, packet, sequence, expect_type,
+                                      timeout=0)
+
+        engine.request = request_answered_by_nobody
+        self.addCleanup(vars(engine).pop, "request", None)
         # The session is module state and outlives one test's app, so
         # every test here says out loud that it starts from nothing
         # running.

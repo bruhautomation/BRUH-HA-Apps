@@ -13,6 +13,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import time
 import uuid
@@ -683,6 +684,13 @@ def test_the_decision_reaches_the_argv_of_the_next_worker(tmp_path, monkeypatch)
     flag says nothing at all about the flag."""
     mod = load_pool_module(tmp_path, monkeypatch)
     pool = mod.Pool()
+    # Every request here is answered by a cold spawn on purpose: the spare
+    # the pool warms afterwards on a daemon thread writes its own argv line
+    # while this test reads the log's last line, and a line read half
+    # written has no flag in it — which read as the decision not reaching
+    # the argv, one run in four under load. Cold spawns are what the test
+    # asks for anyway ("what the decision governs is the next SPAWN").
+    pool._spawn_spare = lambda profile: None
     try:
         pool.handle(make_request("hello", conv="withflag"))
         first = argv_log(tmp_path)[-1]
@@ -748,3 +756,43 @@ def test_the_count_is_kept_by_the_real_request_path(tmp_path, monkeypatch):
         assert mod._PARTIAL["deaths"] == 0
     finally:
         shutdown(pool)
+
+
+def test_a_death_the_reaper_has_not_seen_yet_is_still_a_death(tmp_path, monkeypatch):
+    """`poll()` says "alive" about a child that has closed its pipes and not
+    yet exited, and the reader thread sees EOF at the first of those two
+    moments. Read `alive()` there and a worker that died at spawn counted
+    as a live one; the early-death counter missed about half of them on a
+    loaded machine. The child here closes stdout, then lingers, so EOF
+    always arrives before the exit status — the race made certain rather
+    than hoped for — and the flaky counter test above is what it fixes."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    worker = mod.Worker.__new__(mod.Worker)
+    worker.saw_eof = False
+    worker.proc = subprocess.Popen(
+        [sys.executable, "-c",
+         # os.close, not sys.stdout.close(): Python keeps fd 1 open behind
+         # a closed sys.stdout, and the parent would read EOF only at exit.
+         "import os, time; os.close(1); time.sleep(3.0)"],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        assert worker.proc.stdout.read() == ""          # EOF: pipes closed
+        worker.saw_eof = True
+        assert worker.alive(), "the race is only shown if poll() still says alive"
+        assert worker.died(settle=10.0)                 # waits the status out
+        assert not worker.alive()
+    finally:
+        worker.proc.kill()
+        worker.proc.wait()
+    # A worker whose stdout is still open is asked poll() and never waited
+    # on: the bound is for a process that is already on its way out.
+    lingering = mod.Worker.__new__(mod.Worker)
+    lingering.saw_eof = False
+    lingering.proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        started = time.monotonic()
+        assert not lingering.died(settle=5.0)
+        assert time.monotonic() - started < 3.0
+    finally:
+        lingering.proc.kill()
+        lingering.proc.wait()

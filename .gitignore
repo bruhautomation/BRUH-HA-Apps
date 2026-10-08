@@ -43,11 +43,14 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Claude Code's local state stays out; the development loop's config and
-# the fixer's skill are shared with the cloud routine, so they are tracked.
+# Claude Code's local state stays out; the development loop's config, the
+# fixer's skill and the SessionStart hook that installs the test deps in a
+# cloud session are shared with the cloud routine, so they are tracked.
 .claude/*
 !.claude/devloop.json
 !.claude/skills/
+!.claude/settings.json
+!.claude/hooks/
 
 # Coverage artifacts (local audit runs)
 .coverage

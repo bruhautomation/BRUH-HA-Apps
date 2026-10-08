@@ -79,9 +79,15 @@ class TestTheLinksAreWalkedInOrder(DirectorCheckCase):
         try:
             if os.access(claude_director.TASKS_DIR, os.W_OK):
                 self.skipTest("running as a user that ignores file modes")
+            # Both waits are made long so the bound below can be loose: a
+            # check that waited for a claim or an answer would take a
+            # minute, and one that caught the folder first takes well under
+            # a second however loaded the machine is.
+            claude_director.CLAIM_GRACE_S = 60
+            director_check.PROBE_TIMEOUT_S = 60
             started = time.monotonic()
             result = director_check.check()
-            self.assertLess(time.monotonic() - started, 2)
+            self.assertLess(time.monotonic() - started, 30)
             self.assertEqual("writing", self.failed_step(result)["step"])
         finally:
             os.chmod(claude_director.TASKS_DIR, 0o700)
@@ -103,9 +109,13 @@ class TestTheLinksAreWalkedInOrder(DirectorCheckCase):
 
     def test_claimed_and_silent_is_a_different_link_than_unclaimed(self):
         claude_director.TASKS_DIR.mkdir(parents=True)
+        # The claimer is a thread racing the check; the 0.3s grace the
+        # unclaimed cases use is a race it can lose on a loaded machine, and
+        # a claim that lands costs nothing however long the grace is.
+        claude_director.CLAIM_GRACE_S = 30
 
         def claim_only():
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 for task in claude_director.TASKS_DIR.glob("*.json"):
                     task.rename(task.with_suffix(".work.1"))
@@ -122,9 +132,12 @@ class TestTheLinksAreWalkedInOrder(DirectorCheckCase):
 
     def test_a_working_chain_says_so_and_names_the_model(self):
         claude_director.TASKS_DIR.mkdir(parents=True)
+        # See the test above: a claim that lands ends the wait at once.
+        claude_director.CLAIM_GRACE_S = 30
+        director_check.PROBE_TIMEOUT_S = 30
 
         def answer():
-            deadline = time.monotonic() + 3
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 for task in claude_director.TASKS_DIR.glob("*.json"):
                     body = json.loads(task.read_text())

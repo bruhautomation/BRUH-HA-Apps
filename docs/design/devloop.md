@@ -128,6 +128,19 @@ declined, or handed to a person under `needs-human`). In order:
 the version, and a batch is reverted whole: one PR's issues are one
 release, so *Back again* after it says which release to look at.
 
+**The suite is run once per batch, by the run, in parallel.** The first
+run took 7.5 hours for ten batches and spent much of it on tests: a batch
+ran the suite up to four times (the subagent, the run, CI on the PR, CI
+again on `main`), the serial suite is over six minutes of which two thirds
+is waiting on sleeps and subprocesses, and the agent's shell kills a
+command at two minutes, so a plain run ended with no result at all. Now the
+subagent runs only what its changed paths reach (`tests/affected.py`), the
+run runs the whole suite once across four workers (under two minutes, with
+the shell's timeout raised), and CI, which runs it in parallel too and
+skips the add-ons a PR does not touch, stays the gate. The local run is
+not a second gate; it is what saves a CI cycle on a failure the suite would
+have shown in two minutes.
+
 ### What a model is not trusted to keep
 
 `devloop-guard` (`.github/workflows/devloop-guard.yml`,
