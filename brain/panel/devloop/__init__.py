@@ -95,6 +95,15 @@ STREAMS: dict[str, dict] = {
         "label": "Ideas: features this house would use (one Claude run)",
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": False, "default_hours": 168},
+    # brAIn reading what it actually SAID on this house — the cards, the
+    # findings, what a look concluded — as somebody who has to live with it.
+    # Faults and wrongs report what broke; nothing else reported a card that
+    # is accurate and not worth reading, which is most of what makes a
+    # product feel chaotic.
+    "design": {
+        "label": "Design review: what brAIn showed you, judged as a product (one Claude run)",
+        "cost": "claude", "clears": False, "rolling": False,
+        "default_on": False, "default_hours": 24},
     "look": {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
@@ -108,8 +117,19 @@ HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
 # is a fresh allowance, and a backlog filed all at once is the flood.
 CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 
+# "Autopilot": the owner has handed brAIn's development to the loop. Every
+# stream on, on these schedules, nothing waiting for a press, and caps no
+# lower than these. Somebody who chose that should not tune eight switches
+# to get it, nor find their reports sitting in a review queue they never
+# open.
+AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "unmet": 24,
+                   "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
+                   "look": 0}
+AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
+
 DEFAULTS = {
     "enabled": False,
+    "autopilot": False,
     "streams": {k: v["default_on"] for k, v in STREAMS.items()},
     "schedule": {k: v["default_hours"] for k, v in STREAMS.items()},
     "repo": "",
@@ -133,6 +153,29 @@ def settings_file() -> Path:
 
 
 def load_settings() -> dict:
+    """The settings in force: what is stored, as autopilot reads it."""
+    return _apply_autopilot(_raw_settings())
+
+
+def _apply_autopilot(settings: dict) -> dict:
+    """Autopilot is a READING of the stored settings, never a rewrite of
+    them: switch it off and the streams, schedule and review you had are
+    back exactly as they were."""
+    if not settings.get("autopilot"):
+        return settings
+    out = dict(settings)
+    out["streams"] = {k: True for k in STREAMS}
+    out["schedule"] = {k: AUTOPILOT_HOURS.get(k, v["default_hours"])
+                       for k, v in STREAMS.items()}
+    out["review"] = False
+    out["max_issues_per_day"] = max(int(out.get("max_issues_per_day") or 0),
+                                    AUTOPILOT_CAPS["max_issues_per_day"])
+    out["max_runs_per_day"] = max(int(out.get("max_runs_per_day") or 0),
+                                  AUTOPILOT_CAPS["max_runs_per_day"])
+    return out
+
+
+def _raw_settings() -> dict:
     out = dict(DEFAULTS)
     try:
         data = json.loads(settings_file().read_text(encoding="utf-8"))
@@ -144,6 +187,8 @@ def load_settings() -> dict:
         out["enabled"] = data["enabled"]
     if isinstance(data.get("review"), bool):
         out["review"] = data["review"]
+    if isinstance(data.get("autopilot"), bool):
+        out["autopilot"] = data["autopilot"]
     repo = data.get("repo")
     if isinstance(repo, str) and REPO_RE.match(repo):
         out["repo"] = repo
@@ -168,9 +213,9 @@ def load_settings() -> dict:
 def save_settings(changes: dict) -> dict:
     """Merge ``changes`` into the stored settings. Raises ValueError naming
     the field for anything that is not what it should be."""
-    current = load_settings()
+    current = _raw_settings()
     for key, value in (changes or {}).items():
-        if key in ("enabled", "review"):
+        if key in ("enabled", "review", "autopilot"):
             if not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false")
             current[key] = value
@@ -207,7 +252,7 @@ def save_settings(changes: dict) -> dict:
         else:
             raise ValueError(f"unknown setting: {key}")
     atomic_write.write_json(settings_file(), current)
-    return current
+    return _apply_autopilot(current)
 
 
 def enabled() -> bool:

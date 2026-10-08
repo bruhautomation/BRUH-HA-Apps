@@ -1164,3 +1164,59 @@ class TestHouseholdWordsInProse(unittest.TestCase):
                  "sensor.y": {"name": "Report"}})
         text = "The device check keeps re-reporting the report."
         self.assertEqual(a.apply(text), text)
+
+
+class TestTheOwnersRequestIsNeverLost(DevloopCase):
+    """The owner asked twice for Settings to be reworked; once the run
+    reframed it as a missing tool and the cloud declined it, and a
+    declined Settings report then stood down the next request too."""
+
+    def test_an_empty_run_files_the_words_as_typed(self):
+        rows = streams_mod.verbatim_rows("Rework the settings menu, it is bulky")
+        self.assertEqual(len(rows), 1)
+        self.assertIn("> Rework the settings menu", rows[0]["body"])
+        self.assertTrue(rows[0]["where"].startswith("Fix: "))
+        self.assertEqual(streams_mod.verbatim_rows("   "), [])
+
+    def test_a_look_is_never_stood_down(self):
+        self.assertNotIn("look", upstream.STAND_DOWN_STREAMS)
+        self.assertIn("design", upstream.STAND_DOWN_STREAMS)
+
+    def test_the_run_is_told_the_request_is_the_issue(self):
+        self.assertIn("The owner's request IS the issue",
+                      streams_mod.analyst_system("look"))
+
+
+class TestAutopilot(DevloopCase):
+    def test_autopilot_reads_everything_on_and_off_puts_it_back(self):
+        devloop.save_settings({"enabled": True, "review": True,
+                               "streams": {"gaps": False}})
+        on = devloop.save_settings({"autopilot": True})
+        self.assertTrue(all(on["streams"].values()))
+        self.assertFalse(on["review"])
+        self.assertGreaterEqual(on["max_runs_per_day"], 8)
+        self.assertEqual(on["schedule"]["design"], 24)
+        off = devloop.save_settings({"autopilot": False})
+        self.assertTrue(off["review"])
+        self.assertFalse(off["streams"]["gaps"])
+
+
+class TestTheDesignReview(DevloopCase):
+    REPLY = json.dumps({"rows": [
+        {"title": "Findings wording", "what": "Fixes repeat the title",
+         "why": "\"Check the battery\" under every card.",
+         "done_when": "No fix restates its title.", "ui": True}]})
+
+    def test_it_reads_what_brain_said_and_files_a_ux_row(self):
+        ctx = streams_mod.design_context(
+            [{"title": "Energy", "summary": "You used 12 kWh."}],
+            [{"text": "Battery low", "detail": "9%", "fix": "Replace it",
+              "triage": {"reason": "looked"}}])
+        self.assertIn("Energy — You used 12 kWh.", ctx)
+        self.assertIn("Battery low | 9% | Replace it | looked", ctx)
+        rows = streams_mod.parse_rows(self.REPLY, "design")
+        self.assertEqual(rows[0]["where"], "Design: Findings wording")
+        self.assertIs(rows[0]["ux"], True)
+        self.assertIn("**Done when:**", rows[0]["body"])
+        self.assertIn("Here is what brAIn showed",
+                      streams_mod.analyst_prompt("design", "", ctx))

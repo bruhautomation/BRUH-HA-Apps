@@ -267,6 +267,10 @@ PROMPTS = {
              "brAIn's code or capabilities."),
     "ideas": ("What would make brAIn more useful in THIS house? Ground every "
               "idea in something you can see here. Each row is one feature."),
+    "design": ("Here is what brAIn showed this household. Judge it as the "
+               "person who lives here would, and file the changes that would "
+               "make brAIn feel like one calm, coherent assistant.\n\n"
+               "%(topic)s"),
     # "What do you want to fix?" — the owner's own words about brAIn, which
     # the run turns into the issue a developer would want. LOOK_SYSTEM says
     # how; this is only the opening.
@@ -311,8 +315,12 @@ def reported_block(listing: list[dict]) -> str:
 
 def analyst_prompt(stream: str, context: str, topic: str = "",
                    reported: str = "") -> str:
-    head = PROMPTS[stream] % {"topic": topic[:500]} if stream == "look" \
-        else PROMPTS[stream]
+    if stream == "look":
+        head = PROMPTS[stream] % {"topic": topic[:500]}
+    elif stream == "design":
+        head = PROMPTS[stream] % {"topic": topic[:DESIGN_CHARS]}
+    else:
+        head = PROMPTS[stream]
     tail = (f"\n\nALREADY REPORTED (do not file these again):\n{reported}"
             if reported else "\n\nALREADY REPORTED: nothing yet.")
     return f"{head}\n\nWHAT BRAIN ALREADY KNOWS:\n{context[:12000]}{tail}"
@@ -347,6 +355,11 @@ Think like a person who uses brAIn every day, not like a code reviewer:
   person would see there, and the developer will screenshot it.
 - If the words are vague, choose the most likely concrete problem and say
   in "why" what you assumed. Never answer with a question.
+- The owner's request IS the issue. Never turn it into a report about a
+  tool brAIn lacks, something you could not see or read, or a permission
+  it does not have. "Rework the settings page" is a request to redesign
+  the settings page, whether or not any tool can show it to you: file the
+  redesign, title it after the screen, and let the developer look.
 
 Answer with JSON only:
 {"rows": [{"title": "...", "what": "...", "why": "...", "done_when": "...",
@@ -365,9 +378,74 @@ words are new evidence, and saying it again is how they say it was not
 fixed. Start "what" with "Still a problem:" in that case."""
 
 
+# The design review: brAIn reading what it SHOWED this house, as the
+# person who has to live with it. Not "is it correct" — faults, wrongs and
+# the checks' scorecard answer that — but "is it worth reading, does it
+# say one thing once, would a person know what to do". It sees the real
+# text: card titles and summaries, the findings as worded, what a look
+# concluded. It cannot see pixels; the cloud screenshots what it names.
+DESIGN_ROWS = 4
+DESIGN_CHARS = 9000
+DESIGN_SYSTEM = """You are the design lead for brAIn, a Home Assistant add-on meant to be
+the household's own brain: one calm place that understands the house,
+says what matters, answers questions and fixes problems. You are reading
+exactly what brAIn showed this household recently — its insight cards,
+its findings as worded, and the conclusions it drew — the way the person
+living here reads them on a phone.
+
+Find what makes brAIn feel chaotic, generic or untrustworthy, and say how
+it should be instead. Look for:
+- cards or findings that say the same thing twice, or in two places;
+- text that is accurate and not worth reading: generic advice, a number
+  with nothing to compare it to, a claim that restates its own title;
+- sentences only a developer would understand: ids, codes, internal names;
+- a person left not knowing what to do, or asked something brAIn could
+  have found out itself;
+- a missing feeling of one coherent assistant: inconsistent tone, names
+  or vocabulary between surfaces.
+Every row is a change to brAIn's CODE or prompts that would fix the whole
+class, not one card. Ground it in a quote from what you were shown.
+
+Answer with JSON only:
+{"rows": [{"title": "...", "what": "...", "why": "...", "done_when": "...",
+           "ui": true}]}
+with at most %(cap)d rows, the most important first. "title" under 80
+characters names the surface; "what" is one sentence; "why" up to four
+sentences quoting the evidence; "done_when" says what a developer checks;
+"ui" is true when the fix is on a screen. No row beats a vague row. Never
+include a secret, a code or a person's whereabouts. Never re-file
+anything under ALREADY REPORTED."""
+
+
+def design_context(insights: list, findings: list) -> str:
+    """What the design review is shown: the words brAIn put in front of the
+    household, newest first, bounded. Never the chart HTML — a card's
+    words are what a person reads, and the HTML is the cloud's to look at."""
+    parts = ["INSIGHT CARDS (title — summary):"]
+    for ins in (insights or [])[:24]:
+        if not isinstance(ins, dict):
+            continue
+        title = " ".join(str(ins.get("title") or "").split())[:140]
+        summary = " ".join(str(ins.get("summary") or "").split())[:400]
+        if title or summary:
+            parts.append(f"- {title} — {summary}")
+    parts += ["", "FINDINGS AS WORDED (text | detail | what to do | what a look said):"]
+    for f in (findings or [])[:40]:
+        if not isinstance(f, dict):
+            continue
+        tri = f.get("triage") if isinstance(f.get("triage"), dict) else {}
+        bits = [" ".join(str(f.get(k) or "").split())[:300]
+                for k in ("text", "detail", "fix")]
+        bits.append(" ".join(str(tri.get("reason") or "").split())[:200])
+        parts.append("- " + " | ".join(bits))
+    return "\n".join(parts)[:DESIGN_CHARS]
+
+
 def analyst_system(stream: str = "") -> str:
     if stream == "look":
         return LOOK_SYSTEM
+    if stream == "design":
+        return DESIGN_SYSTEM % {"cap": DESIGN_ROWS}
     return ANALYST_SYSTEM % {"cap": MAX_ROWS}
 
 
@@ -389,10 +467,16 @@ def parse_rows(text: str, stream: str, topic: str = "") -> list[dict]:
         what = str(r.get("what") or "").strip()[:300]
         if not title or not what:
             continue
-        where = {"gaps": "Gap", "ideas": "Idea", "look": "Fix"}[stream]
+        where = {"gaps": "Gap", "ideas": "Idea", "look": "Fix",
+                 "design": "Design"}[stream]
         body = str(r.get("why") or "").strip()[:2000]
         row = {"where": f"{where}: {title}", "what": what, "detail": "",
                "body": body}
+        if stream == "design":
+            done = str(r.get("done_when") or "").strip()[:800]
+            if done:
+                row["body"] = "\n\n".join(p for p in (body, f"**Done when:** {done}") if p)
+            row["ux"] = r.get("ui") is True
         if stream == "look":
             done = str(r.get("done_when") or "").strip()[:800]
             parts = []
@@ -406,9 +490,26 @@ def parse_rows(text: str, stream: str, topic: str = "") -> list[dict]:
             row["body"] = "\n\n".join(parts)
             row["ux"] = r.get("ui") is True
         out.append(row)
-        if len(out) >= (LOOK_ROWS if stream == "look" else MAX_ROWS):
+        if len(out) >= (LOOK_ROWS if stream == "look"
+                        else DESIGN_ROWS if stream == "design" else MAX_ROWS):
             break
     return out
+
+
+def verbatim_rows(topic: str) -> list[dict]:
+    """The owner's words as the issue, for when the run that was meant to
+    write it up failed or wrote nothing. A request somebody typed and sent
+    is never dropped on the floor."""
+    words = " ".join(str(topic or "").split())[:500]
+    if not words:
+        return []
+    title = words if len(words) <= 70 else words[:69].rsplit(" ", 1)[0] + "…"
+    return [{"where": f"Fix: {title}", "what": words, "detail": "",
+             "body": "The owner said:\n\n> " + words
+                     + "\n\nThe run that should have written this up did not "
+                       "answer, so this is their request as they typed it. "
+                       "It is the requirement.",
+             "ux": False}]
 
 
 def context_block(diagnostics: dict, score_rows: list, unmet_rows: list) -> str:

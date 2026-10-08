@@ -23,3 +23,7 @@ Last UX audit: 2026-10-07
   `python3 -m pytest tests -q -n 4 --dist loadfile` (1m41s) with the Bash
   `timeout` raised or in the background, and always `python3 -m pytest`,
   because the bare `pytest` on PATH cannot see the dependencies.
+
+## Loop health
+
+One line per run: date, duration, issues by ending, slowest step.

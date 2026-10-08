@@ -25,6 +25,7 @@ schedule and its own **Run** button:
 | **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
+| **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the cloud screenshots the screens it names | no | one run |
 
 **What do you want to fix?** is the eighth: say it the way you would to a
 person ("the settings page is too crowded", "the brief never mentions the
@@ -34,6 +35,19 @@ separate problems) with your words quoted, the real problem, and what
 "fixed" looks like. An issue about a screen is labelled `devloop:ux`, which
 tells the cloud half to drive and screenshot that pane before and after the
 fix: the house never takes screenshots.
+
+**Autopilot** (the switch at the top of the section) is the one choice
+for somebody handing brAIn's development to the loop: every stream on, on
+its own schedule, nothing waiting for you to press Send, and the caps at
+least 20 issues and 8 runs a day. Switching it off puts back exactly the
+switches you had. It changes what the HOUSE sends; what the cloud may
+change is `.claude/devloop.json`'s.
+
+A request you type into *What do you want to fix?* is never lost: if the
+run that writes it up fails or answers nothing, your sentence is filed as
+you typed it. It is never held back because an earlier report about the
+same screen was declined, and the line under the box says which issue it
+became and what the cloud said when it closed it.
 
 Two daily caps keep it in proportion. Both refuse rather than queue up:
 

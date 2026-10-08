@@ -15683,6 +15683,13 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         unmet = await asyncio.to_thread(
             dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
         context = dl_streams.context_block(payload, score, unmet)
+        if stream == "design":
+            # What brAIn showed this house, in its own words: the run is
+            # handed it as its subject, the way a look is handed the owner's.
+            topic = await asyncio.to_thread(
+                lambda: dl_streams.design_context(
+                    load_insights(),
+                    (findings_store.listing() or {}).get("findings") or []))
         result = await _claude(
             engine.run_analyst,
             dl_streams.analyst_prompt(
@@ -15692,14 +15699,26 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
             priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
         _record_usage(result, "devloop")
-        if not result or not result.get("ok"):
-            await asyncio.to_thread(up.mark_run, stream)
-            return {"error": (result or {}).get("error") or "the run failed"}
-        rows = dl_streams.parse_rows(result.get("text") or "", stream, topic)
+        rows = dl_streams.parse_rows(
+            (result or {}).get("text") or "", stream, topic) \
+            if result and result.get("ok") else []
+        # The owner pressed Send on their own words: a run that failed or
+        # came back empty must not be the reason nothing was filed. Their
+        # sentence goes as it is, and the developer reads it.
+        if stream == "look" and not rows:
+            rows = dl_streams.verbatim_rows(topic)
         if not rows:
             await asyncio.to_thread(up.mark_run, stream)
+            if not result or not result.get("ok"):
+                return {"error": (result or {}).get("error") or "the run failed"}
             return {"rows": 0}
-        return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        out = await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "look":
+            # Which reports this request became, so the box under it can say
+            # where they went rather than only that it was sent.
+            out = {**out, "fps": [up.fingerprint(r["where"], r["what"])
+                                  for r in rows]}
+        return out
     except Exception as exc:  # noqa: BLE001 — one stream, not the loop
         log.warning("devloop: the %s stream failed: %s", stream, exc)
         return {"error": str(exc)[:200]}
@@ -15722,17 +15741,34 @@ _DEVLOOP_TASKS: set = set()
 
 
 def _devloop_payload() -> dict:
+    queue = devloop.upstream.listing()
     return {
         "settings": devloop.load_settings(),
         "streams": devloop.catalog(),
         "hours": list(devloop.HOURS_CHOICES),
         "caps": {k: list(v) for k, v in devloop.CAP_LIMITS.items()},
         "looks": {"running": DEVLOOP_LOOKS["running"],
-                  "last": DEVLOOP_LOOKS["last"]},
+                  "last": _devloop_last_look(queue)},
         "token_set": devloop.token_set(),
         "status": devloop.upstream.status(),
-        "queue": devloop.upstream.listing(),
+        "queue": queue,
     }
+
+
+def _devloop_last_look(queue: list[dict]) -> dict | None:
+    """The last request, with what it became: each report's issue and what
+    the cloud said about it, read off the queue rather than remembered,
+    so a verdict that came back an hour later is on the same line."""
+    last = DEVLOOP_LOOKS["last"]
+    if not last:
+        return None
+    fps = ((last.get("result") or {}).get("fps") or [])
+    by_fp = {r.get("fp"): r for r in queue}
+    filed = [{k: by_fp[fp].get(k) for k in ("where", "state", "issue",
+                                            "issue_url", "verdict")}
+             for fp in fps if fp in by_fp]
+    return {**last, "filed": filed,
+            "error": (last.get("result") or {}).get("error") or ""}
 
 
 async def h_devloop_get(request: web.Request) -> web.Response:
@@ -15747,7 +15783,7 @@ async def h_devloop_put(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "expected an object"}, status=400)
     changes = {k: body[k] for k in (
-        "enabled", "repo", "review", "streams", "schedule",
+        "enabled", "autopilot", "repo", "review", "streams", "schedule",
         *devloop.CAP_LIMITS) if k in body}
     try:
         await asyncio.to_thread(devloop.save_settings, changes)

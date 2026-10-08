@@ -3740,11 +3740,36 @@ function devQueueRows(data) {
   }).join("");
 }
 
+function devLookOutcome(last) {
+  if (!last) return "";
+  const asked = "“" + esc(last.topic || "") + "”";
+  const filed = last.filed || [];
+  if (!filed.length) {
+    return asked + ": nothing was filed"
+      + (last.error ? " (" + esc(last.error) + ")" : "") + ".";
+  }
+  return asked + " became " + filed.map((f) => {
+    let state = DEV_STATE_WORDS[f.state] || f.state || "";
+    if (f.verdict && f.verdict !== "open") {
+      state = "closed · " + (DEV_VERDICT_WORDS[f.verdict] || f.verdict);
+    }
+    const name = esc(String(f.where || "").replace(/^Fix: /, ""));
+    const link = f.issue_url
+      ? `<a href="${esc(f.issue_url)}" target="_blank" rel="noopener">#${esc(String(f.issue))}</a> `
+      : "";
+    return `${link}${name} (${esc(state)})`;
+  }).join("; ") + ".";
+}
+
 function paintDevloop(data) {
   const s = data.settings || {};
   $("#setDevloop").checked = s.enabled === true;
   $("#devloopBody").hidden = s.enabled !== true;
   $("#setDevReview").checked = s.review !== false;
+  // Autopilot decides the switches below it, so they are shown and greyed
+  // rather than hidden: what it turned on is still something to read.
+  $("#setDevAutopilot").checked = s.autopilot === true;
+  $("#setDevReview").disabled = s.autopilot === true;
   if (document.activeElement !== $("#devRepo")) $("#devRepo").value = s.repo || "";
   $("#devToken").placeholder = data.token_set ? "saved — paste a new one to replace it"
                                               : "github_pat_…";
@@ -3783,7 +3808,7 @@ function paintDevloop(data) {
         ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}</option>`).join("");
       return `<div class="setrow top devstream"><label class="check bigcheck">`
         + `<input class="tog" type="checkbox" data-dev-stream="${esc(st.name)}"`
-        + `${on[st.name] ? " checked" : ""}><span><b>${esc(st.label)}</b><br>`
+        + `${on[st.name] ? " checked" : ""}${s.autopilot ? " disabled" : ""}><span><b>${esc(st.label)}</b><br>`
         + `<span class="subtext">${esc(when)}</span></span></label>`
         + `<div class="row tight"><select class="sel" data-dev-hours="${esc(st.name)}"`
         + ` aria-label="How often">${opts}</select>`
@@ -3791,9 +3816,12 @@ function paintDevloop(data) {
         + ` aria-label="Run this stream now">Run</button></div></div>${slow}`;
     }).join("");
   const looks = data.looks || {};
-  $("#devLookState").textContent = looks.running
-    ? "Working on: " + looks.running
-    : (looks.last ? "Last sent: " + looks.last.topic : "");
+  // Where the last request went: each report it became, its issue, and
+  // what the cloud said when it closed it. "Sent" alone could not tell a
+  // filed request from one that came back empty.
+  $("#devLookState").innerHTML = looks.running
+    ? "Working on: " + esc(looks.running)
+    : devLookOutcome(looks.last);
   $("#devLookRun").disabled = !!looks.running;
   if (document.activeElement !== $("#devCapIssues")) {
     $("#devCapIssues").value = s.max_issues_per_day ?? 10;
@@ -3882,6 +3910,9 @@ async function devloopCall(path, opts, okMessage) {
 $("#setDevloop").addEventListener("change", () =>
   devloopCall("api/devloop", { method: "PUT",
     body: JSON.stringify({ enabled: $("#setDevloop").checked }) }));
+$("#setDevAutopilot").addEventListener("change", () =>
+  devloopCall("api/devloop", { method: "PUT",
+    body: JSON.stringify({ autopilot: $("#setDevAutopilot").checked }) }));
 $("#setDevReview").addEventListener("change", () =>
   devloopCall("api/devloop", { method: "PUT",
     body: JSON.stringify({ review: $("#setDevReview").checked }) }));
