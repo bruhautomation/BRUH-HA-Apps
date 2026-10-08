@@ -315,6 +315,47 @@ class BruhClaudeUsageLimitSensor(SensorEntity):
             return None
 
 
+# What the Usage tracker sensor can say, as an ENUM so Home Assistant shows
+# each in words (entity.sensor.usage_tracker.state in strings.json) while
+# the stored state stays the tracker's own code — automations key on it.
+# Read off the two places that write it: the tracker
+# (brain/scripts/usage-limits-tracker.py — its AUTH_PROBLEMS, ERROR_DETAIL,
+# SCOPE_ERROR, REFRESH_PENDING and the codes its failure paths return) and
+# this sensor's own three (`ok`, `stale`, `not_running`). The tracker
+# writes `http_<status>` for any status the endpoint answers, so the ones a
+# real endpoint sends are listed; anything else — a status nobody listed,
+# or an error string the API body carried — is `other`, with the raw code
+# kept in the `code` attribute, because an ENUM state outside its options
+# is an error in Home Assistant and this sensor's job is to be readable
+# when the others are not. `tests/test_usage_tracker_sensor.py` holds the
+# list against the tracker.
+USAGE_TRACKER_OTHER = "other"
+USAGE_TRACKER_STATES = (
+    "ok",
+    "stale",
+    "not_running",
+    "no_oauth_token",
+    "api_key_has_no_usage_limits",
+    "http_401",
+    "http_403",
+    "oauth_token_lacks_usage_scope",
+    "oauth_token_awaiting_refresh",
+    "http_429",
+    "network_error",
+    "invalid_response",
+    "tracker_error",
+    "http_400",
+    "http_404",
+    "http_408",
+    "http_500",
+    "http_502",
+    "http_503",
+    "http_504",
+    "http_529",
+    USAGE_TRACKER_OTHER,
+)
+
+
 class BrainUsageTrackerSensor(SensorEntity):
     """Whether the usage tracker is working, and what stopped it if not.
 
@@ -379,11 +420,19 @@ class BrainUsageTrackerSensor(SensorEntity):
     the reading is still fresh the failure is a ``note``, because the
     numbers on show are still the honest answer. ``next_attempt_at`` says
     when the tracker will ask again, in every state that has one.
+
+    It is an ENUM sensor (where the core has one) with the
+    ``usage_tracker`` translation key, so the UI shows each state in words
+    while the stored state stays the code above. A code not in
+    ``USAGE_TRACKER_STATES`` is ``other``; the raw code is always in the
+    ``code`` attribute, which is what an automation should read when it
+    needs the tracker's exact word.
     """
 
     _attr_has_entity_name = True
     _attr_should_poll = True
     _attr_name = "Usage tracker"
+    _attr_translation_key = "usage_tracker"
     _attr_icon = "mdi:cloud-question-outline"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_info = USAGE_DEVICE_INFO
@@ -392,6 +441,13 @@ class BrainUsageTrackerSensor(SensorEntity):
         self._entry = config_entry
         self._usage_path = usage_path
         self._attr_unique_id = f"{DOMAIN}_usage_tracker_status"
+        # An ENUM where the core has one (`BrainStatusSensor`'s rule), so
+        # the state shows in words; an older core gets the raw code as it
+        # always did, and `_publish` leaves an unlisted code alone there.
+        self._enum = getattr(SensorDeviceClass, "ENUM", None) is not None
+        if self._enum:
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = list(USAGE_TRACKER_STATES)
         self._attr_native_value = "not_running"
         self._attrs: dict[str, Any] = {}
 
@@ -399,11 +455,24 @@ class BrainUsageTrackerSensor(SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         return self._attrs
 
+    def _publish(self, code: str, attrs: dict[str, Any]) -> None:
+        """Set the state to `code`, and the raw code beside it.
+
+        `code` is always in the attributes, so an automation can read the
+        tracker's own word whatever the state shows; a code the enum does
+        not list is `other` rather than a state Home Assistant would refuse.
+        """
+        attrs["code"] = code
+        if self._enum and code not in USAGE_TRACKER_STATES:
+            code = USAGE_TRACKER_OTHER
+        self._attr_native_value = code
+        self._attrs = attrs
+
     async def async_update(self) -> None:
         data = await self.hass.async_add_executor_job(self._read)
         if data is None:
-            self._attr_native_value = "not_running"
-            self._attrs = {"detail": "the tracker has not written a reading yet"}
+            self._publish("not_running",
+                          {"detail": "the tracker has not written a reading yet"})
             return
 
         attrs: dict[str, Any] = {}
@@ -419,8 +488,7 @@ class BrainUsageTrackerSensor(SensorEntity):
             detail = data.get("detail")
             if detail:
                 attrs["detail"] = str(detail)
-            self._attr_native_value = str(error)
-            self._attrs = attrs
+            self._publish(str(error), attrs)
             return
 
         last_error = data.get("last_error")
@@ -432,13 +500,13 @@ class BrainUsageTrackerSensor(SensorEntity):
             # Stale with a recorded reason IS that reason — "stale" alone is
             # the state that sent people here not understanding why.
             if last_error:
-                self._attr_native_value = last_error
+                code = last_error
                 if last_detail:
                     attrs["detail"] = str(last_detail)
             else:
-                self._attr_native_value = "stale"
+                code = "stale"
         else:
-            self._attr_native_value = "ok"
+            code = "ok"
             if last_error:
                 attrs["note"] = (
                     f"last poll failed ({last_error}); showing the previous "
@@ -446,7 +514,7 @@ class BrainUsageTrackerSensor(SensorEntity):
                 )
                 if last_detail:
                     attrs["detail"] = str(last_detail)
-        self._attrs = attrs
+        self._publish(code, attrs)
 
     def _read(self) -> dict | None:
         if not os.path.isfile(self._usage_path):
@@ -817,7 +885,7 @@ class BruhClaudeInsightSensor(SensorEntity):
 
 MEMORY_DEVICE_INFO = DeviceInfo(
     identifiers={(DOMAIN, "brain_memory")},
-    name="brAIn memory",
+    name="brAIn Memory",
     manufacturer="BRUH Automation",
     model="Home memory",
 )
@@ -894,7 +962,7 @@ class BrainOpenFindingsSensor(SensorEntity):
     _attr_native_unit_of_measurement = "findings"
     _attr_device_info = DeviceInfo(
         identifiers={(DOMAIN, "brain_findings")},
-        name="brAIn findings",
+        name="brAIn Findings",
         manufacturer="BRUH Automation",
         model="Home findings",
     )

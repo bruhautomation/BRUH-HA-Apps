@@ -1387,6 +1387,33 @@
           "degraded": "Degraded",
           "unknown": "Unknown"
         }
+      },
+      "usage_tracker": {
+        "name": "Usage tracker",
+        "state": {
+          "ok": "Reporting",
+          "stale": "Reading too old",
+          "not_running": "Not running",
+          "no_oauth_token": "Not signed in",
+          "api_key_has_no_usage_limits": "API key (no usage limits)",
+          "http_401": "Sign-in refused",
+          "http_403": "Permission refused",
+          "oauth_token_lacks_usage_scope": "Sign-in cannot read usage",
+          "oauth_token_awaiting_refresh": "Waiting for sign-in to renew",
+          "http_429": "Usage endpoint rate-limited",
+          "network_error": "Anthropic unreachable",
+          "invalid_response": "Unreadable answer",
+          "tracker_error": "Tracker error",
+          "http_400": "Request refused (400)",
+          "http_404": "Endpoint not found (404)",
+          "http_408": "Request timed out (408)",
+          "http_500": "Anthropic error (500)",
+          "http_502": "Anthropic unavailable (502)",
+          "http_503": "Anthropic unavailable (503)",
+          "http_504": "Anthropic timed out (504)",
+          "http_529": "Anthropic overloaded (529)",
+          "other": "Other problem"
+        }
       }
     }
   }

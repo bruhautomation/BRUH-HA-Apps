@@ -74,6 +74,7 @@ from .const import (
     DEFAULT_MODEL,
     DEFAULT_NAME,
     DOMAIN,
+    agent_device_name,
 )
 
 # Chat-log streaming (HA 2025.x): when available and the add-on publishes
@@ -302,14 +303,21 @@ class BruhClaudeConversationEntity(ConversationEntity):
         access = opts.get(CONF_ACCESS)
         self._access = access if access in ACCESS_LEVELS else DEFAULT_ACCESS
         name = config_entry.data.get(CONF_NAME, DEFAULT_NAME)
-        self._attr_name = "Agent"  # Short — the device name provides context
+        # The device carries the whole name ("brAIn Agent"), and the entity
+        # takes it: the friendly name and a new install's
+        # `conversation.brain_agent` are what they were when the device was
+        # "brAIn" and the entity "Agent", and the device no longer shares
+        # its name with the add-on's own device in a picker.
+        self._attr_name = None
         self._attr_unique_id = f"{config_entry.entry_id}_conversation"
 
         # Give each conversation agent its own device so it appears as a
         # distinct card in Settings > Devices, separate from the usage sensors.
+        # The identifier is what the registry keys the device by and never
+        # moves; only the display name does.
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"agent_{config_entry.entry_id}")},
-            name=name,
+            name=agent_device_name(name),
             manufacturer="BRUH Automation",
             model="Claude Conversation Agent",
         )
@@ -497,7 +505,7 @@ class BruhClaudeConversationEntity(ConversationEntity):
 
         _LOGGER.debug(
             "Processing conversation [%s]: %s (id=%s)",
-            self._attr_name,
+            self.entity_id,
             user_input.text,
             conversation_id,
         )

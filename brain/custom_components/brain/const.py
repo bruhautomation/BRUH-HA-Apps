@@ -34,6 +34,26 @@ DEFAULT_TIMEOUT = 120
 # default (300s) or results land after the bridge stops waiting.
 DEFAULT_TASK_TIMEOUT = 300
 DEFAULT_NAME = "brAIn"
+
+
+def agent_device_name(name) -> str:
+    """The device name for a conversation agent called `name`.
+
+    The agent's device used to carry the entry's name bare, and the
+    default name is "brAIn" — which is also what the Supervisor calls the
+    add-on's own device, so a device picker showed two rows called
+    "brAIn". Saying it is an agent keeps them apart and cannot land on any
+    of the integration's fixed devices ("brAIn System", "brAIn Memory"…),
+    none of which ends in "Agent". A name that already says so is left as
+    it is rather than read as "Kitchen agent Agent". Only the display name
+    moves: the device's identifier is `agent_<entry id>`, as it always was.
+    """
+    text = str(name).strip() if name is not None else ""
+    if not text:
+        text = DEFAULT_NAME
+    if text.split()[-1].casefold() == "agent":
+        return text
+    return f"{text} Agent"
 DEFAULT_SYSTEM_PROMPT = ""
 # Haiku keeps voice interactions snappy; device control rarely needs a
 # bigger model. Users can pick another model per agent in the options flow.
