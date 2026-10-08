@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.2
+
+- A memory consolidation pass that fails now says why: the pass reads Claude's own verdict (it used to keep only an empty error stream and report "claude exited 1"), and it runs with no tools loaded, so a pass can no longer spend its single turn reaching for a tool it is not allowed. A retry after a refused flag never reuses a spent session id. (reports #117)
+- When the usage endpoint has refused brAIn for more than a day, the usage popover and the morning brief say so in plain words and that the figure shown is brAIn's own estimate, never as a sign-in problem. The back-off still keeps trying, every few hours at most. (reports #124)
+
 ## 2.18.1
 
 - ⚙ Settings is redesigned: one list of sections whose rows already say what you most often check (signed in, the model and this session's usage, whether brAIn asks before it acts, your notification sentence), every section one press away, and nothing inside a collapsible any more. On a wide screen the list sits beside the section; on a phone the list is the page and a row opens its section. Developer tools have their own section. (reports #115)
