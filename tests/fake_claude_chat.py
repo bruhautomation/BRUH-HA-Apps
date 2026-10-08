@@ -279,8 +279,15 @@ for line in sys.stdin:
         emit({"type": "control_response",
               "response": {"subtype": "success",
                            "request_id": msg.get("request_id")}})
-        emit({"type": "result", "subtype": "success", "is_error": False,
-              "result": "stopped", "duration_ms": 10, "num_turns": 1})
+        # The shape the real CLI closes an interrupted turn with (2.1.293's
+        # own schema and its comment on the interrupt request): an error
+        # subtype with `is_error` set and no result text, and a
+        # `terminal_reason` saying the turn was aborted. It answered
+        # `success` here, which is how the chat could journal a person's
+        # own Stop as a failed run without any test seeing it.
+        emit({"type": "result", "subtype": "error_during_execution",
+              "is_error": True, "duration_ms": 10, "num_turns": 1,
+              "errors": [], "terminal_reason": "aborted_streaming"})
         continue
     if msg.get("type") == "control_response":
         # The panel answering a control question of ours.

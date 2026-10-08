@@ -557,6 +557,39 @@ class ChatSessionCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.session.proc, proc, "it killed a session that answered")
         self.assertEqual(self.session.state, "ready")
 
+    async def test_pressing_stop_is_not_a_failed_run(self):
+        """The CLI closes an interrupted turn with `error_during_execution`
+        and `is_error` set — a person pressing Stop on their own chat — and
+        the chat journalled it as an `error`, reported it as a failure and
+        drew it as a red error notice. It is the person getting what they
+        asked for."""
+        import journal
+        old = journal.JOURNAL_FILE
+        journal.JOURNAL_FILE = os.path.join(self.tmp.name, "journal.jsonl")
+        self.addCleanup(setattr, journal, "JOURNAL_FILE", old)
+        os.environ["FAKE_CHAT_MODE"] = "hang"
+        self.mod.INTERRUPT_GRACE = 3.0
+        await self.session.start()
+        await self.session.send("hang please")
+        await asyncio.sleep(0.3)
+        out = await self.session.interrupt()
+        self.assertEqual(out["method"], "interrupt")
+        rows = [r for r in journal.tail(10) if r.get("source") == "chat"]
+        self.assertEqual([r["outcome"] for r in rows], ["stopped"])
+        self.assertFalse(journal.is_failure(rows[0]))
+        notices = [e for e in self.session.events if e.get("type") == "notice"]
+        self.assertFalse([n for n in notices if n.get("level") == "error"],
+                         "a Stop the person pressed was drawn as an error")
+
+    async def test_an_error_nobody_asked_for_is_still_a_failure(self):
+        """The same subtype without a Stop behind it is a turn that broke,
+        and must go on being reported as one."""
+        out = self.mod._normalise({
+            "type": "result", "subtype": "error_during_execution",
+            "is_error": True, "duration_ms": 5, "num_turns": 1,
+            "errors": ["API Error: 500"]})
+        self.assertEqual(out[0].get("level"), "error")
+
     async def test_an_older_cli_is_stopped_by_killing_and_resuming(self):
         """The polite interrupt is what a current CLI answers; an older one
         ignores it silently, which is indistinguishable from thinking. So

@@ -54,6 +54,13 @@ CONSOLIDATION_STALE_H = 26.0
 # Below this many runs, a failure rate is an anecdote.
 MIN_RUNS_FOR_RATE = 6
 FAILURE_RATE_DEGRADED = 0.5
+# Refused-credential runs from ONE face before that face is a problem.
+# One is a blip — an access token lapsing between refreshes can cost the
+# run that meets it — and two is the same press retried. Three separate
+# runs of one runner refused, with the latest of them still refused, is a
+# credential that is not working for that runner, which the sign-in check
+# cannot see when every other face authenticates another way.
+AUTH_RUNS_DEGRADED = 3
 # The mirror is rewritten after every checks pass and hourly in between.
 # Twice that is a panel that has stopped writing.
 MIRROR_STALE_H = 2.5
@@ -388,6 +395,8 @@ def problems(diag: dict, options: dict | None = None,
             "the settings dialog lists the last few with their reasons.",
             "runs"))
 
+    found.extend(_auth_runs(diag, auth))
+
     usage = diag.get("usage") or {}
     # Not every missing figure is a fault. `usage_store.NEEDS_NOTHING` is
     # the set whose remedy is to do nothing — a credential between
@@ -407,6 +416,48 @@ def problems(diag: dict, options: dict | None = None,
     order = {s: i for i, s in enumerate(STATES)}
     found.sort(key=lambda p: -order[p["state"]])
     return found
+
+
+def _auth_runs(diag: dict, auth: dict) -> list[dict]:
+    """A runner whose credential keeps being refused while the sign-in
+    check says ok.
+
+    The check asks one question — does the panel's credential work — and
+    a face that authenticates some other way can be refused all day under
+    it: the memory extractor did, run after run, while the chat, the cards
+    and voice all worked and the verdict said ok. Counted per source,
+    because three different faces each refused once is three blips and
+    one face refused three times is a fault; and only while that face's
+    newest run was refused too, because once a run of it works the
+    remedy has already happened. A payload from before the newest-outcome
+    map keeps the count alone. Stands down when the sign-in check has
+    itself failed: that is the sentence, and a second about the same
+    credential is noise.
+    """
+    if auth.get("state") not in (None, "ok", "checking"):
+        return []
+    journal = diag.get("journal") or {}
+    by_source = journal.get("by_source") or {}
+    last = journal.get("last_by_source")
+    failing = []
+    for source, outcomes in sorted(by_source.items()):
+        if not isinstance(outcomes, dict):
+            continue
+        refused = _num(outcomes.get("auth")) or 0
+        if refused < AUTH_RUNS_DEGRADED:
+            continue
+        if isinstance(last, dict) and last.get(source) != "auth":
+            continue
+        failing.append((source, int(refused)))
+    if not failing:
+        return []
+    names = ", ".join(f"{src} ({n} runs)" for src, n in failing)
+    return [_problem(
+        "degraded", "Claude refused the sign-in for " + names,
+        "These runs keep being told the sign-in has expired while the rest "
+        "of brAIn works. Open Settings (Account) and press Sign in again; if it keeps "
+        "happening, the failing runs are listed under Diagnostics.",
+        "auth_runs")]
 
 
 def verdict(diag: dict, options: dict | None = None,

@@ -948,6 +948,12 @@ class ChatSession:
         # cap). The next send restarts with --resume first, so the counter
         # resets and the conversation carries on.
         self._respawn_pending = False
+        # Set when the person pressed Stop on the turn in flight, and cleared
+        # when that turn's result arrives or the next turn is sent. The CLI
+        # closes an interrupted turn as `error_during_execution`, the same
+        # subtype a turn that broke carries, and this is what tells the two
+        # apart.
+        self._interrupt_requested = False
         # Which finding this conversation is about, set by the Discuss route
         # and cleared by reset(). It is stamped onto every `resolutions`
         # event rather than resolved when one is rendered, because the
@@ -1619,7 +1625,8 @@ class ChatSession:
                     # own total is the wrong number here.
                     self._take_context(
                         (event.get("message") or {}).get("usage"))
-                for norm in _normalise(event):
+                for norm in _normalise(
+                        event, interrupted=self._interrupt_requested):
                     if norm["type"] == "resolutions":
                         # Never the model's own idea of which finding: it is
                         # not asked, so it cannot name the wrong one. A zero
@@ -1633,6 +1640,7 @@ class ChatSession:
                     # transcript a reload repaints.
                     self._emit(norm, keep=norm.pop("_keep", True))
                 if event.get("type") == "result":
+                    self._interrupt_requested = False
                     if event.get("subtype") == "error_max_turns":
                         # The cap spans this process, however this CLI counts
                         # turns — so only a respawn clears it. Marked here,
@@ -1698,6 +1706,8 @@ class ChatSession:
                 raise RuntimeError(self.error or "the Claude session is not running")
             if self.state == "busy":
                 raise RuntimeError("Claude is still answering — stop it first")
+            # A new turn: a Stop pressed on an earlier one is not about it.
+            self._interrupt_requested = False
 
             self._emit({"type": "user", "text": text})
             # The first message after a fallback IS the fresh start the
@@ -1941,6 +1951,8 @@ class ChatSession:
         async with self._swap_lock:
             if not self.alive():
                 return {"ok": True, "method": "none"}
+            if self.state == "busy":
+                self._interrupt_requested = True
             try:
                 assert self.proc is not None and self.proc.stdin is not None
                 self.proc.stdin.write((json.dumps({
@@ -2171,7 +2183,28 @@ def _reclassified(events: list[dict]) -> list[dict]:
     return out
 
 
-def _normalise(event: dict) -> list[dict]:
+# The CLI's own word for a turn that was stopped rather than one that
+# failed (2.1.293 classifies both as not-an-error itself). A result carrying
+# one is a Stop, whoever asked for it.
+ABORTED_REASONS = frozenset({"aborted_streaming", "aborted_tools"})
+
+
+def _was_stopped(event: dict, interrupted: bool) -> bool:
+    """Whether an error result is the turn a Stop ended.
+
+    `error_during_execution` is what the CLI closes an interrupted turn
+    with, and also what it closes a turn that broke with — so the subtype
+    alone cannot say, and reading every one as a failure is how a person
+    pressing Stop on their own chat reached the run journal as an `error`.
+    Either the session asked for this interrupt, or the CLI says the turn
+    was aborted; anything else is still a failure.
+    """
+    if event.get("subtype") != "error_during_execution":
+        return False
+    return interrupted or event.get("terminal_reason") in ABORTED_REASONS
+
+
+def _normalise(event: dict, interrupted: bool = False) -> list[dict]:
     """Turn one stream-json event into zero or more transcript events.
 
     Everything that knows the CLI's wire shape is here (the control channel
@@ -2272,6 +2305,10 @@ def _normalise(event: dict) -> list[dict]:
         duration = event.get("duration_ms")
         turns = event.get("num_turns")
         secs = duration / 1000 if isinstance(duration, (int, float)) else None
+        if event.get("is_error") and _was_stopped(event, interrupted):
+            journal.record("chat", "stopped", duration_s=secs,
+                           turns=turns if isinstance(turns, int) else None)
+            return [{"type": "notice", "text": "Stopped."}]
         if event.get("is_error"):
             text = _error_text(event)
             journal.record(

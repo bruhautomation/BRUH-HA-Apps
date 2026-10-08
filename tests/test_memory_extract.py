@@ -587,6 +587,88 @@ class TestAnOlderCli(ExtractCase):
                         "the id is still minted and still claimed")
 
 
+# A fake CLI that records the credential it was handed, and nothing else
+# about it beyond whether it was there.
+FAKE_CLAUDE_CRED = """#!/bin/sh
+cat > /dev/null
+printf '%s|%s' "${CLAUDE_CODE_OAUTH_TOKEN-<unset>}" "${ANTHROPIC_API_KEY-<unset>}" > "$ARGV_LOG.cred"
+echo '{"fact": "the boiler is in the loft", "confidence": "high", "subject": "house", "kind": "fact"}'
+"""
+
+# Stands in for the Claude Code process: it holds the credential in its OWN
+# environment and runs the hook with that credential scrubbed, the way CLI
+# 2.1.293 does (measured: CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY never
+# reach a hook, while an ordinary variable does), naming itself in
+# CLAUDE_PID exactly as the CLI does.
+CLI_PARENT = """
+import os, subprocess, sys
+script, payload, pid_mode = sys.argv[1], sys.argv[2], sys.argv[3]
+env = dict(os.environ)
+env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+env.pop("ANTHROPIC_API_KEY", None)
+if pid_mode == "self":
+    env["CLAUDE_PID"] = str(os.getpid())
+elif pid_mode == "stranger":
+    env["CLAUDE_PID"] = os.environ["STRANGER_PID"]
+proc = subprocess.run([sys.executable, script], input=payload, text=True,
+                      env=env, timeout=20)
+sys.exit(proc.returncode)
+"""
+
+
+class TestTheCredentialIsTheCLIsOwn(ExtractCase):
+    """The Stop hook's environment does not carry the credential the CLI
+    was started with — Claude Code strips it from every hook — so the pass
+    used to fall through to the CLI's own .credentials.json, which the
+    panel never refreshes because it hands the CLI its token in the
+    environment instead. Every chat and card ran; every extraction ended
+    `auth`. The hook now reads the two credential variables off the CLI
+    process that ran it, and only those."""
+
+    FAKE = FAKE_CLAUDE_CRED
+
+    def run_under_cli(self, pid_mode="self", **cli_env):
+        env = self.env(**cli_env)
+        env.pop("CLAUDE_PID", None)
+        proc = subprocess.run(
+            [sys.executable, "-c", CLI_PARENT, str(SCRIPT),
+             json.dumps(self.payload()), pid_mode],
+            capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def cred(self):
+        path = Path(str(self.argv_log) + ".cred")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not path.exists():
+            time.sleep(0.05)
+        time.sleep(0.1)
+        return path.read_text() if path.exists() else None
+
+    def test_the_pass_is_handed_the_token_the_cli_was_started_with(self):
+        self.run_under_cli(CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-panel-token")
+        self.assertEqual(self.cred(), "sk-ant-oat01-panel-token|<unset>")
+
+    def test_an_api_key_travels_the_same_way(self):
+        self.run_under_cli(ANTHROPIC_API_KEY="sk-ant-api03-key")
+        self.assertEqual(self.cred(), "<unset>|sk-ant-api03-key")
+
+    def test_a_cli_signed_in_by_its_own_file_hands_on_nothing(self):
+        """The CLI authenticating from .credentials.json is the cli_login
+        case, and the pass then does the same: nothing invented."""
+        self.run_under_cli()
+        self.assertEqual(self.cred(), "<unset>|<unset>")
+
+    def test_a_process_that_did_not_run_the_hook_is_not_asked(self):
+        """CLAUDE_PID is honoured only for an ancestor: a variable naming
+        some other process is not where this hook's credential lives."""
+        stranger = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            env={**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-stranger"})
+        self.addCleanup(stranger.kill)
+        self.run_under_cli(pid_mode="stranger", STRANGER_PID=str(stranger.pid))
+        self.assertEqual(self.cred(), "<unset>|<unset>")
+
+
 class TestTheHookIsRegistered(unittest.TestCase):
     """run.sh writes /config/.claude/settings.local.json at every start, and
     that file is the only route this hook has into the CLI. The heredoc is

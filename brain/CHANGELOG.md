@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.3
+
+- Learning from what you type in the chat and the terminal works again on houses that sign in through the panel: Claude Code does not hand its credential to the hooks it runs, so these passes were using an expired sign-in while everything else worked. They now use the same sign-in your chat or terminal is using. (reports #2)
+- The health status now notices when one kind of background run keeps being refused its sign-in while the rest of brAIn works, and says to press Sign in again, instead of reporting everything as fine. A single refused run is not reported. (reports #23)
+- A run that was cut short because the add-on was stopping or restarting is now recorded as stopped rather than as a crash, and no longer counts as a failure. (reports #1)
+- Pressing Stop on your own chat is no longer recorded as a failed run or drawn as a red error; the chat just says it stopped. A chat turn that genuinely fails is still reported. (reports #3)
+
 ## 2.17.2
 
 - The development loop's cloud fixer now works through every open report in each run, fixing related reports together in a few pull requests and closing each report with the reason. No change to how brAIn behaves on your house.

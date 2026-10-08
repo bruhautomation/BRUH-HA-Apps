@@ -619,3 +619,77 @@ class TestWhichMissingFiguresAreFaults(unittest.TestCase):
         different claims, and only the second may keep one off a verdict."""
         self.assertFalse(self.problem("something_new")["needs_nothing"])
         self.assertFalse(self.usage_store.needs_nothing(""))
+
+
+class TestASignInOneFaceCannotUse(unittest.TestCase):
+    """A background runner refused its credential run after run while
+    every other face kept working — so the sign-in check said ok, the
+    failure rate stayed far under half, and the verdict said nothing at
+    all while the morning brief was telling the person to sign in again.
+
+    Driven through the REAL journal: rows recorded, summarised, and the
+    summary handed to the verdict, because a key the summary writes and
+    a key the verdict reads are a wire format, and only the round trip
+    proves the two agree."""
+
+    def setUp(self):
+        import journal
+        self.journal = journal
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = journal.JOURNAL_FILE
+        journal.JOURNAL_FILE = os.path.join(self.tmp.name, "journal.jsonl")
+
+    def tearDown(self):
+        self.journal.JOURNAL_FILE = self._old
+        self.tmp.cleanup()
+
+    def record(self, source, outcome, at):
+        self.journal.record(source, outcome, ok=outcome == "ok", tokens=10,
+                            run_id=f"r{at}", now=NOW - 3600 + at,
+                            error="OAuth session expired" if outcome == "auth" else "")
+
+    def found(self):
+        snap = diag(journal=self.journal.summary(24, now=NOW))
+        return [p for p in health.problems(snap, now=NOW) if p["id"] == "auth_runs"]
+
+    def busy_house(self, failing="memory_extract", failures=3, then_ok=False):
+        at = 0
+        for _ in range(40):
+            for src in ("chat", "card", "resident"):
+                self.record(src, "ok", at)
+                at += 1
+        for _ in range(failures):
+            self.record(failing, "auth", at)
+            at += 1
+        if then_ok:
+            self.record(failing, "ok", at)
+
+    def test_repeated_refusals_on_one_runner_are_a_problem_that_names_it(self):
+        self.busy_house()
+        found = self.found()
+        self.assertEqual(len(found), 1, "the verdict said nothing")
+        self.assertEqual(found[0]["state"], "degraded")
+        self.assertIn("memory_extract", found[0]["what"] + found[0]["fix"])
+        self.assertIn("Sign in again", found[0]["fix"])
+        self.assertNotIn("/login", found[0]["fix"])
+
+    def test_one_refused_run_is_not_a_degraded_add_on(self):
+        self.busy_house(failures=1)
+        self.assertEqual(self.found(), [])
+
+    def test_a_runner_that_has_since_succeeded_is_not_still_failing(self):
+        """The person signed in again; the next run worked. A verdict
+        that went on saying degraded for the rest of the day would be a
+        reading the remedy cannot correct."""
+        self.busy_house(then_ok=True)
+        self.assertEqual(self.found(), [])
+
+    def test_a_signed_out_add_on_is_said_once_not_twice(self):
+        """When the sign-in check itself has failed, that is the sentence;
+        a second row about the same credential is noise."""
+        self.busy_house()
+        snap = diag(auth={"state": "failed"},
+                    journal=self.journal.summary(24, now=NOW))
+        found = health.problems(snap, now=NOW)
+        self.assertIn("auth", ids(found))
+        self.assertNotIn("auth_runs", ids(found))

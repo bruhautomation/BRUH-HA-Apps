@@ -54,12 +54,15 @@ OUTCOMES = (
     "heal_failed",   # it made it and the call came back a failure
     "heal_skipped",  # it was refused before any call was made
     "rate_limited",  # the account's usage limit (or the API's rate limit) said wait
+    "stopped",       # ended on purpose: the add-on stopping, or a person pressing Stop
     "error",         # anything else
 )
 
-# Which of those is a PROBLEM. Six of the fifteen non-`ok` outcomes are
-# not: `applied` and `healed` are successes, `heal_skipped` and `denied`
-# are refusals doing their job, `fallback` is a quieter path that still
+# Which of those is a PROBLEM. Seven of the sixteen non-`ok` outcomes are
+# not: `stopped` is a run ended on purpose (the add-on stopping, a person
+# pressing Stop on their own chat), which is not the CLI failing anybody,
+# `applied` and `healed` are successes, `heal_skipped` and `denied` are
+# refusals doing their job, `fallback` is a quieter path that still
 # produced a card, and `rate_limited` is the account saying "not now" —
 # a window that resets, answered by the scheduler backing off rather than
 # by a problem report per run, forty of which about one spent window is
@@ -168,6 +171,17 @@ _RATE_LIMITED_RE = re.compile(
     r"\b429\b|limiting requests|spend limit", re.IGNORECASE)
 
 
+# 143 is 128 + SIGTERM (a CLI that handled the signal) and -15 is Python's
+# spelling of a process the signal killed outright. Nothing in the panel
+# sends an engine run TERM: its deadline is `subprocess.run`'s timeout,
+# which kills with SIGKILL and arrives as `TimeoutExpired`, i.e. `timeout`.
+# What does send it is the container stopping — s6 TERMs every process on
+# an add-on stop or restart — and a run the add-on stopped is not a crash
+# of the CLI. SIGKILL (137 / -9) stays `crash`: that is the OOM killer as
+# often as anything, and is worth reading about.
+_SIGTERM_EXIT_RE = re.compile(r"claude exited (?:143|-15)\b")
+
+
 def scrub(text: str) -> str:
     """Error text with anything credential-shaped replaced."""
     return _SECRET_RE.sub("[redacted]", str(text or ""))
@@ -202,6 +216,8 @@ def classify(result: dict, timeout_message: str = "") -> str:
         return "auth"
     if "not permitted" in low or "permission" in low and "denied" in low:
         return "denied"
+    if _SIGTERM_EXIT_RE.match(low):
+        return "stopped"
     if low.startswith("claude exited"):
         return "crash"
     if "unparseable" in low or "no json" in low:
@@ -351,9 +367,13 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
     failed_by_outcome: dict[str, int] = {}
     claude_failed = 0
     claude_failed_by: dict[str, int] = {}
+    last_by_source: dict[str, str] = {}
     for r in rows:
         src = str(r.get("source") or "?")
         outcome = outcome_of(r)
+        # The file is append-only and read oldest first, so the last word
+        # written for a source is where that face stands now.
+        last_by_source[src] = outcome
         by_source.setdefault(src, {})
         by_source[src][outcome] = by_source[src].get(outcome, 0) + 1
         by_outcome[outcome] = by_outcome.get(outcome, 0) + 1
@@ -375,6 +395,11 @@ def summary(hours: float = 24.0, now: float | None = None) -> dict:
         "claude_runs": sum(1 for r in rows if is_claude_run(r)),
         "by_source": by_source,
         "by_outcome": by_outcome,
+        # The newest outcome per source: whether a face that was failing
+        # is STILL failing, which no count over the window can say.
+        # Health reads it so a refusal the person has since fixed stops
+        # being reported the moment the next run of that face works.
+        "last_by_source": last_by_source,
         # `is_failure`'s count over the whole window, which `failures` (the
         # last ten) cannot give: health's rate is read off this, never off
         # "everything that is not ok".
