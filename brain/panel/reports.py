@@ -65,6 +65,9 @@ log = logging.getLogger("brain.reports")
 
 # Health problems the sweep reports with a row of its own.
 HEALTH_ROWS_OF_THEIR_OWN = frozenset({"restart"})
+# Health problems that, alone, are not worth a problem file: a restart owed
+# after an ordinary update (the status line and Repairs already say it).
+NOT_INCIDENTS = frozenset({"restart"})
 
 REPORTS_DIR = Path(os.environ.get("BRAIN_REPORTS_DIR", "/share/brain/reports"))
 INDEX_FILE = Path(os.environ.get("BRAIN_REPORTS_INDEX", "/data/reports-index.json"))
@@ -1142,6 +1145,14 @@ def note_health(health: dict, diagnostics=None, now: float | None = None) -> str
         new = str((health or {}).get("state") or "")
         if new not in ("ok", "degraded", "failed") or not tracks_health():
             return None
+        # A restart Home Assistant owes after every add-on update is the
+        # verdict's to say and not a problem file's: recorded as ok, so the
+        # update files nothing and a real fault beside it still reads as
+        # the change it is.
+        ids = {p.get("id") for p in (health.get("problems") or [])
+               if isinstance(p, dict)}
+        if ids and ids <= NOT_INCIDENTS:
+            new = "ok"
         prev = _read_last_health()
         now = time.time() if now is None else float(now)
         try:

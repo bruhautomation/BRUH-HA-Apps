@@ -216,5 +216,51 @@ class TestTheRestartIsOneRepairNotTwo(unittest.TestCase):
             self.assertEqual(calls[-1], "failed")
 
 
+class TestARestartIsNotAProblemFile(unittest.TestCase):
+    """Every add-on update owes Home Assistant a restart. The verdict goes
+    `degraded` over it, but the health-leaving-ok producer writes no file
+    when the restart is the only problem — forty files about ordinary
+    updates is how the folder stops being opened. A real fault arriving
+    while the restart is still owed is still filed."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        (base / "share").mkdir()
+        (base / "data").mkdir()
+        self._old = (reports.REPORTS_DIR, reports.INDEX_FILE,
+                     reports.HEALTH_LAST_FILE, reports.fetch_addon_log)
+        reports.REPORTS_DIR = base / "share" / "brain" / "reports"
+        reports.INDEX_FILE = base / "data" / "reports-index.json"
+        reports.HEALTH_LAST_FILE = base / "data" / "health-last.json"
+        reports.fetch_addon_log = lambda *a, **k: ""
+
+    def tearDown(self):
+        (reports.REPORTS_DIR, reports.INDEX_FILE, reports.HEALTH_LAST_FILE,
+         reports.fetch_addon_log) = self._old
+        self.tmp.cleanup()
+
+    def files(self):
+        d = reports.REPORTS_DIR
+        return sorted(d.glob("*.txt")) if d.is_dir() else []
+
+    def test_a_restart_alone_files_nothing_and_a_real_fault_still_does(self):
+        owed = {"versions": {"integration": {"loaded": "1.0", "required": "1.1",
+                                             "restart_pending": True}}}
+        self.assertIsNone(reports.note_health(health.verdict(diag(), now=NOW),
+                                              now=NOW))
+        v = health.verdict(diag(**owed), now=NOW)
+        self.assertEqual(v["state"], "degraded")
+        self.assertIsNone(reports.note_health(v, now=NOW + 60))
+        self.assertEqual(self.files(), [])
+        d = diag(**owed)
+        d["daemons"]["usage_tracker"] = {"running": False}
+        v = health.verdict(d, now=NOW)
+        self.assertEqual(v["state"], "degraded")
+        self.assertIsNotNone(reports.note_health(v, now=NOW + 120))
+        self.assertEqual(len(self.files()), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
