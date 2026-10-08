@@ -178,3 +178,17 @@ jobs:
             exit 1
           fi
           echo "ghcr.io/${OWNER}/${IMAGE}:${TAG} is publicly pullable."
+      # Tell the home Home Assistant to install the new brAIn now instead of
+      # waiting for its Supervisor to poll the store. Only the brain/amd64
+      # leg, and only after the image is published and verified pullable.
+      - name: Tell Home Assistant to update brAIn
+        if: steps.decide.outputs.build == 'true' && matrix.addon == 'brain' && matrix.arch == 'amd64'
+        env:
+          WEBHOOK: ${{ secrets.BRAIN_UPDATE_WEBHOOK }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "BRAIN_UPDATE_WEBHOOK not set; skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "$WEBHOOK" > /dev/null \
+            || echo "::warning::Home Assistant webhook did not answer"
