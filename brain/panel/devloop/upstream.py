@@ -377,6 +377,9 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         entry["days"] = days[-MAX_DAYS:]
         if "impact" in row:
             entry["impact"] = _clean_impact(row.get("impact"))
+        # A report about a screen of the panel: the house cannot see it, so
+        # the label is what tells the cloud to drive and screenshot it.
+        entry["ux"] = row.get("ux") is True
     _prune(items)
     data["swept_at"] = now
     data.setdefault("last_run", {})[stream] = now
@@ -789,7 +792,8 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
         doc = compose(entry, aliases)
         issue, err = github.create_issue(
             token, repo, doc["title"], doc["body"],
-            labels=[github.LABEL, f"devloop:{entry.get('stream') or 'faults'}"])
+            labels=[github.LABEL, f"devloop:{entry.get('stream') or 'faults'}"]
+            + (["devloop:ux"] if entry.get("ux") is True else []))
         if issue:
             entry["created_here"] = True
             entry["body_digest"] = _digest(doc["body"])

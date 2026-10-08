@@ -1322,14 +1322,15 @@
               </div>
               <p id="devStatus" class="hint tight"></p>
               <div id="devStreams"></div>
-              <label for="devLook">Look at…</label>
-              <input id="devLook" type="text" maxlength="500" autocomplete="off"
-                placeholder="e.g. why notifications arrive late">
+              <label for="devLook">What do you want to fix?</label>
+              <textarea id="devLook" rows="3" maxlength="500" autocomplete="off"
+                placeholder="e.g. The settings page is too crowded. I can never find the model picker."></textarea>
               <div class="row">
-                <button id="devLookRun" class="btn" aria-label="Investigate this now and file what is found">Run</button>
+                <button id="devLookRun" class="btn primary" aria-label="Turn this into an issue and file it">Send</button>
                 <span id="devLookState" class="hint tight"></span>
               </div>
-              <p class="hint tight">One read-only Claude run, filed as issues like any other stream.</p>
+              <p class="hint tight">Say it the way you would to a person. One Claude run works out
+                what is really wrong and files the issue that would fix it.</p>
               <div class="row">
                 <label for="devCapIssues">New issues a day</label>
                 <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">

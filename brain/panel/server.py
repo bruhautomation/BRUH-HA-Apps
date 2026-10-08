@@ -15607,7 +15607,7 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             dl_streams.analyst_prompt(
                 stream, context, topic,
                 dl_streams.reported_block(await asyncio.to_thread(up.listing))),
-            dl_streams.analyst_system(), eff_model(),
+            dl_streams.analyst_system(stream), eff_model(),
             TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
             priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
         _record_usage(result, "devloop")
@@ -15625,7 +15625,8 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
 
 
 async def _devloop_look(topic: str) -> None:
-    """A Look at… request, run as a press and sent straight away."""
+    """A "What do you want to fix?" request, run as a press and sent
+    straight away."""
     try:
         payload = await asyncio.to_thread(_diagnostics_payload)
         out = await _devloop_stream("look", payload, topic=topic, pressed=True)
@@ -15732,8 +15733,9 @@ async def h_devloop_run(request: web.Request) -> web.Response:
 
 
 async def h_devloop_look(request: web.Request) -> web.Response:
-    """Look at…: one read-only investigation of what somebody named,
-    started and never awaited (a run is minutes; a request is not)."""
+    """What do you want to fix?: the owner's words, turned by one
+    read-only run into the issue that would fix it. Started and never
+    awaited (a run is minutes; a request is not)."""
     if not await asyncio.to_thread(devloop.enabled):
         return web.json_response({"error": "the development loop is off"},
                                  status=409)
@@ -15743,10 +15745,11 @@ async def h_devloop_look(request: web.Request) -> web.Response:
         return web.json_response({"error": "expected JSON"}, status=400)
     topic = " ".join(str((body or {}).get("topic") or "").split())[:500]
     if not topic:
-        return web.json_response({"error": "say what to look at"}, status=400)
+        return web.json_response({"error": "say what you want fixed"},
+                                 status=400)
     if DEVLOOP_LOOKS["running"]:
         return web.json_response(
-            {"error": f"already looking at: {DEVLOOP_LOOKS['running']}"},
+            {"error": f"still working on: {DEVLOOP_LOOKS['running']}"},
             status=409)
     if await asyncio.to_thread(devloop.upstream.runs_left) <= 0:
         return web.json_response({"error": "today's run cap is spent"},

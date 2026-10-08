@@ -4,7 +4,7 @@
 // the real `paintDevloop` with a payload shaped like `_devloop_payload`.
 //
 // Fails on: a stream row missing its switch, schedule or Run; a select that
-// does not offer the server's hours; the Look at box or the caps missing;
+// does not offer the server's hours; the What do you want to fix? box or the caps missing;
 // a target under 44px or a text control under 16px on touch; sideways
 // scroll; a page error.
 import { chromium } from 'playwright';
@@ -32,7 +32,7 @@ const PAYLOAD = {
     ['snapshot', 'House shape: an aliased outline of this house, for UI audits'],
     ['gaps', 'Gaps: where brAIn falls short on this house (one Claude run)'],
     ['ideas', 'Ideas: features this house would use (one Claude run)'],
-    ['look', 'Look at…: investigations you ask for (one Claude run each)'],
+    ['look', 'What do you want to fix?: your words, turned into an issue (one Claude run each)'],
   ].map(([name, label]) => ({ name, label })),
   hours: [0, 1, 3, 6, 12, 24, 168],
   caps: { max_issues_per_day: [0, 50], max_runs_per_day: [0, 24] },
@@ -109,12 +109,12 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
       sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
   });
-  if (m.rows.length !== 7) note(where, `${m.rows.length} stream rows, expected 7 (every stream but Look at)`);
+  if (m.rows.length !== 7) note(where, `${m.rows.length} stream rows, expected 7 (every stream but What do you want to fix?)`);
   m.rows.forEach((r, i) => {
     if (!r.toggle || !r.run) note(where, `stream row ${i} is missing its switch or its Run`);
     if (r.hours.join(',') !== '0,1,3,6,12,24,168') note(where, `stream row ${i} offers hours ${r.hours}`);
   });
-  if (!m.look) note(where, 'the Look at box or its Run is missing');
+  if (!m.look) note(where, 'the What do you want to fix? box or its Send is missing');
   if (!m.caps) note(where, 'the daily caps were not painted');
   if (touch && m.small.length) note(where, `targets under 44px: ${m.small.join(', ')}`);
   if (touch && m.tiny.length) note(where, `text controls under 16px: ${m.tiny.join(', ')}`);

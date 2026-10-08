@@ -1102,3 +1102,65 @@ class TestTheCloudHalf(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhatDoYouWantToFix(DevloopCase):
+    """The free-text box: the owner's words become ONE issue a developer
+    can act on — their words quoted, the real problem, what fixed looks
+    like — and an issue about a screen carries the label that tells the
+    cloud to go and look at it."""
+
+    REPLY = json.dumps({"rows": [
+        {"title": "Settings page", "what": "Settings buries the weekly controls",
+         "why": "Eight sections open on rare controls.",
+         "done_when": "The model picker is one press from opening Settings.",
+         "ui": True},
+        {"title": "Second", "what": "A second problem", "why": "", "ui": False},
+        {"title": "Third", "what": "A third the owner never named", "why": ""},
+    ]})
+
+    def test_it_files_at_most_two_and_quotes_the_owner(self):
+        rows = streams_mod.parse_rows(self.REPLY, "look",
+                                      "The settings page is too crowded")
+        self.assertEqual(len(rows), streams_mod.LOOK_ROWS)
+        first = rows[0]
+        self.assertEqual(first["where"], "Fix: Settings page")
+        self.assertIn("> The settings page is too crowded", first["body"])
+        self.assertIn("**Done when:** The model picker", first["body"])
+        self.assertIs(first["ux"], True)
+        self.assertIs(rows[1]["ux"], False)
+        # The other streams are untouched by the box's rules.
+        self.assertNotIn("ux", streams_mod.parse_rows(self.REPLY, "gaps")[0])
+
+    def test_a_ui_issue_is_labelled_for_the_cloud_to_look_at(self):
+        self.switch_on()
+        rows = streams_mod.parse_rows(self.REPLY, "look", "too crowded")
+        upstream.ingest("look", rows, diagnostics(), NAMES)
+        upstream.send_due()
+        labels = {i["title"]: [x["name"] for x in i["labels"]]
+                  for i in self.gh.issues}
+        ui = next(v for k, v in labels.items() if "Settings page" in k)
+        other = next(v for k, v in labels.items() if "Second" in k)
+        self.assertIn("devloop:ux", ui)
+        self.assertIn("devloop:look", ui)
+        self.assertNotIn("devloop:ux", other)
+
+    def test_the_run_is_told_to_think_like_somebody_using_brain(self):
+        system = streams_mod.analyst_system("look")
+        self.assertIn("ALREADY REPORTED", system)
+        self.assertIn("done_when", system)
+        self.assertNotEqual(system, streams_mod.analyst_system("gaps"))
+        prompt = streams_mod.analyst_prompt("look", "FAULTS: none",
+                                            "the settings page is crowded")
+        self.assertIn("the settings page is crowded", prompt)
+
+
+class TestHouseholdWordsInProse(unittest.TestCase):
+    def test_words_brain_writes_about_itself_are_not_aliased(self):
+        for word in ("Device", "Entity", "Report", "Reporting", "Everything"):
+            self.assertTrue(aliases_mod.is_generic(word, "sensor"), word)
+        a = aliases_mod.Aliases()
+        a.learn({"binary_sensor.x": {"name": "Device"},
+                 "sensor.y": {"name": "Report"}})
+        text = "The device check keeps re-reporting the report."
+        self.assertEqual(a.apply(text), text)

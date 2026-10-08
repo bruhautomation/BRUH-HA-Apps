@@ -2,9 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 2.17.18
+## 2.17.19
 
 - Voice: a worker that died at spawn is now counted as dead even when its exit status lands a few milliseconds after its output closed. Read in that gap, the pool took the dead worker for a live one and the fallback that switches token streaming off after repeated early deaths could miss them.
+
+## 2.17.18
+
+- Help develop brAIn: the *Look at…* box is now **What do you want to fix?** Say it the way you would to a person ("the settings page is too crowded") and press **Send**. One read-only Claude run works out the real problem behind it and files one issue (two if you named two) with your words quoted, the underlying problem, and a *Done when* line to check the fix against. An issue about a screen is labelled `devloop:ux`, so the fixer screenshots that pane before and after fixing it.
+- Development-loop reports no longer replace the words "device", "entity", "report" and "everything" with aliases when a house has an entity named that, so titles like "Binary sensor 269 check" read as "device check" again.
 
 ## 2.17.17
 

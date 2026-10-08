@@ -291,6 +291,16 @@ not depend on the current one's result. So while a pull request is in CI:
   issue gives. For a UI issue, extend or add a `tests/manual/measure-*.mjs`
   that fails on it (and add a new measure to CI's `layout` job). A fix with
   no failing test first is not a fix you can claim works.
+- **See every `devloop:ux` issue before and after.** The house cannot see
+  its own panel, so an issue labelled `devloop:ux` (or one whose title
+  names a pane) is about a screen nobody in the loop has looked at yet.
+  Before writing the fix, drive that pane with Playwright on
+  `tests/manual/today-fixture.mjs` at 390px with touch and at 1200px,
+  screenshot it, and look at it as the owner who complained would: is
+  what they said true on screen, and what else on that pane is crowded,
+  repeated, unnamed or only meaningful to a developer? Then screenshot it
+  again after the fix and look again. A UX fix judged only by a measure
+  that passes is a fix nobody has seen. Its `Done when:` line is the bar.
 - **Fix them** in `brain/`, `tests/`, `docs/` or `CLAUDE.md` only. Never in
   another add-on, never in a `needs_human_paths` file, never in an option's
   meaning (an existing install must not change behaviour because of a
