@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.23
+
+- Findings no longer wait hours for a first look on a house with a busy protected device: a filed row is never dropped from the look queue while a live signal can be, the rows that have waited longest go first, and a row already being investigated is no longer counted as waiting. (reports #82)
+
 ## 2.17.22
 
 - A finding's "brAIn checked" line no longer repeats the finding's own words when the look that wrote it reached no conclusion; it shows nothing there instead. (reports #100)

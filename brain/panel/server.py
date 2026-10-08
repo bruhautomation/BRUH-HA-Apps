@@ -802,6 +802,14 @@ RESIDENT_PENDING: list[dict] = []
 # already being judged — harmless (`record_triage` only touches a row still
 # in `triaging`) and still a wasted line of a batch.
 RESIDENT_INFLIGHT: set[int] = set()
+# Filed rows a first look has JUDGED and sent to be looked into, while that
+# investigation runs (`_resident_apply`'s `looked_into`). Such a row stays
+# `triaging` on purpose — it is shown when the investigation decides — but
+# it is no longer waiting for a look, and `_waiting_rows` counted it as one
+# for as long as the investigations took, in run-queue time. In memory, as
+# the tick that fills it is: a restart leaves the row `triaging`, and the
+# next look judges it again, which is the honest answer to a run that died.
+RESIDENT_LOOKED_INTO: set[int] = set()
 # Investigations a look decided on that the ledger could not pay for yet,
 # with the look's reason. Parked here rather than put back on the pending
 # list: back there they were re-judged by a fresh paid look every minute
@@ -9573,7 +9581,13 @@ def _offer_findings(rows: list[dict], now: float) -> int:
             continue
         if signal is None:
             continue
-        RESIDENT_PENDING.append({**signal, "finding_ts": ts})
+        # When the row started waiting rides beside its id, for the same
+        # reason: the batch serves the rows past `triage.SHOW_AFTER_S`
+        # oldest-first, and the signal's own `seen_at` is when it was
+        # OFFERED (every sweep re-offers), which says nothing about that.
+        RESIDENT_PENDING.append({**signal, "finding_ts": ts,
+                                 "waiting_since":
+                                     findings_store.waiting_since(row)})
         have.add(ts)
         offered += 1
     return offered
@@ -10333,8 +10347,11 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
 def _resident_absorb(now: float) -> None:
     """Drain the queue into the pending list, and hold it to its cap.
 
-    The cap drops the LEAST SALIENT non-hot signal, oldest first among
-    equals, and counts what it took. Hot is spared because hot is what
+    Over the cap the live signals are folded by kind and subject first
+    (what the look does anyway), and then the cap drops the LEAST SALIENT
+    live non-hot signal, oldest first among equals, and counts what it
+    took — never a row a rule filed while a live signal is left to take.
+    Hot is spared because hot is what
     makes a look happen at all — a cap that could drop the reason for the
     look would be the cap answering the question the look was called to
     answer — and a pending list that is nothing but hot signals is a house
@@ -10356,14 +10373,30 @@ def _resident_absorb(now: float) -> None:
     for row in stale:
         RESIDENT_PENDING.remove(row)
         RESIDENT_STATE["dropped"] += 1
+    if len(RESIDENT_PENDING) > RESIDENT_QUEUE_MAX:
+        # Over the cap, the live signals are folded first, exactly as the
+        # look will fold them (`signals.dedupe`, by kind and subject, the
+        # repeats summed): a protected entity that changes every second
+        # puts hundreds of copies of ONE signal here between two looks, and
+        # counting each against the cap is what used to push the rows a
+        # rule filed off the list — the sweep offered them every minute and
+        # the same tick's cap dropped them again, so the least salient of
+        # them (the oldest) never reached a look at all.
+        filed = [s for s in RESIDENT_PENDING if s.get("finding_ts")]
+        live = [s for s in RESIDENT_PENDING if not s.get("finding_ts")]
+        # Folded, not dropped: the repeats ride on the one that is kept, so
+        # nothing the look would have read is lost and nothing is counted.
+        RESIDENT_PENDING[:] = filed + signals.dedupe(live)
     while len(RESIDENT_PENDING) > RESIDENT_QUEUE_MAX:
-        # A row a rule filed is never the victim while a live signal can
-        # be: it is already in the store with a deadline, and dropping it
-        # only spends the next sweep offering it again behind the same cap.
-        cool = ([s for s in RESIDENT_PENDING
-                 if not s.get("hot") and not s.get("finding_ts")]
-                or [s for s in RESIDENT_PENDING if not s.get("hot")])
-        victim = min(cool or RESIDENT_PENDING,
+        # A row a rule filed is never the victim while ANY live signal can
+        # be, hot included: it is already in the store with a deadline, and
+        # dropping it only spends the next sweep offering it again behind
+        # the same cap. Hot is spared among the live ones while a cool one
+        # is left, because hot is what makes a look happen at all.
+        live = [s for s in RESIDENT_PENDING if not s.get("finding_ts")]
+        pool = ([s for s in live if not s.get("hot")] or live
+                or RESIDENT_PENDING)
+        victim = min(pool,
                      key=lambda s: (float(s.get("salience") or 0.0),
                                     -float(s.get("seen_at") or 0.0)))
         RESIDENT_PENDING.remove(victim)
@@ -10574,8 +10607,13 @@ async def _resident_look(now: float, settings: dict, thinking: str,
     # is evidence about a moment; filled hot-first, a busy house's hot
     # changes took every slot and the filed rows were shown unjudged an
     # hour later. A tripped safety sensor still goes first.
+    # And a filed row that has already waited past `triage.SHOW_AFTER_S`
+    # goes first in that reserve, oldest first. Ranked by salience alone,
+    # whose recency weight favours the newest row, a row that lost one
+    # lottery lost every later one to whatever was filed after it.
     picked = signals.batch(ready, resident.MAX_BATCH,
-                           filed_reserve=resident.MAX_BATCH // 2)
+                           filed_reserve=resident.MAX_BATCH // 2,
+                           overdue_before=now - triage.SHOW_AFTER_S)
     batch = picked["batch"]
     taken = {id(row) for row in batch}
     RESIDENT_PENDING.clear()
@@ -10796,9 +10834,14 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         if late:
             await asyncio.to_thread(findings_store.record_triage, late,
                                     run_id, now)
-    investigated = await _resident_investigations(
-        to_investigate, now, settings, thinking)
-    settled = await _settle_looked_into(looked_into, run_id, now)
+    # Judged, and waiting for an investigation rather than for a look.
+    RESIDENT_LOOKED_INTO.update(looked_into)
+    try:
+        investigated = await _resident_investigations(
+            to_investigate, now, settings, thinking)
+        settled = await _settle_looked_into(looked_into, run_id, now)
+    finally:
+        RESIDENT_LOOKED_INTO.difference_update(looked_into)
     held_first = len(moved) - len(shown)
     shown = shown + settled["shown"]
     log.info("first look: %d signal(s) — %d ignored, %d watched, %d to "
@@ -15078,9 +15121,17 @@ def _waited_s(row: dict, now: float | None = None) -> int:
 
 def _waiting_rows(rows: list[dict]) -> list[dict]:
     """The rows no look has judged: `triaging`, or `open` carrying the
-    "nothing looked" record (`findings_store.late_verdict_welcome`)."""
+    "nothing looked" record (`findings_store.late_verdict_welcome`).
+
+    A `triaging` row a look has already judged and sent to be looked into
+    (`RESIDENT_LOOKED_INTO`) is waiting for its investigation, not for a
+    look, and is not counted: the fault this feeds says "waiting for a
+    look", and a row the look answered is the one row that sentence is
+    never true of."""
+    looked = set(RESIDENT_LOOKED_INTO)
     return [f for f in rows
-            if f.get("status") == "triaging"
+            if (f.get("status") == "triaging"
+                and int(f.get("ts") or 0) not in looked)
             or (f.get("status") == "open"
                 and (f.get("triage") or {}).get("verdict") == "untriaged"
                 and not (f.get("triage") or {}).get("elevated_by_person"))]
