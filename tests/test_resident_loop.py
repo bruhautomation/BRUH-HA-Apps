@@ -152,6 +152,12 @@ class LoopCase(unittest.TestCase):
                    STATE_FILE=root / "config" / ".brain" / "todo.json")
         self.point("cases", SNOOZE_FILE=root / "cases-snooze.json")
         self.point("resident", WATCH_FILE=root / "resident-watch.json")
+        # Answering a question records it in the facts ledger; left at its
+        # default this wrote /data/knowledge.json, which passed for as long
+        # as an earlier test file in the same process had pointed it at
+        # tmp and never put it back. Under xdist that file is on another
+        # worker and CI's runner cannot create /data.
+        self.point("knowledge_store", KNOWLEDGE_FILE=str(root / "knowledge.json"))
         # Every look and investigation writes a verdict row, and the next
         # look reads the graded log back as worked examples — so the log is
         # this test's own, or one test's verdicts become the next one's

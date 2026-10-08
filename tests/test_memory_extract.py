@@ -118,6 +118,35 @@ def transcript_lines(exchanges: int = 2, user_text: str = "") -> list[str]:
     return out
 
 
+# The variable `ExtractCase.env` tags every process with: its temp dir, so two
+# tests running at once (pytest-xdist) never wait on each other's children.
+TAG_VAR = "BRAIN_TEST_EXTRACT_TAG"
+
+
+def tagged_processes(tag: str) -> list[int] | None:
+    """The live pids whose environment carries ``TAG_VAR=tag``, or None
+    where ``/proc`` is not there to ask. A zombie has exited — its
+    environment reads empty and its state is Z — so it is not counted."""
+    proc = Path("/proc")
+    if not (proc / "self" / "environ").exists():
+        return None
+    needle = f"{TAG_VAR}={tag}".encode()
+    found = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            environ = (entry / "environ").read_bytes()
+            state = (entry / "stat").read_text().rsplit(")", 1)[1].split()[0]
+        except (OSError, IndexError):
+            # Gone between the listing and the read, or not ours to read:
+            # a process this test started is ours and readable.
+            continue
+        if state != "Z" and needle in environ.split(b"\0"):
+            found.append(int(entry.name))
+    return found
+
+
 class ExtractCase(unittest.TestCase):
     """One temp house per test: a ledger, an inbox, a state dir, a
     transcript and a fake CLI."""
@@ -160,6 +189,10 @@ class ExtractCase(unittest.TestCase):
             "ARGV_LOG": str(self.argv_log),
             "FAKE_DELAY": self.DELAY,
             "BRAIN_HOME": str(self.home),
+            # Every process this test starts inherits this, and the hook
+            # hands its own environment to the child it detaches (and that
+            # child to the CLI it runs), so it is what `quiet` looks for.
+            TAG_VAR: self.tmp.name,
         })
         # No panel: the journal row is asserted where it is asked for, and
         # must not reach the real /data anywhere else.
@@ -206,9 +239,38 @@ class ExtractCase(unittest.TestCase):
             time.sleep(0.05)
         return []
 
-    def settle(self, seconds=3.0):
-        """Give a child that should write nothing time to have written it."""
-        time.sleep(seconds)
+    def quiet(self, seconds=20.0):
+        """Wait until no process started under this test is still running.
+
+        The hook detaches its child into a session of its own and prints
+        nothing about it, so there is no pid to wait on; what every one of
+        them does carry is this test's environment (see ``TAG_VAR``). A
+        negative test used to sleep three seconds and call that "had its
+        chance to write" — which was both slow and, on a loaded runner, a
+        guess. Once nothing tagged is alive, everything the hook handed off
+        has finished, and whatever it was going to write is on disk.
+
+        Returns False only where ``/proc`` cannot be read at all, after the
+        fixed wait the tests used before, so a platform without it gets
+        the old claim rather than none.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            alive = tagged_processes(self.tmp.name)
+            if alive is None:
+                time.sleep(3.0)
+                return False
+            if not alive:
+                return True
+            if time.monotonic() > deadline:
+                self.fail(f"the hook's child is still running after "
+                          f"{seconds}s: pids {alive}")
+            time.sleep(0.02)
+
+    def settle(self):
+        """The inbox once everything the hook handed off has finished: a
+        child that should write nothing has then had every chance to."""
+        self.quiet()
         return self.inbox_files()
 
     def claim(self, source, session_id=None):
@@ -496,7 +558,7 @@ class TestOnlyWhatIsNewIsRead(ExtractCase):
         self.assertTrue(self.wait_for_inbox())
         self.argv_log.unlink()
         self.run_hook()
-        time.sleep(2.0)
+        self.quiet()
         self.assertFalse(self.argv_log.exists(), "a pass over nothing new ran")
 
     def test_two_exchanges_no_longer_skip_the_gate(self):
@@ -515,7 +577,7 @@ class TestOnlyWhatIsNewIsRead(ExtractCase):
             exchanges=1,
             user_text="how many lights are on downstairs right now please"))
         self.run_hook()
-        self.assertEqual(self.settle(1.5), [])
+        self.assertEqual(self.settle(), [])
         self.append(5, "Actually the hall lamp is on a smart plug, never the switch.")
         self.run_hook()
         self.assertTrue(self.wait_for_inbox())
@@ -562,8 +624,7 @@ class TestAReplyNobodyCanRead(ExtractCase):
     def test_prose_instead_of_jsonl_files_nothing_and_still_exits_zero(self):
         proc, _ = self.run_hook()
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        time.sleep(3.0)
-        self.assertEqual(self.inbox_files(), [])
+        self.assertEqual(self.settle(), [])
         self.assertTrue(self.argv_log.exists(), "the run did happen")
 
 
@@ -636,12 +697,17 @@ class TestTheCredentialIsTheCLIsOwn(ExtractCase):
             capture_output=True, text=True, timeout=30, env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def cred(self):
+    def cred(self, seconds=10.0):
+        """What the fake CLI was handed, once every process the hook (or
+        the panel's drain) started has exited — so a missing file means no
+        pass ran, not that one has not got there yet."""
         path = Path(str(self.argv_log) + ".cred")
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not path.exists():
-            time.sleep(0.05)
-        time.sleep(0.1)
+        if not self.quiet():
+            # No /proc to ask: the poll these tests used before.
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline and not path.exists():
+                time.sleep(0.05)
+            time.sleep(0.1)
         return path.read_text() if path.exists() else None
 
     def test_the_pass_is_handed_the_token_the_cli_was_started_with(self):
@@ -740,11 +806,16 @@ class TestACredentialTheHookCannotReadIsThePanelsToSupply(ExtractCase):
         return proc
 
     def cred(self, seconds=3.0):
+        """What the fake CLI was handed, once every process the hook (or
+        the panel's drain) started has exited — so a missing file means no
+        pass ran, not that one has not got there yet."""
         path = Path(str(self.argv_log) + ".cred")
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline and not path.exists():
-            time.sleep(0.05)
-        time.sleep(0.1)
+        if not self.quiet():
+            # No /proc to ask: the poll these tests used before.
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline and not path.exists():
+                time.sleep(0.05)
+            time.sleep(0.1)
         return path.read_text() if path.exists() else None
 
     def request_files(self):

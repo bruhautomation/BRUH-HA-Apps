@@ -424,6 +424,11 @@ PARTIAL_DISABLE_AFTER = int(os.environ.get("BRAIN_PARTIAL_DISABLE_AFTER", "2"))
 # the shape a CLI that rejects --include-partial-messages makes. A worker
 # that answered for a while and then died says nothing about the flag.
 EARLY_DEATH_S = float(os.environ.get("BRAIN_EARLY_DEATH_S", "5"))
+# How long `Worker.died()` waits for the exit status once stdout has closed.
+# The CLI closes its pipes on the way out, so the status is milliseconds
+# behind EOF; the bound only matters for a process that closed stdout and
+# then hung, which is reported as alive and reaped by the idle sweep.
+DEATH_SETTLE_S = float(os.environ.get("BRAIN_DEATH_SETTLE_S", "2"))
 PARTIAL_RETRY_AFTER_S = float(os.environ.get("BRAIN_PARTIAL_RETRY_AFTER_S",
                                              str(15 * 60)))
 # Consecutive early deaths of workers spawned WITH the flag, and the instant
@@ -1079,6 +1084,7 @@ class Worker:
         # tool before it ended (see `ask`), and the CLI's own result event
         # for the journal (session, turns, tokens).
         self.acted = False
+        self.saw_eof = False  # set by the reader thread at stdout EOF
         self.last_result: dict | None = None
 
         system_prompt, model, denied_csv = profile[:3]
@@ -1140,10 +1146,34 @@ class Worker:
                     self.session_id = sid
                 self._events.put(event)
         finally:
+            self.saw_eof = True
             self._events.put({"type": "_eof"})
 
     def alive(self) -> bool:
         return self.proc.poll() is None
+
+    def died(self, settle: float = DEATH_SETTLE_S) -> bool:
+        """Whether this worker's process has ended — waiting for it, briefly,
+        when its stdout has already closed.
+
+        `alive()` is `poll()`, and `poll()` answers "alive" for a child that
+        has closed its pipes but not yet been reaped: the reader thread sees
+        EOF the instant the CLI closes stdout, `ask()` returns None on that
+        event, and the exit status lands a few milliseconds later. Read at
+        that moment, a death at spawn counted as a live worker and the
+        early-death counter missed it — about half the time on a loaded
+        machine, which is where it was found. So after EOF the question is
+        answered by `wait()` with a bound, and only then: a worker whose
+        stdout is still open is simply asked `poll()`, because waiting on a
+        process that is not exiting costs the whole bound for nothing.
+        """
+        if not self.saw_eof:
+            return not self.alive()
+        try:
+            self.proc.wait(timeout=settle)
+        except subprocess.TimeoutExpired:
+            return False
+        return True
 
     def ask(self, text: str, deadline: float, delta_cb=None) -> str | None:
         """Send one user message, wait for its result event.
@@ -1503,7 +1533,7 @@ class Pool:
                 envelope = worker.last_result
                 run_id = worker.session_id or ""
                 ran_model = worker.model
-                if response is None and not worker.alive() and \
+                if response is None and worker.died() and \
                         time.time() - worker.created < EARLY_DEATH_S and worker.partial:
                     # CLI may predate --include-partial-messages — or this
                     # may be one bad spawn. Counted rather than concluded

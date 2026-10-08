@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 
 from ._util import House, age_days, counted_names, domain_of, join_names
+from .devices import SELF_PLATFORMS
 
 # A house is "using areas" past this many. Below it, "not in an area" is
 # how the house is set up, not a finding.
@@ -112,17 +113,37 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
 # reg.no_area — a device in no room
 # ---------------------------------------------------------------------------
 
+def _can_have_no_room(dev: dict, entry_domains: dict[str, str]) -> bool:
+    """A device that is not a thing in a room, so "no area" is what it is.
+
+    A service device (`entry_type: service` — a Backup manager, the Sun,
+    an online service) is how Home Assistant groups a service's entities,
+    and the editor offers no area for it. brAIn's own devices — its
+    conversation agents and its system device — are the add-on, which is
+    not in the lounge. Counting either told somebody to put software in a
+    room, and the row was anchored on brAIn's own conversation entity.
+    """
+    if str(dev.get("entry_type") or "") == "service":
+        return True
+    return bool(_integrations_of(dev, entry_domains) & SELF_PLATFORMS)
+
+
 def no_area(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     if len(house.areas) < MIN_AREAS:
         # A house that has not set areas up is not a house with a problem.
         return []
+    entry_domains = _entry_domains(snap)
     by_device: dict[str, list[str]] = {}
     for eid in house.states:
         if not _in_a_picker(house, eid):
             continue
+        if (house.registry.get(eid) or {}).get("platform") in SELF_PLATFORMS:
+            continue  # brAIn's own entity: never counted, never the anchor
         dev = house.device_of(eid)
         if dev is None or dev.get("area_id"):
+            continue
+        if _can_have_no_room(dev, entry_domains):
             continue
         if (house.registry.get(eid) or {}).get("area_id"):
             continue  # the entity overrides its device's area
@@ -235,13 +256,18 @@ def _integrations_of(dev: dict, entry_domains: dict[str, str]) -> set[str]:
     return found
 
 
+def _entry_domains(snap: dict) -> dict[str, str]:
+    """Config entry id -> integration domain, as far as the snapshot says."""
+    return {str(e.get("entry_id")): str(e.get("domain") or "")
+            for e in (snap.get("config_entries") or [])
+            if isinstance(e, dict) and e.get("entry_id")}
+
+
 def orphan_device(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     if not house.devices:
         return []
-    entry_domains = {str(e.get("entry_id")): str(e.get("domain") or "")
-                     for e in (snap.get("config_entries") or [])
-                     if isinstance(e, dict) and e.get("entry_id")}
+    entry_domains = _entry_domains(snap)
     has_entities: set[str] = set()
     for reg in house.entities:
         dev_id = reg.get("device_id")

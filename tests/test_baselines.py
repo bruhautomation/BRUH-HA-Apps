@@ -389,6 +389,93 @@ class TestTheChecksThatUseIt(unittest.TestCase):
             self.check.stale_baselines(self.house(baselines={}), self.now), [])
 
 
+class TestAReadingThatMovesInStepsIsMeasuredInItsSteps(unittest.TestCase):
+    """A forecast that sits on 1% for days and steps to 5% has a MAD of
+    zero, because more than half its readings are the same number — so
+    the spread fell to the 2% fractional floor (0.02 of a percent) and a
+    step it takes every few days came out as "200 times its normal
+    variation". The floor has to be the size of the reading's own steps,
+    measured across its history, wherever an hour's own samples are all
+    one value; and a step far bigger than any it takes is still news."""
+
+    def setUp(self):
+        from checks import baseline as check  # noqa: PLC0415
+        self.check = check
+        # Four weeks, and the reading is asked about at Monday 10:00 —
+        # an hour at which it has always read its resting value.
+        self.now = MONDAY + 28 * 24 * HOUR + 10 * HOUR
+
+    def stepped(self, rest, step_to):
+        """Four weeks resting on `rest`, stepping to each of `step_to` in
+        turn for three afternoon hours a day."""
+        values = []
+        for i in range(28 * 24):
+            if i % 24 in (14, 15, 16):
+                values.append(step_to[(i // 24) % len(step_to)])
+            else:
+                values.append(rest)
+        return baselines.build_buckets(hourly(values), dt.timezone.utc)
+
+    def house(self, eid, unit, value, built):
+        return {
+            "now": self.now,
+            "states": {eid: {
+                "state": str(value),
+                "attributes": {"state_class": "measurement",
+                               "unit_of_measurement": unit},
+                "last_changed": "", "last_updated": ""}},
+            "entities": [{"entity_id": eid, "platform": "rest"}],
+            "devices": [], "areas": [],
+            "baselines": {"built_at": int(self.now - 3600), "tz": "UTC",
+                          "days": 28, "entities": {eid: {**built,
+                                                         "unit": unit}}},
+        }
+
+    def test_a_one_to_five_percent_step_is_its_usual_step(self):
+        built = self.stepped(1.0, [5.0])
+        bucket = baselines.hour_of_week(self.now, dt.timezone.utc)
+        found = baselines.deviation(5.0, built, bucket)
+        self.assertEqual(found["source"], "hour")
+        self.assertLess(abs(found["sigmas"]), self.check.UNUSUAL_SPREADS)
+        self.assertEqual(self.check.unusual(
+            self.house("sensor.storm_probability", "%", 5.0, built),
+            self.now), [])
+
+    def test_a_seven_and_a_half_to_sixteen_step_is_its_usual_step(self):
+        built = self.stepped(7.5, [12.0, 16.0, 10.5])
+        bucket = baselines.hour_of_week(self.now, dt.timezone.utc)
+        found = baselines.deviation(16.0, built, bucket)
+        self.assertLess(abs(found["sigmas"]), self.check.UNUSUAL_SPREADS)
+        self.assertEqual(self.check.unusual(
+            self.house("sensor.flux_index", "", 16.0, built), self.now), [])
+
+    def test_a_step_far_past_any_it_takes_is_still_unusual(self):
+        built = self.stepped(1.0, [5.0])
+        found = self.check.unusual(
+            self.house("sensor.storm_probability", "%", 60.0, built), self.now)
+        self.assertEqual([f["entity_id"] for f in found],
+                         ["sensor.storm_probability"])
+
+    def test_a_reading_that_varies_keeps_the_spread_it_measured(self):
+        """The step floor is for an hour whose samples are all one value;
+        a reading with an ordinary wobble keeps its own MAD."""
+        values = [20.0 + ((i * 7919) % 11 - 5) / 10 for i in range(28 * 24)]
+        built = baselines.build_buckets(hourly(values), dt.timezone.utc)
+        self.assertAlmostEqual(
+            built["overall"]["spread"],
+            max(baselines.mad(values),
+                baselines.spread_floor(baselines.median(values))), places=4)
+        by_bucket: dict = {}
+        for i, v in enumerate(values):
+            by_bucket.setdefault(str(i % 168), []).append(v)
+        for key, bucket in built["buckets"].items():
+            own = by_bucket[key]
+            self.assertAlmostEqual(
+                bucket["spread"],
+                max(baselines.mad(own),
+                    baselines.spread_floor(baselines.median(own))), places=4)
+
+
 class TestTheThresholdIsNotASigma(unittest.TestCase):
     def test_the_module_says_what_its_spread_is(self):
         """A MAD is about two thirds of a standard deviation, so a reader

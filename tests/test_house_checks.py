@@ -867,6 +867,51 @@ class TestDeviceChecks(unittest.TestCase):
         self.assertIn("sensor.old_a, sensor.old_b", found[0]["detail"])
 
 
+    def _restored(self, snap, eid, platform, entry_id):
+        snap["states"][eid] = {"state": "unavailable",
+                               "attributes": {"restored": True}}
+        row = {"entity_id": eid, "platform": platform}
+        if entry_id:
+            row["config_entry_id"] = entry_id
+        snap["entities"].append(row)
+
+    def test_an_entity_whose_integration_is_still_there_is_not_left_over(self):
+        """`restored: true` says the integration has not added the entity
+        THIS run, not that nothing provides it. A config entry retrying
+        its setup (a HomeKit power strip that did not answer) and a
+        loaded one whose device is simply away (an iBeacon out of range)
+        both leave restored entities behind, and deleting them would
+        take a working device out of the house."""
+        snap = house()
+        snap["config_entries"] += [
+            {"entry_id": "e-hk", "domain": "homekit_controller",
+             "title": "Power strip", "state": "setup_retry", "source": "zeroconf"},
+            {"entry_id": "e-ib", "domain": "ibeacon", "title": "iBeacon Tracker",
+             "state": "loaded", "source": "user"},
+        ]
+        for eid in ("switch.power_strip_outlet_1", "switch.power_strip_outlet_2"):
+            self._restored(snap, eid, "homekit_controller", "e-hk")
+        self._restored(snap, "device_tracker.keys_beacon", "ibeacon", "e-ib")
+        self.assertEqual(devices.restored(snap, NOW), [])
+        # An entity whose entry is gone IS left over, beside them.
+        self._restored(snap, "sensor.old_a", "gone_integration", "e-deleted")
+        [found] = devices.restored(snap, NOW)
+        self.assertIn("gone_integration", found["text"])
+        self.assertEqual(found["entity_id"], "sensor.old_a")
+
+    def test_restored_stands_down_when_the_config_entries_could_not_be_read(self):
+        """"I could not look" is not "nothing provides them": without the
+        config entries the check cannot tell a retrying integration from a
+        removed one, so it is skipped — and a skipped check clears nothing."""
+        snap = house()
+        self._restored(snap, "sensor.old_a", "gone_integration", "e-deleted")
+        snap["available"]["config_entries"] = False
+        result = checks.run_all(snap, NOW, only=["dev.restored"])
+        self.assertEqual(result["findings"], [])
+        self.assertIn("dev.restored", result["skipped"])
+        self.assertIn("config_entries", result["skipped"]["dev.restored"])
+
+
 class TestDashboardCheck(unittest.TestCase):
     def test_dead_reference_in_a_card(self):
         snap = house()
@@ -1008,6 +1053,66 @@ class TestNodeChecks(unittest.TestCase):
         self.assertEqual(len(devices.unavailable(alive, NOW)), 1)
         self.assertEqual(devices.zwave_dead(alive, NOW), [])
 
+    def _energy_monitor(self, status="dead", battery="0"):
+        """A node status sensor in the shape Z-Wave JS registers it: an
+        entity id Home Assistant derived from a name and so did NOT end
+        `_node_status` (a second monitor of the same name took the plain
+        id, and this one got `_2`), the translation key `node_status`,
+        the unique id `<home id>.<node id>.node_status`, diagnostic."""
+        snap = house()
+        status_id = "sensor.home_energy_monitor_node_status_2"
+        snap["states"][status_id] = {
+            "state": status,
+            "attributes": {"friendly_name": "Home Energy Monitor Node status",
+                           "device_class": "enum",
+                           "options": ["alive", "dead", "asleep", "awake",
+                                       "unknown"]},
+            "last_changed": iso(6 * DAY)}
+        snap["entities"].append(
+            {"entity_id": status_id, "platform": "zwave_js",
+             "device_id": "dev-zwave-hem", "entity_category": "diagnostic",
+             "translation_key": "node_status", "has_entity_name": True,
+             "unique_id": "3245146787.23.node_status"})
+        battery_id = "sensor.home_energy_monitor_battery_level_2"
+        snap["states"][battery_id] = {
+            "state": battery,
+            "attributes": {"device_class": "battery",
+                           "unit_of_measurement": "%",
+                           "friendly_name": "Home Energy Monitor Battery level",
+                           "state_class": "measurement"},
+            "last_updated": iso(6 * DAY), "last_reported": iso(6 * DAY),
+            "last_changed": iso(6 * DAY)}
+        snap["entities"].append(
+            {"entity_id": battery_id, "platform": "zwave_js",
+             "device_id": "dev-zwave-hem",
+             "unique_id": "3245146787.23-128-0-level"})
+        snap["devices"].append(
+            {"id": "dev-zwave-hem", "name": "Home Energy Monitor",
+             "area_id": "hall",
+             "identifiers": [["zwave_js", "3245146787-23"]]})
+        return snap
+
+    def test_a_dead_node_is_found_by_what_zwave_js_registered_not_its_id(self):
+        snap = self._energy_monitor("dead")
+        found = devices.zwave_dead(snap, NOW)
+        self.assertEqual(len(found), 1)
+        self.assertIn("Home Energy Monitor", found[0]["detail"])
+        self.assertEqual(devices.zwave_dead(self._energy_monitor("alive"), NOW), [])
+        self.assertEqual(
+            [n["entity_id"] for n in devices.zwave_dead_nodes(snap)],
+            ["sensor.home_energy_monitor_node_status_2"])
+
+    def test_a_dead_nodes_frozen_battery_is_not_a_second_finding(self):
+        """The box under two fixes: the controller has lost it, and the 0%
+        it last said is the last thing it said. dev.zwave_dead has the
+        mesh fix; dev.battery_low stands down for that device."""
+        snap = self._energy_monitor("dead", battery="0")
+        self.assertEqual(devices.battery_low(snap, NOW), [])
+        self.assertEqual(len(devices.zwave_dead(snap, NOW)), 1)
+        # ... and with the node alive, a 0% battery is the battery's row.
+        alive = self._energy_monitor("alive", battery="0")
+        self.assertEqual(len(devices.battery_low(alive, NOW)), 1)
+
     def test_a_status_sensor_from_another_integration_is_not_a_zwave_node(self):
         snap = self._zwave("dead")
         self.assertEqual(snap["entities"][-1]["entity_id"],
@@ -1074,6 +1179,58 @@ class TestRegistryChecks(unittest.TestCase):
         # ... but on a house with no areas set up, this is not a finding
         snap["areas"] = [{"area_id": "kitchen", "name": "Kitchen"}]
         self.assertEqual(registry.no_area(snap, NOW), [])
+
+    def test_no_area_never_counts_a_device_that_can_have_no_room(self):
+        """A service device (`entry_type: service` — a Backup service, a
+        Sun) and brAIn's own devices (its conversation agents and system
+        device) are not in a room and cannot be: no room is what they
+        are. Counting them told somebody to put the add-on in the
+        lounge, and anchoring the row on a brAIn entity filed a card
+        about the add-on under a registry fix."""
+        snap = house()
+        snap["config_entries"].append(
+            {"entry_id": "e-brain", "domain": "brain", "title": "brAIn",
+             "state": "loaded", "source": "user"})
+        snap["states"]["conversation.brain_house"] = {
+            "state": "unknown", "attributes": {"friendly_name": "brAIn House"},
+            "last_changed": iso(60)}
+        snap["entities"].append(
+            {"entity_id": "conversation.brain_house", "platform": "brain",
+             "device_id": "dev-brain-agent", "config_entry_id": "e-brain"})
+        snap["devices"].append(
+            {"id": "dev-brain-agent", "name": "brAIn House",
+             "identifiers": [["brain", "agent-house"]],
+             "config_entries": ["e-brain"], "entry_type": "service"})
+        snap["states"]["sensor.brain_health"] = {
+            "state": "ok", "attributes": {"friendly_name": "brAIn health"},
+            "last_changed": iso(60)}
+        snap["entities"].append(
+            {"entity_id": "sensor.brain_health", "platform": "brain",
+             "device_id": "dev-brain-system", "config_entry_id": "e-brain"})
+        snap["devices"].append(
+            {"id": "dev-brain-system", "name": "brAIn System",
+             "identifiers": [["brain", "system"]],
+             "config_entries": ["e-brain"]})
+        snap["states"]["event.backup_automatic_backup"] = {
+            "state": "unknown",
+            "attributes": {"friendly_name": "Backup Automatic backup"},
+            "last_changed": iso(60)}
+        snap["entities"].append(
+            {"entity_id": "event.backup_automatic_backup", "platform": "backup",
+             "device_id": "dev-backup"})
+        snap["devices"].append(
+            {"id": "dev-backup", "name": "Backup", "entry_type": "service",
+             "identifiers": [["backup", "backup_manager"]]})
+        self.assertEqual(registry.no_area(snap, NOW), [])
+        # ... and with a real device in no room, that is the only one
+        # named, and the row is anchored on it rather than on brAIn.
+        del snap["entities"][3]["area_id"]
+        [found] = registry.no_area(snap, NOW)
+        self.assertIn("1 of them", found["detail"])
+        self.assertIn("Hall climate", found["detail"])
+        self.assertNotIn("brAIn", found["detail"])
+        self.assertNotIn("Backup", found["detail"])
+        self.assertEqual(found["entity_id"], "sensor.hall_temp")
 
     def _helper(self, age_days_old=90, **extra):
         snap = house()
