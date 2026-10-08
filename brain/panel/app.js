@@ -602,7 +602,7 @@ function renderUsageChip() {
   const s = state.status;
   const chip = $("#usageChip");
   const u = s && s.authenticated && s.usage;
-  // The numbers live in ⚙ → Usage & schedule. The header carries them only
+  // The numbers live in ⚙ → Model & usage. The header carries them only
   // when they are news: past USAGE_PILL_AT in either window, or with
   // automatic insights paused by the budget. A pill reading "Session 3%"
   // on every visit is a reading nobody acts on, beside a status line that
@@ -2752,18 +2752,29 @@ function renderSettingsForm(data) {
   });
   renderModelField(data);
   renderNotifyPolicy(data.settings || {});
+  renderSetSummaries(data);
   $("#setSyncNote").textContent = data.options_synced
     ? "The same settings as the add-on's Configuration tab."
     : "Saved in the panel only until the Supervisor answers.";
 }
 
-// ⚙ is a page of eight sections on one segmented control, one shown at a
-// time, and the page remembers which — somebody who lives in Diagnostics
-// should land there every visit. `prefGet` can throw or answer null (an
-// ingress iframe may be refused storage), so Account is the fallback.
-const SET_SECTIONS = ["account", "usage", "permissions", "sources",
-                      "notifications", "memory", "diagnostics", "guide"];
+// ⚙ is a page of sections: a list naming each one and what it is set to,
+// beside the section in front on a wide screen, and as the first thing a
+// phone shows (a section there carries "‹ Settings" back to the list). It
+// was eight panes on a segmented control, and on a phone the control was a
+// select hiding seven of its eight names — so every section was two taps
+// away and nothing on screen said what any of them held. The page
+// remembers the section in front for a wide screen — somebody who lives in
+// Diagnostics should land there every visit; `prefGet` can throw or
+// answer null (an ingress iframe may be refused storage), so Account is the
+// fallback.
+const SET_SECTIONS = ["account", "usage", "permissions", "notifications",
+                      "sources", "memory", "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
+// Where the list sits beside the section rather than in front of it. The
+// stylesheet's breakpoint for `.setlayout` is the same number.
+const SET_WIDE = window.matchMedia ? window.matchMedia("(min-width: 900px)") : null;
+const setWide = () => !SET_WIDE || SET_WIDE.matches;
 
 // What showing a section has to fetch. Nothing here runs for a section
 // that has not been shown: a dozen reads for somebody who came to change
@@ -2775,6 +2786,7 @@ const SET_LOADERS = {
   sources: () => { loadCameras(); loadSetCalendars(); },
   memory: () => loadSetMemory(),
   diagnostics: () => loadAdvanced(),
+  developer: () => loadDeveloper(),
   guide: () => renderSetGuide(),
 };
 
@@ -2788,22 +2800,21 @@ function savedSettingsSection() {
   return SET_SECTIONS.includes(saved) ? saved : "account";
 }
 
-// Show one section: its pane, its button pressed, the select on a phone,
-// remembered, and its readings fetched the first time it is shown this
-// visit.
+// Show one section: its pane, its row marked on the list, remembered, and
+// its readings fetched the first time it is shown this visit.
 function showSettingsSection(name, load = true) {
   if (!SET_SECTIONS.includes(name)) name = "account";
   setSection = name;
+  const root = $("#setModal");
+  if (root) root.classList.remove("setindex");
   document.querySelectorAll("#setModal .setsec").forEach((sec) => {
     sec.hidden = sec.dataset.sec !== name;
   });
-  document.querySelectorAll("#setNav .segbtn").forEach((b) => {
+  document.querySelectorAll("#setNav .setnavbtn").forEach((b) => {
     const on = b.dataset.sec === name;
     b.classList.toggle("active", on);
     b.setAttribute("aria-selected", on ? "true" : "false");
   });
-  const sel = $("#setNavSel");
-  if (sel) sel.value = name;
   prefSet(SET_SECTION_KEY, name);
   if (load && !setShown.has(name)) {
     setShown.add(name);
@@ -2811,22 +2822,85 @@ function showSettingsSection(name, load = true) {
   }
 }
 
+// The list on its own: what a phone shows when Settings opens and what
+// "‹ Settings" goes back to. A wide screen always has a section beside the
+// list, so there it shows the remembered one instead.
+function showSettingsIndex() {
+  if (setWide()) { showSettingsSection(setSection || savedSettingsSection()); return; }
+  const root = $("#setModal");
+  if (root) root.classList.add("setindex");
+  document.querySelectorAll("#setModal .setsec").forEach((sec) => { sec.hidden = true; });
+  document.querySelectorAll("#setNav .setnavbtn").forEach((b) => {
+    b.classList.remove("active");
+    b.setAttribute("aria-selected", "false");
+  });
+  window.scrollTo(0, 0);
+}
+
 function restoreSettingsSections() {
-  const sel = $("#setNavSel");
-  if (sel) {
-    sel.textContent = "";
-    document.querySelectorAll("#setNav .segbtn").forEach((b) => {
-      const opt = el("option", null, b.textContent.trim());
-      opt.value = b.dataset.sec;
-      sel.appendChild(opt);
+  document.querySelectorAll("#setNav .setnavbtn").forEach((b) =>
+    b.addEventListener("click", () => {
+      showSettingsSection(b.dataset.sec);
+      if (!setWide()) window.scrollTo(0, 0);
+    }));
+  document.querySelectorAll("#setModal .setback").forEach((b) =>
+    b.addEventListener("click", showSettingsIndex));
+  // A window widened past the breakpoint while the list stands alone has
+  // nothing beside it; put the remembered section there.
+  if (SET_WIDE && SET_WIDE.addEventListener) {
+    SET_WIDE.addEventListener("change", () => {
+      const root = $("#setModal");
+      if (setWide() && root && root.classList.contains("setindex")
+          && root.classList.contains("open")) {
+        showSettingsSection(setSection || savedSettingsSection());
+      }
     });
-    sel.addEventListener("change", () => showSettingsSection(sel.value));
   }
-  document.querySelectorAll("#setNav .segbtn").forEach((b) =>
-    b.addEventListener("click", () => showSettingsSection(b.dataset.sec)));
-  // The markup ships every section hidden; the first paint shows one, and
-  // fetches nothing — that waits for somebody to open the page.
-  showSettingsSection(savedSettingsSection(), false);
+  // The markup ships every section hidden; the first paint shows one (or
+  // the list, on a phone), and fetches nothing — that waits for somebody
+  // to open the page.
+  if (setWide()) showSettingsSection(savedSettingsSection(), false);
+  else showSettingsIndex();
+}
+
+// The second line of each row on the list: what the section is set to
+// now, from the settings payload and the credential state. A row whose
+// answer is not known yet keeps the sentence the markup ships, which says
+// what the section is for.
+let setSummaryData = null;
+
+function setSummary(id, text) {
+  const node = document.getElementById(id);
+  if (node && text) { node.textContent = text; node.title = text; }
+}
+
+function renderSetSummaries(data) {
+  if (data) setSummaryData = data;
+  const d = setSummaryData || {};
+  const st = d.settings || {};
+  if (authState) {
+    const c = authState.auth_check || {};
+    setSummary("setSumAccount", !authState.authenticated ? "Not signed in"
+      : c.state === "failed" ? "Signed in, but Claude rejected it" : "Signed in");
+  }
+  if (d.settings) {
+    const usage = d.usage || {};
+    const used = Number(usage.used_percent);
+    const model = st.model ? (d.model_label || st.model) : "Chosen per job";
+    setSummary("setSumUsage", model
+      + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
+    setSummary("setSumPermissions", st.dangerously_skip_permissions === true
+      ? "Acts without asking" : "Asks before it acts");
+    const policy = String(st.notify_policy || "").trim();
+    setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
+      + (st.speak_first === true ? " · said aloud" : ""));
+    const cams = Array.isArray(st.camera_confirm) ? st.camera_confirm.length : null;
+    const cals = Array.isArray(st.occasion_calendars) ? st.occasion_calendars.length : null;
+    if (cams !== null || cals !== null) {
+      const n = (k, one) => `${k || "No"} ${one}${k === 1 ? "" : "s"}`;
+      setSummary("setSumSources", `${n(cams || 0, "camera")}, ${n(cals || 0, "calendar")}`);
+    }
+  }
 }
 
 // Entering and leaving the page. `open` on the root is what every guard
@@ -2867,13 +2941,21 @@ function loadAdvanced() {
   advancedLoaded = true;
   loadDiagnostics();
   loadReports();
-  loadCaptures();
   loadDeep(true);
-  loadRehearsal(true);
   loadDiagAccuracy();
   loadDiagMeasures();
   loadDiagUpkeep();
+}
+
+// The Developer section's readings: the rehearsal (which may start a 3s
+// poll while one runs), the captures, the development loop and whether
+// there is a "why" to ask. Run the first time the section is shown each
+// visit, like every other section's.
+function loadDeveloper() {
+  loadRehearsal(true);
+  loadCaptures();
   loadDevloop();
+  curiousState(false);
 }
 
 // The line under "Let brAIn act without asking". The switch reaches a
@@ -2947,7 +3029,11 @@ async function openSettings() {
   // Every visit asks again for the section in front: the page being open
   // is not the same claim as its rows being current.
   setShown.clear();
-  showSettingsSection(setSection || savedSettingsSection());
+  // A phone lands on the list, where every section is one press away and
+  // each row already says what it is set to; a wide screen shows the
+  // remembered section beside it.
+  if (setWide()) showSettingsSection(setSection || savedSettingsSection());
+  else showSettingsIndex();
   try {
     renderSettingsForm(await api("api/settings"));
   } catch (e) {
@@ -3384,7 +3470,7 @@ async function loadDiagnostics() {
 }
 
 // Export report (Share) is the one export. With problem files ticked under
-// Developer it copies exactly those, as one text; with none ticked it writes
+// "Report a problem" it copies exactly those, as one text; with none ticked it writes
 // a report file first and copies THAT: the same single text file a failure
 // would have written (with the full diagnostics appended), so what lands in
 // an issue is one readable file rather than raw JSON, and the same file
@@ -3688,7 +3774,7 @@ async function copyOrSelect(text, okMessage) {
 }
 
 // ------------------------------------------------------- development loop
-// ⚙ › Diagnostics › Developer › Help develop brAIn (devloop/, DEVLOOP.md).
+// ⚙ › Developer › Help develop brAIn (devloop/, DEVLOOP.md).
 // Off for everyone. The token is sent once and never comes back: the server
 // only says whether one is set. View is the first press on a report for the
 // same reason it is on a capture: a Send you could not read is not consent.
@@ -4029,38 +4115,83 @@ $("#capBody").addEventListener("click", async (ev) => {
 });
 
 // ------------------------------------------------------------- deep check
-// `brain doctor --deep` from the dialog. Fetched when pressed and while a
-// run is in flight, and NEVER on a timer once it is done: a deep run is a
-// handful of Claude turns, so a poll behind a closed dialog would be a
-// question nobody asked with a bill attached to it.
-const DEEP_MARK = { ok: "✓", failed: "✗", skipped: "–" };
+// `brain doctor --deep`, as ⚙ › Diagnostics › Run all tests. Fetched when
+// pressed and while a run is in flight, and NEVER on a timer once it is
+// done: a deep run is a handful of Claude turns, so a poll behind a closed
+// page would be a question nobody asked with a bill attached to it.
+//
+// It used to be a Developer fold at the bottom of Diagnostics, rendered as
+// a ✓/✗/– glyph beside each stage's name with the verdict in a line under
+// the button. Now the answer is the header — "6 of 6 passed · 2 skipped",
+// counted over the stages that RAN, because a stage skipped over a failed
+// precondition or a switch that is off did not pass and did not fail — and
+// each stage is a row saying which in a word, the reason in a sentence and
+// the time it ran (`at`, stamped per stage by doctor.run_deep).
+const DEEP_WORD = { ok: "Passed", failed: "Failed", skipped: "Skipped" };
 let deepPoll = null;
 
+function deepTime(stamp) {
+  if (!stamp) return "";
+  return new Date(stamp * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function deepRow(state, word, title, reason, detail, time) {
+  return `<div class="testrow ${state}"><span class="testword">${esc(word)}</span>`
+    + `<div class="testmain"><div class="testtitle">${esc(title)}</div>`
+    + (reason ? `<div class="testreason">${esc(reason)}</div>` : "")
+    + (detail ? `<div class="hint tight">${esc(detail)}</div>` : "")
+    + `</div>`
+    + (time ? `<span class="testtime">${esc(time)}</span>` : "")
+    + `</div>`;
+}
+
+// "N of M passed", where M is the stages that ran; the skipped ones are
+// said apart, never folded into the failures.
+function deepCountLine(stages) {
+  const ok = stages.filter((s) => s.state === "ok").length;
+  const failed = stages.filter((s) => s.state === "failed").length;
+  const skipped = stages.filter((s) => s.state === "skipped").length;
+  let line = `${ok} of ${ok + failed} passed`;
+  if (skipped) line += ` · ${skipped} skipped`;
+  return { line, failed };
+}
+
 function renderDeep(d) {
-  const stages = d.running ? (d.stages || []) : ((d.last || {}).stages || d.stages || []);
+  const last = d.last || {};
+  const stages = d.running ? (d.stages || []) : (last.stages || d.stages || []);
   const body = $("#deepBody");
   body.hidden = !stages.length && !d.running;
-  const rows = stages.map((s) => diagRow(
-    `${DEEP_MARK[s.state] || "·"} ${esc(s.title || s.name)}`,
-    `${esc(s.sentence || "")}`
-    + (s.detail ? `<div class="hint tight">${esc(s.detail)}</div>` : ""),
-    s.state === "failed"));
+  const rows = stages.map((s) => deepRow(
+    s.state || "",
+    DEEP_WORD[s.state] || "—",
+    s.title || s.name,
+    s.sentence || "",
+    s.detail || "",
+    deepTime(s.at || (d.running ? 0 : last.finished_at))));
   if (d.running) {
     // The catalog is what lets a stage that has not started yet be a row
     // rather than nothing: a list that grows from empty reads as a run
     // that is stuck on whatever it is doing.
-    (d.stage_catalog || []).slice(stages.length).forEach((s) =>
-      rows.push(diagRow(`· ${esc(s.title)}`,
-        `<span class="hint">${esc(s.proves)}</span>`)));
+    (d.stage_catalog || []).slice(stages.length).forEach((s, i) =>
+      rows.push(deepRow("waiting", i === 0 ? "Running" : "Waiting",
+                        s.title, s.proves, "", "")));
   }
   body.innerHTML = rows.join("");
-  const last = d.last || {};
-  const c = last.counts || {};
+  const sum = $("#deepSummary");
+  if (sum) {
+    if (stages.length && (d.running || last.finished_at)) {
+      const c = deepCountLine(stages);
+      sum.textContent = d.running ? `${c.line} so far` : c.line;
+      sum.classList.toggle("bad", c.failed > 0);
+      sum.hidden = false;
+    } else {
+      sum.hidden = true;
+    }
+  }
   $("#deepLast").textContent = d.running
     ? "Running — this takes a few minutes."
     : (last.finished_at
-      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}: `
-        + `${c.ok || 0} passed, ${c.failed || 0} failed, ${c.skipped || 0} skipped`
+      ? `Last run ${timeAgo(new Date(last.finished_at * 1000).toISOString())}.`
       : "Not run on this install yet.");
   $("#deepRun").disabled = !!d.running;
 }
@@ -4092,8 +4223,8 @@ $("#deepRun").addEventListener("click", async () => {
     // A 409 means one is already going — which is an answer, not an error:
     // both presses are watching the same run.
     await api("api/doctor/deep", { method: "POST" });
-    toast("Deep check started — it spends a few Claude turns and makes "
-      + "one reversible change to a test helper it creates");
+    toast("Running all tests — a few Claude turns, and one test helper "
+      + "made and removed again");
   } catch (e) {
     toast(e.message);
   }
@@ -4353,6 +4484,7 @@ function renderAuthBox(a) {
           + "be shared. Sign in again with a token to share one."
         : "Sign in first.";
   $("#authSignout").classList.toggle("hidden", !a.authenticated);
+  renderSetSummaries();
 }
 
 let authState = null;
@@ -14217,7 +14349,7 @@ $("#bookAddAsIs")?.addEventListener("click", async () => {
 // The words for what the house is doing (`/api/situation`, built by
 // `panel/situation.py`), read by House › What happened's top line. The
 // situation panel and calendar picker that sat over the old Findings feed
-// are gone: the line is What happened's, the calendars are ⚙ › Sources'.
+// are gone: the line is What happened's, the calendars are ⚙ › Cameras & calendars'.
 // The mode is a WORD and never a colour alone.
 const HOUSE_MODE_WORDS = {
   home: "Someone's home",
@@ -14249,19 +14381,13 @@ function renderNotifyPolicy(settings) {
   const list = $("#setNotifyLearned");
   const learned = Array.isArray(settings.notify_policy_learned)
     ? settings.notify_policy_learned : [];
-  const wasOpen = !!list.querySelector("details[open]");
   list.textContent = "";
   list.classList.toggle("hidden", !learned.length);
   if (!learned.length) return;
-  // Behind a disclosure that names how many: each line is a long sentence
-  // (it names its subject both ways, for a person and for a model), and a
-  // dialog measured against a height budget cannot spend a paragraph per
-  // answer somebody once gave. It stays open across a re-render, because
-  // a Remove re-renders and closing the list under the press reads as the
-  // press having taken everything.
-  const fold = document.createElement("details");
-  fold.open = wasOpen;
-  fold.appendChild(el("summary", null, learned.length === 1
+  // On the page, not behind a disclosure: these lines change what reaches
+  // somebody's phone, and a fold naming how many was one more thing in ⚙
+  // nobody opened. Each is its own row with its own Remove.
+  list.appendChild(el("p", "setlearnedhead", learned.length === 1
     ? "1 line added from your answers"
     : `${learned.length} lines added from your answers`));
   learned.forEach((item) => {
@@ -14275,9 +14401,8 @@ function renderNotifyPolicy(settings) {
       saveSettings({ notify_policy_learned: keep }, "Removed — that line no longer applies");
     });
     row.appendChild(remove);
-    fold.appendChild(row);
+    list.appendChild(row);
   });
-  list.appendChild(fold);
 }
 
 $("#setNotifyPolicy").addEventListener("change", () =>
@@ -14688,7 +14813,7 @@ $("#setMemSave").addEventListener("click", async () => {
   }
 });
 
-// ------------------------------------------------- ⚙ → Sources: calendars
+// ------------------------------------------------- ⚙ → Cameras & calendars: calendars
 // Which calendars brAIn may read for what is coming up. Off until somebody
 // ticks one: a calendar is the most personal thing a house holds. Its
 // safety note is on the page beside the list, never behind anything.

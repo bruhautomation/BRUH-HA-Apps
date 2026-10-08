@@ -168,7 +168,7 @@ async function open(width, height, touch) {
 }
 
 // ------------------------------------------------- the header usage pill
-// The session and week numbers live in ⚙ → Usage & schedule. The header
+// The session and week numbers live in ⚙ → Model & usage. The header
 // carries them only when they are news: past 80% in either window, or with
 // automatic insights paused by the budget (the redesign's PR 9). Driven
 // through the real `renderUsageChip` over the real `state.status`.

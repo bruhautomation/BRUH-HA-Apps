@@ -27,7 +27,7 @@ Usage:
                                 One read-only Claude run works out the real
                                 problem and files the issue that would fix it
 
-Switch it on and set the repository in ⚙ → Diagnostics → Developer.
+Switch it on and set the repository in ⚙ → Developer.
 EOF
     exit "${1:-0}"
 }

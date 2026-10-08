@@ -77,8 +77,7 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
   await page.waitForFunction(() => typeof openSettings === 'function');
   await page.evaluate(() => openSettings());
   await page.waitForSelector('#setModal.open');
-  await page.evaluate(() => showSettingsSection('diagnostics'));
-  await page.evaluate(() => { document.querySelector('#setDiagDeveloper').open = true; });
+  await page.evaluate(() => showSettingsSection('developer'));
   await page.evaluate(() => loadDevloop());
   await page.waitForFunction(() => !document.querySelector('#devloopBody').hidden,
     null, { timeout: 4000 }).catch(() => note(where, 'the section never opened'));

@@ -138,6 +138,11 @@ for (const width of WIDTHS) {
 
   // ---- the ⚙ dialog's Claude account section --------------------------
   await page.click('#settingsBtn');
+  // A narrow page opens on ⚙'s list of sections, where the Account row is
+  // the first one; pressing it is how a person gets here.
+  if (await page.evaluate(() => document.querySelector('#setModal').classList.contains('setindex'))) {
+    await page.click('#setNav .setnavbtn[data-sec="account"]');
+  }
   await page.waitForSelector('#authBody p');
 
   const acct = await page.evaluate(() => ({
@@ -303,6 +308,11 @@ for (const width of WIDTHS) {
   // `const` in the module scope and deliberately not on `window`, and a
   // test that reaches past the controls is a test of the reach.
   await page.click('#settingsBtn');
+  // A narrow page opens on ⚙'s list of sections, where the Account row is
+  // the first one; pressing it is how a person gets here.
+  if (await page.evaluate(() => document.querySelector('#setModal').classList.contains('setindex'))) {
+    await page.click('#setNav .setnavbtn[data-sec="account"]');
+  }
   await page.waitForSelector('#authBody p');
   await page.click('#authSignin');
   await page.waitForFunction(() =>
