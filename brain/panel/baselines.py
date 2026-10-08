@@ -69,6 +69,15 @@ MIN_SPREAD_ABS = 1e-6
 # An entity whose entire history is one value has no baseline worth
 # having. Reported as such rather than as one that is very sensitive.
 FLAT_MAD_FRACTION = 0.0
+# A reading that moves in STEPS (a forecast at 1% that steps to 5%, an
+# index quantised to halves) has more than half its readings on one value,
+# so its MAD is zero and the spread fell to the fractional floor — 0.02 of
+# a percent — and a step it takes every few days came out as "200 times
+# its normal variation". Its spread is the size of its steps instead: the
+# median distance of the readings that are NOT on the resting value, once
+# it has stepped at least this many times. Fewer is an outlier, not a
+# step size, and one outlier may not set the band.
+MIN_STEP_MOVES = 3
 # Past this a baseline describes a house that may have changed.
 STALE_DAYS = 10.0
 # One statistics call per batch; the same bound the checks snapshot uses,
@@ -196,14 +205,45 @@ def spread_floor(centre: float) -> float:
     return max(abs(centre) * MIN_SPREAD_FRACTION, MIN_SPREAD_ABS)
 
 
-def summarise(values: list[float]) -> dict | None:
-    """One bucket, or None when there is not enough of it to mean anything."""
+def step_size(values: list[float], centre: float | None = None) -> float:
+    """How far a stepped reading moves when it moves, or 0.0.
+
+    The median distance from the centre of the readings that are not ON
+    the centre — 0.0 when fewer than `MIN_STEP_MOVES` moved, because one
+    spike is an outlier and the MAD exists so an outlier cannot set the
+    band. Only consulted where the MAD collapsed (more than half the
+    readings on one value); on a reading with an ordinary wobble the MAD
+    already measures this and is left alone.
+    """
+    if not values:
+        return 0.0
+    centre = median(values) if centre is None else centre
+    moves = [abs(v - centre) for v in values if v != centre]
+    if len(moves) < MIN_STEP_MOVES:
+        return 0.0
+    return median(moves)
+
+
+def summarise(values: list[float], stepped_floor: float = 0.0) -> dict | None:
+    """One bucket, or None when there is not enough of it to mean anything.
+
+    ``stepped_floor`` is the whole history's spread, handed to an hour's
+    bucket by `build_buckets`: an hour whose four weekly samples are all
+    one value has measured no variation at all, and on a reading that
+    moves in steps that is the hour it happened not to step in — not a
+    band 0.02 wide. It is applied only where this bucket's own MAD
+    collapsed, so an hour that measured a real wobble keeps it.
+    """
     if len(values) < MIN_SAMPLES:
         return None
     centre = median(values)
+    own = mad(values, centre)
+    spread = max(own, spread_floor(centre))
+    if own == 0.0:
+        spread = max(spread, step_size(values, centre), stepped_floor)
     return {
         "median": round(centre, 4),
-        "spread": round(max(mad(values, centre), spread_floor(centre)), 6),
+        "spread": round(spread, 6),
         "n": len(values),
     }
 
@@ -238,14 +278,17 @@ def build_buckets(rows: list[dict], tz: dt.tzinfo) -> dict:
     if mad(every) <= FLAT_MAD_FRACTION and len(set(every)) <= 1:
         return {"flat": True, "value": round(every[0], 4), "samples": len(every)}
 
-    buckets = {}
-    for bucket, values in by_bucket.items():
-        summary = summarise(values)
-        if summary:
-            buckets[str(bucket)] = summary
     overall = summarise(every)
     if not overall:
         return {}
+    # A stepped reading's history is what knows its step size; an hour's
+    # four samples mostly do not (see `summarise`).
+    stepped = overall["spread"] if mad(every) == 0.0 else 0.0
+    buckets = {}
+    for bucket, values in by_bucket.items():
+        summary = summarise(values, stepped)
+        if summary:
+            buckets[str(bucket)] = summary
     return {"buckets": buckets, "overall": overall, "samples": len(every)}
 
 

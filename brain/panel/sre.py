@@ -225,6 +225,9 @@ def _zha_records(rows: list, now: float, areas: dict) -> list[dict]:
 
 
 def _zwave_records(states: dict, entities: list, devices: list) -> list[dict]:
+    # One answer to "is this the node status sensor" — the registered
+    # translation key or unique id, never the entity id's suffix alone.
+    from checks.devices import is_node_status
     names = {str(d.get("id")): str(d.get("name_by_user") or d.get("name") or "")
              for d in devices if isinstance(d, dict)}
     by_device: dict[str, dict] = {}
@@ -240,7 +243,7 @@ def _zwave_records(states: dict, entities: list, devices: list) -> list[dict]:
         match = _STAT_RE.search(uid)
         if match:
             by_device.setdefault(dev_id, {})[match.group(1)] = state
-        elif eid.endswith("_node_status"):
+        elif is_node_status(eid, reg):
             by_device.setdefault(dev_id, {})["status"] = state
     out = []
     for dev_id, stats in sorted(by_device.items()):
