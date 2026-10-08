@@ -95,6 +95,45 @@ def states_a_fixed_figure(house: House, eid: str, attrs: dict) -> bool:
                for key in FIXED_MODE_ATTRS)
 
 
+# A battery's voltage, or any low DC voltage, sits still by design. A cell
+# reported at 0.1 V resolution reads 1.3 V for weeks while it discharges
+# underneath that step, and a regulated 5 V or 12 V supply rail reads one
+# value because regulating it is its whole job. What `dev.frozen` is for on
+# a voltage sensor is mains: a supply that wanders by volts every hour and
+# has stopped wandering. So a voltage reads as a battery's — and is skipped —
+# when its name says battery or cell, when its device also reports a battery
+# level, or when it is a DC level under `DC_VOLTAGE_MAX` (mains is 100 V and
+# up everywhere). The cheap direction: a stuck 3 V probe costs one finding
+# nobody got, and "this battery sensor is broken" on a healthy one costs the
+# list, which is what a real house marked Not a problem on two siblings.
+DC_VOLTAGE_MAX = 15.0
+BATTERY_VOLTAGE_WORDS = frozenset({"battery", "batt", "cell", "vbat"})
+
+
+def reads_a_battery_voltage(house: House, eid: str, attrs: dict) -> bool:
+    reg = house.registry.get(eid) or {}
+    for name in (attrs.get("friendly_name"), reg.get("name"),
+                 reg.get("original_name"), eid.split(".", 1)[-1]):
+        words = set(re.split(r"[^a-z0-9]+", str(name or "").lower()))
+        if words & BATTERY_VOLTAGE_WORDS:
+            return True
+    dev_id = reg.get("device_id")
+    if dev_id:
+        for row in house.entities:
+            if row.get("device_id") != dev_id or row.get("entity_id") == eid:
+                continue
+            other = house.states.get(row.get("entity_id") or "") or {}
+            if (other.get("attributes") or {}).get("device_class") == "battery":
+                return True
+    value = num((house.states.get(eid) or {}).get("state"))
+    unit = str(attrs.get("unit_of_measurement") or "").strip()
+    if value is not None and unit in ("V", "mV"):
+        volts = value / 1000.0 if unit == "mV" else value
+        if abs(volts) < DC_VOLTAGE_MAX:
+            return True
+    return False
+
+
 # And a cap, for `base.unusual`'s reason. More than a handful of sensors
 # frozen at once is not a house with a handful of broken sensors — it is
 # this rule having stopped describing the house (a recorder purge, an
@@ -303,6 +342,76 @@ def _restart_note(snap: dict, st: dict) -> str:
             "reloading the integration is the first thing to try.")
 
 
+# An entity whose state is computed from other entities rather than read off
+# a device. A light group goes unavailable when every light in it does; a
+# template sensor when what it reads does. Its own row is the same fault said
+# again, under a remedy ("check its power, reload its integration") that
+# points at the helper rather than at the hardware behind it.
+DERIVED_PLATFORMS = frozenset({
+    "group", "template", "min_max", "switch_as_x", "derivative",
+    "integration", "statistics", "threshold", "trend", "filter",
+    "utility_meter", "combine", "mold_indicator", "bayesian", "compensation",
+})
+# A config entry in one of these states is an integration that did not set
+# up, and every entity it provides is unavailable because of that one fact.
+# `sys.entry_failed` reports it, naming the integration and its error; a row
+# per device here is the same fault said once per device under a remedy
+# (batteries, Wi-Fi) that cannot reach it. An entry somebody unloaded is a
+# decision, and not news either.
+ENTRY_NOT_LOADED = frozenset({
+    "setup_error", "setup_retry", "migration_error", "not_loaded",
+    "failed_unload",
+})
+# What a device's settings page carries. An unavailable firmware or "cloud
+# connection" entity on a device that still answers is not the device
+# having gone away.
+SETTINGS_CATEGORIES = frozenset({"diagnostic", "config"})
+
+
+def _down(st: dict | None) -> bool:
+    return bool(st) and st.get("state") == "unavailable"
+
+
+def _members(house: House, eid: str) -> list[str]:
+    """The entities a group names, when its state still carries them."""
+    raw = ((house.states.get(eid) or {}).get("attributes") or {}).get(
+        "entity_id")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    return [m for m in raw if isinstance(m, str) and "." in m and m != eid]
+
+
+def _entry_not_loaded(snap: dict, reg: dict) -> bool:
+    entry_id = reg.get("config_entry_id")
+    if not entry_id:
+        return False
+    for entry in snap.get("config_entries") or []:
+        if isinstance(entry, dict) and entry.get("entry_id") == entry_id:
+            return str(entry.get("state") or "") in ENTRY_NOT_LOADED
+    return False
+
+
+def _device_answers(house: House, dev_id: str) -> bool:
+    """Whether a primary entity on this device still reports a state.
+
+    A device that has gone away takes every entity with it. One whose
+    light still answers while its "cloud" sensor does not has not gone
+    anywhere, and "check its power and its connection" is the wrong fix
+    for it.
+    """
+    for row in house.entities:
+        if row.get("device_id") != dev_id or row.get("disabled_by"):
+            continue
+        if str(row.get("entity_category") or "") in SETTINGS_CATEGORIES:
+            continue
+        st = house.states.get(row.get("entity_id") or "")
+        if st and st.get("state") not in ("unavailable", "unknown", None):
+            return True
+    return False
+
+
 def unavailable(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -311,6 +420,7 @@ def unavailable(snap: dict, now: float) -> list[dict]:
     dead_devices = _zwave_dead_devices(house)
     by_device: dict[str, list[tuple[str, float]]] = {}
     loose: list[tuple[str, float]] = []
+    derived: list[tuple[str, float]] = []
     for eid, st in _live_hardware(house):
         if st.get("state") != "unavailable":
             continue
@@ -319,6 +429,18 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             continue
         # An entity whose integration is gone is the `restored` check's.
         if (st.get("attributes") or {}).get("restored"):
+            continue
+        reg = house.registry.get(eid) or {}
+        # Somebody hid it: they have decided it is not something they
+        # want to look at, and a serious card about it is the opposite.
+        if reg.get("hidden_by") == "user":
+            continue
+        # The integration did not set up: `sys.entry_failed`'s row.
+        if _entry_not_loaded(snap, reg):
+            continue
+        if (reg.get("platform") in DERIVED_PLATFORMS
+                or (_members(house, eid) and not house.device_of(eid))):
+            derived.append((eid, age))
             continue
         dev = house.device_of(eid)
         if dev:
@@ -330,11 +452,40 @@ def unavailable(snap: dict, now: float) -> list[dict]:
     out = []
     for dev_id, rows in by_device.items():
         dev = house.devices[dev_id]
+        answers = _device_answers(house, dev_id)
+        if answers:
+            # The device is there. What is left is a primary entity that
+            # stopped reporting on a device that did not; a settings-page
+            # entity on its own is not worth a card.
+            rows = [r for r in rows if str((house.registry.get(r[0]) or {})
+                    .get("entity_category") or "") not in SETTINGS_CATEGORIES]
+            if not rows:
+                continue
         rows.sort(key=lambda r: r[1], reverse=True)
         first, longest = rows[0]
         if not house.should_report(first, "dev.unavailable"):
             continue
         name = house.device_name(dev)
+        if answers:
+            out.append({
+                "text": f"{house.name(first)} on {name} has been unavailable "
+                        "for more than a day",
+                "detail": f"Since {when(house.states[first].get('last_changed'))}"
+                          f"{house.where(first)}"
+                          + (f"; {len(rows)} of its entities are affected"
+                             if len(rows) > 1 else "")
+                          + f". {name} itself is still answering, so this is "
+                            "that entity rather than the device."
+                          + _restart_note(snap, house.states[first]),
+                "fix": "The device is reachable, so this is one of its "
+                       "features: check what that entity reads from (a probe, "
+                       "an accessory, a cloud service), or disable the entity "
+                       "if the device does not support it.",
+                "severity": "warning",
+                "fixable": False,
+                "entity_id": first,
+            })
+            continue
         out.append({
             "text": f"{name} has been unavailable for more than a day",
             "detail": f"Since {when(house.states[first].get('last_changed'))}"
@@ -360,6 +511,74 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                       + _restart_note(snap, house.states[eid]),
             "fix": "Check whatever provides it, then reload its integration.",
             "severity": "serious",
+            "fixable": False,
+            "entity_id": eid,
+        })
+    out.extend(_derived_rows(snap, house, derived, now))
+    return out
+
+
+def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
+    """A group or helper that is down, said only where it is the fault.
+
+    A helper's state is made of other entities, so one that is unavailable
+    is almost always its inputs being unavailable — and those are reported
+    by name above, under the fix that can reach them. Said here only when
+    the inputs are known and some of them are fine (a member renamed or
+    removed, a helper pointing at nothing), with that as the fix. A helper
+    whose inputs cannot be read is one row only while no hardware of its
+    kind is down beside it, because then there is nothing else that could
+    be the cause.
+    """
+    out = []
+    down_domains = {domain_of(e) for e, st in _live_hardware(house)
+                    if _down(st) and (house.registry.get(e) or {}).get(
+                        "platform") not in DERIVED_PLATFORMS}
+    for eid, _age in derived:
+        members = _members(house, eid)
+        reg = house.registry.get(eid) or {}
+        kind = "group" if (reg.get("platform") == "group" or members) \
+            else f"{reg.get('platform') or 'helper'} helper"
+        if members:
+            missing = [m for m in members if not house.exists(m)]
+            down = [m for m in members if _down(house.states.get(m))]
+            if not missing and len(down) == len(members):
+                house._note({"kind": "dedupe", "subject": eid,
+                             "check": "dev.unavailable",
+                             "reason": "every member of this group is "
+                                       "unavailable and reported by name",
+                             "text": ""})
+                continue
+            if missing:
+                fix = (f"It is a {kind} that names "
+                       f"{join_names(missing)}, which no longer exist"
+                       f"{'s' if len(missing) == 1 else ''} — edit the "
+                       "group's members rather than reloading it.")
+            else:
+                fix = (f"It is a {kind} of {join_names(members)}; a group "
+                       "goes unavailable when its members do, so check "
+                       "those rather than the group.")
+        else:
+            if domain_of(eid) in down_domains:
+                house._note({"kind": "dedupe", "subject": eid,
+                             "check": "dev.unavailable",
+                             "reason": f"a {kind} goes unavailable with what "
+                                       "it reads, and that is reported by name",
+                             "text": ""})
+                continue
+            fix = (f"It is a {kind}, so it reads unavailable when what it is "
+                   "built from does — check the entities it reads, or its "
+                   "configuration.")
+        if not house.should_report(eid, "dev.unavailable"):
+            continue
+        out.append({
+            "text": f"{house.name(eid)} has been unavailable for more than "
+                    "a day",
+            "detail": f"Since {when(house.states[eid].get('last_changed'))}"
+                      f"{house.where(eid)}."
+                      + _restart_note(snap, house.states[eid]),
+            "fix": fix,
+            "severity": "warning",
             "fixable": False,
             "entity_id": eid,
         })
@@ -623,6 +842,9 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if not device_class or device_class in FROZEN_SKIP_CLASSES:
             continue
         if states_a_fixed_figure(house, eid, attrs):
+            continue
+        if device_class == "voltage" and reads_a_battery_voltage(
+                house, eid, attrs):
             continue
         days = [r for r in rows if isinstance(r, dict)
                 and r.get("min") is not None and r.get("max") is not None]
