@@ -9848,7 +9848,8 @@ def _signal_entities(signal: dict) -> list[str]:
 # minute over every queued line, and a registry read per minute is a
 # request nobody asked for.
 _FACTS_CTX: dict = {"entities": frozenset(), "areas": {},
-                    "entity_areas": {}, "at": 0.0}
+                    "entity_areas": {}, "area_aliases": {}, "devices": {},
+                    "entries": {}, "self_entities": frozenset(), "at": 0.0}
 # How old the registry the facts store reads may be before "this entity is
 # not in the house" stops being a claim it can make. Two checks passes at
 # the default interval: a registry read once and never again is a list
@@ -9889,8 +9890,32 @@ def _note_registry(snapshot: dict) -> None:
             area = row.get("area_id") or devices.get(row.get("device_id") or "")
             if area:
                 entity_areas[eid] = area
+        # What the facts store files against beyond the ids and rooms
+        # (`facts_store.context`): a room's aliases, so "the den" finds the
+        # area somebody called that; what a 32-hex device or config-entry
+        # id NAMES, so a fact never carries one; and the `brain`
+        # integration's own entities, which is half of how a fact about
+        # brAIn being broken is told from a fact about the house.
+        aliases = {a["area_id"]: [str(x) for x in (a.get("aliases") or [])
+                                  if x]
+                   for a in (snapshot.get("areas") or [])
+                   if a.get("area_id") and a.get("aliases")}
+        device_names = {str(d["id"]).lower():
+                        str(d.get("name_by_user") or d.get("name") or "")
+                        for d in (snapshot.get("devices") or [])
+                        if d.get("id") and (d.get("name_by_user")
+                                            or d.get("name"))}
+        entry_titles = {str(e["entry_id"]).lower(): str(e.get("title") or "")
+                        for e in (snapshot.get("config_entries") or [])
+                        if isinstance(e, dict) and e.get("entry_id")
+                        and e.get("title")}
+        own = frozenset(str(r.get("entity_id"))
+                        for r in snapshot.get("entities") or []
+                        if r.get("entity_id") and r.get("platform") == "brain")
         _FACTS_CTX.update(entities=frozenset(states), areas=areas,
-                          entity_areas=entity_areas, at=time.time())
+                          entity_areas=entity_areas, area_aliases=aliases,
+                          devices=device_names, entries=entry_titles,
+                          self_entities=own, at=time.time())
     except Exception as exc:  # noqa: BLE001
         log.debug("facts registry note failed: %s", exc)
     try:
@@ -10005,9 +10030,14 @@ def _entity_names_in(*texts: str) -> dict[str, dict]:
 
 def _ingest_facts() -> int:
     try:
+        # A registry older than FACTS_REGISTRY_FRESH_S may not list a device
+        # added since, so only a fresh one may drop a subject at filing.
+        fresh = (bool(_FACTS_CTX["entities"])
+                 and time.time() - float(_FACTS_CTX["at"]) < FACTS_REGISTRY_FRESH_S)
         created = facts_store.ingest_inbox(
             MEMORY_INBOX_DIR, MEMORY_INBOX_DIR / "processed",
-            known_entities=_FACTS_CTX["entities"], areas=_FACTS_CTX["areas"])
+            known_entities=_FACTS_CTX["entities"], areas=_FACTS_CTX["areas"],
+            registry=_FACTS_CTX if fresh else None)
     except Exception as exc:  # noqa: BLE001
         log.debug("facts ingest failed: %s", exc)
         return 0
@@ -10037,7 +10067,7 @@ def _reconcile_facts(force: bool = False) -> dict:
         return facts_store.reconcile(
             document, MEMORY_INBOX_DIR,
             known_entities=_FACTS_CTX["entities"], registry_fresh=fresh,
-            force=force)
+            force=force, registry=_FACTS_CTX if fresh else None)
     except Exception as exc:  # noqa: BLE001 — accounting, not a run
         log.debug("facts reconcile failed: %s", exc)
         return {}

@@ -63,6 +63,7 @@ from pathlib import Path
 import atomic_write
 import categories
 import ha_data
+import textclip
 
 # Under /config, beside the document it is the other half of. `/data` is
 # invisible to Home Assistant and to everything that is not the panel.
@@ -300,6 +301,10 @@ def tag_subjects(text: str, *, known_entities=frozenset(),
         for eid in scanner.findall(low):
             if known_entities and eid not in known_entities:
                 continue
+            if not known_entities and not entity_shaped(eid):
+                # "69.98" and "automations.yaml" match the id grammar and
+                # name nothing.
+                continue
             take(eid[:MAX_SUBJECT])
     for area_id, name in (areas or {}).items():
         label = str(name or "").strip().lower()
@@ -314,12 +319,283 @@ def tag_subjects(text: str, *, known_entities=frozenset(),
     return out
 
 
+# What a subject may be. A subject is a THING — an entity, a room, a
+# person, a rule, or the house — and every one of them has a shape a test
+# can check, because the alternative is what shipped: a decimal ("69.98")
+# and a file name ("automations.yaml") both match the bare id grammar the
+# scanner reads (`ha_data.ENTITY_ID_RE` allows a digit-only domain) and
+# were filed as device-like chips nobody could make sense of.
+#
+#   * an entity id must look like one — a letters-and-underscores domain of
+#     two characters or more, an object id that is not all digits and not a
+#     file suffix — AND, where the registry the last checks pass saw is
+#     known, be in it (the registry is the authority; the shape is only the
+#     floor for when it cannot be asked);
+#   * `area:` is resolved to the REAL area id (`resolve_area`), and dropped
+#     when the area registry was readable and names no such room;
+#   * `person:`, `check:` and `house` stay;
+#   * anything else is dropped, and a fact left about nothing is about the
+#     house — which is what "about nothing in particular" has always meant.
+_SUBJECT_ENTITY_RE = re.compile(r"^[a-z][a-z_]*\.[a-z0-9_]+$")
+FILE_SUFFIXES = frozenset((
+    "yaml", "yml", "json", "jsonl", "py", "sh", "txt", "log", "md", "js",
+    "css", "html", "htm", "db", "conf", "cfg", "ini", "toml", "xml", "csv",
+    "jpg", "jpeg", "png", "gif", "svg", "mp3", "mp4", "wav", "bin", "bak",
+    "tmp", "zip", "gz", "tar", "pem", "key", "crt", "service", "lock",
+))
+KEPT_PREFIXES = ("person:", "check:")
+
+
+def entity_shaped(subject: str) -> bool:
+    """Shaped like an entity id, and not like a number or a file name."""
+    value = str(subject or "")
+    if len(value) > MAX_SUBJECT or not _SUBJECT_ENTITY_RE.match(value):
+        return False
+    domain, obj = value.split(".", 1)
+    if len(domain) < 2 or obj in FILE_SUFFIXES or obj.isdigit():
+        return False
+    return True
+
+
+def _room_word(text: str) -> str:
+    """A room's name as a person would compare two of them: case and
+    punctuation folded, a trailing "room" dropped — `_room_key`'s rule, so
+    the filing side and the display side agree about what is one room."""
+    key = normalize(str(text or "").replace("_", " "))
+    if key.endswith(" room") and len(key) > 5:
+        key = key[:-5].strip()
+    return key
+
+
+def resolve_area(value: str, areas: dict | None,
+                 aliases: dict | None = None) -> str | None:
+    """The real area id ``value`` names, or None — or ``value`` itself when
+    there is no area registry to ask (an unreadable registry is not a
+    house with no rooms).
+
+    Exact id first, then the area's name, then its aliases, each compared
+    as `_room_word` compares them; the id spelled as words counts as a
+    name too, because a run guessing `laundry_room` for the area `laundry`
+    meant that room. Ties go to the first id in sorted order, so the same
+    guess files under the same room every time.
+    """
+    value = str(value or "").strip()
+    if not value:
+        return None
+    if not areas:
+        return value
+    if value in areas:
+        return value
+    want = _room_word(value)
+    if not want:
+        return None
+    ordered = sorted(areas)
+    for area_id in ordered:
+        if _room_word(areas.get(area_id) or "") == want:
+            return area_id
+    for area_id in ordered:
+        if _room_word(area_id) == want:
+            return area_id
+    for area_id in ordered:
+        for alias in (aliases or {}).get(area_id) or ():
+            if _room_word(alias) == want:
+                return area_id
+    return None
+
+
+def clean_subjects(subjects, *, known_entities=frozenset(),
+                   areas: dict | None = None,
+                   area_aliases: dict | None = None,
+                   strict_entities: bool = True) -> list[str]:
+    """Only the subjects that are things, deduplicated, in order.
+
+    ``strict_entities`` False keeps a well-shaped entity the registry does
+    not list: the repair of stored rows uses it, because a fact about an
+    entity the house has since lost is `reconcile`'s orphan rule to age
+    out, and dropping its subject here would turn it into a house fact.
+    May return an empty list; the caller decides what nothing means.
+    """
+    out: list[str] = []
+    known = known_entities or frozenset()
+    for raw in subjects or ():
+        subject = str(raw or "").strip()[:MAX_SUBJECT]
+        keep = ""
+        if subject == "house":
+            keep = subject
+        elif subject.startswith(KEPT_PREFIXES):
+            head, _, rest = subject.partition(":")
+            keep = subject if rest.strip() else ""
+        elif subject.startswith("area:"):
+            area = resolve_area(subject[5:], areas, area_aliases)
+            keep = f"area:{area}" if area else ""
+        elif entity_shaped(subject):
+            keep = subject if (not known or not strict_entities
+                               or subject in known) else ""
+        elif known and subject in known:
+            # The registry says it is an entity whatever its shape.
+            keep = subject
+        if keep and keep not in out and len(out) < MAX_SUBJECTS:
+            out.append(keep)
+    return out
+
+
 def subject_kind(subject: str) -> str:
     """`entity`, `area`, `person`, `check` or `house` — for the summary."""
     head = str(subject or "").split(":", 1)[0]
     if head in ("area", "person", "check"):
         return head
     return "house" if subject == "house" else "entity"
+
+
+# ---------------------------------------------------------------------------
+# What a fact says: whole words, names rather than registry ids
+# ---------------------------------------------------------------------------
+
+# A 32-character hex run is a device or config-entry id out of the
+# registry, and a fact carrying one is a log line nobody can read. Not
+# preceded by `.` or `_`, so the object id of an entity (`sensor.<hex>`)
+# is left alone.
+_HEX_ID_RE = re.compile(r"(?<![0-9A-Fa-f._])[0-9a-fA-F]{32}(?![0-9A-Fa-f_])")
+SHORT_ID = 8
+_ENDS_WHOLE = ".!?…)]\"'”’"
+
+
+def _looks_cut(text: str) -> bool:
+    """A text exactly at the cap that ends inside a word was sliced there.
+
+    Every writer that capped its line used to slice at `MAX_TEXT`
+    (`_clean_strings` caps a card's `learned` at the same 500), so a text
+    of exactly that length ending on a letter is the slice's work rather
+    than a sentence somebody finished — and the one shape of it that can be
+    recognised after the fact."""
+    return (len(text) >= MAX_TEXT and bool(text)
+            and text[-1].isalnum() and text[-1] not in _ENDS_WHOLE)
+
+
+def settle_text(text: str) -> str:
+    """At most `MAX_TEXT`, ending on a sentence or a word with "…" when it
+    was cut — `textclip.clip`, the one implementation of that."""
+    text = str(text or "").strip()
+    if len(text) > MAX_TEXT:
+        return textclip.clip(text, MAX_TEXT)
+    if _looks_cut(text):
+        return textclip.clip(text, len(text) - 1)
+    return text
+
+
+def name_registry_ids(text: str, *, devices: dict | None = None,
+                      entries: dict | None = None) -> str:
+    """Every 32-hex registry id replaced by what it names, or shortened.
+
+    A device id becomes the device's name and a config entry's id its
+    title; one the registry cannot name keeps its first `SHORT_ID`
+    characters and an ellipsis — enough to search a log for, and not 32
+    characters of a sentence nobody can read."""
+    def swap(match):
+        raw = match.group(0)
+        key = raw.lower()
+        name = (devices or {}).get(key) or (entries or {}).get(key) or ""
+        name = " ".join(str(name).split())
+        return name if name else key[:SHORT_ID] + textclip.ELLIPSIS
+    return _HEX_ID_RE.sub(swap, str(text or ""))
+
+
+def clean_text(text: str, source: str = "", *, devices: dict | None = None,
+               entries: dict | None = None) -> str:
+    """What a fact is filed as. A person's own words (`KEEP_SOURCES`) are
+    only ever cut at a boundary; everything else also has its registry ids
+    named, because a machine's sentence is not anybody's wording to keep."""
+    if str(source or "") not in KEEP_SOURCES:
+        text = name_registry_ids(text, devices=devices, entries=entries)
+    return settle_text(text)
+
+
+def said_key(text: str) -> str:
+    """The id of the LINE a fact was filed from (its normalised text,
+    hashed), kept on the row so a fact whose text was cleaned or folded is
+    still recognised as that line by the queue and the inbox's ✕."""
+    return hashlib.sha256(normalize(text).encode("utf-8", "replace")
+                          ).hexdigest()[:16]
+
+
+MAX_SAID = 8
+
+
+def _said_of(row: dict) -> set[str]:
+    got = row.get("said")
+    return {str(x) for x in got} if isinstance(got, list) else set()
+
+
+# ---------------------------------------------------------------------------
+# A fact about brAIn itself is not a fact about the house
+# ---------------------------------------------------------------------------
+#
+# "brAIn's get_history tool fails because …", "the fix belongs in the
+# add-on": a correction or a run's note saying brAIn's own code is broken
+# was filed as a house fact and outlived the release that fixed it, so
+# every run went on being told the add-on was broken. Every fact now
+# carries the version it was filed under (`version`, off `ADDON_VERSION`,
+# the variable run.sh exports and the panel already reports), and one
+# judged to be about brAIn being broken (`about_brain`) expires once a
+# newer version is running — even a correction, because a correction about
+# brAIn's code is about brAIn and not about the house. A rule
+# (`exception:`/`judgement:`) never expires this way: its lifetime is the
+# person's to end.
+#
+# The judgement is conservative on purpose: the fact must say something is
+# broken (`_BROKEN_RE`) AND be about brAIn — a subject that is one of the
+# `brain` integration's own entities, or text that names brAIn, "the
+# add-on", the MCP server or a snake_case tool (`_NAMES_BRAIN_RE`). Either
+# half alone is a fact about the house: "the ESPHome add-on fails to
+# compile" names another add-on, and "brAIn reads the hall sensor" breaks
+# nothing.
+_NAMES_BRAIN_RE = re.compile(
+    r"\bbrain\b|\bthe add-?on\b|\bmcp\b|\b[a-z]+(?:_[a-z0-9]+)+ tool\b",
+    re.I)
+_BROKEN_RE = re.compile(
+    r"\b(?:broken|breaks|fails?|failed|failing|failure|bugs?|buggy|"
+    r"crash(?:es|ed|ing)?|doesn'?t work|does not work|not working|"
+    r"misreads?|misreports?|returns? (?:the )?wrong|"
+    r"fix belongs)\b", re.I)
+_VERSION_RE = re.compile(r"^\s*v?(\d+(?:\.\d+)*)")
+
+
+def current_version() -> str:
+    """The add-on version this process runs, read at call time."""
+    return str(os.environ.get("ADDON_VERSION") or "").strip()
+
+
+def version_tuple(value) -> tuple | None:
+    """`2.12.1` as (2, 12, 1); None for `dev` or anything unreadable —
+    and an unreadable version is never "older", so nothing expires on it."""
+    found = _VERSION_RE.match(str(value or ""))
+    if not found:
+        return None
+    return tuple(int(p) for p in found.group(1).split("."))
+
+
+def about_brain(text: str, subjects=(), self_entities=frozenset()) -> bool:
+    """A fact saying brAIn's own code is broken (see above)."""
+    body = str(text or "")
+    if not _BROKEN_RE.search(body):
+        return False
+    if any(s in (self_entities or ()) for s in subjects or ()):
+        return True
+    return bool(_NAMES_BRAIN_RE.search(body))
+
+
+def outlived(row: dict, current: str | None = None) -> bool:
+    """A fact about brAIn being broken, filed under an older version than
+    the one running now."""
+    if not row.get("about_brain"):
+        return False
+    predicate = str(row.get("predicate") or "")
+    if predicate.startswith((EXCEPTION_PREFIX, "judgement:")):
+        return False
+    filed = version_tuple(row.get("version"))
+    running = version_tuple(current if current is not None
+                            else current_version())
+    return bool(filed and running and running > filed)
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +619,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         confidence=DEFAULT_CONFIDENCE, run_id: str = "", predicate: str = "",
         expires: str = "", ts: float | None = None,
         extra_subjects=(), about: str = "", finding_key: str = "",
-        near_dedupe: bool = False) -> tuple[dict | None, bool]:
+        near_dedupe: bool = False, said: str = "",
+        brain_fact: bool | None = None) -> tuple[dict | None, bool]:
     """Record one fact. Returns ``(fact, created)``.
 
     A re-add is not a second fact: the id is the subject plus the
@@ -352,18 +629,24 @@ def add(text: str, *, subject: str = "", source: str = "panel",
     still true today — and keeps the `first_seen` it already had, which
     is the date that says how long this house has been like this.
 
-    ``near_dedupe`` widens "the same claim" to a paraphrase of it, and is
-    what the inbox sweep asks for: the Stop-hook extractor reads
-    overlapping windows of one conversation and says the same thing in new
-    words on consecutive turns, and every one of those used to become a
-    row of its own. See `_near_duplicate` for what counts.
+    ``near_dedupe`` widens "the same claim" to a paraphrase of it, and to a
+    newer reading of the same state, and is what the inbox sweep asks for
+    (`_folds`): the newest wording wins and the older row is folded into
+    it, keeping the earliest `first_seen` and a short `folded` provenance
+    list — a person reading the list wants the current sentence, and "how
+    long has this been true" is the first sighting's.
 
     ``about`` and ``finding_key`` ride only on an exception: the report a
     Wrong was pressed on, so a prompt reading the rule can say what it was
     about, and that report's settled-ledger key, so the press that puts the
     report back in play can also take the rule away.
+
+    ``said`` is the queued line this fact came from, when cleaning changed
+    its text (`said_key`); ``brain_fact`` is the caller's judgement of
+    `about_brain` (computed from the text alone when not given). Every row
+    is stamped with the `version` it was filed under.
     """
-    text = str(text or "").strip()[:MAX_TEXT]
+    text = settle_text(text)
     if not text or not writable():
         return None, False
     subject = str(subject or "house").strip()[:MAX_SUBJECT] or "house"
@@ -376,6 +659,12 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             subjects.append(extra)
     key = fact_id(subject, text, predicate if _is_exception_predicate(predicate)
                   else "")
+    said_keys = [said_key(text)]
+    if said and said_key(said) not in said_keys:
+        said_keys.append(said_key(said))
+    if brain_fact is None:
+        brain_fact = about_brain(text, subjects)
+    version = current_version()
     with _locked():
         rows = _load()
         same = None
@@ -383,8 +672,15 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             if row.get("id") == key:
                 same = row
                 break
+        folds: list[dict] = []
         if same is None and near_dedupe and not predicate:
-            same = _near_duplicate(rows, text, subjects)
+            twin = _near_duplicate(rows, text, subjects)
+            if twin is not None and not _foldable(twin):
+                # A person's sentence is never replaced by a paraphrase of
+                # it; the paraphrase is a sighting of what they said.
+                same = twin
+            else:
+                folds = _folds(rows, text, subjects, twin)
         if same is not None:
             row = same
             row["ts"] = max(int(now), int(row.get("ts") or 0))
@@ -402,6 +698,12 @@ def add(text: str, *, subject: str = "", source: str = "panel",
                 row["about"] = str(about)[:MAX_TEXT]
             if finding_key:
                 row["finding_key"] = str(finding_key)[:MAX_TEXT]
+            if version:
+                row["version"] = version[:32]
+            if brain_fact:
+                row["about_brain"] = True
+            kept_said = list(_said_of(row) | set(said_keys))
+            row["said"] = sorted(kept_said)[:MAX_SAID]
             # Seen again is seen again, whatever the reconcile last said:
             # a fact somebody re-teaches is pending until the consolidator
             # has had its say about it a second time.
@@ -428,11 +730,20 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             "first_seen": int(now),
             "run_id": str(run_id or "")[:64],
             "expires": str(expires or "")[:10],
+            "said": sorted(set(said_keys))[:MAX_SAID],
         }
+        if version:
+            entry["version"] = version[:32]
+        if brain_fact:
+            entry["about_brain"] = True
         if about:
             entry["about"] = str(about)[:MAX_TEXT]
         if finding_key:
             entry["finding_key"] = str(finding_key)[:MAX_TEXT]
+        if folds:
+            _absorb(entry, folds)
+            gone = {id(r) for r in folds}
+            rows = [r for r in rows if id(r) not in gone]
         rows.append(entry)
         _write(_prune(rows))
     return dict(entry), True
@@ -496,6 +807,106 @@ def _near_duplicate(rows: list[dict], text: str,
         if share >= NEAR_DUP_SHARE and share > best_share:
             best, best_share = row, share
     return best
+
+
+# A newer READING of the same state is not a second fact. "The freezer
+# sensor is frozen at -18" followed a week later by "the freezer sensor is
+# live again" is one entity's state twice, and keeping both tells every run
+# the sensor is stuck. `is_transient` already names the shape of a health
+# snapshot; this is its other half — the recovery — so a state reading of
+# either kind supersedes an older one about the same entities.
+_RECOVERED_RE = re.compile(
+    r"\b(?:(?:is|are|was|were|has been|have been|came|come|is now|are now)"
+    r"\s+(?:back|live|online|working|responding|reporting|available)"
+    r"(?:\s+again)?|live again|back online|working again|reporting again|"
+    r"responding again|available again|recovered|no longer "
+    r"(?:frozen|stuck|offline|unavailable|dead))\b", re.I)
+MAX_FOLDED = 5
+
+
+def is_state_reading(text: str) -> bool:
+    """A snapshot of how a device is doing: stuck, offline, back again."""
+    body = str(text or "")
+    if _DURABLE_RE.search(body):
+        return False
+    return bool(_TRANSIENT_RE.search(body) or _RECOVERED_RE.search(body))
+
+
+def _foldable(row: dict) -> bool:
+    """May this row be folded away into a newer one? Never something a
+    person said (`KEEP_SOURCES`), never a rule or any other row carrying a
+    predicate (an exception, a judgement, an occasion), never an occasion
+    by source either."""
+    if str(row.get("source") or "") in KEEP_SOURCES + ("occasion",):
+        return False
+    return not str(row.get("predicate") or "")
+
+
+def _entity_set(subjects) -> set[str]:
+    return {s for s in subjects or () if subject_kind(s) == "entity"}
+
+
+def _folds(rows: list[dict], text: str, subjects: list[str],
+           twin: dict | None) -> list[dict]:
+    """The older rows a new fact replaces: its paraphrase (`twin`, already
+    found by `_near_duplicate`) and every older state reading about the
+    same entities when the new fact is a state reading too.
+
+    Deterministic and conservative, `_near_duplicate`'s trade: the
+    superseded row's entity subjects must all be the new fact's, so a
+    reading about the freezer never folds away a reading about the freezer
+    AND the garage door, and nothing `_foldable` refuses is ever taken.
+    The Knowledge tab's Clean up is still where a judgement call goes.
+    """
+    out: list[dict] = []
+    if twin is not None and _foldable(twin):
+        out.append(twin)
+    mine = _entity_set(subjects)
+    if not mine or not is_state_reading(text):
+        return out
+    recovered = is_recovery(text)
+    for row in rows:
+        if any(row is o for o in out) or not _foldable(row):
+            continue
+        theirs = _entity_set(_subjects_of(row))
+        if not theirs or not theirs <= mine:
+            continue
+        older = row.get("text", "")
+        if not is_state_reading(older):
+            continue
+        # A recovery answers every older reading of the thing; a new
+        # fault answers only an older recovery. Two faults about one
+        # device (a low battery, then unavailable) can both be true, and
+        # only a paraphrase folds one of those into the other.
+        if recovered or is_recovery(older):
+            out.append(row)
+    return out
+
+
+def is_recovery(text: str) -> bool:
+    """A state reading saying the thing is working again."""
+    return is_state_reading(text) and bool(_RECOVERED_RE.search(str(text or "")))
+
+
+def _absorb(entry: dict, folds: list[dict]) -> None:
+    """The new row inherits what the older ones knew: the earliest
+    sighting, the lines they were filed from, and a short provenance list
+    naming what was folded into it."""
+    first = min([int(entry.get("first_seen") or entry.get("ts") or 0)]
+                + [int(r.get("first_seen") or r.get("ts") or 0) for r in folds
+                   if int(r.get("first_seen") or r.get("ts") or 0) > 0])
+    entry["first_seen"] = first
+    said = set(entry.get("said") or [])
+    folded = list(entry.get("folded") or [])
+    for row in folds:
+        said |= _said_of(row) | {said_key(row.get("text", ""))}
+        folded.extend(row.get("folded") or [])
+        folded.append({"id": str(row.get("id") or ""),
+                       "source": str(row.get("source") or ""),
+                       "observed": str(row.get("observed") or ""),
+                       "run_id": str(row.get("run_id") or "")})
+    entry["said"] = sorted(said)[:MAX_SAID]
+    entry["folded"] = folded[-MAX_FOLDED:]
 
 
 def _prune(rows: list[dict]) -> list[dict]:
@@ -595,11 +1006,13 @@ def forget_text(text: str, source: str = "") -> int:
     if not key:
         return 0
     source = str(source or "")
+    line = said_key(text)
     with _locked():
         rows = _load()
         kept = [r for r in rows
                 if _is_exception_predicate(r.get("predicate"))
-                or normalize(r.get("text", "")) != key
+                or (normalize(r.get("text", "")) != key
+                    and line not in _said_of(r))
                 or (source and str(r.get("source") or "") != source)]
         if len(kept) == len(rows):
             return 0
@@ -654,6 +1067,11 @@ def forget_matching(request: str) -> int:
 # ---------------------------------------------------------------------------
 
 def _expired(row: dict, now: float) -> bool:
+    if outlived(row):
+        # A fact about brAIn being broken, filed under an older release
+        # than the one running (`outlived`): the bug it describes is the
+        # previous version's, and no run should be told it as true.
+        return True
     stamp = str(row.get("expires") or "")
     if not stamp:
         return False
@@ -882,11 +1300,8 @@ def _room_key(row: dict) -> str:
     under each. A trailing "room" is dropped so the invented spelling
     meets the real one.
     """
-    text = row.get("name") or str(row.get("id") or "")[5:].replace("_", " ")
-    key = normalize(text)
-    if key.endswith(" room") and len(key) > 5:
-        key = key[:-5].strip()
-    return key
+    text = row.get("name") or str(row.get("id") or "")[5:]
+    return _room_word(text)
 
 
 def _fold_rooms(rows: list[dict]) -> list[dict]:
@@ -1196,7 +1611,8 @@ def _fingerprint(path: Path) -> str:
 
 
 def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
-                 areas: dict | None = None, state_file=None) -> int:
+                 areas: dict | None = None, state_file=None,
+                 registry: dict | None = None) -> int:
     """Fold the memory inbox's queued lines into facts. Never raises.
 
     A *reader* of that queue and never a second drain of it: the
@@ -1208,9 +1624,16 @@ def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
 
     Returns how many facts were created (not how many lines were read: a
     line that says what the store already holds is not news).
+
+    ``registry`` is the rest of what the last checks pass saw (`context`):
+    area aliases, device names, config-entry titles and the `brain`
+    integration's own entities — what lets a subject be checked, a room be
+    resolved to its real id and a registry id be named.
     """
     if not writable():
         return 0
+    ctx = context(known_entities=known_entities, areas=areas,
+                  registry=registry)
     state_file = INGEST_STATE_FILE if state_file is None else Path(state_file)
     state = _read_state(state_file)
     seen: dict = state["files"]
@@ -1246,7 +1669,7 @@ def ingest_inbox(inbox_dir, processed_dir, *, known_entities=frozenset(),
                     # A torn line is not a fact, and it must not stop the
                     # rest of the file being read.
                     continue
-                if _ingest_line(obj, known_entities, areas):
+                if _ingest_line(obj, ctx):
                     created += 1
             seen[path.name] = mark
     for name in [n for n in seen if n not in alive]:
@@ -1308,36 +1731,71 @@ def _expiry_for(text: str, ts: float, given: str = "") -> str:
     return ""
 
 
-def _ingest_line(obj, known_entities, areas) -> bool:
+def context(*, known_entities=frozenset(), areas: dict | None = None,
+            registry: dict | None = None) -> dict:
+    """What the filing rules may consult, as one dict with every key.
+
+    ``registry`` is shaped like the panel's `_FACTS_CTX` (``entities``,
+    ``areas``, ``area_aliases``, ``devices``, ``entries``,
+    ``self_entities``); the two named arguments win where given, which is
+    how every caller that predates it goes on working. A key that is
+    missing or not the right type is empty, and empty means "could not
+    ask" to every rule that reads it.
+    """
+    reg = registry if isinstance(registry, dict) else {}
+
+    def as_dict(value) -> dict:
+        return value if isinstance(value, dict) else {}
+
+    entities = known_entities or reg.get("entities") or frozenset()
+    return {
+        "entities": frozenset(entities),
+        "areas": as_dict(areas) or as_dict(reg.get("areas")),
+        "area_aliases": as_dict(reg.get("area_aliases")),
+        "devices": as_dict(reg.get("devices")),
+        "entries": as_dict(reg.get("entries")),
+        "self_entities": frozenset(reg.get("self_entities") or ()),
+    }
+
+
+def _ingest_line(obj, ctx) -> bool:
     if not isinstance(obj, dict):
         return False
-    text = str(obj.get("fact") or "").strip()
-    if not text:
+    raw_text = str(obj.get("fact") or "").strip()
+    if not raw_text:
         return False
-    if text.upper().startswith(FORGET_PREFIX):
+    if raw_text.upper().startswith(FORGET_PREFIX):
         # Still not a fact: the store must not assert the very thing
         # somebody asked to have removed. What changed is that it is no
         # longer ignored — `brain memory forget` used to reach the
         # document and leave the store saying the old thing to every run.
-        forget_matching(text[len(FORGET_PREFIX):].strip())
+        forget_matching(raw_text[len(FORGET_PREFIX):].strip())
         return False
     source = str(obj.get("source") or "panel")
+    text = clean_text(raw_text, source, devices=ctx["devices"],
+                      entries=ctx["entries"])
+    if not text:
+        return False
     person = str(obj.get("person") or "")
     named = str(obj.get("subject") or "").strip()
     also = [str(x).strip() for x in (obj.get("subjects") or [])
             if isinstance(x, str) and str(x).strip()]
-    tagged = tag_subjects(text, known_entities=known_entities,
-                          areas=areas or {}, person=person)
-    if named or also:
+    tagged = tag_subjects(text, known_entities=ctx["entities"],
+                          areas=ctx["areas"], person=person)
+    tagged = clean_subjects(tagged, known_entities=ctx["entities"],
+                            areas=ctx["areas"],
+                            area_aliases=ctx["area_aliases"]) or ["house"]
+    lead = clean_subjects([named] + also, known_entities=ctx["entities"],
+                          areas=ctx["areas"], area_aliases=ctx["area_aliases"])
+    if lead:
         # A writer that knows what its fact is about beats a scan of the
         # sentence: `remember_fact` takes a subject for exactly this, and
         # a tagger that overrode it would make the argument decorative.
         # The scan's `house` fallback goes when a writer named anything —
         # it means "about nothing in particular", which is now untrue.
-        lead = [named] if named else []
-        for extra in also:
-            if extra not in lead:
-                lead.append(extra)
+        # What a writer named is checked first (`clean_subjects`): a
+        # number, a file name or a room no area is called is not a thing
+        # the fact is about, and naming only those is naming nothing.
         tagged = lead + [s for s in tagged if s not in lead and s != "house"]
     stamp = obj.get("ts") or None
     try:
@@ -1350,7 +1808,9 @@ def _ingest_line(obj, known_entities, areas) -> bool:
         run_id=str(obj.get("run_id") or ""),
         predicate=str(obj.get("predicate") or ""),
         expires=_expiry_for(text, when, obj.get("expires") or ""),
-        ts=stamp, near_dedupe=True)
+        ts=stamp, near_dedupe=True,
+        said=raw_text if raw_text != text else "",
+        brain_fact=about_brain(text, tagged, ctx["self_entities"]))
     return created
 
 
@@ -1453,9 +1913,128 @@ def _read_reconcile_state() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+# Bumped whenever `_repair` learns a new rule, so a store filed under the
+# old rules is put right once and not on every pass.
+REPAIR_VERSION = 1
+
+
+def _repair_one(row: dict, ctx: dict, version: str) -> bool:
+    """Put one stored row right under today's filing rules. True if moved.
+
+    The same three rules a new line is filed under: subjects that are
+    things (`clean_subjects`, keeping a well-shaped entity the registry no
+    longer lists — that is the orphan rule's to age out), text that ends on
+    a word with its registry ids named (`clean_text`), and the `version`
+    and `about_brain` stamps. A row that predates the version stamp and is
+    about brAIn being broken is stamped with the version running NOW: the
+    honest "filed no later than this", so it expires at the next upgrade
+    rather than never.
+    """
+    changed = False
+    predicate = str(row.get("predicate") or "")
+    is_rule = _is_exception_predicate(predicate) or predicate.startswith(
+        "judgement:")
+    subjects = _subjects_of(row)
+    if not is_rule:
+        cleaned = clean_subjects(subjects, known_entities=ctx["entities"],
+                                 areas=ctx["areas"],
+                                 area_aliases=ctx["area_aliases"],
+                                 strict_entities=False) or ["house"]
+        if cleaned != subjects or row.get("subject") != cleaned[0]:
+            row["subjects"] = cleaned
+            row["subject"] = cleaned[0]
+            changed = True
+    text = str(row.get("text") or "")
+    better = clean_text(text, str(row.get("source") or ""),
+                        devices=ctx["devices"], entries=ctx["entries"])
+    if better and better != text:
+        said = _said_of(row) | {said_key(text)}
+        row["said"] = sorted(said)[:MAX_SAID]
+        row["text"] = better
+        changed = True
+    if not row.get("about_brain") and about_brain(
+            row.get("text", ""), _subjects_of(row), ctx["self_entities"]):
+        row["about_brain"] = True
+        changed = True
+    if row.get("about_brain") and not row.get("version") and version:
+        row["version"] = version[:32]
+        row["version_assumed"] = True
+        changed = True
+    if changed:
+        row["id"] = fact_id(str(row.get("subject") or "house"),
+                            str(row.get("text") or ""),
+                            predicate if _is_exception_predicate(predicate)
+                            else "")
+    return changed
+
+
+def _repair(rows: list[dict], ctx: dict) -> tuple[list[dict], dict]:
+    """Every row through `_repair_one`, then the folds `add` makes at
+    ingest made over what is already stored. Never raises past a row."""
+    out = {"repaired": 0, "folded": 0}
+    version = current_version()
+    for row in rows:
+        try:
+            if _repair_one(row, ctx, version):
+                out["repaired"] += 1
+        except Exception:  # noqa: BLE001 — one odd row is not the store
+            continue
+    # Oldest first, so the newest of a run of readings is the one kept.
+    order = sorted(range(len(rows)),
+                   key=lambda i: (int(rows[i].get("ts") or 0), i))
+    kept: list[dict] = []
+    gone: set[int] = set()
+    seen_ids: dict[str, dict] = {}
+    for i in order:
+        row = rows[i]
+        rid = str(row.get("id") or "")
+        twin_by_id = seen_ids.get(rid)
+        if twin_by_id is not None and _foldable(twin_by_id):
+            # Two rows the repair turned into one id are one fact.
+            _absorb(row, [twin_by_id])
+            gone.add(id(twin_by_id))
+            kept = [k for k in kept if k is not twin_by_id]
+            out["folded"] += 1
+        elif twin_by_id is not None:
+            _absorb(twin_by_id, [row])
+            gone.add(id(row))
+            out["folded"] += 1
+            continue
+        if _foldable(row):
+            subjects = _subjects_of(row)
+            candidates = [k for k in kept
+                          if set(_subjects_of(k)) & set(subjects)]
+            twin = _near_duplicate(candidates, row.get("text", ""), subjects)
+            folds = _folds(candidates, row.get("text", ""), subjects, twin)
+            if folds:
+                _absorb(row, folds)
+                for f in folds:
+                    gone.add(id(f))
+                kept = [k for k in kept if id(k) not in gone]
+                out["folded"] += len(folds)
+        kept.append(row)
+        seen_ids[str(row.get("id") or "")] = row
+    survivors = [r for r in rows if id(r) not in gone]
+    return survivors, out
+
+
+def _repair_mark(ctx: dict) -> str:
+    """What the last repair could see, so a pass with MORE context (the
+    registry arriving after boot) repairs again and one with the same does
+    not."""
+    return ":".join([str(REPAIR_VERSION),
+                     "a" if ctx["areas"] else "-",
+                     "e" if ctx["entities"] else "-",
+                     "d" if ctx["devices"] or ctx["entries"] else "-",
+                     "s" if ctx["self_entities"] else "-",
+                     current_version() or "?"])
+
+
 def reconcile(document: str | None, inbox_dir, *,
               known_entities=frozenset(), registry_fresh: bool = False,
-              now: float | None = None, force: bool = False) -> dict:
+              now: float | None = None, force: bool = False,
+              registry: dict | None = None,
+              areas: dict | None = None) -> dict:
     """Make the store answer to the document and the registry. Never raises.
 
     ``document`` None is "the document could not be read", and then the
@@ -1468,12 +2047,33 @@ def reconcile(document: str | None, inbox_dir, *,
     the minute and the document changes a few times a day.
     """
     out = {"forgotten": 0, "kept": 0, "dropped": 0, "pending": 0,
-           "orphaned": 0, "skipped": False}
+           "orphaned": 0, "repaired": 0, "folded": 0, "skipped": False}
     if not writable():
         out["skipped"] = True
         return out
     now = time.time() if now is None else float(now)
+    ctx = context(known_entities=known_entities, areas=areas,
+                  registry=registry)
     try:
+        # The store filed under older rules is put right once per rule
+        # set and per amount of context (`_repair_mark`), ahead of the
+        # digest's early return: a store nobody has edited since the
+        # upgrade is exactly the one still carrying the old rows.
+        mark = _repair_mark(ctx)
+        if _read_reconcile_state().get("repair") != mark:
+            with _locked():
+                repaired, moved = _repair(_load(), ctx)
+                if moved["repaired"] or moved["folded"]:
+                    _write(repaired)
+            out["repaired"], out["folded"] = moved["repaired"], moved["folded"]
+            try:
+                state0 = _read_reconcile_state()
+                state0["repair"] = mark
+                atomic_write.write_json(RECONCILE_STATE_FILE, state0)
+            except OSError:
+                # An unwritten mark repairs again next pass, which is
+                # idempotent: the rows are already in their repaired shape.
+                pass
         pending = _pending_keys(inbox_dir) if document is not None else None
         lines = document_lines(document) if document is not None else []
         def inputs_digest() -> str:
@@ -1496,6 +2096,8 @@ def reconcile(document: str | None, inbox_dir, *,
             out["skipped"] = True
             return out
 
+        pending_said = ({said_key(k) for k in pending}
+                        if pending is not None else set())
         index: dict[str, set[int]] = {}
         for i, line in enumerate(lines):
             for tok in _claim_tokens(line):
@@ -1515,7 +2117,7 @@ def reconcile(document: str | None, inbox_dir, *,
                 if pending is not None:
                     key = normalize(row.get("text", ""))
                     was = row.get("curation")
-                    if key in pending:
+                    if key in pending or (_said_of(row) & pending_said):
                         now_is = "pending"
                     elif _reflected(_claim_tokens(row.get("text", "")), index):
                         now_is = "kept"
@@ -1564,6 +2166,7 @@ def reconcile(document: str | None, inbox_dir, *,
         try:
             atomic_write.write_json(RECONCILE_STATE_FILE, {
                 "digest": digest, "at": int(now),
+                "repair": _read_reconcile_state().get("repair", ""),
                 "doc_lines": len(lines) if document is not None
                 else int(state.get("doc_lines") or 0),
                 "last": {k: v for k, v in out.items() if k != "skipped"}})

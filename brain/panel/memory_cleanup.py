@@ -38,6 +38,7 @@ import re
 import time
 
 import atomic_write
+import facts_store
 
 STORE = os.environ.get("BRAIN_MEMORY_CLEANUP_FILE", "/data/memory-cleanup.json")
 
@@ -88,13 +89,41 @@ def offerable_fact(row: dict) -> bool:
     return not any(predicate.startswith(p) for p in KEEP_PREDICATES)
 
 
+# The sentence a fact that has outlived its version is offered under. Code
+# writes it, not the model: the version arithmetic is `facts_store`'s and a
+# reason a person can check is the two version numbers.
+OUTLIVED_WHY = ("A note about brAIn itself being broken, filed under brAIn "
+                "{filed}; brAIn {running} is running now.")
+
+
 def digest(document: str, facts: list[dict]) -> dict:
+    """The lines a review may name.
+
+    A fact about brAIn itself being broken that has outlived the version it
+    was filed under (`facts_store.outlived`) is offered even when a person
+    wrote it: a correction about brAIn's own code is not a fact about the
+    house, and once a newer release runs it is the previous version's bug.
+    It carries ``stale`` with the sentence that says so, and `parse` puts it
+    on the table whether or not the model names it.
+    """
     lines = doc_lines(document)
-    rows = [{"id": f"fact:{f.get('id')}", "text": str(f.get("text") or "")[:MAX_TEXT],
-             "subject": str(f.get("subject") or ""),
-             "source": str(f.get("source") or ""),
-             "observed": str(f.get("observed") or "")}
-            for f in facts if f.get("id") and f.get("text") and offerable_fact(f)]
+    rows = []
+    for f in facts:
+        if not (f.get("id") and f.get("text")):
+            continue
+        stale = facts_store.outlived(f)
+        if not stale and not offerable_fact(f):
+            continue
+        row = {"id": f"fact:{f.get('id')}",
+               "text": str(f.get("text") or "")[:MAX_TEXT],
+               "subject": str(f.get("subject") or ""),
+               "source": str(f.get("source") or ""),
+               "observed": str(f.get("observed") or "")}
+        if stale:
+            row["stale"] = OUTLIVED_WHY.format(
+                filed=str(f.get("version") or "?"),
+                running=facts_store.current_version() or "?")[:MAX_WHY]
+        rows.append(row)
     rows = rows[-MAX_FACTS:]
     return {"doc": lines, "facts": rows}
 
@@ -160,7 +189,10 @@ def frame(dig: dict) -> str:
     for r in dig.get("facts") or []:
         meta = ", ".join(x for x in (r.get("subject"), r.get("source"),
                                      r.get("observed")) if x)
-        parts.append(f"{r['id']}: {r['text']}" + (f"  [{meta}]" if meta else ""))
+        line = f"{r['id']}: {r['text']}" + (f"  [{meta}]" if meta else "")
+        if r.get("stale"):
+            line += "  [already proposed as stale: " + r["stale"] + "]"
+        parts.append(line)
     if not dig.get("facts"):
         parts.append("(none)")
     parts.append("\nReply with the JSON contract and nothing else.")
@@ -192,6 +224,16 @@ def parse(answer: dict | None, dig: dict) -> dict:
         kind, line = offered[rid]
         rows.append({"id": rid, "kind": kind, "text": line["text"],
                      "reason": reason, "why": why})
+    # What has outlived its version is on the table whatever the model
+    # said about it: the arithmetic decided, and a review that happened to
+    # skip it must not leave a dead bug report being read to every run.
+    for line in dig.get("facts") or []:
+        if line.get("stale") and line["id"] not in seen \
+                and len(rows) < MAX_ROWS:
+            seen.add(line["id"])
+            rows.append({"id": line["id"], "kind": "fact",
+                         "text": line["text"], "reason": "stale",
+                         "why": line["stale"]})
     return {"rows": rows, "dropped": dropped}
 
 
