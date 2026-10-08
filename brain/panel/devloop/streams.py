@@ -3,7 +3,9 @@
 A row is ``{"where", "what", "detail", "body"}`` and optionally a ``key``:
 the fingerprint is computed from ``where|what`` unless a key is given,
 which is how a ROLLING stream (one issue rewritten each pass) names its
-one issue. Everything here is pure over what it is handed, so the panel
+one issue, and how an unmet capability is one report however it was
+worded. A row may also carry ``impact`` — counts only (how often, over
+how many days, what the house did) — which `upstream` renders and ranks by. Everything here is pure over what it is handed, so the panel
 decides what to read and a test decides what to hand in.
 
 Nothing here aliases or redacts. That happens once, in `upstream.compose`,
@@ -94,7 +96,9 @@ def wrongs(score_rows: list[dict], settled: list[dict]) -> list[dict]:
             if said else "No reasons were typed."
         out.append({"where": f"Rule {src}",
                     "what": f"marked Wrong {wrong} of {total} times",
-                    "detail": str(r.get("title") or ""), "body": body})
+                    "detail": str(r.get("title") or ""), "body": body,
+                    "impact": {"wrong": wrong, "endings": total,
+                               "confirmed": int(r.get("confirmed") or 0)}})
     return out
 
 
@@ -106,48 +110,109 @@ _CANT_RE = re.compile(
     r"\b(I (?:can(?:no|')t|cannot|am unable to|'m unable to|don'?t have (?:a|any) "
     r"(?:way|tool))|there(?:'s| is) no (?:tool|way) (?:to|for)|not (?:able|possible) to)\b",
     re.IGNORECASE)
+# Where a refusal's sentence ends.
+_SENTENCE_END_RE = re.compile(r"[.!?\n]")
+# One spelling for the same refusal, so "I can't" and "I cannot" are one
+# capability. A short fixed table, applied in order, never a fuzzy match.
+_SAME_WORDS = (
+    (re.compile(r"\bcan ?not\b|\bcan'?t\b"), "cannot"),
+    (re.compile(r"\b(?:am|'m) unable to\b"), "cannot"),
+    (re.compile(r"\bthere'?s\b"), "there is"),
+    (re.compile(r"\bdon'?t\b"), "do not"),
+)
 UNMET_DAYS = 14
 MAX_UNMET = 10
+# A capability is a pattern once brAIn has said it could not do it in this
+# many separate conversations. One conversation asking twice is one need.
+UNMET_MIN_CONVERSATIONS = 2
+
+
+def capability(text: str, match: re.Match) -> str:
+    """The sentence brAIn said it could not do something in, from the
+    refusal on — "Sorry," and whatever led up to it are not the capability."""
+    rest = text[match.start():]
+    end = _SENTENCE_END_RE.search(rest)
+    return " ".join((rest[:end.start()] if end else rest).split())[:200]
+
+
+def capability_key(sentence: str) -> str:
+    """The capability, normalised: case, apostrophes, punctuation and the
+    refusal's own wording folded, so the same thing said twice is one key."""
+    text = str(sentence or "").lower().replace("’", "'")
+    for pattern, word in _SAME_WORDS:
+        text = pattern.sub(word, text)
+    text = re.sub(r"\d+", "#", text)
+    return " ".join(re.sub(r"[^a-z# ]+", " ", text).split())[:160]
 
 
 def unmet(transcript_dir: Path, now: float | None = None) -> list[dict]:
-    """Things a person asked the chat for that brAIn said it could not do.
+    """What brAIn told somebody in the chat it could not do, as
+    capabilities rather than conversations.
 
     Read from the panel's own chat transcripts (the person's conversations,
-    never a machine's), the last UNMET_DAYS of them. The person's words
-    are the row; the reply's sentence is the detail. Both are aliased and
-    scrubbed on their way out like everything else."""
+    never a machine's), the last UNMET_DAYS of them. The ROW is the
+    sentence brAIn answered with, keyed on its normalised form: what the
+    person typed is not read into it, so it never leaves. A capability is
+    filed once it has come up in UNMET_MIN_CONVERSATIONS conversations,
+    with how many times, in how many conversations, over how many days."""
     now = now or time.time()
-    rows: list[dict] = []
+    seen: dict[str, dict] = {}
     try:
         files = sorted(Path(transcript_dir).glob("*.json"),
                        key=lambda p: p.stat().st_mtime, reverse=True)
     except OSError:
-        return rows
+        return []
     for path in files:
         try:
-            if now - path.stat().st_mtime > UNMET_DAYS * 86400:
+            mtime = path.stat().st_mtime
+            if now - mtime > UNMET_DAYS * 86400:
                 continue
             events = json.loads(path.read_text(encoding="utf-8")).get("events") or []
         except (OSError, ValueError, AttributeError):
             continue
-        asked = ""
+        asked = False
         for ev in events:
             if not isinstance(ev, dict):
                 continue
             if ev.get("type") == "user":
-                asked = str(ev.get("text") or "").strip()
+                asked = True
             elif ev.get("type") == "text" and asked:
                 text = str(ev.get("text") or "")
                 m = _CANT_RE.search(text)
-                if m:
-                    sentence = text[max(0, m.start() - 80): m.end() + 160]
-                    rows.append({"where": "Chat", "what": asked[:200],
-                                 "detail": " ".join(sentence.split())})
-                    asked = ""
-            if len(rows) >= MAX_UNMET:
-                return rows
-    return rows
+                if not m:
+                    continue
+                asked = False
+                sentence = capability(text, m)
+                key = capability_key(sentence)
+                if not key:
+                    continue
+                when = ev.get("ts") if isinstance(ev.get("ts"), (int, float)) \
+                    and not isinstance(ev.get("ts"), bool) else mtime
+                row = seen.setdefault(key, {"sentence": sentence, "count": 0,
+                                            "conversations": set(),
+                                            "days": set(), "last": 0.0})
+                row["count"] += 1
+                row["conversations"].add(path.name)
+                row["days"].add(time.strftime("%Y-%m-%d", time.localtime(when)))
+                if when >= row["last"]:
+                    row["last"], row["sentence"] = float(when), sentence
+    rows = []
+    for key, row in seen.items():
+        convs = len(row["conversations"])
+        if convs < UNMET_MIN_CONVERSATIONS:
+            continue
+        last = time.strftime("%Y-%m-%d", time.localtime(row["last"]))
+        rows.append({
+            "key": key, "where": "Chat", "what": row["sentence"],
+            "detail": (f"Said {row['count']} times in {convs} conversations "
+                       f"over {len(row['days'])} days; last on {last}"),
+            "impact": {"count": row["count"], "conversations": convs,
+                       "days": len(row["days"])},
+            "_last": row["last"]})
+    rows.sort(key=lambda r: (-r["impact"]["count"], -r["_last"], r["key"]))
+    for r in rows:
+        r.pop("_last")
+    return rows[:MAX_UNMET]
 
 
 # -------------------------------------------------------------- snapshot
@@ -290,6 +355,6 @@ def context_block(diagnostics: dict, score_rows: list, unmet_rows: list) -> str:
     parts += [f"- {r.get('source')}: {r.get('confirmed', 0)}/{r.get('wrong', 0)}"
               for r in (score_rows or [])[:30]]
     if unmet_rows:
-        parts += ["", "ASKED FOR AND NOT DONE:"]
+        parts += ["", "WHAT BRAIN SAID IT COULD NOT DO, IN MORE THAN ONE CHAT:"]
         parts += [f"- {r['what']}" for r in unmet_rows[:10]]
     return "\n".join(parts)

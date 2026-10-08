@@ -15762,6 +15762,17 @@ async def h_devloop_look(request: web.Request) -> web.Response:
                              status=202)
 
 
+async def h_devloop_unslow(request: web.Request) -> web.Response:
+    """Put a stream the cloud's verdicts slowed back on its own schedule.
+    The name is checked against the catalog; it arrives off the URL."""
+    name = request.match_info["name"]
+    if name not in devloop.STREAMS:
+        return web.json_response({"error": "no such stream"}, status=404)
+    done = await asyncio.to_thread(devloop.upstream.unslow, name)
+    return web.json_response({"unslowed": done,
+                              **await asyncio.to_thread(_devloop_payload)})
+
+
 async def h_devloop_item(request: web.Request) -> web.Response:
     """Exactly what would be sent for one fingerprint — composed by the
     function the sender calls, so the preview cannot disagree with it."""
@@ -21960,6 +21971,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/devloop/test", h_devloop_test)
     app.router.add_post("/api/devloop/run", h_devloop_run)
     app.router.add_post("/api/devloop/look", h_devloop_look)
+    app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
     app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
