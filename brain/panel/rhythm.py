@@ -241,6 +241,10 @@ def _shape(rows: list[dict], field: str) -> dict | None:
     centre = circular_median(minutes)
     if centre is None:
         return None
+    # A median absolute deviation, not a range (`circular_spread`): odd
+    # days — a holiday, a late night — cannot veto the answer; only more
+    # than half the days being over MAX_SPREAD_MIN out can, and that is a
+    # house that genuinely has no usual time.
     spread = circular_spread(minutes, centre)
     if spread > MAX_SPREAD_MIN:
         # No usual time. Saying so is the honest answer; a median here

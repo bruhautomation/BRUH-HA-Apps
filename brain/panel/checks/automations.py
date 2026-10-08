@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from ._util import DAY, House, age_days, join_names, listify, walk, when
 
@@ -100,6 +101,54 @@ def _without_field_hints(config: dict) -> dict:
     return {**config, "fields": trimmed}
 
 
+def _disabled(node) -> bool:
+    # Only a literal false: `enabled` may also be a template, which is
+    # decided at run time and so may still run.
+    return isinstance(node, dict) and node.get("enabled") is False
+
+
+def _enabled_only(obj):
+    """The config with every step marked `enabled: false` taken out.
+
+    A disabled trigger, condition or action never runs, so a missing
+    entity inside one cannot fail — and neither can anything nested in
+    it (a disabled `choose` takes its branches with it).
+    """
+    if isinstance(obj, dict):
+        return {k: _enabled_only(v) for k, v in obj.items()
+                if not _disabled(v)}
+    if isinstance(obj, list):
+        return [_enabled_only(v) for v in obj if not _disabled(v)]
+    return obj
+
+
+_SCENE_ID_RE = re.compile(r"[a-z0-9_]+")
+
+
+def _created_scenes(config) -> set[str]:
+    """`scene.<id>` for every `scene.create` this config makes itself.
+
+    `scene.create` with `scene_id: x` makes `scene.x` at run time, so an
+    automation that snapshots a room and later restores it names a scene
+    that exists only while it runs — not a dead reference. A templated id
+    is not read: what it renders to cannot be known here.
+    """
+    made: set[str] = set()
+    for node in walk(config):
+        if not isinstance(node, dict):
+            continue
+        if (node.get("action") or node.get("service")) != "scene.create":
+            continue
+        scene_id = node.get("scene_id")
+        for key in ("data", "data_template"):
+            data = node.get(key)
+            if isinstance(data, dict) and "scene_id" in data:
+                scene_id = data["scene_id"]
+        if isinstance(scene_id, str) and _SCENE_ID_RE.fullmatch(scene_id):
+            made.add(f"scene.{scene_id}")
+    return made
+
+
 def dead_ref(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -109,10 +158,12 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
         for item in items:
             config = (_without_field_hints(item["config"]) if kind == "Script"
                       else item["config"])
+            config = _enabled_only(config)
             refs = house.entity_refs(config)
             # An automation's own entity id can appear inside its config
             # (a "disable myself" action); that is not a dead reference.
             refs.discard(item["entity_id"])
+            refs -= _created_scenes(config)
             dead = sorted(r for r in refs if not house.exists(r))
             if not dead:
                 continue
