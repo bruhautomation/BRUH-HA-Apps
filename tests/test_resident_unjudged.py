@@ -29,6 +29,7 @@ import asyncio
 import sys
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -210,6 +211,93 @@ class TestARowIsAnnouncedOnce(LoopCase):
         fresh = srv.findings_store.get(row["ts"])
         self.assertEqual((fresh["status"], fresh["triage"]["verdict"]),
                          ("open", "held"))
+
+
+class TestARowThatWaitsLongAfterItWasFiledIsStillLookedAt(LoopCase):
+    """Reports #82: "18 findings are still waiting for a look", the oldest
+    for 328 hours, on a day the first look ran 120 times.
+
+    A row's `ts` is when it was FILED, and three things send an old row
+    back to `triaging` long after that: a held row re-reported with a new
+    detail (`_absorb`), one whose severity rose (`refresh_details`), and the
+    one-time re-look at startup (`migrate_folds`). Every clock that decided
+    whether such a row would ever be looked at read the filing stamp:
+
+      * the stale sweep (`stale_triaging`) called it "left mid-look past
+        the hour" on the very next minute, before any look was due, and
+        showed it under `triage.UNJUDGED`;
+      * the re-offer of silence-surfaced rows (`unjudged_open`) only
+        reached back a day from the FILING, so a row filed a fortnight ago
+        was never offered to a look again.
+
+    So it sat on the list saying nothing had looked at it, for good, while
+    every look ran over everything else."""
+
+    DAY = 86400
+
+    def file_held_then_rereported(self, days: float):
+        srv = self.server
+        row = self.file_check_row()
+        srv.findings_store.record_triage(
+            {row["ts"]: ("held", "it is a cupboard nobody opens")}, "look-0",
+            row["ts"])
+        self.assertEqual(srv.findings_store.get(row["ts"])["status"], "held")
+        later = row["ts"] + days * self.DAY
+        # The check reports it again, worse: back to the first look.
+        with unittest.mock.patch("time.time", return_value=later):
+            srv.findings_store.refresh_details([{
+                "text": row["text"], "detail": "last change 3 Sep, 14 days",
+                "severity": "critical"}])
+        self.assertEqual(srv.findings_store.get(row["ts"])["status"], "triaging")
+        return row, later
+
+    def test_an_old_row_sent_back_to_the_look_reaches_the_look(self):
+        srv = self.server
+        row, later = self.file_held_then_rereported(13)
+        self.looks.append(reply([{"id": 1, "verdict": "ignore",
+                                  "why": "still a cupboard nobody opens"}]))
+        out = self.tick(later)
+        self.assertTrue(out.get("looked"), out)
+        [call] = self.look_calls
+        self.assertIn("pantry contact", call["prompt"])
+        fresh = srv.findings_store.get(row["ts"])
+        self.assertNotEqual(fresh["triage"]["verdict"], "untriaged")
+        self.assertIn("cupboard", fresh["triage"]["reason"])
+        self.assertEqual(srv._waiting_rows([fresh]), [])
+
+    def test_the_hour_runs_from_when_it_started_waiting(self):
+        srv = self.server
+        row, later = self.file_held_then_rereported(13)
+        srv.RESIDENT_STATE["last_look_at"] = later   # no look due yet
+        out = self.tick(later + 61)
+        self.assertEqual(out["surfaced"], 0,
+                         "a row is not stale a minute after it started waiting")
+        self.assertEqual(srv.findings_store.get(row["ts"])["status"], "triaging")
+        self.assertIn(row["ts"], [s.get("finding_ts")
+                                  for s in srv.RESIDENT_PENDING])
+        # …and an hour later, with no look, silence still surfaces it.
+        out = self.tick(later + srv.triage.STALE_S + 120)
+        self.assertEqual(out["surfaced"], 1)
+        self.assertEqual(srv.findings_store.get(row["ts"])["triage"]["reason"],
+                         srv.triage.UNJUDGED)
+
+    def test_a_row_silence_showed_a_fortnight_after_filing_is_offered(self):
+        srv = self.server
+        row = self.file_check_row()
+        shown_at = row["ts"] + 13 * self.DAY
+        srv.findings_store.record_triage(
+            {row["ts"]: ("untriaged", srv.triage.UNJUDGED)}, "", shown_at)
+        srv.RESIDENT_PENDING.clear()
+        srv.RESIDENT_STATE["last_look_at"] = shown_at   # not due: count it
+        asyncio.run(srv._resident_pass(shown_at + 60))
+        self.assertIn(row["ts"], [s.get("finding_ts")
+                                  for s in srv.RESIDENT_PENDING])
+
+    def test_the_count_says_how_long_it_has_waited_not_since_filing(self):
+        srv = self.server
+        row, later = self.file_held_then_rereported(13)
+        fresh = srv.findings_store.get(row["ts"])
+        self.assertLess(srv._waited_s(fresh, later + 60), 3600)
 
 
 class TestFiledRowsAreNotStarved(LoopCase):

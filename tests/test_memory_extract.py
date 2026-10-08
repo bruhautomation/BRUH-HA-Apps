@@ -669,6 +669,186 @@ class TestTheCredentialIsTheCLIsOwn(ExtractCase):
         self.assertEqual(self.cred(), "<unset>|<unset>")
 
 
+# The CLI's process environment cannot be read on the house this was
+# reported from (reports #81). brAIn's AppArmor profile grants
+# `ptrace (trace,read) peer=brain` and not `readby`, and reading another
+# process's /proc/<pid>/environ is a ptrace READ the TRACEE's profile has to
+# allow as well, so the kernel refuses it with EACCES — even between two
+# processes of one user in one profile. Nothing else stands in here: the
+# real script runs, and only that one read is refused the way the kernel
+# refuses it.
+UNREADABLE_ENVIRON = """
+import errno, pathlib, runpy, sys
+_read = pathlib.Path.read_bytes
+def refused(self):
+    name = str(self)
+    if name.startswith("/proc/") and name.endswith("/environ") \\
+            and name != "/proc/self/environ":
+        raise PermissionError(errno.EACCES, "Permission denied", name)
+    return _read(self)
+pathlib.Path.read_bytes = refused
+sys.argv = sys.argv[1:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+CLI_PARENT_UNREADABLE = """
+import os, subprocess, sys
+script, payload, wrapper = sys.argv[1], sys.argv[2], sys.argv[3]
+env = dict(os.environ)
+env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+env.pop("ANTHROPIC_API_KEY", None)
+env["CLAUDE_PID"] = str(os.getpid())
+proc = subprocess.run([sys.executable, "-c", wrapper, script], input=payload,
+                      text=True, env=env, timeout=20)
+sys.exit(proc.returncode)
+"""
+
+
+class TestACredentialTheHookCannotReadIsThePanelsToSupply(ExtractCase):
+    """Reports #81: every extraction still ended `auth` after the 2.17.3
+    fix, beside a day of working chats, cards and Resident looks. The fix
+    read the CLI's credential off /proc/<CLAUDE_PID>/environ, and on an
+    AppArmor host that read is refused — so ``cli_credential`` answered
+    "could not look", the child kept an environment with no credential in
+    it, fell through to the CLI's own .credentials.json, which nothing
+    refreshes while the panel hands every run its token in the
+    environment, and was refused. The hook cannot read the panel's store
+    either (/data/secrets is root's, 0700, and stays that way), so what it
+    does instead is hand the pass to the one process that can: a request
+    on disk the panel drains, running the pass with the credential
+    ``engine.get_auth`` picks for every other run."""
+
+    FAKE = FAKE_CLAUDE_CRED
+
+    def setUp(self):
+        super().setUp()
+        self.requests = Path(self.tmp.name) / "requests"
+
+    def env(self, **extra):
+        env = super().env(**extra)
+        env["BRAIN_EXTRACT_REQUEST_DIR"] = str(self.requests)
+        return env
+
+    def run_unreadable(self, **cli_env):
+        env = self.env(**cli_env)
+        env.pop("CLAUDE_PID", None)
+        proc = subprocess.run(
+            [sys.executable, "-c", CLI_PARENT_UNREADABLE, str(SCRIPT),
+             json.dumps(self.payload()), UNREADABLE_ENVIRON],
+            capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc
+
+    def cred(self, seconds=3.0):
+        path = Path(str(self.argv_log) + ".cred")
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline and not path.exists():
+            time.sleep(0.05)
+        time.sleep(0.1)
+        return path.read_text() if path.exists() else None
+
+    def request_files(self):
+        return sorted(self.requests.glob("*.json")) if self.requests.is_dir() else []
+
+    def test_the_hook_does_not_start_a_pass_it_cannot_sign_in(self):
+        proc = self.run_unreadable(CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-panel-token")
+        self.assertEqual(proc.stdout, "", "a hook prints nothing")
+        self.assertIsNone(
+            self.cred(),
+            "a pass started with no credential falls through to the CLI's "
+            "own .credentials.json and is refused — the `auth` row in the field")
+        files = self.request_files()
+        self.assertEqual(len(files), 1, "the pass is handed to the panel")
+        request = json.loads(files[0].read_text())
+        self.assertEqual(request["session_id"], self.session)
+        self.assertEqual(request["transcript"], str(self.transcript))
+        self.assertNotIn("panel-token", files[0].read_text(),
+                         "no credential is ever written into a request")
+
+    def test_the_panel_runs_it_with_the_credential_it_gives_every_run(self):
+        self.run_unreadable(CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-panel-token")
+        import extract_requests
+        env = self.env(CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-from-get-auth")
+        env.pop("ANTHROPIC_API_KEY", None)
+        started = extract_requests.drain(
+            env=env, prefix=[], script=str(SCRIPT), directory=self.requests)
+        self.assertEqual(started, 1)
+        self.assertEqual(self.request_files(), [], "a request is taken once")
+        self.assertEqual(self.cred(10), "sk-ant-oat01-from-get-auth|<unset>")
+        self.assertEqual(len(self.wait_for_inbox()), 1, "and the fact is filed")
+
+    def test_a_readable_cli_still_hands_its_own_credential_on_directly(self):
+        """Where the read works (no AppArmor, a dev box) nothing changes:
+        the hook's own child, the CLI's own credential, no request."""
+        env = self.env(CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-panel-token")
+        env.pop("CLAUDE_PID", None)
+        proc = subprocess.run(
+            [sys.executable, "-c", CLI_PARENT, str(SCRIPT),
+             json.dumps(self.payload()), "self"],
+            capture_output=True, text=True, timeout=30, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.cred(10), "sk-ant-oat01-panel-token|<unset>")
+        self.assertEqual(self.request_files(), [])
+
+
+class TestTheRequestQueueIsOneShape(unittest.TestCase):
+    """Two processes, two users, one folder: the hook writes as `claude`,
+    the panel drains as root, and neither imports the other."""
+
+    def test_both_halves_spell_the_same_folder(self):
+        import re as _re
+        import extract_requests
+        hook = SCRIPT.read_text()
+        default = _re.search(
+            r'"BRAIN_EXTRACT_REQUEST_DIR", "([^"]+)"', hook).group(1)
+        self.assertEqual(str(extract_requests.REQUEST_DIR), default)
+        self.assertTrue(default.startswith("/data/.brain/"),
+                        "run.sh hands /data/.brain to the claude user; /data is root's")
+        self.assertEqual(Path(extract_requests.SCRIPT).name, SCRIPT.name)
+
+    def test_what_the_panel_will_not_run(self):
+        import extract_requests
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "t.jsonl"
+            transcript.write_text("{}\n")
+            now = time.time()
+            rows = {
+                "a-bad-id.json": {"session_id": "../etc", "transcript": str(transcript)},
+                "b-relative.json": {"session_id": "s1", "transcript": "t.jsonl"},
+                "c-missing.json": {"session_id": "s2", "transcript": str(root / "nope")},
+                "d-stale.json": {"session_id": "s3", "transcript": str(transcript),
+                                 "ts": int(now - extract_requests.MAX_AGE_S - 5)},
+                "e-ok.json": {"session_id": "s4", "transcript": str(transcript),
+                              "ts": int(now)},
+                "f-ok-again.json": {"session_id": "s4", "transcript": str(transcript),
+                                    "cwd": "/config", "ts": int(now)},
+            }
+            for name, body in rows.items():
+                (root / name).write_text(json.dumps(body))
+            (root / "g-garbage.json").write_text("{not json")
+            taken = extract_requests.take(root, now)
+            self.assertEqual([r["session_id"] for r in taken], ["s4"],
+                             "one pass per conversation, nothing malformed or stale")
+            self.assertEqual(taken[0]["cwd"], "/config", "the newest request wins")
+            self.assertEqual(list(root.glob("*.json")), [], "every request is taken once")
+
+    def test_a_tick_is_bounded(self):
+        import extract_requests
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "t.jsonl"
+            transcript.write_text("{}\n")
+            for i in range(extract_requests.MAX_PER_TICK + 3):
+                (root / f"{i:03d}.json").write_text(json.dumps(
+                    {"session_id": f"s{i}", "transcript": str(transcript),
+                     "ts": int(time.time())}))
+            started = extract_requests.drain(
+                env={"PATH": os.environ.get("PATH", "")},
+                prefix=[], script=str(root / "absent.py"), directory=root)
+            self.assertEqual(started, extract_requests.MAX_PER_TICK)
+
+
 class TestTheHookIsRegistered(unittest.TestCase):
     """run.sh writes /config/.claude/settings.local.json at every start, and
     that file is the only route this hook has into the CLI. The heredoc is

@@ -867,7 +867,17 @@ def _is_ancestor(pid: int) -> bool:
     return False
 
 
-def cli_credential() -> dict | None:
+# What `read_cli_credential` can answer, and they are three claims, not two.
+NO_CLI = "no_cli"          # nothing named a CLI that ran this hook
+READ = "read"              # its environment was read (perhaps holding nothing)
+UNREADABLE = "unreadable"  # a CLI ran this hook and its environment is refused
+
+
+def _read_environ(pid: int) -> bytes:
+    return Path(f"/proc/{pid}/environ").read_bytes()
+
+
+def read_cli_credential() -> tuple[str, dict]:
     """The credential the CLI that ran this hook was started with.
 
     Claude Code does not pass CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
@@ -880,21 +890,28 @@ def cli_credential() -> dict | None:
 
     So the hook reads the two variables off the CLI process itself, which
     the CLI names in CLAUDE_PID, and only while that process really is one
-    of this hook's ancestors. Returns ``None`` for "could not look" (the
-    child's environment is then left as it is) and ``{}`` for a CLI that
-    was handed nothing — the CLI authenticating from its own file, which
-    is what the pass then does too.
+    of this hook's ancestors.
+
+    **And on the house that matters the read is refused** (reports #81).
+    /proc/<pid>/environ is a ptrace READ, and AppArmor asks the TRACEE's
+    profile as well as the tracer's: brAIn's grants `ptrace (trace,read)`
+    and not `readby`, so the kernel answers EACCES between two processes of
+    one user in one profile. That is `UNREADABLE`, and it is not `READ` with
+    nothing in it: a CLI that may well hold the credential every other run
+    uses is not one that holds none, and treating the two alike is how the
+    pass went on falling through to a dead file after the fix for exactly
+    that. The caller hands an unreadable case to the panel (`queue_request`).
     """
     raw = os.environ.get("CLAUDE_PID", "").strip()
     if not raw.isdigit():
-        return None
+        return NO_CLI, {}
     pid = int(raw)
     if not _is_ancestor(pid):
-        return None
+        return NO_CLI, {}
     try:
-        data = Path(f"/proc/{pid}/environ").read_bytes()
+        data = _read_environ(pid)
     except OSError:
-        return None
+        return UNREADABLE, {}
     found: dict[str, str] = {}
     for item in data.split(b"\0"):
         name, sep, value = item.partition(b"=")
@@ -903,7 +920,16 @@ def cli_credential() -> dict | None:
         key = name.decode("utf-8", errors="replace")
         if key in CREDENTIAL_VARS and value:
             found[key] = value.decode("utf-8", errors="replace")
-    return found
+    return READ, found
+
+
+def cli_credential() -> dict | None:
+    """``read_cli_credential``'s credential, or ``None`` for "could not
+    look" (the child's environment is then left as it is) and ``{}`` for a
+    CLI that was handed nothing — the CLI authenticating from its own file,
+    which is what the pass then does too."""
+    state, found = read_cli_credential()
+    return found if state == READ else None
 
 
 def child_env() -> dict:
@@ -944,6 +970,52 @@ def spawn(session_id: str, transcript: str, cwd: str) -> None:
                 # The child holds its own descriptor; ours failing to close
                 # leaks one fd in a process about to exit.
                 pass
+
+
+# ---------------------------------------------------------------------------
+# When the hook cannot hand the credential on: the panel runs the pass
+# ---------------------------------------------------------------------------
+
+# A request the panel drains (panel/extract_requests.py spells the same path;
+# tests/test_memory_extract.py reads both ends). Under /data/.brain because
+# run.sh hands that tree to the claude user, which this hook runs as, while
+# /data itself is root's.
+REQUEST_DIR = Path(os.environ.get(
+    "BRAIN_EXTRACT_REQUEST_DIR", "/data/.brain/memory-extract-requests"))
+# A panel that is not draining must not let the folder grow without end; a
+# full queue refuses the new request rather than dropping an older one.
+MAX_REQUESTS = 50
+MAX_PATH_CHARS = 1024
+
+
+def queue_request(session_id: str, transcript: str, cwd: str) -> bool:
+    """Leave the pass for the panel. True when a request is on disk.
+
+    It carries the three things the child is started with and nothing
+    else: never a credential — the panel supplies its own, from
+    ``engine.get_auth``, which is the store every other run is handed and
+    the one this hook cannot read. Written to a scratch name and renamed,
+    because the panel globs ``*.json`` and must never read half of one.
+    """
+    if not safe_id(session_id) or len(transcript) > MAX_PATH_CHARS:
+        return False
+    try:
+        REQUEST_DIR.mkdir(parents=True, exist_ok=True)
+        if len(list(REQUEST_DIR.glob("*.json"))) >= MAX_REQUESTS:
+            return False
+        stamp = f"{int(time.time() * 1000)}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        final = REQUEST_DIR / f"{stamp}.json"
+        scratch = REQUEST_DIR / f".{stamp}.tmp"
+        scratch.write_text(json.dumps({
+            "session_id": session_id,
+            "transcript": transcript,
+            "cwd": str(cwd or "")[:MAX_PATH_CHARS],
+            "ts": int(time.time()),
+        }), encoding="utf-8")
+        os.replace(scratch, final)
+        return True
+    except OSError:
+        return False
 
 
 def learning_enabled() -> bool:
@@ -995,7 +1067,14 @@ def hook() -> int:
         # Their transcripts are a prompt read back, and voice reflects for
         # itself.
         return 0
-    spawn(session_id, transcript, str(payload.get("cwd") or ""))
+    cwd = str(payload.get("cwd") or "")
+    state, _ = read_cli_credential()
+    if state == UNREADABLE and queue_request(session_id, transcript, cwd):
+        # Started here, the pass would run with no credential at all and be
+        # refused on the CLI's own file (reports #81); the panel has the
+        # credential and runs it within the minute.
+        return 0
+    spawn(session_id, transcript, cwd)
     return 0
 
 

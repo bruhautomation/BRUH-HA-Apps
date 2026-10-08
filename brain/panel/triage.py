@@ -153,7 +153,13 @@ def waiting_too_long(row: dict, now: float | None = None) -> bool:
     now = time.time() if now is None else float(now)
     if float(row.get("snoozed_until") or 0) > now:
         return False
-    return int(row.get("ts") or 0) <= now - SHOW_AFTER_S
+    # From when it started WAITING, not when it was filed: a row sent back
+    # to the look a fortnight after it was filed has not waited a fortnight.
+    try:
+        since = int(row.get("triaging_since") or 0)
+    except (TypeError, ValueError):
+        since = 0
+    return (since or int(row.get("ts") or 0)) <= now - SHOW_AFTER_S
 
 
 # The most first looks one day may spend. Nothing else bounded the look
