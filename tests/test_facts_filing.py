@@ -91,7 +91,8 @@ class StoreCase(unittest.TestCase):
         for r in self.rows():
             if needle in r["text"]:
                 return r
-        self.fail(f"no row carrying {needle!r}: {[r['text'] for r in self.rows()]}")
+        raise self.failureException(
+            f"no row carrying {needle!r}: {[r['text'] for r in self.rows()]}")
 
     def store(self, rows):
         facts_store.FACTS_FILE.write_text(json.dumps({"facts": rows}),
