@@ -176,6 +176,15 @@ def history_params(ids, end: dt.datetime, *,
 # purpose: the recorder commits within seconds, so an hour is never the
 # recorder being slow — it is rows that are not there.
 HISTORY_GAP_S = 3600
+# A live `last_changed` that this many entities share to the second is a
+# restart or an integration reload, not a change. Both re-publish every
+# entity they own with a fresh `last_changed` and the state it already
+# had, so the recorder writes nothing new and the logbook has no line —
+# the history did not stop early, the clock on the state was reset. A
+# real cut-off is an entity changing on its own after its history ends,
+# and its own second is its own. (A scene moving six lights at once is
+# six real changes, recorded at that second, so they are never cut.)
+SHARED_CHANGE_MIN = 6
 
 
 def _epoch(value: Any) -> float | None:
@@ -191,6 +200,18 @@ def _epoch(value: Any) -> float | None:
     if when.tzinfo is None:
         when = when.replace(tzinfo=dt.timezone.utc)
     return when.timestamp()
+
+
+def _shared_seconds(live: dict[str, dict] | None) -> set[int]:
+    """The seconds at least `SHARED_CHANGE_MIN` live states changed in."""
+    counts: dict[int, int] = {}
+    for st in (live or {}).values():
+        if not isinstance(st, dict):
+            continue
+        changed = _epoch(st.get("last_changed"))
+        if changed is not None:
+            counts[int(changed)] = counts.get(int(changed), 0) + 1
+    return {sec for sec, n in counts.items() if n >= SHARED_CHANGE_MIN}
 
 
 def history_cutoffs(series: dict[str, list], live: dict[str, dict],
@@ -214,9 +235,13 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
     seconds). An entity with no rows at all is not judged — a recorder
     `exclude` answers that way on purpose — and neither is one whose live
     change is after ``end``, which is a change the window never asked
-    about. Pure, so every caller reads one rule.
+    about. Nor is one whose live change is a second it shares with
+    `SHARED_CHANGE_MIN` or more other states: that is a restart or a
+    reload resetting the clock, which writes no row because nothing
+    changed. Pure, so every caller reads one rule.
     """
     stop = _epoch(end)
+    shared = _shared_seconds(live)
     out: dict[str, dict] = {}
     for eid, rows in (series or {}).items():
         if not isinstance(rows, list) or not rows:
@@ -226,6 +251,8 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
             continue
         changed = _epoch(st.get("last_changed"))
         if changed is None or (stop is not None and changed > stop):
+            continue
+        if int(changed) in shared:
             continue
         last = None
         for row in rows:

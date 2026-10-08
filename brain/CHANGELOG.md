@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.12
+
+- The missing-entity check no longer reads pieces of a template as entities: part of an id being built, a method on a loop variable, or a script field's example or default value. Real references inside a template are still checked. (reports #70, #75)
+- The "skipped because already running" warning stays quiet for an automation set to `max_exceeded: silent`, which says those skips are intended. (reports #77)
+- "Automations undoing each other" no longer reports a hand-over: one rule setting something another rule listens to is a chain, not a fight. (reports #76)
+- A battery that has read 0% for its whole history (a mains-powered device reporting a placeholder level) is no longer reported as flat. A real battery that ran down is still reported. (reports #78)
+- A Home Assistant restart or integration reload no longer makes recorded history look cut off, so the "history stops early" and "frozen sensor" checks agree. (reports #71)
+- A problem you raised in a question and the same problem found by a house check are one finding instead of two. (reports #79)
+- A fact about a moment ("in the last 12 hours", "right now", "today") now expires after two days instead of being kept for good. Ones already stored age out the same way. (reports #66)
+
 ## 2.17.11
 
 - Memory › Knowledge names a fact's subject by its friendly name and room instead of its entity id (the id is in the tooltip), and marks a device Home Assistant no longer has as "removed". (reports #42)

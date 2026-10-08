@@ -405,15 +405,62 @@ class House:
         services = set(self.snap.get("services") or ())
         out: set[str] = set()
         for text in _strings(obj):
-            for domain, obj_id in _ENTITY_RE.findall(text):
+            spans = _template_spans(text)
+            loop_vars = _loop_vars(text) if spans else frozenset()
+            for m in _ENTITY_RE.finditer(text):
+                domain, obj_id = m.group(1), m.group(2)
                 ref = f"{domain}.{obj_id}"
-                if (domain in self.known_domains and domain != "notify"
-                        and ref not in services):
-                    out.add(ref)
+                if (domain not in self.known_domains or domain == "notify"
+                        or ref in services):
+                    continue
+                if spans and _inside(m.start(), spans) and _not_a_ref(
+                        text, m, loop_vars):
+                    continue
+                out.add(ref)
             for domain, obj_id in _STATES_ATTR_RE.findall(text):
                 if domain in self.known_domains:
                     out.add(f"{domain}.{obj_id}")
         return out
+
+
+# Inside a Jinja template a `domain.object` token is not always a reference.
+# `"switch.pump_" ~ zone` is a string being glued into an id the template
+# builds at run time, `zone.split('-')` is a method call on a loop variable
+# that happens to be called after a domain, and `{% for zone in zones %}`
+# makes every `zone.<x>` after it an attribute of that variable. Reporting
+# any of those as a missing entity is `auto.dead_ref` firing on a healthy
+# script, so they are skipped — but only inside `{{ }}`/`{% %}`, because a
+# plain string outside a template that names an entity names an entity, and
+# `states('sensor.x')` inside one still does.
+_TEMPLATE_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
+_FOR_RE = re.compile(r"\{%-?\s*for\s+([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)"
+                     r"\s+in\b")
+# What follows the token: an optional closing quote, then `~` (glued into a
+# longer string) or `(` (called).
+_GLUED_OR_CALLED = re.compile(r"""['"]?\s*~|\s*\(""")
+
+
+def _template_spans(text: str) -> list[tuple[int, int]]:
+    if "{{" not in text and "{%" not in text:
+        return []
+    return [(m.start(), m.end()) for m in _TEMPLATE_RE.finditer(text)]
+
+
+def _inside(pos: int, spans: list[tuple[int, int]]) -> bool:
+    return any(a <= pos < b for a, b in spans)
+
+
+def _loop_vars(text: str) -> frozenset[str]:
+    names: set[str] = set()
+    for m in _FOR_RE.finditer(text):
+        names.update(n.strip() for n in m.group(1).split(","))
+    return frozenset(names)
+
+
+def _not_a_ref(text: str, m: re.Match, loop_vars: frozenset[str]) -> bool:
+    if m.group(1) in loop_vars:
+        return True
+    return bool(_GLUED_OR_CALLED.match(text, m.end()))
 
 
 # Keys whose string value names a service, a trigger kind or a platform —

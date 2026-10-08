@@ -80,6 +80,26 @@ def _label(kind: str, item: dict) -> str:
 # auto.dead_ref — names an entity that does not exist
 # ---------------------------------------------------------------------------
 
+# A script's `fields:` describe what a caller may pass, and the `example`
+# and `default` a field carries are documentation and a fallback for the
+# caller's input — `example: sensor.<prefix>` is a placeholder, never an
+# entity the script reaches. `selector` only filters a picker. A dead id
+# there is not "refers to entities that do not exist".
+_FIELD_HINT_KEYS = ("example", "default", "selector")
+
+
+def _without_field_hints(config: dict) -> dict:
+    fields = config.get("fields")
+    if not isinstance(fields, dict):
+        return config
+    trimmed = {}
+    for name, spec in fields.items():
+        trimmed[name] = ({k: v for k, v in spec.items()
+                          if k not in _FIELD_HINT_KEYS}
+                         if isinstance(spec, dict) else spec)
+    return {**config, "fields": trimmed}
+
+
 def dead_ref(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -87,7 +107,9 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                         ("Script", _scripts(house)),
                         ("Scene", _scenes(house))):
         for item in items:
-            refs = house.entity_refs(item["config"])
+            config = (_without_field_hints(item["config"]) if kind == "Script"
+                      else item["config"])
+            refs = house.entity_refs(config)
             # An automation's own entity id can appear inside its config
             # (a "disable myself" action); that is not a dead reference.
             refs.discard(item["entity_id"])
@@ -346,11 +368,29 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
     return out
 
 
+def _skips_silently(config) -> bool:
+    """The author said dropped triggers are intended.
+
+    `max_exceeded: silent` is the documented way to say "a trigger that
+    arrives while I am still running should be dropped without a word";
+    Core upper-cases the value (`SILENT`), people write it lower-case, and
+    either is the same promise. Telling that author their automation
+    "keeps being skipped" is reporting the setting back to them as a fault.
+    """
+    if not isinstance(config, dict):
+        return False
+    return str(config.get("max_exceeded") or "").strip().lower() == "silent"
+
+
 def already_running(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    configs = {str(c.get("id")): c for c in (snap.get("automations") or [])
+               if isinstance(c, dict) and c.get("id") is not None}
     out = []
     for item in _traced(house):
         if item["kind"] != "Automation":
+            continue
+        if _skips_silently(configs.get(item["key"].split(".", 1)[1])):
             continue
         eid = item["entity_id"]
         rows = _traces_for(snap, item["key"])
@@ -937,16 +977,38 @@ def _automation_entity(house: House, item: dict) -> str:
     return ""
 
 
-def _relays(house: House) -> tuple[set[str], dict[str, set[str]]]:
-    """Which rules a person sets off, and what every rule is triggered by.
+def _sets(config: dict) -> set[str]:
+    """The entity ids an automation's actions name as targets.
+
+    Read through `shadow.would_do`, the one walk of an action list that
+    knows every spelling a target has (and `choose` branches); an area
+    or device target names no entity and adds nothing.
+    """
+    try:
+        import shadow  # noqa: PLC0415 — see `_override_history`
+        calls = shadow.would_do(config)
+    except Exception as exc:  # noqa: BLE001 — no feeds is the old answer
+        log.debug("actions could not be read: %s", exc)
+        return set()
+    return {e for c in calls for e in (c.get("entity_id") or ())
+            if isinstance(e, str) and "." in e}
+
+
+def _relays(house: House) -> tuple[set[str], dict[str, set[str]],
+                                   dict[str, set[str]]]:
+    """Which rules a person sets off, what every rule is triggered by,
+    and what every rule sets.
 
     The first set is the automations whose every trigger is a press: their
-    moves are a person's. The map is what `actions.find_conflicts` needs
-    to see a person one hop further back (a mode picked in the UI). Empty
-    when the configs could not be read, which is the miner's own answer.
+    moves are a person's. The first map is what `actions.find_conflicts`
+    needs to see a person one hop further back (a mode picked in the UI);
+    the second is what lets it see one rule handing over to another (a
+    rule setting the selector the next rule is triggered by). Empty when
+    the configs could not be read, which is the miner's own answer.
     """
     pressed: set[str] = set()
     watches: dict[str, set[str]] = {}
+    feeds: dict[str, set[str]] = {}
     for item in _automations(house):
         eid = _automation_entity(house, item)
         if not eid:
@@ -957,7 +1019,10 @@ def _relays(house: House) -> tuple[set[str], dict[str, set[str]]]:
         seen = {w for t in trigs for w in _watched(house, t) if "." in w}
         if seen:
             watches[eid] = seen
-    return pressed, watches
+        sets = _sets(item["config"])
+        if sets:
+            feeds[eid] = sets
+    return pressed, watches, feeds
 
 
 def _conflicts(snap: dict, house: House) -> list[dict]:
@@ -971,12 +1036,13 @@ def _conflicts(snap: dict, house: House) -> list[dict]:
     moves = mined.get("actions")
     if not moves:
         return rows
-    pressed, watches = _relays(house)
+    pressed, watches, feeds = _relays(house)
     if not pressed and not watches:
         return rows
     try:
         import actions  # noqa: PLC0415 — see `_override_history`
-        return actions.find_conflicts(moves, relayed=pressed, triggers=watches)
+        return actions.find_conflicts(moves, relayed=pressed, triggers=watches,
+                                      feeds=feeds)
     except Exception as exc:  # noqa: BLE001 — the miner's answer stands
         log.debug("conflicts could not be re-read: %s", exc)
         return rows
