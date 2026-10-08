@@ -96,12 +96,12 @@ STREAMS: dict[str, dict] = {
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": False, "default_hours": 168},
     "look": {
-        "label": "Look at…: investigations you ask for (one Claude run each)",
+        "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": True, "default_hours": 0},
 }
 # The schedule choices, in hours. 0 is "only when asked" — Run now, the
-# Look at box and `brain devloop` still work.
+# What do you want to fix? box and `brain devloop` still work.
 HOURS_CHOICES = (0, 1, 3, 6, 12, 24, 168)
 # The two caps that keep an unattended loop from being an unattended bill
 # or an unattended flood. A cap REFUSES rather than queueing: the next day

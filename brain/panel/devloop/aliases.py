@@ -81,13 +81,15 @@ MIN_NAME = 3
 GENERIC_WORDS = frozenset("""
     absolute address alarm apparent aqi atmospheric auto battery brain
     bed brightness button carbon charge charging child cloud cold
-    connected connectivity consumption current daily data dioxide distance
+    connected connectivity consumption current daily data device devices
+    dioxide distance entities entity everything
     door duration enabled energy error factor filter firmware frequency
     garage gas heat high humidity identify illuminance indicator ip
     irradiance job last led level link linkquality lock low manual max
     min mode moisture monetary monoxide motion moving nozzle occupancy
     online opening overheating overloaded ozone ph plug power precipitation
     presence pressure print problem production progress rate reboot
+    report reporting reports
     remaining reset restart rssi running safety seen setpoint signal size
     smoke sound speed state status strength sync tamper target temperature
     time today total update uptime version vibration voltage volume water
