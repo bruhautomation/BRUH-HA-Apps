@@ -620,8 +620,17 @@ class OnboardingRecommendCase(PanelCase):
         engine.run_claude = run_claude
         ha_data.collect_orientation = orientation
         ha_data.collect_bundle = bundle
+        # save_recommendations writes the onboarding state; at its default
+        # that is /data/onboarding.json, writable here only as root and only
+        # ever "passing" by inheriting another test file's patch.
+        self._onboarding_tmp = tempfile.TemporaryDirectory()
+        self._old_state_file = self.server.onboarding.STATE_FILE
+        self.server.onboarding.STATE_FILE = (
+            Path(self._onboarding_tmp.name) / "onboarding.json")
 
     def tearDown(self):
+        self.server.onboarding.STATE_FILE = self._old_state_file
+        self._onboarding_tmp.cleanup()
         (self.engine.get_auth, self.engine.run_analyst, self.engine.run_claude,
          self.ha_data.collect_orientation,
          self.ha_data.collect_bundle) = self._patched

@@ -684,6 +684,13 @@ def test_the_decision_reaches_the_argv_of_the_next_worker(tmp_path, monkeypatch)
     flag says nothing at all about the flag."""
     mod = load_pool_module(tmp_path, monkeypatch)
     pool = mod.Pool()
+    # Every request here is answered by a cold spawn on purpose: the spare
+    # the pool warms afterwards on a daemon thread writes its own argv line
+    # while this test reads the log's last line, and a line read half
+    # written has no flag in it — which read as the decision not reaching
+    # the argv, one run in four under load. Cold spawns are what the test
+    # asks for anyway ("what the decision governs is the next SPAWN").
+    pool._spawn_spare = lambda profile: None
     try:
         pool.handle(make_request("hello", conv="withflag"))
         first = argv_log(tmp_path)[-1]

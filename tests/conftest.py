@@ -15,6 +15,9 @@ wants a CLI still sets the variable itself; this only fills it when empty.
 """
 
 import os
+from pathlib import Path
+
+import warnings
 
 import pytest
 
@@ -149,3 +152,92 @@ def pytest_collection_modifyitems(config, items):
             nodeid = nodeid[len("tests/"):]
         if _is_slow(nodeid):
             item.add_marker(pytest.mark.slow)
+
+
+# ---------------------------------------------------------------------------
+# A test that writes to the real /data is reported, and BRAIN_STRICT_DATA=1
+# makes it fail.
+#
+# Forty-eight panel modules default a path to /data at import time, and a
+# test that forgets to point one at tmp_path writes there. On a root machine
+# (a Claude Code cloud session, a developer's container) the write succeeds
+# and the test passes; on CI's unprivileged runner /data cannot be created
+# and the same test is a PermissionError. The pattern stayed hidden for as
+# long as the suite ran serially: one early test file patched a module's path
+# and never restored it, and every later test in the process wrote to that
+# tmp path by inheritance. Under xdist the inheriting file lands on another
+# worker and the default comes back, which is what turned six tests red on
+# the first parallel CI run. So the real /data is watched around every test,
+# shallowly (its entries, their sizes and mtimes), and a test that changed it
+# is named with the remedy, whichever machine it ran on.
+#
+# Named as a WARNING by default rather than a failure, because the first
+# strict run counted 579 such tests: nearly all of them through the panel's
+# accounting side channels (the run journal, the usage nudge, the decision
+# trail, run_sources, the delivery ledger), which every route writes and
+# which are wrapped to never raise, so on CI the write fails silently and
+# the test passes. Failing 579 tests over a path nobody asked them about
+# would be a red suite with no change in what it proves. The honest fix is
+# one data root the panel reads (a BRAIN_DATA_DIR every one of the 48
+# modules honours, set here before any of them is imported); until then the
+# count is on every run's warnings summary, `BRAIN_STRICT_DATA=1` turns each
+# into a failure, and the six paths that are NOT wrapped (the knowledge
+# ledger, the onboarding state, the card token) are patched in the tests
+# that reach them.
+# ---------------------------------------------------------------------------
+
+_REAL_DATA = Path("/data")
+
+
+class RealDataWrite(pytest.PytestWarning):
+    """A test changed the real /data (see the note above)."""
+
+
+def _data_snapshot():
+    if not _REAL_DATA.exists():
+        return None
+    out = {}
+    try:
+        for entry in os.scandir(_REAL_DATA):
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            out[entry.name] = (st.st_size, st.st_mtime_ns)
+            if entry.is_dir(follow_symlinks=False):
+                try:
+                    for sub in os.scandir(entry.path):
+                        try:
+                            sst = sub.stat(follow_symlinks=False)
+                        except OSError:
+                            continue
+                        out[entry.name + "/" + sub.name] = (sst.st_size, sst.st_mtime_ns)
+                except OSError:
+                    continue
+    except OSError:
+        return None
+    return out
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_the_real_data_dir():
+    before = _data_snapshot()
+    yield
+    after = _data_snapshot()
+    if before == after:
+        return
+    if before is None:
+        changed = sorted((after or {}).keys()) or ["/data (created)"]
+    else:
+        changed = sorted(k for k in set(before) | set(after or {})
+                         if before.get(k) != (after or {}).get(k))
+    message = (
+        "this test wrote to the real /data: " + ", ".join(changed[:8])
+        + (" …" if len(changed) > 8 else "")
+        + ". Point the module's path at tmp_path (its *_FILE / *_DIR constant or"
+        " BRAIN_* variable) in this test's own setUp; passing by inheriting"
+        " another test file's patch is what breaks under xdist and on CI,"
+        " where /data cannot be created.")
+    if os.environ.get("BRAIN_STRICT_DATA") == "1":
+        pytest.fail(message, pytrace=False)
+    warnings.warn(message, RealDataWrite, stacklevel=1)
