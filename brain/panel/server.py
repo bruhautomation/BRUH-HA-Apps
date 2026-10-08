@@ -16213,8 +16213,19 @@ def _ending_undo(finding: dict, spec: dict, fact: str, payload: dict) -> str:
 def _exception_rule(finding: dict) -> tuple[str, list[str]]:
     source = str(finding.get("source") or "")
     if source.startswith("check:"):
+        check_id = source[len("check:"):]
         entity_id = str(finding.get("entity_id") or "")
-        return (source[len("check:"):], [entity_id] if entity_id else [])
+        subjects = [entity_id] if entity_id else []
+        # A check whose row is about more than one entity (two rules
+        # undoing each other) says so in its catalog entry, and the
+        # exception goes under every one the row's evidence names — the
+        # check asks about each, so whichever the next row is filed under,
+        # the answer is read.
+        if entity_id and (checks.get_check(check_id) or {}).get("except_evidence"):
+            for extra in _finding_subjects(finding)[1:]:
+                if extra not in subjects:
+                    subjects.append(extra)
+        return (check_id, subjects)
     if source == findings_store.RESIDENT_SOURCE:
         return "resident", _finding_subjects(finding)
     return "", []

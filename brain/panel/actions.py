@@ -442,8 +442,42 @@ def find_overrides(actions: list[dict],
     return out
 
 
+# How soon after a person moves what an automation is triggered by that
+# automation's own move still counts as theirs. A rule answers its trigger
+# in a second or two; this is room for a slow hub, not for a `delay:`.
+RELAY_S = 15.0
+
+
+def _by_a_person(action: dict, relayed, triggers, last_on) -> bool:
+    """Whether this move is a person's — directly, or relayed through a rule.
+
+    A rule that a person sets off by pressing something (a scene
+    controller's button, a remote, a tag) is the person acting with an
+    automation in between, so its move is theirs whatever the logbook's
+    context says (``relayed``: the caller read that off the configs). And
+    a rule that answers within `RELAY_S` of a person changing the thing it
+    is triggered by (``triggers``: automation → the entities its triggers
+    watch) — a room mode somebody picked in the UI — is the same one hop
+    further back. A rule answering a rule is still a rule.
+    """
+    cause = action.get("cause")
+    if cause in PERSON_CAUSES:
+        return True
+    if cause not in AUTOMATED:
+        return False
+    by = action.get("by") or ""
+    if by in relayed:
+        return True
+    for watched in triggers.get(by) or ():
+        seen = last_on.get(watched)
+        if seen and seen[1] and 0 <= action["ts"] - seen[0] <= RELAY_S:
+            return True
+    return False
+
+
 def find_conflicts(actions: list[dict],
-                   window_s: float = OVERRIDE_WINDOW_S) -> list[dict]:
+                   window_s: float = OVERRIDE_WINDOW_S,
+                   relayed=(), triggers: dict | None = None) -> list[dict]:
     """Every time one automation put back what another had just done.
 
     Deliberately not an override. A person undoing a rule is evidence the
@@ -460,12 +494,22 @@ def find_conflicts(actions: list[dict],
     and one move is undone once. The fourth is new — **an automation
     cannot conflict with itself**, or a rule that sets a light on and
     then off within one run reports itself as its own opponent.
+
+    ``relayed`` and ``triggers`` are what the miner cannot see from the
+    logbook alone (see `_by_a_person`): a move a person made through a
+    rule ends the pairing exactly as a press on the entity itself does.
+    Both default to nothing, which is the miner's own answer.
     """
+    relayed = set(relayed or ())
+    triggers = triggers or {}
     last_auto: dict[str, dict] = {}
+    last_on: dict[str, tuple[float, bool]] = {}
     out: list[dict] = []
     for action in sorted(actions, key=lambda a: a["ts"]):
         eid = action["entity_id"]
-        if action["cause"] not in AUTOMATED:
+        person = _by_a_person(action, relayed, triggers, last_on)
+        last_on[eid] = (action["ts"], person)
+        if person or action["cause"] not in AUTOMATED:
             # A person's move is not a conflict, and it ends the pairing:
             # what follows answers the person, not the earlier rule.
             last_auto.pop(eid, None)

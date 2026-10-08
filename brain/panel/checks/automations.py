@@ -878,6 +878,110 @@ def overridden(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# What a person pressing something looks like from inside an automation's
+# trigger. Event types a button, a remote, a tag or a phone's notification
+# action fires on the bus (Z-Wave Central Scene arrives as a value
+# notification), the integration trigger platforms that carry the same
+# thing, and the words a device trigger's `type` uses for a press
+# (`remote_button_short_press`, `event.value_notification.central_scene`).
+# A guess made where being wrong is cheap — a rule wrongly read as a
+# person's hand costs one conflict nobody was told about, and the other way
+# round is a card about somebody's wall switch disagreeing with them.
+PRESS_EVENT_TYPES = frozenset({
+    "zwave_js_value_notification", "zha_event", "deconz_event", "hue_event",
+    "lutron_caseta_button_event", "shelly.click", "homematic.keypress",
+    "tag_scanned", "ios.action_fired", "mobile_app_notification_action",
+})
+PRESS_PLATFORMS = frozenset({"zwave_js.value_notification", "zwave_js.event",
+                             "tag"})
+PRESS_DEVICE_WORDS = ("press", "click", "central_scene", "scene_activation",
+                      "button", "remote_")
+# Entities whose state changing IS somebody pressing. An `event` entity is
+# a button, a doorbell or a motion event (EventDeviceClass); the last is a
+# sensor, not a hand.
+PRESS_DOMAINS = frozenset({"event", "input_button"})
+
+
+def _is_press(house: House, trig: dict) -> bool:
+    kind = _trigger_kind(trig)
+    if kind in PRESS_PLATFORMS:
+        return True
+    if kind == "event":
+        types = {str(t) for t in listify(trig.get("event_type"))}
+        return bool(types) and types <= PRESS_EVENT_TYPES
+    if kind == "device":
+        said = (str(trig.get("type") or "") + " "
+                + str(trig.get("subtype") or "")).lower()
+        if any(word in said for word in PRESS_DEVICE_WORDS):
+            return True
+    watched = _watched(house, trig)
+    if not watched:
+        return False
+    for eid in watched:
+        if eid.split(".", 1)[0] not in PRESS_DOMAINS:
+            return False
+        attrs = (house.states.get(eid) or {}).get("attributes") or {}
+        if str(attrs.get("device_class") or "") == "motion":
+            return False
+    return True
+
+
+def _automation_entity(house: House, item: dict) -> str:
+    if item["entity_id"]:
+        return item["entity_id"]
+    cid = item["id"]
+    for eid, st in house.states.items():
+        if (eid.startswith("automation.") and cid
+                and str((st.get("attributes") or {}).get("id") or "") == cid):
+            return eid
+    return ""
+
+
+def _relays(house: House) -> tuple[set[str], dict[str, set[str]]]:
+    """Which rules a person sets off, and what every rule is triggered by.
+
+    The first set is the automations whose every trigger is a press: their
+    moves are a person's. The map is what `actions.find_conflicts` needs
+    to see a person one hop further back (a mode picked in the UI). Empty
+    when the configs could not be read, which is the miner's own answer.
+    """
+    pressed: set[str] = set()
+    watches: dict[str, set[str]] = {}
+    for item in _automations(house):
+        eid = _automation_entity(house, item)
+        if not eid:
+            continue
+        trigs = _triggers(item["config"])
+        if trigs and all(_is_press(house, t) for t in trigs):
+            pressed.add(eid)
+        seen = {w for t in trigs for w in _watched(house, t) if "." in w}
+        if seen:
+            watches[eid] = seen
+    return pressed, watches
+
+
+def _conflicts(snap: dict, house: House) -> list[dict]:
+    """The miner's conflicts, with a person's hand through a rule taken out.
+
+    The same `actions.find_conflicts` the miner ran — one implementation of
+    the window and the must-differ rule — given what only the configs know.
+    """
+    mined = snap.get("actions") or {}
+    rows = mined.get("conflicts") or []
+    moves = mined.get("actions")
+    if not moves:
+        return rows
+    pressed, watches = _relays(house)
+    if not pressed and not watches:
+        return rows
+    try:
+        import actions  # noqa: PLC0415 — see `_override_history`
+        return actions.find_conflicts(moves, relayed=pressed, triggers=watches)
+    except Exception as exc:  # noqa: BLE001 — the miner's answer stands
+        log.debug("conflicts could not be re-read: %s", exc)
+        return rows
+
+
 def conflicting(snap: dict, now: float) -> list[dict]:
     """Two automations that keep undoing each other.
 
@@ -906,9 +1010,9 @@ def conflicting(snap: dict, now: float) -> list[dict]:
     the order Core ran them in. A one-way pair slower than that is a
     sequence somebody built and says nothing, whatever the count.
     """
-    mined = snap.get("actions") or {}
+    house = House(snap)
     pairs: dict[tuple, dict] = {}
-    for c in mined.get("conflicts") or []:
+    for c in _conflicts(snap, house):
         first, second = c.get("first") or "", c.get("second") or ""
         if not first or not second:
             continue
@@ -931,15 +1035,19 @@ def conflicting(snap: dict, now: float) -> list[dict]:
             p["entities"].append(c["entity_id"])
         p["last"] = max(p["last"], c.get("ts") or 0.0)
 
-    house = House(snap)
     out = []
     for key, p in sorted(pairs.items()):
         if p["count"] < CONFLICT_MIN:
             continue
         if len(p["ways"]) < 2 and not p["raced"]:
             continue
-        subject = key[0] if key[0].startswith("automation.") else ""
-        if subject and not house.should_report(subject, "auto.conflict"):
+        rules = [k for k in key if k.startswith("automation.")]
+        subject = rules[0] if rules else ""
+        # A Wrong is written under BOTH rules (the evidence below), and
+        # asked of both: the row is filed under whichever sorts first, so
+        # asking only that one let the rule somebody keeps answering about
+        # come back under every new partner it was filed beside.
+        if any(not house.should_report(r, "auto.conflict") for r in rules):
             continue
         a, b = (p["names"].get(k, k) for k in key)
         out.append({
@@ -958,6 +1066,8 @@ def conflicting(snap: dict, now: float) -> list[dict]:
             "severity": "warning",
             "fixable": False,
             "entity_id": subject,
+            "evidence": [{"entity": r, "value": "one of the two rules",
+                          "when": ""} for r in rules],
         })
     return out
 
@@ -988,6 +1098,9 @@ CHECKS = [
      "needs": ("registry", "automations"), "run": blueprint_missing},
     {"id": "auto.conflict",
      "title": "Automations undoing each other",
+     # A Wrong is about the pair, so it is written under every rule the
+     # row's evidence names, not only the one the row is filed under.
+     "except_evidence": True,
      "needs": ("actions",), "run": conflicting},
     {"id": "auto.overridden", "title": "Automations a person keeps undoing",
      "needs": ("actions",), "run": overridden},

@@ -7,6 +7,8 @@ no longer there.
 """
 from __future__ import annotations
 
+import re
+
 import numfmt
 
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
@@ -57,6 +59,34 @@ FROZEN_SKIP_CLASSES = frozenset({
     "battery", "signal_strength", "monetary", "enum", "aqi",
     "timestamp", "date", "duration",
 })
+# A device class says what is measured, not that it is MEASURED. An
+# estimate integration publishes one figure for a current or a power by
+# design — the plug's rated draw, a figure somebody typed in — under the
+# same class a real meter carries, and rewrites the state every day with
+# the same number, so it reads exactly like a sensor stuck on its last
+# value. What gives it away is that it says so: the name calls it an
+# estimate, a nominal or rated figure, or the integration reports a fixed
+# calculation. Whole words only, so a name that merely contains one is
+# not read as one. A name gate, made in the direction FROZEN_SKIP_CLASSES
+# makes its own: a stuck sensor called "estimated" costs one finding.
+FIXED_FIGURE_WORDS = frozenset({"estimate", "estimated", "nominal", "rated",
+                                "assumed", "configured"})
+FIXED_MODE_ATTRS = ("calculation_mode", "strategy")
+
+
+def states_a_fixed_figure(house: House, eid: str, attrs: dict) -> bool:
+    """Whether a reading says it is an estimate or a set figure, not a meter."""
+    reg = house.registry.get(eid) or {}
+    names = (attrs.get("friendly_name"), reg.get("name"),
+             reg.get("original_name"), eid.split(".", 1)[-1])
+    for name in names:
+        words = set(re.split(r"[^a-z0-9]+", str(name or "").lower()))
+        if words & FIXED_FIGURE_WORDS:
+            return True
+    return any(str(attrs.get(key) or "").lower() == "fixed"
+               for key in FIXED_MODE_ATTRS)
+
+
 # And a cap, for `base.unusual`'s reason. More than a handful of sensors
 # frozen at once is not a house with a handful of broken sensors — it is
 # this rule having stopped describing the house (a recorder purge, an
@@ -535,6 +565,8 @@ def frozen(snap: dict, now: float) -> list[dict]:
         # sensor, and nor is a rated capacity or a device count.
         device_class = str(attrs.get("device_class") or "")
         if not device_class or device_class in FROZEN_SKIP_CLASSES:
+            continue
+        if states_a_fixed_figure(house, eid, attrs):
             continue
         days = [r for r in rows if isinstance(r, dict)
                 and r.get("min") is not None and r.get("max") is not None]
