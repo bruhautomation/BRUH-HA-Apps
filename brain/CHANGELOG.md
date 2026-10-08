@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.22
+
+- A finding's "brAIn checked" line no longer repeats the finding's own words when the look that wrote it reached no conclusion; it shows nothing there instead. (reports #100)
+- A reason typed in the Repairs dialog that says why a report does not apply (for example "it's mains powered") is recorded as Not a problem with a rule for that device, never as "I've fixed it", so the check stops reporting it. (reports #110)
+- A card's earlier findings are shown to its next run, and one the fresh data no longer supports is taken off the list. It comes back if a later run reports it again. (reports #107)
+
 ## 2.17.21
 
 - Health no longer says everything is running while voice is down: a worker pool whose process is alive but whose main loop has stopped now reads `failed`, and the reason line no longer vouches for processes brAIn could not see. (reports #98)

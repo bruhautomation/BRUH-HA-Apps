@@ -4219,11 +4219,15 @@ async def _generate(insight_id: str) -> None:
                 # No previous run to diff against — which is what a first generation
                 # for this card looks like.
                 pass
+        # This card's own live rows, shown apart for the run to answer
+        # for: reported again if the data still shows them, cleared below
+        # if a successful run was shown one and did not.
+        own = findings_store.own_reports(cat["id"])
         framing = dict(question=question, feedback=feedback,
                        hypothesis_budget=hypotheses.budget(),
                        pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
-                       findings=findings_store.prompt_block(),
+                       findings=findings_store.prompt_block(own=own),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
@@ -4319,6 +4323,19 @@ async def _generate(insight_id: str) -> None:
             {**f, "source": cat["id"], "source_title": filed_under,
              "run_id": run_id}
             for f in model_findings]))
+        # And what it was shown as its own and did not report again: the
+        # data no longer shows it, so it leaves the list the way a check's
+        # row does (`clear_resolved`) — no memory line, no ledger entry.
+        # Only here, after a run that answered: a failed one raised above.
+        if own:
+            cleared = findings_store.clear_unreported(
+                cat["id"], [r["ts"] for r in own],
+                {findings_store.normalize(str(f.get("text") or ""))
+                 for f in model_findings},
+                {str(f.get("entity_id") or "") for f in model_findings})
+            if cleared:
+                log.info("%s: %d finding(s) it no longer reports cleared",
+                         insight_id, len(cleared))
         opportunities = await _offer_card_opportunities(
             insight_id, _card_opportunities(obj.get("opportunities")),
             previous_opportunities)
@@ -7723,7 +7740,8 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                    pending=hypotheses.prompt_block(),
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
-                   findings=findings_store.prompt_block(),
+                   findings=findings_store.prompt_block(
+                       own=findings_store.own_reports(cat_id)),
                    house=await _house_prompt_block())
 
     # The named blocks, in the order `_framing` puts them, each with what
@@ -18729,8 +18747,12 @@ async def _repairs_routes(finding: dict, note: str,
 
     The box sits under "Not a problem", so a press there is a Wrong unless
     the words plainly say otherwise — "remind me tomorrow" is a defer, "I
-    already replaced it" is done. What it may not do is end nothing: a
-    reply read as only a fact still ends the case the way the press meant.
+    will do it at the weekend" is the to-do list. What they may not say is
+    "fixed" (`interpret.SURFACE_ENDINGS`): the dialog's own "I've fixed it"
+    is beside this box, and a reason why the report is wrong read as a fix
+    settled it with no exception on the rule, so it came back. Nor may they
+    end nothing: a reply read as only a fact still ends the case the way
+    the press meant.
     """
     ended = False
     for route in routes:
@@ -18750,8 +18772,9 @@ async def _repairs_routes(finding: dict, note: str,
                 await _snooze_case(finding, None)
                 ended = True
             else:
-                spec = FINDING_VERBS["done" if ending == "done" else "wrong"]
-                await _end_finding(finding, spec,
+                # Only a Wrong is left (`interpret.SURFACE_ENDINGS`): the
+                # press, with the words as its reason.
+                await _end_finding(finding, FINDING_VERBS["wrong"],
                                    route.get("note") or note)
                 ended = True
         elif kind == "defer" and not ended:
