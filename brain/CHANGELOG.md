@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.4
+
+- "Automations undoing each other" no longer reports a rule you set off by pressing a wall button, a scene controller or a remote (or a room mode you picked yourself) as fighting another rule: that is you acting, so it is treated the way pressing the light itself is. And answering Ignore on one of these now stops that pair being reported again, whichever of the two rules the next card is filed under. (reports #21)
+- "Sensors frozen on one value" no longer reports a sensor that says it is an estimate, a nominal or rated figure, or a fixed calculation: those publish one number by design. A real sensor stuck on one value is still reported. (reports #22)
+- "Readings drifting for weeks" no longer reports drifts with an outside cause the house cannot control: the weather and the soil, a tariff or the grid's carbon intensity, a phone or anything somebody carries, or a weather or grid integration's figure. A freezer or a room drifting is still reported. (reports #8)
+
 ## 2.17.3
 
 - Learning from what you type in the chat and the terminal works again on houses that sign in through the panel: Claude Code does not hand its credential to the hooks it runs, so these passes were using an expired sign-in while everything else worked. They now use the same sign-in your chat or terminal is using. (reports #2)
