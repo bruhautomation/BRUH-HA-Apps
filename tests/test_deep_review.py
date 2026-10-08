@@ -221,6 +221,9 @@ class TestThePressDriven(unittest.TestCase):
                              "plan": "pro"})
         srv.DEEP_REVIEW_STATE.update({"running": False, "starting": False,
                                       "last_error": ""})
+        # A task another test left in the set belongs to a loop that is
+        # gone; see press().
+        srv._DEEP_REVIEW_TASKS.clear()
 
     def tearDown(self):
         for mod, k, v in reversed(self._restore):
@@ -234,8 +237,21 @@ class TestThePressDriven(unittest.TestCase):
 
         async def go():
             resp = await srv.h_deep_review_run(None)
-            while srv._DEEP_REVIEW_TASKS:
-                await asyncio.gather(*list(srv._DEEP_REVIEW_TASKS))
+            # Wait for the tasks that are still running, never for the set
+            # to empty. A task is dropped from the set by its done-callback,
+            # and a callback is a step on the loop that owns the task: a
+            # task finished in the last turn of an earlier asyncio.run (a
+            # previous press, or another test in this worker) can stay in
+            # the set already done. Awaiting a finished future never yields,
+            # so `while tasks: await gather(tasks)` over such a set spun on
+            # one core without touching the loop — timers dead, executors
+            # idle — until pytest-timeout killed the worker, about one run
+            # in eight under load.
+            while True:
+                pending = [t for t in srv._DEEP_REVIEW_TASKS if not t.done()]
+                if not pending:
+                    break
+                await asyncio.gather(*pending)
             return resp
 
         return asyncio.run(go())
