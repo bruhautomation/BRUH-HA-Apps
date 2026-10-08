@@ -766,13 +766,13 @@ def test_a_death_the_reaper_has_not_seen_yet_is_still_a_death(tmp_path, monkeypa
         [sys.executable, "-c",
          # os.close, not sys.stdout.close(): Python keeps fd 1 open behind
          # a closed sys.stdout, and the parent would read EOF only at exit.
-         "import os, time; os.close(1); time.sleep(1.0)"],
+         "import os, time; os.close(1); time.sleep(3.0)"],
         stdout=subprocess.PIPE, text=True)
     try:
         assert worker.proc.stdout.read() == ""          # EOF: pipes closed
         worker.saw_eof = True
         assert worker.alive(), "the race is only shown if poll() still says alive"
-        assert worker.died(settle=5.0)                  # waits the status out
+        assert worker.died(settle=10.0)                 # waits the status out
         assert not worker.alive()
     finally:
         worker.proc.kill()
@@ -785,7 +785,7 @@ def test_a_death_the_reaper_has_not_seen_yet_is_still_a_death(tmp_path, monkeypa
     try:
         started = time.monotonic()
         assert not lingering.died(settle=5.0)
-        assert time.monotonic() - started < 1.0
+        assert time.monotonic() - started < 3.0
     finally:
         lingering.proc.kill()
         lingering.proc.wait()

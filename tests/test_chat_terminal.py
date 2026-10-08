@@ -1720,6 +1720,26 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         await self.client.close()
         self.tmp.cleanup()
 
+    async def _state_when(self, check, timeout=10.0):
+        """`/api/chat/state` once `check` holds of it, or the last one read
+        when `timeout` runs out — the assertions after it say what was
+        missing. These used to sleep 0.6s after a send and hope the turn had
+        landed by then: a guess on a loaded runner, and most of a second
+        spent every time on one that lands in a few milliseconds."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            snap = await (await self.client.get("/api/chat/state")).json()
+            if check(snap) or asyncio.get_running_loop().time() > deadline:
+                return snap
+            await asyncio.sleep(0.02)
+
+    async def _turn_lands(self):
+        """The state once the message just sent has been answered: `send`
+        returns with the session `busy`, and only the turn's `result` puts
+        it back to `ready` with the CLI's session id known."""
+        return await self._state_when(
+            lambda snap: snap["state"] == "ready" and snap.get("session_id"))
+
     async def test_the_stream_opens_with_a_snapshot(self):
         """One request, not two: a client that has to stitch "what the
         transcript was" onto "what happened next" drops an event eventually."""
@@ -1769,8 +1789,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         them once and does not repeat itself."""
         resp = await self.client.post("/api/chat/send", json={"text": "hi"})
         self.assertEqual(resp.status, 200)
-        await asyncio.sleep(0.6)
-        snap = await (await self.client.get("/api/chat/state")).json()
+        snap = await self._turn_lands()
         self.assertEqual(snap["info"]["api_key_source"], "none")
         self.assertTrue(snap["info"]["model"])
         self.assertIn("compact", [c["name"] for c in snap["commands"]])
@@ -1778,7 +1797,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
 
     async def test_handoff_stops_the_session_and_returns_the_command(self):
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         out = await (await self.client.post("/api/chat/handoff")).json()
         self.assertTrue(out["session_id"])
         self.assertTrue(out["command"].startswith("claude --resume "))
@@ -1825,7 +1844,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
 
     async def test_adopting_the_conversation_we_are_already_in_is_a_no_op(self):
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         current = (await (await self.client.get("/api/chat/state")).json())["session_id"]
         self._fake_conversation(current, "the one we are already in")
 
@@ -2064,7 +2083,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_id["mine"]["row_state"]["state"], "paused")
         # A live one says so on the row — the three flags stay beside it.
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         current = (await (await self.client.get(
             "/api/chat/state")).json())["session_id"]
         self._fake_conversation(current, "the open one")
@@ -2142,7 +2161,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         A list that silently omits the current item makes you wonder where
         it went."""
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         current = (await (await self.client.get(
             "/api/chat/state")).json())["session_id"]
         self.assertTrue(current)
@@ -2229,7 +2248,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             await self.client.post("/api/chat/model",
                                    json={"model": "claude-haiku-4-5"})
             await self.client.post("/api/chat/send", json={"text": "hi"})
-            await asyncio.sleep(0.6)
+            await self._turn_lands()
             argv = [json.loads(l) for l in Path(log).read_text().splitlines()][-1]
             self.assertIn("--model", argv)
             self.assertEqual(argv[argv.index("--model") + 1], "claude-haiku-4-5")
@@ -2246,16 +2265,15 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         The label is the server's now, off the model the CLI announces.
         """
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
-        first = await (await self.client.get("/api/chat/state")).json()
+        first = await self._turn_lands()
         self.assertEqual(first["info"]["model_label"], "Claude Sonnet 5")
         self.assertEqual(first["context"]["window"], 1_000_000)
 
         resp = await self.client.post("/api/chat/model",
                                       json={"model": "claude-haiku-4-5"})
         self.assertTrue((await resp.json())["restarted"])
-        await asyncio.sleep(0.6)
-        after = await (await self.client.get("/api/chat/state")).json()
+        after = await self._state_when(
+            lambda snap: snap["info"].get("model") == "claude-haiku-4-5")
         self.assertEqual(after["info"]["model"], "claude-haiku-4-5")
         self.assertEqual(after["info"]["model_label"], "Claude Haiku 4.5")
         # And the window went with it, without waiting for the next turn:
@@ -2344,7 +2362,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         """Deleting the ground the live session stands on either kills it or
         quietly forks it — "start a new chat first" beats both."""
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         current = (await (await self.client.get("/api/chat/state")).json())["session_id"]
         path = self._fake_conversation(current, "the open one")
         resp = await self.client.post(f"/api/chat/conversation/{current}/delete")
@@ -2387,7 +2405,7 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
         what it skipped — refusing the whole batch teaches people to
         deselect one row by trial and error."""
         await self.client.post("/api/chat/send", json={"text": "hi"})
-        await asyncio.sleep(0.6)
+        await self._turn_lands()
         current = (await (await self.client.get(
             "/api/chat/state")).json())["session_id"]
         open_path = self._fake_conversation(current, "the open one")
@@ -2592,7 +2610,10 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
             await self.client.post("/api/chat/resume",
                                    json={"session_id": "busy-one"})
             await self.client.post("/api/chat/send", json={"text": "hello"})
-            await asyncio.sleep(0.5)
+            # The refusal is about a session that is answering, so wait for
+            # exactly that rather than half a second.
+            snap = await self._state_when(lambda snap: snap["state"] == "busy")
+            self.assertEqual(snap["state"], "busy")
             resp = await self.client.post("/api/chat/resume",
                                           json={"session_id": "other-one"})
             self.assertEqual(resp.status, 409)

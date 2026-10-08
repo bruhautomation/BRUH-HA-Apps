@@ -59,7 +59,6 @@ SLOW = (
     "test_bright_live.py",
     "test_bright_media_source.py::TestResolvingIsNotServing",
     "test_bright_panel_routes.py::TestTheBriefIsReadable::test_reading_the_brief_runs_nothing",
-    "test_bright_panel_routes.py::TestTheManualSocket",
     "test_bright_party.py::TestPartyLoop::test_the_queue_plays_through_with_per_track_anchors",
     "test_bright_party.py::TestPartyTransport::test_previous_goes_back_a_track",
     "test_bright_playback.py::TestThePartyEndsOnce",
