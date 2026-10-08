@@ -876,14 +876,19 @@
   </div>
 </div>
 
-<!-- Settings is a page of its own, reached by ⚙. It was a 640px dialog
-     holding eight stacked disclosures, which on a desktop was a small box
-     with everything in it; now each section is a pane on one segmented
-     control (Insights' own), one shown at a time, and the page remembers
-     which. The root keeps the id `setModal` and carries `open` while the
-     page is in front, so every guard that asks "is Settings showing"
-     (a poll, a refresh that must not overwrite a field being typed in)
-     still asks the same question. -->
+<!-- Settings is a page of its own, reached by ⚙. It was a 640px dialog of
+     eight stacked disclosures, then eight panes on a segmented control —
+     which on a phone was a select hiding seven of its eight names, with the
+     model picker and the terminal's settings shut inside "Advanced" folds
+     on top of that. Now it is a list of sections, each carrying what it is
+     set to right now (signed in, the model and this session's usage,
+     whether brAIn asks), beside the one section in front on a wide screen,
+     and as the first thing a phone shows. Every section is one press from
+     opening Settings and nothing inside a section folds away. The root
+     keeps the id `setModal` and carries `open` while the page is in front,
+     so every guard that asks "is Settings showing" (a poll, a refresh that
+     must not overwrite a field being typed in) still asks the same
+     question. -->
 <div id="viewSettings" class="view">
 <div id="setModal" class="setpage">
   <header class="panehead setpagehead">
@@ -891,27 +896,39 @@
       <h1 class="panetitle">Settings</h1>
     </div>
   </header>
-  <nav id="setNav" class="segnav setnav" aria-label="Settings sections">
-    <div class="segbtns" role="tablist">
-      <button type="button" class="segbtn" data-sec="account" role="tab" aria-controls="setsecAccount">Account</button>
-      <button type="button" class="segbtn" data-sec="usage" role="tab" aria-controls="setsecUsage">Usage &amp; schedule</button>
-      <button type="button" class="segbtn" data-sec="permissions" role="tab" aria-controls="setsecPermissions">Permissions</button>
-      <button type="button" class="segbtn" data-sec="sources" role="tab" aria-controls="setsecSources">Sources</button>
-      <button type="button" class="segbtn" data-sec="notifications" role="tab" aria-controls="setsecNotify">Notifications</button>
-      <button type="button" class="segbtn" data-sec="memory" role="tab" aria-controls="setsecMemory">Memory</button>
-      <button type="button" class="segbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">Diagnostics</button>
-      <button type="button" class="segbtn" data-sec="guide" role="tab" aria-controls="setsecGuide">Guide</button>
+  <div class="setlayout">
+  <!-- Each row names a section and says what it is set to, filled in by
+       renderSetSummaries: the answers people come here to check are on the
+       list itself. -->
+  <nav id="setNav" class="setnav" aria-label="Settings sections">
+    <div class="setnavlist" role="tablist" aria-orientation="vertical">
+      <button type="button" class="setnavbtn" data-sec="account" role="tab" aria-controls="setsecAccount">
+        <span class="setnavname">Account</span><span class="setnavsum" id="setSumAccount">Your Claude sign-in</span></button>
+      <button type="button" class="setnavbtn" data-sec="usage" role="tab" aria-controls="setsecUsage">
+        <span class="setnavname">Model &amp; usage</span><span class="setnavsum" id="setSumUsage">Which Claude model, and how much it spends</span></button>
+      <button type="button" class="setnavbtn" data-sec="permissions" role="tab" aria-controls="setsecPermissions">
+        <span class="setnavname">Permissions</span><span class="setnavsum" id="setSumPermissions">Whether brAIn asks before it acts</span></button>
+      <button type="button" class="setnavbtn" data-sec="notifications" role="tab" aria-controls="setsecNotify">
+        <span class="setnavname">Notifications</span><span class="setnavsum" id="setSumNotify">What reaches your phone</span></button>
+      <button type="button" class="setnavbtn" data-sec="sources" role="tab" aria-controls="setsecSources">
+        <span class="setnavname">Cameras &amp; calendars</span><span class="setnavsum" id="setSumSources">What brAIn may look at</span></button>
+      <button type="button" class="setnavbtn" data-sec="memory" role="tab" aria-controls="setsecMemory">
+        <span class="setnavname">Memory</span><span class="setnavsum" id="setSumMemory">What brAIn knows about your home</span></button>
+      <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
+        <span class="setnavname">Diagnostics</span><span class="setnavsum" id="setSumDiagnostics">Run all tests, and what is wrong</span></button>
+      <button type="button" class="setnavbtn" data-sec="developer" role="tab" aria-controls="setsecDeveloper">
+        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, run capture, help develop brAIn</span></button>
+      <button type="button" class="setnavbtn" data-sec="guide" role="tab" aria-controls="setsecGuide">
+        <span class="setnavname">Guide</span><span class="setnavsum" id="setSumGuide">How brAIn works</span></button>
     </div>
-    <select id="setNavSel" class="sel segsel" aria-label="Settings section"></select>
   </nav>
   <div class="edit-body setbody">
-      <!-- First, and open: everything else here is a preference, and this
-           is the one thing that decides whether the add-on works at all. -->
+      <!-- First: everything else here is a preference, and this is the one
+           thing that decides whether the add-on works at all. -->
       <section class="setsec" id="setsecAccount" data-sec="account" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Account</span>
-          <span class="setsecsub">Which Claude login brAIn uses, and whether the other BRUH
-            add-ons share it</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Account</h2>
         </header>
         <div class="setsecbody">
           <div id="authBody" class="authbox">Loading…</div>
@@ -937,16 +954,33 @@
         </div>
       </section>
 
-      <!-- What brAIn spends and when it runs on its own. The header pill
-           only appears past 80% or when paused, so this is where the
-           numbers live the rest of the time. -->
+      <!-- The model first, then what brAIn spends, then how cards run.
+           These were split between the section and an "Advanced" fold, and
+           the model — the setting people change most — was in the fold. -->
       <section class="setsec" id="setsecUsage" data-sec="usage" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Usage &amp; schedule</span>
-          <span class="setsecsub">This session and this week, the budget, and how cards
-            run on their own</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Model &amp; usage</h2>
         </header>
         <div class="setsecbody">
+          <h4 class="sethead first">Model</h4>
+          <label for="setModel">Claude model</label>
+          <select id="setModel" class="sel selin"></select>
+          <input id="setModelCustom" class="hidden" type="text" maxlength="100"
+                 autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
+          <label for="setThinking">How hard brAIn thinks</label>
+          <select id="setThinking" class="sel selin">
+            <option value="light">Light — cheaper where it is safe</option>
+            <option value="normal">Normal — tiered by each job</option>
+            <option value="generous">Generous — stronger where it counts</option>
+          </select>
+          <!-- Rewritten by syncThinking: with a model chosen above, the
+               tiers are not consulted at all, so the select is disabled
+               and this line says why rather than looking live. -->
+          <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
+            Sonnet thinks, Opus acts); this shifts the tiers.</p>
+
+          <h4 class="sethead">Usage</h4>
           <div class="usagewrap">
             <label>This session</label>
             <div class="usagebar" aria-hidden="true">
@@ -961,13 +995,6 @@
             <div id="usageDetail" class="usagedetail"></div>
           </div>
 
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setEnabled" class="tog" type="checkbox">
-              <span><b>Automatic insights</b><br>
-              <span class="subtext">Cards refresh on their own schedules. Asking by hand
-              always runs.</span></span></label>
-          </div>
-
           <label for="setPlan">Your Claude subscription</label>
           <select id="setPlan" class="sel selin">
             <option value="pro">Claude Pro</option>
@@ -975,74 +1002,58 @@
             <option value="max20">Claude Max (20×)</option>
           </select>
 
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setEnabled" class="tog" type="checkbox">
+              <span><b>Automatic insights</b><br>
+              <span class="subtext">Cards refresh on their own schedules. Asking by hand
+              always runs.</span></span></label>
+          </div>
+
           <div class="setrow">
             <label for="setBudget">Let automatic insights use up to
               <b id="setBudgetVal">25%</b> of each 5-hour session</label>
           </div>
           <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
 
+          <h4 class="sethead">Insight cards</h4>
           <label for="setGatherMode">How a card gets its data</label>
           <select id="setGatherMode" class="sel selin">
             <option value="search">Search — only what the card needs</option>
             <option value="snapshot">Snapshot — the whole home every run</option>
           </select>
-          <p class="hint">Snapshot sends the whole home every run and costs several times
-            the tokens.</p>
-
-          <details class="setsub" id="setUsageAdvanced">
-            <summary>Advanced</summary>
-            <p class="hint" id="setSyncNote"></p>
-            <div class="setgrid">
-              <div>
-                <label for="setRefresh">Default refresh interval (hours)</label>
-                <input id="setRefresh" type="number" min="0" max="168" step="1">
-                <p class="hint tight">0 means no scheduled refresh.</p>
-              </div>
-              <div>
-                <label for="setRefreshMode">When to refresh a card</label>
-                <select id="setRefreshMode" class="sel selin">
-                  <option value="changed">When what it reads changes</option>
-                  <option value="always">Always, on the interval</option>
-                  <option value="never">Never on a schedule</option>
-                </select>
-              </div>
-              <div>
-                <label for="setHistoryDays">History analyzed (days)</label>
-                <input id="setHistoryDays" type="number" min="1" max="30" step="1">
-              </div>
-              <div>
-                <label for="setTimeout">Generation timeout (minutes)</label>
-                <input id="setTimeout" type="number" min="2" max="30" step="1">
-              </div>
-              <div class="setwide">
-                <label for="setModel">Claude model</label>
-                <select id="setModel" class="sel selin"></select>
-                <input id="setModelCustom" class="hidden" type="text" maxlength="100"
-                       autocomplete="off" spellcheck="false" placeholder="e.g. claude-opus-5-5">
-              </div>
-              <div class="setwide">
-                <label for="setThinking">How hard brAIn thinks</label>
-                <select id="setThinking" class="sel selin">
-                  <option value="light">Light — cheaper where it is safe</option>
-                  <option value="normal">Normal — tiered by each job</option>
-                  <option value="generous">Generous — stronger where it counts</option>
-                </select>
-                <!-- Rewritten by syncThinking: with a model chosen above, the
-                     tiers are not consulted at all, so the select is disabled
-                     and this line says why rather than looking live. -->
-                <p class="hint tight" id="setThinkingNote">Every run is tiered by its job (Haiku looks,
-                  Sonnet thinks, Opus acts); this shifts the tiers.</p>
-              </div>
-              <div>
-                <label for="setKeepRuns">Past runs kept per card</label>
-                <input id="setKeepRuns" type="number" min="0" max="200" step="1">
-              </div>
-              <div>
-                <label for="setKeepDays">Keep past runs for (days)</label>
-                <input id="setKeepDays" type="number" min="0" max="365" step="1">
-              </div>
+          <p class="hint tight">Snapshot costs several times the tokens.</p>
+          <div class="setgrid">
+            <div>
+              <label for="setRefresh">Refresh every (hours)</label>
+              <input id="setRefresh" type="number" min="0" max="168" step="1">
+              <p class="hint tight">0 means no scheduled refresh.</p>
             </div>
-          </details>
+            <div>
+              <label for="setRefreshMode">When to refresh a card</label>
+              <select id="setRefreshMode" class="sel selin">
+                <option value="changed">When what it reads changes</option>
+                <option value="always">Always, on the interval</option>
+                <option value="never">Never on a schedule</option>
+              </select>
+            </div>
+            <div>
+              <label for="setHistoryDays">History analyzed (days)</label>
+              <input id="setHistoryDays" type="number" min="1" max="30" step="1">
+            </div>
+            <div>
+              <label for="setTimeout">Time limit per card (minutes)</label>
+              <input id="setTimeout" type="number" min="2" max="30" step="1">
+            </div>
+            <div>
+              <label for="setKeepRuns">Past runs kept per card</label>
+              <input id="setKeepRuns" type="number" min="0" max="200" step="1">
+            </div>
+            <div>
+              <label for="setKeepDays">Keep past runs for (days)</label>
+              <input id="setKeepDays" type="number" min="0" max="365" step="1">
+            </div>
+          </div>
+          <p class="hint tight" id="setSyncNote"></p>
         </div>
       </section>
 
@@ -1050,12 +1061,11 @@
            One switch with two doors: this is the add-on's
            `dangerously_skip_permissions` option, written back through the
            Supervisor, so the Configuration tab shows the same value.
-           "Stop asking…" on a chat approval card opens the dialog here. -->
+           "Stop asking…" on a chat approval card opens the page here. -->
       <section class="setsec" id="setsecPermissions" data-sec="permissions" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Permissions</span>
-          <span class="setsecsub">Whether brAIn asks before it acts, and the house rules that
-            make it more careful</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Permissions</h2>
         </header>
         <div class="setsecbody">
           <div class="setrow top" id="setSkipPermsRow">
@@ -1075,8 +1085,8 @@
             own tools, not every shell command.</p>
 
           <h4 class="sethead">House rules</h4>
-          <p class="hint">One per line, in your own words. Each is checked against every
-            action brAIn takes, and can only make it more careful.</p>
+          <p class="hint tight">One per line, in your own words. They can only make brAIn more
+            careful.</p>
           <textarea id="setHouseRules" rows="4" maxlength="4000"
             aria-label="House rules, one per line"></textarea>
           <div class="row">
@@ -1084,59 +1094,31 @@
             <span id="setHouseRulesNote" class="hint tight"></span>
           </div>
 
-          <details class="setsub" id="setPermsAdvanced">
-            <summary>Advanced</summary>
-            <label for="setTerminalUi">Ask tab opens as</label>
-            <select id="setTerminalUi" class="sel selin">
-              <option value="chat">Chat — Claude Code as messages</option>
-              <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
-            </select>
-            <label for="setChatSessions">Conversations kept open at once</label>
-            <select id="setChatSessions" class="sel selin">
-              <option value="1">1 — one at a time</option>
-              <option value="2">2</option>
-              <option value="3">3 (default)</option>
-              <option value="4">4</option>
-              <option value="5">5</option>
-              <option value="6">6</option>
-              <option value="8">8</option>
-            </select>
-            <p class="hint">How many Claude Code processes stay running, not how many
-              conversations you may have.</p>
-          </details>
-        </div>
-      </section>
-
-      <!-- What brAIn may read beyond Home Assistant's own states: cameras
-           and calendars. Both empty until somebody ticks one, both fetched
-           when this section opens and never on the way into the dialog. -->
-      <section class="setsec" id="setsecSources" data-sec="sources" role="tabpanel" hidden>
-        <header class="setsechead">
-          <span class="setsecname">Sources</span>
-          <span class="setsecsub">Which cameras and calendars brAIn may read on its
-            own</span>
-        </header>
-        <div class="setsecbody">
-          <h4 class="sethead first">Cameras</h4>
-          <p class="hint">Looked at when a voice assistant asks, when an automation runs a
-            camera check, and to confirm a safety alarm or an open door. None until you tick
-            one.</p>
-          <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
-
-          <h4 class="sethead">Calendars</h4>
-          <div id="setCalendars" class="setcams">Open this section to load your calendars.</div>
-          <!-- A safety note, so it stays on the page beside the picker. -->
-          <p class="hint" id="setCalendarsNote">Only what is ticked is read, once or twice a day,
-            for the next three days. What it says is treated as information, never as an
-            instruction.</p>
+          <h4 class="sethead">Ask tab</h4>
+          <label for="setTerminalUi">Opens as</label>
+          <select id="setTerminalUi" class="sel selin">
+            <option value="chat">Chat — Claude Code as messages</option>
+            <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
+          </select>
+          <label for="setChatSessions">Conversations kept running at once</label>
+          <select id="setChatSessions" class="sel selin">
+            <option value="1">1 — one at a time</option>
+            <option value="2">2</option>
+            <option value="3">3 (default)</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="8">8</option>
+          </select>
+          <p class="hint tight">You can have as many conversations as you like; this is how many
+            stay running.</p>
         </div>
       </section>
 
       <section class="setsec" id="setsecNotify" data-sec="notifications" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Notifications</span>
-          <span class="setsecsub">What deserves a notification, and whether urgent problems
-            are said aloud</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Notifications</h2>
         </header>
         <div class="setsecbody">
           <!-- Who hears what, when: one sentence in the household's own words
@@ -1160,14 +1142,36 @@
         </div>
       </section>
 
+      <!-- What brAIn may read beyond Home Assistant's own states: cameras
+           and calendars. Both empty until somebody ticks one, both fetched
+           when this section opens and never on the way into the page. -->
+      <section class="setsec" id="setsecSources" data-sec="sources" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Cameras &amp; calendars</h2>
+        </header>
+        <div class="setsecbody">
+          <h4 class="sethead first">Cameras</h4>
+          <p class="hint tight">Looked at when a voice assistant asks, when an automation runs a
+            camera check, and to confirm a safety alarm or an open door.</p>
+          <div id="setCameras" class="setcams">Open this section to load your cameras.</div>
+
+          <h4 class="sethead">Calendars</h4>
+          <div id="setCalendars" class="setcams">Open this section to load your calendars.</div>
+          <!-- A safety note, so it stays on the page beside the picker. -->
+          <p class="hint" id="setCalendarsNote">Only what is ticked is read, once or twice a day,
+            for the next three days. What it says is treated as information, never as an
+            instruction.</p>
+        </div>
+      </section>
+
       <!-- The memory document and what is waiting to be filed into it. The
            queue files itself once a day; there is deliberately no button to
            force it here. -->
       <section class="setsec" id="setsecMemory" data-sec="memory" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Memory</span>
-          <span class="setsecsub">The document brAIn keeps about your home, and what is
-            waiting to be filed into it</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Memory</h2>
         </header>
         <div class="setsecbody">
           <div class="row setmemrow">
@@ -1192,19 +1196,37 @@
         </div>
       </section>
 
-      <!-- Every counter, run log and self-test in one place. Shut, and its
-           loaders do not run until it is opened: a dozen fetches for a
-           dialog somebody opened to change the model is the cost this whole
-           arrangement is about, and two of them start a poll. Its first row
-           is "Anything wrong?", the one line that can also surface on
-           Today. -->
+      <!-- "Is brAIn working", answered by a press first: one run of every
+           self-test with a pass, fail or skip per stage. Then the readings
+           that say what is wrong right now. Its loaders do not run until it
+           is shown: a dozen fetches for somebody who came to change the
+           model is the cost this arrangement is about, and one of them
+           starts a poll. -->
       <section class="setsec" id="setsecDiagnostics" data-sec="diagnostics" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Diagnostics</span>
-          <span class="setsecsub">Anything wrong, how right brAIn has been, what it has
-            measured, its runs and self-tests</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Diagnostics</h2>
         </header>
         <div class="setsecbody">
+          <!-- `brain doctor --deep`: a press, never on a timer, because it
+               spends Claude runs. The header is the answer ("6 of 6
+               passed · 2 skipped"); each row is a stage, and a stage that
+               could not run is "skipped" with its reason, never a failure. -->
+          <div class="testsbox" id="deepBox">
+            <div class="testshead">
+              <div>
+                <h4 class="testsname">Run all tests</h4>
+                <p class="hint tight">Every part of brAIn, for real: about five Claude runs.
+                  It makes one test helper and removes it.</p>
+              </div>
+              <button id="deepRun" class="btn primary" aria-label="Run all tests">Run</button>
+            </div>
+            <p id="deepSummary" class="testssum" hidden></p>
+            <p id="deepLast" class="hint tight"></p>
+            <div id="deepBody" class="testlist" hidden></div>
+          </div>
+
+          <h4 class="sethead">Right now</h4>
           <div id="diagBody" class="diag">Loading…</div>
           <div class="row">
             <button id="diagRefresh" class="btn">Recheck</button>
@@ -1238,120 +1260,115 @@
               aria-label="Run the access review now">Run</button>
           </div>
 
-          <!-- One export for a bug report. Tick problem files below to send
-               those; with none ticked it writes a fresh report and copies
-               that. -->
-          <h4 class="sethead">Export report</h4>
-          <p class="hint">One redacted text file for a bug report. Anything credential-shaped
-            is removed.</p>
+          <!-- One export for a bug report. The problem files sit above it
+               because a tick there is what Share sends; with none ticked it
+               writes a fresh report and copies that. -->
+          <h4 class="sethead">Report a problem</h4>
+          <p class="hint tight">One redacted text file; anything credential-shaped is removed.
+            Tick problem files to share just those.</p>
+          <div id="probBody" class="diag prob">Loading…</div>
           <div class="row">
             <button id="diagCopy" class="btn primary"
               aria-label="Share a report for a bug report">Share</button>
           </div>
+        </div>
+      </section>
 
-          <details class="setsub" id="setDiagDeveloper">
-            <summary>Developer</summary>
-            <h4 class="sethead first">Problems</h4>
-            <p class="hint">One text file per failure, under <code>/share/brain/reports</code>.
-              Tick some to share just those.</p>
-            <div id="probBody" class="diag prob">Loading…</div>
+      <!-- What only somebody working on brAIn needs. It was a "Developer"
+           fold at the bottom of Diagnostics; a section of its own is one
+           press away and leaves Diagnostics about the house. -->
+      <section class="setsec" id="setsecDeveloper" data-sec="developer" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Developer</h2>
+        </header>
+        <div class="setsecbody">
+          <h4 class="sethead first">Rehearsal</h4>
+          <p class="hint tight">Plants a few broken <code>brain_test_*</code> things, scores the
+            checks against them, and removes them. It asks first.</p>
+          <div class="row">
+            <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Run</button>
+            <!-- Rendered only when the record says something is still in
+                 the house: a button that clears nothing is a control
+                 asking to be understood. -->
+            <button id="rehearseSweep" class="btn" hidden
+              aria-label="Delete what the last rehearsal left behind">Delete</button>
+            <span id="rehearseLast" class="hint tight"></span>
+          </div>
+          <div id="rehearseBody" class="diag" hidden></div>
 
-            <h4 class="sethead">Why somebody did something</h4>
-            <p class="hint">brAIn asks once a day at most. This asks the next one now, with one
-              Claude run.</p>
-            <div class="row">
-              <button id="diagCurious" class="btn" hidden
-                aria-label="Run the next why question now">Run</button>
-            </div>
+          <h4 class="sethead">Why somebody did something</h4>
+          <p class="hint tight">brAIn asks once a day at most. This asks the next one now, with
+            one Claude run.</p>
+          <div class="row">
+            <button id="diagCurious" class="btn" hidden
+              aria-label="Run the next why question now">Run</button>
+          </div>
 
-            <h4 class="sethead">Capture runs for the corpus</h4>
+          <h4 class="sethead">Capture runs for the corpus</h4>
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
+              <span><b>Save a copy of each insight card run</b><br>
+              <span class="subtext">Off by default. Each file holds your entity names, so
+              read one before you share it.</span></span></label>
+          </div>
+          <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
+            <span id="capMax">50</span> are kept.</p>
+          <div id="capBody" class="diag">Loading…</div>
+
+          <!-- The development loop (devloop/, brain/DEVLOOP.md). Off for
+               everyone; the controls under the switch render only once it
+               is on, and nothing is fetched until this section opens. -->
+          <h4 class="sethead">Help develop brAIn</h4>
+          <div class="setrow top">
+            <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
+              <span><b>File this house's faults as issues in a private GitHub repository</b><br>
+              <span class="subtext">Off by default. Names, rooms and entity ids are replaced
+                with aliases before anything is sent.</span></span></label>
+          </div>
+          <div id="devloopBody" hidden>
             <div class="setrow top">
-              <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
-                <span><b>Save a copy of each insight card run</b><br>
-                <span class="subtext">Off by default. Each file holds your entity names, so
-                read one before you share it.</span></span></label>
+              <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
+                <span><b>Autopilot: let brAIn develop itself</b><br>
+                <span class="subtext">Every stream on, nothing waits for you to press Send,
+                  and the cloud fixes and ships what it finds.</span></span></label>
             </div>
-            <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
-              <span id="capMax">50</span> are kept.</p>
-            <div id="capBody" class="diag">Loading…</div>
-
-            <h4 class="sethead">Deep check</h4>
-            <p class="hint">A live round trip through every face, about five Claude runs. It
-              creates one test helper and removes it again.</p>
+            <label for="devRepo">Private repository</label>
+            <input id="devRepo" type="text" maxlength="140" autocomplete="off"
+              spellcheck="false" placeholder="owner/brain-house-reports">
+            <label for="devToken">Fine-grained token (Issues: read and write, that repository only)</label>
+            <input id="devToken" type="password" autocomplete="off" placeholder="github_pat_…">
             <div class="row">
-              <button id="deepRun" class="btn" aria-label="Run the deep check">Run</button>
-              <span id="deepLast" class="hint tight"></span>
+              <button id="devSave" class="btn primary" aria-label="Save the repository and token">Save</button>
+              <button id="devTest" class="btn" aria-label="Check the token can reach the repository">Recheck</button>
+              <button id="devRun" class="btn" aria-label="Sweep the faults and send now">Run</button>
+              <button id="devForget" class="btn" hidden aria-label="Remove the saved token">Remove</button>
             </div>
-            <div id="deepBody" class="diag" hidden></div>
-
-            <h4 class="sethead">Rehearsal</h4>
-            <p class="hint">Plants a few broken <code>brain_test_*</code> things, scores the
-              checks against them, and removes them. It asks first.</p>
+            <p id="devStatus" class="hint tight"></p>
+            <div id="devStreams"></div>
+            <label for="devLook">What do you want to fix?</label>
+            <textarea id="devLook" rows="3" maxlength="500" autocomplete="off"
+              placeholder="e.g. The settings page is too crowded. I can never find the model picker."></textarea>
             <div class="row">
-              <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Run</button>
-              <!-- Rendered only when the record says something is still in
-                   the house: a button that clears nothing is a control
-                   asking to be understood. -->
-              <button id="rehearseSweep" class="btn" hidden
-                aria-label="Delete what the last rehearsal left behind">Delete</button>
-              <span id="rehearseLast" class="hint tight"></span>
+              <button id="devLookRun" class="btn primary" aria-label="Turn this into an issue and file it">Send</button>
+              <span id="devLookState" class="hint tight"></span>
             </div>
-            <div id="rehearseBody" class="diag" hidden></div>
-
-            <!-- The development loop (devloop/, brain/DEVLOOP.md). Off for
-                 everyone; the controls under the switch render only once it
-                 is on, and nothing is fetched until this section opens. -->
-            <h4 class="sethead">Help develop brAIn</h4>
+            <p class="hint tight">Say it the way you would to a person. One Claude run works out
+              what is really wrong and files the issue that would fix it.</p>
+            <div class="row">
+              <label for="devCapIssues">New issues a day</label>
+              <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
+              <label for="devCapRuns">Claude runs a day</label>
+              <input id="devCapRuns" type="number" min="0" max="24" inputmode="numeric">
+              <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
+            </div>
             <div class="setrow top">
-              <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
-                <span><b>File this house's faults as issues in a private GitHub repository</b><br>
-                <span class="subtext">Off by default. Names, rooms and entity ids are replaced
-                  with aliases before anything is sent.</span></span></label>
+              <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
+                <span><b>Ask before sending each new report</b><br>
+                <span class="subtext">View shows exactly what would be sent.</span></span></label>
             </div>
-            <div id="devloopBody" hidden>
-              <div class="setrow top">
-                <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
-                  <span><b>Autopilot: let brAIn develop itself</b><br>
-                  <span class="subtext">Every stream on, nothing waits for you to press Send,
-                    and the cloud fixes and ships what it finds.</span></span></label>
-              </div>
-              <label for="devRepo">Private repository</label>
-              <input id="devRepo" type="text" maxlength="140" autocomplete="off"
-                spellcheck="false" placeholder="owner/brain-house-reports">
-              <label for="devToken">Fine-grained token (Issues: read and write, that repository only)</label>
-              <input id="devToken" type="password" autocomplete="off" placeholder="github_pat_…">
-              <div class="row">
-                <button id="devSave" class="btn primary" aria-label="Save the repository and token">Save</button>
-                <button id="devTest" class="btn" aria-label="Check the token can reach the repository">Recheck</button>
-                <button id="devRun" class="btn" aria-label="Sweep the faults and send now">Run</button>
-                <button id="devForget" class="btn" hidden aria-label="Remove the saved token">Remove</button>
-              </div>
-              <p id="devStatus" class="hint tight"></p>
-              <div id="devStreams"></div>
-              <label for="devLook">What do you want to fix?</label>
-              <textarea id="devLook" rows="3" maxlength="500" autocomplete="off"
-                placeholder="e.g. The settings page is too crowded. I can never find the model picker."></textarea>
-              <div class="row">
-                <button id="devLookRun" class="btn primary" aria-label="Turn this into an issue and file it">Send</button>
-                <span id="devLookState" class="hint tight"></span>
-              </div>
-              <p class="hint tight">Say it the way you would to a person. One Claude run works out
-                what is really wrong and files the issue that would fix it.</p>
-              <div class="row">
-                <label for="devCapIssues">New issues a day</label>
-                <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
-                <label for="devCapRuns">Claude runs a day</label>
-                <input id="devCapRuns" type="number" min="0" max="24" inputmode="numeric">
-                <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
-              </div>
-              <div class="setrow top">
-                <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
-                  <span><b>Ask before sending each new report</b><br>
-                  <span class="subtext">View shows exactly what would be sent.</span></span></label>
-              </div>
-              <div id="devQueue" class="diag">Loading…</div>
-            </div>
-          </details>
+            <div id="devQueue" class="diag">Loading…</div>
+          </div>
         </div>
       </section>
 
@@ -1359,14 +1376,14 @@
            and the docs pane is one press away from here. -->
       <section class="setsec" id="setsecGuide" data-sec="guide" role="tabpanel" hidden>
         <header class="setsechead">
-          <span class="setsecname">Guide</span>
-          <span class="setsecsub">How brAIn works, in eight parts, with setup and safety
-            first</span>
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Guide</h2>
         </header>
         <div class="setsecbody">
           <nav id="setGuide" class="setguide" aria-label="Guide contents"></nav>
         </div>
       </section>
+  </div>
   </div>
 </div>
 </div>

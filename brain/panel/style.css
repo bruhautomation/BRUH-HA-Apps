@@ -1319,32 +1319,60 @@ body.modal-open {
   opacity: 0.85;
 }
 
-/* ⚙ sections. The dialog is five disclosures rather than one flat scroll,
-   and the summary is the only thing you are guaranteed to read, so it
-   carries a name AND a line saying what is behind it — a row of bare nouns
-   would be five words to guess at. 44px whatever the pointer is: this is
-   the dialog's navigation, not a link inside a paragraph, and a floor that
-   only existed on touch would leave the one control every visit starts with
-   at 19px on the screen it is designed at.
-
-   The marker is drawn rather than inherited: `list-style: none` (plus the
-   WebKit pseudo-element, which ignores it) takes the browser's triangle out,
-   and the chevron is two borders on a pseudo-element so `textContent` of a
-   summary stays the section's name — which is what the measure reads. */
-/* Settings is a page: a title, the eight sections on one segmented
-   control (the select on a narrow screen, where eight labels do not fit a
-   row), and the one section in front as a card — wide enough to read on a
-   desktop, which the 640px dialog was not. */
-.setpage { max-width: 920px; }
+/* Settings is a page: a title, the list of sections, and the one section
+   in front. On a wide screen the list is a column beside the section and
+   follows the page down; below 900px the list IS the page until a row is
+   pressed (`.setindex`), and a section carries "‹ Settings" back to it.
+   Each row names its section and, on a second line, what it is set to —
+   which is why it is a list and not a row of tabs: a segmented control has
+   no room for the second line, and on a phone it was a select hiding
+   seven of its names. The breakpoint is `SET_WIDE` in app.js. */
+.setpage { max-width: 1120px; }
 .setpage .setpagehead { margin-bottom: var(--sp-3); }
-.setnav { margin: 0 0 var(--sp-4); }
-.setnav .segbtns { flex-wrap: nowrap; max-width: 100%; }
-.setnav .segbtn { white-space: nowrap; }
-/* Ids, because `.segnav .segbtns` and `.segnav .segsel` come later in the
-   file at the same specificity and would otherwise win. */
-@media (max-width: 1000px) {
-  #setNav .segbtns { display: none; }
-  #setNav .segsel { display: block; max-width: 420px; }
+.setlayout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-4); }
+.setnav { margin: 0; min-width: 0; }
+.setnavlist {
+  display: grid; gap: 2px;
+  border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
+  padding: 6px;
+}
+.setnavbtn {
+  display: grid; gap: 1px; min-height: 52px; min-width: 0; width: 100%;
+  padding: 8px 12px; border: 0; border-radius: 8px; background: transparent;
+  text-align: left; cursor: pointer; font: inherit; color: var(--ink);
+}
+.setnavbtn:hover { background: var(--plane); }
+.setnavbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.setnavbtn.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.setnavname { font-size: var(--fs-body); font-weight: 600; }
+.setnavsum {
+  font-size: var(--fs-meta); color: var(--ink-3); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.setnavbtn.active .setnavsum { color: var(--ink-2); }
+.setback { display: none; }
+@media (min-width: 900px) {
+  .setlayout { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+  .setnav { position: sticky; top: calc(var(--bar-h, 56px) + 12px); }
+}
+@media (max-width: 899.98px) {
+  /* The list alone, or the section alone: never both on a phone. */
+  #setModal.setindex .setbody { display: none; }
+  #setModal:not(.setindex) .setnav { display: none; }
+  .setback {
+    display: inline-flex; align-items: center; min-height: 44px; margin: -6px 0 2px -8px;
+    padding: 0 8px; border: 0; background: transparent; color: var(--accent-2);
+    font: inherit; font-size: var(--fs-body); cursor: pointer;
+  }
+  /* A chevron says a row opens something, on the one layout where the
+     row is all there is. */
+  .setnavbtn { min-height: 56px; position: relative; padding-right: 32px; }
+  .setnavbtn::after {
+    content: ""; position: absolute; right: 14px; top: calc(50% - 4px);
+    width: 7px; height: 7px; border-right: 2px solid var(--ink-3);
+    border-top: 2px solid var(--ink-3); transform: rotate(45deg);
+  }
+  .setnavname { font-size: 16px; }
 }
 .setbody.edit-body { padding: 0; overflow: visible; }
 .setsec {
@@ -1352,10 +1380,8 @@ body.modal-open {
   border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
 }
 .setsec[hidden] { display: none; }
-.setsechead { display: grid; gap: 2px; margin: 0 0 var(--sp-3);
-  padding-bottom: var(--sp-3); border-bottom: 1px solid var(--hairline); }
-.setsecname { font-size: var(--fs-title, 18px); font-weight: 600; color: var(--ink); }
-.setsecsub { font-size: var(--fs-body); color: var(--ink-3); line-height: 1.4; }
+.setsechead { display: grid; gap: 2px; margin: 0 0 var(--sp-3); justify-items: start; }
+.setsecname { margin: 0; font-size: var(--fs-title, 18px); font-weight: 600; color: var(--ink); }
 .setsecbody { padding: 0; }
 .setsecbody > label:first-child, .setsecbody > .setrow:first-child { margin-top: 0; }
 @media (max-width: 640px) {
@@ -1364,39 +1390,38 @@ body.modal-open {
 #settingsBtn.active { background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent-2); }
 
-/* A disclosure inside a section ("Advanced", "Developer"): the rarer half
-   of a section, shut until asked for. Smaller than a section's summary and
-   indented under it, so it reads as part of the section it is in. */
-.setsub { margin: 14px 0 0; border-top: 1px solid var(--hairline); }
-.setsub > summary {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 4px;
-  cursor: pointer;
+/* Run all tests: the deep check, at the top of Diagnostics. The header is
+   the answer ("6 of 6 passed · 2 skipped") and each stage is a row whose
+   first word says passed, failed or skipped — in words, because a mark
+   alone was the one part of the old list nobody could read at a glance —
+   with the reason and the time it ran. Skipped is muted, never red: a stage
+   that could not run did not fail. */
+.testsbox {
+  padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--plane);
+}
+.testshead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.testsname { margin: 0; font-size: var(--fs-body); font-weight: 700; color: var(--ink); }
+.testshead .btn { flex: none; }
+.testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good); }
+.testssum.bad { color: var(--critical); }
+.testlist { margin-top: 8px; }
+.testrow {
+  display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 4px 10px;
+  align-items: baseline; padding: 8px 0; border-top: 1px solid var(--hairline);
   font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--ink-2);
 }
-.setsub[open] > summary { color: var(--ink); }
-/* `display: flex` takes the browser's disclosure triangle away, so
-   "Advanced" and "Developer" read as plain headings nobody would press.
-   The section summaries' own chevron, smaller. */
-.setsub > summary { position: relative; padding-left: 22px; list-style: none; }
-.setsub > summary::-webkit-details-marker { display: none; }
-.setsub > summary::before {
-  content: "";
-  position: absolute;
-  left: 6px;
-  top: calc(50% - 4px);
-  width: 5px;
-  height: 5px;
-  border-right: 2px solid var(--ink-3);
-  border-bottom: 2px solid var(--ink-3);
-  transform: rotate(-45deg);
-  transition: transform 0.15s ease;
+.testword { font-size: var(--fs-meta); font-weight: 700; color: var(--ink-3); }
+.testrow.ok .testword { color: var(--good); }
+.testrow.failed .testword { color: var(--critical); }
+.testtitle { font-weight: 600; color: var(--ink); }
+.testreason { color: var(--ink-2); line-height: 1.4; }
+.testrow.skipped .testtitle, .testrow.waiting .testtitle { color: var(--ink-2); }
+.testtime { font-size: var(--fs-meta); color: var(--ink-3); white-space: nowrap; }
+@media (max-width: 520px) {
+  .testrow { grid-template-columns: 64px minmax(0, 1fr); }
+  .testtime { grid-column: 2; }
 }
-.setsub[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
 
 /* ⚙ → Account: the answer in one line, the evidence behind Details. */
 .authline { color: var(--ink); }
@@ -5268,16 +5293,7 @@ body.term-classic #termMode .ico-out { display: block; }
    it one per row, each with its own Remove: a clause spliced into the
    sentence would be one nobody could find again to take back. */
 .setlearned { margin-top: 8px; display: grid; gap: 6px; }
-.setlearned summary {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  font-size: var(--fs-body);
-  font-weight: 600;
-  color: var(--ink-2);
-  cursor: pointer;
-}
-.setlearned details > .setlearnedrow + .setlearnedrow { margin-top: 6px; }
+.setlearnedhead { margin: 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-2); }
 .setlearnedrow {
   display: flex;
   align-items: center;

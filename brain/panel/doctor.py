@@ -1233,9 +1233,11 @@ async def run_deep(hooks: Hooks, *, only: list[str] | None = None,
             seconds = round(time.monotonic() - began, 1)
             _journal_stage(name, result, seconds)
         state_by_name[name] = result["state"]
+        # `at` is when the stage's answer was reached, skipped ones
+        # included: ⚙ › Diagnostics puts the time on every row.
         stages.append({"name": name, "title": spec["title"],
                        "proves": spec["proves"], "seconds": seconds,
-                       **result})
+                       "at": int(time.time()), **result})
         if progress is not None:
             progress(dict(payload, stages=list(stages)))
 
