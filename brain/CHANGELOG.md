@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.11
+
+- Memory › Knowledge names a fact's subject by its friendly name and room instead of its entity id (the id is in the tooltip), and marks a device Home Assistant no longer has as "removed". (reports #42)
+- Facts show at most two of their subjects as links, with "+N" for the rest, and no longer repeat the subject you are browsing. (reports #43)
+- House › Reports has a Schedule list: each recurring card's cadence, last run, next run (or why it is waiting), and a switch to turn it off or on. (reports #47)
+- ⚙ › Diagnostics says why a background job is off ("off — Assist is turned off") instead of showing true or false. A one-time ask now says it runs once, when what you described happens, and where its result goes. (reports #49, #46)
+
 ## 2.17.10
 
 - Findings that brAIn set aside are looked at again when a later report contradicts the reason they were set aside. Findings set aside before brAIn judged the claim itself, rather than one reading in it, get one fresh look after the update. (reports #54, #58)
