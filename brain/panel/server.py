@@ -15574,7 +15574,9 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         context = dl_streams.context_block(payload, score, unmet)
         result = await _claude(
             engine.run_analyst,
-            dl_streams.analyst_prompt(stream, context, topic),
+            dl_streams.analyst_prompt(
+                stream, context, topic,
+                dl_streams.reported_block(await asyncio.to_thread(up.listing))),
             dl_streams.analyst_system(), eff_model(),
             TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
             priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)

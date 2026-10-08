@@ -277,6 +277,27 @@ class TestAliases(unittest.TestCase):
         self.assertEqual(a.apply("see server.py, memory.md, e.g. light.turn_on"),
                          "see server.py, memory.md, e.g. light.turn_on")
 
+    def test_home_assistant_vocabulary_is_not_a_name(self):
+        # What the first real house sent: an integration's "Battery" and
+        # "Power" entities, and brAIn's own conversation entity, rewrote
+        # the words of every report until the fixer could not read them.
+        a = aliases_mod.Aliases()
+        a.learn({"binary_sensor.meter_battery": {"name": "Battery"},
+                 "sensor.plug_power": {"name": "Power"},
+                 "conversation.brain": {"name": "brAIn"},
+                 "person.alex": {"name": "Alex"},
+                 "light.desk": {"name": "Alex Desk"}})
+        out = a.apply("brAIn calls a power-sensed meter's battery flat; "
+                      "Alex asked, near Alex Desk and binary_sensor.meter_battery")
+        self.assertIn("brAIn calls a power-sensed meter's battery flat", out)
+        for real in ("Alex", "meter_battery"):
+            self.assertNotIn(real, out)
+
+    def test_a_personal_name_is_never_vocabulary(self):
+        self.assertFalse(aliases_mod.is_generic("Power", "person"))
+        self.assertTrue(aliases_mod.is_generic("Signal strength 2", "sensor"))
+        self.assertFalse(aliases_mod.is_generic("Garden Power", "sensor"))
+
     def test_an_alias_is_stable_across_a_reload(self):
         a = aliases_mod.Aliases()
         first = a.apply("sensor.garage_freezer")
@@ -619,6 +640,30 @@ class TestCollectors(unittest.TestCase):
         many = json.dumps({"rows": [{"title": f"t{i}", "what": "w"} for i in range(20)]})
         self.assertEqual(len(streams_mod.parse_rows(many, "ideas")),
                          streams_mod.MAX_ROWS)
+
+    def test_a_claude_stream_is_shown_what_it_already_filed(self):
+        listing = [
+            {"stream": "look", "where": "Look: Findings",
+             "what": "not merged across sources", "state": "sent", "last_seen": 2},
+            {"stream": "gaps", "where": "Gap: Cameras",
+             "what": "no image analysis", "state": "discarded", "last_seen": 1},
+            {"stream": "scorecard", "where": "Scorecard", "what": "brAIn 2.17.0",
+             "state": "sent", "last_seen": 3},
+        ]
+        block = streams_mod.reported_block(listing)
+        self.assertEqual(block.splitlines()[0],
+                         "- Look: Findings: not merged across sources")
+        self.assertIn("never to report this", block)
+        self.assertNotIn("Scorecard", block)
+        prompt = streams_mod.analyst_prompt("gaps", "FAULTS: none", "", block)
+        self.assertIn("ALREADY REPORTED", prompt)
+        self.assertIn("not merged across sources", prompt)
+        self.assertIn("ALREADY REPORTED", streams_mod.analyst_system())
+
+    def test_the_reported_block_survives_a_long_context(self):
+        prompt = streams_mod.analyst_prompt("ideas", "x" * 50_000, "",
+                                            "- Gap: A: b")
+        self.assertTrue(prompt.endswith("- Gap: A: b"))
 
     def test_the_snapshot_carries_counts_and_no_names(self):
         row = streams_mod.snapshot(NAMES, diagnostics(), "2.17.0")[0]

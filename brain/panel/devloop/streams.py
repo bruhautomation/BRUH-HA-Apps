@@ -19,6 +19,8 @@ from pathlib import Path
 
 import reports
 
+from . import STREAMS
+
 # --------------------------------------------------------------- faults
 
 SKIP_WHERE = frozenset({"This list"})
@@ -185,7 +187,13 @@ Answer with JSON only: {"rows": [{"title": "...", "what": "...", "why": "..."}]}
 with at most %(cap)d rows. "title" is under 80 characters and names the part
 of brAIn; "what" is one sentence saying what is wrong or missing; "why" is
 up to three sentences of evidence from this house. No row is better than a
-vague one. Never include a secret, a code or a person's whereabouts."""
+vague one. Never include a secret, a code or a person's whereabouts.
+
+Every report this house has already filed is listed under
+ALREADY REPORTED. Never file one of those again, in the same words or new ones:
+a second issue about a problem already filed costs whoever fixes brAIn
+a duplicate to close and adds nothing. A row is only worth filing when
+it is a different problem."""
 
 PROMPTS = {
     "gaps": ("Where does brAIn fall short on this house? Read the faults, the "
@@ -201,10 +209,44 @@ PROMPTS = {
 MAX_ROWS = 6
 
 
-def analyst_prompt(stream: str, context: str, topic: str = "") -> str:
+# What a Claude stream is shown of what it has already filed. Its own
+# budget, so a long fault list can never cut the one block that stops a
+# rewording being filed as a new issue.
+MAX_REPORTED = 60
+REPORTED_CHARS = 6000
+
+
+def reported_block(listing: list[dict]) -> str:
+    """Everything this house has filed or queued, one line each, newest
+    first: `upstream.listing()`'s rows. A rolling issue is evidence rather
+    than a report, and is left out.
+
+    The Claude streams write free text, and the fingerprint folds digits,
+    not wording — so "findings are not merged across sources" and "the same
+    problem is filed twice by different cards" were two issues, and on the
+    first real house six of them were the same report (the fixer closed
+    thirteen duplicates in one run). The run cannot avoid what it is not
+    shown."""
+    rows = [r for r in listing or [] if isinstance(r, dict)
+            and not STREAMS.get(str(r.get("stream")), {}).get("rolling")
+            and r.get("what")]
+    rows.sort(key=lambda r: -float(r.get("last_seen") or 0))
+    lines = []
+    for r in rows[:MAX_REPORTED]:
+        note = " (the homeowner said never to report this)" \
+            if r.get("state") == "discarded" else ""
+        lines.append(f"- {str(r.get('where') or '')[:120]}: "
+                     f"{str(r.get('what') or '')[:200]}{note}")
+    return "\n".join(lines)[:REPORTED_CHARS]
+
+
+def analyst_prompt(stream: str, context: str, topic: str = "",
+                   reported: str = "") -> str:
     head = PROMPTS[stream] % {"topic": topic[:500]} if stream == "look" \
         else PROMPTS[stream]
-    return f"{head}\n\nWHAT BRAIN ALREADY KNOWS:\n{context[:12000]}"
+    tail = (f"\n\nALREADY REPORTED (do not file these again):\n{reported}"
+            if reported else "\n\nALREADY REPORTED: nothing yet.")
+    return f"{head}\n\nWHAT BRAIN ALREADY KNOWS:\n{context[:12000]}{tail}"
 
 
 def analyst_system() -> str:
