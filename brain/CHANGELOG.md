@@ -6,6 +6,11 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 - Help develop brAIn (the opt-in development loop): reports the developer closed as declined, not brAIn's or duplicate are no longer filed again, and a stream whose reports are mostly closed that way is slowed, with the reason and an Undo shown. Unmet requests are now reported as the thing brAIn said it could not do, once it has come up in two conversations, and never include what was typed. Every report says how often it happened and how many days, and the most frequent go first. Nothing changes while the loop is off.
 
+## 2.17.13
+
+- What you teach brAIn in the chat or the terminal is filed into memory again on a system where the sign-in hook could not read the conversation's credential. The add-on now runs that step itself with the credential every other run uses, instead of failing it as "not signed in". (reports #81)
+- A finding sent back for a second look (a re-report with new detail, a rise in severity, or the one-time re-look at startup) is now looked at again, rather than being marked "nothing finished looking at this one" within a minute and never offered again. The "waiting for a look" count in diagnostics now measures time spent waiting, not time since the finding was first filed. (reports #82)
+
 ## 2.17.12
 
 - The missing-entity check no longer reads pieces of a template as entities: part of an id being built, a method on a loop variable, or a script field's example or default value. Real references inside a template are still checked. (reports #70, #75)

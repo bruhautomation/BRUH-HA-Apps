@@ -742,6 +742,11 @@ def _shape(entry: dict) -> dict:
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
         out["came_back"] = int(entry["came_back"])
+    # When a row sent back to the look started waiting again (`_send_to_look`).
+    # Absent on a row that has waited only since it was filed.
+    if entry.get("triaging_since") and (status == "triaging"
+                                        or late_verdict_welcome(entry)):
+        out["triaging_since"] = waiting_since(entry)
     # Still `triaging` past `triage.SHOW_AFTER_S`: shown on the feed with
     # `triage.WAITING` and counted, while the look it is waiting for has
     # still not come. Derived, never stored, and absent otherwise.
@@ -1171,7 +1176,7 @@ def _absorb(host: dict | None, entry: dict) -> bool:
     host["detail"] = detail
     if (host.get("status") == "held"
             and not (host.get("triage") or {}).get("elevated_by_person")):
-        host["status"] = "triaging"
+        _send_to_look(host)
     return True
 
 
@@ -1594,6 +1599,10 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         if not late:
             entry["status"] = "held" if verdict == "held" else "open"
+        if verdict != "untriaged":
+            # A look answered: the wait is over. "Nothing looked" keeps the
+            # stamp, because the row is still waiting for exactly that.
+            entry.pop("triaging_since", None)
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
             "run_id": run_id, "at": stamp, "wrote_fix": False,
@@ -1604,6 +1613,34 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     if wrote:
         _write(items)
     return changed
+
+
+def waiting_since(entry: dict) -> int:
+    """When this row started waiting for a look: the moment it was last
+    sent back to `triaging`, or when it was filed.
+
+    A row's `ts` is its FILING, and three things send an old row back to
+    the look long after that — a held row re-reported with a new detail
+    (`_absorb`), one whose severity rose (`refresh_details`), the one-time
+    re-look at startup (`migrate_folds`). Every clock that asked "has this
+    waited too long" read `ts`, so a fortnight-old row sent back to the
+    look was "left mid-look past the hour" the very next minute, shown as
+    if nothing had looked at it, and — the re-offer reaching back a day
+    from the FILING — never offered to a look again (reports #82).
+    """
+    if not isinstance(entry, dict):
+        return 0
+    try:
+        since = int(entry.get("triaging_since") or 0)
+    except (TypeError, ValueError):
+        since = 0
+    return since or int(entry.get("ts") or 0)
+
+
+def _send_to_look(entry: dict, now: float | None = None) -> None:
+    """Back to the first look, stamped with when — see `waiting_since`."""
+    entry["status"] = "triaging"
+    entry["triaging_since"] = int(now if now is not None else time.time())
 
 
 def late_verdict_welcome(entry: dict) -> bool:
@@ -1630,17 +1667,27 @@ def late_verdict_welcome(entry: dict) -> bool:
             and not record.get("elevated_by_person"))
 
 
-def unjudged_open(since: float) -> list[dict]:
-    """Rows silence surfaced since ``since``, OLDEST FIRST, shaped.
+def unjudged_open(since: float | None = None) -> list[dict]:
+    """Rows silence surfaced and no look has judged since, OLDEST FIRST,
+    shaped.
 
     They are offered to the next look beside `awaiting_triage`'s, because
     the pending list is in memory: a restart after the stale sweep would
     otherwise leave a row marked as never looked at for good, with nothing
-    left that could correct it. Bounded by the caller's window, which is
-    the age past which a signal stops being evidence about the house.
+    left that could correct it.
+
+    **There is no window on the filing, and there used to be.** A row on
+    the list that says nothing looked at it is a claim on screen today
+    whatever day it was filed — a check re-reports it every pass, or
+    `clear_resolved` takes it off — so it is offered until a look answers
+    about it. Bounding it by a day from `ts` is what left a row sent back
+    to the look a fortnight after it was filed waiting for good (reports
+    #82). ``since``, when given, bounds when the row started WAITING
+    (`waiting_since`), never when it was filed.
     """
     rows = [_shape(e) for e in _load()
-            if late_verdict_welcome(e) and int(e.get("ts") or 0) >= int(since)]
+            if late_verdict_welcome(e)
+            and (since is None or waiting_since(e) >= int(since))]
     rows = [r for r in rows if r["text"]]
     rows.sort(key=lambda f: f["ts"])
     return rows
@@ -1687,10 +1734,11 @@ def stale_triaging(cutoff: float) -> list[int]:
     outcome this whole step must not be able to produce. The caller
     promotes them through :func:`record_triage` with an ``untriaged``
     verdict, so they surface carrying the reason they were never judged.
+    The hour runs from `waiting_since`, never from the filing.
     """
     return [int(e.get("ts") or 0) for e in _load()
             if e.get("status") == "triaging"
-            and int(e.get("ts") or 0) < int(cutoff)]
+            and waiting_since(e) < int(cutoff)]
 
 
 @_mutates
@@ -2151,7 +2199,7 @@ def migrate_folds() -> dict:
                < triage.LOOK_VERSION]
         old.sort(key=lambda f: -int(f.get("ts") or 0))
         for f in old[:MIGRATION_RETRIAGE_MAX]:
-            f["status"] = "triaging"
+            _send_to_look(f)
             out["retriaged"] += 1
             changed = True
         marks["retriage_v1"] = int(time.time())
@@ -2361,7 +2409,7 @@ def refresh_details(objs: list[dict]) -> int:
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
             if rose and cur.get("status") == "held":
-                cur["status"] = "triaging"
+                _send_to_look(cur)
             changed += 1
     if changed:
         _write(items)

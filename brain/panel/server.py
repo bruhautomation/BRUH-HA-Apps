@@ -174,6 +174,7 @@ import facts_store
 import episodes
 import esphome
 import eventbus
+import extract_requests
 import feedback_store
 import finding_requests
 import findings_store
@@ -6417,6 +6418,11 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # The memory extractions the Stop hook could not sign in (reports
+        # #81): it cannot read the credential its CLI was handed, and the
+        # panel holds the one every other run uses. Before the gates, as the
+        # hook's own pass always was — a person typed it.
+        await asyncio.to_thread(_drain_extract_requests)
         # The drain that used to live here is the Resident's first look
         # now (`_resident_loop`), which reads the same `awaiting_triage()`
         # queue on its own five-second tick — so a row a study session just
@@ -10173,6 +10179,19 @@ def _entity_names_in(*texts: str) -> dict[str, dict]:
     return out
 
 
+def _drain_extract_requests() -> int:
+    """Run the extraction passes the hook left for the panel, as the
+    `claude` user, with the environment every Claude run is handed (and so
+    the credential `engine.get_auth` picks). A signed-out house starts
+    nothing — the pass would only be refused — and leaves the requests to
+    age out."""
+    if not engine.get_auth():
+        return 0
+    prefix = (["su-exec", "claude"]
+              if os.geteuid() == 0 and shutil.which("su-exec") else [])
+    return extract_requests.drain(env=engine._claude_env(), prefix=prefix)
+
+
 def _ingest_facts() -> int:
     try:
         # A registry older than FACTS_REGISTRY_FRESH_S may not list a device
@@ -10417,8 +10436,10 @@ async def _resident_pass(now: float) -> dict:
         # verdict they never had: the pending list is in memory, and a
         # restart after the stale sweep otherwise left a row saying nothing
         # had looked at it for good (`findings_store.late_verdict_welcome`).
-        shown_unjudged = await asyncio.to_thread(
-            findings_store.unjudged_open, now - RESIDENT_SIGNAL_TTL_S)
+        # No window on the FILING (reports #82): a row on the list that says
+        # nothing looked is offered until a look answers, however long ago
+        # it was filed.
+        shown_unjudged = await asyncio.to_thread(findings_store.unjudged_open)
         _offer_findings(waiting + shown_unjudged, now)
     _resident_absorb(now)
     out = {"looked": False, "surfaced": len(surfaced),
@@ -15016,6 +15037,15 @@ def _facts_summary_safe() -> dict:
         return {"error": str(exc)[:200]}
 
 
+def _waited_s(row: dict, now: float | None = None) -> int:
+    """How long a waiting row has waited — from when it was last sent to
+    the look (`findings_store.waiting_since`), not from when it was filed:
+    "oldest waiting 328 h" was a fortnight-old row sent back to the look
+    minutes earlier (reports #82)."""
+    now = time.time() if now is None else now
+    return max(0, int(now - findings_store.waiting_since(row)))
+
+
 def _waiting_rows(rows: list[dict]) -> list[dict]:
     """The rows no look has judged: `triaging`, or `open` carrying the
     "nothing looked" record (`findings_store.late_verdict_welcome`)."""
@@ -15103,7 +15133,7 @@ def _diagnostics_payload() -> dict:
             # Computed once here so `reports.faults` stays pure over it.
             "waiting_for_look": len(_waiting_rows(rows)),
             "waiting_for_look_oldest_s": max(
-                [int(time.time() - f["ts"]) for f in _waiting_rows(rows)]
+                [_waited_s(f) for f in _waiting_rows(rows)]
                 or [0]),
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
