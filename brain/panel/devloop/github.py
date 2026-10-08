@@ -1,4 +1,4 @@
-"""The five GitHub calls the loop makes, and nothing else.
+"""The GitHub calls the loop makes, and nothing else.
 
 urllib rather than a client library: five requests do not earn a
 dependency, and the base URL is an environment variable so the tests can
@@ -106,6 +106,36 @@ def find_issue(token: str, repo: str, fp: str) -> tuple[int | None, str]:
         if len(body) < 100:
             break
     return None, ""
+
+
+def list_issues(token: str, repo: str, pages: int = 3
+                ) -> tuple[list[dict] | None, str]:
+    """The newest issues with their state and labels: the request
+    `find_issue` already makes, read for the verdict the cloud left on
+    each one rather than for a marker. No new call, no new permission —
+    Issues: read is what the token was given."""
+    out: list[dict] = []
+    for page in range(1, max(1, int(pages)) + 1):
+        status, body = _call(
+            token, "GET", f"/repos/{repo}/issues?state=all&sort=created"
+            f"&direction=desc&per_page=100&page={page}")
+        if status != 200 or not isinstance(body, list):
+            return None, _message(status, body)
+        out += [row for row in body if isinstance(row, dict)]
+        if len(body) < 100:
+            break
+    return out, ""
+
+
+def label_names(issue: dict) -> set[str]:
+    """GitHub answers labels as objects; a string is read too, so a
+    caller handing back what it sent is not read as unlabelled."""
+    names = set()
+    for label in (issue or {}).get("labels") or []:
+        name = label.get("name") if isinstance(label, dict) else label
+        if isinstance(name, str):
+            names.add(name)
+    return names
 
 
 def create_issue(token: str, repo: str, title: str, body: str,

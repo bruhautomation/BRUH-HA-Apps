@@ -51,7 +51,7 @@ owes, and `_devloop_tick` runs on `_checks_loop`.
 | `faults` | The `reports.faults` sweep: dead loops and daemons, failing runs, checks that could not look, the health verdict | nothing | on, hourly |
 | `scorecard` | `findings_store.scorecard()` and the journal's outcomes, as ONE rolling issue per release, its body rewritten (PATCH) when what it says changes | nothing | on, daily |
 | `wrongs` | Producers marked Wrong ≥3 times and ≥50% of the time, with the reasons typed | nothing | on, daily |
-| `unmet` | The person's chat messages the reply said it could not do (`_CANT_RE` on the reply, never the person), last 14 days | nothing | off |
+| `unmet` | What the chat said it could not do (`_CANT_RE` on the reply, never the person), keyed on that sentence normalised (`capability_key`) and filed once it recurs in `UNMET_MIN_CONVERSATIONS` (2) conversations, last 14 days | nothing | off |
 | `snapshot` | Counts and flags only (domains, rooms, boolean options), as one rolling issue, so a cloud UX audit can match a real house without visiting it | nothing | off, weekly |
 | `gaps` | A read-only `run_analyst` over the faults, scorecard and unmet requests: where brAIn falls short here | one run | off, weekly |
 | `ideas` | The same run asked for features this house would use | one run | off, weekly |
@@ -71,6 +71,19 @@ a count are precisely what changes, so folding them filed every release's
 scorecard into the first issue and never rewrote a body whose only change was
 a number. A rolling body also carries no per-pass counter, or every pass is
 a rewrite.
+
+**The cloud's verdict comes back** (`upstream._refresh_verdicts`). Hourly
+(`VERDICT_INTERVAL_S`) the send pass lists the reports repo's issues with the
+call the marker search already makes and stores each filed report's verdict
+(`devloop:fixed` / `declined` / `not-brain` / `duplicate`, or plain closed)
+in `verdicts.json`, apart from the queue. A noise verdict on a `gaps`,
+`ideas`, `look` or `unmet` report stands that stream down for its
+fingerprint and, for a Claude stream, for the title it names. A stream whose
+last `SLOW_WINDOW` (8) resolved reports are ≥`SLOW_NOISE_SHARE` (75%) noise
+runs at twice its interval, capped at `SLOW_MAX_HOURS` (336), with the
+reason in the payload and an Undo press; `fixed` is never noise. Each
+non-rolling issue carries an **Impact** section and new reports are filed in
+`impact_score` order under the day's cap.
 
 Still planned, and not in `STREAMS` until built: **outcomes** (Resident
 verdicts the household contradicted, per scope) and **aliased screenshots

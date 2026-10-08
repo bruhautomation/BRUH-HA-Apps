@@ -21,7 +21,7 @@ schedule and its own **Run** button:
 | **Faults** | The fault list from ⚙ › Diagnostics: a service that stopped, a run that keeps failing | yes, hourly | nothing |
 | **Scorecard** | How right each house check was on this release. One issue per release, rewritten in place | yes, daily | nothing |
 | **Wrongs** | A check you have marked Wrong at least 3 times and at least half the time, with the reasons you typed | yes, daily | nothing |
-| **Unmet requests** | Things you asked the chat for that brAIn said it could not do | no | nothing |
+| **Unmet requests** | Things brAIn told you in the chat it could not do, once the same one has come up in two or more conversations | no | nothing |
 | **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
@@ -58,6 +58,21 @@ For each finding brAIn:
    These comments are what tell anyone whether a fix actually worked on your
    house. A stream you switch off never claims anything stopped: it was not
    looking.
+4. **Says how much it matters.** Every new issue opens with a short
+   **Impact** section: how often it was seen and over how many days, how
+   many rows or runs it touched where brAIn knows, and what you did about it
+   (marked Wrong, confirmed). When the day's cap holds reports back, the most
+   impactful are sent first.
+5. **Listens to the answer.** Whoever works through your reports closes each
+   issue with a label: fixed, declined, not brAIn's, or a duplicate. Once an
+   hour brAIn reads those back, using the same issue listing it already
+   reads, and shows the tally beside each stream. A Gaps, Ideas, Look at or
+   Unmet report closed as declined, not brAIn's or a duplicate is never filed
+   again, even reworded. If 6 of a stream's last 8 closed reports were noise
+   like that, the stream runs half as often (but at least once a
+   fortnight), and ⚙ says so with an **Undo**. A fix
+   is never counted as noise, and a fixed fault that comes back is still
+   reported as *Back again*.
 
 The same controls are in the terminal as `brain devloop status`,
 `brain devloop run [stream]` and `brain devloop look "<what>"`.
@@ -67,12 +82,14 @@ The same controls are in the terminal as `brain devloop status`,
 **Sent**, inside the issue:
 
 - the finding's description;
-- for **Unmet requests**, what you typed into the chat and the sentence
-  brAIn answered with, both aliased like everything else;
+- for **Unmet requests**, the sentence brAIn answered with when it could
+  not do something, and how many times and in how many conversations it
+  said it. What you typed is not sent;
 - for **Gaps**, **Ideas** and **Look at**, what the Claude run wrote;
 - brAIn's version and health verdict;
 - an abridged diagnostics summary: versions, run counts by outcome, the last
-  checks pass, and which background services are up.
+  checks pass, and which background services are up;
+- the Impact section's counts.
 
 **Replaced with aliases before sending:** every entity id, friendly name and
 room name. `light.bedroom_lamp` becomes `light.light_07`, *Master Bedroom*
