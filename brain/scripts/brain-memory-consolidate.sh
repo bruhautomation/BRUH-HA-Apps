@@ -377,18 +377,33 @@ claude_pass() {
     # failure — timeout, rate limit, a malformed prompt — report itself as
     # "not authenticated?", which sent people to re-do a sign-in that was
     # fine while the real cause stayed invisible.
-    local err_file rc=0 started
+    #
+    # And stderr is not where the CLI says why. In `-p` text mode its own
+    # verdict on a failed run — "Error: Reached max turns (1)", "Execution
+    # error", an API error, a signed-out account — is printed to STDOUT,
+    # with exit 1 and nothing on stderr. This pass read stdout as the answer
+    # and deleted it on failure, so six passes in seven on one house were
+    # journaled as "claude exited 1" with the reason thrown away. It asks
+    # for the JSON envelope instead: the CLI's own `subtype`, `is_error`,
+    # `result` and usage, which the journal reads as the authority, and the
+    # answer is the envelope's `result`. A stdout that is not an envelope
+    # (an older stand-in) is read as the answer, as before.
+    local err_file raw_file rc=0 started
     err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
+    raw_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-raw.$$")
     started=$(date +%s)
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
             $claude_cmd -p --disallowedTools "*" --max-turns 1 \
+            --output-format json \
             "${session_args[@]}" \
-            --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
+            --model "$CLAUDE_MODEL" >"$raw_file" 2>"$err_file" || rc=$?
 
     # An older CLI answers an unknown flag with usage and a non-zero exit.
     # Drop the label and run the pass — a conversation nobody can attribute
-    # beats a consolidation that never happens.
+    # beats a consolidation that never happens. The retry carries no
+    # --session-id at all, never the same one: an id is spent by the first
+    # attempt that reached the API, and the CLI refuses it a second time.
     if [ "$rc" != 0 ] && [ "${#session_args[@]}" -gt 0 ] \
        && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
         log "this Claude CLI has no --session-id — running unlabelled"
@@ -397,18 +412,38 @@ claude_pass() {
         # shellcheck disable=SC2086
         printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
                 $claude_cmd -p --disallowedTools "*" --max-turns 1 \
-                --model "$CLAUDE_MODEL" >"$out_file" 2>"$err_file" || rc=$?
+                --output-format json \
+                --model "$CLAUDE_MODEL" >"$raw_file" 2>"$err_file" || rc=$?
     fi
 
     # One journal row per pass, from the process that ran it: the panel
     # books it (a report when it failed, its tokens into the breakdown)
     # and the usage reading is nudged. Before the stderr is thrown away,
-    # because its last line is what a failure's row carries.
+    # because its last line is what a failure's row carries when there is
+    # no envelope to say it.
     if command -v brain_journal_record > /dev/null 2>&1; then
         brain_journal_record memory "$rc" --stderr "$err_file" \
+            --envelope "$raw_file" \
             --run-id "$session_id" --model "$CLAUDE_MODEL" \
             --duration "$(( $(date +%s) - started ))"
     fi
+
+    # The envelope's own verdict: is_error on an exit 0 is still a failure.
+    local env_error="" env_reason=""
+    if jq -e 'type == "object" and .type == "result"' "$raw_file" \
+            > /dev/null 2>&1; then
+        env_error=$(jq -r 'if .is_error == true or ((.subtype // "success") != "success")
+                           then "yes" else "" end' "$raw_file" 2>/dev/null)
+        env_reason=$(jq -r '(.result // "") as $r
+            | if ($r | tostring | length) > 0 then $r
+              elif ((.errors // []) | length) > 0 then (.errors | map(tostring) | join("; "))
+              else (.subtype // "") end' "$raw_file" 2>/dev/null \
+            | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-200)
+        jq -r '.result // ""' "$raw_file" > "$out_file" 2>/dev/null || : > "$out_file"
+    else
+        cp "$raw_file" "$out_file" 2>/dev/null || : > "$out_file"
+    fi
+    [ -n "$env_error" ] && [ "$rc" = 0 ] && rc=1
 
     if [ "$rc" != 0 ]; then
         local why detail
@@ -419,12 +454,16 @@ claude_pass() {
         else
             why="Claude exited ${rc}"
         fi
-        detail=$(grep -v '^[[:space:]]*$' "$err_file" 2>/dev/null | tail -n 1 | cut -c1-200)
-        rm -f "$err_file"
+        # The CLI's own words first (the envelope), then its stderr, then
+        # the last line a text-mode run printed — never nothing.
+        detail="$env_reason"
+        [ -n "$detail" ] || detail=$(grep -v '^[[:space:]]*$' "$err_file" 2>/dev/null | tail -n 1 | cut -c1-200)
+        [ -n "$detail" ] || detail=$(grep -v '^[[:space:]]*$' "$raw_file" 2>/dev/null | tail -n 1 | cut -c1-200)
+        rm -f "$err_file" "$raw_file"
         log "${why}${detail:+ — $detail} — inbox left pending"
         return 1
     fi
-    rm -f "$err_file"
+    rm -f "$err_file" "$raw_file"
     return 0
 }
 

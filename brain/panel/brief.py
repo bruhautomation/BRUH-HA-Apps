@@ -178,6 +178,14 @@ def usage_line(state: dict) -> str:
         return ("The Claude usage figures cannot be read because of the "
                 f"sign-in ({code}). If you mention it, the remedy is Sign in "
                 "again under the brAIn panel's settings, Account.")
+    if code == "http_429" and limits.get("stuck"):
+        # Past its shelf life a rate limit is worth saying, and still
+        # never as a sign-in: the account is fine and the endpoint is not
+        # answering.
+        return ("Anthropic's usage endpoint has refused brAIn's requests "
+                "for over a day (http_429), so the usage figure is an "
+                "estimate. If you mention it, it is not the account's "
+                "usage and signing in again will not help.")
     return ""
 
 

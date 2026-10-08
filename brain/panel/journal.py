@@ -491,8 +491,8 @@ def envelope_of(text: str) -> dict:
 
 def transcript_tokens(run_id: str, roots: list[str] | None = None) -> int:
     """What a run with no envelope spent, read off the transcript the CLI
-    left behind (``projects/<dir>/<run id>.jsonl``). The consolidator and
-    study read their answer as text, so their runs carry no usage block —
+    left behind (``projects/<dir>/<run id>.jsonl``). Study reads its answer
+    as text, so its runs carry no usage block —
     but the CLI wrote one per model call into the transcript, and a run
     nothing counted is a run the budget estimate reads as free.
 
@@ -565,6 +565,14 @@ def record_shell(source: str, exit_code: int, *, envelope: dict | None = None,
         ok = (int(exit_code) == 0 and not env.get("is_error")
               and subtype in ("", "success"))
         err = "" if ok else str(env.get("result") or "")
+        if not ok and not err:
+            # An `error_max_turns` envelope carries no result: its words
+            # are in `errors`, and failing that its subtype is the verdict.
+            errors = env.get("errors")
+            if isinstance(errors, list) and errors:
+                err = "; ".join(str(e) for e in errors if e)[:MAX_ERROR]
+            err = err or (f"the CLI ended {subtype}" if subtype
+                          and subtype != "success" else "")
         if isinstance(env.get("num_turns"), int):
             turns = env["num_turns"]
         run_id = run_id or str(env.get("session_id") or "")

@@ -77,6 +77,28 @@ class TestARateLimitIsNotAReason(unittest.TestCase):
                                  brief.frame(["x"], state(stale, limits)))
 
 
+class TestADayOfRateLimitsIsSaidButNeverAsASignIn(unittest.TestCase):
+    """Past a day `http_429` stops needing nothing (`usage_store.STUCK_AFTER`)
+    and becomes a reason, and the reason it is must still not be "sign in
+    again": the account is fine and the endpoint is not answering."""
+
+    def test_it_is_a_reason_and_the_prompt_rules_out_a_sign_in(self):
+        import time as _time
+        from datetime import datetime, timezone
+        since = datetime.fromtimestamp(_time.time() - 30 * 3600,
+                                       timezone.utc).isoformat()
+        limits = limits_for({"error": "http_429", "error_since": since})
+        self.assertFalse(limits["needs_nothing"])
+        verdict = health.verdict({"usage": {"limits": limits}}, {}, now=NOW)
+        self.assertEqual(verdict["state"], "degraded")
+        st = state(verdict, limits)
+        self.assertNotEqual(brief.worth_saying(st), [])
+        text = brief.frame(["x"], st)
+        self.assertIn("over a day", text)
+        self.assertIn("signing in again will not help", text)
+        self.assertNotIn("Sign in again", text)
+
+
 class TestARealSignInProblemIsStillSaid(unittest.TestCase):
 
     def test_a_refused_sign_in_is_a_reason(self):
