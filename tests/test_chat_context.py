@@ -57,6 +57,11 @@ class FakePanel:
 
     def __init__(self, answer=None, raw=None, delay=0.0):
         self.seen: list[dict] = []
+        # A slow panel answers after `delay` OR when the test closes it,
+        # whichever is first: the test closes it only once the hook has
+        # returned, so it is still silent for as long as the hook waits,
+        # and shutting the server down no longer waits the delay out.
+        self.released = threading.Event()
         panel = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -65,7 +70,7 @@ class FakePanel:
                 body = json.loads(self.rfile.read(length) or b"{}")
                 panel.seen.append({"path": self.path, "body": body})
                 if delay:
-                    time.sleep(delay)
+                    panel.released.wait(delay)
                 payload = raw if raw is not None else json.dumps(answer).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -81,6 +86,7 @@ class FakePanel:
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
 
     def close(self):
+        self.released.set()
         self.httpd.shutdown()
         self.httpd.server_close()
 
@@ -128,7 +134,12 @@ class TestTheHook(unittest.TestCase):
         self.assertEqual((out.returncode, out.stdout), (0, ""))
 
     def test_a_slow_panel_is_given_up_on_inside_the_budget(self):
-        panel = FakePanel({"context": "late"}, delay=3.0)
+        # The panel would answer after 30s and the hook's budget is half a
+        # second, so a hook that waited is unmistakable at any bound in
+        # between. The bound is wide on purpose: the measured time is mostly
+        # a Python subprocess starting, which a loaded machine (four xdist
+        # workers, a CI runner) stretches to seconds.
+        panel = FakePanel({"context": "late"}, delay=30.0)
         try:
             started = time.monotonic()
             out = self.run_hook(json.dumps({"prompt": "hello"}), panel.url,
@@ -137,7 +148,7 @@ class TestTheHook(unittest.TestCase):
         finally:
             panel.close()
         self.assertEqual((out.returncode, out.stdout), (0, ""))
-        self.assertLess(took, 2.5)
+        self.assertLess(took, 15)
 
     def test_garbage_in_and_garbage_back_are_both_nothing(self):
         panel = FakePanel(raw=b"<html>not json</html>")

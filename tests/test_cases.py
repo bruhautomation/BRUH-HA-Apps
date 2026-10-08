@@ -16,6 +16,7 @@ means.
 """
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -246,8 +247,33 @@ class TestOneListOverFourStores(StoresCase):
     def test_the_kinds_are_the_stores_own_vocabulary(self):
         """One table, in the module that decides what may be written to
         disk — a word the reader admitted and the store refused would be a
-        case the feed renders and nothing can file."""
-        self.assertIs(cases.KINDS, findings_store.CASE_KINDS)
+        case the feed renders and nothing can file.
+
+        "One table" is an identity, and it is asked in a FRESH interpreter
+        rather than of the modules this file imported. Other test files
+        `importlib.reload(findings_store)` (test_doctor_deep, to re-read its
+        paths from the environment), which re-runs the module body in the
+        same object and mints a new `CASE_KINDS` tuple while the `cases`
+        already in `sys.modules` keeps the one it bound at its own import.
+        So `assertIs` across this process answered "which file ran before
+        this one on this worker" — it passed serially by luck of ordering
+        and failed under xdist — when the claim is about how `cases` takes
+        its vocabulary, which only an import nobody has touched can show.
+        The in-process half is equality, which a reload cannot break and a
+        second copy that drifted would."""
+        self.assertEqual(cases.KINDS, findings_store.CASE_KINDS)
+        probe = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(PANEL_DIR)!r})\n"
+            "import cases, findings_store\n"
+            "print(cases.KINDS is findings_store.CASE_KINDS)\n"
+        )
+        out = subprocess.run([sys.executable, "-c", probe],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.strip(), "True",
+                         "cases.KINDS is a copy of the store's vocabulary, "
+                         "not the store's own table")
 
 
 # ---------------------------------------------------------------------------

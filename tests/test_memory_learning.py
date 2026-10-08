@@ -1409,16 +1409,10 @@ def test_a_held_lock_exits_busy_rather_than_claiming_success(tmp_path):
         tmp_path, FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE)
     memory_dir.mkdir(parents=True, exist_ok=True)
     lock = memory_dir / ".consolidate.lock"
-    lock.touch()
-    holder = subprocess.Popen(["flock", str(lock), "sleep", "10"])
+    # Owned before the race starts and held until killed, so the pass meets
+    # a held lock however slowly a loaded machine gets round to running it.
+    holder = hold_the_lock(lock)
     try:
-        # wait for the holder to actually own it before racing it
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            probe = subprocess.run(["flock", "-n", str(lock), "true"], check=False)
-            if probe.returncode != 0:
-                break
-            time.sleep(0.05)
         result = run_consolidator(memory_dir, fake, BRAIN_MEMORY_LOCK_WAIT="1")
     finally:
         holder.kill()
@@ -1467,8 +1461,11 @@ def hold_the_lock(lock: Path):
     """A subprocess actually holding the flock, the way a pass does."""
     lock.parent.mkdir(parents=True, exist_ok=True)
     lock.touch()
-    holder = subprocess.Popen(["flock", str(lock), "sleep", "30"])
-    deadline = time.time() + 5
+    # Held far longer than any test needs and killed by the caller: a
+    # holder that let go on its own while a check was still asking would
+    # turn "the pass is running" into a coin toss on a loaded machine.
+    holder = subprocess.Popen(["flock", str(lock), "sleep", "300"])
+    deadline = time.time() + 30
     while time.time() < deadline:
         probe = subprocess.run(["flock", "-n", str(lock), "true"], check=False)
         if probe.returncode != 0:
@@ -1555,7 +1552,12 @@ def test_a_pass_in_flight_is_reported_as_running_not_stuck(tmp_path):
         holder.kill()
         holder.wait()
     assert "WARN" not in out, out
-    assert "is running (60s so far)" in out
+    # The marker is stamped 60s back and the check reads the clock itself,
+    # so a loaded machine (a parallel run) reports 61s or 62s. What the line
+    # claims is "running, about a minute so far", not an exact second.
+    match = re.search(r"is running \((\d+)s so far\)", out)
+    assert match, out
+    assert 60 <= int(match.group(1)) < 120, out
 
 
 def test_the_probe_neither_blocks_a_pass_nor_truncates_its_lock(tmp_path):
@@ -1581,7 +1583,10 @@ def test_the_probe_neither_blocks_a_pass_nor_truncates_its_lock(tmp_path):
         holder.kill()
         holder.wait()
     assert "is running" in out
-    assert elapsed < 5, "the check waited on a lock it should only have probed"
+    # A check that waited would wait out the holder's five minutes; one that
+    # probed is a bash start and a flock, which a loaded machine stretches
+    # to seconds but never to twenty.
+    assert elapsed < 20, "the check waited on a lock it should only have probed"
     assert lock.read_text() == "held by a pass\n", \
         "the probe truncated the holder's lock file"
 
