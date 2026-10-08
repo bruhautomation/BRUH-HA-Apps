@@ -471,19 +471,7 @@ def problems(diag: dict, options: dict | None = None,
     # sensor people stop reading. The pill still says the number is an
     # estimate and why; that is a different question from this one.
     limits = usage.get("limits") or {}
-    if (limits and not limits.get("needs_nothing")
-            and limits.get("stuck") and limits.get("code") == "http_429"):
-        # The ladder's own code, aged past its shelf life: not the generic
-        # "not being reported", which reads as a tracker that stopped, when
-        # this one is asking on schedule and being refused every time.
-        found.append(_problem(
-            "degraded", "the usage endpoint has refused brAIn for over a day",
-            "Anthropic's usage endpoint has answered every request with a "
-            "rate limit for more than a day, so the usage figure is brAIn's "
-            "own estimate. The tracker keeps asking every few hours; the "
-            "add-on log says what it was told.",
-            "usage"))
-    elif limits and not limits.get("needs_nothing"):
+    if limits and not limits.get("needs_nothing"):
         found.append(_problem(
             "degraded", "usage figures are not being reported",
             "The pill is showing brAIn's own local estimate rather than "

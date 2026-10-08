@@ -335,6 +335,90 @@ class TestTheConsolidatorHearsTheCliItRuns(ShellCase):
         self.assertEqual((row["outcome"], row["tokens"]), ("ok", 100))
 
 
+class TestTheConsolidatorLoadsNoTools(ShellCase):
+    """A pass is one turn, and a tool the model may reach for spends it.
+
+    `--disallowedTools "*"` denies every tool and leaves every one in the
+    model's list, so a model that reaches for Write to update memory.md spends
+    its single `--max-turns 1` turn on the refusal and the CLI ends
+    `error_max_turns`. `--tools ""` loads none at all (the engine's
+    `run_claude` rule); the deny stays beside it. A CLI too old for `--tools`
+    loses that flag and only that flag, and the retry never carries the
+    session id the first attempt spent.
+    """
+
+    CONSOLIDATOR = TestTheConsolidatorRecordsItsPass.CONSOLIDATOR
+    _run = TestTheConsolidatorRecordsItsPass._run
+    MERGED = TestTheConsolidatorHearsTheCliItRuns.MERGED
+
+    def _cli(self, rejects_tools: bool) -> Path:
+        calls = self.base / "calls.jsonl"
+        fake = self.base / "fake_cli.py"
+        fake.write_text(
+            "#!" + sys.executable + "\n"
+            "import json, sys, pathlib\n"
+            "sys.stdin.read()\n"
+            f"calls = pathlib.Path({str(calls)!r})\n"
+            f"merged = {self.MERGED!r}\n"
+            f"rejects = {rejects_tools!r}\n"
+            "args = sys.argv[1:]\n"
+            "seen = [json.loads(l) for l in calls.read_text().splitlines()]"
+            " if calls.exists() else []\n"
+            "with calls.open('a') as fh:\n"
+            "    fh.write(json.dumps(args) + '\\n')\n"
+            "if '--session-id' in args:\n"
+            "    sid = args[args.index('--session-id') + 1]\n"
+            "    for old in seen:\n"
+            "        if '--session-id' in old and old[old.index('--session-id') + 1] == sid:\n"
+            "            print(f'Error: Session ID {sid} is already in use.', file=sys.stderr)\n"
+            "            sys.exit(1)\n"
+            "if '--tools' in args and rejects:\n"
+            "    print(\"error: unknown option '--tools'\", file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "no_tools = '--tools' in args and args[args.index('--tools') + 1] == ''\n"
+            "if not no_tools and not rejects:\n"
+            "    print(json.dumps({'type': 'result', 'subtype': 'error_max_turns',\n"
+            "                      'is_error': True, 'num_turns': 2}))\n"
+            "    sys.exit(1)\n"
+            "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,\n"
+            "                  'result': merged, 'num_turns': 1,\n"
+            "                  'usage': {'input_tokens': 40, 'output_tokens': 60}}))\n")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        return fake
+
+    def _calls(self) -> list:
+        path = self.base / "calls.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def test_a_pass_offers_the_model_no_tool_to_spend_its_turn_on(self):
+        proc = self._run(self._cli(rejects_tools=False))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("the beacon",
+                      (self.base / "memory" / "memory.md").read_text())
+        args = self._calls()[0]
+        self.assertEqual(args[args.index("--tools") + 1], "")
+        self.assertEqual(args[args.index("--disallowedTools") + 1], "*")
+        rows = [r for r in self.rows() if r["source"] == "memory"]
+        self.assertEqual([r["outcome"] for r in rows], ["ok"], rows)
+
+    def test_a_cli_without_tools_drops_that_flag_and_spends_a_new_id(self):
+        proc = self._run(self._cli(rejects_tools=True))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("the beacon",
+                      (self.base / "memory" / "memory.md").read_text())
+        first, second = self._calls()
+        self.assertIn("--tools", first)
+        self.assertNotIn("--tools", second)
+        self.assertEqual(second[second.index("--disallowedTools") + 1], "*")
+        self.assertIn("--max-turns", second)
+        if "--session-id" in second:
+            self.assertNotEqual(
+                second[second.index("--session-id") + 1],
+                first[first.index("--session-id") + 1])
+        rows = [r for r in self.rows() if r["source"] == "memory"]
+        self.assertEqual([r["outcome"] for r in rows], ["ok"], rows)
+
+
 class TestThePanelBooksThem(ShellCase):
     def setUp(self):
         super().setUp()

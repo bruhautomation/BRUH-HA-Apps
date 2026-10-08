@@ -1939,7 +1939,7 @@ class TestADayOfRateLimitsIsSaid(unittest.TestCase):
     an estimate the whole time, and health called it nothing to do because
     the code was on the list. Two halves: the ladder itself must go on
     asking (a wall that lifts has to be noticed), and a streak that has
-    stood past a day has to reach the panel as a fault — through the real
+    stood past a day has to reach the panel in its own words — through the real
     writer into the real reader, because the clock is one key two processes
     spell."""
 
@@ -1972,7 +1972,7 @@ class TestADayOfRateLimitsIsSaid(unittest.TestCase):
         wait, _ = self.mod._resume_backoff()
         self.assertLessEqual(wait, self.mod.RETRY_AFTER_MAX_S)
 
-    def test_a_day_old_streak_reaches_the_panel_as_a_fault(self):
+    def test_a_day_old_streak_reaches_the_panel_in_words(self):
         since = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
         with open(self.mod.USAGE_FILE, "w") as fh:
             json.dump({"error": "http_429", "error_since": since}, fh)
@@ -1992,6 +1992,8 @@ class TestADayOfRateLimitsIsSaid(unittest.TestCase):
         finally:
             usage_store.LIMITS_FILE = old
         self.assertEqual(got["code"], "http_429")
-        self.assertFalse(got["needs_nothing"])
-        self.assertTrue(got["stuck"])
+        # Still nothing to do; the sentence is what moved.
+        self.assertTrue(got["needs_nothing"])
+        self.assertTrue(got["overdue"])
+        self.assertIn("refused every request", got["detail"])
         self.assertIn("next_attempt", got)

@@ -754,10 +754,10 @@ function limitsNote(u) {
         + `again from <b>⚙ › Account › Sign in again</b> is what `
         + `usually fixes it.`);
     case "http_429":
-      // Bounded the same way: a day of refusals is not the backoff doing
-      // its job any more, and the sentence that says it lifts on its own
-      // would be the one a person stops believing.
-      if (lim.stuck) {
+      // Still nothing to do (`needs_nothing` stays true at any age), but
+      // past a day the sentence that says it lifts on its own is the one
+      // a person stops believing, so it says how long it has stood.
+      if (lim.overdue) {
         return say("Anthropic's usage endpoint has refused brAIn for over a day.",
           `Every request has been answered with a rate limit, so the figure `
           + `above is brAIn's own estimate. This is not your account's usage; `

@@ -388,33 +388,63 @@ claude_pass() {
     # `result` and usage, which the journal reads as the authority, and the
     # answer is the envelope's `result`. A stdout that is not an envelope
     # (an older stand-in) is read as the answer, as before.
-    local err_file raw_file rc=0 started
+    #
+    # And the pass loads NO tools (`--tools ""`), with the deny kept beside
+    # it. `--disallowedTools "*"` alone denies every tool but leaves each one
+    # in the model's list, so a model that reaches for Write to update
+    # memory.md spends its single `--max-turns 1` turn on the refusal and the
+    # CLI ends `error_max_turns` — the same rule `engine.run_claude` follows.
+    local err_file raw_file rc=0 started use_tools=1 attempt rejected
+    local base_args
     err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-err.$$")
     raw_file=$(mktemp 2>/dev/null || echo "/tmp/brain-memory-raw.$$")
     started=$(date +%s)
-    # shellcheck disable=SC2086
-    printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
-            $claude_cmd -p --disallowedTools "*" --max-turns 1 \
-            --output-format json \
-            "${session_args[@]}" \
-            --model "$CLAUDE_MODEL" >"$raw_file" 2>"$err_file" || rc=$?
-
-    # An older CLI answers an unknown flag with usage and a non-zero exit.
-    # Drop the label and run the pass — a conversation nobody can attribute
-    # beats a consolidation that never happens. The retry carries no
-    # --session-id at all, never the same one: an id is spent by the first
-    # attempt that reached the API, and the CLI refuses it a second time.
-    if [ "$rc" != 0 ] && [ "${#session_args[@]}" -gt 0 ] \
-       && grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null; then
-        log "this Claude CLI has no --session-id — running unlabelled"
+    for attempt in 1 2 3; do
+        base_args=(-p)
+        [ "$use_tools" = 1 ] && base_args+=(--tools "")
+        base_args+=(--disallowedTools "*" --max-turns 1 --output-format json)
         rc=0
-        session_id=""
         # shellcheck disable=SC2086
         printf '%s' "$prompt" | timeout "$CLAUDE_TIMEOUT" \
-                $claude_cmd -p --disallowedTools "*" --max-turns 1 \
-                --output-format json \
+                $claude_cmd "${base_args[@]}" \
+                "${session_args[@]}" \
                 --model "$CLAUDE_MODEL" >"$raw_file" 2>"$err_file" || rc=$?
-    fi
+        [ "$rc" = 0 ] && break
+
+        # An older CLI answers an unknown flag with usage and a non-zero
+        # exit. Drop THAT flag and run the pass again — a pass with the deny
+        # alone, or a conversation nobody can attribute, beats a
+        # consolidation that never happens. Anything else is the pass's
+        # answer and stands.
+        grep -qi "unknown option\|unrecognized option" "$err_file" 2>/dev/null || break
+        rejected=$(grep -oiE "(unknown|unrecognized) option[^-]*--[a-zA-Z-]+" \
+                       "$err_file" 2>/dev/null | grep -oE -- "--[a-zA-Z-]+" | head -n 1)
+        if [ "$rejected" = "--tools" ] && [ "$use_tools" = 1 ]; then
+            log "this Claude CLI has no --tools — running with the deny alone"
+            use_tools=0
+        elif [ "${#session_args[@]}" -gt 0 ] \
+             && { [ "$rejected" = "--session-id" ] || [ -z "$rejected" ]; }; then
+            log "this Claude CLI has no --session-id — running unlabelled"
+            session_args=()
+            session_id=""
+            continue
+        else
+            break
+        fi
+        # A session id is spent by the attempt that carried it: the CLI
+        # refuses one it has already seen, so a retry claims a fresh one
+        # (or carries none) and never the same.
+        if [ "${#session_args[@]}" -gt 0 ]; then
+            session_id=""
+            command -v brain_new_session > /dev/null 2>&1 \
+                && session_id=$(brain_new_session memory)
+            if [ -n "$session_id" ]; then
+                session_args=(--session-id "$session_id")
+            else
+                session_args=()
+            fi
+        fi
+    done
 
     # One journal row per pass, from the process that ran it: the panel
     # books it (a report when it failed, its tokens into the breakdown)

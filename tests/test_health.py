@@ -599,37 +599,37 @@ class TestWhichMissingFiguresAreFaults(unittest.TestCase):
         self.assertIn("usage", [p["id"] for p in health.problems(diag)])
 
     def test_the_clock_is_only_on_the_verdicts_that_can_clear(self):
-        """An API key can never clear, so it may not age into a fault."""
-        self.assertTrue(self._problem_since(
-            "api_key_has_no_usage_limits", 48)["needs_nothing"])
+        """A 429 ladder has hour-long rungs by design and an API key can
+        never clear; neither may age into a fault."""
+        for code in ("http_429", "api_key_has_no_usage_limits"):
+            self.assertTrue(self._problem_since(code, 48)["needs_nothing"],
+                            code)
 
     def test_a_rate_limit_inside_a_day_is_still_the_ladder_working(self):
         """Its rungs are hours long by design, so an evening of 429s is the
         backoff doing its job and nothing anybody can do."""
         got = self._problem_since("http_429", 20)
         self.assertTrue(got["needs_nothing"])
-        self.assertNotIn("stuck", got)
+        self.assertNotIn("overdue", got)
+        self.assertNotIn("hours now", got["detail"])
 
     def test_a_rate_limit_past_a_day_is_said(self):
         """The report this exists for: the endpoint answered 429 for about
-        thirty hours, the figure was an estimate the whole time, and health
-        called it nothing to do because the code was on the list. A ladder
-        that has climbed for a day without the endpoint answering once is
-        not a refusal doing its job any more, it is a figure that is not
-        coming — and the sentence has to say that, not the 'wait' one."""
+        thirty hours, the figure was an estimate the whole time, and the
+        only sentence anywhere said it would lift on its own. The verdict
+        stays needs-nothing (making it a fault is a person's decision), but
+        the sentence a person reads has to say how long it has stood and
+        that the figure is an estimate — never a sign-in."""
         got = self._problem_since("http_429", 30)
-        self.assertFalse(got["needs_nothing"])
-        self.assertTrue(got["stuck"])
+        self.assertTrue(got["needs_nothing"])
+        self.assertTrue(got["overdue"])
+        self.assertNotIn("stuck", got)
         self.assertIn("the tracker's own gloss", got["detail"])
         self.assertIn("30 hours", got["detail"])
         self.assertIn("estimate", got["detail"])
-        self.assertNotIn("renewal", got["detail"])
+        self.assertNotIn("sign in", got["detail"].lower())
         diag = {"usage": {"limits": got}, "daemons": {}, "options": {}}
-        [row] = [p for p in health.problems(diag) if p["id"] == "usage"]
-        self.assertEqual(row["state"], "degraded")
-        self.assertIn("refused", row["what"] + row["fix"])
-        self.assertIn("over a day", row["what"] + row["fix"])
-        self.assertIn("estimate", row["fix"])
+        self.assertNotIn("usage", [p["id"] for p in health.problems(diag)])
 
     def test_an_api_key_has_no_window_to_report(self):
         """And never will, so this one could not clear at all."""

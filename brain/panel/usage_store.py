@@ -310,7 +310,7 @@ def _fresh_payload() -> dict | None:
 NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
                  "http_429")
 
-# ...and the ones whose "nothing to do" has a shelf life. The tracker
+# ...and the one whose "nothing to do" has a shelf life. The tracker
 # renews the account credential itself now, on every pass, so "between
 # refreshes" is a state that lasts a poll or two — and one that has lasted
 # longer is the tracker unable to renew for hours, which is something a
@@ -319,31 +319,36 @@ NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
 # was a verdict saying nothing was wrong. Three hours is six ordinary
 # polls, or one renewal that failed and five more chances to make it.
 #
-# The 429 ladder was left off this table on the argument that its rungs are
-# hours long by design and it retries on its own — and a house then sat on
-# `http_429` for thirty hours with the figure an estimate the whole time and
-# health calling it nothing to do. Both halves of the argument are true and
-# neither is the question: the ladder does keep asking (every rung at most
-# `RETRY_AFTER_MAX_S`, a nudge never shortening one), but a day of asking
-# with not one answer is not a backoff doing its job any more, it is a
-# figure that is not coming. A day is six asks on the top rung, which is
-# well past any wall that lifts by itself. An API key gets no clock, because
-# it can never clear.
-STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600,
-               "http_429": 24 * 3600}
+# The 429 ladder is deliberately not on this table, and stays needs-nothing
+# at any age: its rungs are hours long by design, it keeps asking on its own
+# (every rung at most the tracker's RETRY_AFTER_MAX_S, a nudge never
+# shortening one), and turning a rate limit into a fault on the health
+# sensor is a decision a person makes, not one a clock makes. An API key
+# can never clear, so it gets no clock either.
+STUCK_AFTER = {"oauth_token_awaiting_refresh": 3 * 3600}
 
-# What a code says once it has outlived its shelf life. It is the reader's
-# sentence because the tracker wrote its gloss when the code was true.
+# What a stuck code says once it has outlived its shelf life. It is the
+# reader's sentence because the tracker wrote its gloss when it was true.
 STUCK_DETAIL = {
     "oauth_token_awaiting_refresh": (
         "It has been the answer for {hours} hours now, which is longer than "
         "a renewal should take — the add-on log says what the tracker ran "
         "into."),
+}
+
+# ...and the needs-nothing codes whose SENTENCE goes out of date while the
+# verdict does not. A house sat on `http_429` for thirty hours with the
+# figure an estimate the whole time, and the only words anywhere said it
+# would lift on its own — true of an evening, untrue of a day and a half.
+# Past this the verdict is unchanged and the words say how long it has
+# stood (`overdue` on the payload, for the popover and the brief).
+OVERDUE_AFTER = {"http_429": 24 * 3600}
+OVERDUE_DETAIL = {
     "http_429": (
         "The usage endpoint has refused every request for {hours} hours "
-        "now, over a day, so the usage figure is brAIn's own estimate. The "
-        "tracker goes on asking every few hours; the add-on log says what "
-        "it was told."),
+        "now, so the usage figure is brAIn's own estimate. This is not the "
+        "account's usage; the tracker goes on asking every few hours and "
+        "the add-on log says what it was told."),
 }
 
 
@@ -423,6 +428,13 @@ def limits_problem() -> dict:
                          + STUCK_DETAIL.get(
                              code, "It has been the answer for {hours} "
                              "hours now.").format(hours=f"{hours:.0f}")
+                         ).strip()
+    limit = OVERDUE_AFTER.get(code)
+    if limit and since and time.time() - since >= limit:
+        hours = (time.time() - since) / 3600
+        out["overdue"] = True
+        out["detail"] = ((out.get("detail") or "") + " "
+                         + OVERDUE_DETAIL[code].format(hours=f"{hours:.0f}")
                          ).strip()
     return out
 
