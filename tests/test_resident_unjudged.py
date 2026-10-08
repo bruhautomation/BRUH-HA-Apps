@@ -277,6 +277,7 @@ class TestARowThatWaitsLongAfterItWasFiledIsStillLookedAt(LoopCase):
                                   for s in srv.RESIDENT_PENDING])
         # …and an hour later, with no look, silence still surfaces it.
         out = self.tick(later + srv.triage.STALE_S + 120)
+        self.assertEqual(out["surfaced"], 1)
         self.assertEqual(srv.findings_store.get(row["ts"])["triage"]["reason"],
                          srv.triage.UNJUDGED)
 
