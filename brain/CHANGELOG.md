@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.9
+
+- The unusual-readings and drifting-readings checks no longer spend their limit on readings that are not about the house: brAIn's own sensors, a printer's job figures, durations and timestamps, targets and setpoints, daily totals, and weather or sky figures. A real fault in the house is reported again instead of the check going quiet because those filled its quota. (reports #36)
+- The morning brief no longer tells you to sign in again when the usage figures are only waiting (for example, while Anthropic is rate-limiting the usage endpoint). It still says so when a sign-in really failed. (reports #37, #61)
+- The Open findings sensor in Home Assistant now shows the same number as the panel's badge: findings, questions and suggestions waiting on you. (reports #39, #51)
+- Findings from a question you asked are filed under that card's title instead of "Custom", including ones already on your list. (reports #46)
+- A failed run in the problems list now says which card or job it was and when it last failed. (reports #48)
+- The record of why brAIn said nothing keeps one row per standing decision with a count, instead of a new row each pass. And when you said you had fixed something and the check still finds it two hours later, the finding comes back instead of being silently dropped every pass. (reports #51, #57)
+
 ## 2.17.8
 
 - What brAIn knows is filed against real things. A number ("69.98") or a file name ("automations.yaml") is no longer stored as a device, and a fact about a device that does not exist is filed about the house instead. (reports #40)

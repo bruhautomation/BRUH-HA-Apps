@@ -328,6 +328,21 @@ RATE_LIMITED_SHARE = 0.10
 RATE_LIMITED_MIN = 5
 
 
+# What a journal row says its run was about, best first. A caller that
+# knew writes it into `extra` (`journal.record` keeps eight keys, scrubbed
+# and capped); an id is the floor, because "energy" is a card somebody can
+# find and "a run" is not.
+_SUBJECT_KEYS = ("title", "label", "category_title", "about", "id")
+
+
+def _run_subject(extra: dict) -> str:
+    for key in _SUBJECT_KEYS:
+        value = extra.get(key) if isinstance(extra, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:80]
+    return ""
+
+
 def _clock(epoch) -> str:
     """A reset time as a person reads it, or "" for none."""
     try:
@@ -412,17 +427,32 @@ def _faults(diag) -> list[dict]:
     # One row per distinct failure, counted: the same refusal ten times in
     # ten minutes is one fact, and six identical lines is how the list
     # stops being read. Newest first, so the row says what is true now.
+    #
+    # And it names what the run was ABOUT when the row says (`_run_subject`)
+    # and when it last happened: "Run (card): ended crash" named a kind of
+    # run and nothing anybody could go and look at. The subject is in
+    # `what` (it is stable per card); the time is in `detail`, because a
+    # fingerprint is taken over `where|what` with digits folded and a
+    # weekday is not a digit.
     grouped: dict[tuple, list] = {}
     for row in reversed(failures):
-        stage = (row.get("extra") or {}).get("stage") if isinstance(
-            row.get("extra"), dict) else ""
-        key = (str(row.get("source") or "a run"), stage or "",
-               str(row.get("outcome") or "badly"), str(row.get("error") or ""))
-        grouped.setdefault(key, [key, 0])[1] += 1
+        extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+        stage = extra.get("stage") or ""
+        key = (str(row.get("source") or "a run"), str(stage),
+               str(row.get("outcome") or "badly"), str(row.get("error") or ""),
+               _run_subject(extra))
+        grouped.setdefault(key, [key, 0, 0])
+        grouped[key][1] += 1
+        grouped[key][2] = max(grouped[key][2], int(row.get("ts") or 0))
     distinct = list(grouped.values())
-    for (where, stage, outcome, error), n in distinct[:FAULTS_PER_KIND]:
+    for (where, stage, outcome, error, subject), n, last in \
+            distinct[:FAULTS_PER_KIND]:
+        when = _clock(last)
+        detail = "; ".join(part for part in (
+            error, f"last at {when}" if when else "") if part)
         _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
-             f"ended {outcome}" + (f" ({n} times)" if n > 1 else ""), error)
+             (f"{subject}: " if subject else "") + f"ended {outcome}"
+             + (f" ({n} times)" if n > 1 else ""), detail)
     if len(distinct) > FAULTS_PER_KIND:
         rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",

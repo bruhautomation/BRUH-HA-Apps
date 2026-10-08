@@ -2136,6 +2136,54 @@ class TestGenerateFlow(InsightsServerCase):
         self.assertEqual(fingerprint["parts"]["findings"],
                          again["parts"]["findings"])
 
+    def test_an_asked_cards_findings_are_filed_under_the_card(self):
+        """Not "Custom": the Findings tab and the scorecard said that word
+        and nothing tied the row back to the card that raised it."""
+        self.server.JOBS["custom-3"] = {"state": "queued",
+                                        "question": "is the dryer ok?"}
+        asyncio.run(self.server._generate("custom-3"))
+        rows = [r for r in findings_store.list_all()
+                if r["source"] == "custom-3"]
+        self.assertTrue(rows)
+        self.assertEqual({r["source_title"] for r in rows}, {"Dryer watch"})
+
+    def test_a_row_filed_as_custom_reads_as_its_card(self):
+        """Rows and ledger entries written before the fix carry "Custom";
+        every reader names the card instead, the scorecard included."""
+        self.server.JOBS["custom-4"] = {"state": "queued",
+                                        "question": "is the dryer ok?"}
+        asyncio.run(self.server._generate("custom-4"))
+        old_settled = findings_store.SETTLED_FILE
+        findings_store.SETTLED_FILE = Path(self.tmp.name) / "settled.json"
+        self.addCleanup(setattr, findings_store, "SETTLED_FILE", old_settled)
+        [row] = findings_store.add_many([{
+            "text": "The dryer vent is blocked", "severity": "warning",
+            "source": "custom-4", "source_title": "Custom"}])
+        self.assertEqual(findings_store.get(row["ts"])["source_title"],
+                         "Dryer watch")
+        findings_store.settle_and_clear(row["ts"], "ignored")
+        titles = {r["source"]: r["title"] for r in self.server._scorecard()}
+        self.assertEqual(titles["custom-4"], "Dryer watch")
+        self.assertNotIn("Custom", findings_store.source_titles().values())
+
+    def test_a_failed_card_journals_which_card_it_was(self):
+        """The fault row reads the card's name off this line
+        (`reports._run_subject`); an id alone is a card nobody can find."""
+        engine.run_claude = lambda *a, **k: {
+            "ok": False, "text": "", "error": "claude exited 1: boom",
+            "meta": {}}
+        lines = []
+        journal = self.server.journal
+        old = journal.record
+        journal.record = lambda *a, **k: lines.append((a, k))
+        self.addCleanup(setattr, journal, "record", old)
+        asyncio.run(self.server._generate("energy"))
+        extras = [k.get("extra") or {} for a, k in lines
+                  if a and a[0] == "insight"]
+        self.assertTrue(extras)
+        self.assertEqual(extras[-1]["title"],
+                         self.server.resolve_category("energy")["title"])
+
     def test_a_typed_question_is_not_fingerprinted(self):
         """Nothing schedules an Ask card, so a fingerprint on one would
         be a number nothing ever reads."""

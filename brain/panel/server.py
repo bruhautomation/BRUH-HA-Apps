@@ -1832,10 +1832,11 @@ def _brief_morning(now: float, night: dict) -> dict:
 
 async def _send_brief(now: float) -> str:
     """Gather, decide, and only then ask. Returns what was sent, or ''."""
-    verdict = {}
+    verdict, usage = {}, {}
     try:
         payload = await asyncio.to_thread(_diagnostics_payload)
         verdict = payload.get("health") or {}
+        usage = payload.get("usage") or {}
     except Exception as exc:  # noqa: BLE001 — the verdict is one reason of
         # several, and not having it is not a reason to skip the morning.
         log.info("brief could not read the health verdict: %s", exc)
@@ -1845,7 +1846,7 @@ async def _send_brief(now: float) -> str:
         await asyncio.to_thread(findings_store.list_all, "live"),
         verdict, {}, BRIEF_STATE["last_sent"] or (now - 86400),
         await asyncio.to_thread(_healing_brief_lines),
-        morning=_brief_morning(now, night), now=now)
+        morning=_brief_morning(now, night), now=now, usage=usage)
 
     reasons = brief.worth_saying(state)
     BRIEF_STATE["last_reasons"] = reasons
@@ -4070,6 +4071,15 @@ async def _offer_card_opportunities(insight_id: str, found: list[dict],
     return out
 
 
+def _card_label(cat: dict, question: str | None) -> str:
+    """What a card's journal line says the run was about, so a fault row
+    names the card (`reports._run_subject`): a category's own title, or an
+    asked card's question — its title is not known until the run lands."""
+    if question is None:
+        return str(cat.get("title") or cat.get("id") or "")[:80]
+    return textclip.clip(f"“{str(question).strip()}”", 80)
+
+
 async def _generate(insight_id: str) -> None:
     job = JOBS.get(insight_id, {})
     question = job.get("question")
@@ -4158,7 +4168,8 @@ async def _generate(insight_id: str) -> None:
                 journal.record("insight", "fallback",
                                error=result.get("error") or "no result",
                                extra={"id": insight_id, "from": "search",
-                                      "to": "snapshot"})
+                                      "to": "snapshot",
+                                      "title": _card_label(cat, question)})
             result, cost, sent = await _snapshot_run(insight_id, cat, framing)
         if not result["ok"]:
             raise RuntimeError(result["error"] or "generation failed")
@@ -4211,11 +4222,16 @@ async def _generate(insight_id: str) -> None:
         # Nothing is announced from this call site any more: a `triaging`
         # row must not ring a phone, and the drain announces what it puts
         # on the list.
+        tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
+        # An asked card's findings are filed under the CARD — its title,
+        # else what its eyebrow says it is about — never the synthetic
+        # category's "Custom", which named nothing anybody could find.
+        filed_under = (cat.get("title", "Insight") if question is None
+                       else _asked_title(str(obj.get("title") or ""), tags))
         filed = findings_store.add_many(triage.gate([
-            {**f, "source": cat["id"], "source_title": cat.get("title", "Insight"),
+            {**f, "source": cat["id"], "source_title": filed_under,
              "run_id": run_id}
             for f in model_findings]))
-        tags = card_tags.clean_tags(_clean_strings(obj.get("tags"), 4, 24))
         opportunities = await _offer_card_opportunities(
             insight_id, _card_opportunities(obj.get("opportunities")),
             previous_opportunities)
@@ -4316,7 +4332,8 @@ async def _generate(insight_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         log.warning("insight %s failed: %s", insight_id, exc)
         journal.record("insight", journal.classify({"ok": False, "error": str(exc)}),
-                       error=str(exc), extra={"id": insight_id})
+                       error=str(exc), extra={"id": insight_id,
+                                              "title": _card_label(cat, question)})
         # The scheduler backs off from this card until a run succeeds.
         _note_card_failure(insight_id, str(exc))
         _set_job(insight_id, state="error", error=str(exc)[:500])
@@ -6918,6 +6935,12 @@ def _queue_count(now: float | None = None) -> int:
     return base
 
 
+# The findings mirror's `open` is this number too, so the Open findings
+# sensor and the panel's badge cannot be two answers (see `findings_store.
+# QUEUE_COUNT` for why the store is handed it rather than asking).
+findings_store.QUEUE_COUNT = _queue_count
+
+
 def _counts(now: float | None = None) -> dict:
     """The three numbers a person compares across screens, each from its
     one derivation: the queue (`cases.queue_count`), To Do
@@ -7819,6 +7842,42 @@ def _asked_card_name(insight: dict) -> str:
     if named and named != "Custom":
         return named
     return str(insight.get("title") or "an asked question")[:120]
+
+
+def _asked_title(title: str, tags: list[str] | None = None,
+                 label: str = "") -> str:
+    """What a finding an asked card filed is filed under: a hand-given
+    label, else the card's title, else its eyebrow (`card_tags.eyebrow`,
+    which never answers "Custom")."""
+    title = textclip.clip(str(title or "").strip(), 120)
+    label = str(label or "").strip()
+    if label and label != "Custom":
+        return label[:120]
+    return title or card_tags.eyebrow({"category_title": ""}, tags or [])
+
+
+_CARD_SOURCE = re.compile(r"^custom-[A-Za-z0-9_-]{1,64}$")
+
+
+def _card_source_title(source: str, title: str) -> str:
+    """`findings_store.SOURCE_TITLE`: a row or ledger entry an asked card
+    filed under "Custom", named by the card it came from. A card since
+    deleted is "Your question", the eyebrow's own last word."""
+    if not _CARD_SOURCE.match(str(source or "")):
+        return title
+    try:
+        stored = json.loads((INSIGHTS_DIR / f"{source}.json").read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        stored = None
+    if not isinstance(stored, dict):
+        return card_tags.eyebrow({"category_title": ""}, [])
+    return _asked_title(str(stored.get("title") or ""),
+                        card_tags.effective_tags(stored),
+                        str(stored.get("category_title") or ""))
+
+
+findings_store.SOURCE_TITLE = _card_source_title
 
 
 async def h_feedback_list(request: web.Request) -> web.Response:
