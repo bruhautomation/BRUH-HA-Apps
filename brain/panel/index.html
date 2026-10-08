@@ -404,6 +404,16 @@
     </div>
     <div id="grid" class="grid"></div>
 
+    <!-- Schedule: every recurring card's cadence, last run, next run and
+         on/off in one compact list, read off the categories the status poll
+         already carries. -->
+    <section id="schedRow" class="reportrow schedrow" aria-label="Schedule" hidden>
+      <details id="schedDetails">
+        <summary><h2>Schedule</h2><span id="schedCount" class="schedcount"></span></summary>
+        <div id="schedList" class="schedlist"></div>
+      </details>
+    </section>
+
     <!-- Deep review: a report like the others, priced on its Run button
          before it is pressed, and dated rather than labelled with a model
          and a token count. -->

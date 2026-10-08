@@ -329,6 +329,7 @@ window.fetch = async (url, opts) => {
     const u = new URL(p, 'http://panel.invalid/');
     const q = (u.searchParams.get('q') || '').toLowerCase();
     const kind = u.searchParams.get('kind') || '';
+    const picked = (u.searchParams.get('subject') || '').split('|').filter(Boolean);
     const kindOf = (f) => (f.predicate || '').startsWith('exception:') ? 'rule'
       : f.subject.startsWith('area:') ? 'area'
       : f.subject === 'house' ? 'house' : 'entity';
@@ -336,13 +337,19 @@ window.fetch = async (url, opts) => {
     const all = window.__facts || [];
     const rows = all.filter((f) => (!q || (f.text + ' ' + f.subject + ' '
       + (names[f.subject] || '')).toLowerCase().includes(q))
-      && (!kind || kindOf(f) === kind));
+      && (!kind || kindOf(f) === kind)
+      && (!picked.length || picked.includes(f.subject)
+        || (f.subjects || []).some((x) => picked.includes(x))));
     const kinds = { house: 0, area: 0, entity: 0, person: 0, rule: 0 };
     all.forEach((f) => { kinds[kindOf(f)] += 1; });
     const filtered = q || kind;
     return answer({
       facts: rows.map((f) => Object.assign({}, f, {
-        kind: kindOf(f), subject_name: names[f.subject] || '' })),
+        kind: kindOf(f), subject_name: names[f.subject] || '',
+        // What \`facts_store.browse\` adds: a name per subject, and the entity
+        // subjects the last checks pass did not see.
+        subject_names: names,
+        subject_gone: f.subject === 'binary_sensor.porch_contact' ? [f.subject] : [] })),
       total: filtered ? rows.length : (window.__factsCount || 0),
       all: window.__factsCount || 0,
       facets: { kinds, sources: { correction: 2, study: 1 } },
@@ -408,7 +415,7 @@ window.fetch = async (url, opts) => {
 // so is the difference between "two facts" and "two of forty".
 const FACTS = [
   { id: 'f1a2b3c4d5e6f7a8', text: 'The garage fridge runs all night on purpose.',
-    subject: 'sensor.garage_fridge_power', subjects: ['area:garage'],
+    subject: 'sensor.garage_fridge_power', subjects: ['area:garage', 'sensor.a', 'sensor.b'],
     source: 'correction', observed: '2026-09-12', confidence: 0.95,
     run_id: 'run-0001', run_source: 'chat', predicate: '', first_seen: NOW - 86400 },
   { id: 'a9b8c7d6e5f4a3b2', text: 'The porch contact is on a cupboard nobody opens.',
@@ -858,6 +865,9 @@ for (const width of WIDTHS) {
           more: del ? del.getAttribute('aria-label') || '' : '',
           subject: subj ? subj.textContent.trim() : '',
           subjectShown: seen(subj),
+          links: [...r.querySelectorAll('.kfactsubs .kfactsubj')].map((n) => n.textContent.trim()),
+          moreN: (r.querySelector('.kfactmore') || {}).textContent || '',
+          gone: (r.querySelector('.kfactgone') || {}).textContent || '',
           hasRun: !!run,
           runH: Math.round(rbox.height), runW: Math.round(rbox.width),
           delH: Math.round(dbox.height), delW: Math.round(dbox.width),
@@ -930,6 +940,32 @@ for (const width of WIDTHS) {
   if (subjects[2] !== 'Garage') {
     note(at, `an area subject renders as "${subjects[2]}", not the room's word`);
   }
+  // Fewer pills: at most two subjects are links, "+N" counts the rest, and a
+  // device the last checks pass did not see carries a muted "removed" tag.
+  f.rows.forEach((r, i) => {
+    if (r.links.length > 2) note(at, `row ${i} shows ${r.links.length} subject links`);
+  });
+  if (f.rows[0] && f.rows[0].moreN !== '+2') {
+    note(at, `a fact with four subjects reads "${f.rows[0].moreN}", not "+2"`);
+  }
+  if (f.rows[1] && f.rows[1].gone !== 'removed') {
+    note(at, `a device the checks did not see carries "${f.rows[1].gone}", not "removed"`);
+  }
+  if (f.rows[0] && f.rows[0].gone) note(at, 'a device that exists is tagged removed');
+  // The subject already selected in the rail is not repeated on the rows.
+  await page.evaluate(() => document.querySelector('#kKnown .kfactsubs .kfactsubj').click());
+  await page.waitForFunction(
+    () => document.querySelectorAll('#kKnown .kfact').length === 1,
+    null, { timeout: 5000 })
+    .catch(() => note(at, 'picking a subject did not narrow the list to its facts'));
+  const rep = await page.evaluate(() => [...document.querySelectorAll('#kKnown .kfact .kfactsubj')]
+    .map((n) => n.textContent.trim()));
+  if (rep.includes('Garage fridge power')) note(at, 'the selected subject is repeated on its own rows');
+  await page.evaluate(() => { factsView.subject = ''; loadFacts(true); });
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('#kKnown .kfact').length === n,
+    FACTS.length, { timeout: 5000 })
+    .catch(() => note(at, 'clearing the subject did not restore the list'));
   // The count is not the list: the row that says so has to be there.
   if (!new RegExp(`${FACTS_COUNT - FACTS.length} more`).test(f.more)) {
     note(at, `the list does not say how many it is not showing: "${f.more}"`);

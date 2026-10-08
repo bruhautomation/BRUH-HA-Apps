@@ -98,7 +98,7 @@ window.fetch = async (url, opts) => {
       version: 'test', authenticated: true, auth_type: 'oauth',
       auth_source: 'panel', auth_check: { state: 'ok', error: '' },
       model: 'default', settings: {}, usage: {}, auto: {},
-      categories: [], jobs: {}, queue_size: 0, findings_open: 0,
+      categories: window.__cats || [], jobs: {}, queue_size: 0, findings_open: 0,
     });
   }
   if (p.includes('api/settings')) return answer({});
@@ -336,6 +336,63 @@ for (const { width, touch } of CASES) {
   }
   console.log(`  ${String(width).padStart(4)}px reason box ${size}px, `
     + `sent ${posted ? posted.body : 'nothing'}`);
+  await context.close();
+}
+
+// The Schedule list under the reports: every recurring card with its
+// cadence, last run, next run and a switch — one compact row each, the switch
+// a 44px target on touch, and a press on it writes `enabled` through the
+// route the card's own Enable uses.
+for (const { width, touch } of CASES) {
+  const { context, page } = await open(width, touch, payload());
+  await page.evaluate(() => {
+    window.__cats = [
+      { id: 'energy', title: 'Energy', icon: '⚡', enabled: true, refresh_hours: 24,
+        generated_at: new Date(Date.now() - 3 * 3600e3).toISOString(),
+        next_due: Date.now() / 1000 + 5 * 3600, job: {} },
+      { id: 'climate', title: 'Climate', icon: '🌡', enabled: true, schedule: ['07:00', '19:00'],
+        generated_at: null, refresh_hold: { why: 'nothing it reads has changed', at: 1 }, job: {} },
+      { id: 'security', title: 'Security', icon: '🔒', enabled: false, refresh_hours: 12,
+        generated_at: new Date(Date.now() - 86400e3).toISOString(), job: {} },
+    ];
+    window.__fetchLog = [];
+    return refreshStatus().then(() => render());
+  });
+  await page.waitForSelector('#schedList .scheditem', { state: 'attached' });
+  await page.click('#schedRow summary');
+  const sched = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('#schedList .scheditem')].map((r) => ({
+      text: r.textContent.replace(/\s+/g, ' ').trim(),
+      togH: Math.round(r.querySelector('.schedtog').getBoundingClientRect().height),
+      togW: Math.round(r.querySelector('.schedtog').getBoundingClientRect().width),
+      on: r.querySelector('input').checked,
+      right: r.getBoundingClientRect().right })),
+    count: document.getElementById('schedCount').textContent,
+    docWidth: document.documentElement.scrollWidth, viewport: window.innerWidth,
+  }));
+  const at = `${width}px schedule`;
+  if (sched.rows.length !== 3) note(at, `${sched.rows.length} rows for 3 cards`);
+  const want = [/every 24 h/, /at 07:00, 19:00/, /every 12 h/];
+  sched.rows.forEach((r, i) => {
+    if (want[i] && !want[i].test(r.text)) note(at, `row ${i} does not say its cadence: "${r.text}"`);
+    if (touch && (r.togH < 44 || r.togW < 44)) note(at, `row ${i} switch is ${r.togW}x${r.togH}`);
+    if (r.right > sched.viewport + 0.5) note(at, `row ${i} overflows the viewport`);
+  });
+  if (!/3 h ago/.test(sched.rows[0].text)) note(at, 'the last run is not dated');
+  if (!/in 5 h/.test(sched.rows[0].text)) note(at, `the next run is not dated: "${sched.rows[0].text}"`);
+  if (!/waiting — nothing it reads has changed/.test(sched.rows[1].text)) note(at, 'a held card does not say why it waits');
+  if (!/not yet/.test(sched.rows[1].text)) note(at, 'a card that never ran does not say so');
+  if (sched.rows[2].on || !/off/.test(sched.rows[2].text)) note(at, 'a disabled card is not shown off');
+  if (sched.count !== '2 of 3 on') note(at, `the count reads "${sched.count}"`);
+  if (sched.docWidth > sched.viewport + 0.5) note(at, 'the page scrolls sideways');
+  await page.click('#schedList .scheditem:nth-child(3) .schedtog');
+  await page.waitForFunction(() => window.__calls.some(
+    (c) => c.method === 'PUT' && /api\/prompt\/security/.test(c.url)), null, { timeout: 5000 })
+    .catch(() => note(at, 'the switch wrote nothing'));
+  const put = await page.evaluate(() => window.__calls.find(
+    (c) => c.method === 'PUT' && /api\/prompt\/security/.test(c.url)));
+  if (put && !/"enabled":true/.test(put.body)) note(at, `the switch sent ${put.body}`);
+  console.log(`  ${String(width).padStart(4)}px schedule ${sched.rows.length} rows, ${sched.count}`);
   await context.close();
 }
 

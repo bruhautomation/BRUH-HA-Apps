@@ -1939,6 +1939,83 @@ function render() {
     if (q && !(ins && matches(ins)) && !c.title.toLowerCase().includes(q)) return;
     grid.appendChild(makeCard(c, ins));
   });
+  renderSchedule();
+}
+
+// One compact list of every recurring card: when it runs, when it last did,
+// when it next will, and a switch. All of it is the category status the poll
+// already carries (`next_due` is the scheduler's own readback and
+// `refresh_hold` its reason for waiting), so nothing here is a second
+// derivation of when a card is due.
+function schedCadence(c) {
+  if (Array.isArray(c.schedule) && c.schedule.length) return `at ${c.schedule.join(", ")}`;
+  const hours = c.refresh_hours != null ? c.refresh_hours : (state.status || {}).refresh_hours;
+  return hours > 0 ? `every ${Math.round(hours)} h` : "by hand";
+}
+function schedLast(c) {
+  const job = c.job || {};
+  if (ACTIVE_STATES.includes(job.state)) return "running now";
+  if (job.state === "error") return "failed" + (c.generated_at ? ` (last good ${timeAgo(c.generated_at)})` : "");
+  return c.generated_at ? timeAgo(c.generated_at) : "not yet";
+}
+// Not `timeUntil`: a second function of that name further down is the one that
+// wins, and it speaks in "tomorrow" — a list of next runs wants the hour.
+function schedIn(epochS) {
+  const mins = Math.round((epochS * 1000 - Date.now()) / 60000);
+  if (mins < 2) return "due now";
+  if (mins < 60) return `in ${mins} min`;
+  if (mins < 48 * 60) return `in ${Math.round(mins / 60)} h`;
+  return `in ${Math.round(mins / 1440)} d`;
+}
+function schedNext(c) {
+  if (c.enabled === false) return "off";
+  if (c.refresh_hold && c.refresh_hold.why) return `waiting — ${c.refresh_hold.why}`;
+  return c.next_due ? schedIn(c.next_due) : "by hand";
+}
+function renderSchedule() {
+  const row = $("#schedRow");
+  const list = $("#schedList");
+  if (!row || !list) return;
+  const cats = ((state.status || {}).categories || []);
+  row.hidden = !cats.length;
+  const on = cats.filter((c) => c.enabled !== false).length;
+  $("#schedCount").textContent = cats.length ? `${on} of ${cats.length} on` : "";
+  list.textContent = "";
+  cats.forEach((c) => {
+    const item = el("div", "scheditem" + (c.enabled === false ? " off" : ""));
+    const name = el("button", "schedname", `${c.icon || "✨"} ${c.title}`);
+    name.type = "button";
+    tip(name, "Edit this card");
+    name.addEventListener("click", () => openEdit(c));
+    item.appendChild(name);
+    [["Runs", schedCadence(c)], ["Last", schedLast(c)], ["Next", schedNext(c)]].forEach(([k, v]) => {
+      const cell = el("span", "schedcell");
+      cell.appendChild(el("span", "schedkey", k));
+      cell.appendChild(el("span", null, v));
+      item.appendChild(cell);
+    });
+    const label = el("label", "schedtog");
+    const box = el("input", "tog");
+    box.type = "checkbox";
+    box.checked = c.enabled !== false;
+    box.setAttribute("aria-label", `${c.title} on or off`);
+    box.addEventListener("change", async () => {
+      box.disabled = true;
+      try {
+        await api(c.user ? `api/user_category/${c.id}` : `api/prompt/${c.id}`,
+          { method: "PUT", body: JSON.stringify({ enabled: box.checked }) });
+        await refreshStatus();
+        render();
+      } catch (e) {
+        box.checked = !box.checked;
+        box.disabled = false;
+        toast(e.message);
+      }
+    });
+    label.appendChild(box);
+    item.appendChild(label);
+    list.appendChild(item);
+  });
 }
 
 // Rebuild only when something meaningful changed (avoid iframe reloads)
@@ -3232,13 +3309,18 @@ function renderDiagnostics(d) {
     ? Object.keys(daemons) : [];
   if (names.length) {
     const up = (n) => !!(daemons[n] || {}).running;
+    // Every daemon gets a word and, when it is not running, the reason.
     // `not_used` is the server's reason a stopped one was never asked for
-    // (`health.not_used_reason`) — "not used (fast mode)" rather than a
-    // bare "not running" beside a verdict that says everything is fine.
+    // (`health.not_used_reason`) — "off — fast mode" rather than a bare
+    // "not running" beside a verdict that says everything is fine — and
+    // `expected` marks the one stopped state that is a fault: asked for,
+    // and not there.
     const items = names.sort().map((n) => {
       const row = daemons[n] || {};
       const said = up(n) ? "running"
-        : (row.not_used ? String(row.not_used) : "not running");
+        : row.not_used ? "off — " + String(row.not_used).replace(/^not used \((.*)\)$/, "$1")
+        : row.expected ? "stopped — it should be running; the add-on log says why"
+        : "not running";
       return `<li><b>${esc(n)}</b> — ${esc(said)}</li>`;
     });
     // The roll-call is DESCRIPTIVE — some of these are correctly absent
@@ -3249,6 +3331,23 @@ function renderDiagnostics(d) {
   } else if (daemons) {
     // An empty roll-call is /proc unreadable, not seven dead daemons.
     rows.push(diagRow("Background daemons", "could not read /proc"));
+  }
+  // One-off asks ("when the guests leave, turn the porch light off") are not
+  // reports and not proposals: each runs once, when its trigger happens, then
+  // switches itself off. Said here because a count of "armed" with no more
+  // reads as a job that is stuck rather than one that is waiting.
+  const oneoffs = (d.proposals || {}).intents;
+  if (oneoffs && !oneoffs.error && (oneoffs.armed || oneoffs.fired || oneoffs.refused || oneoffs.queued)) {
+    const bits = [];
+    if (oneoffs.queued) bits.push(`${oneoffs.queued} being drafted`);
+    if (oneoffs.armed) bits.push(`${oneoffs.armed} armed`);
+    if (oneoffs.fired) bits.push(`${oneoffs.fired} fired`);
+    if (oneoffs.refused) bits.push(`${oneoffs.refused} not armed`);
+    rows.push(diagRow("One-time asks",
+      esc(bits.join(", ")) + `<p class="hint">Each runs once, when what you described `
+      + "happens, then switches itself off. It is an automation in your "
+      + "automations list, with its card on Today until you remove it"
+      + (oneoffs.ttl_days ? `; one that never fires is flagged after ${oneoffs.ttl_days} days.` : ".") + "</p>"));
   }
   rows.push(...actingDiagRows(d));
   if (failures.length) {
@@ -6624,6 +6723,7 @@ function makeQueuedRow(f) {
 // the source says who taught it, and a run id the ledger knows becomes a
 // button that opens that run in the reader every other engine-store run
 // opens in — provenance a person can follow rather than a hash in a file.
+const FACT_SUBJECTS_INLINE = 2;
 const FACT_SUBJECT_WORDS = { house: "The house" };
 function factSubjectLabel(subject) {
   const s = String(subject || "house");
@@ -6667,18 +6767,51 @@ function makeFactRow(f) {
   open.setAttribute("aria-expanded", "false");
   open.appendChild(el("span", "kfacttext", f.text));
   txt.appendChild(open);
-  // What it is about, as a chip that narrows the list to it — the quickest
-  // way from one fact to everything else brAIn knows about that thing.
-  const subj = el("button", "kfactsubj" + (factSubjectText(f) !== String(f.subject || "") ? " named" : ""),
-    factSubjectText(f));
-  subj.type = "button";
-  tip(subj, `Show everything about ${factSubjectText(f)}`);
-  subj.addEventListener("click", () => pickFactSubject(String(f.subject || "house")));
-  txt.appendChild(subj);
+  // What it is about, as plain links that narrow the list to it — the
+  // quickest way from one fact to everything else brAIn knows about that
+  // thing. At most two are shown, "+N" says there are more (and names them),
+  // and a subject the rail already has selected is left out: the list is
+  // already about it, and repeating it is how a short fact became a row of
+  // chips.
+  const picked = new Set(String(factsView.subject || "").split("|").filter(Boolean));
+  const every = [String(f.subject || "house")];
+  (Array.isArray(f.subjects) ? f.subjects : []).forEach((s) => {
+    if (s && !every.includes(String(s))) every.push(String(s));
+  });
+  const nameOf = (s) => (s === String(f.subject || "house") ? factSubjectText(f)
+    : (f.subject_names && f.subject_names[s]) || factSubjectLabel(s));
+  const gone = new Set(Array.isArray(f.subject_gone) ? f.subject_gone : []);
+  const left = every.filter((s) => !picked.has(s));
+  if (left.length) {
+    const line = el("div", "kfactsubs");
+    left.slice(0, FACT_SUBJECTS_INLINE).forEach((s) => {
+      const text = nameOf(s);
+      const link = el("button", "kfactsubj" + (text !== s ? " named" : ""), text);
+      link.type = "button";
+      tip(link, `Show everything about ${text}`
+        + (text !== s ? ` (${s})` : "")
+        + (s === every[0] && f.subject_room ? ` · ${f.subject_room}` : ""));
+      link.addEventListener("click", () => pickFactSubject(s));
+      line.appendChild(link);
+      if (gone.has(s)) {
+        const tag = el("span", "kfactgone", "removed");
+        tip(tag, "The last check of the house did not see this device.");
+        line.appendChild(tag);
+      }
+    });
+    const rest = left.slice(FACT_SUBJECTS_INLINE);
+    if (rest.length) {
+      const more = el("span", "kfactmore", `+${rest.length}`);
+      tip(more, rest.map(nameOf).join(", "));
+      line.appendChild(more);
+    }
+    txt.appendChild(line);
+  }
   const detail = el("div", "when kfactdetail hidden");
   const bits = [kSourceLabel(f.source)];
   if (f.observed) bits.push(f.observed);
   if (f.subject && factSubjectText(f) !== f.subject) bits.push(f.subject);
+  if (f.subject_room) bits.push(f.subject_room);
   if (f.predicate && String(f.predicate).startsWith("exception:")) {
     bits.push("stands " + String(f.predicate).slice(10) + " down");
   }
