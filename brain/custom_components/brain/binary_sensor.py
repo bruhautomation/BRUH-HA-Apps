@@ -1,10 +1,10 @@
 """System health binary sensor for brAIn.
 
-Reports whether the add-on's assist channel is alive. Primary source is the
-worker pool's /health endpoint (fast mode); falls back to the heartbeat file
-the pool writes on the shared volume, so it still works when the HTTP API
-can't be reached. Classic-listener installs (no pool) show unavailable
-rather than a misleading "off".
+Reports whether the add-on's assist channel is answering — the worker
+pool's live /health (only while its loop goes round), the panel's own
+verdict, the pool's heartbeat file aged by its mtime, or for a classic
+listener the panel's roll-call (`assist_health.judge`). Never unavailable:
+nothing to read is unknown with a reason.
 """
 
 from __future__ import annotations
@@ -25,7 +25,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, POOL_STATUS_FILENAME, SHARED_DIR
+from . import assist_health
+from .const import (
+    DIAGNOSTICS_FILENAME,
+    DOMAIN,
+    POOL_STATUS_FILENAME,
+    SHARED_DIR,
+)
 from .learning import read_open_hypotheses
 from .status_mirror import STATUS_FILENAME
 from .status_mirror import count as status_count
@@ -34,8 +40,8 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=60)
 
-# Heartbeat is written at least every 30s; allow generous slack.
-HEARTBEAT_FRESH_S = 150
+# Heartbeat freshness lives in `assist_health` (held equal to the panel's).
+HEARTBEAT_FRESH_S = assist_health.HEARTBEAT_FRESH_S
 
 
 async def async_setup_entry(
@@ -62,7 +68,14 @@ async def async_setup_entry(
 
 
 class BruhClaudeHealthSensor(BinarySensorEntity):
-    """On when the assist worker pool answers (HTTP first, heartbeat file second)."""
+    """On while voice is answering — the rule is `assist_health.judge`.
+
+    The pool's live answer first (and only while its main loop is going
+    round), then the panel's own verdict out of the diagnostics mirror, then
+    the pool's heartbeat file aged by its mtime, then the roll-call for a
+    classic-listener house. Never unavailable: nothing to read is unknown
+    with a `reason`.
+    """
 
     _attr_has_entity_name = True
     _attr_should_poll = True
@@ -78,59 +91,60 @@ class BruhClaudeHealthSensor(BinarySensorEntity):
     def __init__(self, config_entry: ConfigEntry, bridge) -> None:
         self._bridge = bridge
         self._attr_unique_id = f"{DOMAIN}_assist_healthy"
-        self._status: dict[str, Any] = {}
-        self._transport: str | None = None
-        self._attr_is_on = False
-        self._seen_any = False
+        self._attr_is_on = None
+        self._attrs: dict[str, Any] = {
+            "transport": None, "reason": "not read yet"}
 
     @property
     def available(self) -> bool:
-        # Hide the sensor until the pool has ever reported (classic-listener
-        # installs would otherwise show a misleading permanent "off").
-        return self._seen_any
+        # HA hides an unavailable entity's attributes, and the reason is
+        # the point: "unknown, because…" is a state, never an absence.
+        return True
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        attrs: dict[str, Any] = {"transport": self._transport}
-        for key in ("workers", "spare_ready", "uptime_s", "tool_access"):
-            if key in self._status:
-                attrs[key] = self._status[key]
-        last = self._status.get("last_request") or {}
-        if last:
-            attrs["last_request_duration_s"] = last.get("duration_s")
-            attrs["last_request_mode"] = last.get("mode")
-        return attrs
+        return self._attrs
 
     async def async_update(self) -> None:
+        http = None
         if self._bridge is not None:
-            health = await self._bridge.async_api_health()
-            if health:
-                self._status = health
-                self._transport = "http"
-                self._attr_is_on = health.get("status") == "ok"
-                self._seen_any = True
-                return
-
-        status = await self.hass.async_add_executor_job(self._read_heartbeat)
-        if status is not None:
-            self._seen_any = True
-            self._status = status
-            self._transport = "file"
-            age = time.time() - (status.get("ts") or 0)
-            self._attr_is_on = age < HEARTBEAT_FRESH_S
-        elif self._seen_any:
-            self._transport = None
-            self._attr_is_on = False
-
-    def _read_heartbeat(self) -> dict | None:
-        path = self.hass.config.path(SHARED_DIR, POOL_STATUS_FILENAME)
-        if not os.path.isfile(path):
-            return None
+            try:
+                http = await self._bridge.async_api_health()
+            except Exception:  # noqa: BLE001 — a sensor must not take HA down
+                http = None
+        heartbeat, beat_age, mirror, mirror_age = \
+            await self.hass.async_add_executor_job(self._read_files)
         try:
-            with open(path) as fh:
-                return json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            return None
+            on, attrs = assist_health.judge(
+                http=http if isinstance(http, dict) else None,
+                heartbeat=heartbeat, heartbeat_age_s=beat_age,
+                mirror=mirror, mirror_age_h=mirror_age)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("could not judge assist health", exc_info=True)
+            on, attrs = None, {"transport": None,
+                               "reason": "brAIn could not read its own state"}
+        self._attr_is_on = on
+        self._attrs = attrs
+
+    def _read_files(self):
+        """The heartbeat and the diagnostics mirror, each with its file's age
+        (mtime, never a stamp inside it)."""
+        def read(name: str):
+            path = self.hass.config.path(SHARED_DIR, name)
+            try:
+                stat = os.stat(path)
+                with open(path) as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                return None, None
+            if not isinstance(data, dict):
+                return None, None
+            return data, max(0.0, time.time() - stat.st_mtime)
+
+        beat, beat_age = read(POOL_STATUS_FILENAME)
+        mirror, mirror_age_s = read(DIAGNOSTICS_FILENAME)
+        mirror_age = None if mirror_age_s is None else mirror_age_s / 3600.0
+        return beat, beat_age, mirror, mirror_age
 
 
 class BrainNeedsYouSensor(BinarySensorEntity):

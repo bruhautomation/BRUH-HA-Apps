@@ -6418,6 +6418,14 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # The to-do mirror lists what To Do shows — open and not snoozed —
+        # and a snooze starts and lapses without the to-do store being
+        # written, so the tick republishes it; it writes only when what it
+        # would say moved.
+        try:
+            await asyncio.to_thread(todo_store.publish_state, True)
+        except Exception as exc:  # noqa: BLE001 — a mirror, never the tick
+            log.debug("could not republish the to-do mirror: %s", exc)
         # The memory extractions the Stop hook could not sign in (reports
         # #81): it cannot read the credential its CLI was handed, and the
         # panel holds the one every other run uses. Before the gates, as the
@@ -7031,6 +7039,10 @@ def _queue_count(now: float | None = None) -> int:
 # sensor and the panel's badge cannot be two answers (see `findings_store.
 # QUEUE_COUNT` for why the store is handed it rather than asking).
 findings_store.QUEUE_COUNT = _queue_count
+# The to-do mirror hides a snoozed chore the way To Do does; the snoozes
+# are the cases' sidecar, and `cases` reads `todo_store`, so the store is
+# handed the reader rather than importing it.
+todo_store.SNOOZED = lambda: cases.snoozes()
 
 
 def _counts(now: float | None = None) -> dict:
@@ -7040,7 +7052,7 @@ def _counts(now: float | None = None) -> dict:
     store that could not be read is None — "I could not look" — never 0."""
     out: dict = {}
     for key, fn in (("queue_count", lambda: _queue_count(now)),
-                    ("list_count", lambda: todo_store.counts()["open"]),
+                    ("list_count", lambda: todo_store.counts()["shown"]),
                     ("facts_count", lambda: facts_store.count(now))):
         try:
             out[key] = int(fn())
@@ -16019,6 +16031,9 @@ async def h_case_verb(request: web.Request) -> web.Response:
     # card says when it comes back.
     if isinstance(outcome, dict) and outcome.get("undo"):
         payload["undo"] = outcome["undo"]
+    if case_id.startswith("t:"):
+        # A snoozed chore leaves the To-do app now, not at the next tick.
+        await asyncio.to_thread(todo_store.publish_state, True)
     log.info("case %s: %s", log_safe(case_id), log_safe(verb))
     return web.json_response(payload)
 
@@ -16029,6 +16044,8 @@ async def h_case_wake(request: web.Request) -> web.Response:
     woken = await asyncio.to_thread(cases.wake, case_id)
     if woken is None:
         raise web.HTTPNotFound(text="no such case")
+    if case_id.startswith("t:"):
+        await asyncio.to_thread(todo_store.publish_state, True)
     payload = await asyncio.to_thread(_cases_payload)
     payload.update(woken)
     return web.json_response(payload)
@@ -20916,6 +20933,11 @@ async def h_setup_cancel(request: web.Request) -> web.Response:
 # these are the siblings whose death is otherwise invisible: the add-on
 # still shows "started", every tab still renders, and the first symptom is
 # a queue quietly not draining days later.
+# The heartbeat the assist worker pool rewrites every 30s (the same file the
+# integration's "Assist healthy" sensor reads).
+POOL_STATUS_FILE = Path(os.environ.get(
+    "BRAIN_POOL_STATUS_FILE", "/config/.brain/cache/pool_status.json"))
+
 DAEMON_MARKS = {
     "ttyd": "ttyd",
     "usage_tracker": "usage-limits-tracker.py",
@@ -20969,6 +20991,17 @@ def _daemon_rollcall() -> dict:
     except OSError:
         return {}
     out: dict = {name: {"running": name in found} for name in DAEMON_MARKS}
+    # The worker pool's heartbeat, by the file's mtime: a pool process in the
+    # table is not a pool going round, and the heartbeat is written from its
+    # main loop. `health._assist_daemon` judges the age; this only reads it.
+    if out["assist_worker_pool"]["running"]:
+        try:
+            out["assist_worker_pool"]["heartbeat_age_s"] = int(max(
+                0.0, time.time() - POOL_STATUS_FILE.stat().st_mtime))
+        except OSError:
+            # No heartbeat yet is a pool starting up (it writes one before
+            # its first loop) — reported by the field's absence.
+            pass
     # The consolidator's heartbeat: when a pass last landed. A running
     # process that never lands a pass is the failure the stale-queue check
     # exists for, and this is the same number, readable from one place.

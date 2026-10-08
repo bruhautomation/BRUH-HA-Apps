@@ -1256,6 +1256,10 @@ class Pool:
         self.lock = threading.Lock()
         self.conv_locks: dict[str, threading.Lock] = {}
         self.started = time.time()
+        # When the main loop last went round (it claims the requests HA
+        # drops). The HTTP thread answers /health whatever that loop is
+        # doing, so this is what says whether the pool is really working.
+        self.loop_at = time.time()
         self.last_request: dict | None = None
         # What /health reports beside the heartbeat: how many turns, how
         # many failed and of which kind, and how often the fallback ran.
@@ -1698,20 +1702,33 @@ def pool_counts(pool) -> dict:
         return {**stats, "by_error": dict(stats.get("by_error") or {})}
 
 
+# Past this, a main loop that has not gone round is a pool that has stopped
+# claiming requests (the loop beats every POLL_INTERVAL). Held equal to the
+# integration's `assist_health.HEARTBEAT_FRESH_S` by a test.
+LOOP_STALL_S = 150
+
+
+def health_status(pool) -> dict:
+    """What /health and the heartbeat say: `ok` only while the main loop is
+    going round, `stalled` past `LOOP_STALL_S`, with the age either way."""
+    loop_age = max(0.0, time.time() - float(getattr(pool, "loop_at", 0) or 0))
+    return {
+        "status": "ok" if loop_age <= LOOP_STALL_S else "stalled",
+        "loop_age_s": int(loop_age),
+        "workers": len(pool.workers),
+        "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
+        "uptime_s": int(time.time() - pool.started),
+        "last_request": pool.last_request,
+        "tool_access": TOOL_ACCESS,
+        "counts": pool_counts(pool),
+    }
+
+
 def write_pool_status(pool) -> None:
     """Heartbeat consumed by the integration's health sensor (file fallback
     when the HTTP endpoint isn't reachable)."""
     try:
-        status = {
-            "ts": time.time(),
-            "status": "ok",
-            "workers": len(pool.workers),
-            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
-            "uptime_s": int(time.time() - pool.started),
-            "last_request": pool.last_request,
-            "tool_access": TOOL_ACCESS,
-            "counts": pool_counts(pool),
-        }
+        status = {"ts": time.time(), **health_status(pool)}
         tmp = POOL_STATUS_FILE + ".tmp"
         with open(tmp, "w") as fh:
             json.dump(status, fh)
@@ -1816,19 +1833,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         # Unauthenticated callers get liveness only; operational telemetry
         # (worker counts, request timing, tool access) needs the token.
+        status = health_status(self.pool)
         if not self._token_ok():
-            self._json(200, {"status": "ok"})
+            self._json(200, {"status": status["status"]})
             return
-        pool = self.pool
-        self._json(200, {
-            "status": "ok",
-            "workers": len(pool.workers),
-            "spare_ready": bool(pool.spare is not None and pool.spare.alive()),
-            "uptime_s": int(time.time() - pool.started),
-            "last_request": pool.last_request,
-            "tool_access": TOOL_ACCESS,
-            "counts": pool_counts(pool),
-        })
+        self._json(200, status)
 
     def do_POST(self):  # noqa: N802
         if self.path == LLM_TOOL_PATH:
@@ -2060,6 +2069,7 @@ def main() -> None:
                 ).start()
 
         now = time.time()
+        pool.loop_at = now
         if now - last_housekeeping > 30:
             last_housekeeping = now
             pool.reap()

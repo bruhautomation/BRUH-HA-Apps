@@ -63,6 +63,9 @@ import journal
 
 log = logging.getLogger("brain.reports")
 
+# Health problems the sweep reports with a row of its own.
+HEALTH_ROWS_OF_THEIR_OWN = frozenset({"restart"})
+
 REPORTS_DIR = Path(os.environ.get("BRAIN_REPORTS_DIR", "/share/brain/reports"))
 INDEX_FILE = Path(os.environ.get("BRAIN_REPORTS_INDEX", "/data/reports-index.json"))
 HEALTH_LAST_FILE = Path(os.environ.get("BRAIN_HEALTH_LAST", "/data/health-last.json"))
@@ -418,7 +421,9 @@ def _faults(diag) -> list[dict]:
     health = diag.get("health") or {}
     if str(health.get("state") or "ok") != "ok":
         for problem in (health.get("problems") or []):
-            if isinstance(problem, dict):
+            # A pending restart has its own row below, with the versions in
+            # it; saying it twice is one fact read as two.
+            if isinstance(problem, dict) and problem.get("id") not in HEALTH_ROWS_OF_THEIR_OWN:
                 _row(out, "Health", problem.get("what"), problem.get("fix"))
         if not (health.get("problems") or []):
             _row(out, "Health", health.get("reason"), health.get("fix"))

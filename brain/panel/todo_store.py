@@ -218,8 +218,11 @@ def get(item_id: int) -> dict | None:
 
 
 def counts() -> dict:
+    """`open` is every open item the store holds; `shown` is what the To Do
+    section lists (open and not snoozed) — the To Do count."""
     listed = listing()
-    return {"open": listed["open"], "done": listed["done_count"]}
+    return {"open": listed["open"], "done": listed["done_count"],
+            "shown": shown()["open"]}
 
 
 # ---------------------------------------------------------------------------
@@ -414,23 +417,82 @@ def remove(item_id: int) -> dict | None:
 # The mirror
 # ---------------------------------------------------------------------------
 
-def publish_state() -> None:
+# Which open items are asleep: `{case id: epoch}` off the cases' snooze
+# sidecar (`t:<id>`), handed in by the panel at import because `cases`
+# reads this store and so this store may not import it. Snooze on a To Do
+# row hides it on the panel until it lapses; the mirror has to hide it too,
+# or the To-do app lists chores the section it copies does not.
+SNOOZED = None
+
+_LAST_PUBLISHED: str | None = None
+
+
+def _asleep(now: float) -> dict[int, int]:
+    """`{item id: until}` for the items whose snooze has not lapsed. A
+    sidecar that cannot be read hides nothing — `cases._read_snoozes`'
+    direction, one extra row rather than a hidden one."""
+    if SNOOZED is None:
+        return {}
+    try:
+        rows = SNOOZED() or {}
+    except Exception as exc:  # noqa: BLE001 — never hide a chore over a read
+        log.debug("could not read the to-do snoozes: %s", exc)
+        return {}
+    out: dict[int, int] = {}
+    for key, until in rows.items():
+        if not str(key).startswith("t:"):
+            continue
+        try:
+            item_id, until = int(str(key)[2:]), int(until)
+        except (TypeError, ValueError):
+            continue
+        if until > now:
+            out[item_id] = until
+    return out
+
+
+def shown(now: float | None = None) -> dict:
+    """What the panel's To Do section lists: the open items that are not
+    snoozed, and how many are asleep. The mirror, `todo.brain` and the To
+    Do count read this, so the three are one number."""
+    now = time.time() if now is None else now
+    listed = listing()
+    asleep = _asleep(now)
+    items = [i for i in listed["items"] if int(i.get("id") or 0) not in asleep]
+    return {"items": items, "open": len(items),
+            "snoozed": len(listed["items"]) - len(items),
+            "next_wake": min(asleep.values()) if asleep else None}
+
+
+def publish_state(only_if_changed: bool = False) -> bool:
     """Republish the shared-volume copy the integration reads.
 
     Skipped where the shared volume's parent does not exist, so a dev
     checkout does not grow a stray `/config`; an OSError is a warning and
     never a lost item, because the item is already safe in `/data` before
     this is reached. The findings mirror's rules, for its reasons.
+
+    It lists what the panel's To Do lists — open and not snoozed. A snooze
+    starts and lapses without this store being written, so the scheduler
+    calls it every tick with `only_if_changed`, which writes only when
+    what it would say moved. Answers whether it wrote.
     """
+    global _LAST_PUBLISHED
     if not STATE_FILE.parent.parent.exists():
-        return
+        return False
     try:
-        listed = listing()
+        view = shown()
+        body = {"open": view["open"], "snoozed": view["snoozed"],
+                "items": view["items"]}
+        digest = json.dumps(body, sort_keys=True, default=str)
+        if (only_if_changed and digest == _LAST_PUBLISHED
+                and STATE_FILE.exists()):
+            return False
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
-            "generated_at": int(time.time()),
-            "open": listed["open"],
-            "items": listed["items"],
-        })
+            "generated_at": int(time.time()), **body})
+        _LAST_PUBLISHED = digest
+        return True
     except OSError as exc:
         log.warning("could not publish the to-do mirror: %s", exc)
+        return False
