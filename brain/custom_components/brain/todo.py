@@ -68,6 +68,7 @@ checks have to carry a real one first.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 from functools import partial
 
@@ -169,6 +170,21 @@ def item_for(finding: dict) -> TodoItem | None:
     )
 
 
+def _listed(row: dict, now: float) -> bool:
+    """Whether a mirror row is one the panel's To Do section shows: open
+    (a row that says nothing is open — what the mirror has always carried)
+    and not snoozed. The add-on's mirror already lists only those; this is
+    the floor under one written by an older add-on or mid-change, because
+    a list that disagrees with the section it copies is two answers."""
+    status = row.get("status")
+    if status not in (None, "", "open"):
+        return False
+    try:
+        return float(row.get("snoozed_until") or 0) <= now
+    except (TypeError, ValueError):
+        return True
+
+
 def item_for_todo(row: dict) -> TodoItem | None:
     """One accepted chore as a to-do item, or None if it is not one.
 
@@ -263,7 +279,9 @@ class BrainTodoList(TodoListEntity):
             read_todo_state, self.hass)
         if chores is None:
             return
-        rows = [item_for_todo(t) for t in chores.get("items") or []]
+        now = time.time()
+        rows = [item_for_todo(t) for t in chores.get("items") or []
+                if _listed(t, now)]
         self._chores = [i for i in rows if i is not None]
         self._findings = []
         self._attr_todo_items = list(self._chores)

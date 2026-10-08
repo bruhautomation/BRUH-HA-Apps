@@ -68,6 +68,15 @@ MIRROR_STALE_H = 2.5
 # generous enough that a 22->7 hold plus a long weekend of nobody looking
 # is not accused, tight enough that a dead loop is caught the same day.
 HELD_TOO_LONG_H = 30.0
+# The voice worker pool rewrites its heartbeat file every 30s from its main
+# loop (and after every answered turn). A heartbeat older than this on a
+# pool whose PROCESS is still in the roll-call is a pool that has stopped
+# going round: the process table says "running", nothing is claiming the
+# requests HA drops, and voice is down with every other surface saying so
+# nowhere. The integration's "Assist healthy" sensor reads the same file
+# with the same window (`assist_health.HEARTBEAT_FRESH_S`, held equal by a
+# test), so the two cannot disagree about which pool is alive.
+POOL_HEARTBEAT_STALE_S = 150
 
 # Which daemons matter, and what turns each one on. A daemon whose option
 # is off is not missing; it was not asked for.
@@ -268,15 +277,71 @@ def _assist_daemon(diag: dict, options: dict) -> list[dict]:
     daemons = diag.get("daemons") or {}
     if not daemons:
         return []
-    alive = any((daemons.get(name) or {}).get("running")
-                for name in ("assist_worker_pool", "assist_listener"))
-    if alive:
+    listener = (daemons.get("assist_listener") or {}).get("running")
+    pool = daemons.get("assist_worker_pool") or {}
+    if listener:
         return []
+    if pool.get("running"):
+        # A process in the table is not a pool answering. The heartbeat is
+        # written from the pool's main loop, so one that has stopped moving
+        # is a pool that has stopped claiming requests. No figure at all is
+        # a mirror from before this existed — "I could not look", never a
+        # fault.
+        age = _num(pool.get("heartbeat_age_s"))
+        if age is None or age <= POOL_HEARTBEAT_STALE_S:
+            return []
+        return [_problem(
+            "failed", "the voice worker pool has stopped answering",
+            f"Its process is running but its heartbeat is {int(age // 60)} "
+            "minutes old, so nothing is picking up what Assist asks. "
+            "Restart the add-on; what it was stuck on is in the add-on log.",
+            "assist_pool")]
     return [_problem(
         "failed", "nothing is listening for voice",
         "Assist is switched on and neither the worker pool nor the classic "
         "listener is running. Restart the add-on; the reason it exited is "
         "in the add-on log.", "assist")]
+
+
+def _restart_owed(diag: dict) -> list[dict]:
+    """Home Assistant is still running an older brAIn integration.
+
+    run.sh deploys the new integration at every start and Core runs the one
+    it loaded until it restarts, so until then the HA half — the sensors,
+    the services, Assist's entity — is last release's. That is something a
+    person has to do, and `sensor.brain_status` already says `needs_restart`
+    about it: a health sensor reading `ok` beside it was two surfaces
+    disagreeing about one install. `degraded`, not `failed`: everything
+    still works, just not the version that was installed.
+    """
+    versions = diag.get("versions") if isinstance(diag.get("versions"), dict) else {}
+    integ = versions.get("integration") if isinstance(
+        versions.get("integration"), dict) else {}
+    if not integ.get("restart_pending"):
+        return []
+    wanted = integ.get("required") or versions.get("addon")
+    wanted = f"v{wanted}" if wanted else "the new one"
+    running = (f"It is still running v{integ['loaded']}; the add-on "
+               f"installed {wanted}. " if integ.get("loaded")
+               else f"It has not loaded {wanted} yet. ")
+    return [_problem(
+        "degraded", "Home Assistant needs a restart to load brAIn's update",
+        running + "Restart Home Assistant (Settings → System → Restart, "
+        "or the brAIn entry under Settings → System → Repairs).",
+        "restart")]
+
+
+def _quiet_reason(diag: dict, options: dict) -> str:
+    """The sentence for a verdict with nothing wrong, and it has to be true.
+
+    "Everything brAIn runs is running" is a claim about the roll-call, so it
+    is said only when the roll-call was read. An empty one is /proc
+    unreadable — nobody is accused, and nobody is vouched for either.
+    """
+    if not (diag.get("daemons") or {}):
+        return ("nothing wrong found, but brAIn could not see which of its "
+                "processes are running")
+    return "everything brAIn runs is running"
 
 
 def problems(diag: dict, options: dict | None = None,
@@ -306,6 +371,7 @@ def problems(diag: dict, options: dict | None = None,
                                   spec["fix"], f"daemon:{name}"))
     found.extend(_assist_daemon(diag, options))
     found.extend(_loop_problems(diag))
+    found.extend(_restart_owed(diag))
 
     consol = (daemons.get("memory_consolidator") or {})
     age = consol.get("last_pass_hours_ago")
@@ -473,7 +539,8 @@ def verdict(diag: dict, options: dict | None = None,
     state = found[0]["state"] if found else "ok"
     return {
         "state": state,
-        "reason": found[0]["what"] if found else "everything brAIn runs is running",
+        "reason": found[0]["what"] if found else _quiet_reason(
+            diag, options or diag.get("options") or {}),
         "fix": found[0]["fix"] if found else "",
         "problems": found,
         "checked_at": int(time.time() if now is None else now),

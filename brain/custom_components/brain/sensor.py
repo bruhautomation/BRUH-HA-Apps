@@ -663,7 +663,14 @@ class BrainHealthSensor(SensorEntity):
         self._attr_native_value = state if state in ("ok", "degraded", "failed") \
             else "failed"
         self._attrs = attrs
-        self._sync_repair(str(self._attr_native_value), str(attrs["reason"]))
+        # A pending integration restart already has a Repairs entry of its
+        # own (the restart flow); a second one saying the same thing is one
+        # fact read as two. The sensor still reads degraded.
+        ids = {p.get("id") for p in (health.get("problems") or [])
+               if isinstance(p, dict)}
+        repair_state = "ok" if ids and ids <= {"restart"} \
+            else str(self._attr_native_value)
+        self._sync_repair(repair_state, str(attrs["reason"]))
 
     def _read(self, path: str) -> tuple[dict | None, float | None]:
         try:

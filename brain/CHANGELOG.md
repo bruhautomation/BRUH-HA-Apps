@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.21
+
+- Health no longer says everything is running while voice is down: a worker pool whose process is alive but whose main loop has stopped now reads `failed`, and the reason line no longer vouches for processes brAIn could not see. (reports #98)
+- Health and the Status sensor now agree after an update: a pending Home Assistant restart makes health `degraded`, naming the restart, without writing a problem file for an ordinary update. (reports #98)
+- "Assist healthy" now follows whether voice is really answering: the pool reports itself stalled when its loop stops, the heartbeat file is aged by its modification time, and on a classic-listener install the sensor reads the panel's roll-call instead of being unavailable. (reports #99)
+- The brAIn to-do list in Home Assistant now matches the To Do section exactly: a snoozed chore is hidden in both until its snooze lapses. (reports #104)
+
 ## 2.17.20
 
 - "Devices not in an area" no longer counts service devices (Backup, the Sun, online services) or brAIn's own conversation agents and system device, none of which belong in a room. (reports #96)
