@@ -19949,7 +19949,8 @@ def _facts_browse_payload(q) -> dict:
         names=_fact_subject_names(),
         subject_areas={eid: str(row.get("area") or "")
                        for eid, row in _NAMES.items()
-                       if isinstance(row, dict) and row.get("area")})
+                       if isinstance(row, dict) and row.get("area")},
+        known_entities=frozenset(_NAMES))
     known = run_sources.lookup([r.get("run_id") for r in got["facts"]
                                 if r.get("run_id")])
     for row in got["facts"]:
@@ -20771,11 +20772,15 @@ DAEMON_MARKS = {
 def _annotate_daemons(rollcall: dict, options: dict) -> dict:
     """The roll-call, with `not_used` on each daemon this configuration did
     not ask for — health's answer, worded for the Diagnostics list."""
+    wanted = health.expected_daemons(options)
     for name, row in (rollcall or {}).items():
         if isinstance(row, dict) and not row.get("running"):
             why = health.not_used_reason(name, options)
             if why:
                 row["not_used"] = why
+            # A daemon this configuration asked for and that is not there is
+            # the one stopped state worth a different word.
+            row["expected"] = name in wanted
     return rollcall
 
 

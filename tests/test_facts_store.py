@@ -82,6 +82,27 @@ class TestBrowsingForAPerson(StoreCase):
         got = facts_store.browse(query="chest boot", names=names, now=NOW)
         self.assertEqual(got["total"], 0)
 
+    def test_a_row_names_every_subject_and_says_which_devices_are_gone(self):
+        facts_store.add("The chest freezer is on the utility circuit",
+                        subject="sensor.garage_freezer_temp",
+                        extra_subjects=["area:utility", "sensor.old_probe"],
+                        source="study", ts=NOW - 10)
+        names = {"sensor.garage_freezer_temp": "Chest freezer",
+                 "area:utility": "Utility"}
+        seen = frozenset({"sensor.garage_freezer_temp"})
+        row = facts_store.browse(
+            names=names, subject_areas={"sensor.garage_freezer_temp": "Garage"},
+            known_entities=seen, now=NOW)["facts"][0]
+        self.assertEqual(row["subject_names"],
+                         {"sensor.garage_freezer_temp": "Chest freezer",
+                          "area:utility": "Utility"})
+        self.assertEqual(row["subject_room"], "Garage")
+        # "Removed" is only claimed for an entity the pass did not see.
+        self.assertEqual(row["subject_gone"], ["sensor.old_probe"])
+        # With nothing known the pass has not run: nothing is called removed.
+        row = facts_store.browse(names=names, now=NOW)["facts"][0]
+        self.assertNotIn("subject_gone", row)
+
     def test_a_rule_is_its_own_kind_and_facets_count_it(self):
         self.fill()
         got = facts_store.browse(kind="rule", now=NOW)

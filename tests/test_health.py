@@ -168,6 +168,11 @@ class TestTheThingsThatMatter(unittest.TestCase):
         self.assertNotIn("not_used", rows["automation_listener"])
         self.assertEqual(rows["ttyd"]["not_used"],
                          "not used (enable_terminal is off)")
+        # The panel words the third state from this flag: down AND wanted.
+        self.assertTrue(rows["automation_listener"]["expected"])
+        self.assertFalse(rows["assist_listener"]["expected"])
+        self.assertFalse(rows["ttyd"]["expected"])
+        self.assertNotIn("expected", rows["assist_worker_pool"])
         classic = {"enable_assist_integration": True,
                    "assist_fast_mode": False}
         self.assertEqual(health.not_used_reason("assist_worker_pool", classic),

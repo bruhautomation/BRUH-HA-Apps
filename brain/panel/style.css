@@ -6034,6 +6034,11 @@ button.kfactsubj { appearance: none; border: 0; margin-top: var(--sp-1); cursor:
 button.kfactsubj:hover { color: var(--accent-2);
   background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .kfact .txt { display: grid; align-content: start; }
+/* Subjects ride as plain links, at most two, then "+N"; "removed" is muted
+   text and never a chip, because it is a fact about the device and not a
+   control. */
+.kfactsubs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.kfactgone, .kfactmore { font-size: var(--fs-meta); color: var(--ink-3); }
 .factdel { flex: none; color: var(--ink-3); align-self: center; }
 .factdel:hover { color: var(--critical); }
 @media (max-width: 899px) {
@@ -6101,6 +6106,30 @@ button.kfactsubj:hover { color: var(--accent-2);
 .ideasrow .findlist { margin-top: var(--sp-3); }
 .ideasrow.empty .findlist:empty { display: none; }
 .ideasrow .ideasnote { margin-top: var(--sp-2); font-size: var(--fs-meta); color: var(--ink-3); }
+/* The schedule list: one line per card on a wide screen, a name over its
+   three facts on a phone. The summary is the 44px target; the switch sits in
+   a 44px label so a thumb can hit it. */
+.schedrow summary { display: flex; align-items: center; gap: var(--sp-3); cursor: pointer;
+  min-height: 44px; list-style: none; }
+.schedrow summary::-webkit-details-marker { display: none; }
+.schedcount { font-size: var(--fs-meta); color: var(--ink-3); }
+.schedlist { margin-top: var(--sp-2); display: grid; }
+.scheditem { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)) auto;
+  align-items: center; gap: 2px var(--sp-3); padding: 2px 0; border-top: 1px solid var(--hairline); }
+.scheditem.off { color: var(--ink-3); }
+.schedname { appearance: none; border: 0; background: none; color: inherit; font: inherit;
+  font-weight: 600; text-align: left; cursor: pointer; padding: 10px 0; min-height: 44px;
+  overflow-wrap: anywhere; }
+.schedcell { font-size: var(--fs-meta); color: var(--ink-2); overflow-wrap: anywhere; }
+.schedkey { display: none; color: var(--ink-3); margin-right: 6px; }
+.schedtog { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+@media (max-width: 640px) {
+  .scheditem { grid-template-columns: minmax(0, 1fr) auto; }
+  .schedname { grid-column: 1; }
+  .schedtog { grid-column: 2; grid-row: 1; }
+  .schedcell { grid-column: 1 / -1; }
+  .schedkey { display: inline-block; min-width: 3.2em; }
+}
 .kreviewsec .kreview { margin-top: var(--sp-2); }
 .kreviewsec .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
 .kreviewsec .kreviewcost { font-size: var(--fs-meta); color: var(--ink-3); }

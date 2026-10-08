@@ -213,6 +213,13 @@ window.fetch = async (url, opts) => {
       generated_at: ${NOW}, version: 'test',
       health: { state: 'ok', reason: '' }, faults: [],
       runs: { total: 12, failures: [] }, checks: { ran: 15, skipped: [] },
+      daemons: {
+        usage_tracker: { running: true },
+        assist_listener: { running: false, not_used: 'not used (fast mode)', expected: false },
+        ttyd: { running: false, not_used: 'not used (enable_terminal is off)', expected: false },
+        automation_listener: { running: false, expected: true },
+      },
+      proposals: { intents: { armed: 2, fired: 1, refused: 0, queued: 0, ttl_days: 14 } },
     });
   }
   if (p.includes('api/reports')) {
@@ -645,6 +652,17 @@ for (const width of WIDTHS) {
     }
     await page.waitForFunction(() => window.__fetched.some((u) => u.includes('api/diagnostics')),
       null, { timeout: 4000 }).catch(() => note(where, 'a remembered Diagnostics fetched nothing on reopen'));
+    // Each daemon gets a word, and a stopped one the reason: off because the
+    // switch is off, or stopped when it should be running.
+    await page.waitForSelector('#diagBody .drow', { timeout: 4000 }).catch(() => {});
+    const diag = await page.evaluate(() => document.getElementById('diagBody').textContent.replace(/\s+/g, ' '));
+    if (!/usage_tracker — running/.test(diag)) note(where, 'a running daemon is not said to be running');
+    if (!/assist_listener — off — fast mode/.test(diag)) note(where, 'a daemon that is off does not say why');
+    if (!/ttyd — off — enable_terminal is off/.test(diag)) note(where, 'a daemon behind an off option does not name it');
+    if (!/automation_listener — stopped — it should be running/.test(diag)) note(where, 'a wanted daemon that is down is not called stopped');
+    if (!/One-time asks.*2 armed, 1 fired.*Each runs once, when what you described happens/.test(diag)) {
+      note(where, 'one-off asks are not described as running once, when, and where the result goes');
+    }
   } catch (e) {
     note(where, `driving the sections failed: ${String(e.message).split('\n')[0]}`);
   }

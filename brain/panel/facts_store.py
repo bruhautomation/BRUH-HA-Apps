@@ -1181,6 +1181,7 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
            subject: str = "", sort: str = "newest", offset: int = 0,
            limit: int = 50, names: dict | None = None,
            subject_areas: dict | None = None,
+           known_entities=None,
            now: float | None = None) -> dict:
     """Every live fact, filtered, searched and sorted for a person.
 
@@ -1197,7 +1198,10 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
     kind and source in force (never the subject filter itself), which is
     what lets somebody browse what brAIn knows one thing at a time.
     ``subject_areas`` names the room a device subject is in, so the
-    browser can put a device under its room.
+    browser can put a device under its room. ``known_entities`` is every
+    entity the last checks pass saw: an entity subject outside a non-empty
+    set comes back in the row's ``subject_gone``, because "removed" is only
+    sayable when the pass that would have seen it ran.
     """
     now = time.time() if now is None else float(now)
     names = names or {}
@@ -1280,6 +1284,16 @@ def browse(*, query: str = "", kind: str = "", source: str = "",
         out["kind"] = _kind_of(row)
         subj = str(row.get("subject") or "house")
         out["subject_name"] = label(subj)
+        # Every subject as a person would name it, so the row can show a
+        # few as links without a second lookup; a room for the device.
+        every = _subjects_of(row)
+        out["subject_names"] = {s: label(s) for s in every[:MAX_SUBJECTS] if label(s)}
+        if areas_of.get(subj):
+            out["subject_room"] = str(areas_of[subj])
+        if known_entities:
+            out["subject_gone"] = [s for s in every[:MAX_SUBJECTS]
+                                   if subject_kind(s) == "entity"
+                                   and "." in s and s not in known_entities]
         page.append(out)
     return {"facts": page, "total": len(rows), "all": len(live),
             "offset": offset, "limit": limit, "sort": sort,
