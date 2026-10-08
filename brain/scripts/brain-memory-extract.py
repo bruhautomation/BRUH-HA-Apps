@@ -833,6 +833,91 @@ def _child_stderr():
     return subprocess.DEVNULL
 
 
+# The two variables a Claude process authenticates from when it is handed
+# a credential rather than reading its own file. Nothing else is taken off
+# the CLI's environment.
+CREDENTIAL_VARS = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY")
+MAX_ANCESTORS = 16
+
+
+def _parent_of(pid: int) -> int | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8",
+                                                    errors="replace")
+    except OSError:
+        return None
+    # `comm` is parenthesised and may hold spaces or parentheses itself, so
+    # the fields are read after the LAST ")".
+    fields = stat.rpartition(")")[2].split()
+    try:
+        return int(fields[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def _is_ancestor(pid: int) -> bool:
+    current = os.getpid()
+    for _ in range(MAX_ANCESTORS):
+        parent = _parent_of(current)
+        if not parent or parent == current:
+            return False
+        if parent == pid:
+            return True
+        current = parent
+    return False
+
+
+def cli_credential() -> dict | None:
+    """The credential the CLI that ran this hook was started with.
+
+    Claude Code does not pass CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY
+    on to a hook (measured on 2.1.293: an ordinary variable arrives, those
+    two never do). The panel and `claude-run` hand the chat and the
+    terminal their credential exactly that way, so the extraction — the one
+    Claude run that started from a hook — fell through to the CLI's own
+    .credentials.json, which nothing refreshes while the token in the
+    environment is what everything else uses, and every pass ended `auth`.
+
+    So the hook reads the two variables off the CLI process itself, which
+    the CLI names in CLAUDE_PID, and only while that process really is one
+    of this hook's ancestors. Returns ``None`` for "could not look" (the
+    child's environment is then left as it is) and ``{}`` for a CLI that
+    was handed nothing — the CLI authenticating from its own file, which
+    is what the pass then does too.
+    """
+    raw = os.environ.get("CLAUDE_PID", "").strip()
+    if not raw.isdigit():
+        return None
+    pid = int(raw)
+    if not _is_ancestor(pid):
+        return None
+    try:
+        data = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return None
+    found: dict[str, str] = {}
+    for item in data.split(b"\0"):
+        name, sep, value = item.partition(b"=")
+        if not sep:
+            continue
+        key = name.decode("utf-8", errors="replace")
+        if key in CREDENTIAL_VARS and value:
+            found[key] = value.decode("utf-8", errors="replace")
+    return found
+
+
+def child_env() -> dict:
+    """The detached child's environment: the hook's own, carrying the
+    credential the CLI was actually using (see ``cli_credential``)."""
+    env = dict(os.environ)
+    cred = cli_credential()
+    if cred is not None:
+        for key in CREDENTIAL_VARS:
+            env.pop(key, None)
+        env.update(cred)
+    return env
+
+
 def spawn(session_id: str, transcript: str, cwd: str) -> None:
     """Hand the work to a process the turn does not wait on."""
     stderr = _child_stderr()
@@ -845,6 +930,7 @@ def spawn(session_id: str, transcript: str, cwd: str) -> None:
             stderr=stderr,
             start_new_session=True,
             close_fds=True,
+            env=child_env(),
         )
     except (OSError, ValueError):
         # A child that could not spawn costs one extraction. The hook exits 0

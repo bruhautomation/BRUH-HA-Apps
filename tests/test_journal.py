@@ -115,6 +115,56 @@ class TestClassify(unittest.TestCase):
             self.assertIn(word, journal.OUTCOMES)
 
 
+class TestARunThatWasStoppedDidNotCrash(JournalCase):
+    """A card run ended `crash` with "claude exited 143: no output". 143
+    is 128 + SIGTERM: the CLI was told to stop by something outside it,
+    and the one thing that sends TERM to every process in the container
+    is the add-on itself stopping or restarting. The engine's own deadline
+    is `subprocess.run`'s timeout, which kills with SIGKILL and is reported
+    as `timeout` from `TimeoutExpired` — so TERM never means the clock.
+    A run the add-on stopped is not a crash of the CLI, and it is not a
+    failure worth a problem file or a place in the failure rate.
+
+    Driven through real processes and the engine's own envelope reader,
+    because "claude exited 143" and "claude exited -15" are both what a
+    TERM looks like depending on whether the process handled it."""
+
+    def outcome_of_process(self, script):
+        import subprocess
+        import engine
+        proc = subprocess.run(["sh", "-c", script], capture_output=True,
+                              text=True, timeout=10)
+        result = engine._envelope(proc)
+        return journal.classify(result), result
+
+    def test_a_process_that_handled_its_sigterm_was_stopped(self):
+        outcome, result = self.outcome_of_process(
+            "trap 'exit 143' TERM; kill -TERM $$; sleep 1")
+        self.assertIn("143", result["error"])
+        self.assertEqual(outcome, "stopped")
+
+    def test_a_process_the_sigterm_killed_was_stopped(self):
+        outcome, result = self.outcome_of_process("kill -TERM $$; sleep 1")
+        self.assertIn("-15", result["error"])
+        self.assertEqual(outcome, "stopped")
+
+    def test_any_other_exit_with_no_output_is_still_a_crash(self):
+        self.assertEqual(self.outcome_of_process("exit 1")[0], "crash")
+        self.assertEqual(self.outcome_of_process("kill -KILL $$")[0], "crash")
+
+    def test_a_stopped_run_is_not_a_failure(self):
+        row = journal.record("card", journal.classify(
+            {"ok": False, "error": "claude exited 143: no output"}), now=1000)
+        self.assertEqual(row["outcome"], "stopped")
+        self.assertFalse(journal.is_failure(row))
+        self.assertEqual(journal.summary(now=1001)["failed"], 0)
+
+    def test_the_shell_half_reads_the_exit_the_same_way(self):
+        row = journal.record_shell("memory_extract", 143, stderr_text="")
+        self.assertEqual(row["outcome"], "stopped")
+        self.assertFalse(journal.is_failure(row))
+
+
 class TestEngineHooksIntoTheJournal(unittest.TestCase):
     """The engine records every invocation, whatever happened to it."""
 
