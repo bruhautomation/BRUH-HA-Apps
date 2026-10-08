@@ -4,8 +4,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.17.13
 
-- Help develop brAIn: reports no longer rewrite ordinary words. An entity named only in Home Assistant's own vocabulary ("Battery", "Power", "Energy", brAIn's own "brAIn") was being swapped for its alias everywhere the word appeared, so a sentence like "non-battery sensors" arrived as "non-Binary sensor 269 sensors". Names a household chose, rooms, people and every entity id are still replaced.
-- Help develop brAIn: the Gaps, Ideas and Look at… runs are shown everything this house has already reported, and told not to report it again in new words. On the first house to use the loop, about one report in six was a rewording of one already filed.
+- What you teach brAIn in the chat or the terminal is filed into memory again on a system where the sign-in hook could not read the conversation's credential. The add-on now runs that step itself with the credential every other run uses, instead of failing it as "not signed in". (reports #81)
+- A finding sent back for a second look (a re-report with new detail, a rise in severity, or the one-time re-look at startup) is now looked at again, rather than being marked "nothing finished looking at this one" within a minute and never offered again. The "waiting for a look" count in diagnostics now measures time spent waiting, not time since the finding was first filed. (reports #82)
 
 ## 2.17.12
 
