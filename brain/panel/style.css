@@ -1037,6 +1037,7 @@ body.modal-open {
 .kclean { display: grid; gap: var(--sp-2); margin: 0 0 var(--sp-4);
   padding: var(--sp-3); border: 1px solid var(--hairline); border-radius: var(--r-card, 12px);
   background: var(--surface); }
+.kclean[hidden] { display: none; }
 .kclean h2 { margin: 0; }
 .kclean .panesub { margin: 0; }
 .kcleanlist { display: grid; gap: var(--sp-2); }

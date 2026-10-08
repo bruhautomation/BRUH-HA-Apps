@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.6
+
+- Memory › Knowledge no longer draws an empty rounded bar between the heading and the box you teach brAIn in, and that box's hint now fits on a phone instead of being cut off. (reports #16)
+
 ## 2.17.5
 
 - Findings no longer stay marked "nothing finished looking at this one" for good. When brAIn's first look gets to a finding after it has already been shown (because it had to wait, or the look before it failed), its answer now reaches the card instead of that sentence, without the finding disappearing from your list or notifying you again. Findings a rule filed are also no longer pushed out of the look by a busy house's stream of changes, and those changes can no longer use up the whole day's looks by mid-morning. (reports #24)
