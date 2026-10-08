@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.18
+
+- Voice: a worker that died at spawn is now counted as dead even when its exit status lands a few milliseconds after its output closed. Read in that gap, the pool took the dead worker for a live one and the fallback that switches token streaming off after repeated early deaths could miss them.
+
 ## 2.17.17
 
 - The Usage tracker sensor now shows its state in words in Home Assistant ("Waiting for sign-in to renew", "Usage endpoint rate-limited"…) instead of an internal code. The stored state is unchanged, so automations keep working, and the exact code is also in a new `code` attribute. (reports #86)
