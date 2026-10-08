@@ -3687,6 +3687,25 @@ const DEV_STATE_WORDS = {
   sent: "sent", discarded: "never sent",
 };
 
+const DEV_VERDICT_WORDS = {
+  fixed: "fixed", declined: "declined", not_brain: "not brAIn's",
+  duplicate: "duplicate", closed: "closed",
+};
+
+// One line per stream: what it filed and what the cloud said about it.
+// Empty until something has been filed, because "0 filed" on every row of
+// a loop that was switched on a minute ago says nothing.
+function devUsefulness(u) {
+  if (!u || !(u.filed || u.fixed || u.declined || u.not_brain || u.duplicate)) {
+    return "";
+  }
+  const parts = [`${u.filed} filed`];
+  for (const k of ["fixed", "declined", "not_brain", "duplicate"]) {
+    if (u[k]) parts.push(`${u[k]} ${DEV_VERDICT_WORDS[k]}`);
+  }
+  return parts.join(" · ");
+}
+
 function devQueueRows(data) {
   const rows = data.queue || [];
   if (!rows.length) {
@@ -3698,6 +3717,11 @@ function devQueueRows(data) {
       ? timeAgo(new Date(r.last_seen * 1000).toISOString()) : "";
     let state = DEV_STATE_WORDS[r.state] || r.state;
     if (r.state === "sent" && r.cleared_noted) state = "sent · no longer seen";
+    // What the cloud said when it closed the issue, read back hourly.
+    if (r.verdict && r.verdict !== "open") {
+      state = "closed · " + (DEV_VERDICT_WORDS[r.verdict] || r.verdict);
+    }
+    if (r.stood_down) state = "not sent · the cloud said " + r.stood_down;
     const link = r.issue_url
       ? ` · <a href="${esc(r.issue_url)}" target="_blank" rel="noopener">#${esc(String(r.issue))}</a>`
       : "";
@@ -3741,10 +3765,20 @@ function paintDevloop(data) {
   const sched = s.schedule || {};
   const hours = data.hours || [0, 1, 3, 6, 12, 24, 168];
   const last = (data.status || {}).last_run || {};
+  const useful = (data.status || {}).usefulness || {};
+  const slowed = (data.status || {}).slowed || {};
   $("#devStreams").innerHTML = (data.streams || [])
     .filter((st) => st.name !== "look").map((st) => {
-      const when = last[st.name]
+      let when = last[st.name]
         ? "ran " + timeAgo(new Date(last[st.name] * 1000).toISOString()) : "not run yet";
+      const tally = devUsefulness(useful[st.name]);
+      if (tally) when += " · " + tally;
+      // Slowed by the cloud's verdicts: said, never silent, and undoable.
+      const slow = slowed[st.name]
+        ? `<div class="hint tight devslow">Slowed: ${esc(slowed[st.name].why || "")}.`
+          + ` <button class="btn tiny" data-dev-unslow="${esc(st.name)}"`
+          + ` aria-label="Put this stream back on its own schedule">Undo</button></div>`
+        : "";
       const opts = hours.map((h) => `<option value="${h}"${sched[st.name] === h
         ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}</option>`).join("");
       return `<div class="setrow top devstream"><label class="check bigcheck">`
@@ -3754,7 +3788,7 @@ function paintDevloop(data) {
         + `<div class="row tight"><select class="sel" data-dev-hours="${esc(st.name)}"`
         + ` aria-label="How often">${opts}</select>`
         + `<button class="btn tiny" data-dev-run="${esc(st.name)}"`
-        + ` aria-label="Run this stream now">Run</button></div></div>`;
+        + ` aria-label="Run this stream now">Run</button></div></div>${slow}`;
     }).join("");
   const looks = data.looks || {};
   $("#devLookState").textContent = looks.running
@@ -3773,6 +3807,14 @@ const DEV_HOURS = { 0: "Only when asked", 1: "Every hour", 3: "Every 3 hours",
   6: "Every 6 hours", 12: "Every 12 hours", 24: "Daily", 168: "Weekly" };
 
 $("#devStreams").addEventListener("click", async (ev) => {
+  const unslow = ev.target.closest("[data-dev-unslow]");
+  if (unslow) {
+    ev.preventDefault();
+    await devloopCall("api/devloop/stream/"
+      + encodeURIComponent(unslow.getAttribute("data-dev-unslow")) + "/unslow",
+      { method: "POST" }, "Back on its own schedule");
+    return;
+  }
   const run = ev.target.closest("[data-dev-run]");
   if (!run) return;
   run.disabled = true;

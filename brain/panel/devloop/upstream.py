@@ -28,6 +28,21 @@ that shipped is a fingerprint that stopped, said on the issue it fixed.
 **It never raises.** It runs on the checks loop's tick, and a report
 about a fault that took down the loop reporting it is the worse outcome
 — `reports.file_incident`'s rule, one module over.
+
+**The cloud's verdict comes home, and noise stops being filed.** The
+routine closes every issue with a label saying what it was
+(`devloop:fixed`, `declined`, `not-brain`, `duplicate`). Once an hour the
+send pass reads them back with the listing call `find_issue` already
+makes, and keeps the verdict beside the report (`verdicts.json`, apart
+from the queue so a lost queue does not forget it). A report the cloud
+called noise is never filed again by a stream that writes its own
+sentences (`STAND_DOWN_STREAMS`): not under its fingerprint, and for the
+Claude streams not under the part of brAIn it names either, since a run
+rewords its sentence every time. A stream whose last `SLOW_WINDOW`
+resolved reports were mostly noise runs half as often, says so, and can
+be put back by a press. `fixed` is never noise, and a fixed fault coming
+back is still *Back again*. Each new report says how much it matters
+(`impact`), and the most impactful are filed first under the day's cap.
 """
 from __future__ import annotations
 
@@ -65,6 +80,36 @@ FP_RE = re.compile(r"^[0-9a-f]{16}$")
 SKIP_WHERE = frozenset({"This list"})
 STATES = ("pending", "ready", "sent", "discarded")
 
+# How often the verdicts the cloud left on filed issues are read back: the
+# hourly sweep's clock, with the call the marker search already makes.
+VERDICT_INTERVAL_S = SWEEP_INTERVAL_S
+# Issues older than the newest three pages of the listing are asked for
+# one at a time, at most this many a pass.
+VERDICT_GETS_PER_PASS = 10
+# Label → verdict, first match wins. `fixed` leads: a fix is never noise.
+VERDICT_LABELS = (("devloop:fixed", "fixed"), ("devloop:duplicate", "duplicate"),
+                  ("devloop:not-brain", "not_brain"), ("devloop:declined", "declined"))
+VERDICTS = ("fixed", "declined", "not_brain", "duplicate", "closed")
+NOISE = frozenset({"declined", "not_brain", "duplicate"})
+# The streams that write their own sentences, and so stand down on a
+# report the cloud called noise. A fault, a wrong or a scorecard row is
+# brAIn's own measurement and keeps its follow-ups whatever the label.
+STAND_DOWN_STREAMS = frozenset({"gaps", "ideas", "look", "unmet"})
+CLAUDE_STREAMS = frozenset({"gaps", "ideas", "look"})
+# A stream is slowed when at least SLOW_NOISE_SHARE of its last
+# SLOW_WINDOW resolved reports were noise: its interval doubles, capped at
+# SLOW_MAX_HOURS (or its own interval, if that is already longer).
+SLOW_WINDOW = 8
+SLOW_NOISE_SHARE = 0.75
+SLOW_FACTOR = 2
+SLOW_MAX_HOURS = 336
+MAX_RESOLVED = 400
+MAX_STOOD_DOWN = 400
+MAX_DAYS = 60
+# What a row may say about its own impact, all counts.
+IMPACT_KEYS = ("count", "conversations", "days", "rows", "runs",
+               "wrong", "confirmed", "endings")
+
 _GITHUB_TOKEN_RE = re.compile(r"\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,})\b")
 _LOCK = threading.Lock()
 STATE: dict = {"last_sweep": 0.0, "last_send": 0.0, "error": "", "running": False}
@@ -86,6 +131,128 @@ def _load() -> dict:
 
 def _save(data: dict) -> None:
     atomic_write.write_json(_queue_file(), data, mode=0o600)
+
+
+def _verdict_file():
+    return data_dir() / "verdicts.json"
+
+
+def _vload() -> dict:
+    """What the cloud said about filed reports. Kept apart from the queue:
+    a reinstall that loses the queue must not forget what was declined."""
+    try:
+        data = json.loads(_verdict_file().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    for key in ("resolved", "stood_down", "filed", "slowed", "unslowed"):
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+    return data
+
+
+def _vsave(data: dict) -> None:
+    for key, cap in (("resolved", MAX_RESOLVED), ("stood_down", MAX_STOOD_DOWN)):
+        rows = data.get(key) or {}
+        if len(rows) > cap:
+            for k in sorted(rows, key=lambda k: float(rows[k].get("at") or 0)
+                            )[:len(rows) - cap]:
+                rows.pop(k, None)
+    atomic_write.write_json(_verdict_file(), data, mode=0o600)
+
+
+def verdict_of(issue: dict) -> str:
+    """``open`` for an open issue; for a closed one the cloud's label, or
+    ``closed`` when it left none."""
+    if (issue or {}).get("state") != "closed":
+        return "open"
+    names = github.label_names(issue)
+    for label, verdict in VERDICT_LABELS:
+        if label in names:
+            return verdict
+    return "closed"
+
+
+def _norm(text: str) -> str:
+    text = re.sub(r"\d+", "#", str(text or "").lower())
+    return " ".join(re.sub(r"[^a-z#]+", " ", text).split())
+
+
+def stand_down_keys(stream: str, fp: str, where: str = "") -> set[str]:
+    """The keys a report the cloud called noise is refused under: its
+    fingerprint, and for a Claude stream the part of brAIn it names (its
+    title, case, digits and punctuation folded) — the run rewords its
+    sentence every pass, and the title is the half it keeps."""
+    keys = {fp}
+    if stream in CLAUDE_STREAMS and _norm(where):
+        keys.add(_digest("where|" + _norm(where)))
+    return keys
+
+
+def effective_hours(hours: int, slowed: bool) -> int:
+    """A stream's interval, doubled while it is slowed and capped."""
+    hours = int(hours or 0)
+    if not hours or not slowed:
+        return hours
+    return min(hours * SLOW_FACTOR, max(hours, SLOW_MAX_HOURS))
+
+
+def _clean_impact(raw) -> dict:
+    out: dict = {}
+    if isinstance(raw, dict):
+        for key in IMPACT_KEYS:
+            value = raw.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                out[key] = min(value, 1_000_000)
+    return out
+
+
+def impact_of(entry: dict) -> dict:
+    """How often, over how many days, how much it touched, and what the
+    house did about it — from the row's own counts where it gave them,
+    else from the passes and days this queue saw it on."""
+    imp = entry.get("impact") or {}
+    counted = bool(imp.get("count"))
+    return {
+        "often": imp.get("count") or int(entry.get("seen") or 0),
+        "unit": "times" if counted else "passes",
+        "conversations": imp.get("conversations", 0),
+        "days": imp.get("days") or len(entry.get("days") or []),
+        "rows": imp.get("rows", 0), "runs": imp.get("runs", 0),
+        "wrong": imp.get("wrong", 0), "endings": imp.get("endings", 0),
+        "confirmed": imp.get("confirmed", 0),
+    }
+
+
+def impact_score(entry: dict) -> int:
+    """One deterministic number to order reports by: a day it was seen on
+    is worth ten passes, a person's Wrong or confirm five."""
+    i = impact_of(entry)
+    return (10 * i["days"] + i["often"] + i["rows"] + i["runs"]
+            + 5 * (i["wrong"] + i["confirmed"]))
+
+
+def _impact_lines(entry: dict) -> list[str]:
+    i = impact_of(entry)
+    days = f"{i['days']} day{'s' if i['days'] != 1 else ''}"
+    often = f"{i['often']} {i['unit']}"
+    if i["conversations"]:
+        often += f" in {i['conversations']} conversations"
+    lines = ["### Impact", "", f"- **How often:** {often} over {days}"]
+    affected = [f"{i[k]} {k}" for k in ("rows", "runs") if i[k]]
+    if affected:
+        lines.append(f"- **Affected:** {', '.join(affected)}")
+    if i["wrong"] or i["confirmed"]:
+        acted = []
+        if i["wrong"]:
+            acted.append(f"marked Wrong {i['wrong']} of "
+                         f"{i['endings'] or i['wrong']} times")
+        if i["confirmed"]:
+            acted.append(f"confirmed {i['confirmed']} "
+                         f"time{'s' if i['confirmed'] != 1 else ''}")
+        lines.append(f"- **The house acted:** {', '.join(acted)}")
+    return lines
 
 
 def fingerprint(where: str, what: str) -> str:
@@ -163,18 +330,25 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
     abridged = _abridged(diagnostics) if stream == "faults" else ""
     rolling = bool(STREAMS[stream].get("rolling"))
     seen_now: set[str] = set()
-    added = 0
+    added = stood_down = 0
+    stood = _vload()["stood_down"] if stream in STAND_DOWN_STREAMS else {}
     for row in rows:
         where, what = str(row.get("where") or ""), str(row.get("what") or "")
         if not what:
             continue
-        # A row that names its own key (a rolling stream's one issue) is
-        # that key; any other is the fault, digits folded.
+        # A row that names its own key (a rolling stream's one issue, an
+        # unmet capability) is that key; any other is the fault, digits
+        # folded.
         fp = _digest(f"{stream}|{row['key']}") if row.get("key") \
             else fingerprint(where, what)
         if fp in seen_now:
             continue
         seen_now.add(fp)
+        # The cloud called this noise: not under its fingerprint, and not
+        # under the part of brAIn it names.
+        if stood and stand_down_keys(stream, fp, where) & stood.keys():
+            stood_down += 1
+            continue
         entry = items.get(fp)
         if entry is None:
             entry = items[fp] = {
@@ -196,13 +370,21 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                       + (f" — {health.get('reason')}" if health.get("reason") else ""),
             "abridged": abridged,
         })
+        day = _day(now)
+        days = [d for d in (entry.get("days") or []) if isinstance(d, str)]
+        if day not in days:
+            days.append(day)
+        entry["days"] = days[-MAX_DAYS:]
+        if "impact" in row:
+            entry["impact"] = _clean_impact(row.get("impact"))
     _prune(items)
     data["swept_at"] = now
     data.setdefault("last_run", {})[stream] = now
     _save(data)
     aliases.save()
     STATE["last_sweep"] = now
-    return {"stream": stream, "rows": len(seen_now), "added": added}
+    return {"stream": stream, "rows": len(seen_now), "added": added,
+            "stood_down": stood_down}
 
 
 # ---------------------------------------------------------------------------
@@ -220,9 +402,11 @@ def due_streams(now: float | None = None) -> list[str]:
     if not settings.get("enabled"):
         return []
     last = _load().get("last_run") or {}
+    slowed = _vload()["slowed"]
     out = []
     for name in STREAMS:
-        hours = int((settings.get("schedule") or {}).get(name) or 0)
+        hours = effective_hours((settings.get("schedule") or {}).get(name) or 0,
+                                name in slowed)
         if not hours or not (settings.get("streams") or {}).get(name):
             continue
         if now - float(last.get(name) or 0) >= hours * 3600:
@@ -307,6 +491,10 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     ]
     if entry.get("detail"):
         lines.append(f"**Detail:** {clean(entry['detail'])}")
+    # A rolling issue is rewritten when what it says changes, so it carries
+    # no impact counts: they move every pass.
+    if not entry.get("rolling"):
+        lines += [""] + [clean(line) for line in _impact_lines(entry)]
     if entry.get("body"):
         lines += ["", clean(entry["body"])]
     lines += ["", "| | |", "|---|---|",
@@ -340,11 +528,15 @@ def listing() -> list[dict]:
     for e in _load()["items"].values():
         if not isinstance(e, dict):
             continue
-        rows.append({k: e.get(k) for k in (
+        row = {k: e.get(k) for k in (
             "fp", "stream", "where", "what", "state", "seen", "first_seen", "last_seen",
-            "issue", "issue_url", "error", "cleared_noted")})
+            "issue", "issue_url", "error", "cleared_noted", "verdict", "stood_down")}
+        row["impact"] = impact_score(e)
+        rows.append(row)
+    # What is waiting is listed most impactful first: the order it is sent.
     order = {"pending": 0, "ready": 1, "sent": 2, "discarded": 3}
-    rows.sort(key=lambda r: (order.get(r["state"], 9), -(r["last_seen"] or 0)))
+    rows.sort(key=lambda r: (order.get(r["state"], 9), -r["impact"],
+                             -(r["last_seen"] or 0)))
     return rows
 
 
@@ -405,6 +597,10 @@ def _send_due(now: float) -> dict:
         STATE["error"] = why
         return {"error": why}
     aliases = Aliases.load()
+    verdicts = _vload()
+    if now - float(verdicts.get("at") or 0) >= VERDICT_INTERVAL_S:
+        _refresh_verdicts(token, repo, items, verdicts, now)
+    stood = verdicts["stood_down"]
     sent = updated = 0
     # The day's cap counts only issues this house CREATED: a fingerprint
     # found again by its marker, a comment and a rewritten scorecard file
@@ -412,22 +608,155 @@ def _send_due(now: float) -> dict:
     room = max(0, int(settings.get("max_issues_per_day") or 0)
                - _issues_today(items, now))
     capped = 0
-    for entry in sorted(work, key=lambda e: e.get("first_seen") or 0):
+    # New reports go most impactful first, so the day's cap is spent on
+    # what matters; the rest keep the order they were found in.
+    work.sort(key=lambda e: (e.get("state") != "ready",
+                             -impact_score(e) if e.get("state") == "ready" else 0,
+                             e.get("first_seen") or 0, e.get("fp") or ""))
+    for entry in work:
         if entry["state"] == "ready":
+            if _stand_down(entry, stood):
+                continue
             if sent >= min(MAX_SENDS_PER_PASS, room):
                 capped += 1
                 continue
-            if _file(token, repo, entry, aliases, now):
+            if _file(token, repo, entry, aliases, now, verdicts):
                 sent += 1
+        elif entry.get("state") != "sent":
+            continue  # stood down by the verdicts read above
         elif entry.get("rolling"):
             if _rewrite(token, repo, entry, aliases):
                 updated += 1
         elif _follow_up(token, repo, entry, now):
             updated += 1
     _save(data)
+    _vsave(verdicts)
     aliases.save()
     STATE.update(last_send=now, error="")
     return {"sent": sent, "updated": updated, "capped": capped}
+
+
+def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
+                      now: float) -> None:
+    """Read back what the cloud said about every filed report, and decide
+    which streams are noise. A listing that fails leaves the old verdicts
+    standing and is asked again next tick: "I could not look" is not
+    "nothing changed"."""
+    tracked: dict[int, dict] = {}
+    for entry in items.values():
+        if isinstance(entry, dict) and int(entry.get("issue") or 0) > 0:
+            tracked[int(entry["issue"])] = entry
+    if not tracked:
+        return
+    rows, err = github.list_issues(token, repo)
+    if err or rows is None:
+        log.info("devloop: could not read the verdicts: %s", err)
+        return
+    by_number = {int(r.get("number") or 0): r for r in rows}
+    asked = 0
+    for number in sorted(tracked):
+        if number not in by_number and asked < VERDICT_GETS_PER_PASS:
+            asked += 1
+            issue, _ = github.get_issue(token, repo, number)
+            if issue:
+                by_number[number] = issue
+    resolved, stood = v["resolved"], v["stood_down"]
+    for number, entry in tracked.items():
+        issue = by_number.get(number)
+        if not issue:
+            continue
+        verdict = verdict_of(issue)
+        fp, stream = entry["fp"], str(entry.get("stream") or "faults")
+        if verdict != entry.get("verdict"):
+            entry["verdict_at"] = now
+        entry["verdict"] = verdict
+        if verdict == "open":
+            resolved.pop(fp, None)
+        else:
+            old = resolved.get(fp) or {}
+            resolved[fp] = {"stream": stream, "verdict": verdict, "issue": number,
+                            "at": old.get("at") if old.get("verdict") == verdict
+                            else now}
+        for key in [k for k, row in stood.items() if row.get("fp") == fp]:
+            stood.pop(key)
+        if verdict in NOISE and stream in STAND_DOWN_STREAMS:
+            for key in stand_down_keys(stream, fp, entry.get("where") or ""):
+                stood[key] = {"fp": fp, "stream": stream, "verdict": verdict,
+                              "issue": number, "at": now}
+    # A report still waiting for a press that the cloud has since called
+    # noise (under its title) is not one anybody needs to review.
+    for entry in items.values():
+        if isinstance(entry, dict) and entry.get("state") in ("pending", "ready"):
+            _stand_down(entry, stood)
+    _evaluate_slow(v, now)
+    v["at"] = now
+
+
+def _stand_down(entry: dict, stood: dict) -> bool:
+    """Discard a report the cloud already called noise, saying which issue
+    said so. True when it was."""
+    if entry.get("stream") not in STAND_DOWN_STREAMS:
+        return False
+    keys = stand_down_keys(entry["stream"], entry["fp"],
+                           entry.get("where") or "") & stood.keys()
+    if not keys:
+        return False
+    match = stood[sorted(keys)[0]]
+    entry.update(state="discarded",
+                 stood_down=f"{match.get('verdict')} on #{match.get('issue')}")
+    return True
+
+
+def _window(v: dict, stream: str) -> list[dict]:
+    after = float(v["unslowed"].get(stream) or 0)
+    rows = [dict(r, fp=fp) for fp, r in v["resolved"].items()
+            if r.get("stream") == stream and float(r.get("at") or 0) > after]
+    rows.sort(key=lambda r: (float(r.get("at") or 0), r["fp"]))
+    return rows[-SLOW_WINDOW:]
+
+
+def _evaluate_slow(v: dict, now: float) -> None:
+    """Slowed is derived, every refresh: it holds while the window is
+    mostly noise and lifts itself the pass it is not."""
+    slowed = v["slowed"]
+    for stream in STREAMS:
+        window = _window(v, stream)
+        noise = sum(1 for r in window if r.get("verdict") in NOISE)
+        if len(window) >= SLOW_WINDOW and noise >= SLOW_NOISE_SHARE * SLOW_WINDOW:
+            row = slowed.setdefault(stream, {"since": now})
+            row.update(noise=noise, of=len(window), why=(
+                f"{noise} of its last {len(window)} closed reports were declined, "
+                "not brAIn's, or duplicates, so it runs half as often"))
+        else:
+            slowed.pop(stream, None)
+
+
+def unslow(stream: str) -> bool:
+    """A person putting a slowed stream back to its own schedule. It is not
+    slowed again until reports resolved after this press say so."""
+    if stream not in STREAMS:
+        return False
+    with _LOCK:
+        v = _vload()
+        ats = [float(r.get("at") or 0) for r in v["resolved"].values()
+               if r.get("stream") == stream]
+        v["unslowed"][stream] = max(ats, default=0.0)
+        was = v["slowed"].pop(stream, None)
+        _vsave(v)
+    return was is not None
+
+
+def usefulness(v: dict | None = None) -> dict:
+    """Per stream: issues this house filed, and what the cloud said about
+    the ones it closed."""
+    v = v if v is not None else _vload()
+    out = {name: {"filed": int(v["filed"].get(name) or 0),
+                  **{verdict: 0 for verdict in VERDICTS}} for name in STREAMS}
+    for row in v["resolved"].values():
+        counts = out.get(str(row.get("stream")))
+        if counts is not None and row.get("verdict") in counts:
+            counts[row["verdict"]] += 1
+    return out
 
 
 def _rewrite(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
@@ -448,7 +777,8 @@ def _rewrite(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
     return True
 
 
-def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float) -> bool:
+def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
+          verdicts: dict | None = None) -> bool:
     number, err = github.find_issue(token, repo, entry["fp"])
     if err:
         entry["error"] = err
@@ -463,6 +793,9 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float) -> b
         if issue:
             entry["created_here"] = True
             entry["body_digest"] = _digest(doc["body"])
+            if verdicts is not None:
+                stream = str(entry.get("stream") or "faults")
+                verdicts["filed"][stream] = int(verdicts["filed"].get(stream) or 0) + 1
     if err or not issue:
         entry["error"] = err or "GitHub did not return the issue"
         return False
@@ -523,7 +856,11 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
 
 def status() -> dict:
     data = _load()
+    v = _vload()
     return {
+        "usefulness": usefulness(v),
+        "slowed": v["slowed"],
+        "verdicts_at": float(v.get("at") or 0),
         "last_run": data.get("last_run") or {},
         "runs_left": runs_left(),
         "last_sweep": STATE["last_sweep"] or data.get("swept_at") or 0,

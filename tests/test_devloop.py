@@ -102,8 +102,11 @@ class FakeGitHub:
                 body = self._body()
                 if self.path == "/repos/me/reports/issues":
                     n = len(fake.issues) + 1
+                    # GitHub answers labels as objects, not the strings it
+                    # was sent; the verdict reader has to read that shape.
                     issue = {"number": n, "state": "open", "title": body["title"],
-                             "body": body["body"], "labels": body.get("labels"),
+                             "body": body["body"],
+                             "labels": [{"name": x} for x in body.get("labels") or []],
                              "html_url": f"https://github.test/me/reports/issues/{n}"}
                     fake.issues.append(issue)
                     self._send(201, issue)
@@ -134,6 +137,17 @@ class FakeGitHub:
     def close(self):
         self.server.shutdown()
         self.server.server_close()
+
+    def judge(self, number: int, label: str = "", state: str = "closed"):
+        """What the cloud routine does to an issue: a label and a state."""
+        issue = self.issues[number - 1]
+        issue["state"] = state
+        if label:
+            issue["labels"] = list(issue.get("labels") or []) + [{"name": label}]
+
+    def lists(self) -> int:
+        return sum(1 for m, path in self.requests
+                   if m == "GET" and path.startswith("/repos/me/reports/issues?"))
 
 
 NAMES = {
@@ -433,6 +447,288 @@ class TestFollowUps(DevloopCase):
             self.assertNotIn("Kitchen", text)
 
 
+
+def gap(title: str, what: str = "it does not do the thing") -> dict:
+    return {"where": f"Gap: {title}", "what": what, "detail": "", "body": "why"}
+
+
+class TestTheVerdictComesBack(DevloopCase):
+    """The cloud closes each issue with a label saying what it was. The
+    house reads that back on the hourly pass, with the call it already
+    makes, and a report the cloud said was noise is not filed again."""
+
+    def _file_gap(self, title, t, what="it does not do the thing"):
+        upstream.ingest("gaps", [gap(title, what)], diagnostics(), now=t)
+        upstream.send_due(now=t)
+        return len(self.gh.issues)
+
+    def test_a_closed_issue_carries_its_verdict_home(self):
+        self.switch_on()
+        t = time.time()
+        n = self._file_gap("the brief", t)
+        self.gh.judge(n, "devloop:declined")
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 1)
+        row = upstream.listing()[0]
+        self.assertEqual(row["verdict"], "declined")
+        use = upstream.status()["usefulness"]["gaps"]
+        self.assertEqual((use["filed"], use["declined"], use["fixed"]), (1, 1, 0))
+
+    def test_verdicts_are_read_once_an_hour_not_every_tick(self):
+        self.switch_on()
+        t = time.time()
+        self._file_gap("the brief", t)
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 1)
+        first = self.gh.lists()
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 60)
+        self.assertEqual(self.gh.lists(), first)
+        upstream.send_due(now=t + 2 * upstream.VERDICT_INTERVAL_S + 2)
+        self.assertEqual(self.gh.lists(), first + 1)
+
+    def test_a_declined_gap_is_never_filed_again_reworded_or_not(self):
+        self.switch_on()
+        t = time.time()
+        n = self._file_gap("the brief", t)
+        self.gh.judge(n, "devloop:not-brain")
+        later = t + upstream.VERDICT_INTERVAL_S + 1
+        upstream.send_due(now=later)
+        # Lost queue, same finding: nothing queued, nothing filed.
+        (devloop.DATA_DIR / "queue.json").unlink()
+        out = upstream.ingest("gaps", [gap("the brief")], diagnostics(), now=later)
+        self.assertEqual(out["stood_down"], 1)
+        # The same part of brAIn named again with a reworded sentence.
+        out = upstream.ingest("gaps", [gap("The brief!", "it still is not good")],
+                              diagnostics(), now=later)
+        self.assertEqual(out["stood_down"], 1)
+        upstream.send_due(now=later + 60)
+        self.assertEqual(len(self.gh.issues), 1)
+        self.assertEqual(upstream.listing(), [])
+        # A different part of brAIn is not touched by it.
+        upstream.ingest("gaps", [gap("the weekly report")], diagnostics(), now=later)
+        upstream.send_due(now=later + 120)
+        self.assertEqual(len(self.gh.issues), 2)
+
+    def test_a_report_queued_before_the_verdict_arrived_is_not_sent(self):
+        self.switch_on(review=True)
+        t = time.time()
+        devloop.save_settings({"review": False})
+        n = self._file_gap("the brief", t)
+        devloop.save_settings({"review": True})
+        self.gh.judge(n, "devloop:duplicate")
+        # Queued and pressed Send while the verdict was still on GitHub.
+        upstream.ingest("gaps", [gap("the brief", "reworded")], diagnostics(), now=t)
+        fp = [r["fp"] for r in upstream.listing() if r["state"] == "pending"][0]
+        upstream.mark(fp, "ready")
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 1)
+        self.assertEqual(len(self.gh.issues), 1)
+
+    def test_unmet_stands_down_on_its_capability(self):
+        self.switch_on()
+        t = time.time()
+        row = {"key": "cannot control the oven", "where": "Chat",
+               "what": "I cannot control the oven", "detail": ""}
+        upstream.ingest("unmet", [row], diagnostics(), now=t)
+        upstream.send_due(now=t)
+        self.gh.judge(1, "devloop:declined")
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 1)
+        (devloop.DATA_DIR / "queue.json").unlink()
+        out = upstream.ingest("unmet", [row], diagnostics(), now=t + 7200)
+        self.assertEqual(out["stood_down"], 1)
+
+    def test_a_fixed_fault_that_comes_back_is_still_reopened(self):
+        """`devloop:fixed` is never noise, and Back again is unchanged."""
+        self.switch_on()
+        t = time.time()
+        upstream.sweep(diagnostics(), NAMES, now=t)
+        upstream.send_due(now=t)
+        keep = list(self.rows)
+        self.rows = []
+        later = t + upstream.CLEAR_AFTER_S + 60
+        upstream.sweep(diagnostics(), NAMES, now=later)
+        upstream.send_due(now=later)
+        self.gh.judge(1, "devloop:fixed")
+        self.rows = keep
+        upstream.sweep(diagnostics(), NAMES, now=later + 600)
+        upstream.send_due(now=later + 600)
+        self.assertEqual(self.gh.issues[0]["state"], "open")
+        self.assertTrue(any(c[0] == 1 and c[1].startswith("Back again")
+                            for c in self.gh.comments))
+        self.assertEqual(len(self.gh.issues), 2)
+
+    def test_a_reopened_issue_lifts_the_stand_down(self):
+        self.switch_on()
+        t = time.time()
+        n = self._file_gap("the brief", t)
+        self.gh.judge(n, "devloop:declined")
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 1)
+        self.gh.judge(n, state="open")
+        upstream.send_due(now=t + 2 * upstream.VERDICT_INTERVAL_S + 2)
+        (devloop.DATA_DIR / "queue.json").unlink()
+        out = upstream.ingest("gaps", [gap("the brief", "again")], diagnostics(),
+                              now=t + 3 * upstream.VERDICT_INTERVAL_S)
+        self.assertEqual(out.get("stood_down", 0), 0)
+
+
+class TestANoisyStreamSlowsDown(DevloopCase):
+    def _resolve(self, verdicts, t):
+        self.switch_on()
+        devloop.save_settings({"streams": {"gaps": True},
+                               "schedule": {"gaps": 24},
+                               "max_issues_per_day": 50})
+        for i, label in enumerate(verdicts):
+            upstream.ingest("gaps", [gap(f"part {chr(97 + i)}")], diagnostics(),
+                            now=t + i)
+            upstream.send_due(now=t + i)
+            self.gh.judge(len(self.gh.issues), label)
+        upstream.send_due(now=t + upstream.VERDICT_INTERVAL_S + 100)
+
+    def test_mostly_noise_doubles_the_interval_and_says_why(self):
+        t = time.time()
+        noise = ["devloop:declined"] * 4 + ["devloop:not-brain"] + [
+            "devloop:duplicate"]
+        self._resolve(noise + ["devloop:fixed"] * 2, t)
+        slowed = upstream.status()["slowed"]
+        self.assertIn("gaps", slowed)
+        self.assertIn("6 of its last 8", slowed["gaps"]["why"])
+        base = t + upstream.VERDICT_INTERVAL_S + 200
+        upstream.mark_run("gaps", base)
+        self.assertNotIn("gaps", upstream.due_streams(base + 25 * 3600))
+        self.assertIn("gaps", upstream.due_streams(base + 49 * 3600))
+        # A person undoes it, and it stays undone until new verdicts say so.
+        self.assertTrue(upstream.unslow("gaps"))
+        self.assertNotIn("gaps", upstream.status()["slowed"])
+        self.assertIn("gaps", upstream.due_streams(base + 25 * 3600))
+        upstream.send_due(now=base + 2 * upstream.VERDICT_INTERVAL_S)
+        self.assertNotIn("gaps", upstream.status()["slowed"])
+
+    def test_fixed_is_never_noise(self):
+        t = time.time()
+        self._resolve(["devloop:declined"] * 5 + ["devloop:fixed"] * 3, t)
+        self.assertNotIn("gaps", upstream.status()["slowed"])
+
+    def test_fewer_than_n_resolved_slows_nothing(self):
+        t = time.time()
+        self._resolve(["devloop:declined"] * (upstream.SLOW_WINDOW - 1), t)
+        self.assertNotIn("gaps", upstream.status()["slowed"])
+
+    def test_the_undo_route_checks_the_name_and_undoes(self):
+        import asyncio
+        import importlib
+
+        from aiohttp import web
+        from aiohttp.test_utils import TestClient, TestServer
+        t = time.time()
+        self._resolve(["devloop:declined"] * upstream.SLOW_WINDOW, t)
+        server = importlib.import_module("server")
+        app = web.Application()
+        app.router.add_post("/api/devloop/stream/{name}/unslow",
+                            server.h_devloop_unslow)
+
+        async def go():
+            async with TestClient(TestServer(app)) as c:
+                r = await c.post("/api/devloop/stream/telepathy/unslow")
+                self.assertEqual(r.status, 404)
+                r = await c.get("/api/devloop")  # not routed here
+                self.assertEqual(r.status, 404)
+                r = await c.post("/api/devloop/stream/gaps/unslow")
+                body = await r.json()
+                self.assertTrue(body["unslowed"])
+                self.assertNotIn("gaps", body["status"]["slowed"])
+                self.assertEqual(body["status"]["usefulness"]["gaps"]["declined"],
+                                 upstream.SLOW_WINDOW)
+
+        asyncio.run(go())
+
+    def test_the_cap_holds_on_a_weekly_stream(self):
+        self.assertEqual(upstream.effective_hours(168, slowed=True),
+                         upstream.SLOW_MAX_HOURS)
+        self.assertEqual(upstream.effective_hours(1, slowed=True), 2)
+        self.assertEqual(upstream.effective_hours(0, slowed=True), 0)
+
+
+class TestImpact(DevloopCase):
+    def test_the_body_says_how_often_and_what_the_house_did(self):
+        self.switch_on()
+        rows = streams_mod.wrongs(
+            [{"source": "check:dev.frozen", "wrong": 4, "total": 5,
+              "confirmed": 1}], [])
+        upstream.ingest("wrongs", rows, diagnostics())
+        upstream.send_due()
+        body = self.gh.issues[0]["body"]
+        self.assertIn("### Impact", body)
+        self.assertIn("marked Wrong 4 of 5 times", body)
+
+    def test_unmet_impact_counts_conversations(self):
+        self.switch_on()
+        row = {"key": "cannot control the oven", "where": "Chat",
+               "what": "I cannot control the oven", "detail": "",
+               "impact": {"count": 3, "conversations": 2, "days": 2}}
+        upstream.ingest("unmet", [row], diagnostics())
+        upstream.send_due()
+        body = self.gh.issues[0]["body"]
+        self.assertIn("3 times in 2 conversations over 2 days", body)
+
+    def test_the_most_impactful_report_is_filed_first_under_the_cap(self):
+        self.switch_on()
+        devloop.save_settings({"max_issues_per_day": 1})
+        t = time.time()
+        quiet = {"where": "Idea: a", "what": "small", "detail": ""}
+        loud = {"where": "Rule check:x", "what": "marked Wrong 9 of 9 times",
+                "detail": "", "impact": {"wrong": 9, "endings": 9}}
+        upstream.ingest("ideas", [quiet], diagnostics(), now=t)
+        upstream.ingest("wrongs", [loud], diagnostics(), now=t + 5)
+        upstream.send_due(now=t + 10)
+        self.assertEqual(len(self.gh.issues), 1)
+        self.assertIn("check:x", self.gh.issues[0]["title"])
+
+    def test_impact_goes_through_the_alias_path(self):
+        self.switch_on()
+        row = {"where": "Runs", "what": "light.bedroom_lamp keeps failing",
+               "detail": "Kitchen", "impact": {"rows": 3}}
+        upstream.ingest("faults", [row], diagnostics(), NAMES)
+        upstream.send_due()
+        body = self.gh.issues[0]["body"]
+        self.assertIn("### Impact", body)
+        self.assertNotIn("bedroom_lamp", body)
+        self.assertNotIn("Kitchen", body)
+
+    def test_a_rolling_issue_carries_no_impact_section(self):
+        self.switch_on()
+        upstream.ingest("snapshot", streams_mod.snapshot(NAMES, diagnostics(),
+                                                         "2.17.0"), diagnostics())
+        upstream.send_due()
+        self.assertNotIn("### Impact", self.gh.issues[0]["body"])
+
+
+class TestUnmetIsACapability(unittest.TestCase):
+    def _write(self, tmp, name, said, asked="please do it"):
+        Path(tmp, f"{name}.json").write_text(json.dumps({"events": [
+            {"type": "user", "text": asked},
+            {"type": "text", "text": said}]}))
+
+    def test_one_conversation_is_not_a_pattern(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a", "I can't control the oven.")
+            self.assertEqual(streams_mod.unmet(Path(tmp)), [])
+
+    def test_two_conversations_saying_it_two_ways_are_one_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write(tmp, "a", "Sorry, I can't control the oven.",
+                        asked="turn the oven on for the roast")
+            self._write(tmp, "b", "I cannot control the oven!",
+                        asked="preheat the oven to 200")
+            self._write(tmp, "c", "I cannot water the garden.")
+            rows = streams_mod.unmet(Path(tmp))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["impact"]["count"], 2)
+        self.assertEqual(rows[0]["impact"]["conversations"], 2)
+        self.assertNotIn("roast", json.dumps(rows))
+        self.assertTrue(rows[0]["key"])
+
+    def test_the_key_is_stable_across_wording_of_the_refusal_verb(self):
+        self.assertEqual(streams_mod.capability_key("I can't control the oven"),
+                         streams_mod.capability_key("I cannot control the Oven."))
+
+
 class TestTheRepoIsSafeToShip(unittest.TestCase):
     def test_backups_leave_the_token_out(self):
         text = (BASE_DIR / "brain" / "config.yaml").read_text()
@@ -603,27 +899,40 @@ class TestTheCaps(DevloopCase):
 
 class TestCollectors(unittest.TestCase):
     def test_unmet_reads_the_reply_not_the_person(self):
+        """The refusal is matched on what brAIn said, never on the
+        person's own "I can't" — and since 2.x the row IS what brAIn said:
+        the person's words never leave in it."""
         with tempfile.TemporaryDirectory() as tmp:
-            Path(tmp, "a.json").write_text(json.dumps({"events": [
-                {"type": "user", "text": "I can't find the remote, any ideas"},
-                {"type": "text", "text": "Try the sofa."},
-                {"type": "user", "text": "set the oven to 200"},
-                {"type": "text", "text": "Sorry, I cannot control the oven: "
-                                         "there is no tool for it."},
-            ]}))
+            for name in ("a", "b"):
+                Path(tmp, f"{name}.json").write_text(json.dumps({"events": [
+                    {"type": "user", "text": "I can't find the remote, any ideas"},
+                    {"type": "text", "text": "Try the sofa."},
+                    {"type": "user", "text": f"set the oven to 200 ({name})"},
+                    {"type": "text", "text": "Sorry, I cannot control the oven: "
+                                             "there is no tool for it."},
+                ]}))
             rows = streams_mod.unmet(Path(tmp))
-        self.assertEqual([r["what"] for r in rows], ["set the oven to 200"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["what"],
+                         "I cannot control the oven: there is no tool for it")
+        self.assertNotIn("remote", json.dumps(rows))
+        self.assertNotIn("set the oven", json.dumps(rows))
 
     def test_unmet_ignores_old_conversations(self):
         import os
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp, "old.json")
-            path.write_text(json.dumps({"events": [
-                {"type": "user", "text": "x"},
-                {"type": "text", "text": "I can't do that."}]}))
-            old = time.time() - (streams_mod.UNMET_DAYS + 1) * 86400
-            os.utime(path, (old, old))
+            # Two conversations, so the floor is met and only age excludes.
+            for name in ("old", "older"):
+                path = Path(tmp, f"{name}.json")
+                path.write_text(json.dumps({"events": [
+                    {"type": "user", "text": "x"},
+                    {"type": "text", "text": "I can't do that."}]}))
+                old = time.time() - (streams_mod.UNMET_DAYS + 1) * 86400
+                os.utime(path, (old, old))
             self.assertEqual(streams_mod.unmet(Path(tmp)), [])
+            os.utime(path, None)
+            Path(tmp, "new.json").write_text(path.read_text())
+            self.assertEqual(len(streams_mod.unmet(Path(tmp))), 1)
 
     def test_wrongs_needs_a_pattern_not_an_anecdote(self):
         rows = [{"source": "check:a", "wrong": 2, "total": 2},
