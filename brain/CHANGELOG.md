@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.1
+
+- ⚙ Settings is redesigned: one list of sections whose rows already say what you most often check (signed in, the model and this session's usage, whether brAIn asks before it acts, your notification sentence), every section one press away, and nothing inside a collapsible any more. On a wide screen the list sits beside the section; on a phone the list is the page and a row opens its section. Developer tools have their own section. (reports #115)
+- **Run all tests** is the first thing in Diagnostics: one press runs every deep-check stage and shows "N of M passed", one row per stage with Passed, Failed or Skipped, the reason in words and when it ran. A stage that could not run yet is skipped with its reason, never counted as a failure. (reports #125)
+
 ## 2.18.0
 
 - *What do you want to fix?* never loses a request: if the run that writes it up fails or answers nothing, your words are filed as you typed them. A request is never held back because an earlier report about the same screen was declined. The run is told your request is the issue, so it can no longer turn "rework the settings page" into "no tool can read the settings page". (reports #83, #95)

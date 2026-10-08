@@ -6,7 +6,7 @@ A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
 Last retro: 2026-10-07
-Last UX audit: 2026-10-07
+Last UX audit: 2026-10-08
 
 ## Lessons
 
