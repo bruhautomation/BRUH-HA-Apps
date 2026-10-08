@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.14
+
+- Help develop brAIn (the opt-in development loop): reports the developer closed as declined, not brAIn's or duplicate are no longer filed again, and a stream whose reports are mostly closed that way is slowed, with the reason and an Undo shown. Unmet requests are now reported as the thing brAIn said it could not do, once it has come up in two conversations, and never include what was typed. Every report says how often it happened and how many days, and the most frequent go first. Nothing changes while the loop is off.
+
 ## 2.17.12
 
 - The missing-entity check no longer reads pieces of a template as entities: part of an id being built, a method on a loop variable, or a script field's example or default value. Real references inside a template are still checked. (reports #70, #75)
