@@ -506,7 +506,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "changed": [str(c) for c in row.get("changed") or []
                     if isinstance(c, str)],
         "checked_at": int(row.get("checked_at") or 0),
-        "triage": dict(row.get("triage") or {}),
+        # A reason that only repeats the row's own text or claim is not a
+        # conclusion (`findings_store.echoes`), so the card shows none.
+        "triage": dict(findings_store.without_echo(
+            dict(row.get("triage") or {}), row)),
         # The store's own rule, not a second reading of it: absent means
         # fixable and only an explicit false means hands are required, so
         # a row written before the key existed keeps the answer

@@ -75,6 +75,19 @@ ALLOWED = {
     "service": frozenset({"one_off", "standing_rule", "automation_edit",
                           "remember", "study"}),
 }
+# The endings a surface's words may give. The Repairs reason box sits under
+# "Not a problem", and the same dialog's own step for "I've fixed it" is
+# beside it, so the words in that box never need to carry a fix. Read as
+# `done`, a sentence explaining why the report is WRONG ("it's mains
+# powered, there is no battery") settled the row as fixed: no exception on
+# the rule, the decision trail saying "you said you had fixed it" every
+# pass, and the fixed answer lapsing back into a recurrence while the check
+# still reported it. The words there decide how wide and how long the
+# correction is, or that it is really "later" — never that the press meant
+# the opposite of what was pressed.
+SURFACE_ENDINGS = {
+    "repairs": frozenset({"wrong", "todo", "not_now"}),
+}
 # A person is waiting on these: the budget does not stop them.
 PRESSED = frozenset({"ask_bar", "reply", "repairs"})
 
@@ -106,8 +119,12 @@ light on whenever the front door opens after dark").
 - automation_edit: change an automation that already exists ("make the \
 landing light stay on longer").
 - case_ending: about the report they are looking at — ending is one of \
-"wrong" (it is not a problem, with their reason as note), "done" (they \
-fixed it), "todo" (they will do it later), "not_now" (dismiss for now).
+"wrong" (the report is mistaken or does not apply here — the device has \
+no battery, it is mains powered, that reading is normal in this house — \
+with their reason as note), "done" (they repaired, replaced or changed \
+something, so the problem it reported is over), "todo" (they will do it \
+later), "not_now" (dismiss for now). Why a report does not apply is the \
+note of a "wrong", never a "done".
 - defer: remind them about that report later; hours if they said when.
 - remember: a fact about the house to keep ("the garage freezer is \
 switched off in winter").
@@ -224,7 +241,7 @@ def _clean_route(item, surface: str, words: str) -> dict | None:
     route: dict = {"kind": kind, "text": text}
     if kind == "case_ending":
         ending = str(item.get("ending") or "")
-        if ending not in ENDINGS:
+        if ending not in SURFACE_ENDINGS.get(surface, ENDINGS):
             return None
         route["ending"] = ending
         route["note"] = " ".join(str(item.get("note") or "").split())[:MAX_NOTE]
@@ -381,6 +398,6 @@ def summary() -> dict:
 
 __all__ = ["ALLOWED", "ENDINGS", "EXPLAIN_KINDS", "EXPLAIN_SCHEMA",
            "EXPLAIN_SYSTEM", "KINDS", "MAX_PER_DAY", "MAX_ROUTES", "PRESSED",
-           "SCHEMA", "STATE", "SURFACES", "SYSTEM",
+           "SCHEMA", "STATE", "SURFACES", "SURFACE_ENDINGS", "SYSTEM",
            "explain_prompt", "gate", "note_fallback", "note_run", "parse",
            "parse_explain", "prompt", "summary"]
