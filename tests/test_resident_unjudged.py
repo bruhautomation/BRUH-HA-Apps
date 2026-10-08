@@ -57,7 +57,9 @@ class TestALateLookCorrectsWhatSilenceShowed(LoopCase):
         out = self.tick(later + srv.RESIDENT_LOOK_S + 1)
         self.assertTrue(out["looked"], out)
         fresh = srv.findings_store.get(row["ts"])
-        self.assertEqual(fresh["status"], "held")
+        # The verdict is recorded, and the row stays where it is: a row
+        # already on screen never vanishes into a run.
+        self.assertEqual(fresh["status"], "open")
         self.assertEqual(fresh["triage"]["verdict"], "held")
         self.assertIn("moved twice", fresh["triage"]["reason"])
 
@@ -117,7 +119,68 @@ class TestAFailedLookIsNotTheLastWord(LoopCase):
                                   "why": "it is a cupboard nobody opens"}]))
         out = self.tick(now + srv.RESIDENT_LOOK_S + 1)
         self.assertTrue(out["looked"], out)
-        self.assertEqual(srv.findings_store.get(row["ts"])["status"], "held")
+        fresh = srv.findings_store.get(row["ts"])
+        self.assertEqual(fresh["status"], "open")
+        self.assertEqual(fresh["triage"]["verdict"], "held")
+        self.assertIn("cupboard", fresh["triage"]["reason"])
+
+
+class TestARowIsAnnouncedOnce(LoopCase):
+    """A row a late verdict reaches is already open and already announced;
+    handing it to the notifier again rang the phone on every look."""
+
+    def announced_ts(self, ts):
+        return [r["ts"] for r in self.announced].count(ts)
+
+    def test_a_row_that_keeps_failing_is_announced_once(self):
+        srv = self.server
+        now = time.time()
+        row = self.file_check_row()
+        for i in range(3):          # no reply queued: every look fails
+            self.tick(now + i * (srv.RESIDENT_LOOK_S + 1))
+        self.assertEqual(len(self.look_calls), 3)
+        self.assertEqual(self.announced_ts(row["ts"]), 1)
+
+    def test_a_late_verdict_does_not_announce_the_row_again(self):
+        import engine
+        srv = self.server
+        engine.get_auth = lambda: None
+        now = time.time()
+        row = self.file_check_row()
+        self.tick(now)
+        later = now + srv.triage.STALE_S + 60
+        self.tick(later)
+        self.assertEqual(self.announced_ts(row["ts"]), 1)
+        engine.get_auth = lambda: {"type": "oauth", "value": "x"}
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "worth a look at its history"}]))
+        self.tick(later + srv.RESIDENT_LOOK_S + 1)
+        self.assertEqual(self.announced_ts(row["ts"]), 1)
+        self.assertEqual(srv.findings_store.get(row["ts"])["triage"]["verdict"],
+                         "elevated")
+
+    def test_an_untriaged_verdict_on_an_untriaged_row_is_no_change(self):
+        srv = self.server
+        row = self.file_check_row()
+        srv.findings_store.record_triage(
+            {row["ts"]: ("untriaged", srv.triage.UNJUDGED)}, "", 1.0)
+        again = srv.findings_store.record_triage(
+            {row["ts"]: ("untriaged", srv.triage.RUN_FAILED)}, "", 2.0)
+        self.assertEqual(again, [])
+        self.assertEqual(srv.findings_store.get(row["ts"])["triage"]["reason"],
+                         srv.triage.UNJUDGED)
+
+    def test_a_late_verdict_is_written_but_not_returned_as_moved(self):
+        srv = self.server
+        row = self.file_check_row()
+        srv.findings_store.record_triage(
+            {row["ts"]: ("untriaged", srv.triage.UNJUDGED)}, "", 1.0)
+        moved = srv.findings_store.record_triage(
+            {row["ts"]: ("held", "a cupboard")}, "look-2", 2.0)
+        self.assertEqual(moved, [])
+        fresh = srv.findings_store.get(row["ts"])
+        self.assertEqual((fresh["status"], fresh["triage"]["verdict"]),
+                         ("open", "held"))
 
 
 class TestFiledRowsAreNotStarved(LoopCase):

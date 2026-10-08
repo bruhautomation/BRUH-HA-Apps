@@ -1405,26 +1405,39 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     minutes can easily be answering about a finding somebody settled in
     the meantime.
 
-    Returns the rows it changed, shaped.
+    Returns the rows it MOVED out of ``triaging``, shaped — which is what
+    every caller announces. A late verdict on a row silence already showed
+    is written but not returned: that row is already on the list and was
+    already announced, and returning it rang the phone again on every look.
     """
     stamp = int(when if when is not None else time.time())
     items = _load()
     changed: list[dict] = []
+    wrote = False
     for entry in items:
         ts = int(entry.get("ts") or 0)
         if ts not in verdicts:
             continue
-        if entry.get("status") != "triaging" and not late_verdict_welcome(entry):
+        late = entry.get("status") != "triaging"
+        if late and not late_verdict_welcome(entry):
             continue
         verdict, reason = verdicts[ts][:2]
         if verdict not in triage.VERDICTS:
             continue
-        entry["status"] = "held" if verdict == "held" else "open"
+        if late and verdict == "untriaged":
+            # "Nothing looked" about a row that already says nothing looked
+            # is not a change — and rewriting it would hand the row back to
+            # be announced on every look that fails.
+            continue
+        if not late:
+            entry["status"] = "held" if verdict == "held" else "open"
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
             "run_id": run_id, "at": stamp, "wrote_fix": False})
-        changed.append(_shape(entry))
-    if changed:
+        wrote = True
+        if not late:
+            changed.append(_shape(entry))
+    if wrote:
         _write(items)
     return changed
 
@@ -1436,8 +1449,10 @@ def late_verdict_welcome(entry: dict) -> bool:
     or a failed look showed it so that silence could not hide it — and it
     is not a decision anybody made. So a look that answers about it later
     is the first verdict it has had, not a late one overriding somebody:
-    it may replace the "nothing looked" sentence, and an `ignore` may set
-    the row aside into History exactly as it would have an hour earlier.
+    it replaces the "nothing looked" record with what the look said. The
+    STATUS stays `open` whatever the verdict — an `ignore` included —
+    because a row already on screen never vanishes into a run; the card
+    then says what brAIn had said about it.
     Refusing it was what left rows carrying `triage.UNJUDGED` for the rest
     of their lives on a house where a look did answer about them.
 
