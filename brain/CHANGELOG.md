@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.14
+
+- Help develop brAIn: reports no longer rewrite ordinary words. An entity named only in Home Assistant's own vocabulary ("Battery", "Power", "Energy", brAIn's own "brAIn") was being swapped for its alias everywhere the word appeared, so a sentence like "non-battery sensors" arrived as "non-Binary sensor 269 sensors". Names a household chose, rooms, people and every entity id are still replaced.
+- Help develop brAIn: the Gaps, Ideas and Look at… runs are shown everything this house has already reported, and told not to report it again in new words. On the first house to use the loop, about one report in six was a rewording of one already filed.
+
 ## 2.17.13
 
 - What you teach brAIn in the chat or the terminal is filed into memory again on a system where the sign-in hook could not read the conversation's credential. The add-on now runs that step itself with the credential every other run uses, instead of failing it as "not signed in". (reports #81)
