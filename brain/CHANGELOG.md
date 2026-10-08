@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.5
+
+- Findings no longer stay marked "nothing finished looking at this one" for good. When brAIn's first look gets to a finding after it has already been shown (because it had to wait, or the look before it failed), its answer now reaches the card, and a finding it judges not worth your attention is set aside into History. Findings a rule filed are also no longer pushed out of the look by a busy house's stream of changes, and those changes can no longer use up the whole day's looks by mid-morning. (reports #24)
+- Two different insight cards reporting the same thing about the same sensor now share one finding instead of filing it again and again; the finding already there picks up the newer details. House checks, safety and correction findings, and anything you settled are unaffected. (reports #27)
+- brAIn's look and its investigation now judge what a finding actually claims against all the evidence it states. A finding that says two readings disagree (a sensor reading 0 on a day the air conditioning ran) is no longer set aside with a reason that only explains one of them, and the look now sees a finding's details rather than just its title. (reports #28)
+- Insight cards are now told to check related sensors and any recorder gap before saying something has not happened for hours or days, and to report the disagreement instead of the silence. (reports #32)
+
 ## 2.17.4
 
 - "Automations undoing each other" no longer reports a rule you set off by pressing a wall button, a scene controller or a remote (or a room mode you picked yourself) as fighting another rule: that is you acting, so it is treated the way pressing the light itself is. And answering Ignore on one of these now stops that pair being reported again, whichever of the two rules the next card is filed under. (reports #21)

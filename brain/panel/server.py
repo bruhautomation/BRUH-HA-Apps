@@ -10133,7 +10133,12 @@ def _resident_absorb(now: float) -> None:
         RESIDENT_PENDING.remove(row)
         RESIDENT_STATE["dropped"] += 1
     while len(RESIDENT_PENDING) > RESIDENT_QUEUE_MAX:
-        cool = [s for s in RESIDENT_PENDING if not s.get("hot")]
+        # A row a rule filed is never the victim while a live signal can
+        # be: it is already in the store with a deadline, and dropping it
+        # only spends the next sweep offering it again behind the same cap.
+        cool = ([s for s in RESIDENT_PENDING
+                 if not s.get("hot") and not s.get("finding_ts")]
+                or [s for s in RESIDENT_PENDING if not s.get("hot")])
         victim = min(cool or RESIDENT_PENDING,
                      key=lambda s: (float(s.get("salience") or 0.0),
                                     -float(s.get("seen_at") or 0.0)))
@@ -10233,13 +10238,26 @@ async def _resident_pass(now: float) -> dict:
         # front of the next one. `run_checks` hands its own rows over the
         # moment it files them, so a pass does not wait on this minute.
         waiting = await asyncio.to_thread(findings_store.awaiting_triage)
-        _offer_findings(waiting, now)
+        # …and the rows silence surfaced, so a look can still give them the
+        # verdict they never had: the pending list is in memory, and a
+        # restart after the stale sweep otherwise left a row saying nothing
+        # had looked at it for good (`findings_store.late_verdict_welcome`).
+        shown_unjudged = await asyncio.to_thread(
+            findings_store.unjudged_open, now - RESIDENT_SIGNAL_TTL_S)
+        _offer_findings(waiting + shown_unjudged, now)
     _resident_absorb(now)
     out = {"looked": False, "surfaced": len(surfaced),
            "queue": len(RESIDENT_PENDING)}
 
     since = now - float(RESIDENT_STATE["last_look_at"] or 0.0)
     hot = RESIDENT_STATE["hot_pending"] > 0
+    # Past `triage.HOT_LOOKS_PER_DAY` only a tripped safety sensor may pull
+    # a look forward: hot looks a minute apart can otherwise spend the
+    # day's allowance by mid-morning, and every row filed after that waits
+    # out the hour and is shown as if nothing had looked at it.
+    if hot and _triage_runs_today(now) >= triage.HOT_LOOKS_PER_DAY:
+        hot = any(sig.get("safety") and sig.get("hot")
+                  for sig in RESIDENT_PENDING)
     # The timer, or a hot signal that has waited out the floor. `hot` is
     # the one thing a signal may cause by itself, and `MIN_LOOK_SPACING_S`
     # is what stops a house producing them in a burst looking once per
@@ -10325,7 +10343,13 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         (ready if resident.rejudge_due(row, now) else watched_off).append(row)
     if watched_off:
         await asyncio.to_thread(resident.note_withheld, watched_off, now)
-    picked = signals.batch(ready, resident.MAX_BATCH)
+    # Half the batch is kept for rows a rule filed. A row is already on the
+    # store with a deadline (`triage.STALE_S`), where a live state change
+    # is evidence about a moment; filled hot-first, a busy house's hot
+    # changes took every slot and the filed rows were shown unjudged an
+    # hour later. A tripped safety sensor still goes first.
+    picked = signals.batch(ready, resident.MAX_BATCH,
+                           filed_reserve=resident.MAX_BATCH // 2)
     batch = picked["batch"]
     taken = {id(row) for row in batch}
     RESIDENT_PENDING.clear()
@@ -10414,10 +10438,10 @@ async def _resident_run_failed(batch: list[dict], run_id: str, now: float,
     `triage.RUN_FAILED` rather than a sentence this file wrote, because a
     row a rule filed is in the triage lifecycle whatever judged it and one
     vocabulary is what stops "nothing looked at this" being said two ways
-    on two cards. Nothing a rule filed is re-queued — it is on the list
-    now, which is louder than waiting — and everything else goes back,
-    because a failed run is not a verdict about it and dropping it is the
-    one thing this loop must not do.
+    on two cards. Every signal goes back, the filed rows too: the row is on
+    the list now, which is louder than waiting, and the next look can still
+    give it the verdict this one could not — a failed run is not a verdict
+    about anything, and dropping it is the one thing this loop must not do.
     """
     decided = {int(s["finding_ts"]): ("untriaged", triage.RUN_FAILED)
                for s in batch if s.get("finding_ts")}
@@ -10425,7 +10449,11 @@ async def _resident_run_failed(batch: list[dict], run_id: str, now: float,
         findings_store.record_triage, decided, run_id, now) if decided else []
     if moved:
         await _announce_findings([f for f in moved if f["status"] != "held"])
-    RESIDENT_PENDING.extend(s for s in batch if not s.get("finding_ts"))
+    # Every signal goes back, the filed rows included: a failed run is not a
+    # verdict, and a row shown under `RUN_FAILED` that nothing offers again
+    # says nothing looked at it for the rest of its life. The next look may
+    # still give it one (`findings_store.late_verdict_welcome`).
+    RESIDENT_PENDING.extend(batch)
     RESIDENT_INFLIGHT.clear()
     RESIDENT_STATE["queue_len"] = len(RESIDENT_PENDING)
     return {"looked": True, "ok": False, "shown": len(moved),
@@ -10532,8 +10560,16 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
     # the list keeps its place, and its investigation refines it in place.
     if looked_into:
         before = await asyncio.to_thread(findings_store.statuses, list(looked_into))
+        late = {t: ("elevated", looked_into[t]) for t in looked_into
+                if before.get(t) == "open"}
         for ts in [t for t in looked_into if before.get(t) != "triaging"]:
             looked_into.pop(ts)
+        # A row silence already showed takes the look's reason in place of
+        # "nothing looked at this", and its investigation refines it in
+        # place (`record_triage` touches only a row nothing ever judged).
+        if late:
+            await asyncio.to_thread(findings_store.record_triage, late,
+                                    run_id, now)
     investigated = await _resident_investigations(
         to_investigate, now, settings, thinking)
     settled = await _settle_looked_into(looked_into, run_id, now)

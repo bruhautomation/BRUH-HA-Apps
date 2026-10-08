@@ -222,6 +222,28 @@ FIRST_LOOK_SCHEMA = {
 }
 
 
+# How a finding is judged, in the words both tiers are handed. A real house
+# had a "this sensor reads 0 although the air conditioning ran for hours"
+# row set aside as "zero cooling in late September is normal for the
+# season" — a reason about one of the two numbers, answering a claim that
+# was about the pair. One string, put into the first look's rules and the
+# investigation's, so the two tiers cannot be told different things.
+CLAIM_RULE = ("Judge the CLAIM a signal or a row makes, against every piece "
+              "of evidence it states, never one number in it on its own. "
+              "When it states two readings that disagree (a sensor reading "
+              "0 on a day another reading says the thing ran), the "
+              "disagreement IS the claim, and a reason that explains one "
+              "of the numbers (the season, a schedule, a quiet day) does "
+              "not answer it. Never give a reason that contradicts "
+              "evidence the signal or row itself states.")
+
+# …and the same rule where an investigation is handed the row it may
+# dismiss, beside the row, because a dismissal is where it was broken.
+DISMISS_RULE = ("Before dismissing it, check your reason against what this "
+                "row itself states: a dismissal may not contradict its "
+                "own evidence, and when it reports two readings that "
+                "disagree, only an account of the disagreement dismisses it.")
+
 FIRST_LOOK_SYSTEM = """You watch one home, and you are deciding what is worth anybody's attention.
 
 You are given a batch of SIGNALS. A signal is something that happened or
@@ -261,6 +283,7 @@ consequences today.
 
 Rules:
 
+- """ + CLAIM_RULE + """
 - Never "ignore" anything about water, smoke, fire, gas, a freeze,
   security, a device somebody has marked protected, or a signal the home
   has already flagged as urgent. If one of those is in front of you and
@@ -699,6 +722,7 @@ Answer with ONE JSON object and nothing else. What it means:
 Rules that matter more than anything about style:
 
 - NEVER invent a number, a reading or an event. Cite only what you read.
+- """ + CLAIM_RULE + """
 - Say nothing about anybody's health, their whereabouts, who was home,
   their sleep or their household. If the only account you can give is
   about a person rather than about the house, make no claim. This is not
@@ -770,6 +794,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
         if refining.get("fix"):
             parts.append(f"- what it tells them to do: "
                          f"{str(refining['fix'])[:300]}")
+        parts.append(DISMISS_RULE)
         parts.append("")
     if isinstance(prior_case, dict) and prior_case.get("claim"):
         parts.append("A FIRST INVESTIGATION CONCLUDED THIS, AND WAS UNSURE — "
@@ -1269,6 +1294,7 @@ __all__ = [
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
     "first_look_prompt", "investigate_prompt", "never_ignore",
+    "CLAIM_RULE", "DISMISS_RULE",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
 ]

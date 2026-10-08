@@ -158,7 +158,18 @@ def waiting_too_long(row: dict, now: float | None = None) -> bool:
 # Counted per local day and reset with it (`server._triage_runs_today`).
 MAX_PER_DAY = 200
 
+# How many of those a HOT signal may spend by pulling a look forward. Hot
+# cuts the ten-minute interval to one, which is right for a leak and is
+# also what every change to a protected entity and every person moving at
+# an odd hour is — so a busy house could spend the whole day's looks by
+# mid-morning on the interval alone, and every row filed after that waited
+# out `STALE_S` and was shown as if nothing had looked. Past this share a
+# hot signal waits for the timer like any other, which keeps the rest of
+# the day's looks for the timer and for the rows a rule filed; a TRIPPED
+# safety sensor is the one hot signal the share never holds.
+HOT_LOOKS_PER_DAY = 150
+
 __all__ = [
-    "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED", "SHOW_AFTER_S", "STALE_S",
+    "HOT_LOOKS_PER_DAY", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED", "SHOW_AFTER_S", "STALE_S",
     "UNJUDGED", "VERDICTS", "WAITING", "gate", "waiting_too_long",
 ]

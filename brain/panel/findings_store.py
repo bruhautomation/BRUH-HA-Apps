@@ -971,8 +971,9 @@ def _prune(items: list[dict]) -> list[dict]:
 # rows are about an EVENT rather than a subject: the safety lane files one
 # row per trip by putting the time in the text, and folding the second
 # leak on a sensor into the first is the one fold that loses something
-# real. A different producer about the same entity is a different claim
-# and is never folded either, which is why the source is half the key.
+# real. The source is half this key; a second model-written producer about
+# the same entity is folded by the narrower rule below
+# (`CROSS_FOLD_STATUSES`), against live rows only.
 SUBJECT_FOLD_EXCLUDED = frozenset({
     "safety", "security", "sre", "correction", "notify_policy",
     "house_book", "healing", "followup", "fix", "doctor", "condition",
@@ -988,6 +989,32 @@ def _folds_by_subject(entry: dict) -> tuple[str, str] | None:
             or source in SUBJECT_FOLD_EXCLUDED):
         return None
     return eid, source
+
+
+# A second model-written producer about the same entity. Two insight cards
+# that both read one sensor — the cooling card and the running-cost card —
+# each wrote their own wording of the same diagnosis, so the per-producer
+# fold above made each card's rewordings one row and still left two cards'
+# worth: six rows over ten days about one sensor. So a model-written row
+# about an entity that already has a LIVE model-written row about it folds
+# into that row whichever producer wrote it, refreshing the row's detail
+# rather than filing beside it. Narrower than the per-producer fold on
+# purpose: only against `CROSS_FOLD_STATUSES` (a row brAIn fixed is a dated
+# event, and a settled "Wrong" was said to ONE producer about ITS claim),
+# and never the Resident, whose case is the look itself and refines the row
+# it was sent to rather than being a second report about it.
+CROSS_FOLD_STATUSES = ("open", "triaging", "held", "needs_you")
+# `RESIDENT_SOURCE`, spelled here because it is defined further down; the
+# test holds the two equal.
+CROSS_FOLD_EXCLUDED = frozenset({"resident"})
+
+
+def _cross_folds(entry: dict) -> str:
+    """The entity a row folds on across producers, or ""."""
+    subject = _folds_by_subject(entry)
+    if not subject or subject[1] in CROSS_FOLD_EXCLUDED:
+        return ""
+    return subject[0]
 
 
 def _subjects_answered_wrong() -> set[tuple[str, str]]:
@@ -1023,8 +1050,15 @@ def add_many(objs: list[dict]) -> list[dict]:
     seen |= suppressing_keys()
     subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
     subjects |= _subjects_answered_wrong()
+    # entity -> the live model-written row about it (`CROSS_FOLD_STATUSES`).
+    across = {}
+    for f in items:
+        eid = _cross_folds(f)
+        if eid and f.get("status") in CROSS_FOLD_STATUSES:
+            across.setdefault(eid, f)
     used = {int(f.get("ts") or 0) for f in items}
     created = []
+    refreshed = False
     for obj in objs:
         entry = coerce(obj)
         if entry is None or normalize(entry["text"]) in seen:
@@ -1032,14 +1066,26 @@ def add_many(objs: list[dict]) -> list[dict]:
         subject = _folds_by_subject(entry)
         if subject and subject in subjects:
             continue
+        eid = _cross_folds(entry)
+        host = across.get(eid) if eid else None
+        if host is not None:
+            # Folded: the row already there carries the newer evidence, as
+            # a check's re-report does through `refresh_details`, and its
+            # status and verdict stand.
+            if entry.get("detail") and host.get("detail") != entry["detail"]:
+                host["detail"] = entry["detail"]
+                refreshed = True
+            continue
         entry["ts"] = _unique_ts(used)
         used.add(entry["ts"])
         seen.add(normalize(entry["text"]))
         if subject:
             subjects.add(subject)
+        if eid and entry.get("status") in CROSS_FOLD_STATUSES:
+            across.setdefault(eid, entry)
         items.append(entry)
         created.append(_shape(entry))
-    if created:
+    if created or refreshed:
         _write(_prune(items))
     return created
 
@@ -1352,11 +1398,12 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     calls this answers one word and a sentence, and a sentence about
     whether a row is real is not advice about what to do with it.
 
-    Only a row still in ``triaging`` is touched. Everything else is a row
-    a person or the fixer has already moved on from, and a verdict
-    arriving late about one of those must not drag it back: a run that
-    took four minutes can easily be answering about a finding somebody
-    settled in the meantime.
+    Only a row still in ``triaging`` is touched — or one that silence
+    surfaced (:func:`late_verdict_welcome`). Everything else is a row a
+    person or the fixer has already moved on from, and a verdict arriving
+    late about one of those must not drag it back: a run that took four
+    minutes can easily be answering about a finding somebody settled in
+    the meantime.
 
     Returns the rows it changed, shaped.
     """
@@ -1365,7 +1412,9 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     changed: list[dict] = []
     for entry in items:
         ts = int(entry.get("ts") or 0)
-        if ts not in verdicts or entry.get("status") != "triaging":
+        if ts not in verdicts:
+            continue
+        if entry.get("status") != "triaging" and not late_verdict_welcome(entry):
             continue
         verdict, reason = verdicts[ts][:2]
         if verdict not in triage.VERDICTS:
@@ -1378,6 +1427,44 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
     if changed:
         _write(items)
     return changed
+
+
+def late_verdict_welcome(entry: dict) -> bool:
+    """A row on the list only because nothing looked at it in time.
+
+    `untriaged` is the record that NOTHING judged a row — the stale sweep
+    or a failed look showed it so that silence could not hide it — and it
+    is not a decision anybody made. So a look that answers about it later
+    is the first verdict it has had, not a late one overriding somebody:
+    it may replace the "nothing looked" sentence, and an `ignore` may set
+    the row aside into History exactly as it would have an hour earlier.
+    Refusing it was what left rows carrying `triage.UNJUDGED` for the rest
+    of their lives on a house where a look did answer about them.
+
+    Never a row a person put back, never one a person or the fixer has
+    moved on from (only `open`), and never one a look already judged.
+    """
+    if not isinstance(entry, dict) or entry.get("status") != "open":
+        return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    return (record.get("verdict") == "untriaged"
+            and not record.get("elevated_by_person"))
+
+
+def unjudged_open(since: float) -> list[dict]:
+    """Rows silence surfaced since ``since``, OLDEST FIRST, shaped.
+
+    They are offered to the next look beside `awaiting_triage`'s, because
+    the pending list is in memory: a restart after the stale sweep would
+    otherwise leave a row marked as never looked at for good, with nothing
+    left that could correct it. Bounded by the caller's window, which is
+    the age past which a signal stops being evidence about the house.
+    """
+    rows = [_shape(e) for e in _load()
+            if late_verdict_welcome(e) and int(e.get("ts") or 0) >= int(since)]
+    rows = [r for r in rows if r["text"]]
+    rows.sort(key=lambda f: f["ts"])
+    return rows
 
 
 @_mutates

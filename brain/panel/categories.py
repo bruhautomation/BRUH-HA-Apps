@@ -505,6 +505,7 @@ ANALYSIS RULES:
 - Times in the data are ISO timestamps in the home's local timezone unless suffixed Z; present them in a friendly way ("6:42 PM").
 - Never invent data. Every number shown must come from the data you were given or fetched.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, say so, draw it as a gap; too little left means no comparison.
+- Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time."""
 
