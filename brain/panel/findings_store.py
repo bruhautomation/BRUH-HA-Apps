@@ -553,6 +553,9 @@ def _clean_triage(value) -> dict:
         # where every reader of a finding already looks; this is the
         # record of who wrote it.
         "wrote_fix": bool(value.get("wrote_fix")),
+        # Which look-rules judged it (`triage.LOOK_VERSION`). 0 is a
+        # verdict given before the claim rule existed.
+        "v": int(value.get("v") or 0),
     }
 
 
@@ -1083,6 +1086,32 @@ def _subjects_answered_wrong() -> set[tuple[str, str]]:
     return out
 
 
+def _absorb(host: dict | None, entry: dict) -> bool:
+    """Fold a re-report into the live row it duplicates. True if it changed.
+
+    The newer detail replaces the old. **A HELD row whose detail changed
+    goes back to `triaging`**: a held verdict is a look's answer about the
+    row as it stood, and a re-report that carries different evidence is
+    the one thing it never saw — four copies of "this window is wrong"
+    stayed held as "zero cooling in late September is normal" while a
+    later copy's detail proved the window was missing hours of cooling,
+    and nothing went back to the verdicts. The first look then judges it
+    again under the current claim rule. Never a row a person put back
+    (`elevated_by_person`): a person overruling a verdict is not
+    overruled back, and a row a person ended is no longer live here.
+    """
+    if host is None or host.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    detail = entry.get("detail")
+    if not detail or host.get("detail") == detail:
+        return False
+    host["detail"] = detail
+    if (host.get("status") == "held"
+            and not (host.get("triage") or {}).get("elevated_by_person")):
+        host["status"] = "triaging"
+    return True
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -1100,12 +1129,18 @@ def add_many(objs: list[dict]) -> list[dict]:
     seen |= suppressing_keys()
     subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
     subjects |= _subjects_answered_wrong()
-    # entity -> the live model-written row about it (`CROSS_FOLD_STATUSES`).
+    # entity -> the live model-written row about it (`CROSS_FOLD_STATUSES`),
+    # and (entity, source) -> the live row of that producer, so a re-report
+    # that is dropped as a duplicate still reaches the row it duplicates.
     across = {}
+    live_subject = {}
     for f in items:
         eid = _cross_folds(f)
         if eid and f.get("status") in CROSS_FOLD_STATUSES:
             across.setdefault(eid, f)
+        k = _folds_by_subject(f)
+        if k and f.get("status") in CROSS_FOLD_STATUSES:
+            live_subject.setdefault(k, f)
     used = {int(f.get("ts") or 0) for f in items}
     created = []
     refreshed = False
@@ -1115,15 +1150,16 @@ def add_many(objs: list[dict]) -> list[dict]:
             continue
         subject = _folds_by_subject(entry)
         if subject and subject in subjects:
+            if _absorb(live_subject.get(subject), entry):
+                refreshed = True
             continue
         eid = _cross_folds(entry)
         host = across.get(eid) if eid else None
         if host is not None:
             # Folded: the row already there carries the newer evidence, as
             # a check's re-report does through `refresh_details`, and its
-            # status and verdict stand.
-            if entry.get("detail") and host.get("detail") != entry["detail"]:
-                host["detail"] = entry["detail"]
+            # status and verdict stand (`_absorb` is the one exception).
+            if _absorb(host, entry):
                 refreshed = True
             continue
         entry["ts"] = _unique_ts(used)
@@ -1131,6 +1167,8 @@ def add_many(objs: list[dict]) -> list[dict]:
         seen.add(normalize(entry["text"]))
         if subject:
             subjects.add(subject)
+            if entry.get("status") in CROSS_FOLD_STATUSES:
+                live_subject.setdefault(subject, entry)
         if eid and entry.get("status") in CROSS_FOLD_STATUSES:
             across.setdefault(eid, entry)
         items.append(entry)
@@ -1324,7 +1362,7 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
             "reason": textclip.clip(str(reason or "").strip(), triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
-            "wrote_fix": False})
+            "wrote_fix": False, "v": triage.LOOK_VERSION})
         _write(items)
         return _shape(entry)
     return None
@@ -1483,7 +1521,8 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             entry["status"] = "held" if verdict == "held" else "open"
         entry["triage"] = _clean_triage({
             "verdict": verdict, "reason": reason,
-            "run_id": run_id, "at": stamp, "wrote_fix": False})
+            "run_id": run_id, "at": stamp, "wrote_fix": False,
+            "v": triage.LOOK_VERSION})
         wrote = True
         if not late:
             changed.append(_shape(entry))
@@ -1826,16 +1865,20 @@ def scorecard() -> list[dict]:
         row = by.setdefault(src, {
             "source": src,
             "title": _titled(src, str(e.get("source_title") or "")) or src,
-            "confirmed": 0, "wrong": 0})
+            "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0})
         # Agreeing to do something is agreeing the report was right, so
         # an accepted row scores exactly as a fixed one. The alternative
         # was to count it as nothing until the chore is done, which would
         # make a producer look worse the more of its reports people took
         # seriously and had not got round to yet.
-        if e.get("kind") in ("fixed", "accepted"):
-            row["confirmed"] += 1
-        elif e.get("kind") == "ignored":
-            row["wrong"] += 1
+        label = ("confirmed" if e.get("kind") in ("fixed", "accepted")
+                 else "wrong" if e.get("kind") == "ignored" else "")
+        if label:
+            row[label] += 1
+            # The latest ending, for `mute_offer`: a rule somebody last
+            # agreed with is not offered for muting.
+            if int(e.get("ts") or 0) >= row["last_ts"]:
+                row["last"], row["last_ts"] = label, int(e.get("ts") or 0)
     rows = list(by.values())
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]
@@ -1955,6 +1998,96 @@ def merge_settled(entries: list[dict]) -> int:
     if added:
         _write_settled(ledger[-MAX_SETTLED:])
     return added
+
+
+# A held verdict given before the claim rule (`triage.LOOK_VERSION` 2)
+# judged a reason, not the claim; and one fault filed by several cards
+# before the cross-fold existed is several rows. Both are repaired ONCE at
+# startup, marked on disk, so a restart cannot re-look at the whole store.
+MIGRATIONS_FILE = Path(os.environ.get(
+    "BRAIN_FINDINGS_MIGRATIONS", "/data/findings-migrations.json"))
+MIGRATION_RETRIAGE_MAX = 25
+
+
+def _migrated() -> dict:
+    try:
+        data = json.loads(MIGRATIONS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _status_rank(row: dict) -> int:
+    # The status a person can see wins: open > needs_you > triaging > held.
+    return {"open": 0, "needs_you": 1, "triaging": 2, "held": 3}.get(
+        row.get("status"), 9)
+
+
+@_mutates
+def migrate_folds() -> dict:
+    """One-time: fold live model-written rows about one entity across
+    producers (`_cross_folds`' rule), and give rows held under the old look
+    one fresh look. Returns ``{"folded": n, "retriaged": n}``.
+
+    The newest row's detail wins and the row the person can SEE wins the
+    status (any open copy keeps the open one); the others are dropped, not
+    settled — they are one report, and a settled key for the wording of a
+    duplicate would suppress the report that is still true. Never the
+    Resident, a fixed/fixing row, or the settled ledger; never a held row a
+    person put back. The re-look is bounded to `MIGRATION_RETRIAGE_MAX`
+    rows, newest first, and neither half runs twice (the marker is written
+    even when nothing changed, so a restart is not a new pass).
+    """
+    marks = _migrated()
+    out = {"folded": 0, "retriaged": 0}
+    if marks.get("folds_v1") and marks.get("retriage_v1"):
+        return out
+    items = _load()
+    changed = False
+    if not marks.get("folds_v1"):
+        groups: dict[str, list[dict]] = {}
+        for f in items:
+            eid = _cross_folds(f)
+            if eid and f.get("status") in CROSS_FOLD_STATUSES:
+                groups.setdefault(eid, []).append(f)
+        drop: set[int] = set()
+        for rows in groups.values():
+            if len(rows) < 2:
+                continue
+            host = min(rows, key=lambda r: (_status_rank(r),
+                                            -int(r.get("ts") or 0)))
+            newest = max(rows, key=lambda r: int(r.get("ts") or 0))
+            if newest.get("detail"):
+                host["detail"] = newest["detail"]
+            for r in rows:
+                if r is not host:
+                    drop.add(id(r))
+            out["folded"] += len(rows) - 1
+        if drop:
+            items = [f for f in items if id(f) not in drop]
+            changed = True
+        marks["folds_v1"] = int(time.time())
+    if not marks.get("retriage_v1"):
+        old = [f for f in items
+               if f.get("status") == "held"
+               and _cross_folds(f)
+               and not (f.get("triage") or {}).get("elevated_by_person")
+               and int((f.get("triage") or {}).get("v") or 0)
+               < triage.LOOK_VERSION]
+        old.sort(key=lambda f: -int(f.get("ts") or 0))
+        for f in old[:MIGRATION_RETRIAGE_MAX]:
+            f["status"] = "triaging"
+            out["retriaged"] += 1
+            changed = True
+        marks["retriage_v1"] = int(time.time())
+    if changed:
+        _write(items)
+    if MIGRATIONS_FILE.parent.is_dir():
+        try:
+            atomic_write.write_json(MIGRATIONS_FILE, marks)
+        except OSError as exc:
+            log.info("could not write the findings migration marker: %s", exc)
+    return out
 
 
 @_mutates

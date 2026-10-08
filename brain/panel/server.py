@@ -194,6 +194,7 @@ import manual_ledger
 import milestones
 import model_plan
 import music_assistant
+import mute_offer
 import notify_learn
 import notify_router
 import numfmt
@@ -3700,6 +3701,91 @@ async def _notify_learn_pass(now: float) -> list[dict]:
     NOTIFY_LEARN_STATE["filed"] += len(filed)
     NOTIFY_LEARN_STATE["last_filed"] = [r.get("claim") or "" for r in filed]
     return filed
+
+
+MUTE_OFFER_STATE: dict = {"last_at": 0, "filed": 0, "last_error": ""}
+MUTE_OFFER_KEY = "mute_offer_last"
+MUTE_OFFER_EVERY_S = 6 * 60 * 60
+
+
+async def _mute_offer_pass(now: float) -> list[dict]:
+    """File a question for each producer the scorecard says is wrong about
+    this house. Deterministic, free, no gate (`_notify_learn_pass`'s rule);
+    it mutes NOTHING — a Yes does, on a press."""
+    MUTE_OFFER_STATE["last_at"] = int(now)
+    await asyncio.to_thread(findings_store.expire_cases, now,
+                            (mute_offer.SOURCE,))
+    card = await asyncio.to_thread(findings_store.scorecard)
+    state = await asyncio.to_thread(mute_offer.load)
+    live = {int(f.get("ts") or 0)
+            for f in await asyncio.to_thread(findings_store.list_all)
+            if f.get("source") == mute_offer.SOURCE}
+    planned = mute_offer.plan(card, state, now, live,
+                              set(settings_store.muted()),
+                              cases.UNMUTABLE_SOURCES)
+    filed: list[dict] = []
+    for item in planned:
+        row = await asyncio.to_thread(findings_store.add_case, item["row"],
+                                      when=now)
+        if row:
+            mute_offer.record_asked(state, item["source"], int(row["ts"]),
+                                    item["wrong"], item["total"], now)
+            filed.append(row)
+    if filed:
+        await asyncio.to_thread(mute_offer.save, state)
+        log.info("offered to stop %d rule(s) the household keeps marking "
+                 "wrong", len(filed))
+    MUTE_OFFER_STATE["filed"] += len(filed)
+    return filed
+
+
+async def _end_mute_offer(finding: dict, spec: dict,
+                          note: str) -> tuple[dict, str]:
+    """Yes mutes the producer (the scorecard button's own `_mute_source`);
+    No is remembered with the record it was declined at. Neither writes a
+    memory line: a mute is about the RULE and not about the house."""
+    state = await asyncio.to_thread(mute_offer.load)
+    source = mute_offer.source_for_finding(state, finding)
+    accept = spec.get("label") == "accepted"
+    if accept and source:
+        _refuse_unmutable(source)
+
+    def settle() -> dict:
+        if accept and source:
+            _mute_source(source)
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(settle)
+    if source:
+        rec = dict(state.get(source) or {})
+        rec["answer"] = "accepted" if accept else "declined"
+        rec["answered_at"] = int(time.time())
+        state[source] = rec
+        await asyncio.to_thread(mute_offer.save, state)
+    return payload, ""
+
+
+def _mute_offer_undo(entry: dict) -> None:
+    """Undo of a Yes unmutes; of either answer, forgets the answer."""
+    finding = (entry or {}).get("finding") or {}
+    if finding.get("source") != mute_offer.SOURCE:
+        return
+    try:
+        state = mute_offer.load()
+        source = mute_offer.source_for_finding(state, finding)
+        rec = dict(state.get(source) or {})
+        if rec.get("answer") == "accepted":
+            current = [m for m in settings_store.load().get("muted_sources")
+                       or [] if m != source]
+            settings_store.save({"muted_sources": current})
+        if source and rec:
+            rec["answer"] = ""
+            rec.pop("answered_at", None)
+            state[source] = rec
+            mute_offer.save(state)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not undo a mute suggestion: %s", exc)
 
 
 async def _notify_learn_loop():
@@ -12637,6 +12723,11 @@ async def _checks_loop() -> None:
                 await run_checks("schedule")
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
+            # A rule the scorecard says is wrong here, offered for muting:
+            # deterministic and free, so it rides this loop on its own stamp.
+            if time.time() - schedule_store.get(MUTE_OFFER_KEY) >= MUTE_OFFER_EVERY_S:
+                schedule_store.set(MUTE_OFFER_KEY, time.time())
+                await _mute_offer_pass(time.time())
             # The development loop, when somebody switched it on: it decides
             # for itself whether an hour has passed (`_devloop_tick`).
             await _devloop_tick()
@@ -14925,6 +15016,16 @@ def _facts_summary_safe() -> dict:
         return {"error": str(exc)[:200]}
 
 
+def _waiting_rows(rows: list[dict]) -> list[dict]:
+    """The rows no look has judged: `triaging`, or `open` carrying the
+    "nothing looked" record (`findings_store.late_verdict_welcome`)."""
+    return [f for f in rows
+            if f.get("status") == "triaging"
+            or (f.get("status") == "open"
+                and (f.get("triage") or {}).get("verdict") == "untriaged"
+                and not (f.get("triage") or {}).get("elevated_by_person"))]
+
+
 def _diagnostics_payload() -> dict:
     """Versions, options, the journal's last day, the stores' shapes, the
     last checks pass, the daemon roll-call and the auth verdict.
@@ -14997,6 +15098,13 @@ def _diagnostics_payload() -> dict:
             # Rows past `triage.SHOW_AFTER_S` still waiting for that look:
             # shown on the feed and counted in `open` above.
             "waiting_look": len([f for f in rows if f.get("waiting_look")]),
+            # Rows nothing has finished looking at: still `triaging`, or on
+            # the list only because silence surfaced them (`untriaged`).
+            # Computed once here so `reports.faults` stays pure over it.
+            "waiting_for_look": len(_waiting_rows(rows)),
+            "waiting_for_look_oldest_s": max(
+                [int(time.time() - f["ts"]) for f in _waiting_rows(rows)]
+                or [0]),
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
             "scorecard": _scorecard(),
@@ -16211,6 +16319,9 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         # A question about notifications: Yes adds a clause to the
         # household's sentence, and neither answer is a fact about the house.
         return await _end_notify_suggestion(finding, spec, note)
+    if finding.get("source") == mute_offer.SOURCE:
+        # "Stop raising this rule?": Yes is the mute, No is remembered.
+        return await _end_mute_offer(finding, spec, note)
 
     def settle() -> dict:
         findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
@@ -17712,6 +17823,7 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
         _unqueue_fact(entry["fact_source"], entry["fact"])
     # A Yes to a notification suggestion took a clause with it.
     _notify_learn_undo(entry)
+    _mute_offer_undo(entry)
     return restored, _findings_payload()
 
 
@@ -22005,6 +22117,13 @@ def make_app() -> web.Application:
         if migrated:
             log.info("moved %d dismissed finding(s) into the settled ledger",
                      migrated)
+        # One-time, marked on disk: fold one fault filed by several cards,
+        # and give rows held under the old look one fresh look.
+        repaired = await asyncio.to_thread(findings_store.migrate_folds)
+        if repaired.get("folded") or repaired.get("retriaged"):
+            log.info("findings repaired once: %d duplicate(s) folded, %d "
+                     "held row(s) sent for a fresh look",
+                     repaired["folded"], repaired["retriaged"])
         # Republish the shared-volume mirror so the integration's findings
         # sensor reads the current list, not the one from the last change.
         await asyncio.to_thread(findings_store.publish_state)

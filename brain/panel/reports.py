@@ -324,6 +324,10 @@ def _missing_snapshot_key(why) -> str:
 
 # When a day's refused runs become a fault row: a share of the day's runs,
 # with a floor so three refusals in five runs on a quiet house is not one.
+# Findings still waiting for a first look: how many, and how long the oldest.
+WAITING_LOOK_MIN = 2
+WAITING_LOOK_AFTER_S = 2 * 3600
+
 RATE_LIMITED_SHARE = 0.10
 RATE_LIMITED_MIN = 5
 
@@ -677,6 +681,21 @@ def _faults(diag) -> list[dict]:
                  f"ignored {wrong} of {total} times",
                  "this rule is firing on a healthy house, which is worse "
                  "than not having it")
+
+    # Findings nothing has finished looking at. A look that fails leaves its
+    # rows on `triaging` or showing "Nothing finished looking at this one",
+    # and nothing said how many — a drain that stopped and one a minute from
+    # draining read the same from the tab. Past a count and an age: a few
+    # rows waiting minutes is the ordinary state of a drain.
+    waiting = int(findings.get("waiting_for_look") or 0)
+    oldest = int(findings.get("waiting_for_look_oldest_s") or 0)
+    if waiting >= WAITING_LOOK_MIN and oldest >= WAITING_LOOK_AFTER_S:
+        _row(out, "Looks",
+             f"{waiting} findings are still waiting for a look",
+             f"The oldest has waited {oldest // 3600} h "
+             f"{oldest % 3600 // 60} min. Each failed look puts its rows back "
+             "for the next one, so this is looks failing (see the failed "
+             "runs and the usage limit above) or paused, not a row lost.")
 
     # Refusals a producer carried because nothing on the tab could show
     # them. These are not cards anybody can answer.

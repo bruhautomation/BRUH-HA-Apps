@@ -310,6 +310,64 @@ class TestTheChecksThatUseIt(unittest.TestCase):
                 snap["baselines"]["entities"]["sensor.hall_temp"])
         self.assertEqual(self.check.unusual(snap, self.now), [])
 
+    def _season(self, n_temps, extra=()):
+        """`n_temps` thermometers all far above their usual, plus any
+        `(eid, device_class, unit, median, spread, value)` of another kind."""
+        snap = self.house("28.0")
+        base = snap["baselines"]["entities"]["sensor.hall_temp"]
+        for i in range(n_temps - 1):
+            eid = f"sensor.other{i}"
+            snap["states"][eid] = dict(snap["states"]["sensor.hall_temp"])
+            snap["entities"].append({"entity_id": eid, "name": f"Other {i}"})
+            snap["baselines"]["entities"][eid] = dict(base)
+        bucket = next(iter(base["buckets"]))
+        for eid, klass, unit, median, spread, value in extra:
+            snap["states"][eid] = {
+                "state": str(value), "last_changed": "", "last_updated": "",
+                "attributes": {"device_class": klass, "unit_of_measurement": unit,
+                               "state_class": "measurement"}}
+            snap["entities"].append({"entity_id": eid, "name": eid})
+            snap["baselines"]["entities"][eid] = {
+                "unit": unit, "samples": 672,
+                "overall": {"median": median, "spread": spread, "n": 672},
+                "buckets": {bucket: {"median": median, "spread": spread, "n": 4}}}
+        return snap
+
+    def test_a_season_turning_stands_down_and_leaves_the_real_anomaly(self):
+        """23, 17 and 17 rows against a limit of 4, and giving up whole
+        left every real anomaly among them unchecked. Thermometers that all
+        moved the same way are the season; the pump drawing ten times its
+        usual power is still a row."""
+        snap = self._season(self.check.MAX_ROWS + 3, extra=[
+            ("sensor.pump_power", "power", "W", 100.0, 10.0, 1500.0)])
+        found = self.check.unusual(snap, self.now)
+        self.assertEqual([f["entity_id"] for f in found], ["sensor.pump_power"])
+
+    def test_sensors_moving_opposite_ways_are_not_a_season(self):
+        snap = self._season(1)
+        bucket = next(iter(snap["baselines"]["entities"]["sensor.hall_temp"]
+                           ["buckets"]))
+        for i in range(self.check.MAX_ROWS):
+            eid = f"sensor.p{i}"
+            snap["states"][eid] = {
+                "state": "1500" if i % 2 else "0.0", "last_changed": "",
+                "last_updated": "",
+                "attributes": {"device_class": "power", "state_class":
+                               "measurement", "unit_of_measurement": "W"}}
+            snap["entities"].append({"entity_id": eid, "name": eid})
+            snap["baselines"]["entities"][eid] = {
+                "unit": "W", "samples": 672,
+                "overall": {"median": 100.0, "spread": 1.0, "n": 672},
+                "buckets": {bucket: {"median": 100.0, "spread": 1.0, "n": 4}}}
+        # Two up, two down and the thermometer: five rows, no kind-and-way
+        # exceeds the limit, so nothing is seasonal and the cap still holds.
+        self.assertEqual(self.check.unusual(snap, self.now), [])
+
+    def test_the_shared_rule_is_the_one_decline_uses(self):
+        hits = [("a", "t"), ("b", "t"), ("c", "t"), ("d", "p")]
+        self.assertEqual(self.check.moved_together(hits, lambda h: h[1]),
+                         hits[:3])
+
     def test_an_unavailable_sensor_is_not_unusual(self):
         self.assertEqual(self.check.unusual(self.house("unavailable"), self.now), [])
 
