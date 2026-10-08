@@ -27,6 +27,16 @@ object position is left alone.
 a two-letter name would eat half the English in the report. Names under
 `MIN_NAME` characters are left; an id that names the same thing is still
 aliased, which is where the useful half of the information was anyway.
+
+**A name made only of Home Assistant's own words is not the household's**
+(`GENERIC_WORDS`). An integration names its entities "Battery", "Power",
+"Energy", "Mode" or "Restart", and replacing those as whole words rewrote
+the PROSE of every report: "non-battery sensors" arrived as "non-Binary
+sensor 269 sensors", "power-sensed" as "Sensor 13-sensed", and "brAIn"
+itself as "Conversation 7", so the fixer read a report it could not parse.
+Such a name says nothing about which home it is in, so it is left in the
+text; its entity id is still aliased. A person's, a tracker's and a zone's
+name is never treated as generic, whatever it is.
 """
 from __future__ import annotations
 
@@ -63,10 +73,40 @@ SERVICE_WORDS = frozenset({
     "persistent_notification", "speak", "announce", "home", "home_assistant",
 })
 MIN_NAME = 3
+# Words Home Assistant and its integrations name entities with: device
+# classes, split on underscores, and the names integrations give an
+# entity of a device ("Restart", "Firmware", "Signal strength"). A name
+# made of nothing else is vocabulary, not a household's choice. Domain
+# names are deliberately absent: "Light" is aliased like any other name.
+GENERIC_WORDS = frozenset("""
+    absolute address alarm apparent aqi atmospheric auto battery brain
+    bed brightness button carbon charge charging child cloud cold
+    connected connectivity consumption current daily data dioxide distance
+    door duration enabled energy error factor filter firmware frequency
+    garage gas heat high humidity identify illuminance indicator ip
+    irradiance job last led level link linkquality lock low manual max
+    min mode moisture monetary monoxide motion moving nozzle occupancy
+    online opening overheating overloaded ozone ph plug power precipitation
+    presence pressure print problem production progress rate reboot
+    remaining reset restart rssi running safety seen setpoint signal size
+    smoke sound speed state status strength sync tamper target temperature
+    time today total update uptime version vibration voltage volume water
+    weight wifi wind window
+""".split())
+# Kinds whose name is a person's or a place's, never vocabulary.
+PERSONAL_KINDS = frozenset({"person", "device_tracker", "zone"})
 ENTITY_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 # The person-ish identifiers notify services carry, and the companion
 # app's own prefix: `notify.mobile_app_brians_phone` is a name in an id.
 _MOBILE_RE = re.compile(r"\bmobile_app_[a-z0-9_]+\b")
+
+
+def is_generic(name: str, kind: str) -> bool:
+    """True when ``name`` is made only of `GENERIC_WORDS` (and digits)."""
+    if kind in PERSONAL_KINDS:
+        return False
+    words = re.findall(r"[a-z]+|\d+", str(name or "").casefold())
+    return bool(words) and all(w.isdigit() or w in GENERIC_WORDS for w in words)
 
 
 def _file() -> Path:
@@ -168,8 +208,8 @@ class Aliases:
         # is never read again by a shorter real name ("Room").
         lookup: dict[str, str] = {}
         for key, alias in self.names.items():
-            real = key.split(":", 1)[1]
-            if len(real) >= MIN_NAME:
+            kind, real = key.split(":", 1)
+            if len(real) >= MIN_NAME and not is_generic(real, kind):
                 lookup.setdefault(real.casefold(), alias)
         if lookup:
             pattern = re.compile(
