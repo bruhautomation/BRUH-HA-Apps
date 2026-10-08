@@ -278,6 +278,17 @@ class TestTheMirroredCard(ServerCase):
                "highlights": [{"label": f"L{i}", "value": "5%"} for i in range(6)],
                "generated_at": "2026-09-24T10:09:00", "html": "<p>x</p>"}
 
+    def setUp(self):
+        # _dashboard_card names the file by the card token, and minting one
+        # creates /data/secrets: root's to create here, nobody's on CI.
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old_token_file = self.server.CARD_TOKEN_FILE
+        self.server.CARD_TOKEN_FILE = Path(self._tmp.name) / "secrets" / "card_token"
+
+    def tearDown(self):
+        self.server.CARD_TOKEN_FILE = self._old_token_file
+        self._tmp.cleanup()
+
     def test_the_page_says_how_old_it_is(self):
         page = self.server._whole_card_page(self.INSIGHT)
         self.assertIn('id="age"', page)

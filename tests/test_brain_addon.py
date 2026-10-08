@@ -2086,12 +2086,19 @@ class TestEditJournal(unittest.TestCase):
         runner.write_text(src)
         env = {**os.environ, "BRAIN_EDIT_JOURNAL": str(self.journal),
                "BRAIN_EDIT_JOURNAL_DAYS": "14"}
+        last_second = None
         for _ in range(3):
-            time.sleep(1.05)  # snapshot names carry whole seconds
+            # Snapshot names carry whole seconds, so two edits inside one
+            # second are one snapshot and the cap would have nothing to cut.
+            # A real wait, but only for the clock to reach a second the last
+            # run had finished before — not a flat second-and-a-bit each.
+            while last_second is not None and int(time.time()) <= last_second:
+                time.sleep(1.0 - time.time() % 1.0 + 0.005)
             subprocess.run([sys.executable, str(runner)],
                            input=json.dumps({"tool_name": "Edit",
                                              "tool_input": {"file_path": str(target)}}),
                            capture_output=True, text=True, env=env, timeout=30)
+            last_second = int(time.time())
         snaps = list((self.journal / "snapshots").iterdir())
         self.assertEqual(len(snaps), 1,
                          "three 4 KB snapshots under a 6 KB cap should leave one")

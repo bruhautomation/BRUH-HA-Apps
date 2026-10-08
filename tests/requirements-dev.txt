@@ -5,3 +5,5 @@ numpy
 pillow
 pytest
 pyyaml
+pytest-timeout
+pytest-xdist

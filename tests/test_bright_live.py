@@ -654,6 +654,9 @@ class TestOverdubAndEditing(unittest.IsolatedAsyncioTestCase):
         session.add_tap(clip.id, CAST[0]["id"])
         session.set_muted(clip.id, True)
         session.engine.sent = []
+        # A real wait, not a stand-in for one: "sent nothing" means
+        # something only once the loop has come round past its event, and
+        # a bar is 0.8s at this tempo.
         await asyncio.sleep(1.0)
         self.assertEqual([], session.engine.sent)
         self.assertEqual(1, len(clip.events))

@@ -574,16 +574,21 @@ class TestEndToEnd(ServerCase):
 
         class R:
             pass
+        before = asyncio.all_tasks()
         resp = await self.server.h_curiosity_ask(R())
         self.assertEqual(resp.status, 200)
         body = json.loads(resp.text)
         self.assertEqual(body["asked"], 1)
         self.assertIn("Lawn sprinklers", body["why"])
-        # Started, not awaited — the outcome is read back off the route.
-        for _ in range(50):
-            if not self.server.CURIOSITY_STATE["starting"]:
-                break
-            await asyncio.sleep(0.01)
+        # Started, not awaited — so the test waits on the task the route
+        # started rather than on a flag. The flag drops before the task's
+        # last write (the diagnostics mirror, in a thread), and a test that
+        # stopped at the flag let teardown remove the directory under that
+        # write: "Directory not empty" on a loaded machine, half a second
+        # of polling being a race the run could lose either way.
+        started = asyncio.all_tasks() - before - {asyncio.current_task()}
+        self.assertTrue(started, "the press started no run")
+        await asyncio.wait_for(asyncio.gather(*started), timeout=60)
         self.assertFalse(self.server.CURIOSITY_STATE["starting"])
         self.assertEqual(len(self.inbox_facts()), 1)
 

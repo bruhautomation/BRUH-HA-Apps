@@ -288,7 +288,13 @@ class HypothesisRaceCase(unittest.TestCase):
         hypotheses._write(entries)
 
     def _rewrite_repeatedly(self, locked: bool):
-        """`locked=False` is the shipped code."""
+        """`locked=False` is the shipped code.
+
+        The three seconds are the measure and not a stand-in for "until the
+        appender is done": rewriting back to back under the lock starves
+        the appender, which is the contention this exists to apply — tried
+        as "until the appender exits", the shell appender was still waiting
+        for the lock thirty seconds later."""
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             if locked:
@@ -481,20 +487,39 @@ class TestTheConsolidatorTakesIt(HypothesisRaceCase):
 
     SCRIPT = SCRIPTS / "brain-memory-consolidate.sh"
 
-    def _retire_loop(self, locked: bool, seconds: float = 2.0):
+    def _retire_loop(self, locked: bool, appender=None):
+        """Run the real expiry rewrite over and over until `appender` has
+        exited — at least once, and once only when there is none.
+
+        It used to loop for a fixed two seconds of `date +%s`, around an
+        appender that is done in a fraction of one; the rewrites after the
+        last append raced nothing. The loop now stops when the test says the
+        appender is finished (a file it touches after `wait()`, because a
+        shell cannot `kill -0` a child of ours that has exited — it stays a
+        zombie until we reap it), so it overlaps every append and no more.
+        The `date` bound is a runaway guard, never the measure."""
         # Dropping the lock leaves exactly the shipped-before body: read the
         # file with jq, rename the result over the top.
         unlock = "" if locked else \
             'brain_with_store_lock() { shift; "$@"; };'
+        stop = Path(self.tmp.name) / "retire.stop"
+        stop.unlink(missing_ok=True)
         script = (f'. "{self.SCRIPT}" --help > /dev/null; {unlock}'
-                  f'end=$(( $(date +%s) + {int(seconds)} ));'
-                  'while [ "$(date +%s)" -lt "$end" ]; do'
-                  '  retire_stale_hypotheses; done')
-        return subprocess.run(
-            ["bash", "-c", script], capture_output=True, text=True, timeout=120,
+                  'end=$(( $(date +%s) + 60 ));'
+                  'while :; do retire_stale_hypotheses;'
+                  f'  [ -e "{stop}" ] && break;'
+                  '  [ "$(date +%s)" -ge "$end" ] && break; done')
+        loop = subprocess.Popen(
+            ["bash", "-c", script], stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
             env={**os.environ,
                  "BRAIN_MEMORY_DIR": str(self.path.parent),
                  "BRAIN_STORE_LOCK_LIB": str(SCRIPTS / "brain-memory-lock.sh")})
+        if appender is not None:
+            appender.wait(timeout=60)
+        stop.touch()
+        out, err = loop.communicate(timeout=120)
+        return subprocess.CompletedProcess(loop.args, loop.returncode, out, err)
 
     def _seed_stale(self):
         stale = int(time.time()) - 365 * 86400
@@ -505,7 +530,7 @@ class TestTheConsolidatorTakesIt(HypothesisRaceCase):
         """The claim about the code this replaces, demonstrated."""
         self._seed_stale()
         proc = self._appender(use_lock=True)
-        done = self._retire_loop(locked=False)
+        done = self._retire_loop(locked=False, appender=proc)
         proc.wait(timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertLess(
@@ -516,7 +541,7 @@ class TestTheConsolidatorTakesIt(HypothesisRaceCase):
     def test_it_holds_the_queues_lock_while_it_rewrites(self):
         self._seed_stale()
         proc = self._appender(use_lock=True)
-        done = self._retire_loop(locked=True)
+        done = self._retire_loop(locked=True, appender=proc)
         proc.wait(timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
         self.assertEqual(len(self._appended()), self.ROUNDS,
@@ -528,7 +553,7 @@ class TestTheConsolidatorTakesIt(HypothesisRaceCase):
     def test_it_creates_the_lock_beside_the_queue(self):
         self.path.write_text(json.dumps(
             {"ts": int(time.time()), "text": "Fresh", "status": "open"}) + "\n")
-        self.assertEqual(self._retire_loop(locked=True, seconds=1).returncode, 0)
+        self.assertEqual(self._retire_loop(locked=True).returncode, 0)
         self.assertTrue(atomic_write.lock_path(self.path).exists(),
                         "the consolidator did not take the queue's own lock")
 

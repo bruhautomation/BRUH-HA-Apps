@@ -2,13 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 2.17.19
+## 2.17.20
 
 - "Devices not in an area" no longer counts service devices (Backup, the Sun, online services) or brAIn's own conversation agents and system device, none of which belong in a room. (reports #96)
 - A reading that moves in steps (a forecast resting at 1% that sometimes steps to 5%) no longer reports its usual step as hundreds of times its normal variation: its spread is now the size of the steps it takes. (reports #97)
 - "Entities with no integration" no longer lists entities whose integration is still there, whether it is retrying setup or loaded with the device simply out of range, so it no longer suggests deleting them. (reports #103, #108)
 - A Z-Wave node the controller has declared dead is now found by what Z-Wave JS registered rather than by its entity id, so a renamed or `_2` node is reported, and its frozen battery is no longer filed as a low battery as well. (reports #111)
 - The house book no longer asks where something is when its room is already known. (reports #109)
+
+## 2.17.19
+
+- Voice: a worker that died at spawn is now counted as dead even when its exit status lands a few milliseconds after its output closed. Read in that gap, the pool took the dead worker for a live one and the fallback that switches token streaming off after repeated early deaths could miss them.
 
 ## 2.17.18
 

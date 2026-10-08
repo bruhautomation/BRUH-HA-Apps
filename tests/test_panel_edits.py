@@ -587,8 +587,17 @@ class TestManualConsolidation(PanelCase):
         """The whole point of the change. A pass that takes longer than any
         HTTP client will wait must still leave the button responsive and the
         tab able to say what is happening."""
+        # The pass is held open until the test lets it go, rather than for a
+        # second: a POST that waited for it would then take the gate's full
+        # minute, so the bound below can be generous enough for a loaded
+        # machine and still tell the two apart — and "in flight" is read
+        # while it provably is, not while a sleep happens not to have ended.
         script = Path(self.tmp.name) / "slow.sh"
-        script.write_text("#!/bin/bash\nsleep 1\nexit 0\n", encoding="utf-8")
+        release = Path(self.tmp.name) / "release"
+        script.write_text(
+            "#!/bin/bash\n"
+            f"for _ in $(seq 1200); do [ -e {release} ] && exit 0; sleep 0.05; done\n"
+            "exit 0\n", encoding="utf-8")
         script.chmod(0o755)
         self.server.CONSOLIDATE_SCRIPT = str(script)
         self._queue(1)
@@ -601,11 +610,12 @@ class TestManualConsolidation(PanelCase):
                 resp = await client.post("/api/memory/consolidate")
                 elapsed = time.monotonic() - started
                 self.assertEqual(resp.status, 200)
-                self.assertLess(elapsed, 0.5, "the POST waited for the pass")
+                self.assertLess(elapsed, 20, "the POST waited for the pass")
                 # and while it runs, the tab is told a pass is in flight
                 state = (await (await client.get("/api/memory/state")).json())["memory_state"]
                 self.assertTrue(state["merging"])
                 self.assertEqual(state["by"], "you")
+                release.touch()
                 await self._await_pass(client)
             finally:
                 await client.close()
@@ -615,9 +625,16 @@ class TestManualConsolidation(PanelCase):
     def test_a_second_press_joins_the_pass_instead_of_starting_one(self):
         """Two consolidators writing memory.md at once is the one thing the
         lock exists to prevent; the panel should not be racing to it."""
+        # Held open until released, as above: the second press has to land
+        # while the first pass is still running, and a one-second sleep is
+        # a race a loaded machine can lose.
         script = Path(self.tmp.name) / "slow.sh"
         runs = Path(self.tmp.name) / "runs"
-        script.write_text(f"#!/bin/bash\necho x >> {runs}\nsleep 1\n", encoding="utf-8")
+        release = Path(self.tmp.name) / "release"
+        script.write_text(
+            f"#!/bin/bash\necho x >> {runs}\n"
+            f"for _ in $(seq 1200); do [ -e {release} ] && exit 0; sleep 0.05; done\n",
+            encoding="utf-8")
         script.chmod(0o755)
         self.server.CONSOLIDATE_SCRIPT = str(script)
         self._queue(1)
@@ -631,6 +648,7 @@ class TestManualConsolidation(PanelCase):
                 again = await (await client.post("/api/memory/consolidate")).json()
                 self.assertFalse(again["started"])
                 self.assertTrue(again["running"])
+                release.touch()
                 await self._await_pass(client)
             finally:
                 await client.close()

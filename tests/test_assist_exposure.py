@@ -474,6 +474,14 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
             mod = load_pool(tmp, {})
             Path(mod.ASSIST_SETTINGS_FILE).write_text("{}")
             pool = mod.Pool()
+            # The pool pre-warms a spare on a daemon thread after every
+            # request. Nothing here asserts on the spare, and a spare still
+            # being spawned when this block ends has the fake CLI writing
+            # argv.log into a directory TemporaryDirectory is removing —
+            # "Directory not empty", about one run in two under four xdist
+            # workers. The request is served by a cold spawn instead, which
+            # is the same argv for the same profile.
+            pool._spawn_spare = lambda profile: None
             req = {"id": uuid.uuid4().hex, "conversation_id": "c",
                    "text": "turn on the lab lights", "type": "conversation",
                    "ts": 0, "timeout": 30}
@@ -482,10 +490,21 @@ class TestEachAgentChoosesItsOwnReach(unittest.TestCase):
             try:
                 pool.handle(req)
             finally:
-                for worker in list(pool.workers.values()):
-                    worker.kill()
+                procs = [w for w in list(pool.workers.values())]
                 if pool.spare is not None:
-                    pool.spare.kill()
+                    procs.append(pool.spare)
+                for worker in procs:
+                    worker.kill()
+                for worker in procs:
+                    # kill() only sends the signal; the directory can go
+                    # only once the process has let go of its files.
+                    try:
+                        worker.proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        # A fake CLI that ignored SIGKILL for ten seconds is
+                        # not something this test can do anything about;
+                        # the directory removal below reports the leftover.
+                        pass
             lines = Path(tmp, "argv.log").read_text().splitlines()
             envs = [l for l in lines if l.startswith("ENV BRAIN_EXPOSED_ONLY=")]
             argvs = [l for l in lines if not l.startswith("ENV ")]

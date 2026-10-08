@@ -20,9 +20,149 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request's branch makes every run before it a run about
+# code nobody is going to merge, so the newer one cancels it. Runs on main
+# are different: each one is the record of a commit that landed, and a run
+# cancelled there is a commit nobody ever checked. So main's group is keyed
+# on the commit — every push is its own group and nothing replaces it —
+# while a pull request's is keyed on its ref. Keying main on the branch and
+# only switching cancel-in-progress off is not enough: GitHub still
+# cancels a PENDING run in the same group when a newer one arrives, so the
+# middle of three quick merges would never run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    # One decision about what a pull request can have affected, made once
+    # and printed once, read by the tests job and the layout groups. It
+    # only ever NARROWS: every way of not knowing (a push, a failed fetch,
+    # an empty diff, a change to the machinery the tests share) answers
+    # "run everything", because a test skipped on a guess is a regression
+    # that reaches main. No third-party paths-filter action — a `git diff`
+    # answers the question and adding a dependency is a person's decision.
+    name: Decide what this change can affect
+    runs-on: ubuntu-latest
+    outputs:
+      pytest_args: ${{ steps.scope.outputs.pytest_args }}
+      bright: ${{ steps.scope.outputs.bright }}
+      print: ${{ steps.scope.outputs.print }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # On a pull_request the checkout is the merge commit, i.e. the base
+      # branch with the PR applied, so a two-dot diff against the base's
+      # tip is exactly what merging would change. That needs one commit of
+      # the base and no history, hence a depth-1 fetch rather than
+      # fetch-depth: 0. If the base moves between the merge commit being
+      # made and this fetch, its new files show up as "changed" too — which
+      # can only make the run wider, never narrower.
+      - name: Work out which tests and layout groups apply
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -uo pipefail
+          out="${GITHUB_OUTPUT:-/dev/stdout}"
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          everything() {
+            echo "Decision: every test file and every layout group runs — $1"
+            {
+              echo "pytest_args="
+              echo "bright=true"
+              echo "print=true"
+            } >> "$out"
+            echo "Everything runs: $1" >> "$summary"
+            exit 0
+          }
+
+          if [ "$EVENT" != "pull_request" ]; then
+            everything "a $EVENT run checks the whole repository; only a pull request is narrowed"
+          fi
+          if ! git fetch --no-tags --depth=1 origin "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"; then
+            everything "could not fetch origin/$BASE_REF to compare against"
+          fi
+          if ! changed=$(git diff --name-only "origin/$BASE_REF" HEAD); then
+            everything "could not diff against origin/$BASE_REF"
+          fi
+          if [ -z "$changed" ]; then
+            everything "the diff against origin/$BASE_REF is empty, which is nothing to narrow on"
+          fi
+
+          echo "Changed against origin/$BASE_REF:"
+          sed 's/^/  /' <<<"$changed"
+
+          # What every test file leans on, whichever add-on it is about:
+          # the shared fixtures and fakes, the pytest config, the test
+          # dependencies, and this workflow (which decides the selection,
+          # so a change to it is tested by the run it would narrow).
+          shared=$(grep -E '^(pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|conftest\.py|tests/conftest\.py|tests/fake_[^/]*\.py|tests/[^/]*_env\.py|tests/requirements-dev\.txt|\.github/workflows/ci\.yml)$' <<<"$changed" || true)
+          if [ -n "$shared" ]; then
+            everything "shared test infrastructure changed: $(tr '\n' ' ' <<<"$shared")"
+          fi
+
+          # Prefixed files that read MORE than their own add-on, so they
+          # can never be skipped on that add-on being untouched:
+          # test_bright_addon reads BRUH Minecraft's config.yaml (the two
+          # ingress ports must not collide) and test_bruh_print_addon reads
+          # .github/workflows/build.yml. Every other test_bright_*,
+          # test_bruh_print_* and test_minecraft_* file reads only its own
+          # add-on's directory (checked by grep when this was written —
+          # test_bright_director_check's "brain" is a temp directory name,
+          # not brAIn's code). Anything without one of these three prefixes
+          # — brAIn's tests and every cross-add-on test (hardening, brand
+          # assets, documented counts, labelling) — always runs.
+          always=" tests/test_bright_addon.py tests/test_bruh_print_addon.py "
+          args=""
+
+          # Skip an add-on's own test files only when neither its directory
+          # nor any of those test files changed. (Its test helpers are
+          # either prefixed the same way or covered by the shared list.)
+          narrow() {
+            local name=$1 dir=$2 prefix=$3 f n=0
+            if grep -qE "^(${dir}/|tests/${prefix}[^/]*\.py\$)" <<<"$changed"; then
+              echo "$name: changed — its tests run"
+              return
+            fi
+            for f in tests/"$prefix"*.py; do
+              [ -e "$f" ] || continue
+              case "$always" in *" $f "*) continue ;; esac
+              args="$args --ignore=$f"
+              n=$((n + 1))
+            done
+            echo "$name: untouched — skipping its $n own test files"
+            echo "$name: untouched, $n test files skipped" >> "$summary"
+          }
+          narrow "BRight" bright test_bright_
+          narrow "BRUH Print" bruh-print test_bruh_print_
+          narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
+
+          # The two layout groups that boot an add-on's panel run when that
+          # add-on or one of the files only that group reads changed. The
+          # static groups are brAIn's panel and always run.
+          bright=false
+          if grep -qE '^(bright/|tests/manual/(bright_demo_panel\.py|measure-(effects|showeditor|manual|lightmap|library)\.mjs))' <<<"$changed"; then
+            bright=true
+          fi
+          print=false
+          if grep -qE '^(bruh-print/|tests/manual/(bruh_print_demo_panel\.py|measure-print-(panel|card)\.mjs))' <<<"$changed"; then
+            print=true
+          fi
+          echo "Layout groups: static-a and static-b run; bright=$bright print=$print"
+          echo "Layout: bright=$bright print=$print" >> "$summary"
+
+          {
+            echo "pytest_args=${args# }"
+            echo "bright=$bright"
+            echo "print=$print"
+          } >> "$out"
+
   tests:
     name: Python tests
+    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -39,8 +179,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r tests/requirements-dev.txt
 
+      # -n 4 is the runner's core count (ubuntu-latest has four): the suite
+      # took 6m11s serially and 1m41s this way. --dist loadfile keeps every
+      # test in a file on one worker, because several files share module
+      # state through sys.modules — they pop and re-import panel modules,
+      # and BRight's and BRUH Print's panels both have a top-level `stores`
+      # — and splitting a file across workers would make those tests pass
+      # or fail on which worker drew them. The per-test timeout comes from
+      # pytest.ini, so a hung test fails by name instead of eating the job.
+      # PYTEST_ARGS is the changes job's --ignore list, empty when
+      # everything runs; it is left unquoted on purpose so each --ignore
+      # is its own word (the paths it holds contain no spaces).
       - name: Run pytest
-        run: pytest tests/ -q
+        env:
+          PYTEST_ARGS: ${{ needs.changes.outputs.pytest_args }}
+        run: |
+          echo "python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS"
+          # shellcheck disable=SC2086
+          python -m pytest tests -q -n 4 --dist loadfile $PYTEST_ARGS
 
   ruff:
     name: Python lint
@@ -70,35 +226,78 @@ jobs:
     # line actually painted, tooltips inside the viewport) was enforced by
     # a documented human habit. They run headless against static fixtures,
     # so the only thing keeping them out of CI was nobody promoting them.
-    name: Layout measures (Playwright)
+    #
+    # Thirty-five of them in one job took 4m40s, one after another, while
+    # every other job finished in under a minute. They are independent —
+    # each opens its own page — so they run as four groups on four runners:
+    # brAIn's static-fixture measures split in two by their measured times
+    # (about 65s and 68s), BRight's (its two static ones plus the three on
+    # one booted demo panel) and BRUH Print's (its booted panel plus the
+    # Lovelace card). Each group installs Playwright itself; 21s per runner
+    # is cheaper than the serial chain it replaces.
+    #
+    # Every group is a job that always REPORTS, even when the changes job
+    # said a pull request cannot have affected it — its steps are gated
+    # rather than the job, so a branch protection rule naming one of these
+    # checks never waits on a check that was never created. (A job-level
+    # `if` cannot read `matrix` anyway; it is evaluated before the matrix
+    # expands.) GROUP_RUNS falls through to 'true' whenever the changes
+    # job's answer is missing, so a group is only ever skipped on a
+    # positive "untouched", never on a missing one.
+    name: Layout measures (${{ matrix.group }})
+    needs: changes
     runs-on: ubuntu-latest
+    strategy:
+      # One group failing must not cancel the others: a layout regression
+      # in one panel says nothing about the rest, and a run that stopped at
+      # the first red group hides the second until the next push.
+      fail-fast: false
+      matrix:
+        group: [static-a, static-b, bright, print]
+    env:
+      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || 'true' }}
     steps:
+      - name: Say why this group has nothing to do
+        if: env.GROUP_RUNS != 'true'
+        run: |
+          echo "Skipped: this pull request changes nothing the ${{ matrix.group }} measures read (see the changes job's log)."
+
       - uses: actions/checkout@v7
+        if: env.GROUP_RUNS == 'true'
 
       # ubuntu-latest ships a current Node; the scripts resolve Playwright
       # from the repo-root node_modules exactly as the README describes.
       - name: Install Playwright
+        if: env.GROUP_RUNS == 'true'
         run: |
           # Pinned: an unpinned install takes whatever npm published a minute ago, and a tarball the registry cannot serve yet fails this job before a single measure runs.
           npm install playwright@1.62.1 --no-fund --no-audit
           npx playwright install --with-deps chromium
 
+      # static-a: brAIn's static-fixture measures, first half (~65s).
+
       - name: Measure the top bar
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-topbar.mjs
 
       - name: Measure the card head
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-cardhead.mjs
 
       - name: Measure the chat meta line
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-chatmeta.mjs
 
       - name: Measure the terminal on a phone
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-terminal-mobile.mjs
 
       - name: Measure the tooltips
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-tooltips.mjs
 
       - name: Measure the activity tab
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-activity.mjs
 
       # Seven measurement rows, five states, four sections and the Today
@@ -107,6 +306,7 @@ jobs:
       # house with nothing to say are three silences that look identical
       # unless every row carries its state and its reason.
       - name: Measure the Knowledge tab
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-knowledge.mjs
 
       # The one screen somebody sees exactly once, which is why it goes
@@ -114,47 +314,59 @@ jobs:
       # version that is broken. Four steps, both empty cases, and — the one
       # that matters — that a step already answered is not asked again.
       - name: Measure the first-run flow
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-onboarding.mjs
 
       - name: Measure the suggestions on Today
+        if: matrix.group == 'static-a'
         run: node tests/manual/measure-proposals.mjs
 
+      # static-b: brAIn's static-fixture measures, second half (~68s).
+
       - name: Measure the Claude account surfaces
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-account.mjs
 
       - name: Measure the Problems section
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-problems.mjs
 
       # ⚙ is six disclosures rather than one scroll, and the numbers that
       # make that true — its open height, its lazy Advanced loaders, the
       # prose it moved onto a ? — are only checkable by driving it.
       - name: Measure the Settings dialog
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-settings.mjs
 
       # The development loop's section is hidden while the loop is off, which
       # is the only state measure-settings sees; this drives it switched on.
       - name: Measure the development loop's controls
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-devloop.mjs
 
       # What the panel spends on chrome before content: the sub-tab strip,
       # the status strip and Help's contents on a phone, and how much of a
       # wide screen the Home group's lists use.
       - name: Measure the panel's chrome
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-chrome.mjs
 
       # The chat's approval card is where the asking happens, so it is
       # where the way out of asking has to be: "Always allow" with what it
       # adds said in words, and "Stop asking…" landing on the switch in ⚙.
       - name: Measure the chat approval card
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-permcard.mjs
 
       # A live card has two ages; the foot used to report one of them.
       - name: Measure a live card's two ages
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-cardlive.mjs
 
       # A chore you cannot finish from the screen it is on is
       # indistinguishable from one nobody has got round to.
       - name: Measure Your list
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-todo.mjs
 
       # An idea is a proposal to spend a run every refresh interval for
@@ -163,9 +375,11 @@ jobs:
       # Suggested row under Reports is its name and Run when empty, and
       # only a failed look says anything.
       - name: Measure the Suggested ideas row
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-ideas.mjs
 
       - name: Measure the resolutions card
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-chatres.mjs
 
       # Ask: your chats only (no run-type chips), one ⋯ per row, the list
@@ -173,6 +387,7 @@ jobs:
       # line while the cards that ask something stay out of it, and no
       # "Resume" anywhere.
       - name: Measure the Ask tab
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-ask.mjs
 
       # The tidy and update cards on Today, and the house book: a book
@@ -181,50 +396,63 @@ jobs:
       # a review nobody can do, and an upgrade verdict without both quotes
       # is an opinion.
       - name: Measure the tidy, updates and house book
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-upkeep.mjs
 
       # House: four segments on one control (a select on a phone), the
       # Reports cards cut to a headline and an age, the house book a pane
       # of its own, and the top line of What happened is the house now.
       - name: Measure the House screen
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-house.mjs
 
       # A card nothing checked must not read like one something did.
       - name: Measure what a card says about being looked at
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-triage.mjs
 
       # Every kind of card on Today offers its own row and sends its own
       # route: a case whose ending is missing is work with nowhere to go.
       - name: Measure the cards' presses
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-home.mjs
 
       # What a fix would change, read before it changes it — and what it
       # did change, read before the undo beside it is pressed.
       - name: Measure the fix plan card
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-fixplan.mjs
 
       # Today, the one screen for deciding: no sub-tab bar, the first card
       # near the top, what fits and "Show N more", one card standard, the
       # status line, Your list, History and the first-run setup card.
       - name: Measure Today
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-today.mjs
 
       # The visual standard: four type sizes, sentence case, no browser
       # chrome on a select or a checkbox, and every card on the 4px grid
       # with one edge all the way round — read off every pane and ⚙.
       - name: Measure the visual tokens
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-tokens.mjs
 
       # The phone: a 56px header, the three tabs on a bar fixed to the
       # bottom, no sideways scroll at 390 or 320, and the sweep (no glyph
       # labels, no ? bubbles) on every pane and in ⚙.
       - name: Measure the phone layout
+        if: matrix.group == 'static-b'
         run: node tests/manual/measure-phone.mjs
 
+      # bright: BRight's panel — two static measures, then three on one
+      # booted demo panel, in the order the comments below rely on.
+
       - name: Measure BRight's light map
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-lightmap.mjs
 
       - name: Measure BRight's library tab
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-library.mjs
 
       # This one needs the real panel behind it: the effect preview is a
@@ -233,6 +461,7 @@ jobs:
       # seeded scratch house — no bulbs are contacted and no Home
       # Assistant is needed.
       - name: Measure BRight's effect builder
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: |
           pip install --quiet aiohttp numpy
           python3 tests/manual/bright_demo_panel.py /tmp/bright-demo &
@@ -251,6 +480,7 @@ jobs:
       # opens. That independence is what lets it run three viewports in a
       # row and lets this step follow the effects one on a shared panel.
       - name: Measure BRight's show editor
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-showeditor.mjs
 
       # The Manual tab, on the same booted panel: a performance surface
@@ -258,7 +488,10 @@ jobs:
       # hand — pad sizes, the tap pad counting, and a gesture before a
       # session exists coming back with its reason.
       - name: Measure BRight's Manual tab
+        if: matrix.group == 'bright' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-manual.mjs
+
+      # print: BRUH Print's booted panel and its Lovelace card.
 
       # BRUH Print's panel, on its own booted instance. Every failure this
       # catches is a layout one that geometry can see and reading cannot:
@@ -267,6 +500,7 @@ jobs:
       # hide, a design canvas that does not fit its pane. The only thing
       # stood in for is the USB write.
       - name: Measure BRUH Print's panel
+        if: matrix.group == 'print' && env.GROUP_RUNS == 'true'
         run: |
           pip install --quiet aiohttp pillow qrcode
           python3 tests/manual/bruh_print_demo_panel.py /tmp/bruh-print-demo &
@@ -283,6 +517,7 @@ jobs:
       # read the file, and a grep for a line is not a test of what the
       # line does.
       - name: Measure BRUH Print's Lovelace card
+        if: matrix.group == 'print' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-print-card.mjs
 
   hassfest:
