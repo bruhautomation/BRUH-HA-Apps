@@ -112,8 +112,6 @@ DAILY_WORDS = frozenset({"today", "yesterday", "daily"})
 
 
 def _name_words(house: House, eid: str, st: dict) -> list[list[str]]:
-    import re  # noqa: PLC0415
-
     attrs = st.get("attributes") or {}
     reg = house.registry.get(eid) or {}
     return [[w for w in re.split(r"[^a-z0-9]+", str(name or "").lower()) if w]

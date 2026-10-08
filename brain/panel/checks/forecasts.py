@@ -46,7 +46,6 @@ SAME_CLASS_MAX = 2
 # re-exported here under the names callers and tests already use.
 OUTSIDE_CLASSES = baseline_check.OUTSIDE_CLASSES
 OUTSIDE_PLATFORMS = baseline_check.OUTSIDE_PLATFORMS
-_PER_ENERGY = baseline_check._PER_ENERGY  # noqa: SLF001
 OUTSIDE_WORDS = baseline_check.OUTSIDE_WORDS
 outside_cause = baseline_check.outside_cause
 
