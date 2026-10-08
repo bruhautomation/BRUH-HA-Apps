@@ -997,7 +997,8 @@ def rank(signals: list[dict]) -> list[dict]:
 
 
 def batch(signals: list[dict], cap: int = MAX_BATCH,
-          filed_reserve: int = 0) -> dict:
+          filed_reserve: int = 0,
+          overdue_before: float | None = None) -> dict:
     """The top `cap`, and how many waited.
 
     `{"batch": [...], "waiting": n, "hot": n}`. The surplus **waits** — it
@@ -1036,6 +1037,23 @@ def batch(signals: list[dict], cap: int = MAX_BATCH,
         other_hot = [s for s in hot if not s.get("safety")]
         filed = [s for s in cool if s.get("finding_ts")]
         live = [s for s in cool if not s.get("finding_ts")]
+        if overdue_before is not None:
+            # **A filed row already past its deadline goes first, oldest
+            # waiting first** (`waiting_since`, which the caller carries
+            # beside `finding_ts`). Salience carries a recency weight, so
+            # by salience alone a row that missed one look misses every
+            # later one to whatever was filed after it — the lottery it
+            # is not meant to lose twice. The rest keep the rank's order.
+            def _since(s: dict) -> float:
+                try:
+                    return float(s.get("waiting_since") or 0.0)
+                except (TypeError, ValueError):
+                    return 0.0
+            late = sorted((s for s in filed
+                           if 0.0 < _since(s) <= float(overdue_before)),
+                          key=_since)
+            first = {id(s) for s in late}
+            filed = late + [s for s in filed if id(s) not in first]
         keep = min(int(filed_reserve), len(filed))
         taken = (safe + filed[:keep] + other_hot + filed[keep:] + live)[:cap]
     else:
