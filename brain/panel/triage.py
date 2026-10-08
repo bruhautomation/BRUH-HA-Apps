@@ -80,6 +80,11 @@ SHOW_AFTER_S = 15 * 60
 # stuck sensor"), short enough that ten of them are a list.
 MAX_REASON = 300
 
+# Which rules judged a row. 2 = judged on the CLAIM against all its own
+# evidence (`resident.CLAIM_RULE`); a held verdict stamped 0 was given
+# before that and gets one fresh look (`findings_store.migrate_folds`).
+LOOK_VERSION = 2
+
 # Every way a finding reaches the tab without anything having looked at
 # it, in the words the card shows. They are here rather than at the call
 # sites for the reason every closed vocabulary in this add-on is one

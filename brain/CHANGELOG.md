@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.10
+
+- Findings that brAIn set aside are looked at again when a later report contradicts the reason they were set aside. Findings set aside before brAIn judged the claim itself, rather than one reading in it, get one fresh look after the update. (reports #54, #58)
+- One problem reported by several insight cards is one finding. Copies already on your list are merged once, after the update. (reports #59)
+- When you keep marking a rule's findings Wrong, brAIn now asks once whether to stop raising them. Yes mutes the rule (Undo unmutes it). No is remembered, and you are asked again only if the Wrongs double. (reports #56, #60)
+- The problems list now says when findings have been waiting for a look for more than two hours, and how many. (reports #62)
+- The unusual-readings check no longer goes quiet when the season turns. Sensors of one kind moving the same way together are set aside as the season, and the rest are still checked. (reports #63)
+
 ## 2.17.9
 
 - The unusual-readings and drifting-readings checks no longer spend their limit on readings that are not about the house: brAIn's own sensors, a printer's job figures, durations and timestamps, targets and setpoints, daily totals, and weather or sky figures. A real fault in the house is reported again instead of the check going quiet because those filled its quota. (reports #36)

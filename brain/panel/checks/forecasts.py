@@ -171,17 +171,15 @@ def decline(snap: dict, now: float) -> list[dict]:
     # and that is the weather rather than a device. More than a couple of
     # one kind moving together is the environment moving; the whole class
     # stands down rather than filling the list with the season.
-    by_class: dict[str, int] = {}
-    for _rank, _eid, _moved, klass, _b in hits:
-        by_class[klass] = by_class.get(klass, 0) + 1
-    together = [h for h in hits if by_class.get(h[3], 0) > SAME_CLASS_MAX]
+    together = baseline_check.moved_together(
+        hits, lambda h: h[3], limit=SAME_CLASS_MAX)
     if together:
         house.gave_up("forecast.decline",
                       [{"entity_id": h[1]} for h in together],
                       "several sensors of the same kind were drifting the "
                       "same way at once — that is the weather or the season "
                       "moving, not one device")
-    hits = [h for h in hits if by_class.get(h[3], 0) <= SAME_CLASS_MAX
+    hits = [h for h in hits if h not in together
             and house.should_report(h[1], "forecast.decline")]
 
     if len(hits) > DECLINE_MAX_ROWS:
