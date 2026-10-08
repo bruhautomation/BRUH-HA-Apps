@@ -812,6 +812,28 @@ for (const width of WIDTHS) {
   await page.evaluate(() => document.querySelectorAll('#kKnown .kfactopen')
     .forEach((b) => b.click()));
 
+  // Presentation: a `hidden` element must not be drawn (a class with its own
+  // `display` outranks the UA [hidden] rule and paints an empty bar), and the
+  // teach box's placeholder has to be readable in full, not cut off.
+  const pres = await page.evaluate(() => {
+    const pane = document.querySelector('#viewMemory .kknow');
+    const drawn = [...pane.querySelectorAll('[hidden]')]
+      .filter((n) => getComputedStyle(n).display !== 'none'
+        || n.getBoundingClientRect().height > 0)
+      .map((n) => `${n.tagName.toLowerCase()}${n.id ? '#' + n.id : ''}${n.className ? '.' + String(n.className).trim().split(/\s+/).join('.') : ''}`);
+    const input = document.getElementById('kAddInput');
+    const cs = getComputedStyle(input);
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const need = ctx.measureText(input.placeholder).width;
+    const room = input.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return { drawn, need: Math.ceil(need), room: Math.floor(room), ph: input.placeholder,
+      font: parseFloat(cs.fontSize) };
+  });
+  if (pres.drawn.length) note(at, `hidden elements are drawn in the Knowledge pane: ${pres.drawn.join(', ')}`);
+  if (pres.need > pres.room) note(at, `teach box placeholder "${pres.ph}" needs ${pres.need}px but has ${pres.room}px`);
+  if (touch && pres.font < 16) note(at, `teach box text is ${pres.font}px on touch (floor is 16)`);
+
   const f = await page.evaluate(() => {
     const seen = (node) => {
       if (!node) return false;
@@ -922,7 +944,7 @@ for (const width of WIDTHS) {
     note(at, `the chips are ${f.chips.join(' | ')}`);
   }
   if (!f.browse) note(at, 'Knowledge cannot be browsed by room or device');
-  if (f.teach.placeholder !== 'Tell brAIn something about the house…') {
+  if (f.teach.placeholder !== 'Tell brAIn about the house…') {
     note(at, `the teach box reads "${f.teach.placeholder}"`);
   }
   if (f.teach.send !== 'Teach') note(at, `the teach box's button reads "${f.teach.send}"`);
