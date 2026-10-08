@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.16
+
+- The "devices left in the registry with no entities" check no longer lists HomeKit Bridge devices, which never have entities of their own and break HomeKit if deleted. (reports #93)
+- The "refers to entities that do not exist" check no longer reports a scene the same automation or script makes with `scene.create`, and no longer reads steps marked as disabled. (reports #91)
+- A power sensor whose name says it is a fan, blower, booster, vent or duct (such as a dryer's vent booster fan) is no longer treated as the washer, dryer or dishwasher it is named after, so it no longer files "has finished and is still full". (reports #90)
+- The wake and bedtime measurement now has tests showing that a few odd days cannot stop it giving an answer. (reports #92)
+
 ## 2.17.15
 
 - Help develop brAIn: reports no longer rewrite ordinary words. An entity named only in Home Assistant's own vocabulary ("Battery", "Power", "Energy", brAIn's own "brAIn") was being swapped for its alias everywhere the word appeared, so a sentence like "non-battery sensors" arrived as "non-Binary sensor 269 sensors". Names a household chose, rooms, people and every entity id are still replaced.

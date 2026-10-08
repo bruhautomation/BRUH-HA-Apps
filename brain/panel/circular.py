@@ -62,7 +62,14 @@ def circular_distance(a: float, b: float) -> float:
 
 
 def circular_spread(minutes: list[int], centre: float) -> float:
-    """How far these times stray from their centre, the short way round."""
+    """How far these times stray from their centre, the short way round.
+
+    The MEDIAN of the distances (a median absolute deviation), never the
+    range: it says how far the middle half of the days sits from the
+    centre, so a holiday lie-in or a night up cannot decide it — it only
+    grows past a floor when more than half the days are that far out,
+    which is a house with no usual time rather than one with odd days.
+    """
     if not minutes:
         return 0.0
     return statistics.median([circular_distance(m, centre) for m in minutes])
