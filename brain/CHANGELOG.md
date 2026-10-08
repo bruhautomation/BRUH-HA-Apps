@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.9
+
+- The unusual-readings and drifting-readings checks no longer spend their limit on readings that are not about the house: brAIn's own sensors, a printer's job figures, durations and timestamps, targets and setpoints, daily totals, and weather or sky figures. A real fault in the house is reported again instead of the check going quiet because those filled its quota. (reports #36)
+- The morning brief no longer tells you to sign in again when the usage figures are only waiting (for example, while Anthropic is rate-limiting the usage endpoint). It still says so when a sign-in really failed. (reports #37, #61)
+- The Open findings sensor in Home Assistant now shows the same number as the panel's badge: findings, questions and suggestions waiting on you. (reports #39, #51)
+- Findings from a question you asked are filed under that card's title instead of "Custom", including ones already on your list. (reports #46)
+- A failed run in the problems list now says which card or job it was and when it last failed. (reports #48)
+- The record of why brAIn said nothing keeps one row per standing decision with a count, instead of a new row each pass. And when you said you had fixed something and the check still finds it two hours later, the finding comes back instead of being silently dropped every pass. (reports #51, #57)
+
+## 2.17.8
+
+- What brAIn knows is filed against real things. A number ("69.98") or a file name ("automations.yaml") is no longer stored as a device, and a fact about a device that does not exist is filed about the house instead. (reports #40)
+- One room is one room. A fact filed under a room's name, a nickname or a slightly different spelling now lands in that room instead of starting a second one beside it. (reports #41)
+- Facts read as sentences. A fact cut off mid-word now ends on a whole word, and a long device or integration id inside one is replaced by that device's or integration's name. (reports #44)
+- A fact that says the same thing as one already there, or a newer reading of the same state ("back online" after "unavailable"), now replaces the older one instead of sitting beside it. Things you told brAIn, rules and calendar occasions are never replaced. (reports #45)
+- A fact about one of brAIn's own problems no longer stays true for ever. It is marked with the version that filed it, stops counting once brAIn has been updated, and is offered for removal in Clean up. Existing facts are tidied once, the first time the updated add-on runs. (reports #52)
+
+## 2.17.7
+
+- brAIn can now tell you a 3D print has finished and is waiting to be taken off, from the status the printer's own integration publishes, with no power sensor needed. The same works for a washing machine, dryer or dishwasher that publishes its own running and finished status. It speaks only when the status really went from running to finished (not a status that has said "finished" all along or since a restart), waits twenty minutes in case you are already there, stops after fourteen hours, and ticking it off is never undone by the status still saying "finished". (reports #31)
+
 ## 2.17.6
 
 - Memory › Knowledge no longer draws an empty rounded bar between the heading and the box you teach brAIn in, and that box's hint now fits on a phone instead of being cut off. (reports #16)

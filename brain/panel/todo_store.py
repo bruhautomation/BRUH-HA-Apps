@@ -319,6 +319,13 @@ def reopen(item_id: int) -> dict | None:
 # and a reloaded integration has finished setting up; a check that did not
 # run reopens nothing, `clear_resolved`'s rule.
 CHORE_SETTLE_S = 2 * 3600
+# Checks that can see a chore happen and cannot see it done. A printer's
+# status says "finish" until the next job starts, whatever was taken off
+# the bed, so re-running `chore.job_done` after the tick reports exactly
+# what it reported before it — and putting the chore back "because the
+# check still reports it" would be the check contradicting a person about
+# the one fact it has no way to read. Their chores end on the press.
+UNSEEN_DONE_SOURCES = frozenset({"check:chore.job_done"})
 CAME_BACK_NOTE = ("Came back: the check that reported this still reports it "
                   "after you marked it done.")
 
@@ -334,6 +341,7 @@ def still_reported(sources: set[str], keep_keys: set[str],
         if (item["status"] == "done" and item["origin"] == "finding"
                 and item["source"].startswith("check:")
                 and item["source"] in sources
+                and item["source"] not in UNSEEN_DONE_SOURCES
                 and item["finding_key"] in keep_keys
                 and item["done_at"]
                 and now - item["done_at"] >= CHORE_SETTLE_S):

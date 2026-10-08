@@ -46,6 +46,8 @@ PRODUCER_URGENCY = {
     # `whenever` is what lets quiet hours hold it, which is the whole
     # reason urgency is declared per producer.
     "check:chore.waiting": "whenever",
+    # The same chore read off a printer's or a washer's own status.
+    "check:chore.job_done": "whenever",
     # Pipes. This is the one climate finding that is about the next few
     # hours rather than about the building, and the hours it fires in are
     # exactly the ones quiet hours would hold it through.

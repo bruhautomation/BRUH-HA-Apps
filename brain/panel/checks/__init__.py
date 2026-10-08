@@ -49,7 +49,7 @@ from __future__ import annotations
 from . import (automations, baseline, chores, dashboards,  # noqa: F401
                devices, evening, forecasts, registry, security, snapshot,
                system, thermal)
-from ._util import history_cut
+from ._util import CouldNotLook, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
@@ -182,6 +182,9 @@ def run_all(snap: dict, now: float | None = None,
             continue
         try:
             found = check["run"](snap, now) or []
+        except CouldNotLook as exc:
+            skipped[cid] = str(exc) or "it could not look"
+            continue
         except Exception as exc:  # noqa: BLE001 — one rule must not sink the batch
             errors[cid] = f"{type(exc).__name__}: {exc}"[:200]
             continue

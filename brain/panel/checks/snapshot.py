@@ -73,6 +73,10 @@ and so cannot clear anything):
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
+    job_status     {entity_id: [history rows]} for the status entities
+                    that say a job just finished (`chores.job_candidates`)
+                    — `{}` and available when nothing has; unavailable
+                    when the recorder would not answer
     thermal        how fast each room loses heat and how fast it gains it,
                     as `panel/thermal.py` last measured it, plus `recent`:
                     the last few hours of five-minute readings for those
@@ -462,6 +466,21 @@ async def collect(now: float | None = None) -> dict:
             snap["appliances"] = {"entities": {}, "built_at": 0, "recent": {}}
             _mark("appliances", False, str(exc))
 
+        # A device whose integration says in words that its job ended (a
+        # 3D printer's print status, a washer's operation state) and has
+        # no power sensor to profile. Asked only about the status entities
+        # that say "finished" right now, so a house with nothing just
+        # finished costs no request at all.
+        try:
+            jobs = await _job_history(session, snap.get("states") or {}, now)
+            snap["job_status"] = jobs or {}
+            _mark("job_status", jobs is not None,
+                  "" if jobs is not None else
+                  "the recorder did not answer for the job status history")
+        except Exception as exc:  # noqa: BLE001
+            snap["job_status"] = {}
+            _mark("job_status", False, str(exc))
+
         # The nightly store says how each room behaves; whether one is
         # cooling faster than it can is a live question, so this is the
         # second measurement the checks pass fetches for itself. Cheap
@@ -773,6 +792,35 @@ def probe_candidates(states: dict, now: float,
         picked.append((changed, eid))
     picked.sort(key=lambda p: (-p[0], p[1]))
     return [eid for _changed, eid in picked[:cap]]
+
+
+async def _job_history(session, states: dict, now: float) -> dict | None:
+    """`{entity_id: [history rows]}` for the status entities that say a job
+    just finished (`chores.job_candidates`), or None when Core would not
+    answer. Nothing to ask is `{}` and costs no request.
+
+    Bounded twice: at most `chores.JOB_FETCH_MAX` entities, and a window
+    an hour longer than the stale floor — long enough that the state the
+    finish came OUT of is the window's start state, short enough that a
+    status entity is a handful of rows.
+    """
+    import ha_data
+
+    from . import chores
+
+    ids = chores.job_candidates(states, now)
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(hours=chores.STALE_HOURS + 1)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=30,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    return {eid: got.get(eid) or [] for eid in ids}
 
 
 async def _history_probe(session, states: dict, now: float) -> dict | None:
