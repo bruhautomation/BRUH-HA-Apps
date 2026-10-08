@@ -689,7 +689,7 @@ class TestTheOpenFindingsSensorIsTheQueue(ServerStoresCase):
         if env_dir not in sys.path:
             sys.path.insert(0, env_dir)
         import brain_ha_env as env
-        cls.sensor, _binary = _import_platforms()
+        cls.sensor = _import_platforms()[0]
         # `update` imports the mirror's reader at call time; the real one,
         # out of the integration loaded for real.
         cls.findings = env.load_integration().findings

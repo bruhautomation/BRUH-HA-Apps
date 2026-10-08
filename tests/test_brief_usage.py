@@ -13,7 +13,7 @@ problem must still be said.
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
+import unittest.mock as mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL_DIR = BASE_DIR / "brain" / "panel"

@@ -11,7 +11,6 @@ lives in ``detail`` so the finding refreshes rather than re-files.
 """
 from __future__ import annotations
 
-import re
 
 import numfmt
 
@@ -43,65 +42,13 @@ DECLINE_MAX_ROWS = 3
 # Two thermometers drifting together is a house; five is the weather.
 SAME_CLASS_MAX = 2
 # A drift is a finding only where its cause could be inside the house. The
-# producer scorecard read 0 confirmed against 3 marked Wrong, and the rows
-# were the grid's carbon intensity falling over a month, a car's charge
-# level following how far somebody drove, and soil drying out in a dry
-# spell — each a real drift, measured correctly, about something the house
-# does not control and no device in it is doing wrong. What they have in
-# common is checkable: what they measure is outside (the weather's own
-# classes, the soil), a tariff or an intensity per unit of energy (the
-# grid, not the meter), something a person carries (a phone, or a device
-# that also reports where it is), or a weather or grid integration's
-# figure. A freezer, a room, a boiler's pressure stay — those are what the
-# check is for. Each is a guess in the cheap direction: a missed drift on
-# one of these costs one card, and a false one is the list.
-OUTSIDE_CLASSES = frozenset({
-    "moisture", "precipitation", "precipitation_intensity", "wind_speed",
-    "wind_direction", "irradiance", "illuminance", "atmospheric_pressure",
-    "aqi", "pm1", "pm10", "pm25", "ozone", "nitrogen_dioxide",
-    "sulphur_dioxide", "monetary", "distance", "speed",
-})
-OUTSIDE_PLATFORMS = frozenset({
-    "mobile_app", "met", "met_eireann", "openweathermap", "accuweather",
-    "pirateweather", "tomorrowio", "nws", "buienradar", "smhi", "ipma",
-    "aemet", "environment_canada", "meteo_france", "bom", "open_meteo",
-    "weatherkit", "weatherflow", "weatherflow_cloud", "co2signal",
-    "electricity_maps", "nordpool", "entsoe", "astroweather", "weatherbit",
-    "visual_crossing", "meteoblue", "openuv", "sun", "moon", "season",
-})
-# A tariff or an intensity: anything per kWh/MWh/Wh, which is the grid's
-# number rather than the house's.
-_PER_ENERGY = re.compile(r"/\s*[kmg]?wh$", re.I)
-# Words that cannot mean a thing indoors. Not "grid" (a grid power meter
-# is the house's own draw), not "carbon" (a carbon monoxide detector), not
-# "external" (a freezer's external probe).
-OUTSIDE_WORDS = frozenset({"outdoor", "outside", "exterior", "soil",
-                           "weather", "forecast"})
-
-
-def outside_cause(house: House, eid: str, st: dict, unit: str) -> str:
-    """Why a drift on this reading is not the house's, or "" when it may be."""
-    attrs = st.get("attributes") or {}
-    reg = house.registry.get(eid) or {}
-    if str(attrs.get("device_class") or "") in OUTSIDE_CLASSES:
-        return "what it measures is outside"
-    if _PER_ENERGY.search(str(unit or "").strip()):
-        return "a tariff or intensity per unit of energy"
-    if str(reg.get("platform") or "") in OUTSIDE_PLATFORMS:
-        return "a weather, grid or phone integration"
-    device = reg.get("device_id")
-    if device and any(e.get("device_id") == device
-                      and str(e.get("entity_id") or "").startswith("device_tracker.")
-                      for e in house.entities):
-        return "a device somebody carries"
-    for name in (attrs.get("friendly_name"), reg.get("name"),
-                 reg.get("original_name"), eid.split(".", 1)[-1]):
-        if set(re.split(r"[^a-z0-9]+", str(name or "").lower())) & OUTSIDE_WORDS:
-            return "named as outdoors"
-    import thermal  # noqa: PLC0415 — panel-local, like checks/thermal.py
-    if thermal._area_is_outdoors(house.area_of(eid)):  # noqa: SLF001
-        return "in an area called outdoors"
-    return ""
+# rule lives in `checks/baseline.py`, which `base.unusual` reads too, and is
+# re-exported here under the names callers and tests already use.
+OUTSIDE_CLASSES = baseline_check.OUTSIDE_CLASSES
+OUTSIDE_PLATFORMS = baseline_check.OUTSIDE_PLATFORMS
+_PER_ENERGY = baseline_check._PER_ENERGY  # noqa: SLF001
+OUTSIDE_WORDS = baseline_check.OUTSIDE_WORDS
+outside_cause = baseline_check.outside_cause
 
 
 def _fit(points: list[tuple[float, float]]) -> tuple[float, float] | None:
