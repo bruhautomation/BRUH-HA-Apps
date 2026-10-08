@@ -788,9 +788,12 @@ class TestOneOffIntents(AcceptCase):
             seen.append(area)
             return {"scenes": area, "lights": 4}
 
-        self.server._design_scenes = design
+        # The original is taken BEFORE the fake goes in: a cleanup that
+        # read the attribute after the assignment "restored" the fake, and
+        # every later test on the worker designed scenes with it.
         self.addCleanup(setattr, self.server, "_design_scenes",
                         self.server._design_scenes)
+        self.server._design_scenes = design
         status, out = await self.ask("design  my   evening \n for the "
                                      "living  room")
         self.assertEqual(status, 200, out)
