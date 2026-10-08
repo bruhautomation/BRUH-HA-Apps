@@ -36,6 +36,8 @@ a person's, and there is one press for it.
 """
 from __future__ import annotations
 
+import re
+
 from ._util import CouldNotLook, House, domain_of, parse_ts
 
 # The three machines that finish and then wait for somebody. Matched
@@ -46,6 +48,18 @@ WAITING_KINDS = {
     "dryer": ("tumble dryer", "dryer", "tumble-dryer"),
     "dishwasher": ("dishwasher", "dish washer"),
 }
+# A name that also says it is one of these is the thing that SERVES the
+# machine, not the machine: a booster fan in a dryer's vent duct is named
+# for the dryer and draws like a small motor that runs and stops, so the
+# measurement profiles it and the phrase above calls it the dryer. Whole
+# words only ("fancy" is no fan). The same cheap-direction guess as the
+# rest of the gate: a missed chore costs nothing, a false one costs the
+# list.
+NOT_THE_MACHINE = frozenset({
+    "fan", "fans", "blower", "blowers", "booster", "boosters", "vent",
+    "vents", "exhaust", "duct", "ducts", "ducting"})
+_WORD_RE = re.compile(r"[a-z]+")
+
 # What to call it in the sentence, which is not the entity's name: a
 # sensor called "Utility Plug Power" is a washing machine to the check
 # and "Utility Plug Power" to nobody.
@@ -78,6 +92,8 @@ def kind_of(name: str, world=None, entity_id: str = "") -> str:
         return world_model.chore_machine(
             world, entity_id, lambda: kind_of(name))
     text = str(name or "").lower()
+    if NOT_THE_MACHINE & set(_WORD_RE.findall(text)):
+        return ""
     best, longest = "", 0
     for kind, words in WAITING_KINDS.items():
         for word in words:

@@ -211,10 +211,37 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
 # reg.orphan_device — a device row with nothing behind it
 # ---------------------------------------------------------------------------
 
+# Integrations whose devices have no entities BY DESIGN. HomeKit Bridge
+# makes one device per bridge (model "HomeBridge") to stand for the bridge
+# itself and never gives it an entity; deleting it breaks the house's
+# HomeKit exposure. Decided by the integration that owns the device —
+# its config entry's domain or its own identifier — and never by a name,
+# because a leftover called "bridge" is still a leftover. Kept to the
+# integrations this is known of rather than guessed at.
+NO_ENTITIES_BY_DESIGN = frozenset({"homekit"})
+
+
+def _integrations_of(dev: dict, entry_domains: dict[str, str]) -> set[str]:
+    """Which integrations a device row belongs to, as far as it says."""
+    found: set[str] = set()
+    for entry_id in dev.get("config_entries") or []:
+        domain = entry_domains.get(str(entry_id))
+        if domain:
+            found.add(domain)
+    for ident in dev.get("identifiers") or []:
+        if isinstance(ident, (list, tuple)) and ident and isinstance(
+                ident[0], str):
+            found.add(ident[0])
+    return found
+
+
 def orphan_device(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     if not house.devices:
         return []
+    entry_domains = {str(e.get("entry_id")): str(e.get("domain") or "")
+                     for e in (snap.get("config_entries") or [])
+                     if isinstance(e, dict) and e.get("entry_id")}
     has_entities: set[str] = set()
     for reg in house.entities:
         dev_id = reg.get("device_id")
@@ -229,6 +256,8 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
         if dev_id in has_entities or dev_id in parents:
             continue
         if dev.get("disabled_by"):
+            continue
+        if _integrations_of(dev, entry_domains) & NO_ENTITIES_BY_DESIGN:
             continue
         orphans.append(house.device_name(dev))
     if not orphans:
