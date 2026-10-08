@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.0
+
+- *What do you want to fix?* never loses a request: if the run that writes it up fails or answers nothing, your words are filed as you typed them. A request is never held back because an earlier report about the same screen was declined. The run is told your request is the issue, so it can no longer turn "rework the settings page" into "no tool can read the settings page". (reports #83, #95)
+- The line under the box says which issue your last request became and what the cloud said when it closed it, instead of only "Last sent".
+- New stream, **Design review**: one read-only Claude run reads what brAIn actually showed this house (the insight cards, the findings as worded, what a look concluded) and files what makes it feel repetitive, generic or developer-only.
+- New switch, **Autopilot: let brAIn develop itself**: every stream on, nothing waiting for you to press Send, higher daily caps. Switching it off restores the switches you had.
+- The cloud half now treats the owner's quoted words as the spec, does a screenshot UX audit on every run rather than weekly, and records how long each run took so the loop can speed itself up.
+
 ## 2.17.23
 
 - Findings no longer wait hours for a first look on a house with a busy protected device: a filed row is never dropped from the look queue while a live signal can be, the rows that have waited longest go first, and a row already being investigated is no longer counted as waiting. (reports #82)
