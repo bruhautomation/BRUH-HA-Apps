@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.8
+
+- What brAIn knows is filed against real things. A number ("69.98") or a file name ("automations.yaml") is no longer stored as a device, and a fact about a device that does not exist is filed about the house instead. (reports #40)
+- One room is one room. A fact filed under a room's name, a nickname or a slightly different spelling now lands in that room instead of starting a second one beside it. (reports #41)
+- Facts read as sentences. A fact cut off mid-word now ends on a whole word, and a long device or integration id inside one is replaced by that device's or integration's name. (reports #44)
+- A fact that says the same thing as one already there, or a newer reading of the same state ("back online" after "unavailable"), now replaces the older one instead of sitting beside it. Things you told brAIn, rules and calendar occasions are never replaced. (reports #45)
+- A fact about one of brAIn's own problems no longer stays true for ever. It is marked with the version that filed it, stops counting once brAIn has been updated, and is offered for removal in Clean up. Existing facts are tidied once, the first time the updated add-on runs. (reports #52)
+
 ## 2.17.7
 
 - brAIn can now tell you a 3D print has finished and is waiting to be taken off, from the status the printer's own integration publishes, with no power sensor needed. The same works for a washing machine, dryer or dishwasher that publishes its own running and finished status. It speaks only when the status really went from running to finished (not a status that has said "finished" all along or since a restart), waits twenty minutes in case you are already there, stops after fourteen hours, and ticking it off is never undone by the status still saying "finished". (reports #31)
