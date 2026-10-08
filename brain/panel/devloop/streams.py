@@ -267,9 +267,13 @@ PROMPTS = {
              "brAIn's code or capabilities."),
     "ideas": ("What would make brAIn more useful in THIS house? Ground every "
               "idea in something you can see here. Each row is one feature."),
-    "look": ("The owner asked you to look into this, as a developer of brAIn "
-             "would: %(topic)s\nInvestigate it with your tools and report what "
-             "you find wrong or improvable in brAIn."),
+    # "What do you want to fix?" — the owner's own words about brAIn, which
+    # the run turns into the issue a developer would want. LOOK_SYSTEM says
+    # how; this is only the opening.
+    "look": ("The owner of this house uses brAIn every day and told you what "
+             "they want fixed, in their own words:\n\n%(topic)s\n\n"
+             "Work out what is really wrong behind it and file the one issue "
+             "that would fix it."),
 }
 MAX_ROWS = 6
 
@@ -314,7 +318,56 @@ def analyst_prompt(stream: str, context: str, topic: str = "",
     return f"{head}\n\nWHAT BRAIN ALREADY KNOWS:\n{context[:12000]}{tail}"
 
 
-def analyst_system() -> str:
+# "What do you want to fix?" is not a search for problems: somebody who
+# lives with brAIn has already found one and said it in a sentence. What
+# they need from the run is the issue a good product engineer would write
+# after hearing it — the real problem rather than the complaint restated,
+# what "fixed" looks like, and ONE of them, because a vague complaint
+# turned into six speculative rows is the noise the cloud has to close.
+LOOK_ROWS = 2
+LOOK_SYSTEM = """You are a senior product engineer on brAIn, a Home Assistant add-on
+that is meant to be the household's own brain: it watches the house, says
+what matters, answers in a chat, and fixes things with permission. The
+owner of one house that runs it has just told you, in their own words, what
+they want fixed. They are the user; what they feel is the evidence.
+
+Think like a person who uses brAIn every day, not like a code reviewer:
+- Find the problem BEHIND the words. "The settings page is too crowded"
+  is not an issue; "Settings opens on eight sections of controls most
+  people never change, so the three they visit weekly are buried" is.
+- Judge it against what brAIn is for: a screen should carry only what a
+  decision needs; every control does one job and says what it is; nothing
+  is shown twice; no sentence only a developer could understand; no
+  number without what it is out of; nothing that sounds busy and tells the
+  person nothing. Output that is generic, repetitive, wrong about this
+  house or not worth reading is a bug, and saying so is the fix.
+- Use your read-only tools where they help (get_health, get_findings and
+  Home Assistant's own reads) to ground it in this house. You cannot see
+  the panel: when the issue is about a screen, name the pane and what a
+  person would see there, and the developer will screenshot it.
+- If the words are vague, choose the most likely concrete problem and say
+  in "why" what you assumed. Never answer with a question.
+
+Answer with JSON only:
+{"rows": [{"title": "...", "what": "...", "why": "...", "done_when": "...",
+           "ui": true}]}
+with ONE row, two only when the owner named two genuinely separate
+problems. "title" is under 80 characters and names the part of brAIn;
+"what" is one sentence stating the real problem; "why" is up to four
+sentences: what the owner experiences and the evidence; "done_when" is one
+to three sentences a developer could check the fix against; "ui" is true
+when the fix is on a screen of the panel. Never include a secret, a code or
+a person's whereabouts.
+
+Every report this house has already filed is listed under
+ALREADY REPORTED. If the owner's complaint IS one of those, still file it: their
+words are new evidence, and saying it again is how they say it was not
+fixed. Start "what" with "Still a problem:" in that case."""
+
+
+def analyst_system(stream: str = "") -> str:
+    if stream == "look":
+        return LOOK_SYSTEM
     return ANALYST_SYSTEM % {"cap": MAX_ROWS}
 
 
@@ -336,13 +389,24 @@ def parse_rows(text: str, stream: str, topic: str = "") -> list[dict]:
         what = str(r.get("what") or "").strip()[:300]
         if not title or not what:
             continue
-        where = {"gaps": "Gap", "ideas": "Idea", "look": "Look"}[stream]
+        where = {"gaps": "Gap", "ideas": "Idea", "look": "Fix"}[stream]
         body = str(r.get("why") or "").strip()[:2000]
-        if stream == "look" and topic:
-            body = f"Asked: *{topic[:300]}*\n\n{body}"
-        out.append({"where": f"{where}: {title}", "what": what,
-                    "detail": "", "body": body})
-        if len(out) >= MAX_ROWS:
+        row = {"where": f"{where}: {title}", "what": what, "detail": "",
+               "body": body}
+        if stream == "look":
+            done = str(r.get("done_when") or "").strip()[:800]
+            parts = []
+            if topic:
+                parts.append("The owner said:\n\n> "
+                             + topic[:500].replace("\n", "\n> "))
+            if body:
+                parts.append(body)
+            if done:
+                parts.append(f"**Done when:** {done}")
+            row["body"] = "\n\n".join(parts)
+            row["ux"] = r.get("ui") is True
+        out.append(row)
+        if len(out) >= (LOOK_ROWS if stream == "look" else MAX_ROWS):
             break
     return out
 

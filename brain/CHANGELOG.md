@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.18
+
+- Help develop brAIn: the *Look at…* box is now **What do you want to fix?** Say it the way you would to a person ("the settings page is too crowded") and press **Send**. One read-only Claude run works out the real problem behind it and files one issue (two if you named two) with your words quoted, the underlying problem, and a *Done when* line to check the fix against. An issue about a screen is labelled `devloop:ux`, so the fixer screenshots that pane before and after fixing it.
+- Development-loop reports no longer replace the words "device", "entity", "report" and "everything" with aliases when a house has an entity named that, so titles like "Binary sensor 269 check" read as "device check" again.
+
 ## 2.17.17
 
 - The Usage tracker sensor now shows its state in words in Home Assistant ("Waiting for sign-in to renew", "Usage endpoint rate-limited"…) instead of an internal code. The stored state is unchanged, so automations keep working, and the exact code is also in a new `code` attribute. (reports #86)

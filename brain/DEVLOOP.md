@@ -26,14 +26,20 @@ schedule and its own **Run** button:
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
 
-**Look at…** is the eighth: type what you want looked into ("why the brief
-never mentions the boiler") and press **Run**. It is one read-only Claude
-run, and its findings are filed like any other stream's.
+**What do you want to fix?** is the eighth: say it the way you would to a
+person ("the settings page is too crowded", "the brief never mentions the
+boiler") and press **Send**. One read-only Claude run works out what is
+really wrong behind it, and files **one** issue (two if you named two
+separate problems) with your words quoted, the real problem, and what
+"fixed" looks like. An issue about a screen is labelled `devloop:ux`, which
+tells the cloud half to drive and screenshot that pane before and after the
+fix: the house never takes screenshots.
 
 Two daily caps keep it in proportion. Both refuse rather than queue up:
 
 - **Issues a day** (default 10): past it, new reports wait for tomorrow.
-- **Claude runs a day** (default 4): covers Gaps, Ideas and Look at.
+- **Claude runs a day** (default 4): covers Gaps, Ideas and *What do you
+  want to fix?*.
   Scheduled runs also stop when automatic insights are paused or the usage
   budget is spent. A **Run** press skips the budget but still counts
   against this cap.
@@ -66,7 +72,7 @@ For each finding brAIn:
 5. **Listens to the answer.** Whoever works through your reports closes each
    issue with a label: fixed, declined, not brAIn's, or a duplicate. Once an
    hour brAIn reads those back, using the same issue listing it already
-   reads, and shows the tally beside each stream. A Gaps, Ideas, Look at or
+   reads, and shows the tally beside each stream. A Gaps, Ideas, *What do you want to fix?* or
    Unmet report closed as declined, not brAIn's or a duplicate is never filed
    again, even reworded. If 6 of a stream's last 8 closed reports were noise
    like that, the stream runs half as often (but at least once a
@@ -75,7 +81,7 @@ For each finding brAIn:
    reported as *Back again*.
 
 The same controls are in the terminal as `brain devloop status`,
-`brain devloop run [stream]` and `brain devloop look "<what>"`.
+`brain devloop run [stream]` and `brain devloop look "<what to fix>"`.
 
 ## What leaves your house, and what never does
 
@@ -85,7 +91,8 @@ The same controls are in the terminal as `brain devloop status`,
 - for **Unmet requests**, the sentence brAIn answered with when it could
   not do something, and how many times and in how many conversations it
   said it. What you typed is not sent;
-- for **Gaps**, **Ideas** and **Look at**, what the Claude run wrote;
+- for **Gaps** and **Ideas**, what the Claude run wrote; for *What do you
+  want to fix?*, your words and what the run wrote;
 - brAIn's version and health verdict;
 - an abridged diagnostics summary: versions, run counts by outcome, the last
   checks pass, and which background services are up;

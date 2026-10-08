@@ -8,7 +8,7 @@
 # Usage:
 #   brain devloop                 Status: what is on, what ran, what is queued
 #   brain devloop run [stream]    Run every switched-on stream now, or one
-#   brain devloop look "<topic>"  Investigate one thing and file what is found
+#   brain devloop look "<words>"  Say what you want fixed; the issue is filed
 
 set -uo pipefail
 
@@ -23,8 +23,9 @@ Usage:
   brain devloop run [stream]    Run now: every switched-on stream, or one
                                 (faults, scorecard, wrongs, unmet, snapshot,
                                 gaps, ideas)
-  brain devloop look "<topic>"  One read-only Claude run looking into what
-                                you name; what it finds is filed as issues
+  brain devloop look "<words>"  Say what you want fixed, in your own words.
+                                One read-only Claude run works out the real
+                                problem and files the issue that would fix it
 
 Switch it on and set the repository in ⚙ → Diagnostics → Developer.
 EOF

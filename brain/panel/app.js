@@ -3760,7 +3760,7 @@ function paintDevloop(data) {
   $("#devQueue").innerHTML = devQueueRows(data);
   // One row per stream, from the server's own list: a switch, how often it
   // runs, and Run. A stream that is not built has no row rather than a
-  // switch that does nothing. "Look at…" has its own box below.
+  // switch that does nothing. "What do you want to fix?" has its own box below.
   const on = s.streams || {};
   const sched = s.schedule || {};
   const hours = data.hours || [0, 1, 3, 6, 12, 24, 168];
@@ -3792,8 +3792,8 @@ function paintDevloop(data) {
     }).join("");
   const looks = data.looks || {};
   $("#devLookState").textContent = looks.running
-    ? "Looking at: " + looks.running
-    : (looks.last ? "Last look: " + looks.last.topic : "");
+    ? "Working on: " + looks.running
+    : (looks.last ? "Last sent: " + looks.last.topic : "");
   $("#devLookRun").disabled = !!looks.running;
   if (document.activeElement !== $("#devCapIssues")) {
     $("#devCapIssues").value = s.max_issues_per_day ?? 10;
@@ -3835,9 +3835,9 @@ $("#devStreams").addEventListener("change", (ev) => {
 });
 $("#devLookRun").addEventListener("click", async () => {
   const topic = $("#devLook").value.trim();
-  if (!topic) { toast("Say what to look at"); return; }
+  if (!topic) { toast("Say what you want fixed"); return; }
   const out = await devloopCall("api/devloop/look", { method: "POST",
-    body: JSON.stringify({ topic }) }, "Looking — what it finds is filed as issues");
+    body: JSON.stringify({ topic }) }, "Working on it. The issue is filed when it is ready");
   if (out) {
     $("#devLook").value = "";
     // The look runs for minutes; read the line back once it has had time.
