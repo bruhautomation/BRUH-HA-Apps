@@ -125,6 +125,35 @@ class TestAFailedLookIsNotTheLastWord(LoopCase):
         self.assertIn("cupboard", fresh["triage"]["reason"])
 
 
+class TestWaitingRowsAreCountedAndOfferedAgain(LoopCase):
+
+    def test_a_row_left_waiting_by_a_failed_look_is_offered_again(self):
+        srv = self.server
+        now = time.time()
+        row = self.file_check_row()
+        self.tick(now)                      # no reply queued: the look fails
+        self.assertEqual(srv.findings_store.get(row["ts"])["triage"]["reason"],
+                         srv.triage.RUN_FAILED)
+        # The in-memory pending list is gone (a restart): the minute sweep
+        # must still find the row through the store.
+        srv.RESIDENT_PENDING.clear()
+        srv.RESIDENT_STATE["last_look_at"] = now   # not due: count it
+        asyncio.run(srv._resident_pass(now + 61))
+        self.assertIn(row["ts"], [s.get("finding_ts")
+                                  for s in srv.RESIDENT_PENDING])
+
+    def test_the_diagnostics_count_covers_triaging_and_unjudged_rows(self):
+        srv = self.server
+        rows = [{"status": "triaging", "ts": 1},
+                {"status": "open", "ts": 2,
+                 "triage": {"verdict": "untriaged"}},
+                {"status": "open", "ts": 3,
+                 "triage": {"verdict": "untriaged", "elevated_by_person": True}},
+                {"status": "open", "ts": 4, "triage": {"verdict": "elevated"}},
+                {"status": "held", "ts": 5}]
+        self.assertEqual([r["ts"] for r in srv._waiting_rows(rows)], [1, 2])
+
+
 class TestARowIsAnnouncedOnce(LoopCase):
     """A row a late verdict reaches is already open and already announced;
     handing it to the notifier again rang the phone on every look."""

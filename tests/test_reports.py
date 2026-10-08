@@ -1076,6 +1076,17 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         said = _said(reports.faults(FIELD))
         self.assertNotIn("Machines", said)
 
+    def test_findings_stuck_waiting_for_a_look_are_one_row_with_the_oldest(self):
+        def rows(n, oldest):
+            return _said(reports.faults({**FIELD, "findings": {
+                "waiting_for_look": n, "waiting_for_look_oldest_s": oldest}}))
+        said = rows(7, 5 * 3600 + 120)
+        self.assertIn("7 findings are still waiting for a look", said)
+        self.assertIn("5 h 2 min", said)
+        # An ordinary drain is not a fault: few rows, or only minutes.
+        self.assertNotIn("waiting for a look", rows(7, 600))
+        self.assertNotIn("waiting for a look", rows(1, 9 * 3600))
+
     def test_an_anecdote_is_not_a_producer_being_wrong(self):
         """Two endings say nothing about a rule. `findings_store`'s own
         floor, and the reason the tab hides a producer below it."""

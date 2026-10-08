@@ -211,6 +211,30 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
     return outside_cause(house, eid, st, unit)
 
 
+# Several sensors of one kind that all moved the same way at once are the
+# environment moving — a season turning, a heating system switched on —
+# and not one device. More than this many in a group is the weather.
+SAME_GROUP_MAX = 2
+
+
+def moved_together(hits: list, group_of, direction_of=None,
+                   limit: int = SAME_GROUP_MAX) -> list:
+    """The hits that moved with more than ``limit`` others of their group.
+
+    ``group_of(hit)`` names the kind (a device class, a unit) and
+    ``direction_of(hit)`` the way it moved; with no direction the group
+    alone counts. One rule for the two checks that need it, so
+    `base.unusual` and `forecast.decline` cannot disagree about what a
+    season looks like.
+    """
+    def key(hit):
+        return (group_of(hit), direction_of(hit) if direction_of else 0)
+    counts: dict = {}
+    for hit in hits:
+        counts[key(hit)] = counts.get(key(hit), 0) + 1
+    return [h for h in hits if counts[key(h)] > limit]
+
+
 def eligible(house: House, eid: str, st: dict) -> bool:
     """Whether a reading from this entity is worth reporting on at all.
 
@@ -297,6 +321,26 @@ def unusual(snap: dict, now: float) -> list[dict]:
             continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
+    if len(hits) > MAX_ROWS:
+        # When the seasons change, a lot of sensors are far outside their
+        # hour-of-the-week usual at once — 23, 17 and 17 rows against a
+        # limit of 4 — and giving up whole left every real anomaly among
+        # them unchecked. Sensors of one kind that moved the SAME way
+        # together are the season (`forecast.decline`'s rule, shared), so
+        # they stand down and what is left is reported if it now fits.
+        def kind(h):
+            attrs = (house.states.get(h[1]) or {}).get("attributes") or {}
+            return str(attrs.get("device_class") or h[3].get("unit")
+                       or attrs.get("unit_of_measurement") or "")
+
+        seasonal = moved_together(
+            hits, kind, lambda h: 1 if h[2]["value"] >= h[2]["median"] else -1)
+        if seasonal:
+            house.gave_up("base.unusual", [{"entity_id": h[1]} for h in seasonal],
+                          "several sensors of the same kind moved the same "
+                          "way at once — that is the season or the weather "
+                          "moving, not one device")
+            hits = [h for h in hits if h not in seasonal]
     if len(hits) > MAX_ROWS:
         # Too many is the measurement being wrong, not the house. Said
         # nothing rather than said fifty times — and the trail says so.
