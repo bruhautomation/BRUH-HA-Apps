@@ -226,6 +226,30 @@ def _live_hardware(house: House):
         yield eid, st
 
 
+def is_node_status(entity_id: str, reg: dict) -> bool:
+    """Whether this is the node status sensor Z-Wave JS publishes.
+
+    Read off what the integration REGISTERED — its translation key
+    `node_status`, or its unique id `<home id>.<node id>.node_status` —
+    and never off the entity id alone. The entity id is derived from a
+    name: it is in the house's own language, it is whatever somebody
+    renamed it to, and a second device of the same name gets `_2` on the
+    end. Reading the suffix missed a node the controller had declared
+    dead for days, and its frozen 0% battery was filed in its place. The
+    suffix stays as the answer for a registry row that carries neither
+    field (an older Core), which is what this always did.
+    """
+    if not entity_id.startswith("sensor."):
+        return False
+    if reg.get("platform") != "zwave_js":
+        return False
+    if reg.get("translation_key") == "node_status":
+        return True
+    if str(reg.get("unique_id") or "").endswith(".node_status"):
+        return True
+    return entity_id.endswith("_node_status")
+
+
 def _zwave_dead_nodes(house: House) -> list[dict]:
     """Every device whose Z-Wave node status sensor reads `dead`.
 
@@ -237,9 +261,7 @@ def _zwave_dead_nodes(house: House) -> list[dict]:
     """
     out: list[dict] = []
     for eid, st in sorted(house.states.items()):
-        if not (eid.startswith("sensor.") and eid.endswith("_node_status")):
-            continue
-        if (house.registry.get(eid) or {}).get("platform") != "zwave_js":
+        if not is_node_status(eid, house.registry.get(eid) or {}):
             continue
         if str(st.get("state") or "").lower() != "dead":
             continue
@@ -448,9 +470,18 @@ def _never_above_zero(snap: dict, entity_id: str) -> bool:
 
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    # A node the Z-Wave controller has declared dead is dev.zwave_dead's
+    # row: the battery it shows is the last thing it said before the mesh
+    # lost it (often a frozen 0%), and "replace the battery" under it is
+    # the same box under a second fix — `dev.unavailable`'s rule, through
+    # the same helper so the two cannot disagree about which box that is.
+    dead_devices = _zwave_dead_devices(house)
     out = []
     for eid, st in _live_hardware(house):
         if not _is_battery(st):
+            continue
+        dev = house.device_of(eid)
+        if dev and dev["id"] in dead_devices:
             continue
         # Charged, not replaced: see RECHARGEABLE_PLATFORMS. Both halves
         # of this check are about a cell somebody has to go and change,
@@ -647,12 +678,26 @@ def frozen(snap: dict, now: float) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def restored(snap: dict, now: float) -> list[dict]:
+    """Restored entities whose provider is really gone.
+
+    `restored: true` says the integration has not added the entity THIS
+    run, which is also true of a config entry retrying its setup (a
+    device that did not answer at boot) and of a loaded one whose device
+    is simply away (a beacon out of range): deleting those takes a
+    working device out of the house. So an entity whose config entry
+    still exists, in any state, is not left over — and the check needs
+    the config entries to say so, or it is skipped ("I could not look").
+    """
     house = House(snap)
+    entries = {str(e.get("entry_id")) for e in (snap.get("config_entries") or [])
+               if isinstance(e, dict) and e.get("entry_id")}
     by_platform: dict[str, list[str]] = {}
     for eid, st in house.states.items():
         if (st.get("attributes") or {}).get("restored") is not True:
             continue
         reg = house.registry.get(eid) or {}
+        if str(reg.get("config_entry_id") or "") in entries:
+            continue
         by_platform.setdefault(str(reg.get("platform") or "unknown"), []).append(eid)
     out = []
     for platform, eids in sorted(by_platform.items()):
@@ -763,7 +808,7 @@ CHECKS = [
      # probe says the recorder is incomplete — `checks.run_all`.
      "reads_history": True},
     {"id": "dev.restored", "title": "Entities with no integration",
-     "needs": ("states", "registry"), "run": restored},
+     "needs": ("states", "registry", "config_entries"), "run": restored},
     {"id": "dev.zwave_dead", "title": "Z-Wave nodes marked dead",
      "needs": ("states", "registry"), "run": zwave_dead},
     {"id": "dev.zha_unseen", "title": "Zigbee devices gone quiet",

@@ -161,6 +161,39 @@ class TestGapQuestions(unittest.TestCase):
         out = house_book.parse(reply(questions=[q] * 6), self.dig)
         self.assertEqual(len(out["questions"]), house_book.MAX_QUESTIONS_PER_RUN)
 
+    def test_where_is_never_asked_about_something_whose_room_is_known(self):
+        """The registry already says which room it is in — through its own
+        area, or its device's — so "where is it?" asks the homeowner for
+        something brAIn was handed. A question that is not about where
+        stays, and so does "where" about something with no room."""
+        house = snap()
+        house["areas"].append({"area_id": "hall", "name": "Hall"})
+        house["entities"] = [
+            {"entity_id": "climate.hall", "platform": "nest",
+             "device_id": "dev-thermostat"},
+            {"entity_id": "binary_sensor.utility_leak", "platform": "zha",
+             "area_id": "utility"},
+        ]
+        house["devices"] = [{"id": "dev-thermostat", "name": "Thermostat",
+                             "area_id": "hall"}]
+        dig = house_book.digest(house)
+        out = house_book.parse(reply(questions=[
+            {"question": "Where is the Hall thermostat?", "subject": {
+                "kind": "entity", "id": "climate.hall"}},
+            {"question": "Which room is the utility leak sensor in?",
+             "subject": {"kind": "entity", "id": "binary_sensor.utility_leak"}},
+            {"question": "What temperature do you like the hall at night?",
+             "subject": {"kind": "entity", "id": "climate.hall"}},
+            {"question": "Where is the valve switch.mains_valve closes?",
+             "subject": {"kind": "entity", "id": "switch.mains_valve"}},
+        ]), dig)
+        asked = [(q["subject"], q["question"]) for q in out["questions"]]
+        self.assertEqual(asked, [
+            ("entity:climate.hall",
+             "What temperature do you like the hall at night?"),
+            ("entity:switch.mains_valve",
+             "Where is the valve switch.mains_valve closes?")])
+
 
 class TestThePage(unittest.TestCase):
     def test_escaped_and_scriptless(self):
