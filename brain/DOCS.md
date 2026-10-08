@@ -1570,7 +1570,7 @@ tell.
 **What is coming up.** Twice a day brAIn reads the next three days of your weather
 forecast. A frost (0 °C or below), a hot day (30 °C or above), a day with 10 mm of
 rain or more and gusts of 60 km/h or more each become a short note, worked out with
-arithmetic rather than a model. **Calendars brAIn may read** — under ⚙ → Sources —
+arithmetic rather than a model. **Calendars brAIn may read** — under ⚙ → Cameras & calendars —
 lists your calendars, none ticked; nothing is read
 until you tick one, and unticking them all stops it. A ticked calendar's next three
 days are read too, and the notable events become notes like "Mum staying Fri–Sun".
@@ -2634,7 +2634,7 @@ household — if the only explanation it can think of is about a person rather
 than about the house, the answer is "could not tell".
 
 You can see what it is curious about, what it has worked out, and how much of
-today's budget is left under **⚙ → Diagnostics**; **Developer → Why somebody
+today's budget is left under **⚙ → Diagnostics**; **⚙ → Developer → Why somebody
 did something → Run** asks the next question without waiting. It costs one Claude
 turn, and the line beside it says so.
 
@@ -2891,47 +2891,56 @@ itself always runs, because it is the ingress target.
 
 ### ⚙ Settings
 
-Eight sections, and you only open the ones you need.
+A list of nine sections, each row saying what it is set to right now — signed
+in, the model and how much of this session it has used, whether brAIn asks
+before it acts. On a wide screen the list sits beside the section you are in;
+on a phone Settings opens on the list and **‹ Settings** goes back to it. Every
+section is one press away and nothing inside one is folded away.
 
-* **Account** *(open)* — signed in or not, and when Claude last said the login
+* **Account** — signed in or not, and when Claude last said the login
   works. **Recheck** asks again now; **Sign in again** opens the sign-in screen;
   **Sign out** asks once before it does anything. **Details** shows which of the
   three credential stores holds the login. The switch below shares that login
   with the other BRUH add-ons, and the line under it says what that costs: a
   shared login is stored in Home Assistant backups.
-* **Usage & schedule** *(open)* — this session's and this week's usage, the
-  switch that pauses all automatic generation, your Claude subscription, the
-  share of each 5-hour session automatic insights may spend, and whether a card
-  fetches what it needs or is handed the whole home. **Advanced** holds the
-  generation defaults: refresh interval, when a card actually refreshes, days
-  of history, timeout, model, how hard brAIn thinks (greyed out while a model
-  is chosen, because that model then runs every job) and how many past runs
-  are kept. These are the add-on's own Configuration options; editing them here
-  or on the Configuration tab is the same setting.
+* **Model & usage** — **Model**: which Claude model runs everything, and how
+  hard brAIn thinks (greyed out while a model is chosen, because that model
+  then runs every job). **Usage**: this session's and this week's usage, your
+  Claude subscription, the switch that pauses all automatic generation and the
+  share of each 5-hour session automatic insights may spend. **Insight cards**:
+  whether a card fetches what it needs or is handed the whole home, the refresh
+  interval, when a card actually refreshes, days of history, the time limit and
+  how many past runs are kept. These are the add-on's own Configuration
+  options; editing them here or on the Configuration tab is the same setting.
 * **Permissions** — **Let brAIn act without asking** (the same switch as the
   Configuration tab's), with the line that stays under it: protected entities
   are refused through brAIn's own tools, not every shell command. **House rules**
-  can only make brAIn more careful. **Advanced** holds which face the Ask tab
+  can only make brAIn more careful. **Ask tab** holds which face the Ask tab
   shows and how many conversations keep a live Claude Code process.
-* **Sources** — which cameras brAIn may look at on its own (and how many looks
-  it has used today), and which calendars it may read. A robot vacuum's floor
-  map is published as a camera too; those are left out unless one is already
-  ticked.
 * **Notifications** — what deserves a notification, in your own words, and
   whether urgent problems are said aloud.
+* **Cameras & calendars** — which cameras brAIn may look at on its own (and
+  how many looks it has used today), and which calendars it may read. A robot
+  vacuum's floor map is published as a camera too; those are left out unless
+  one is already ticked.
 * **Memory** — the memory document, with **Edit** and **Export**, and what is
   waiting to be filed into it. The queue files itself once a day.
-* **Diagnostics** — opens on **Anything wrong?**, then how right each kind of
-  report has been, what brAIn has measured, the overnight health check, who
-  can reach the house, and the background runs by kind (voice, automations,
-  cards, fixes, memory passes). **Run** starts a measurement, a check or a
-  review now; **Export report** (**Share**) copies one redacted file for a bug
-  report. **Developer** holds the problem files, corpus capture, the deep check
-  and the rehearsal. Nothing here is fetched until you open it.
+* **Diagnostics** — opens on **Run all tests**: one press runs every
+  self-test (the deep check, below) and the result reads "6 of 6 passed · 2
+  skipped", one row per test with pass, fail or skipped, the reason in plain
+  words and the time it ran. A test that could not run — because one before it
+  failed, or a switch it needs is off — is *skipped* with its reason, never
+  failed. Then **Anything wrong?**, how right each kind of report has been,
+  what brAIn has measured, the overnight health check and who can reach the
+  house. **Run** starts a measurement, a check or a review now; **Report a
+  problem** lists the problem files and **Share** copies one redacted file for a
+  bug report. Nothing here is fetched until you open it.
+* **Developer** — the rehearsal, asking the next "why" question now, corpus
+  capture and **Help develop brAIn**.
 * **Guide** — this guide, in eight groups. Help is no longer a tab.
 
-A section remembers whether you left it open. There are no **?** bubbles: every
-hint is on the page.
+The page remembers which section you were on. There are no **?** bubbles:
+every hint is on the page.
 
 ### Which model does which job
 
@@ -2944,7 +2953,7 @@ brAIn 2.0 plans every Claude run by **job** rather than by one global model:
 | **Opus** | applying a fix, turning a sentence into an automation, the weekly report's one thing | The runs that change the house or decide what you act on |
 | **Fable** | the **deep review** you press for on Insights | Never from a timer — a scheduler cannot name it |
 
-The **thinking** dial (⚙ → Usage & schedule → Advanced, or `thinking` in `/api/settings`) is
+The **thinking** dial (⚙ → Model & usage, or `thinking` in `/api/settings`) is
 `light` / `normal` / `generous`. *Light* steps down only the jobs where a
 wrong answer is cheap (a card, a question) and never the apply run;
 *generous* steps up only the reasoning jobs, never a naming call. A typed
@@ -3103,10 +3112,10 @@ live line at all. A past run is a record of what the card said then, so brAIn do
 overlay today's readings on it.
 
 **⚙ Settings** is a page of its own: press ⚙ to open it and ⚙ again to go back.
-Its eight sections — Account, Usage & schedule, Permissions, Sources,
-Notifications, Memory, Diagnostics and Guide — sit on one segmented control
-(a picker on a narrow screen), one in front at a time, and the page remembers
-which one you were on.
+Its nine sections — Account, Model & usage, Permissions, Notifications,
+Cameras & calendars, Memory, Diagnostics, Developer and Guide — are a list
+beside the section in front (the list first, on a phone), and the page
+remembers which one you were on.
 
 **⚙ > Diagnostics** opens with **Anything wrong?** — one flat list of everything
 brAIn can currently see that is not working, gathered from every surface it has: the
@@ -3142,7 +3151,7 @@ one is measured was invisible until the next night. The button starts a pass —
 reads a month of statistics, so it takes a few minutes and the panel tells you when
 it lands — and it costs no Claude turns.
 
-**⚙ > Diagnostics > Developer > Problems** is the other half. Every incident brAIn
+**⚙ > Diagnostics > Report a problem** is the other half. Every incident brAIn
 has written up is listed there with a checkbox; **Export report** (**Share**) copies
 the ticked ones, or with none ticked writes a fresh report and copies that. See
 [Reports](#reports).
@@ -3283,8 +3292,8 @@ fixer with `protected_entities` covering the helper it would rename are all
 somebody's conversation to make room for itself.
 
 Run it from the terminal (`brain doctor --deep`, `--json` for the whole object,
-non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics → Developer →
-Deep check → Run**, which fills the stage list in as it goes. The last run's verdict
+non-zero exit on any failed stage), or from **⚙ Settings → Diagnostics →
+Run all tests → Run**, which fills the stage list in as it goes. The last run's verdict
 rides in the diagnostics bundle, so a bug report carries it without anybody
 having to ask.
 
@@ -3324,7 +3333,7 @@ up. And **cleanup is the first thing the plain `brain doctor` verifies on its
 next run**: it warns if any `brain_test_*` automation, entity or helper is still
 there, and names the command that removes it.
 
-**If something was left behind, one press takes it out.** ⚙ → Diagnostics → Developer
+**If something was left behind, one press takes it out.** ⚙ → Developer
 grows a **Delete** beside the rehearsal while there is anything to clear, and
 `brain doctor --sweep` does the same from the terminal. It creates nothing,
 asks no model and spends nothing — it only ever removes what is already named
@@ -3364,7 +3373,7 @@ JSON fields that carry tokens. Prompts and replies are never in them in the firs
 place. Entity names **are** — a report about "a sensor" is not a report — and
 `brain report --no-names` hashes them if that matters to you.
 
-Read them in **⚙ → Diagnostics → Developer**: a checkbox each, and **Export report**
+Read them in **⚙ → Diagnostics → Report a problem**: a checkbox each, and **Export report**
 (**Share**), which copies the ticked ones or, with none ticked, writes one for the
 case where nothing failed but something is wrong.
 `brain report` from a terminal writes the same single file and prints its path,
@@ -3779,7 +3788,7 @@ To keep it from eating the plan you also use for your own work:
 A camera frame is the most private thing your house holds, so brAIn looks
 through one **on its own** — when you ask a voice assistant, when an
 automation runs the **Camera check** insight, or to confirm a safety alarm or
-an open door — only through the cameras you tick under **⚙ → Sources**. None are ticked to begin with.
+an open door — only through the cameras you tick under **⚙ → Cameras & calendars**. None are ticked to begin with.
 
 - **A daily limit.** Ticked cameras are looked at a dozen times a day at most,
   across every one of those paths together; the list says how many have been

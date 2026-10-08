@@ -1,45 +1,50 @@
 // Drive the ⚙ page and assert it is a thing somebody can get through.
 //
-// ⚙ is a PAGE now, not a dialog: the eight sections are panes on one
-// segmented control (a select on a narrow screen), one shown at a time,
-// and the page remembers which. Everything below is about the sections and
-// what is in them; "open" means "the section in front".
+// What this exists to prevent is the shape ⚙ has shipped in twice. First a
+// dialog that was one flat scroll — measured behind this same stub, **5,910px
+// at 390 and 3,837px at 1,200**. Then eight panes on a segmented control,
+// which on a phone was a select hiding seven of its eight names, with the
+// model picker inside a "Usage & schedule › Advanced" fold, the Ask tab's
+// settings inside "Permissions › Advanced" and the deep check inside
+// "Diagnostics › Developer": the owner's words were "really bulky, hard to
+// navigate sections, stuff is buried under collapsible sections".
 //
-// What this exists to prevent is the shape the dialog had shipped in: one
-// flat scroll of a dozen headings with a paragraph of prose under nearly
-// every control. Measured on the unmodified dialog, behind this same stub,
-// the scrolling body was **5,910px at 390 and 3,837px at 1,200**. It became
-// six disclosures with fifteen "?" bubbles carrying the long prose; the
-// redesign (docs/design/ui-redesign-2026-10.md, PR 9) makes it EIGHT named
-// sections — Account, Usage & schedule, Permissions, Sources,
-// Notifications, Memory, Diagnostics, Guide — and takes every "?" out,
-// because a tooltip is the one place a phone cannot read.
+// So ⚙ is a LIST of nine sections — Account, Model & usage, Permissions,
+// Notifications, Cameras & calendars, Memory, Diagnostics, Developer, Guide —
+// each row saying what it is set to now, beside the section in front on a
+// wide screen and as the page itself on a phone. The checks:
 //
-// So the checks are about the reorganisation rather than about the styling:
-//
-//   * the page's height at OPEN time (Account in front) is under a budget
-//     per width.
-//   * there are exactly eight sections, named as the doc names them, ONE in
-//     front at a time, each with a button on the segmented control (or an
-//     option in its select on a phone, which clears the touch floor) and a
-//     heading that says in a second line what is in it.
-//   * there is NO "?" bubble anywhere in the dialog, and no hint runs past
-//     two sentences: the long version is cut or in the Guide.
+//   * the page's height at OPEN time is under a budget per width (the list
+//     on a phone, the list beside Account on a desktop).
+//   * there are exactly nine sections, named and ordered as above, one row
+//     each on the list, every row clearing the touch floor and carrying a
+//     second line; the list's lines say what the weekly answers ARE at open
+//     time — signed in, the model, whether brAIn asks — with no press.
+//   * on a phone nothing is in front at open (the list is), a row opens its
+//     section, and "‹ Settings" goes back to the list; on a desktop exactly
+//     one section is in front.
+//   * the settings a person changes weekly — the model, the sign-in, the
+//     usage and budget, the notification sentence and "Let brAIn act without
+//     asking" — are each visible after ONE press from opening ⚙, with no
+//     disclosure opened; and no form control anywhere in ⚙ lives inside a
+//     <details> (there is no "Advanced" or "Developer" fold left).
+//   * Diagnostics opens on "Run all tests", whose result reads "N of M
+//     passed · K skipped" with one row per stage: Passed / Failed / Skipped
+//     in words, the reason, and the time it ran — a skipped stage is never
+//     drawn as failed.
+//   * there is NO "?" bubble anywhere, and no hint runs past two sentences.
 //   * the safety prose stays on the page: the sharing box's backup warning,
 //     the shell-command caveat under "Let brAIn act without asking" (and it
 //     is still there when the line above it turns into the stale-session
 //     warning), and the calendar note beside the calendar picker.
 //   * Sign out is neutral at rest, never filled or coloured red.
-//   * the page remembers the section in front, across leaving Settings
+//   * a wide page remembers the section in front, across leaving Settings
 //     (⚙ is the way back) AND across a reload.
-//   * the Diagnostics loaders do not run until Diagnostics is opened, and
-//     opening it fills every block: Anything wrong, how right it has been,
-//     the measurements, the overnight check, who can reach the house, the
-//     runs by kind, and ONE Export report (Share) where four copy/write
-//     buttons used to be.
+//   * the Diagnostics and Developer loaders do not run until that section
+//     is opened, and opening it fills every block.
 //   * Memory shows the document with Edit and Export, and the queue as a
 //     read-only list with its count — and no "File into memory now".
-//   * Sources reads the cameras and the calendars only when it opens.
+//   * Cameras & calendars reads them only when it opens.
 //   * Guide lists eight groups and opens the docs, whose nav is eight
 //     headings with no emoji.
 //   * every visible button says one of the doc's verbs.
@@ -47,7 +52,7 @@
 //     scrolls sideways, and every element id handlers bind to is present.
 //
 // Drives the panel's REAL markup and its real `openSettings` /
-// `restoreSettingsSections` behind a stubbed fetch. A copy of the dialog in
+// `restoreSettingsSections` behind a stubbed fetch. A copy of the page in
 // this file would only ever agree with itself.
 import { chromium } from 'playwright';
 import path from 'node:path';
@@ -61,11 +66,12 @@ const MIN_TARGET = 44;
 const MIN_TEXT = 16;
 
 // Before any reorganisation: 5910 at 390, 3837 at 1200. Six disclosures
-// brought that to ~2170 and ~1600 with two of them open. Eight sections
-// with the same two open (Account and Usage & schedule) and the ? prose cut
-// measured 1569 at 390 and 1268 at 1200; the budgets leave room for a font
-// or a hairline to move and not for a section to come back flat.
-const MAX_SCROLL = { 390: 1750, 768: 1400, 1200: 1400 };
+// brought that to ~2170 and ~1600 with two of them open. Eight panes on a
+// segmented control measured 1569 at 390 and 1268 at 1200 (the dialog's own
+// budget then was 1750/1400). The list opens at 774 on a phone and at the
+// viewport's own 900 beside Account on a desktop; the budgets leave room for
+// a font or a hairline to move and not for a section to come back flat.
+const MAX_SCROLL = { 390: 900, 768: 1000, 1200: 1000 };
 
 // The verbs a button in ⚙ may say. The doc's vocabulary, plus the few
 // labels it names for this dialog itself (Sign in again, Sign out, Edit,
@@ -82,7 +88,7 @@ const IDS = [
   'deepLast', 'deepRun', 'diagBody', 'diagCopy', 'diagCurious', 'diagMeasure',
   'diagRefresh', 'probBody', 'rehearseBody', 'rehearseLast', 'rehearseRun',
   'rehearseSweep', 'setBudget', 'setBudgetVal', 'setCapture', 'setChatSessions',
-  'setNav', 'setNavSel', 'viewSettings', 'setEnabled', 'setGatherMode', 'setHistoryDays', 'setKeepDays',
+  'setNav', 'viewSettings', 'deepSummary', 'deepBox', 'setEnabled', 'setGatherMode', 'setHistoryDays', 'setKeepDays',
   'setKeepRuns', 'setModel', 'setThinking', 'setModelCustom', 'setPlan',
   'setRefresh', 'setRefreshMode', 'setSyncNote', 'setTerminalUi', 'setTimeout',
   'usageFill', 'usageMark', 'usageText', 'usageWeekFill', 'usageDetail',
@@ -94,23 +100,37 @@ const IDS = [
   'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
 ];
 
-// The sections, in order, and which one the page lands on the first time.
+// The sections, in order, and which one a wide page lands on the first
+// time. A phone lands on the list, with none of them in front.
 const SECTIONS = [
   { sec: 'account', name: 'Account', open: true },
-  { sec: 'usage', name: 'Usage & schedule', open: false },
+  { sec: 'usage', name: 'Model & usage', open: false },
   { sec: 'permissions', name: 'Permissions', open: false },
-  { sec: 'sources', name: 'Sources', open: false },
   { sec: 'notifications', name: 'Notifications', open: false },
+  { sec: 'sources', name: 'Cameras & calendars', open: false },
   { sec: 'memory', name: 'Memory', open: false },
   { sec: 'diagnostics', name: 'Diagnostics', open: false },
+  { sec: 'developer', name: 'Developer', open: false },
   { sec: 'guide', name: 'Guide', open: false },
 ];
 
-// The reads behind Diagnostics. Any of these before it is opened is the
-// lazy load not being lazy.
-const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/capture',
-                   'api/doctor/deep', 'api/doctor/rehearse', 'api/sre',
-                   'api/access', 'api/knowledge/house'];
+// The weekly answers: each must be visible after one press on its row,
+// with nothing folded open.
+const WEEKLY = [
+  { id: 'authBody', sec: 'account', what: 'the sign-in' },
+  { id: 'setModel', sec: 'usage', what: 'the model' },
+  { id: 'usageFill', sec: 'usage', what: 'the usage bar' },
+  { id: 'setBudget', sec: 'usage', what: 'the budget' },
+  { id: 'setNotifyPolicy', sec: 'notifications', what: 'the notification sentence' },
+  { id: 'setSkipPerms', sec: 'permissions', what: '"Let brAIn act without asking"' },
+];
+
+// The reads behind Diagnostics and Developer. Any of these before its
+// section is opened is the lazy load not being lazy.
+const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/doctor/deep',
+                   'api/sre', 'api/access', 'api/knowledge/house'];
+const DEV_URLS = ['api/capture', 'api/doctor/rehearse'];
+const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS];
 
 const CUT = ['Copy selected', 'Copy all', 'Write a report now',
              'Copy for a bug report', 'File into memory now', 'Check it now',
@@ -235,7 +255,25 @@ window.fetch = async (url, opts) => {
   if (p.includes('api/doctor/rehearse')) {
     return answer({ running: false, sweeping: false, last: {}, plan: [] });
   }
-  if (p.includes('api/doctor')) return answer({ running: false, last: {}, stages: [] });
+  if (p.includes('api/doctor')) {
+    // One finished run: three passed, one failed, two skipped — one over a
+    // failed precondition and one over a switch that is off.
+    const st = (name, title, state, sentence, at) => ({ name, title, state, sentence,
+      detail: '', proves: '', seconds: 3, at });
+    const stages = [
+      st('snapshot_claude', 'A plain Claude run', 'ok', 'Claude answered.', ${NOW} - 600),
+      st('analyst_tools', 'Reading the house', 'ok', 'It read 3 entities.', ${NOW} - 560),
+      st('chat', 'The chat', 'failed', 'The chat did not answer within its limit.', ${NOW} - 500),
+      st('memory', 'Memory', 'ok', 'A fact went in and came back out.', ${NOW} - 450),
+      st('fixer_dry', 'A fix, rehearsed', 'skipped',
+         'Not run because chat did not pass — it would fail for the same reason and say so twice.', ${NOW} - 450),
+      st('automation', 'The automation listener', 'skipped',
+         'The Automation integration is off (enable_automation_integration).', ${NOW} - 449),
+    ];
+    return answer({ running: false, stages: [], stage_catalog: [],
+      last: { started_at: ${NOW} - 620, finished_at: ${NOW} - 449, stages, verdict: 'failed',
+              counts: { ok: 3, failed: 1, skipped: 2 } } });
+  }
   if (p.includes('api/sre')) {
     return answer({ running: false, last: { at: ${NOW} - 3600, records: 12, causes: 1,
                                             filed: 1, cleared: 0 } });
@@ -287,6 +325,14 @@ window.fetch = async (url, opts) => {
 
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);
+// A step that cannot be driven at all ends the run, with everything found
+// before it: a page with no way to a section is a failure, not a crash.
+process.on('uncaughtException', (e) => {
+  console.error('measure-settings: FAIL');
+  for (const f of failures) console.error('  ' + f);
+  console.error('  stopped: ' + String(e.message).split('\n')[0]);
+  process.exit(1);
+});
 const heights = [];
 
 // A hint's own text, sentence-counted. `e.g.`/`i.e.` are abbreviations
@@ -309,7 +355,7 @@ window.__hintSentences = () => {
 window.__visibleButtons = () => [...document.querySelectorAll(
   '#setModal button, #setModal a.btn')]
   .filter((b) => b.offsetParent !== null && !b.hidden && !b.classList.contains('krow')
-    && !b.classList.contains('segbtn'))
+    && !b.classList.contains('setnavbtn') && !b.classList.contains('setback'))
   .map((b) => b.textContent.replace(/\\s+/g, ' ').trim());
 `;
 
@@ -317,18 +363,22 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined,
 });
 
-// Put one section in front the way a person would: a button on a wide
-// screen, the select on a narrow one.
+// Put one section in front the way a person would: its row on the list —
+// which on a phone means "‹ Settings" first when a section is in front.
 const showSection = async (page, sec) => {
-  const button = page.locator(`#setNav .segbtn[data-sec="${sec}"]`);
-  if (await button.isVisible()) await button.click();
-  else await page.selectOption('#setNavSel', sec);
+  const button = page.locator(`#setNav .setnavbtn[data-sec="${sec}"]`);
+  if (!await button.isVisible()) {
+    await page.locator('#setModal .setsec:not([hidden]) .setback').click({ timeout: 3000 });
+  }
+  await button.click({ timeout: 3000 });
   await page.waitForFunction((s) => !document.querySelector(`#setModal .setsec[data-sec="${s}"]`).hidden,
     sec, { timeout: 3000 });
 };
 
 for (const width of WIDTHS) {
   const touch = width <= 430;
+  // Below 900px the list is the page until a row is pressed.
+  const narrow = width < 900;
   const context = await browser.newContext({
     viewport: { width, height: touch ? 740 : 900 }, hasTouch: touch, isMobile: touch,
   });
@@ -342,24 +392,32 @@ for (const width of WIDTHS) {
   await page.click('#settingsBtn');
   await page.waitForSelector('#setModal.open');
   await page.waitForFunction(() => document.querySelector('#setSyncNote').textContent !== '');
-  await page.waitForSelector('#authBody p');
+  await page.waitForFunction(() => !!document.querySelector('#authBody p'));
 
   // ---- how long is the page, and what is on the control ----------------
   const m = await page.evaluate(() => {
-    const body = document.querySelector('#setModal .edit-body');
-    const navBtns = [...document.querySelectorAll('#setNav .segbtn')];
-    const navShown = navBtns.some((b) => b.offsetParent !== null);
-    const sel = document.querySelector('#setNavSel');
+    const body = document.querySelector('#setModal');
+    const navBtns = [...document.querySelectorAll('#setNav .setnavbtn')];
     const secs = [...document.querySelectorAll('#setModal .setsec')].map((d, i) => {
       const btn = navBtns[i];
-      const box = (navShown ? btn : sel).getBoundingClientRect();
+      const box = btn ? btn.getBoundingClientRect() : { height: 0, right: 0 };
       return {
         sec: d.dataset.sec, open: !d.hidden, h: Math.round(box.height), right: box.right,
-        button: btn ? btn.textContent.trim() : '', buttonFor: btn ? btn.dataset.sec : '',
+        rowShown: !!btn && btn.offsetParent !== null,
+        button: btn ? (btn.querySelector('.setnavname') || {}).textContent || '' : '',
+        buttonFor: btn ? btn.dataset.sec : '',
         name: (d.querySelector('.setsecname') || {}).textContent || '',
-        sub: (d.querySelector('.setsecsub') || {}).textContent || '',
+        sum: btn ? (btn.querySelector('.setnavsum') || {}).textContent || '' : '',
       };
     });
+    // A form control inside a <details> is a setting somebody has to open
+    // a fold to reach.
+    const folded = [...document.querySelectorAll(
+      '#setModal details input, #setModal details select, #setModal details textarea, '
+      + '#setModal details button')].map((c) => c.id || c.tagName);
+    const folds = [...document.querySelectorAll('#setModal details')]
+      .filter((dd) => !dd.classList.contains('authdetails'))
+      .map((dd) => dd.id || (dd.querySelector('summary') || {}).textContent || 'details');
     // A "?" bubble is a button whose label is a question mark, or the
     // `.btn.icon.tiny` it was built from, or any data-tip but Close's.
     const bubbles = [...document.querySelectorAll('#setModal button, #setModal [data-tip]')]
@@ -381,8 +439,8 @@ for (const width of WIDTHS) {
     return {
       scrollH: document.documentElement.scrollHeight,
       bodyRight: Math.max(body.getBoundingClientRect().right, window.innerWidth),
-      options: [...sel.options].map((o) => o.value),
-      secs, bubbles, small,
+      secs, bubbles, small, folded, folds,
+      index: document.querySelector('#setModal').classList.contains('setindex'),
       hints: window.__hintSentences(),
       docWidth: document.documentElement.scrollWidth,
       signout: { cls: signout.className, color: so.color, bg: so.backgroundColor,
@@ -405,6 +463,8 @@ for (const width of WIDTHS) {
   }
 
   // ---- the sections ------------------------------------------------------
+  if (m.folded.length) note(where, `controls inside a fold: ${m.folded.join(', ')}`);
+  if (m.folds.length) note(where, `folds left in ⚙: ${m.folds.join(', ')}`);
   if (m.secs.length !== SECTIONS.length) {
     note(where, `${m.secs.length} sections, expected ${SECTIONS.length}`);
   }
@@ -419,16 +479,24 @@ for (const width of WIDTHS) {
     if (got.button !== want.name || got.buttonFor !== want.sec) {
       note(where, `the control's button for ${want.sec} reads "${got.button}"`);
     }
-    if (got.sub.trim().length < 20) note(where, `the ${want.sec} section says nothing about what is in it`);
-    if (got.open !== want.open) note(where, `${want.sec} is shown ${got.open} and should be ${want.open}`);
-    if (got.right > m.bodyRight + 0.5) note(where, `the ${want.sec} control overflows the page`);
+    if (got.sum.trim().length < 8) note(where, `the ${want.sec} row has no second line`);
+    if (!got.rowShown) note(where, `the ${want.sec} row is not on screen at open`);
+    const wantOpen = narrow ? false : want.open;
+    if (got.open !== wantOpen) note(where, `${want.sec} is shown ${got.open} and should be ${wantOpen}`);
+    if (got.right > m.bodyRight + 0.5) note(where, `the ${want.sec} row overflows the page`);
   });
-  if (m.secs.filter((x) => x.open).length !== 1) {
-    note(where, `${m.secs.filter((x) => x.open).length} sections shown at once, not 1`);
+  const shownNow = m.secs.filter((x) => x.open).length;
+  if (narrow ? shownNow !== 0 || !m.index : shownNow !== 1) {
+    note(where, `${shownNow} sections shown at open (${narrow ? 'a narrow page opens on the list' : 'want 1'})`);
   }
-  if (m.options.join(',') !== SECTIONS.map((x) => x.sec).join(',')) {
-    note(where, `the section select offers ${m.options.join(', ')}`);
+  // The list itself says the weekly answers, with no press.
+  const sumOf = (sec) => (m.secs.find((x) => x.sec === sec) || {}).sum || '';
+  if (!/^Signed in/.test(sumOf('account'))) note(where, `the Account row reads "${sumOf('account')}"`);
+  if (!/Claude Sonnet 4\.5 · 18% of this session/.test(sumOf('usage'))) {
+    note(where, `the Model & usage row reads "${sumOf('usage')}"`);
   }
+  if (sumOf('permissions') !== 'Asks before it acts') note(where, `the Permissions row reads "${sumOf('permissions')}"`);
+  if (!/water/.test(sumOf('notifications'))) note(where, `the Notifications row reads "${sumOf('notifications')}"`);
 
   // ---- no "?" bubble, and no hint past two sentences ---------------------
   if (m.bubbles.length) note(where, `"?" bubbles remain: ${m.bubbles.join(', ')}`);
@@ -439,6 +507,30 @@ for (const width of WIDTHS) {
     if (m.allText.includes(gone)) note(where, `"${gone}" is back in ⚙`);
   }
   if (/💡/.test(m.allText)) note(where, 'the token tips came back');
+
+  // ---- every weekly setting is one press away, with nothing unfolded ------
+  for (const w of WEEKLY) {
+    try {
+      await page.click('#settingsBtn');        // leave …
+      await page.click('#settingsBtn');        // … and open ⚙ afresh
+      await page.waitForSelector('#setModal.open');
+      await page.click(`#setNav .setnavbtn[data-sec="${w.sec}"]`);   // the one press
+      const seen = await page.evaluate((id) => {
+        const n = document.getElementById(id);
+        if (!n || n.offsetParent === null) return false;
+        const r = n.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && !n.closest('details:not([open])');
+      }, w.id);
+      if (!seen) note(where, `${w.what} is not visible one press after opening ⚙`);
+    } catch (e) {
+      note(where, `reaching ${w.what} failed: ${String(e.message).split('\n')[0]}`);
+    }
+  }
+  await showSection(page, 'account');
+  const acct = await page.evaluate(() => ({
+    backupVisible: document.querySelector('#authShareCost').offsetParent !== null,
+  }));
+  m.backupVisible = acct.backupVisible;
 
   // ---- safety prose stays on the page -------------------------------------
   if (!/backup/i.test(m.backup) || !m.backupVisible) {
@@ -465,8 +557,6 @@ for (const width of WIDTHS) {
   // ---- the notification sentence, and a learned line's Remove ------------
   await showSection(page, 'notifications');
   const learned = await page.evaluate(() => {
-    const fold = document.querySelector('#setNotifyLearned details');
-    if (fold) fold.open = true;
     return [...document.querySelectorAll('#setNotifyLearned .setlearnedrow')].map((r) => ({
       h: Math.round(r.querySelector('button').getBoundingClientRect().height),
       text: r.textContent }));
@@ -525,7 +615,7 @@ for (const width of WIDTHS) {
       doc: document.querySelector('#setMemView').textContent,
       exportHref: document.querySelector('#setMemExport').getAttribute('href'),
       buttons: [...document.querySelectorAll('#setsecMemory button, #setsecMemory a')]
-        .filter((b) => b.offsetParent !== null).map((b) => b.textContent.trim()),
+        .filter((b) => b.offsetParent !== null && !b.classList.contains('setback')).map((b) => b.textContent.trim()),
     }));
     if (mem.count !== '5') note(where, `the queue count reads "${mem.count}", not 5`);
     if (mem.rows !== 2) note(where, `${mem.rows} queued lines rendered, not 2`);
@@ -545,7 +635,7 @@ for (const width of WIDTHS) {
   // ---- Diagnostics is lazy, and opening it fills every block -------------
   try {
     const early = await page.evaluate(
-      (urls) => window.__fetched.filter((u) => urls.some((x) => u.includes(x))), DIAG_URLS);
+      (urls) => window.__fetched.filter((u) => urls.some((x) => u.includes(x))), LAZY_URLS);
     if (early.length) {
       note(where, `opening ⚙ fetched ${early.length} Diagnostics read(s) before it was `
                   + `opened: ${[...new Set(early)].join(', ')}`);
@@ -556,6 +646,57 @@ for (const width of WIDTHS) {
     const late = await page.evaluate(
       (urls) => urls.filter((x) => !window.__fetched.some((u) => u.includes(x))), DIAG_URLS);
     if (late.length) note(where, `opening Diagnostics never fetched: ${late.join(', ')}`);
+    const devEarly = await page.evaluate(
+      (urls) => window.__fetched.filter((u) => urls.some((x) => u.includes(x))), DEV_URLS);
+    if (devEarly.length) note(where, `Diagnostics fetched Developer's reads: ${devEarly.join(', ')}`);
+
+    // Run all tests: first in the section, the answer as its header, a row
+    // per stage in words with the reason and the time; skipped is skipped.
+    await page.waitForSelector('#deepBody .testrow', { timeout: 4000 });
+    const t = await page.evaluate(() => {
+      const body = document.querySelector('#setsecDiagnostics .setsecbody');
+      const first = body.firstElementChild;
+      const run = document.querySelector('#deepRun');
+      return {
+        first: first ? first.id : '',
+        heading: (document.querySelector('#deepBox .testsname') || {}).textContent || '',
+        run: run.textContent.trim(), runLabel: run.getAttribute('aria-label'),
+        runTop: Math.round(run.getBoundingClientRect().top - body.getBoundingClientRect().top),
+        runH: Math.round(run.getBoundingClientRect().height),
+        summary: document.querySelector('#deepSummary').textContent,
+        summaryShown: !document.querySelector('#deepSummary').hidden,
+        rows: [...document.querySelectorAll('#deepBody .testrow')].map((r) => ({
+          cls: r.className,
+          word: (r.querySelector('.testword') || {}).textContent || '',
+          title: (r.querySelector('.testtitle') || {}).textContent || '',
+          reason: (r.querySelector('.testreason') || {}).textContent || '',
+          time: (r.querySelector('.testtime') || {}).textContent || '',
+          right: r.getBoundingClientRect().right,
+        })),
+        bodyRight: body.getBoundingClientRect().right,
+      };
+    });
+    if (t.first !== 'deepBox') note(where, `Diagnostics opens on "${t.first}", not Run all tests`);
+    if (t.heading !== 'Run all tests' || t.runLabel !== 'Run all tests') {
+      note(where, `the tests control reads "${t.heading}" / "${t.runLabel}"`);
+    }
+    if (t.runTop > 120) note(where, `Run all tests' button is ${t.runTop}px down the section`);
+    if (touch && t.runH < MIN_TARGET) note(where, `Run all tests' button is ${t.runH}px`);
+    if (t.summary !== '3 of 4 passed · 2 skipped' || !t.summaryShown) {
+      note(where, `the tests header reads "${t.summary}"`);
+    }
+    if (t.rows.length !== 6) note(where, `${t.rows.length} test rows, not 6`);
+    const words = t.rows.map((r) => r.word).join(',');
+    if (words !== 'Passed,Passed,Failed,Passed,Skipped,Skipped') note(where, `the test rows say ${words}`);
+    t.rows.forEach((r) => {
+      if (!/\b\d{1,2}:\d{2}\b/.test(r.time)) note(where, `the "${r.title}" row has no time ("${r.time}")`);
+      if (r.reason.length < 8) note(where, `the "${r.title}" row gives no reason`);
+      if (r.right > t.bodyRight + 0.5) note(where, `the "${r.title}" row overflows`);
+      if (r.word === 'Skipped' && /failed/.test(r.cls)) note(where, `a skipped row is drawn as failed: ${r.title}`);
+    });
+    if (!/Automation integration is off/.test(t.rows.map((r) => r.reason).join(' '))) {
+      note(where, 'a skipped row does not say why in plain words');
+    }
     const d = await page.evaluate(() => ({
       first: (document.querySelector('#diagBody .drow .dk') || {}).textContent || '',
       accuracy: document.querySelector('#diagAccuracy').textContent,
@@ -564,7 +705,6 @@ for (const width of WIDTHS) {
       access: document.querySelector('#diagAccess').textContent,
       runs: !!document.querySelector('#diagRuns'),
       share: document.querySelector('#diagCopy').textContent.trim(),
-      dev: document.querySelector('#setDiagDeveloper').open,
       buttons: window.__visibleButtons(),
       hints: window.__hintSentences(),
       bubbles: document.querySelectorAll('#setModal .btn.icon.tiny').length,
@@ -577,7 +717,6 @@ for (const width of WIDTHS) {
     if (!/worth a PIN/.test(d.access)) note(where, 'the access review sentence is missing');
     if (d.runs) note(where, 'Runs is still in Diagnostics (it lives on Ask now)');
     if (d.share !== 'Share') note(where, `Export report's button says "${d.share}"`);
-    if (d.dev) note(where, 'Developer opens expanded');
     for (const label of d.buttons) {
       if (!VERBS.has(label)) note(where, `a Diagnostics button says "${label}"`);
     }
@@ -586,8 +725,8 @@ for (const width of WIDTHS) {
     }
     if (d.bubbles) note(where, `${d.bubbles} "?" bubbles in Diagnostics`);
 
-    // Export report: a ticked problem file is what Share copies.
-    await page.click('#setDiagDeveloper > summary');
+    // Report a problem: a ticked problem file is what Share copies.
+    await page.waitForSelector('#probBody .probcheck', { timeout: 4000 });
     await page.check('#probBody .probcheck');
     await page.evaluate(() => {
       window.__copied = null;
@@ -606,14 +745,32 @@ for (const width of WIDTHS) {
     if (JSON.stringify(sent) !== JSON.stringify(['2026-09-08-0912-run.txt'])) {
       note(where, `Share sent ${JSON.stringify(sent)} with one problem ticked`);
     }
-    const devBubbles = await page.evaluate(() => document.querySelectorAll('#setModal .btn.icon.tiny').length);
-    if (devBubbles) note(where, `${devBubbles} "?" bubbles under Developer`);
     await page.evaluate(() => {
       const box = document.querySelector('.copyfallback, #copyFallback');
       if (box) box.remove();
     });
   } catch (e) {
     note(where, `driving Diagnostics failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- Developer: its own section, read when it opens --------------------
+  try {
+    await showSection(page, 'developer');
+    await page.waitForFunction((urls) => urls.every((x) => window.__fetched.some((u) => u.includes(x))),
+      DEV_URLS, { timeout: 4000 }).catch(() => note(where, 'opening Developer did not read the rehearsal and captures'));
+    const dv = await page.evaluate(() => ({
+      buttons: window.__visibleButtons(),
+      shown: ['rehearseRun', 'setCapture', 'setDevloop'].filter(
+        (id) => document.getElementById(id).closest('.setsec').hidden),
+      bubbles: document.querySelectorAll('#setModal .btn.icon.tiny').length,
+    }));
+    if (dv.shown.length) note(where, `not in Developer: ${dv.shown.join(', ')}`);
+    for (const label of dv.buttons) {
+      if (!VERBS.has(label)) note(where, `a Developer button says "${label}"`);
+    }
+    if (dv.bubbles) note(where, `${dv.bubbles} "?" bubbles under Developer`);
+  } catch (e) {
+    note(where, `driving Developer failed: ${String(e.message).split('\n')[0]}`);
   }
 
   // ---- the page remembers its section, and ⚙ is the way back -------------
@@ -627,26 +784,48 @@ for (const width of WIDTHS) {
     if (left.open || left.view) note(where, 'pressing ⚙ on Settings did not go back');
     await page.click('#settingsBtn');
     await page.waitForSelector('#setModal.open');
-    let st = await page.evaluate(() => !document.querySelector('#setsecPermissions').hidden);
-    if (!st) note(where, 'coming back to Settings forgot the section that was in front');
+    // A wide page brings back the section that was in front; a phone opens
+    // on the list every time, where every section is one press away.
+    const front = () => page.evaluate(() => ({
+      perms: !document.querySelector('#setsecPermissions').hidden,
+      index: document.querySelector('#setModal').classList.contains('setindex')
+        && document.querySelector('#setNav').offsetParent !== null
+        && [...document.querySelectorAll('#setModal .setsec')].every((x) => x.hidden),
+    }));
+    let st = await front();
+    if (narrow ? !st.index : !st.perms) {
+      note(where, narrow ? 'coming back to Settings on a phone did not open on the list'
+                        : 'coming back to Settings forgot the section that was in front');
+    }
     await page.reload();
     await page.waitForSelector('#settingsBtn');
     await page.click('#settingsBtn');
     await page.waitForSelector('#setModal.open');
-    st = await page.evaluate(() => !document.querySelector('#setsecPermissions').hidden);
-    if (!st) note(where, 'a reload forgot the section that was in front');
+    st = await front();
+    if (narrow ? !st.index : !st.perms) {
+      note(where, narrow ? 'a reload did not open Settings on the list'
+                        : 'a reload forgot the section that was in front');
+    }
+    if (narrow) {
+      await showSection(page, 'permissions');
+      await page.click('#setsecPermissions .setback');
+      st = await front();
+      if (!st.index) note(where, '"‹ Settings" did not go back to the list');
+      await showSection(page, 'permissions');
+    }
     // Permissions read the house rules when it was put in front.
     await page.waitForFunction(() => /heating above 23/.test(
       document.querySelector('#setHouseRules').value), null, { timeout: 4000 })
       .catch(() => note(where, 'the house rules were not read into Permissions'));
     const early = await page.evaluate(
-      (urls) => window.__fetched.filter((u) => urls.some((x) => u.includes(x))), DIAG_URLS);
+      (urls) => window.__fetched.filter((u) => urls.some((x) => u.includes(x))), LAZY_URLS);
     if (early.length) note(where, `Settings on Permissions fetched Diagnostics reads: ${early.join(', ')}`);
     await showSection(page, 'diagnostics');
     await page.reload();
     await page.waitForSelector('#settingsBtn');
     await page.click('#settingsBtn');
     await page.waitForSelector('#setModal.open');
+    if (narrow) await showSection(page, 'diagnostics');
     if (!await page.evaluate(() => !document.querySelector('#setsecDiagnostics').hidden)) {
       note(where, 'Diagnostics was not in front again after a reload');
     }
@@ -779,10 +958,9 @@ for (const width of WIDTHS) {
     if (got.sentences > 2) note(where, `the still-asking line runs to ${got.sentences} sentences`);
     const toastText = await page.evaluate(() => document.querySelector('#toast').textContent);
     if (/stay refused/.test(toastText)) note(where, 'the toast still claims protected entities "stay refused"');
-    // Advanced keeps the two terminal settings, and its selects say their
-    // whole choice once the fold is open.
-    await page.click('#setPermsAdvanced > summary');
-    const cut = await page.evaluate(() => {
+    // Every select in the two sections that have them says its whole
+    // choice, with no fold to open first.
+    const cutIn = () => page.evaluate(() => {
       const ctx = document.createElement('canvas').getContext('2d');
       const out = [];
       document.querySelectorAll('#setModal select').forEach((sel) => {
@@ -795,6 +973,9 @@ for (const width of WIDTHS) {
       });
       return out;
     });
+    const cut = await cutIn();
+    await showSection(page, 'usage');
+    cut.push(...await cutIn());
     cut.filter((x) => !(touch && x.startsWith('#setModel '))).forEach(
       (c) => note(where, `a select cuts its text: ${c}`));
   } catch (e) {

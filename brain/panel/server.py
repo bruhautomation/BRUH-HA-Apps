@@ -15595,7 +15595,7 @@ async def h_capture_delete(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
-# The development loop — ⚙ › Diagnostics › Developer, off by default
+# The development loop — ⚙ › Developer, off by default
 # ---------------------------------------------------------------------------
 #
 # Everything here answers about one opt-in feature (`devloop/`, and

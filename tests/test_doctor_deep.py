@@ -231,6 +231,22 @@ class TestTheReport(DoctorCase):
         self.assertEqual(summary["failed_stage"], "memory")
         self.assertNotIn("stages", summary)
 
+    async def test_every_stage_says_when_it_ran(self):
+        """⚙ › Diagnostics lists one row per stage with the time it ran,
+        and a stage skipped over a failed precondition is a row too — it
+        was decided at a moment, and a row with no time reads as one that
+        never got to run at all."""
+        d = self.doctor
+        for name in d.STAGE_NAMES:
+            d.RUNNERS[name] = self._stage(d._ok("fine"))
+        d.RUNNERS["snapshot_claude"] = self._stage(d._fail("dead"))
+        out = await d.run_deep(hooks()[0])
+        for stage in out["stages"]:
+            self.assertIsInstance(stage.get("at"), int, stage["name"])
+            self.assertGreaterEqual(stage["at"], out["started_at"], stage["name"])
+            self.assertLessEqual(stage["at"], out["finished_at"], stage["name"])
+        self.assertTrue(any(s["state"] == "skipped" for s in out["stages"]))
+
     async def test_no_run_yet_is_an_empty_summary_not_a_verdict(self):
         self.assertEqual(self.doctor.summary(),
                          {"ran_at": 0, "verdict": "", "failed_stage": ""})
