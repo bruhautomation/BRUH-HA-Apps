@@ -475,9 +475,29 @@ def _by_a_person(action: dict, relayed, triggers, last_on) -> bool:
     return False
 
 
+def _hands_off(prior: dict, action: dict, triggers: dict, feeds: dict) -> bool:
+    """Whether the second rule answers something the first one set.
+
+    "Bedtime" sets `input_select.house_mode` to night and turns the hall
+    light on; "Night mode" is triggered by that selector and turns the
+    light off. The light goes on then off inside the window, from two
+    rules, in different states — and it is one rule handing over to
+    another, built that way on purpose, not two rules fighting.
+    ``feeds`` is automation → the entities its actions set (read off the
+    configs by the caller, like ``triggers``); when the second rule
+    watches one of them, its move follows from the first and is not a
+    disagreement with it.
+    """
+    first = prior.get("by") or ""
+    second = action.get("by") or ""
+    return bool(set(triggers.get(second) or ())
+                & set(feeds.get(first) or ()))
+
+
 def find_conflicts(actions: list[dict],
                    window_s: float = OVERRIDE_WINDOW_S,
-                   relayed=(), triggers: dict | None = None) -> list[dict]:
+                   relayed=(), triggers: dict | None = None,
+                   feeds: dict | None = None) -> list[dict]:
     """Every time one automation put back what another had just done.
 
     Deliberately not an override. A person undoing a rule is evidence the
@@ -498,10 +518,13 @@ def find_conflicts(actions: list[dict],
     ``relayed`` and ``triggers`` are what the miner cannot see from the
     logbook alone (see `_by_a_person`): a move a person made through a
     rule ends the pairing exactly as a press on the entity itself does.
-    Both default to nothing, which is the miner's own answer.
+    Both default to nothing, which is the miner's own answer. ``feeds``
+    is the third thing only the configs know (see `_hands_off`): a rule
+    triggered by what the previous rule set is that rule's follow-on.
     """
     relayed = set(relayed or ())
     triggers = triggers or {}
+    feeds = feeds or {}
     last_auto: dict[str, dict] = {}
     last_on: dict[str, tuple[float, bool]] = {}
     out: list[dict] = []
@@ -525,6 +548,8 @@ def find_conflicts(actions: list[dict],
         first = prior.get("by") or prior.get("by_name") or ""
         second = action.get("by") or action.get("by_name") or ""
         if not first or not second or first == second:
+            continue
+        if _hands_off(prior, action, triggers, feeds):
             continue
         out.append({
             "ts": action["ts"],

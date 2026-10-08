@@ -1070,6 +1070,69 @@ def _cross_folds(entry: dict) -> str:
     return subject[0]
 
 
+# A question somebody ASKED about an entity a HOUSE CHECK already has a
+# live row about is the same problem said twice: "Your question" (an asked
+# card, `custom-<id>`, or the chat) filing "the back door battery is flat"
+# beside `check:dev.battery_low`'s row about the same sensor was two open
+# cards for one battery. Only an asked producer (`ASKED_SOURCE_RE`): a
+# scheduled card reading the same sensor makes its own claim about it —
+# "reads 0 while the AC ran" is not "frozen", and `test_cross_producer_fold`
+# holds that boundary — where a question about a thing somebody was
+# looking at is the card the check already filed. It folds
+# into the check's row — never the other way, because the check's text is
+# the key it re-reports and clears under, and a check row folded into a
+# model one would be re-filed by the next pass. The check's detail stands
+# (it is rewritten by every pass through `refresh_details`, so anything
+# appended would vanish on the next one and read as a flap); the model's
+# detail and fix are taken only where the check row has none. Not into a
+# security or safety check's row (`CHECK_FOLD_EXCLUDED`): those are the
+# family whose rows are about something somebody must see as the rule
+# said it, the same reason `SUBJECT_FOLD_EXCLUDED` keeps that family out
+# on the model side. The model side is `_cross_folds`', so the Resident
+# and that family never fold here either, and only into a live row.
+CHECK_FOLD_EXCLUDED = frozenset({"climate.freeze"})
+CHECK_FOLD_EXCLUDED_PREFIXES = ("sec.",)
+# The producers a person asked: an asked card (`custom-<id>`, the shape
+# `server._CARD_SOURCE` names it by, or the bare "custom" of an older row)
+# and the chat.
+ASKED_SOURCE_RE = re.compile(r"^(?:custom(?:-[A-Za-z0-9_-]{1,64})?|chat)$")
+
+
+def _asked_folds(entry: dict) -> str:
+    """The entity an asked report folds into a check's row on, or ""."""
+    eid = _cross_folds(entry)
+    if not eid or not ASKED_SOURCE_RE.match(str(entry.get("source") or "")):
+        return ""
+    return eid
+
+
+def _check_host_key(f: dict) -> str:
+    """The entity a live house-check row may take model reports about."""
+    source = str(f.get("source") or "")
+    eid = str(f.get("entity_id") or "").strip()
+    if not eid or not source.startswith("check:"):
+        return ""
+    if f.get("status") not in CROSS_FOLD_STATUSES:
+        return ""
+    check = source.split(":", 1)[1]
+    if (check in CHECK_FOLD_EXCLUDED
+            or check.startswith(CHECK_FOLD_EXCLUDED_PREFIXES)):
+        return ""
+    return eid
+
+
+def _fill(host: dict, entry: dict) -> bool:
+    """Give a check's row what a model report adds and it lacks."""
+    changed = False
+    for key in ("detail", "fix"):
+        if not str(host.get(key) or "").strip() and entry.get(key):
+            host[key] = entry[key]
+            if key == "fix" and entry.get("fix_by"):
+                host["fix_by"] = entry["fix_by"]
+            changed = True
+    return changed
+
+
 def _subjects_answered_wrong() -> set[tuple[str, str]]:
     """The subjects somebody said a model-written report was wrong about.
 
@@ -1134,7 +1197,11 @@ def add_many(objs: list[dict]) -> list[dict]:
     # that is dropped as a duplicate still reaches the row it duplicates.
     across = {}
     live_subject = {}
+    checked = {}
     for f in items:
+        ck = _check_host_key(f)
+        if ck:
+            checked.setdefault(ck, f)
         eid = _cross_folds(f)
         if eid and f.get("status") in CROSS_FOLD_STATUSES:
             across.setdefault(eid, f)
@@ -1151,6 +1218,11 @@ def add_many(objs: list[dict]) -> list[dict]:
         subject = _folds_by_subject(entry)
         if subject and subject in subjects:
             if _absorb(live_subject.get(subject), entry):
+                refreshed = True
+            continue
+        asked = _asked_folds(entry)
+        if asked and asked in checked:
+            if _fill(checked[asked], entry):
                 refreshed = True
             continue
         eid = _cross_folds(entry)
@@ -1171,6 +1243,9 @@ def add_many(objs: list[dict]) -> list[dict]:
                 live_subject.setdefault(subject, entry)
         if eid and entry.get("status") in CROSS_FOLD_STATUSES:
             across.setdefault(eid, entry)
+        ck = _check_host_key(entry)
+        if ck:
+            checked.setdefault(ck, entry)
         items.append(entry)
         created.append(_shape(entry))
     if created or refreshed:

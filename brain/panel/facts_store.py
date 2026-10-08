@@ -1736,10 +1736,49 @@ def is_transient(text: str) -> bool:
     return bool(_TRANSIENT_RE.search(body)) and not _DURABLE_RE.search(body)
 
 
-def _expiry_for(text: str, ts: float, given: str = "") -> str:
+# How long a reading of one moment is worth asserting. An insight run
+# files what it saw — "the hall moved across 69–72 °F in the last 12
+# hours", "the freezer sensor is frozen right now" — and the store handed
+# that to every later run as true for good, long after the window it
+# described had moved on. Two days lets the next run or two be told what
+# the last one saw, and no more.
+MOMENT_DAYS = 2
+# What a sentence about a recent window or the present moment sounds like.
+# On the words that pin a claim to WHEN it was said, never on a subject:
+# "the boiler is in the utility room" names no moment and is durable.
+_MOMENT_RE = re.compile(
+    r"\b(?:in|over|during|for)\s+the\s+(?:last|past)\s+(?:\d+|few|several|"
+    r"couple of)\s*(?:minutes?|mins?|hours?|hrs?|h|days?)\b|"
+    r"\b(?:right now|currently|at the moment|at present|as of now|"
+    r"so far today|today|tonight|this (?:morning|afternoon|evening|hour|"
+    r"week))\b", re.I)
+
+
+def is_moment(text: str) -> bool:
+    """A reading of a recent window or of now, rather than a standing fact.
+
+    `_DURABLE_RE` wins here as it does in `is_transient`: "the heating
+    always comes on this early in winter" says when, and is still a habit.
+    """
+    body = str(text or "")
+    return bool(_MOMENT_RE.search(body)) and not _DURABLE_RE.search(body)
+
+
+def _moment_applies(source: str, predicate: str) -> bool:
+    """A moment's short life is for a MACHINE's reading. What a person said
+    (`KEEP_SOURCES`) is never aged out by its wording, and a row with a
+    predicate (a rule, an exception, a judgement, an occasion) carries its
+    own lifetime."""
+    return str(source or "") not in KEEP_SOURCES and not str(predicate or "")
+
+
+def _expiry_for(text: str, ts: float, given: str = "", *,
+                source: str = "", predicate: str = "") -> str:
     given = str(given or "").strip()[:10]
     if given:
         return given
+    if _moment_applies(source, predicate) and is_moment(text):
+        return _day(float(ts) + MOMENT_DAYS * 86400)
     if is_transient(text):
         return _day(float(ts) + TRANSIENT_DAYS * 86400)
     return ""
@@ -1821,7 +1860,9 @@ def _ingest_line(obj, ctx) -> bool:
         confidence=obj.get("confidence", DEFAULT_CONFIDENCE),
         run_id=str(obj.get("run_id") or ""),
         predicate=str(obj.get("predicate") or ""),
-        expires=_expiry_for(text, when, obj.get("expires") or ""),
+        expires=_expiry_for(text, when, obj.get("expires") or "",
+                            source=source,
+                            predicate=str(obj.get("predicate") or "")),
         ts=stamp, near_dedupe=True,
         said=raw_text if raw_text != text else "",
         brain_fact=about_brain(text, tagged, ctx["self_entities"]))
@@ -1928,8 +1969,11 @@ def _read_reconcile_state() -> dict:
 
 
 # Bumped whenever `_repair` learns a new rule, so a store filed under the
-# old rules is put right once and not on every pass.
-REPAIR_VERSION = 1
+# old rules is put right once and not on every pass. 2: a machine's
+# reading of one moment (`is_moment`) filed before it was given a short
+# life gets one, counted from when it was last said — so one from last month
+# ages out on this pass rather than being asserted for ever.
+REPAIR_VERSION = 2
 
 
 def _repair_one(row: dict, ctx: dict, version: str) -> bool:
@@ -1974,6 +2018,13 @@ def _repair_one(row: dict, ctx: dict, version: str) -> bool:
         row["version"] = version[:32]
         row["version_assumed"] = True
         changed = True
+    if (not row.get("expires") and _moment_applies(row.get("source"),
+                                                    predicate)
+            and is_moment(row.get("text", ""))):
+        filed = float(row.get("ts") or row.get("first_seen") or 0)
+        if filed > 0:
+            row["expires"] = _day(filed + MOMENT_DAYS * 86400)
+            changed = True
     if changed:
         row["id"] = fact_id(str(row.get("subject") or "house"),
                             str(row.get("text") or ""),

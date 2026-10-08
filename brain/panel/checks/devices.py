@@ -18,6 +18,14 @@ from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
 BATTERY_SILENT_DAYS = 7
+# A battery sensor that reads 0 today and has read nothing but 0 for at
+# least this many days of its recorded history is not a cell running down:
+# a mains-powered device publishing an unused battery field (a Z-Wave
+# energy meter carries the command class and fills it with 0) reads 0 from
+# the day it was included. A real battery that went flat has a history
+# above 0 before it. Fewer days than this is too short to tell the two apart,
+# so the row is still filed.
+BATTERY_NEVER_CHARGED_DAYS = 7
 FROZEN_DAYS = 7
 FROZEN_MIN_DAYS = 5
 # **A sensor with no `device_class` is not making a measurement claim, and
@@ -423,6 +431,21 @@ def _read_as_rechargeable(house: House, eid: str) -> bool:
     return world_model.battery_kind(house.world, eid, None) == "rechargeable"
 
 
+def _never_above_zero(snap: dict, entity_id: str) -> bool:
+    """Whether the recorded history says this battery has only ever read 0.
+
+    Read off `battery_stats` (sixty days of daily means). No history, or
+    too little of it, is "I could not tell" and answers False — the row
+    is filed as it always was.
+    """
+    rows = (snap.get("battery_stats") or {}).get(entity_id) or []
+    means = [num(r.get("mean")) for r in rows if isinstance(r, dict)]
+    means = [m for m in means if m is not None]
+    if len(means) < BATTERY_NEVER_CHARGED_DAYS:
+        return False
+    return max(means) <= 0
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -440,6 +463,8 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         if not house.should_report(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
+        if level == 0 and _never_above_zero(snap, eid):
+            continue
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
         if level is not None and level <= BATTERY_LOW_PCT:
