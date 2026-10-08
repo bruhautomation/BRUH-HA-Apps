@@ -290,6 +290,53 @@ def _urgent(row: dict) -> bool:
         return False
 
 
+# THE count is the queue's (`cases.queue_count`, plus Today's own cards in
+# the panel's `_queue_count`): findings, questions and suggestions. This
+# module cannot ask it — `cases` reads this store — so the panel hands the
+# callable in at import. Unset (a test, a tool), the mirror's `open` is the
+# findings alone, which is what it always was; either way the findings
+# alone ride beside it as `findings_open`, under their own name.
+QUEUE_COUNT = None
+
+# What a producer is CALLED when the title it filed under says nothing. An
+# asked card files under its own id (`custom-…`) and, until 2.17.7, under the
+# word "Custom" — which is where the card came from and nothing a person
+# can find again; rows and ledger entries written then still carry it. The
+# panel knows the card (this module does not read insights), so it hands a
+# resolver in, `QUEUE_COUNT`'s arrangement: `(source, title) -> title`.
+SOURCE_TITLE = None
+_NO_TITLE = ("", "Custom")
+
+
+def _titled(source: str, title: str) -> str:
+    """The title a reader shows for `source`, never the bare "Custom"."""
+    title = str(title or "")
+    if title.strip() not in _NO_TITLE or not str(source).startswith("custom-"):
+        return title
+    resolver = SOURCE_TITLE
+    if resolver is None:
+        return title
+    try:
+        named = resolver(str(source), title)
+    except Exception as exc:  # noqa: BLE001 — a label, never the read
+        log.debug("could not name %s: %s", source, exc)
+        return title
+    return str(named or title)[:120]
+
+
+def _queue_now(now: float) -> int | None:
+    counter = QUEUE_COUNT
+    if counter is None:
+        return None
+    try:
+        value = counter(now)
+    except Exception as exc:  # noqa: BLE001 — a mirror field, not the write
+        log.debug("findings mirror could not count the queue: %s", exc)
+        return None
+    return value if isinstance(value, int) and not isinstance(value, bool) \
+        else None
+
+
 def _publish_state(items: list[dict]) -> None:
     """Mirror a summary of the live list onto the shared volume.
 
@@ -326,11 +373,13 @@ def _publish_state(items: list[dict]) -> None:
     # events and raises Repairs issues from, and those wait for a verdict.
     waiting = [s for s in shaped if triage.waiting_too_long(s, now)]
     open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES] + waiting
+    queue = _queue_now(now)
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
             "ts": int(now),
-            "open": len(open_rows),
+            "open": len(open_rows) if queue is None else queue,
+            "findings_open": len(open_rows),
             "waiting_look": len(waiting),
             "by_severity": {sev: len([s for s in open_rows
                                       if s["severity"] == sev])
@@ -630,7 +679,8 @@ def _shape(entry: dict) -> dict:
         "fixable": bool(entry.get("fixable", True)),
         "entity_id": str(entry.get("entity_id") or "")[:255],
         "source": str(entry.get("source") or "")[:64],
-        "source_title": str(entry.get("source_title") or "")[:120],
+        "source_title": _titled(str(entry.get("source") or ""),
+                                str(entry.get("source_title") or ""))[:120],
         # Which Claude run raised it, when one did. Empty for a house
         # check, which is the honest answer: nothing was asked. It is
         # what `capture` joins an ENDING back to the prompt that earned
@@ -1774,7 +1824,8 @@ def scorecard() -> list[dict]:
         if not src:
             continue
         row = by.setdefault(src, {
-            "source": src, "title": str(e.get("source_title") or src),
+            "source": src,
+            "title": _titled(src, str(e.get("source_title") or "")) or src,
             "confirmed": 0, "wrong": 0})
         # Agreeing to do something is agreeing the report was right, so
         # an accepted row scores exactly as a fixed one. The alternative
@@ -2043,12 +2094,12 @@ def source_titles() -> dict[str, str]:
     out: dict[str, str] = {}
     for entry in _load_settled():
         src = str(entry.get("source") or "")
-        title = str(entry.get("source_title") or "")
+        title = _titled(src, str(entry.get("source_title") or ""))
         if src and title and src not in out:
             out[src] = title
     for entry in _load():
         src = str(entry.get("source") or "")
-        title = str(entry.get("source_title") or "")
+        title = _titled(src, str(entry.get("source_title") or ""))
         if src and title:
             out[src] = title
     return out
@@ -2271,7 +2322,53 @@ def clear_resolved(sources: set[str], keep_keys: set[str]) -> list[dict]:
     # again). Here, so the scheduled pass, "Check again" and a delayed
     # verification are one rule with three callers.
     _chores_came_back(sources, keep_keys)
+    # And a finding somebody marked fixed by hand: the same claim a ticked
+    # chore makes, checked the same way.
+    _hand_fixes_came_back(sources, keep_keys)
     return gone
+
+
+def _hand_fixes_came_back(sources: set[str], keep_keys: set[str],
+                          now: float | None = None) -> int:
+    """End a person's "I've fixed it" on a check's row that the check still
+    reports past `todo_store.CHORE_SETTLE_S`.
+
+    `lapse_settled` ends an answer when the check STOPS reporting; nothing
+    ended one whose check went on reporting it, so a fix that did not hold
+    was deduped on every pass for the life of the install — the decision
+    trail saying "you said you had fixed it" ten times a day about a card
+    that never came back. A ticked chore already comes back on exactly this
+    evidence (`_chores_came_back`); this is the same rule for the same
+    claim made with a different button. The answer LAPSES, so the next
+    pass files the row again as a recurrence (`recurred`, `previous_at`)
+    through `triage.gate` like any other report — nothing is filed from
+    here. Only `fixed` (never Wrong, never a chore waiting as `accepted`),
+    only a house check's, only a check that ran. Returns how many lapsed.
+    """
+    import todo_store  # noqa: PLC0415 — the store imports nothing of ours
+
+    now = time.time() if now is None else float(now)
+    ledger = _load_settled()
+    lapsed = 0
+    for entry in ledger:
+        source = str(entry.get("source") or "")
+        if (entry.get("kind") == "fixed"
+                and not entry.get("lapsed_at")
+                and source.startswith("check:") and source in sources
+                and str(entry.get("key") or "") in keep_keys
+                and now - float(entry.get("ts") or now)
+                >= todo_store.CHORE_SETTLE_S):
+            entry["lapsed_at"] = int(now)
+            entry["came_back_at"] = int(now)
+            lapsed += 1
+    if lapsed:
+        try:
+            _write_settled(ledger)
+        except OSError as exc:
+            log.warning("could not call back a fix a check still reports: "
+                        "%s", exc)
+            return 0
+    return lapsed
 
 
 def _chores_came_back(sources: set[str], keep_keys: set[str]) -> list[dict]:

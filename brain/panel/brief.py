@@ -110,7 +110,75 @@ Rules that matter more than style:
   not news; leave it out.
 - Write every time of day in ONE format, the one the prompt names. Never
   mix "10:20 PM" and "23:28" in one message.
+- Never tell them to sign in, log in or re-authenticate unless a reason
+  above says a sign-in has failed. Missing usage figures are not a
+  sign-in problem; the prompt says when they are and when they need
+  nothing at all.
 """
+
+# The usage tracker's codes whose remedy is the account sign-in (the
+# panel's Sign in again button). Every other code either needs nothing
+# (`usage_store.NEEDS_NOTHING`, stamped on the payload as `needs_nothing`)
+# or is a fault about the tracker rather than the sign-in.
+SIGN_IN_CODES = frozenset({"no_oauth_token", "http_401",
+                           "oauth_token_lacks_usage_scope"})
+
+
+def _usage_waits(state: dict) -> bool:
+    """Whether the usage figures are missing for a reason that needs
+    nothing from anybody — the endpoint's own rate limit, a credential
+    between refreshes, an API key with no window to report."""
+    limits = state.get("usage_limits") or {}
+    return bool(limits) and bool(limits.get("needs_nothing"))
+
+
+def _health_reason(state: dict) -> tuple[str, str]:
+    """The worst health problem worth a morning message, or ("", "").
+
+    A problem about the usage figures while they are only waiting is not
+    one: `health.problems` already stands it down when the flag rides on
+    the payload, and this asks again because a verdict read from a cache
+    or an older mirror may not carry it — and a brief that said "sign in
+    again" about a rate limit is the message that sends somebody to redo
+    a sign-in that was working.
+    """
+    health = state.get("health") or {}
+    if health.get("state") not in ("degraded", "failed"):
+        return "", ""
+    problems = [p for p in health.get("problems") or [] if isinstance(p, dict)]
+    if not problems:
+        return health["state"], health.get("reason") or "no reason recorded"
+    for p in problems:
+        if p.get("id") == "usage" and _usage_waits(state):
+            continue
+        if p.get("state") not in ("degraded", "failed"):
+            continue
+        return p["state"], p.get("what") or p.get("reason") or (
+            "no reason recorded")
+    return "", ""
+
+
+def usage_line(state: dict) -> str:
+    """What the prompt says about the usage figures, or "".
+
+    Said rather than left to the model's tools: `get_health` hands it the
+    tracker's last word, and a model reading "the usage figures are not
+    being reported" beside a 429 will helpfully suggest signing in.
+    """
+    limits = state.get("usage_limits") or {}
+    if not limits:
+        return ""
+    code = str(limits.get("code") or "")
+    if limits.get("needs_nothing"):
+        return ("The Claude usage figures are missing right now "
+                f"({code}) for a reason that needs nothing from anybody — "
+                "it clears on its own. Do not mention it, and do not tell "
+                "anybody to sign in.")
+    if code in SIGN_IN_CODES:
+        return ("The Claude usage figures cannot be read because of the "
+                f"sign-in ({code}). If you mention it, the remedy is Sign in "
+                "again under the brAIn panel's settings, Account.")
+    return ""
 
 
 def _finding_line(f: dict) -> str:
@@ -136,11 +204,9 @@ def worth_saying(state: dict) -> list[str]:
     """
     reasons: list[str] = []
 
-    health = (state.get("health") or {})
-    if health.get("state") in ("degraded", "failed"):
-        reasons.append(
-            f"brAIn itself is {health['state']}: "
-            f"{health.get('reason') or 'no reason recorded'}")
+    sick, why = _health_reason(state)
+    if sick:
+        reasons.append(f"brAIn itself is {sick}: {why}")
 
     fresh = [f for f in state.get("new_findings") or []
              if f.get("severity", "warning") in NEWS_SEVERITIES]
@@ -346,6 +412,8 @@ def frame(reasons: list[str], state: dict) -> str:
     # are what makes a reason SPECIFIC without spending a tool call, and
     # what stops a message repeating something the homeowner has
     # corrected.
+    if usage_line(state):
+        lines += ["", usage_line(state)]
     if str(state.get("house") or "").strip():
         lines += ["", str(state["house"]).strip()]
     if str(state.get("memory") or "").strip():
@@ -390,7 +458,8 @@ def due(now: float, minute_now: int, wake_minute: float | None,
 def state_from(findings: list[dict], health: dict, overnight: dict,
                since: float, healing: list[str] | None = None,
                morning: dict | None = None,
-               now: float | None = None) -> dict:
+               now: float | None = None,
+               usage: dict | None = None) -> dict:
     """Everything `worth_saying` reads, gathered from what is already known.
 
     `findings` is the LIVE list: a row triage held back is shown to
@@ -420,6 +489,9 @@ def state_from(findings: list[dict], health: dict, overnight: dict,
         "overnight": overnight or {},
         "morning": morning or {},
         "healing": list(healing or []),
+        # The tracker's own word on the usage figures (`usage_store.
+        # limits_problem`), only while they are missing.
+        "usage_limits": dict((usage or {}).get("limits") or {}),
         "since": since,
         "now": now,
     }

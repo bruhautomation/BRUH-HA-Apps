@@ -673,3 +673,72 @@ class TestUrgentCardsRaiseARepair(ServerStoresCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheOpenFindingsSensorIsTheQueue(ServerStoresCase):
+    """`sensor.brain_open_findings` read the findings mirror's own `open` —
+    the findings alone — while every panel surface reads the queue
+    (`cases.queue_count`): findings, questions and suggestions, and a row
+    still waiting for its first look past `triage.SHOW_AFTER_S`. So one
+    open question was a badge of 3 beside a sensor of 2."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        env_dir = str(Path(__file__).resolve().parent)
+        if env_dir not in sys.path:
+            sys.path.insert(0, env_dir)
+        import brain_ha_env as env
+        cls.sensor, _binary = _import_platforms()
+        # `update` imports the mirror's reader at call time; the real one,
+        # out of the integration loaded for real.
+        cls.findings = env.load_integration().findings
+
+    def file_unlooked(self):
+        fs = self.server.findings_store
+        [row] = fs.add_many(self.server.triage.gate([{
+            "text": "The cellar sensor reads far outside its range",
+            "severity": "warning", "entity_id": "sensor.cellar",
+            "source": "check:base.unusual"}]))
+        items = fs._load()
+        for item in items:
+            if item["ts"] == row["ts"]:
+                item["ts"] -= self.server.triage.SHOW_AFTER_S + 60
+        fs._write(items)
+
+    def test_the_mirror_and_the_sensor_count_what_the_panel_counts(self):
+        (self.root / "config" / ".brain").mkdir(parents=True, exist_ok=True)
+        # Where the integration reads it, so both halves meet on one file.
+        fs = self.server.findings_store
+        p = patch.object(fs, "STATE_FILE", self.root / "config" / ".brain"
+                         / self.findings.FINDINGS_STATE_FILENAME)
+        p.start()
+        self.addCleanup(p.stop)
+        self.file_problem()
+        self.file_unlooked()
+        self.file_question()
+        fs = self.server.findings_store
+        fs.publish_state()
+        self.server.publish_status()
+        panel = self.server._findings_payload()["open"]
+        self.assertEqual(panel, 3)
+        mirror = json.loads(fs.STATE_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(mirror["open"], panel)
+        # The findings alone are still said, under their own name.
+        self.assertEqual(mirror["findings_open"], 2)
+
+        root = self.root / "config"
+
+        class Config:
+            def path(self, *parts):
+                return str(root.joinpath(*parts))
+
+        entity = self.sensor.BrainOpenFindingsSensor(None)
+        entity.hass = types.SimpleNamespace(config=Config())
+        parent = types.ModuleType("brain_numbers_cc")
+        parent.__path__ = [str(INTEGRATION_DIR)]
+        with patch.dict(sys.modules, {"brain_numbers_cc": parent,
+                                      "brain_numbers_cc.findings":
+                                          self.findings}):
+            entity.update()
+        self.assertEqual(entity._attr_native_value, panel)

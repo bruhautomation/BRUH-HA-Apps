@@ -32,7 +32,9 @@ because "I could not look" is never "nothing there".
 batch every minute and a muted producer drops the same row every pass, so
 an identical `(kind, subject, check, reason)` inside :data:`MERGE_S` is
 the same decision and is written once: the row says when brAIn FIRST made
-it, which is the instant a person is asking about. The file is capped by
+it, which is the instant a person is asking about. A standing decision
+(:data:`FOLD_KINDS`) made again past that window folds into its row —
+``count`` and ``last_seen`` — rather than being a new line every pass. The file is capped by
 line count the way the run journal is, rewritten only well past the cap.
 
 It never creates its own directory — `/data` exists in the add-on, and a
@@ -79,6 +81,18 @@ KINDS = {
     "look_watch": "the first look decided to watch it",
     "held": "looked at, and held back from the list",
 }
+
+# The decisions that are STANDING answers rather than events: a re-report
+# the settled ledger swallowed, a rule somebody corrected, a muted
+# producer, a rule on trial, a check that gave up. Each checks pass makes
+# the same one again about the same row — ten lines a day saying "you said
+# you had fixed it" about one finding, which is a trail nobody can read past
+# the first screen. So an identical one past `MERGE_S` FOLDS into the row
+# already there: `count` goes up and `last_seen` moves, while `ts` stays the
+# first time, which is still the instant a person asks about. A hold, a
+# look's verdict or a notification decision is an event at a time and is
+# written again past the window, as before.
+FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:
@@ -155,18 +169,64 @@ def note_many(rows, now: float | None = None) -> int:
         if not fresh:
             return 0
         try:
+            if _fold(fresh, now):
+                return len(fresh)
             with open(TRAIL_FILE, "a", encoding="utf-8") as fh:
                 for row in fresh:
                     fh.write(json.dumps(row, separators=(",", ":")) + "\n")
             if _count_lines() > MAX_LINES + MAX_LINES // 4:
                 kept = _read_all()[-MAX_LINES:]
-                atomic_write.write_text(
-                    TRAIL_FILE, "".join(json.dumps(r, separators=(",", ":"))
-                                        + "\n" for r in kept))
+                _rewrite(kept)
         except OSError as exc:
             log.debug("could not write the decision trail: %s", exc)
             return 0
     return len(fresh)
+
+
+def _key(row: dict) -> tuple:
+    return (row.get("kind"), row.get("subject") or "", row.get("check") or "",
+            row.get("reason") or "")
+
+
+def _rewrite(rows: list[dict]) -> None:
+    atomic_write.write_text(
+        TRAIL_FILE, "".join(json.dumps(r, separators=(",", ":")) + "\n"
+                            for r in rows))
+
+
+def _fold(fresh: list[dict], now: float) -> bool:
+    """Fold standing decisions into the rows already on disk; append the
+    rest. True when the file was rewritten (and `fresh` is all recorded),
+    False when there was nothing to fold and the caller appends. Read off
+    the file rather than memory, so a restart folds too."""
+    if not any(r["kind"] in FOLD_KINDS for r in fresh):
+        return False
+    if not os.path.exists(TRAIL_FILE):
+        return False
+    rows = _read_all()
+    where = {_key(r): i for i, r in enumerate(rows) if r["kind"] in FOLD_KINDS}
+    folded = False
+    for row in fresh:
+        i = where.get(_key(row)) if row["kind"] in FOLD_KINDS else None
+        if i is None:
+            rows.append(row)
+            if row["kind"] in FOLD_KINDS:
+                where[_key(row)] = len(rows) - 1
+            continue
+        old = rows[i]
+        old["count"] = int(old.get("count") or 1) + 1
+        old["last_seen"] = int(now)
+        folded = True
+    if not folded:
+        return False
+    _rewrite(rows[-MAX_LINES:])
+    return True
+
+
+def _seen(row: dict) -> int:
+    """When a decision was last made: a folded row's `last_seen`, else its
+    one time."""
+    return int(row.get("last_seen") or row.get("ts") or 0)
 
 
 def note(kind: str, subject: str = "", reason: str = "", *, check: str = "",
@@ -234,8 +294,8 @@ def for_subject(subject: str, *, since: float = 0.0, limit: int = 20,
     if rows is None:
         rows, readable = read()
     hits = [dict(r) for r in rows
-            if _about(r, subject) and int(r.get("ts") or 0) >= since]
-    hits.sort(key=lambda r: int(r.get("ts") or 0), reverse=True)
+            if _about(r, subject) and _seen(r) >= since]
+    hits.sort(key=_seen, reverse=True)
     hits = hits[:max(1, int(limit or 20))]
     for row in hits:
         row["meaning"] = KINDS.get(row["kind"], "")
@@ -248,12 +308,12 @@ def summary(now: float | None = None, window_s: float = 86400.0) -> dict:
     the newest stamp, and whether the file could be read at all."""
     now = time.time() if now is None else float(now)
     rows, readable = read()
-    recent = [r for r in rows if int(r.get("ts") or 0) >= now - window_s]
+    recent = [r for r in rows if _seen(r) >= now - window_s]
     counts: dict[str, int] = {}
     for row in recent:
         counts[row["kind"]] = counts.get(row["kind"], 0) + 1
     return {"readable": readable, "rows": len(rows),
-            "last": max((int(r.get("ts") or 0) for r in rows), default=0),
+            "last": max((_seen(r) for r in rows), default=0),
             "day": counts, "writable": _parent_exists()}
 
 
@@ -325,6 +385,6 @@ def clear_memory() -> None:
         _RECENT.clear()
 
 
-__all__ = ["KINDS", "MAX_LINES", "MERGE_S", "TRAIL_FILE", "clear_memory",
+__all__ = ["FOLD_KINDS", "KINDS", "MAX_LINES", "MERGE_S", "TRAIL_FILE", "clear_memory",
            "for_subject", "note", "note_many", "pass_rows", "read",
            "rows_for", "summary"]

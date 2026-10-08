@@ -66,7 +66,8 @@ OUTSIDE_PLATFORMS = frozenset({
     "pirateweather", "tomorrowio", "nws", "buienradar", "smhi", "ipma",
     "aemet", "environment_canada", "meteo_france", "bom", "open_meteo",
     "weatherkit", "weatherflow", "weatherflow_cloud", "co2signal",
-    "electricity_maps", "nordpool", "entsoe",
+    "electricity_maps", "nordpool", "entsoe", "astroweather", "weatherbit",
+    "visual_crossing", "meteoblue", "openuv", "sun", "moon", "season",
 })
 # A tariff or an intensity: anything per kWh/MWh/Wh, which is the grid's
 # number rather than the house's.

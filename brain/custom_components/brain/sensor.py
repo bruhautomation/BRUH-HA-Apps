@@ -875,6 +875,15 @@ class BrainOpenFindingsSensor(SensorEntity):
     Reads the mirror the add-on republishes on every findings change
     (`findings.py`); unavailable until the add-on has ever written one,
     which is what tells a fresh install apart from a clean bill of health.
+
+    The STATE is the queue, the one count every panel surface reads
+    (`queue_count` in the status mirror, rewritten every minute): open
+    findings, questions and suggestions, and a row still waiting for its
+    first look. It read the findings mirror's own findings-only count,
+    which is how one open question was a badge of 3 beside a sensor of 2.
+    The findings alone ride as `findings_open`. A status file that is
+    missing or stale is no number (unknown, with the reason), never the
+    findings-only figure dressed as the queue.
     """
 
     _attr_has_entity_name = True
@@ -895,6 +904,7 @@ class BrainOpenFindingsSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_open_findings"
         self._attr_native_value = 0
         self._state: dict[str, Any] | None = None
+        self._reason = ""
 
     @property
     def available(self) -> bool:
@@ -912,6 +922,9 @@ class BrainOpenFindingsSensor(SensorEntity):
             "info": int(by_sev.get("info") or 0),
             "findings": [str(f.get("text") or "") for f in rows[:20]],
             "newest": str(rows[0].get("text") or "") if rows else None,
+            "findings_open": int(state.get("findings_open")
+                                 or state.get("open") or 0),
+            **({"reason": self._reason} if self._reason else {}),
         }
 
     def update(self) -> None:
@@ -927,7 +940,13 @@ class BrainOpenFindingsSensor(SensorEntity):
             self._state = None
             return
         self._state = state
-        self._attr_native_value = int(state.get("open") or 0)
+        try:
+            value, reason = status_mirror.count(
+                status_path(self.hass), "queue_count")
+        except Exception:  # noqa: BLE001 — never take HA down over a sensor
+            value, reason = None, "the status file could not be read"
+        self._attr_native_value = value
+        self._reason = reason
 
 
 class BrainLastLearnedSensor(SensorEntity):

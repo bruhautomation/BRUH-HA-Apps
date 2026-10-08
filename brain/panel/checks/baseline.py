@@ -80,6 +80,75 @@ MEASURED_CLASSES = frozenset({"measurement"})
 # `forecast.decline` has the fix that matters on it.
 DRIFT_SPREADS = 4.0
 
+# --- readings that are not a measurement of the house -------------------
+# `state_class: measurement` says the recorder keeps a mean, not that the
+# number is something in the house moving. Both checks here spend a row
+# cap, and past it they say nothing at all — so one print job, a weather
+# integration's forecast and a runtime counter that resets at midnight
+# were enough to stand the whole check down on a house with a real fault
+# in it. Each exclusion is checkable evidence first (the integration, the
+# unit, the device class), and a name only in the cheap direction (whole
+# words: a missed unusual reading costs one card, a false one the list).
+# A span is a configured or last-measured figure — a timer's length, how
+# long the last run took, time at home today — never a quantity that is
+# unusual for this hour of the week.
+SPAN_CLASSES = frozenset({"duration", "timestamp", "date", "enum"})
+SPAN_UNITS = frozenset({"ms", "s", "min", "h", "d", "w"})
+# A print job's numbers are the job's, and so are a printer's heaters
+# (unusual every time it prints).
+PRINTER_PLATFORMS = frozenset({
+    "octoprint", "prusalink", "bambu_lab", "moonraker", "klipper",
+    "elegoo_printer", "anycubic_cloud", "creality_cloud", "duet3d",
+})
+JOB_WORDS = frozenset({"progress", "layer", "layers", "remaining",
+                       "elapsed", "eta", "job"})
+# A setpoint is what somebody asked for, and it moves when they change it.
+SETPOINT_WORDS = frozenset({"target", "setpoint", "setpoints"})
+# A counter that resets every midnight is high at 23:00 and zero at 00:05
+# by construction.
+DAILY_WORDS = frozenset({"today", "yesterday", "daily"})
+
+
+def _name_words(house: House, eid: str, st: dict) -> list[list[str]]:
+    import re  # noqa: PLC0415
+
+    attrs = st.get("attributes") or {}
+    reg = house.registry.get(eid) or {}
+    return [[w for w in re.split(r"[^a-z0-9]+", str(name or "").lower()) if w]
+            for name in (attrs.get("friendly_name"), reg.get("name"),
+                         reg.get("original_name"), eid.split(".", 1)[-1])]
+
+
+def not_a_house_reading(house: House, eid: str, st: dict) -> str:
+    """Why this reading is not a measurement of the house, or "" when it is.
+
+    Shared by `base.unusual` and `forecast.decline` through `eligible`,
+    and asked BEFORE either check's row cap, which is the point: a row
+    spent on a forecast is a row the cap counts.
+    """
+    attrs = st.get("attributes") or {}
+    reg = house.registry.get(eid) or {}
+    platform = str(reg.get("platform") or "")
+    if platform in devices.SELF_PLATFORMS:
+        return "brAIn's own sensor"
+    if platform in PRINTER_PLATFORMS:
+        return "a printer's job"
+    if str(attrs.get("device_class") or "") in SPAN_CLASSES:
+        return "a span, not a quantity"
+    if str(attrs.get("unit_of_measurement") or "").strip() in SPAN_UNITS:
+        return "a span, not a quantity"
+    for words in _name_words(house, eid, st):
+        found = set(words)
+        if found & SETPOINT_WORDS or "set point" in " ".join(words):
+            return "a setpoint somebody chose"
+        if found & DAILY_WORDS:
+            return "a counter that resets daily"
+        if found & JOB_WORDS and found & devices._PAIR_WORDS:  # noqa: SLF001
+            return "a printer's job"
+    from . import forecasts  # noqa: PLC0415 — forecasts imports this module
+    unit = attrs.get("unit_of_measurement") or ""
+    return forecasts.outside_cause(house, eid, st, unit)
+
 
 def eligible(house: House, eid: str, st: dict) -> bool:
     """Whether a reading from this entity is worth reporting on at all.
@@ -116,7 +185,9 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     # node, and they share the question so they cannot disagree about it.
     if devices.out_of_range(st, eid, house.world):
         return False
-    return domain_of(eid) == "sensor"
+    if domain_of(eid) != "sensor":
+        return False
+    return not not_a_house_reading(house, eid, st)
 
 
 def unusual(snap: dict, now: float) -> list[dict]:

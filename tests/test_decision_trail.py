@@ -56,6 +56,39 @@ class TestWriting(TrailCase):
         self.assertEqual([r["ts"] for r in rows],
                          [int(NOW), int(NOW + trail.MERGE_S + 1)])
 
+    def test_a_standing_decision_folds_into_one_row_past_the_window(self):
+        """"You said you had fixed it", about one finding, on every checks
+        pass: ten lines a day is a trail nobody reads past the first
+        screen. Past `MERGE_S` the row counts and moves its last-seen time;
+        `ts` stays the first time."""
+        for i in range(10):
+            trail.note("dedupe", "sensor.a", "you said you had fixed it",
+                       check="dev.unavailable",
+                       now=NOW + i * (trail.MERGE_S + 1))
+        rows, _ = trail.read()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["ts"], int(NOW))
+        self.assertEqual(rows[0]["count"], 10)
+        self.assertEqual(rows[0]["last_seen"],
+                         int(NOW + 9 * (trail.MERGE_S + 1)))
+        # Newest first is by when it was last made, not first.
+        trail.note("gate_hold", "sensor.a", "paused", now=NOW + 60)
+        said = trail.for_subject("sensor.a")["rows"]
+        self.assertEqual(said[0]["kind"], "dedupe")
+
+    def test_the_fold_survives_a_restart(self):
+        trail.note("dedupe", "sensor.a", "fixed", now=NOW)
+        trail.clear_memory()
+        trail.note("dedupe", "sensor.a", "fixed", now=NOW + 60)
+        rows, _ = trail.read()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["count"], 2)
+
+    def test_a_different_subject_is_a_different_row(self):
+        trail.note("dedupe", "sensor.a", "fixed", now=NOW)
+        trail.note("dedupe", "sensor.b", "fixed", now=NOW + trail.MERGE_S + 1)
+        self.assertEqual(len(trail.read()[0]), 2)
+
     def test_a_kind_outside_the_vocabulary_is_dropped(self):
         self.assertEqual(trail.note("because", "sensor.a", "x", now=NOW), 0)
         self.assertEqual(trail.read(), ([], True))
