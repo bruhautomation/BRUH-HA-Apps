@@ -53,6 +53,18 @@ _ENTITY_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w.])")
 _STATES_ATTR_RE = re.compile(r"\bstates\.([a-z_]+)\.([a-z0-9_]+)")
 
 
+class CouldNotLook(Exception):
+    """A check's way of saying "I could not look", from inside the check.
+
+    Most checks name the snapshot keys they need and are skipped before
+    they run when one is missing. A check whose need depends on the house
+    (`chore.job_done` needs a history fetch only when something has just
+    finished) cannot say so up front, so it raises this: `run_all` files
+    it under ``skipped`` with the sentence, never under ``errors``, and a
+    skipped check clears nothing — `clear_resolved`'s rule.
+    """
+
+
 # How many withheld rows one checks pass may hand to the decision trail. A
 # house where every check gives up on everything is a house the trail
 # should describe once, not a reason to grow a list without bound.

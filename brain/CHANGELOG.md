@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.17.7
+
+- brAIn can now tell you a 3D print has finished and is waiting to be taken off, from the status the printer's own integration publishes, with no power sensor needed. The same works for a washing machine, dryer or dishwasher that publishes its own running and finished status. It speaks only when the status really went from running to finished (not a status that has said "finished" all along or since a restart), waits twenty minutes in case you are already there, stops after fourteen hours, and ticking it off is never undone by the status still saying "finished". (reports #31)
+
 ## 2.17.6
 
 - Memory › Knowledge no longer draws an empty rounded bar between the heading and the box you teach brAIn in, and that box's hint now fits on a phone instead of being cut off. (reports #16)
