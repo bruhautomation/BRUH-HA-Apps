@@ -996,7 +996,8 @@ def rank(signals: list[dict]) -> list[dict]:
                        str(s.get("kind") or ""), str(s.get("subject") or "")))
 
 
-def batch(signals: list[dict], cap: int = MAX_BATCH) -> dict:
+def batch(signals: list[dict], cap: int = MAX_BATCH,
+          filed_reserve: int = 0) -> dict:
     """The top `cap`, and how many waited.
 
     `{"batch": [...], "waiting": n, "hot": n}`. The surplus **waits** — it
@@ -1017,9 +1018,28 @@ def batch(signals: list[dict], cap: int = MAX_BATCH) -> dict:
     # rows there is nothing better than their own order, which is what
     # `rank` is; that a house can produce more than `MAX_BATCH` leaks in
     # five minutes is a house with one fault, not two dozen.
+    # (With `filed_reserve`, a hot signal that is not a tripped safety
+    # sensor may wait one look behind the reserved filed rows; see below.)
     hot = [s for s in ranked if s.get("hot")]
     cool = [s for s in ranked if not s.get("hot")]
-    taken = (hot + cool)[:cap]
+    if filed_reserve > 0:
+        # **Up to `filed_reserve` slots are kept for rows a rule filed**
+        # (they carry `finding_ts`), and only a TRIPPED safety sensor goes
+        # ahead of them. A filed row is in the store with a deadline — it is
+        # shown unjudged past `triage.STALE_S` — while a hot state change on
+        # a protected entity is evidence about a moment that the next look,
+        # a minute away, still has; a busy house's hot changes otherwise
+        # filled every slot and every filed row was shown as if nothing had
+        # looked. Past the reserve, filed rows still come before live cool
+        # signals, for the same deadline.
+        safe = [s for s in hot if s.get("safety")]
+        other_hot = [s for s in hot if not s.get("safety")]
+        filed = [s for s in cool if s.get("finding_ts")]
+        live = [s for s in cool if not s.get("finding_ts")]
+        keep = min(int(filed_reserve), len(filed))
+        taken = (safe + filed[:keep] + other_hot + filed[keep:] + live)[:cap]
+    else:
+        taken = (hot + cool)[:cap]
     return {
         "batch": taken,
         "waiting": max(0, len(ranked) - len(taken)),
@@ -1043,6 +1063,13 @@ ROW_CHARS = 200
 # investigation that asks for them. Two, because the useful pair is nearly
 # always "what it reads now" and "what it read before".
 ROW_EVIDENCE = 2
+# Room kept for a FILED row's own detail. A check's title plus its sentence
+# already fills `ROW_CHARS`, and the detail rides as the row's evidence —
+# so on exactly the rows a rule filed, the look was handed the claim and
+# never the evidence the claim rests on: "reads 0" without "while the air
+# conditioning ran for hours", which a look then answered by explaining
+# the zero. A row carrying `finding_ts` gets this much more, for that.
+FILED_DETAIL_CHARS = 180
 
 
 def prompt_rows(signals: list[dict], now: float | None = None, *,
@@ -1089,14 +1116,15 @@ def prompt_rows(signals: list[dict], now: float | None = None, *,
         if now is not None:
             head += f" {_ago(now - float(sig.get('seen_at') or now))}"
         row = f"{head} — {str(sig.get('text') or '').strip()}"
+        cap = ROW_CHARS + (FILED_DETAIL_CHARS if sig.get("finding_ts") else 0)
         for ev in (sig.get("evidence") or [])[:ROW_EVIDENCE]:
             if not isinstance(ev, dict):
                 continue
             piece = f" ({ev.get('entity')}={ev.get('value')})"
-            if len(row) + len(piece) > ROW_CHARS:
+            if len(row) + len(piece) > cap:
                 break
             row += piece
-        out.append(row[:ROW_CHARS])
+        out.append(row[:cap])
     return out
 
 
