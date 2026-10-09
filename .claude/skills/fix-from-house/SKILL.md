@@ -148,8 +148,24 @@ the same thing in different words. A pane that works and is a mess is an
 issue. File at most five new UX issues a run, the most consequential first,
 so the drain stays finishable.
 
-The house does not take screenshots. You do, from this repository:
+Start from the house's own pictures, then take your own:
 
+- Read the newest open issue titled `[Panel screens] UI audit on brAIn …`
+  (stream `screens`) if there is one. It is the house photographing its own
+  panel: every screen at 390px light and dark and at 1200px, redacted on
+  the box before capture (calendar events, addresses, credentials and
+  key-shaped text blacked out, names aliased, images and unreachable frames
+  covered as *not captured*), plus the layout faults a script measured on
+  that real house. Open each picture (the `screens/brain-<version>/…png`
+  files in the reports repository, with `get_file_contents`) and judge them
+  as a designer would: spacing, alignment, hierarchy, density, consistency
+  between screens, empty states, dark mode, and whether each screen looks
+  like a calm, modern product on a phone. A measured problem is a lead to
+  confirm on a fixture, not a verdict; a black bar or a grey *not
+  captured* box is the redaction, never a bug. Every real problem becomes
+  a `devloop:ux` issue (below), or the fix itself when it is small. When
+  the audit is done, comment once on that issue saying what you filed, and
+  close it as fixed if everything in it was handled.
 - Read the reports issue titled `[House shape]` if there is one. It is an
   aliased outline of a real house (how many lights, rooms, which features
   are on) and tells you what a realistic panel looks like.
@@ -336,10 +352,10 @@ not depend on the current one's result. So while a pull request is in CI:
   issue gives. For a UI issue, extend or add a `tests/manual/measure-*.mjs`
   that fails on it (and add a new measure to CI's `layout` job). A fix with
   no failing test first is not a fix you can claim works.
-- **See every `devloop:ux` issue before and after.** The house cannot see
-  its own panel, so an issue labelled `devloop:ux` (or one whose title
-  names a pane) is about a screen nobody in the loop has looked at yet.
-  Before writing the fix, drive that pane with Playwright on
+- **See every `devloop:ux` issue before and after.** An issue labelled
+  `devloop:ux` (or one whose title names a pane) is about a screen. Look
+  first at that pane in the house's newest Screens pictures (the UX audit
+  above), which show it on a real house. Before writing the fix, drive that pane with Playwright on
   `tests/manual/today-fixture.mjs` at 390px with touch and at 1200px,
   screenshot it, and look at it as the owner who complained would: is
   what they said true on screen, and what else on that pane is crowded,

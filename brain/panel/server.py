@@ -149,6 +149,7 @@ import brief
 import capture
 import devloop
 import devloop.github
+import devloop.screens
 import devloop.streams
 import devloop.upstream
 import card_tags
@@ -15708,6 +15709,8 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         if stream == "snapshot":
             rows = dl_streams.snapshot(names, payload, version)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "screens":
+            return await _devloop_screens(payload, names, version)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -15764,6 +15767,69 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         return {"error": str(exc)[:200]}
 
 
+DEVLOOP_SCREENS_TIMEOUT_S = 900
+
+
+async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
+    """Photograph the panel, redacted, and file the release's one issue.
+
+    The confidential strings are read off the house first, and a house that
+    could not be read is not photographed: a calendar event that could not
+    be looked up is one that could not be blanked."""
+    screens = devloop.screens
+    if not screens.find_browser():
+        return {"skipped": "Chromium is not installed on this box"}
+    try:
+        import aiohttp
+
+        import ha_data  # deferred so the module loads without aiohttp in tests
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states", timeout=60)
+    except Exception as exc:  # noqa: BLE001
+        states = None
+        log.info("devloop screens: could not read the states: %s", exc)
+    if not isinstance(states, list):
+        await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        return {"error": ("could not read the house's calendars and addresses "
+                          "to blank them, so nothing was photographed")}
+    confidential = screens.confidential_strings(
+        states, await asyncio.to_thread(occasions.load))
+    aliases = devloop.upstream.Aliases.load()
+    aliases.learn(names)
+    base = devloop.data_dir()
+    out_dir = screens.new_capture_dir(base)
+    try:
+        result = await asyncio.wait_for(
+            screens.capture(out_dir, confidential=confidential, aliases=aliases,
+                            url=f"http://127.0.0.1:{BIND_PORT}/"),
+            DEVLOOP_SCREENS_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — a capture that failed sends nothing
+        shutil.rmtree(out_dir, ignore_errors=True)
+        await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        return {"error": f"the screens could not be captured: {exc}"[:200]}
+    await asyncio.to_thread(screens.prune, base, out_dir.name)
+    rows = screens.rows(result, version, out_dir.name)
+    if not rows:
+        await asyncio.to_thread(devloop.upstream.mark_run, "screens")
+        return {"error": "no screen could be captured and redacted: "
+                         + "; ".join(result.get("errors") or [])[:160]}
+    out = await asyncio.to_thread(devloop.upstream.ingest, "screens", rows,
+                                  payload, names)
+    return {**out, "shots": len(result.get("shots") or []),
+            "problems": len(result.get("problems") or [])}
+
+
+async def h_devloop_screen(request: web.Request) -> web.Response:
+    """One redacted picture this box captured, for the review preview —
+    the exact file that would be uploaded."""
+    path = devloop.screens.local_file(devloop.data_dir(),
+                                      request.match_info["capture"],
+                                      request.match_info["name"])
+    if path is None:
+        return web.json_response({"error": "no such picture"}, status=404)
+    return web.FileResponse(path, headers={"Cache-Control": "no-store"})
+
+
 async def _devloop_look(topic: str) -> None:
     """A "What do you want to fix?" request, run as a press and sent
     straight away."""
@@ -15793,6 +15859,10 @@ def _devloop_payload() -> dict:
         "status": devloop.upstream.status(),
         "queue": queue,
         "held": _devloop_held(),
+        # A line under a stream that cannot do its job on this box.
+        "notes": ({} if devloop.screens.find_browser() else
+                  {"screens": "Chromium is not on this box, so nothing can "
+                              "be photographed."}),
     }
 
 
@@ -22191,6 +22261,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/devloop/look", h_devloop_look)
     app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
+    app.router.add_get("/api/devloop/screen/{capture}/{name}", h_devloop_screen)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
     app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
     app.router.add_get("/api/resident/eval", h_resident_eval_get)

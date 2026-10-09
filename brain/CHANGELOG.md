@@ -2,6 +2,26 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.10
+
+### Added
+
+- **Screens**, a new stream in ⚙ › Developer › Help develop brAIn (off until you switch it on; weekly). brAIn opens its own panel in a browser on your box and photographs every main screen and three settings sections, on a phone in light and dark and on a laptop. It measures the layout faults a script can see (a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast). It files them with the pictures as one issue per release in your private reports repository, so the development loop can see what the panel really looks like and fix it to a modern standard.
+
+### Security
+
+- Before each picture, brAIn rewrites every piece of text on the page, including inside chart frames and in fields:
+  - your calendar events (title, description, location) are blacked out whole;
+  - addresses, postcodes, emails, phone numbers, coordinates and zone names are blacked out;
+  - passwords, tokens and anything key-shaped are blacked out;
+  - names and rooms get the issue's aliases.
+
+  Canvases, video, images that are not brAIn's own icons, and any frame it cannot get into are covered with a grey *not captured* box. If brAIn cannot read the house's calendars first, it takes no pictures. **View** on a waiting report shows the pictures exactly as they would be uploaded. The token needs **Contents: Read and write** on the reports repository for this stream only (see `DEVLOOP.md`).
+
+### Changed
+
+- The add-on image now includes Chromium and two font packages for this stream, which makes the download larger.
+
 ## 2.18.9
 
 ### Changed

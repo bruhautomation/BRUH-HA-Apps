@@ -4179,6 +4179,7 @@ function paintDevloop(data) {
   const last = (data.status || {}).last_run || {};
   const useful = (data.status || {}).usefulness || {};
   const slowed = (data.status || {}).slowed || {};
+  const notes = data.notes || {};
   $("#devStreams").innerHTML = (data.streams || [])
     .filter((st) => st.name !== "look").map((st) => {
       let when = last[st.name]
@@ -4208,7 +4209,9 @@ function paintDevloop(data) {
         + `<select class="sel" data-dev-hours="${esc(st.name)}"`
         + ` aria-label="How often ${esc(name)} runs">${opts}</select>`
         + `<button class="btn tiny" data-dev-run="${esc(st.name)}"`
-        + ` aria-label="Run ${esc(name)} now">Run</button></div>${slow}</div>`;
+        + ` aria-label="Run ${esc(name)} now">Run</button></div>${slow}`
+        + (notes[st.name] ? `<div class="hint tight">${esc(notes[st.name])}</div>` : "")
+        + `</div>`;
     }).join("");
   const looks = data.looks || {};
   // Where the last request went: each report it became, its issue, and
@@ -4341,8 +4344,8 @@ $("#devQueue").addEventListener("click", async (ev) => {
   const drop = ev.target.closest("[data-dev-discard]");
   if (view) {
     const holder = view.closest(".drow");
-    const already = holder.querySelector(".capview");
-    if (already) { already.remove(); return; }
+    const already = holder.querySelectorAll(".capview");
+    if (already.length) { already.forEach((el) => el.remove()); return; }
     const doc = await devloopCall("api/devloop/item/"
       + encodeURIComponent(view.getAttribute("data-dev-view")));
     if (!doc) return;
@@ -4350,6 +4353,16 @@ $("#devQueue").addEventListener("click", async (ev) => {
     pre.className = "capview";
     pre.textContent = doc.title + "\n\n" + doc.body;
     holder.appendChild(pre);
+    // The pictures a Screens report would upload, as this box redacted
+    // them: what is reviewed is the file that is sent.
+    if ((doc.images || []).length) {
+      const grid = document.createElement("div");
+      grid.className = "capview devshots";
+      grid.innerHTML = doc.images.map((im) => `<a href="${esc(im.src)}" target="_blank"`
+        + ` rel="noopener"><img loading="lazy" src="${esc(im.src)}" alt="${esc(im.label)}">`
+        + `<span>${esc(im.label)}</span></a>`).join("");
+      holder.appendChild(grid);
+    }
     return;
   }
   if (send) {

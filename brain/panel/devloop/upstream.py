@@ -381,9 +381,13 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         entry["days"] = days[-MAX_DAYS:]
         if "impact" in row:
             entry["impact"] = _clean_impact(row.get("impact"))
-        # A report about a screen of the panel: the house cannot see it, so
-        # the label is what tells the cloud to drive and screenshot it.
+        # A report about a screen of the panel. The label tells the cloud to
+        # look at that pane: a Screens issue brings the house's own pictures
+        # of it, and anything else is driven and photographed on a fixture.
         entry["ux"] = row.get("ux") is True
+        if isinstance(row.get("gallery"), list):
+            entry["gallery"] = _clean_gallery(row["gallery"])
+            entry["capture"] = str(row.get("capture") or "")[:20]
     _prune(items)
     data["swept_at"] = now
     data.setdefault("last_run", {})[stream] = now
@@ -478,6 +482,48 @@ def _date(epoch) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(float(epoch or 0)))
 
 
+def _clean_gallery(rows: list) -> list[dict]:
+    from . import screens  # noqa: PLC0415 — screens imports scrub from here
+    out = []
+    for r in rows[:60]:
+        if not isinstance(r, dict) or not screens.SHOT_RE.match(str(r.get("name") or "")):
+            continue
+        out.append({"name": r["name"], "screen": str(r.get("screen") or "")[:60],
+                    "width": int(r.get("width") or 0),
+                    "scheme": "dark" if r.get("scheme") == "dark" else "light",
+                    "sha": str(r.get("sha") or "")[:64]})
+    return out
+
+
+def _gallery_lines(entry: dict) -> list[str]:
+    """The pictures, one row per screen and a column per view. Built from
+    the catalog's own labels and the links GitHub gave back, and never
+    through the aliases: a link renamed by them leads nowhere."""
+    gallery = entry.get("gallery") or []
+    if not gallery:
+        return []
+    uploaded = entry.get("uploaded") or {}
+    views: list[tuple[int, str]] = []
+    screens_seen: list[str] = []
+    cells: dict[tuple[str, int, str], str] = {}
+    for g in gallery:
+        view = (int(g.get("width") or 0), str(g.get("scheme") or "light"))
+        if view not in views:
+            views.append(view)
+        if g["screen"] not in screens_seen:
+            screens_seen.append(g["screen"])
+        up = uploaded.get(g["name"]) or {}
+        url = up.get("url") if up.get("sha") == g.get("sha") else ""
+        cells[(g["screen"],) + view] = (f"![{g['screen']}, {view[0]}px {view[1]}]({url})"
+                                        if url else f"`{g['name']}` (sent with the issue)")
+    head = "| Screen | " + " | ".join(f"{w}px {sch}" for w, sch in views) + " |"
+    lines = ["## Screens", "", head, "|---" * (len(views) + 1) + "|"]
+    for name in screens_seen:
+        lines.append(f"| {name} | " + " | ".join(
+            cells.get((name, w, sch), "—") for w, sch in views) + " |")
+    return lines + [""]
+
+
 def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     """``{"title", "body"}`` exactly as they would be sent."""
     aliases = aliases or Aliases.load()
@@ -504,6 +550,8 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
         lines += [""] + [clean(line) for line in _impact_lines(entry)]
     if entry.get("body"):
         lines += ["", clean(entry["body"])]
+    if entry.get("gallery"):
+        lines += [""] + _gallery_lines(entry)
     lines += ["", "| | |", "|---|---|",
               f"| brAIn | {clean(entry.get('version', '?'))} |",
               f"| First seen | {_date(entry.get('first_seen'))} |"]
@@ -551,7 +599,16 @@ def preview(fp: str) -> dict | None:
     if not FP_RE.match(fp or ""):
         return None
     entry = _load()["items"].get(fp)
-    return compose(entry) if isinstance(entry, dict) else None
+    if not isinstance(entry, dict):
+        return None
+    doc = compose(entry)
+    # The pictures that would go with it, served from this box so the
+    # review is of exactly what is sent (`api/devloop/screen/...`).
+    if entry.get("gallery") and entry.get("capture"):
+        doc["images"] = [{"src": f"api/devloop/screen/{entry['capture']}/{g['name']}",
+                          "label": f"{g['screen']}, {g['width']}px {g['scheme']}"}
+                         for g in entry["gallery"]]
+    return doc
 
 
 def mark(fp: str, state: str) -> bool:
@@ -766,10 +823,47 @@ def usefulness(v: dict | None = None) -> dict:
     return out
 
 
+def _upload_gallery(token: str, repo: str, entry: dict) -> bool:
+    """Put the entry's pictures in the repository before the issue that
+    shows them. A picture already there with the same bytes is not sent
+    again. Any failure stops the issue: an issue pointing at pictures that
+    are not there is a page of broken images."""
+    gallery = entry.get("gallery") or []
+    if not gallery:
+        return True
+    from . import screens  # noqa: PLC0415
+    from . import data_dir  # noqa: PLC0415
+    uploaded = dict(entry.get("uploaded") or {})
+    for g in gallery:
+        if (uploaded.get(g["name"]) or {}).get("sha") == g.get("sha"):
+            continue
+        path = screens.local_file(data_dir(), entry.get("capture", ""), g["name"])
+        if path is None:
+            entry["error"] = ("the pictures for this report are no longer on "
+                              "this box — run Screens again")
+            return False
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != g.get("sha"):
+            entry["error"] = "a picture changed on disk after it was redacted"
+            return False
+        url, err = github.put_file(
+            token, repo, screens.repo_path(entry.get("version", "dev"), g["name"]),
+            data, f"brAIn screens: {g['screen']} at {g['width']}px {g['scheme']}")
+        if err:
+            entry["error"] = err
+            return False
+        uploaded[g["name"]] = {"sha": g["sha"], "url": url}
+    entry["uploaded"] = {g["name"]: uploaded[g["name"]] for g in gallery
+                         if g["name"] in uploaded}
+    return True
+
+
 def _rewrite(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
     """A rolling issue is one issue whose body is the current answer: the
     body is rewritten when what it says has changed, and never commented
     on — a scorecard with a comment a day is a scorecard nobody reads."""
+    if not _upload_gallery(token, repo, entry):
+        return False
     doc = compose(entry, aliases)
     digest = _digest(doc["body"])
     if digest == entry.get("body_digest"):
@@ -793,6 +887,8 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
     if number:
         issue, err = github.get_issue(token, repo, number)
     else:
+        if not _upload_gallery(token, repo, entry):
+            return False
         doc = compose(entry, aliases)
         issue, err = github.create_issue(
             token, repo, doc["title"], doc["body"],

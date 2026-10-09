@@ -26,9 +26,10 @@ The four modules:
 leaves out of every Home Assistant backup, and is never handed back to
 the browser: the panel answers whether one is set, never what it is.
 It should be a fine-grained token scoped to ONE private repository with
-Issues read/write and nothing else. The house can file reports; it can
-never write code, so a compromised box can do no more with it than post
-issues nobody else can read. `github.check_repo` refuses a public
+Issues read/write, plus Contents read/write if the Screens stream is on
+(the pictures are files in that repository). It reaches no other
+repository, so a compromised box can do no more with it than post issues
+and pictures in one repository nobody else can read. `github.check_repo` refuses a public
 repository outright, because a report is evidence about a home.
 """
 from __future__ import annotations
@@ -104,6 +105,14 @@ STREAMS: dict[str, dict] = {
         "label": "Design review: what brAIn showed you, judged as a product (one Claude run)",
         "cost": "claude", "clears": False, "rolling": False,
         "default_on": False, "default_hours": 24},
+    # brAIn photographing its own panel, redacted, at a phone's width and a
+    # laptop's, with the layout faults a script can measure. The pictures
+    # go to the private repository with the issue; `devloop/screens.py`
+    # says what is blanked and covered before anything is captured.
+    "screens": {
+        "label": "Screens: pictures of brAIn's own panel, redacted, with the layout faults measured",
+        "cost": "free", "clears": False, "rolling": True,
+        "default_on": False, "default_hours": 168},
     "look": {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
@@ -124,7 +133,7 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 # open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
-                   "look": 0}
+                   "screens": 168, "look": 0}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
 
 DEFAULTS = {

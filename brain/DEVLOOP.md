@@ -25,16 +25,18 @@ schedule and its own **Run** button:
 | **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
-| **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the cloud screenshots the screens it names | no | one run |
+| **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
+| **Screens** | Pictures of brAIn's own panel, taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per release, rewritten in place, with the pictures attached | no, weekly | nothing |
 
-**What do you want to fix?** is the eighth: say it the way you would to a
+**What do you want to fix?** is the ninth: say it the way you would to a
 person ("the settings page is too crowded", "the brief never mentions the
 boiler") and press **Send**. One read-only Claude run works out what is
 really wrong behind it, and files **one** issue (two if you named two
 separate problems) with your words quoted, the real problem, and what
 "fixed" looks like. An issue about a screen is labelled `devloop:ux`, which
-tells the cloud half to drive and screenshot that pane before and after the
-fix: the house never takes screenshots.
+tells the cloud half to look at that pane: in the house's own pictures from
+the latest **Screens** issue, and on a test fixture before and after its
+fix.
 
 **Autopilot** (the switch at the top of the section) is the one choice
 for somebody handing brAIn's development to the loop: every stream on, on
@@ -110,7 +112,34 @@ The same controls are in the terminal as `brain devloop status`,
 - brAIn's version and health verdict;
 - an abridged diagnostics summary: versions, run counts by outcome, the last
   checks pass, and which background services are up;
-- the Impact section's counts.
+- the Impact section's counts;
+- for **Screens**, pictures of the panel, uploaded as files to the same
+  private repository and shown in its issue.
+
+**What a picture shows, and what is taken out first.** brAIn opens its own
+panel in a browser on your box (on loopback; nothing outside the box is
+loaded), and before each picture is taken it rewrites every piece of text
+on the page, in every frame it can reach, including the values in fields:
+
+- anything containing one of your **calendar events** (an event's title,
+  description or location, and the occasions brAIn read off the calendar)
+  is blacked out whole;
+- **addresses** are blacked out: street addresses, postcodes, email
+  addresses, phone numbers, coordinates, every zone's name except Home, and
+  anything Home Assistant holds that reads as an address (a phone's
+  geocoded location, for one);
+- **passwords, keys and tokens** are blacked out: password fields, anything
+  credential-shaped, and any long run of letters and digits that looks like
+  a key;
+- names, rooms and entity ids get the same aliases as the issue text.
+
+Whatever is not text cannot be read, so it is covered with a grey box
+saying *not captured*: canvases, video, images that are not brAIn's own
+icons, and any frame brAIn could not get into. If brAIn cannot read your
+calendars and states first, it takes no pictures at all, and a screen whose
+text could not be rewritten is left out. With *Ask before sending each new
+report* on, **View** on the report shows the pictures exactly as they would
+be uploaded.
 
 **Replaced with aliases before sending:** every entity id, friendly name and
 room name. `light.bedroom_lamp` becomes `light.light_07`, *Master Bedroom*
@@ -129,11 +158,10 @@ becomes *Room 3*, and so on.
 - credentials of any kind: Claude, Home Assistant or GitHub tokens, and
   anything else credential-shaped;
 - `secrets.yaml`;
-- camera images;
+- camera images (a camera picture on a screen is covered);
+- calendar events and addresses (blacked out of every picture);
 - where people are;
-- your memory document as a whole;
-- screenshots. The house takes none. The cloud UX audit described below
-  screenshots brAIn's test fixtures, never your panel.
+- your memory document as a whole.
 
 Even with aliases, a fault list describes the *shape* of a home. That is why
 reports only go to a **private** repository, and brAIn refuses to send to a
@@ -147,7 +175,9 @@ public one.
    Developer settings → Fine-grained tokens.
    - **Repository access:** *Only select repositories*, then just that one.
    - **Repository permissions:** **Issues: Read and write**. *Metadata:
-     Read-only* is added automatically. Add nothing else.
+     Read-only* is added automatically. If you switch **Screens** on, also
+     **Contents: Read and write**, because the pictures are files in that
+     repository (under `screens/`). Add nothing else.
    - **Expiration:** your choice. When the token lapses, brAIn shows the
      error in ⚙ and stops sending until you paste a new one.
 3. In brAIn, open ⚙ › Diagnostics › **Developer** › **Help develop brAIn**.
@@ -158,8 +188,9 @@ Where the token is kept:
 
 - It goes in `/data/secrets`, which Home Assistant backups leave out.
 - The panel never shows it again; it only says that one is saved.
-- It can do nothing but read and write issues in that one repository. In
-  particular it cannot change any code.
+- It can do nothing but read and write issues (and, with Contents, files)
+  in that one repository. It cannot reach brAIn's code or any other
+  repository.
 
 ## Sharing a report with the brAIn project
 

@@ -352,7 +352,8 @@ Think like a person who uses brAIn every day, not like a code reviewer:
 - Use your read-only tools where they help (get_health, get_findings and
   Home Assistant's own reads) to ground it in this house. You cannot see
   the panel: when the issue is about a screen, name the pane and what a
-  person would see there, and the developer will screenshot it.
+  person would see there. The developer looks at it in the house's own
+  redacted screenshots and on a test fixture.
 - If the words are vague, choose the most likely concrete problem and say
   in "why" what you assumed. Never answer with a question.
 - The owner's request IS the issue. Never turn it into a report about a
@@ -383,7 +384,7 @@ fixed. Start "what" with "Still a problem:" in that case."""
 # the checks' scorecard answer that — but "is it worth reading, does it
 # say one thing once, would a person know what to do". It sees the real
 # text: card titles and summaries, the findings as worded, what a look
-# concluded. It cannot see pixels; the cloud screenshots what it names.
+# concluded. It cannot see pixels; the Screens stream's pictures can.
 DESIGN_ROWS = 4
 DESIGN_CHARS = 9000
 DESIGN_SYSTEM = """You are the design lead for brAIn, a Home Assistant add-on meant to be

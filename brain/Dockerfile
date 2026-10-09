@@ -5,7 +5,11 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/base:3.24
 FROM ${BUILD_FROM}
 
-# Install system packages and development tools
+# Install system packages and development tools.
+# chromium and the two font packages are for the development loop's Screens
+# stream (panel/devloop/screens.py): brAIn photographs its own panel, on
+# loopback, to see what a screen looks like. Without fonts a headless
+# browser draws every character as an empty box.
 RUN apk add --no-cache \
     bash \
     curl \
@@ -34,7 +38,10 @@ RUN apk add --no-cache \
     socat \
     su-exec \
     rsync \
-    sqlite
+    sqlite \
+    chromium \
+    font-dejavu \
+    font-noto-emoji
 
 # Install websocat from community repo (may not be in all base images)
 RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community \
