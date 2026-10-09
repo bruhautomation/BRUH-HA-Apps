@@ -69,6 +69,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 
 log = logging.getLogger("brain.thermal")
@@ -183,6 +184,20 @@ FLAT_SWING_C = 1.0
 OUTDOOR_TRIALS = 3
 # How many candidates ride in the store for the Knowledge tab's picker.
 OUTDOOR_LISTED = 8
+
+# A weather service's own temperature sensor is a MODEL's value for a grid
+# square, not a thermometer at this house: an AstroWeather "2m temperature"
+# is the forecast model's air at two metres, and it can be several degrees
+# from the garden on a clear night. It is still a usable reference — often
+# the only one — but every room's `k` is then measured against a model, and
+# the payload says so rather than presenting the physics as measured.
+MODEL_PLATFORMS = frozenset({
+    "astroweather", "open_meteo", "met", "met_eireann", "pirateweather",
+    "tomorrowio", "meteoblue", "visual_crossing", "weatherbit", "weatherkit",
+    "accuweather", "openweathermap", "smhi", "dwd_weather",
+})
+_MODEL_NAME = re.compile(r"\b(forecast|forecasted|model|modelled|modeled|"
+                         r"predicted|\d+\s?m)\b")
 
 # A store older than this describes a season that has ended.
 STALE_DAYS = 10.0
@@ -476,7 +491,8 @@ def expected_fall(entry: dict, indoor: float, outdoor: float) -> float | None:
 def _empty() -> dict:
     return {"built_at": 0, "tz": "", "outdoor": "", "unit": "", "rooms": {},
             "coldest": None, "reason": "", "outdoor_source": "",
-            "outdoor_why": "", "outdoor_candidates": []}
+            "outdoor_why": "", "outdoor_candidates": [],
+            "outdoor_modelled": False, "outdoor_unavailable": []}
 
 
 def load(path: str | None = None) -> dict:
@@ -566,12 +582,26 @@ def progress(payload: dict | None = None, path: str | None = None,
         # house's thermal model can usefully carry.
         timed = [(v["tau_h"], k, v) for k, v in rooms.items()
                  if isinstance(v, dict) and v.get("tau_h")]
-        said = (f"{house.plural(len(rooms), 'room')} measured against "
+        asked = int(payload.get("asked") or 0)
+        counted = (f"{len(rooms)} of {house.plural(asked, 'room')}"
+                   if asked > len(rooms)
+                   else house.plural(len(rooms), 'room'))
+        said = (f"{counted} measured against "
                 f"{payload.get('outdoor') or 'outdoors'}")
+        if payload.get("outdoor_modelled"):
+            said += (" (a forecast model's value for this location, not a "
+                     "thermometer here)")
+        missing = [str(u) for u in payload.get("outdoor_unavailable") or []]
+        if missing:
+            said += (f" — {', '.join(missing)} is unavailable, so it could "
+                     "not be used")
         if timed:
             tau, eid, entry = min(timed)
             said += (f" · {entry.get('area') or entry.get('name') or eid} "
                      f"holds its heat about {round(tau)} h")
+        detail["asked"] = asked
+        detail["outdoor_modelled"] = bool(payload.get("outdoor_modelled"))
+        detail["outdoor_unavailable"] = missing
         return house.progress(state=house.READY, summary=said + ".", **common)
     return house.progress(
         state=house.COLLECTING,
@@ -849,9 +879,17 @@ def rank_outdoor(states: dict, areas: dict | None = None,
             # An indoor thermometer that never claimed to be outdoors is
             # not a candidate anybody needs to see refused.
             continue
+        modelled = bool(source in MODEL_PLATFORMS or _MODEL_NAME.search(text))
+        if modelled:
+            reasons.append("is a weather service's modelled value for this "
+                           "location, not a thermometer here")
+        missing = str(st.get("state") or "") in ("unavailable", "unknown", "")
+        if missing:
+            reasons.append("is unavailable right now")
         out.append({"entity_id": eid, "name": name[:60], "unit": unit,
                     "score": score, "reasons": reasons,
-                    "ruled_out": ruled_out,
+                    "ruled_out": ruled_out, "named": named,
+                    "modelled": modelled, "unavailable": missing,
                     "eligible": not ruled_out and score > 0})
     out.sort(key=lambda c: (not c["eligible"], -c["score"], c["entity_id"]))
     return out
@@ -866,6 +904,39 @@ def _why(candidate: dict) -> str:
     else:
         said = reasons[0]
     return f"{candidate['name']} ({candidate['entity_id']}) {said}."
+
+
+def _caveats(choice: dict) -> dict:
+    """`modelled` and `unavailable` for a choice, and its `why` saying so.
+
+    A reference that is a forecast model's value is said as one; and when
+    it is, any candidate that measures the air here and would have been
+    the better reference — not ruled out, not itself a model — but is
+    unavailable right now is named, because "the station was down, so the
+    model was used" is the sentence that explains every number after it.
+    """
+    eid = choice.get("entity_id") or ""
+    cands = choice.get("candidates") or []
+    picked = next((c for c in cands if c.get("entity_id") == eid), None)
+    modelled = bool(picked and picked.get("modelled"))
+    unavailable = []
+    if modelled:
+        unavailable = [c["entity_id"] for c in cands
+                       if c.get("entity_id") != eid and c.get("unavailable")
+                       and not c.get("modelled") and not c.get("ruled_out")
+                       and (c.get("named") or 0) > 0]
+    why = choice.get("why") or ""
+    if modelled and "forecast model" not in why:
+        why += (" It is a forecast model's value rather than a thermometer "
+                "here, so every room is measured against a model.")
+    if unavailable:
+        names = ", ".join(next((c["name"] for c in cands
+                                if c["entity_id"] == u), u)
+                          + f" ({u})" for u in unavailable)
+        why += (f" {names}, which measures the air here, is unavailable, "
+                "so it could not be used.")
+    return {**choice, "why": why.strip(), "modelled": modelled,
+            "unavailable": unavailable}
 
 
 def choose_outdoor(states: dict, areas: dict | None = None,
@@ -889,10 +960,11 @@ def choose_outdoor(states: dict, areas: dict | None = None,
             if eid == override:
                 name = str(((st.get("attributes") or {}).get("friendly_name"))
                            or eid)
-                return {"entity_id": eid, "unit": unit, "source": "chosen",
-                        "why": (f"{name} ({eid}) was chosen as the outdoor "
-                                "reference in brAIn's settings."),
-                        "candidates": listed}
+                return _caveats(
+                    {"entity_id": eid, "unit": unit, "source": "chosen",
+                     "why": (f"{name} ({eid}) was chosen as the outdoor "
+                             "reference in brAIn's settings."),
+                     "candidates": listed})
         note = (f"The reference chosen in brAIn's settings, {override}, is "
                 "not a temperature sensor with statistics here, so brAIn "
                 "picked one itself. ")
@@ -901,11 +973,11 @@ def choose_outdoor(states: dict, areas: dict | None = None,
         return {"entity_id": "", "unit": "", "source": "",
                 "why": note + ("No temperature sensor here looks like the "
                                "outdoor air."),
-                "candidates": listed}
+                "candidates": listed, "modelled": False, "unavailable": []}
     best = eligible[0]
-    return {"entity_id": best["entity_id"], "unit": best["unit"],
-            "source": "ranked", "why": note + _why(best),
-            "candidates": listed}
+    return _caveats({"entity_id": best["entity_id"], "unit": best["unit"],
+                     "source": "ranked", "why": note + _why(best),
+                     "candidates": listed})
 
 
 def pick_outdoor(states: dict, areas: dict | None = None,
@@ -975,10 +1047,11 @@ def _settled_outdoor(choice: dict, rows: dict, tz: dt.tzinfo) -> dict:
     best = sorted(trial, key=lambda c: (-c["score"], c["entity_id"]))[0]
     rest = [c for c in choice["candidates"]
             if c["entity_id"] not in {t["entity_id"] for t in trial}]
-    return {**choice, "entity_id": best["entity_id"], "why": _why(best),
-            "candidates": sorted(trial, key=lambda c: (-c["score"],
-                                                       c["entity_id"]))
-            + rest}
+    return _caveats({**choice, "entity_id": best["entity_id"],
+                     "why": _why(best),
+                     "candidates": sorted(trial, key=lambda c: (-c["score"],
+                                                                c["entity_id"]))
+                     + rest})
 
 
 def room_candidates(states: dict, outdoor: str, unit: str,
@@ -1176,6 +1249,8 @@ async def build(session, states: dict, registries: dict | None = None,
     payload["outdoor_source"] = choice["source"]
     payload["outdoor_why"] = choice["why"]
     payload["outdoor_candidates"] = choice["candidates"]
+    payload["outdoor_modelled"] = bool(choice.get("modelled"))
+    payload["outdoor_unavailable"] = list(choice.get("unavailable") or [])
     if not outdoor:
         # Not a failure and not an empty house: there is nothing to
         # measure a room against, and every number here is a difference.
@@ -1213,6 +1288,8 @@ async def build(session, states: dict, registries: dict | None = None,
     payload["outdoor"] = outdoor
     payload["outdoor_why"] = choice["why"]
     payload["outdoor_candidates"] = choice["candidates"][:OUTDOOR_LISTED]
+    payload["outdoor_modelled"] = bool(choice.get("modelled"))
+    payload["outdoor_unavailable"] = list(choice.get("unavailable") or [])
     outdoor_rows = rows.get(outdoor) or []
     outdoor_map = _hourly_map(outdoor_rows)
     if outdoor_map:
