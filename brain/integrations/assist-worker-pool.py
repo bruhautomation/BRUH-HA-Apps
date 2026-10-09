@@ -507,6 +507,13 @@ PARTIAL_MESSAGE = (
     "have happened — check before asking again."
 )
 
+# What a turn that reached a tool and then FINISHED says when the CLI's
+# result carries no text and nothing earlier in the turn did either. Such a
+# turn closed `success`: it did what it was asked and said nothing after the
+# tool. It used to read as a turn that died (`PARTIAL_MESSAGE`), so a light
+# that went off was answered with "some of it may already have happened".
+QUIET_DONE_MESSAGE = "Done."
+
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 TEMPLATE_API = os.environ.get(
     "BRAIN_TEMPLATE_API", "http://supervisor/core/api/template"
@@ -1193,6 +1200,12 @@ class Worker:
         """
         self.acted = False
         self.last_result = None
+        # The last thing the model SAID this turn, off the whole assistant
+        # messages. The CLI's `result` is only the closing message's text,
+        # and a turn that says "Turning it off.", calls the tool and closes
+        # with nothing more has an empty `result` and a perfectly good
+        # answer.
+        said = ""
         msg = {
             "type": "user",
             "message": {
@@ -1246,6 +1259,12 @@ class Worker:
                 if any(isinstance(b, dict) and b.get("type") == "tool_use"
                        for b in blocks):
                     self.acted = True
+                spoken = "".join(
+                    b["text"] for b in blocks
+                    if isinstance(b, dict) and b.get("type") == "text"
+                    and isinstance(b.get("text"), str)).strip()
+                if spoken:
+                    said = spoken
                 if delta_cb is not None and not saw_partial:
                     # Coarse fallback: stream each message's text as one
                     # chunk, each message its own paragraph.
@@ -1264,7 +1283,16 @@ class Worker:
                 if event.get("is_error"):
                     return None
                 result = event.get("result")
-                return result if isinstance(result, str) and result else None
+                if isinstance(result, str) and result:
+                    return result
+                # A turn the CLI closed WITHOUT an error is a finished turn,
+                # whatever its closing message said. Only one that reached a
+                # tool is answered here: one that did nothing and said
+                # nothing still falls back to the one-shot, which is safe
+                # because nothing happened.
+                if self.acted:
+                    return said or QUIET_DONE_MESSAGE
+                return None
 
     def kill(self) -> None:
         try:

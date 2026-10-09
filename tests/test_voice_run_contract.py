@@ -192,6 +192,86 @@ def test_streamed_text_from_two_api_messages_is_two_paragraphs(tmp_path, monkeyp
     assert answer == "I'll check.The lights are off."
 
 
+# The stream the real CLI writes for a turn that says what it is about to
+# do, calls the tool, gets its result and closes with a message carrying no
+# text: the result event is a SUCCESS whose `result` (the closing message's
+# text) is empty.
+def _quiet_turn():
+    return [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Turning it off."},
+            {"type": "tool_use", "id": "t1", "name": "control_light",
+             "input": {}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}},
+        {"type": "assistant", "message": {"content": []}},
+        {"type": "result", "subtype": "success", "is_error": False,
+         "result": "", "session_id": "s1"},
+    ]
+
+
+def test_a_turn_that_acted_and_closed_quietly_answers(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    worker = _bare_worker(mod, _quiet_turn())
+    answer = worker.ask("turn off the hall light", time.time() + 5)
+    assert worker.acted is True
+    assert answer == "Turning it off."
+    # …and one that said nothing at all before or after the tool.
+    silent = _bare_worker(mod, [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "control_light",
+             "input": {}}]}},
+        {"type": "result", "subtype": "success", "is_error": False,
+         "result": ""}])
+    assert silent.ask("lights off", time.time() + 5) == mod.QUIET_DONE_MESSAGE
+    # A turn that ended in an ERROR after a tool is still not an answer.
+    broke = _bare_worker(mod, [
+        {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Turning it off."},
+            {"type": "tool_use", "id": "t1", "name": "control_light",
+             "input": {}}]}},
+        {"type": "result", "subtype": "error_during_execution",
+         "is_error": True, "result": ""}])
+    assert broke.ask("lights off", time.time() + 5) is None
+    assert broke.acted is True
+
+
+def test_a_completed_turn_is_never_journaled_partial(tmp_path, monkeypatch):
+    """A turn the CLI closed `success` after a tool call was answered with
+    PARTIAL_MESSAGE, journaled `error`/`partial` and its worker dropped —
+    the voice run a house's journal carried once in a day of six."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    rows = record_journal(mod)
+    pool = mod.Pool()
+    worker = _bare_worker(mod, _quiet_turn())
+    worker.lock = threading.Lock()
+    worker.partial = False
+    worker.session_id = "s1"
+    worker.model = "default"
+    worker.created = time.time()
+    worker.transcript = []
+    worker.people = set()
+    worker.profile = None
+    worker.kill = lambda: None
+    worker.alive = lambda: True
+    worker.saw_eof = False
+    worker.died = lambda *a, **k: False
+    pool._take_worker = lambda conv, profile: (worker, "warm")
+    pool.workers["convA"] = worker
+    try:
+        drop_spare(pool)
+        text, error = pool.process_full(request("turn off the hall light"))
+        assert error == "", f"a completed turn was reported as {error!r}"
+        assert text == "Turning it off."
+        assert pool.stats["failures"] == 0
+        assert rows[-1][0][0] == ""
+        assert pool.workers.get("convA") is worker, \
+            "a worker that answered was dropped"
+    finally:
+        pool.workers.clear()
+        shutdown(pool)
+
+
 def test_the_coarse_path_separates_whole_messages_too(tmp_path, monkeypatch):
     mod = load_pool_module(tmp_path, monkeypatch)
     worker = _bare_worker(mod, [
