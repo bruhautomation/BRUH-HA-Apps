@@ -113,7 +113,7 @@ def battery_runway(snap: dict, now: float) -> list[dict]:
                       f"{'' if round(days_left) == 1 else 's'} left at the "
                       f"current rate: {level:g}% now, losing "
                       f"{-slope:.1f}% a day over the last {round(span)} "
-                      f"days{house.where(eid)}.",
+                      f"days." + house.placed(eid, who),
             "fix": "Have a replacement ready; it will need changing before "
                    "the automations that depend on it notice.",
             "severity": "warning",
@@ -196,7 +196,6 @@ def decline(snap: dict, now: float) -> list[dict]:
     for _rank, eid, moved, _klass, baseline in hits:
         unit = baseline.get("unit") or ""
         rising = (moved.get("per_day") or 0.0) > 0
-        where = house.where(eid)
         out.append({
             # Stable text: every number in here moves every night.
             "text": (f"{house.name(eid)} has been drifting "
@@ -210,7 +209,7 @@ def decline(snap: dict, now: float) -> list[dict]:
                 f"{numfmt.times(abs(moved['spreads']))} "
                 "it. Every single reading has been inside its usual range "
                 "the whole time, which is why nothing else has said so."
-                + (f" {where}." if where else "")),
+                + house.placed(eid)),
             "fix": ("Look at what it is measuring before it reaches a "
                     "number that matters. If this is a season, a new "
                     "appliance or a move brAIn cannot see, press Ignore and "
