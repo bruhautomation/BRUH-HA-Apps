@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.11
+
+### Changed
+
+- Insights › Needs you puts what is broken first, worst first, in a **Problems** group, and gathers questions, chores and suggestions, and tidy-ups into their own labelled groups, each with a count and folded until you open it. A serious fault no longer sits below a finished print or a rule suggestion. (reports #157)
+- A card shows what brAIn's first look concluded only when it says something about the house. The stock "nothing finished looking at this one" sentence and lines about where the card is listed ("already in front of the homeowner") are gone; a card nothing has judged yet says **Unchecked**, and one line at the top of the queue says how many are waiting. The first look is also told to write its reason about the house, to you. (reports #158)
+
 ## 2.18.10
 
 ### Added

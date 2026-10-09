@@ -551,6 +551,57 @@ def without_echo(record: dict, entry: dict) -> dict:
     return record
 
 
+# A look's sentence that describes where the row is rather than the house:
+# "already in front of the homeowner", "already on their list", "already
+# filed". A real house had five cards saying that under "brAIn checked" —
+# brAIn's own routing read back to the one person who can see the row is
+# on the list, which is no judgement at all. Whole sentences (and clauses
+# after a semicolon) go, so a reason that also says why it can wait keeps
+# that half.
+_ROUTING_RE = re.compile(
+    r"\b(?:in front of (?:the )?(?:homeowner|owner|person|user|them)"
+    r"|already (?:(?:been )?(?:filed|raised|reported|listed|surfaced|shown"
+    r"|flagged|queued|tracked|known|told)"
+    r"|(?:on|in) (?:the|their|your|a) (?:list|queue|feed|tab|screen))"
+    r"|(?:is|are|sits?) (?:already )?(?:on|in) (?:the|their|your) "
+    r"(?:list|queue|feed)"
+    r"|has (?:already )?been told about)\b", re.I)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+
+def house_reason(reason) -> str:
+    """What a look's ``reason`` says about the HOUSE, for a card to show.
+
+    The stock silence sentences (`triage.UNJUDGED`, `RUN_FAILED`,
+    `WAITING`) say nothing was concluded, so they are no reason: a card
+    carries an "Unchecked" mark instead and the queue counts them once.
+    A sentence about where the row is listed is dropped too
+    (`_ROUTING_RE`), and what is left is returned as written.
+    """
+    said = str(reason or "").strip()
+    if not said:
+        return ""
+    if said in (triage.UNJUDGED, triage.RUN_FAILED, triage.WAITING):
+        return ""
+    kept = [s for s in _SENTENCE_SPLIT_RE.split(said)
+            if s.strip() and not _ROUTING_RE.search(s)]
+    return " ".join(kept).strip()
+
+
+def shown_look(record: dict, entry: dict) -> dict:
+    """``record`` (a cleaned triage block) as a surface a person reads
+    shows it: an echo blanked (`without_echo`) and the reason cut to what
+    it says about the house (`house_reason`). The stored record is never
+    changed — the look still decides what it is."""
+    record = without_echo(record, entry)
+    if not isinstance(record, dict) or not record.get("reason"):
+        return record
+    said = house_reason(record["reason"])
+    if said == record["reason"]:
+        return record
+    return {**record, "reason": said}
+
+
 def _clean_triage(value) -> dict:
     """The triage record on a row, normalized — `{}` when nothing looked.
 
@@ -888,7 +939,7 @@ def listing() -> dict:
     shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
     for row in shaped:
         if row.get("triage"):
-            row["triage"] = without_echo(row["triage"], row)
+            row["triage"] = shown_look(row["triage"], row)
     shaped.sort(key=lambda f: f["ts"], reverse=True)
     now = time.time()
     return {

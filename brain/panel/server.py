@@ -16194,6 +16194,8 @@ def _cases_payload(now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001 — a row that cannot be read is not urgent
             case["urgent"] = False
         case["chip"] = answers_mod.chip(case, case["urgent"])
+        # Which heading on Needs you it is read under (`answers.group`).
+        case["group"] = answers_mod.group(case, case["urgent"])
         case["mutable"] = bool(case.get("source")) and (
             case.get("source") not in cases.UNMUTABLE_SOURCES)
         # Pretty names: the entity the card is about, and every id the
@@ -16209,9 +16211,10 @@ def _cases_payload(now: float | None = None) -> dict:
             *(a.get("label") or "" for a in case.get("actions") or [])))
         if row:
             names[case["entity_id"]] = row
-    # Urgent first (a leak, an alarm, a lock), then the server's own band
-    # order: `sorted` is stable, so the rest keep `cases._sort`'s order.
-    rows.sort(key=lambda c: 0 if c.get("urgent") else 1)
+    # By group (what is broken first, then questions, chores, tidy-ups),
+    # urgent first inside it, then worst severity (`answers.feed_key`):
+    # `sorted` is stable, so ties keep `cases._sort`'s newest-first order.
+    rows.sort(key=answers_mod.feed_key)
     return {
         "cases": rows,
         "names": names,

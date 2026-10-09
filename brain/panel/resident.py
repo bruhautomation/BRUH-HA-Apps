@@ -297,6 +297,10 @@ Rules:
   reasoning, so "looks fine" is not an answer. The numbers on the signals
   are for your reply only: a "why" never says "signal 7" or "same as
   #3" — it names the device ("same Wi-Fi drop as the water meter").
+  The homeowner reads it on the card, so write it about the house, to
+  them — how urgent it is, why it can wait, what would make it matter —
+  never about where the row is listed ("already in front of the
+  homeowner", "already on the list" says nothing).
 - A device that something USES is not a device with nothing behind it.
   When the prompt says what an entity is used by, or what brAIn knows
   about it, judge its failure by what stops with it — never write "no

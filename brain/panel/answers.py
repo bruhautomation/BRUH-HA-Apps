@@ -554,6 +554,58 @@ def chip(case: dict, urgent: bool = False) -> str:
     return "problem"
 
 
+# The groups Needs you is read in, top first. What is broken or at risk
+# comes first and is read worst-first; the decisions that cost a tap (a
+# guess, a house-book gap, "stop raising these?"), the chores and ideas, and
+# the tidy-ups follow, each under its own heading. A real house had a
+# serious broken integration seventh in one list, under a finished print
+# and a mute question, because a band over stakes then "newest" was the
+# whole order — and a chore or a question is often newer than a fault.
+GROUPS = ("problems", "questions", "chores", "tidy")
+GROUP_WORDS = {"problems": "Problems", "questions": "Questions",
+               "chores": "Chores and suggestions", "tidy": "Tidy-ups"}
+# The situations that are a chore rather than a fault: the machine has
+# finished, the door is open at bedtime — real, and nothing is broken.
+CHORE_SITUATIONS = frozenset({"chore_check", "chore", "chore_done",
+                              "opportunity"})
+# Worst first inside a group. An unknown severity reads as a warning,
+# which is what `cases._base` defaults a row to.
+SEVERITY_RANK = {"critical": 0, "serious": 1, "warning": 2, "info": 3}
+
+
+def group(case: dict, urgent: bool = False) -> str:
+    """Which of `GROUPS` this case is read under. Urgent is a problem
+    whatever it was filed as; a change brAIn made is read with the
+    problems, because it is the end of one and Undo is on it."""
+    if urgent or case.get("urgent"):
+        return "problems"
+    kind = case.get("kind")
+    if kind == "question":
+        return "questions"
+    sit = case.get("situation") or situation(case)
+    if kind in ("opportunity", "chore") or sit in CHORE_SITUATIONS:
+        return "chores"
+    if kind == "change" or sit == "change":
+        return "problems"
+    if chip(case) == "tidy":
+        return "tidy"
+    return "problems"
+
+
+def feed_key(case: dict) -> tuple:
+    """The feed's sort key: group, then urgent, then a change after the
+    faults it ended, then severity worst first. `sorted` is stable, so
+    cases equal on all four keep the order they were handed in (newest
+    first, `cases._sort`)."""
+    g = case.get("group") or group(case)
+    is_change = case.get("kind") == "change" or case.get(
+        "finding_status") == "fixed"
+    return (GROUPS.index(g) if g in GROUPS else len(GROUPS),
+            0 if case.get("urgent") else 1,
+            1 if is_change else 0,
+            SEVERITY_RANK.get(case.get("severity") or "warning", 2))
+
+
 def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
     """What goes behind the ⋯: at most `MAX_MORE` of Ask, Check again
     (where the row has no room for it), Done and Fix — the design doc's four, chosen per kind — never one already
@@ -640,7 +692,8 @@ def request_answers(row: dict) -> list[dict]:
     return out
 
 
-__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS", "HANDS",
-           "LEGACY_PLAN_MARK", "MAX_MORE", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS",
-           "SITUATIONS", "answers", "chip", "more", "plan_is_legacy", "plan_refused",
-           "request_answers", "situation"]
+__all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
+           "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
+           "MAX_MORE", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
+           "SITUATIONS", "answers", "chip", "feed_key", "group", "more",
+           "plan_is_legacy", "plan_refused", "request_answers", "situation"]

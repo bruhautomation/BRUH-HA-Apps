@@ -25,7 +25,7 @@ export const kase = (over) => ({
   entity_id: '', entity_name: '', area: '', fix: '', fix_by: '',
   fixable: false, finding_status: 'open', plan: {}, triage: {},
   snoozed_until: 0, overflow: [], answers: [], more: [], situation: '',
-  chip: 'problem', urgent: false, mutable: true,
+  chip: 'problem', urgent: false, mutable: true, group: 'problems', unchecked: false,
   ...over,
 });
 
@@ -88,7 +88,7 @@ export const FEED = [
     more: [ask(1102)],
   }),
   kase({
-    id: 'h:1103', kind: 'question', chip: 'question', situation: 'question',
+    id: 'h:1103', kind: 'question', chip: 'question', situation: 'question', group: 'questions',
     severity: 'info', claim: 'The garage fridge is meant to run 24/7',
     source: 'hypothesis', source_title: 'energy', mutable: false,
     origin: { store: 'hypotheses', key: 1103 },
@@ -122,7 +122,7 @@ export const FEED = [
   }),
   kase({
     id: 'f:1106', situation: 'planned', finding_status: 'planned', fixable: true,
-    claim: 'The bedroom lamp is in no room',
+    claim: 'The bedroom lamp is in no room', group: 'tidy', chip: 'tidy', severity: 'info',
     plan: { can_fix: true, ops: [], steps: ['Old step'], summary: 'Old summary',
             ops_refused: 'this plan was written before brAIn checked each change '
               + 'as an operation it can carry out, so there is nothing to approve' },
@@ -130,6 +130,43 @@ export const FEED = [
     origin: { store: 'findings', key: 1106 },
     answers: trio('f:1106', A('fix', 'Fix', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
     more: [ask(1106)],
+  }),
+  // A chore: the machine finished. Real, and nothing is broken, so it is
+  // read under Chores and suggestions — never above a serious fault.
+  kase({
+    id: 'f:1107', situation: 'chore_check', group: 'chores', severity: 'info', chip: 'tidy',
+    claim: 'The print on the 3D printer has finished',
+    detail: 'It finished 40 minutes ago and nothing has been taken off the bed.',
+    source: 'check:chore.job_done', source_title: 'Chores',
+    origin: { store: 'findings', key: 1107 },
+    answers: trio('f:1107', A('done', 'Done', '/api/finding/1107/done', { primary: true }), true),
+    more: [ask(1107)],
+  }),
+  // A question brAIn files into the findings store: should it stop
+  // raising a rule you keep marking wrong.
+  kase({
+    id: 'f:1108', kind: 'question', chip: 'question', situation: 'question', group: 'questions',
+    severity: 'info', claim: 'Stop raising "Sensors frozen on one value"?',
+    detail: 'You marked 4 of its last 5 reports Wrong.',
+    source: 'mute_offer', source_title: 'Rules', mutable: false,
+    origin: { store: 'findings', key: 1108 },
+    answers: [A('confirm', 'Yes', '/api/finding/1108/confirm', { primary: true }),
+              A('wrong', 'No', '/api/finding/1108/wrong', { note: true }),
+              A('not_now', 'Snooze', '/api/case/f:1108/not_now', { request: 'snooze' })],
+  }),
+  // A serious fault nothing has looked at yet: the stale sweep put it on
+  // the list. The server sends no sentence for it (`house_reason`) and says
+  // `unchecked`; the card says "Unchecked" and the queue counts it once.
+  kase({
+    id: 'f:1109', severity: 'serious', stakes: 'high', situation: 'hands', unchecked: true,
+    claim: 'The pool pump integration failed to set up',
+    detail: 'Every entity it provides is unavailable.',
+    source: 'check:sys.entry_failed', source_title: 'System check',
+    origin: { store: 'findings', key: 1109 },
+    triage: { verdict: 'untriaged', reason: '', at: NOW - 4000 },
+    answers: trio('f:1109', A('todo', 'Add to To Do', '/api/case/f:1109/do',
+      { primary: true, request: 'todo' }), true),
+    more: [ask(1109)],
   }),
 ];
 
@@ -370,11 +407,20 @@ export async function openToday(browser, panelDir, { width, touch = false, over 
     && (document.querySelector('#findList .qcard')
         || document.querySelector('#findList .empty-line')
         || !document.querySelector('#todaySetup').hidden));
+  await openEverything(page);
+  return { page, context };
+}
+
+// Draw every card: "Show N more" under the lead group, then every closed
+// group's heading. The queue reads in groups (Problems, Questions, Chores
+// and suggestions, Tidy-ups) and only the lead one opens by itself.
+export async function openEverything(page) {
   await page.evaluate(() => {
     const b = document.getElementById('todayMore');
-    if (b && !b.hidden) b.click();
+    if (b && !b.hidden && b.isConnected) b.click();
+    document.querySelectorAll('#findList .qgrouphead[aria-expanded="false"]')
+      .forEach((h) => h.click());
   });
-  return { page, context };
 }
 
 // The presses a page sent, as {url, method, body} with the body parsed.
