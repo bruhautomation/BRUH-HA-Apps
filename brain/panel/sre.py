@@ -170,6 +170,7 @@ def _log_records(rows: list, now: float) -> list[dict]:
         out.append({
             "id": _rid("log", logger, where, str(first or "")[:80]),
             "kind": "log", "level": row.get("level"), "logger": logger[:80],
+            "integration": integration_of(logger),
             "where": where[:120], "message": _redact(first or ""),
             "count": count,
             "last_hours_ago": round(max(0.0, now - float(
@@ -178,6 +179,16 @@ def _log_records(rows: list, now: float) -> list[dict]:
     order = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2}
     out.sort(key=lambda r: (order.get(r["level"], 3), -r["count"], r["id"]))
     return out[:MAX_LOG_RECORDS]
+
+
+_LOGGER_RE = re.compile(
+    r"^(?:homeassistant\.components|custom_components)\.([a-z0-9_]+)")
+
+
+def integration_of(logger: str) -> str:
+    """The integration a log line came from, off its logger name, or ""."""
+    match = _LOGGER_RE.match(str(logger or ""))
+    return match.group(1) if match else ""
 
 
 def _hours_since(value, now: float) -> float | None:
@@ -231,6 +242,10 @@ def _zwave_records(states: dict, entities: list, devices: list) -> list[dict]:
     names = {str(d.get("id")): str(d.get("name_by_user") or d.get("name") or "")
              for d in devices if isinstance(d, dict)}
     by_device: dict[str, dict] = {}
+    # What each node carries, as the Zigbee records name theirs: so a
+    # cause about the node can name the pump a person knows it as, and the
+    # entity a run names is one the records hold (`parse_causes`).
+    owned: dict[str, list] = {}
     for reg in entities:
         if not isinstance(reg, dict) or reg.get("platform") != "zwave_js":
             continue
@@ -238,6 +253,8 @@ def _zwave_records(states: dict, entities: list, devices: list) -> list[dict]:
         eid = str(reg.get("entity_id") or "")
         if not dev_id or not eid:
             continue
+        owned.setdefault(dev_id, []).append(
+            (1 if reg.get("entity_category") else 0, eid))
         uid = str(reg.get("unique_id") or "")
         state = (states.get(eid) or {}).get("state")
         match = _STAT_RE.search(uid)
@@ -256,7 +273,9 @@ def _zwave_records(states: dict, entities: list, devices: list) -> list[dict]:
         out.append({"id": f"zw:{dev_id}", "kind": "zwave",
                     "name": names.get(dev_id, dev_id)[:80],
                     "status": status, "stats": {k: v for k, v in stats.items()
-                                                if k != "status"}})
+                                                if k != "status"},
+                    "entities": [e for _c, e in sorted(owned.get(dev_id)
+                                                       or [])][:4]})
     return out[:MAX_ZWAVE_RECORDS]
 
 
@@ -309,6 +328,71 @@ def _router_switch_records(automations: list, zha: list[dict],
     return out
 
 
+def _representatives(entities: list) -> tuple[dict, dict]:
+    """`({device id: entity}, {integration: entity})` — one deterministic
+    entity a cause about a device or an integration is filed under.
+
+    The first sorted entity id, preferring one with no entity category: a
+    node's status or statistics sensor is a reading ABOUT the device, and a
+    cause filed under it would fold and be corrected against a diagnostic
+    nobody looks at. Only ids the registry holds; never an invented one.
+    """
+    by_device: dict[str, list] = {}
+    by_platform: dict[str, list] = {}
+    for e in entities or []:
+        if not isinstance(e, dict) or not e.get("entity_id"):
+            continue
+        rank = (1 if e.get("entity_category") else 0, str(e["entity_id"]))
+        if e.get("device_id"):
+            by_device.setdefault(str(e["device_id"]), []).append(rank)
+        if e.get("platform"):
+            by_platform.setdefault(str(e["platform"]), []).append(rank)
+    return ({k: min(v)[1] for k, v in by_device.items()},
+            {k: min(v)[1] for k, v in by_platform.items()})
+
+
+# Which records name a device or a rule (the cause is ABOUT it) and which
+# name an integration (a log line: the cause happened IN it). A cause
+# citing both is filed under the device.
+_DEVICE_KINDS = ("zigbee", "zwave", "automation")
+
+
+def _subjects(records: list[dict], entities: list) -> dict[str, str]:
+    """`{record id: entity}` for every record a representative is known for."""
+    devices, platforms = _representatives(entities)
+    out: dict[str, str] = {}
+    for rec in records:
+        eid = ""
+        if rec["kind"] == "zigbee":
+            eid = devices.get(str(rec.get("device_id") or ""), "")
+        elif rec["kind"] == "zwave":
+            eid = devices.get(rec["id"].split(":", 1)[1], "")
+        elif rec["kind"] == "automation":
+            eid = (sorted(rec.get("switches_off") or []) or [""])[0]
+        elif rec["kind"] == "log":
+            eid = platforms.get(str(rec.get("integration") or ""), "")
+        if eid:
+            out[rec["id"]] = eid
+    return out
+
+
+def subject_of(records: list[str], dig: dict) -> str:
+    """The entity a cause citing ``records`` is filed under, or "".
+
+    Read off the digest's own records, device-level ones before log lines,
+    in the order the cause cites them — so the same cause is the same
+    entity every night, and a cause about nothing the registry holds stays
+    about nothing.
+    """
+    subjects = dig.get("subjects") or {}
+    kinds = {r["id"]: r["kind"] for r in dig.get("records") or []}
+    for wanted in (True, False):
+        for rid in records:
+            if (kinds.get(rid) in _DEVICE_KINDS) == wanted and subjects.get(rid):
+                return subjects[rid]
+    return ""
+
+
 def digest(collected: dict, now: float) -> dict:
     zha = _zha_records(collected.get("zha") or [], now,
                        collected.get("areas") or {})
@@ -327,7 +411,11 @@ def digest(collected: dict, now: float) -> dict:
                                 collected.get("devices") or [])
                + _router_switch_records(collected.get("automations") or [],
                                         zha, collected.get("entities") or []))
+    # `subjects` rides beside the records and never in the prompt (`frame`
+    # sends the records alone): it is the code's answer to which entity a
+    # cause is about, not something for the run to choose from.
     return {"records": records,
+            "subjects": _subjects(records, collected.get("entities") or []),
             "available": dict(collected.get("available") or {})}
 
 
@@ -500,10 +588,25 @@ def rows(causes: list[dict], dig: dict, state: dict,
     anchors = state.setdefault("anchors", {})
     out = []
     for cause in causes:
+        # The model's entity when it named one the records hold; otherwise
+        # the one the cited records are about (`subject_of`) — a cause
+        # with no entity could not fold, be corrected per entity, or match
+        # the To Do item somebody moved it to.
+        entity = cause["entity_id"] or subject_of(cause["records"], dig)
         known = anchors.get(cause["anchor"])
+        if not (isinstance(known, dict) and known.get("text")) and entity:
+            # A new anchor about an entity an earlier cause was filed under
+            # is that cause cited from another record: the same text, so
+            # the row it already has is refreshed rather than a second
+            # filed beside it (or folded into it and then cleared by the
+            # pass that refiled it).
+            known = next((v for v in anchors.values() if isinstance(v, dict)
+                          and v.get("entity") == entity and v.get("text")),
+                         None)
         text = known["text"] if isinstance(known, dict) and known.get("text") \
             else cause["title"]
-        anchors[cause["anchor"]] = {"text": text, "at": int(now)}
+        anchors[cause["anchor"]] = {"text": text, "at": int(now),
+                                    "entity": entity}
         evidence = [{"entity": rid, "value": _record_label(by_id[rid])[:120],
                      "when": ""} for rid in cause["records"][:8]]
         out.append({
@@ -512,7 +615,7 @@ def rows(causes: list[dict], dig: dict, state: dict,
             "fix": cause["fix"],
             "severity": cause["severity"],
             "fixable": False,
-            "entity_id": cause["entity_id"],
+            "entity_id": entity,
             "source": SOURCE,
             "source_title": SOURCE_TITLE,
             "kind": "problem",
@@ -522,10 +625,14 @@ def rows(causes: list[dict], dig: dict, state: dict,
     return out
 
 
-def keep_keys(open_rows: list[dict], state: dict, available: dict) -> set[str]:
+def keep_keys(open_rows: list[dict], state: dict, available: dict,
+              reported: set[str] | frozenset = frozenset()) -> set[str]:
     """The texts this pass may NOT clear: rows whose anchor lives in a
     source that did not answer tonight. 'I could not look' at the mesh is
-    not the mesh having healed."""
+    not the mesh having healed. Nor may it clear a row about an entity it
+    reported again (``reported``): a cause in new words about the same
+    entity folds into the row already there (`findings_store`'s subject
+    fold), and the row it folded into is the one still being reported."""
     import findings_store
     by_text = {findings_store.normalize(v.get("text", "")): k
                for k, v in (state.get("anchors") or {}).items()
@@ -534,6 +641,9 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict) -> set[str]:
     keep = set()
     for row in open_rows:
         key = findings_store.normalize(row.get("text", ""))
+        if row.get("entity_id") and row["entity_id"] in reported:
+            keep.add(key)
+            continue
         anchor = by_text.get(key, "")
         source = family.get(anchor.split(":", 1)[0], "log")
         if not available.get(source):
@@ -542,4 +652,5 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict) -> set[str]:
 
 
 __all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "frame",
-           "keep_keys", "load", "parse_causes", "rows", "save", "worth_a_run"]
+           "integration_of", "keep_keys", "load", "parse_causes", "rows",
+           "save", "subject_of", "worth_a_run"]

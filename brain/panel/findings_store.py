@@ -1117,8 +1117,13 @@ def _prune(items: list[dict]) -> list[dict]:
 # real. The source is half this key; a second model-written producer about
 # the same entity is folded by the narrower rule below
 # (`CROSS_FOLD_STATUSES`), against live rows only.
+#
+# The overnight check (`sre`) is NOT on the list: its rows are about a
+# device, and it files each cause under that device's entity
+# (`sre.subject_of`), so a cause the run words differently tomorrow is the
+# row it already has.
 SUBJECT_FOLD_EXCLUDED = frozenset({
-    "safety", "security", "sre", "correction", "notify_policy",
+    "safety", "security", "correction", "notify_policy",
     "house_book", "healing", "followup", "fix", "doctor", "condition",
     "scene"})
 
@@ -1180,7 +1185,7 @@ def _cross_folds(entry: dict) -> str:
 # said it, the same reason `SUBJECT_FOLD_EXCLUDED` keeps that family out
 # on the model side. The model side is `_cross_folds`', so the Resident
 # and that family never fold here either, and only into a live row.
-CHECK_FOLD_EXCLUDED = frozenset({"climate.freeze"})
+CHECK_FOLD_EXCLUDED = frozenset({"climate.freeze", "safety.tripped"})
 CHECK_FOLD_EXCLUDED_PREFIXES = ("sec.",)
 # The producers a person asked: an asked card (`custom-<id>`, the shape
 # `server._CARD_SOURCE` names it by, or the bare "custom" of an older row)
@@ -1265,6 +1270,54 @@ def _absorb(host: dict | None, entry: dict) -> bool:
     return True
 
 
+# A report about an entity somebody has already moved to To Do is the chore
+# they agreed to, said again: "Add to To Do" settles the finding's key as
+# `accepted`, which stops the same TEXT while the chore is open, and a
+# model-written producer (the overnight check, the Resident, a card) words
+# it differently every pass. So a row whose entity an OPEN to-do item names
+# is not filed; the item records that it was seen again instead
+# (`todo_store.seen_again`). Completing or dropping the item ends it, as it
+# ends the key. Never these: the safety lane, the tripwire and the checks
+# about harm — a leak on an entity whose chore is open is still a leak, and
+# a card for it is far better than a line on a list — and never a question
+# or a suggestion, which asks something the chore does not answer.
+TODO_HOLD_EXCLUDED = frozenset({"safety", "security", "check:climate.freeze",
+                                "check:safety.tripped"})
+TODO_HOLD_KINDS = ("", "problem")
+# The house check that reads a detector tripped NOW, and the lane that
+# files one the moment it trips. A lane card about the same detector is
+# the same trip, so the check's row stands down for it — but only for a
+# lane card the list still holds: a sensor still wet a week after its
+# card was answered is reported again.
+TRIPPED_CHECK_SOURCE = "check:safety.tripped"
+SAFETY_LANE_SOURCE = "safety"
+
+
+def _held_by_todo(entry: dict) -> bool:
+    source = str(entry.get("source") or "")
+    if source in TODO_HOLD_EXCLUDED:
+        return False
+    return str(entry.get("kind") or "") in TODO_HOLD_KINDS
+
+
+def _open_todo_entities() -> dict[str, int]:
+    import todo_store  # noqa: PLC0415 — the store imports nothing of ours
+    try:
+        return todo_store.open_entities()
+    except Exception as exc:  # noqa: BLE001 — a list nobody can read holds nothing
+        log.debug("could not read the to-do list: %s", exc)
+        return {}
+
+
+def _note_seen_again(held: list[tuple[int, str]]) -> None:
+    import todo_store  # noqa: PLC0415
+    for item_id, text in held:
+        try:
+            todo_store.seen_again(item_id, text)
+        except OSError as exc:
+            log.warning("could not note a report on its to-do item: %s", exc)
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -1299,11 +1352,23 @@ def add_many(objs: list[dict]) -> list[dict]:
         if k and f.get("status") in CROSS_FOLD_STATUSES:
             live_subject.setdefault(k, f)
     used = {int(f.get("ts") or 0) for f in items}
+    todo_entities = _open_todo_entities() if objs else {}
+    lane_tripped = {str(f.get("entity_id") or "") for f in items
+                    if f.get("source") == SAFETY_LANE_SOURCE
+                    and f.get("entity_id")}
+    held: list[tuple[int, str]] = []
     created = []
     refreshed = False
     for obj in objs:
         entry = coerce(obj)
         if entry is None or normalize(entry["text"]) in seen:
+            continue
+        about = str(entry.get("entity_id") or "")
+        if (about and entry.get("source") == TRIPPED_CHECK_SOURCE
+                and about in lane_tripped):
+            continue
+        if about and about in todo_entities and _held_by_todo(entry):
+            held.append((todo_entities[about], entry["text"]))
             continue
         subject = _folds_by_subject(entry)
         if subject and subject in subjects:
@@ -1340,6 +1405,8 @@ def add_many(objs: list[dict]) -> list[dict]:
         created.append(_shape(entry))
     if created or refreshed:
         _write(_prune(items))
+    if held:
+        _note_seen_again(held)
     return created
 
 

@@ -441,6 +441,7 @@ async def collect(now: float | None = None) -> dict:
         # measurement the checks pass fetches for itself — and it is
         # cheap by construction: a handful of profiled sensors over a few
         # hours, never the whole house over a month.
+        shapes: dict = {}
         try:
             shapes = appliances.load()
             live = {}
@@ -463,7 +464,17 @@ async def collect(now: float | None = None) -> dict:
                   "first pass runs overnight, and it needs a power sensor "
                   "on one")
         except Exception as exc:  # noqa: BLE001
-            snap["appliances"] = {"entities": {}, "built_at": 0, "recent": {}}
+            # The SHAPES stay when only the live read failed: which sensors
+            # are cycling machines is a fact of the nightly store, and the
+            # band checks read it to stand down for them (`checks/baseline
+            # .not_a_house_reading`). The key is still unavailable, so the
+            # chore check that needs "now" is skipped, never run blind.
+            snap["appliances"] = {
+                "entities": (shapes.get("entities") or {})
+                if isinstance(shapes, dict) else {},
+                "built_at": (shapes.get("built_at", 0)
+                             if isinstance(shapes, dict) else 0),
+                "recent": {}}
             _mark("appliances", False, str(exc))
 
         # A device whose integration says in words that its job ended (a

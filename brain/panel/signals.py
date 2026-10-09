@@ -211,6 +211,16 @@ HOT_SAFETY_STATES = frozenset({"on", "detected", "wet", "unsafe"})
 # id: `climate.freeze` is pipes by morning, and the guard that refuses to
 # let a model ignore water has no business ignoring the cause of it.
 SAFETY_CHECKS = frozenset({"climate.freeze"})
+# A detector that reads tripped NOW (`checks/safety.py`): the deterministic
+# half of the safety lane, for a sensor that was wet before anything was
+# watching the bus. Its own set rather than a member of `SAFETY_CHECKS`,
+# because `camera_policy.SAFETY_CHECKS` is held equal to that one and is
+# not this module's to change; a camera still follows, because
+# `camera_policy.trip_kind` reads the `safety` flag this set puts on the
+# signal. Every reader that asks "is this check about harm" asks
+# `SAFETY_FLAG_CHECKS`.
+TRIPPED_CHECKS = frozenset({"safety.tripped"})
+SAFETY_FLAG_CHECKS = SAFETY_CHECKS | TRIPPED_CHECKS
 
 # Person-level domains. A `person` is Home Assistant's own idea of a
 # household member; a `device_tracker` is a phone, which is a weaker
@@ -561,7 +571,7 @@ def from_finding(row: dict, now: float,
         text=(f"{title} [{severity}]: {text}" if title
               else f"[{severity}] {text}"),
         evidence=ev, protected=protected,
-        safety=_check_id(source) in SAFETY_CHECKS,
+        safety=_check_id(source) in SAFETY_FLAG_CHECKS,
         salience=score(
             "check", severity=severity,
             urgency=notify_router.urgency_of(row),
@@ -1161,7 +1171,7 @@ def _ago(seconds: float) -> str:
 __all__ = [
     "BRAIN_ID_PREFIX", "DEDUPE_WINDOW_S", "EMPTY_CONTEXT",
     "HOT_SAFETY_CLASSES", "HOT_SAFETY_STATES", "KINDS", "KIND_BASE",
-    "SAFETY_CHECKS",
+    "SAFETY_CHECKS", "SAFETY_FLAG_CHECKS", "TRIPPED_CHECKS",
     "MAX_BATCH", "MAX_EVIDENCE", "MAX_TEXT", "NIGHT_END_H", "NIGHT_START_H",
     "PERSON_DOMAINS", "REPEAT_CAP", "ROW_CHARS", "RegistryContext",
     "SEVERITY_WEIGHT", "SIGNAL_KEYS", "URGENCY_WEIGHT", "W_KNOWN",
