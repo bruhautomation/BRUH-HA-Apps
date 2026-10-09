@@ -93,7 +93,7 @@ class TestTemplateTextIsNotAReference(unittest.TestCase):
                 "{% endfor %}")}}]})
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("sensor.vanished", found[0]["detail"])
+        self.assertIn("sensor.vanished", [e["entity"] for e in found[0]["evidence"]])
 
     def test_a_plain_string_outside_a_template_is_still_a_reference(self):
         # `~` and `(` mean something only inside a template.
@@ -103,14 +103,14 @@ class TestTemplateTextIsNotAReference(unittest.TestCase):
                           "target": {"entity_id": "switch.switch_436"}}]})
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("switch.switch_436", found[0]["detail"])
+        self.assertIn("switch.switch_436", [e["entity"] for e in found[0]["evidence"]])
 
     def test_a_field_example_in_an_automation_is_untouched(self):
         # Only a SCRIPT's fields are hints; nothing else is trimmed.
         snap = house()
         snap["automations"][0]["actions"][0]["target"]["entity_id"] = "light.gone"
         found = automations.dead_ref(snap, NOW)
-        self.assertIn("light.gone", found[0]["detail"])
+        self.assertIn("light.gone", [e["entity"] for e in found[0]["evidence"]])
 
 
 # ---------------------------------------------------------------------------

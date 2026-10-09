@@ -2,6 +2,10 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.8
+
+- A finding says what is wrong and what to do in the words the house uses: devices and automations by their names, a device named only by its hardware address counted rather than spelled out, and "remove them in Settings > Devices & services" rather than a `brain.*` service name. The ids are still on the card, under its evidence. Rows already on the list pick up the new wording on the next checks pass. (reports #135)
+
 ## 2.18.7
 
 - A voice command that did what was asked and then closed without saying anything more (the light went off) is answered with what it last said, or "Done.", instead of "some of it may already have happened", and is no longer counted as a failed voice run. A turn that really broke after acting still says so. (reports #137)

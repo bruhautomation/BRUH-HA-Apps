@@ -7,7 +7,7 @@ that renamed forty entities is one row and not forty.
 """
 from __future__ import annotations
 
-from ._util import House, join_names, walk
+from ._util import House, evidence_for, join_names, walk
 
 
 def _dashboard_refs(house: House, config) -> set[str]:
@@ -50,13 +50,15 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
         title = str(dash.get("title") or dash.get("url_path") or "Overview")
         out.append({
             "text": f"Dashboard '{title}' shows entities that no longer exist",
-            "detail": "Missing: " + join_names(dead, 8) + ". Each one renders "
+            "detail": "Missing: " + join_names([house.label(r) for r in dead], 8)
+                      + ". Each one renders "
                       "as a red 'entity not available' tile.",
             "fix": "Edit the dashboard and point those cards at the entities "
                    "that replaced them, or remove the cards.",
             "severity": "warning",
             "fixable": True,
             "entity_id": dead[0],
+            "evidence": evidence_for(dead, "no longer exists"),
         })
     return out
 

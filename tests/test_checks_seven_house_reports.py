@@ -91,7 +91,7 @@ class TestAGroupIsNotItsOwnFault(unittest.TestCase):
         found = devices.unavailable(snap, NOW)
         self.assertEqual([f["entity_id"] for f in found], ["light.lounge_lamps"])
         # And the fix is about the members, not about batteries.
-        self.assertIn("light.lounge_old", found[0]["fix"])
+        self.assertIn("“lounge old”", found[0]["fix"])
         self.assertNotIn("reload its integration", found[0]["fix"])
 
 
