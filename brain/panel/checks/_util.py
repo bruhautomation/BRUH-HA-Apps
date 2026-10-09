@@ -180,6 +180,60 @@ def domain_of(entity_id: str) -> str:
     return entity_id.split(".", 1)[0] if "." in entity_id else ""
 
 
+# What a domain is called in a sentence, for an entity the house has no
+# name for (one that no longer exists, mostly). Anything missing here is
+# its domain with the underscores read as spaces.
+_DOMAIN_NOUN = {
+    "binary_sensor": "sensor", "input_boolean": "toggle helper",
+    "input_select": "dropdown helper", "input_number": "number helper",
+    "input_text": "text helper", "input_datetime": "date and time helper",
+    "input_button": "button helper", "media_player": "media player",
+    "climate": "thermostat", "alarm_control_panel": "alarm panel",
+    "device_tracker": "tracker", "water_heater": "water heater",
+}
+
+_MAC_IN_NAME_RE = re.compile(
+    r"\s*[(\[]?\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b[)\]]?", re.I)
+
+
+def spoken_id(entity_id: str) -> str:
+    """An entity id as a person would say it: 'the scene "before movie"'.
+
+    For an entity the house has no name for — a reference to one that no
+    longer exists, a fixture with no friendly name — so a finding's prose
+    never shows `scene.before_movie`. The id itself belongs in the row's
+    ``evidence``, which the card keeps under Details.
+    """
+    domain, _, obj = str(entity_id or "").partition(".")
+    if not obj:
+        return str(entity_id or "")
+    noun = _DOMAIN_NOUN.get(domain, domain.replace("_", " "))
+    words = " ".join(w for w in obj.split("_") if w)
+    return f"the {noun} \u201c{words}\u201d"
+
+
+def without_mac(name: str) -> str:
+    """A device name with any MAC address taken out of it.
+
+    Integrations name devices "Living room speaker (AA:BB:CC:DD:EE:FF)";
+    the address tells a person nothing a picker does not, and it is the
+    one part of the name nobody reads aloud. Empty when the name WAS the
+    address — the caller says so in words.
+    """
+    return re.sub(r"\s{2,}", " ", _MAC_IN_NAME_RE.sub("", str(name or ""))).strip(" -–—")
+
+
+def evidence_for(entity_ids: Iterable[str], value: str, limit: int = 8) -> list[dict]:
+    """``evidence`` rows naming the ids a finding's prose names by name.
+
+    The card shows evidence under its closed Details, so this is where an
+    entity id goes: findable by whoever needs it, and out of the sentence
+    a person reads first.
+    """
+    return [{"entity": e, "value": value, "when": ""}
+            for e in list(entity_ids)[:limit] if e]
+
+
 def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", str(text or "").lower())
 
@@ -235,6 +289,16 @@ class House:
             return str(attrs["friendly_name"])
         reg = self.registry.get(entity_id) or {}
         return str(reg.get("name") or reg.get("original_name") or entity_id)
+
+    def label(self, entity_id: str) -> str:
+        """What a finding's prose calls an entity: its name, never its id.
+
+        ``name`` falls back to the id when the house has no name for it,
+        which is right for matching and wrong in a sentence; this falls
+        back to :func:`spoken_id` instead.
+        """
+        name = self.name(entity_id)
+        return name if name and name != entity_id else spoken_id(entity_id)
 
     def device_of(self, entity_id: str) -> dict | None:
         reg = self.registry.get(entity_id) or {}

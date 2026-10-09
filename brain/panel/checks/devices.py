@@ -12,7 +12,7 @@ import re
 import numfmt
 
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
-                    counted_names, domain_of, join_names, num,
+                    counted_names, domain_of, evidence_for, join_names, num,
                     parse_ts, when)
 
 UNAVAILABLE_DAYS = 1.0
@@ -566,11 +566,13 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
                 continue
             if missing:
                 fix = (f"It is a {kind} that names "
-                       f"{join_names(missing)}, which no longer exist"
+                       f"{join_names([house.label(m) for m in missing])}, "
+                       "which no longer exist"
                        f"{'s' if len(missing) == 1 else ''} — edit the "
                        "group's members rather than reloading it.")
             else:
-                fix = (f"It is a {kind} of {join_names(members)}; a group "
+                fix = (f"It is a {kind} of "
+                       f"{join_names([house.label(m) for m in members])}; a group "
                        "goes unavailable when its members do, so check "
                        "those rather than the group.")
         else:
@@ -946,11 +948,12 @@ def restored(snap: dict, now: float) -> list[dict]:
             "text": f"Entities from the '{platform}' integration are left "
                     "over with nothing providing them",
             "detail": f"{len(eids)} restored entit{'y' if len(eids) == 1 else 'ies'}: "
-                      + join_names(eids) + ". They show as unavailable and "
-                      "clutter every picker.",
-            "fix": "Reinstall the integration if it was removed by mistake, "
-                   "or delete the entities (brain.delete_orphaned_entities "
-                   "does it in one go).",
+                      + join_names([house.label(e) for e in eids])
+                      + ". They show as unavailable and clutter every picker.",
+            "fix": "Reinstall the integration if it was removed by mistake. "
+                   "Otherwise remove them in Settings > Devices & services > "
+                   "Entities: select them and press Remove selected.",
+            "evidence": evidence_for(eids, "restored, nothing provides it"),
             "severity": "info",
             "fixable": True,
             "entity_id": eids[0],

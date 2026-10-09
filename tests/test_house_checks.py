@@ -341,7 +341,7 @@ class TestAutomationChecks(unittest.TestCase):
         snap["automations"][0]["actions"][0]["target"]["entity_id"] = "light.gone"
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("light.gone", found[0]["detail"])
+        self.assertIn("light.gone", [e["entity"] for e in found[0]["evidence"]])
         # light.turn_on is a service and must not be reported as a missing entity
         self.assertNotIn("turn_on", found[0]["detail"])
         self.assertEqual(found[0]["entity_id"], "automation.morning")
@@ -354,7 +354,7 @@ class TestAutomationChecks(unittest.TestCase):
              "value_template": "{{ states('sensor.vanished') == 'on' }}"}]
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("sensor.vanished", found[0]["detail"])
+        self.assertIn("sensor.vanished", [e["entity"] for e in found[0]["evidence"]])
 
     def test_an_automation_naming_itself_is_not_a_dead_reference(self):
         snap = house()
@@ -751,7 +751,7 @@ class TestDeviceChecks(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["text"], system.HISTORY_INCOMPLETE_TEXT)
         self.assertIn("2 of 6", rows[0]["detail"])
-        self.assertIn("climate.downstairs", rows[0]["detail"])
+        self.assertIn("climate.downstairs", [e["entity"] for e in rows[0]["evidence"]])
         self.assertEqual(rows[0]["entity_id"], "")
 
         # One entity of many cut short is not yet the recorder.
@@ -864,7 +864,8 @@ class TestDeviceChecks(unittest.TestCase):
         found = devices.restored(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("gone_integration", found[0]["text"])
-        self.assertIn("sensor.old_a, sensor.old_b", found[0]["detail"])
+        self.assertEqual([e["entity"] for e in found[0]["evidence"]],
+                         ["sensor.old_a", "sensor.old_b"])
 
 
     def _restored(self, snap, eid, platform, entry_id):
@@ -919,7 +920,7 @@ class TestDashboardCheck(unittest.TestCase):
             {"type": "button", "entity": "switch.vanished"})
         result = checks.run_all(snap, NOW, only=["org.dashboard_dead_ref"])
         self.assertEqual(len(result["findings"]), 1)
-        self.assertIn("switch.vanished", result["findings"][0]["detail"])
+        self.assertIn("switch.vanished", [e["entity"] for e in result["findings"][0]["evidence"]])
         self.assertIn("Dashboard 'Home'", result["findings"][0]["text"])
 
 
@@ -971,7 +972,7 @@ class TestTriggerUnavailable(unittest.TestCase):
     def test_a_trigger_on_a_dead_entity_is_found(self):
         found = automations.trigger_unavailable(self._dead_trigger(), NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("sensor.hall_temp", found[0]["detail"])
+        self.assertIn("sensor.hall_temp", [e["entity"] for e in found[0]["evidence"]])
         self.assertEqual(found[0]["entity_id"], "automation.morning")
         self.assertEqual(found[0]["severity"], "serious")
 
@@ -1246,7 +1247,7 @@ class TestRegistryChecks(unittest.TestCase):
     def test_an_unused_helper_is_found(self):
         found = registry.unused_helper(self._helper(), NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("input_boolean.guest_mode", found[0]["detail"])
+        self.assertIn("input_boolean.guest_mode", [e["entity"] for e in found[0]["evidence"]])
 
     def test_a_helper_used_anywhere_is_not_reported(self):
         for wire in ("automation", "dashboard", "attribute"):

@@ -18,7 +18,8 @@ import logging
 import os
 import re
 
-from ._util import DAY, House, age_days, join_names, listify, walk, when
+from ._util import (DAY, House, age_days, evidence_for, join_names, listify,
+                    walk, when)
 
 log = logging.getLogger("brain.checks.automations")
 
@@ -71,6 +72,17 @@ def _scenes(house: House) -> list[dict]:
             out.append({"config": cfg, "id": str(cfg.get("id") or ""),
                         "entity_id": "", "alias": name})
     return out
+
+
+def _named(given, entity_id: str, house: House) -> str:
+    """The miner's name for an entity unless it is only the id again."""
+    given = str(given or "")
+    return given if given and given != entity_id else house.name(entity_id)
+
+
+def _sentence(text: str) -> str:
+    """``text`` with its first letter capitalised: a label can open one."""
+    return text[:1].upper() + text[1:]
 
 
 def _label(kind: str, item: dict) -> str:
@@ -173,7 +185,8 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
             out.append({
                 "text": f"{_label(kind, item)} refers to entities that do "
                         "not exist",
-                "detail": "Missing: " + join_names(dead) + ". "
+                "detail": "Missing: "
+                          + join_names([house.label(r) for r in dead]) + ". "
                           + ("It cannot work as written." if kind != "Scene"
                              else "Those parts of the scene do nothing."),
                 "fix": "Point it at the entity that replaced "
@@ -182,6 +195,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                 "severity": "serious" if kind != "Scene" else "warning",
                 "fixable": True,
                 "entity_id": subject,
+                "evidence": evidence_for(dead, "no longer exists"),
             })
     return out
 
@@ -772,15 +786,16 @@ def trigger_unavailable(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{_label('Automation', item)} is triggered by an "
                     "entity that is not reporting",
-            "detail": join_names([f"{house.name(e)} ({e})" for e in broken])
-                      + " has been unavailable for days, so this automation "
-                        "cannot fire. It is switched on, so nothing else "
-                        "will tell you.",
+            "detail": _sentence(join_names([house.label(e) for e in broken])
+                                + " has been unavailable for days, so this "
+                                  "automation cannot fire. It is switched "
+                                  "on, so nothing else will tell you."),
             "fix": "Fix or replace the device behind that entity, or point "
                    "the trigger at one that works.",
             "severity": "serious",
             "fixable": True,
             "entity_id": subject,
+            "evidence": evidence_for(broken, "unavailable for days"),
         })
     return out
 
@@ -954,7 +969,8 @@ def overridden(snap: dict, now: float) -> list[dict]:
             # Stable across runs: every number in here moves, so they all
             # live in `detail` and the store can refresh them in place.
             "text": f"You keep undoing what '{name}' does",
-            "detail": (lead + ", on " + join_names(entities)
+            "detail": (lead + ", on "
+                       + join_names([house.label(e) for e in entities])
                        + f". The last was {when(last)}."
                        + _pattern_sentence(shape)
                        + " The automation is working; it is doing the wrong "
@@ -1139,8 +1155,11 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         # keyed unordered, or A-undoes-B and B-undoes-A count as two
         # separate disagreements between the same two rules.
         key = tuple(sorted((first, second)))
-        names = {first: c.get("first_name") or first,
-                 second: c.get("second_name") or second}
+        # The miner's name first, then the house's: the id only when
+        # neither has one, because a row naming an id the house could have
+        # named is a sentence nobody reads aloud.
+        names = {first: _named(c.get("first_name"), first, house),
+                 second: _named(c.get("second_name"), second, house)}
         p = pairs.setdefault(key, {"names": names, "count": 0,
                                    "entities": [], "last": 0.0,
                                    "ways": set(), "raced": False})
@@ -1170,13 +1189,15 @@ def conflicting(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"'{a}' and '{b}' keep undoing each other",
             "detail": (f"{p['count']} times in the last day, on "
-                       + join_names(sorted(p["entities"]))
+                       + join_names([house.label(e)
+                                     for e in sorted(p["entities"])])
                        + f". The last was {when(p['last'])}. Both ran and "
                          "neither failed — which one wins depends on the "
                          "order their triggers happen to fire in, so the "
                          "result is different from one day to the next."),
             "fix": ("Decide which one should own "
-                    + join_names(sorted(p["entities"]))
+                    + join_names([house.label(e)
+                                  for e in sorted(p["entities"])])
                     + " and give the other a condition that stands down, "
                       "or merge them into one automation with the "
                       "decision written out."),

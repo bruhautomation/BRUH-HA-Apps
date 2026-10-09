@@ -2460,6 +2460,16 @@ def refresh_details(objs: list[dict]) -> int:
             if rose and cur.get("status") == "held":
                 _send_to_look(cur)
             changed += 1
+        # A check's own sentence about what to do follows the check, so a
+        # reworded rule reaches the rows it already filed. Only while the
+        # rule is still the author (`fix_by` empty): a sentence a look, a
+        # conversation or a person wrote is never put back.
+        new_fix = entry.get("fix") or ""
+        if (new_fix and not cur.get("fix_by")
+                and str(cur.get("source") or "").startswith("check:")
+                and cur.get("fix") != new_fix):
+            cur["fix"] = new_fix
+            changed += 1
     if changed:
         _write(items)
     return changed
