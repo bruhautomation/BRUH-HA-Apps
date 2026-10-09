@@ -462,7 +462,6 @@ def unusual(snap: dict, now: float) -> list[dict]:
     out = []
     for _rank, eid, found, baseline in hits:
         unit = baseline.get("unit") or ""
-        where = house.where(eid)
         # `n` is a different count on each path: one reading per week in
         # an hour-of-the-week bucket, and every hourly reading in the
         # month on the whole-history fallback — where "from 650 weeks of
@@ -482,7 +481,7 @@ def unusual(snap: dict, now: float) -> list[dict]:
                 f"usual {numfmt.quantity(found['median'], unit)} {against}. "
                 f"That is {numfmt.times(abs(found['sigmas']))} its normal "
                 "variation."
-                + (f" {where}." if where else "")),
+                + house.placed(eid)),
             "fix": unusual_fix(house, eid, house.states.get(eid) or {}),
             "severity": "info",
             "fixable": False,

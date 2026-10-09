@@ -180,6 +180,31 @@ def domain_of(entity_id: str) -> str:
     return entity_id.split(".", 1)[0] if "." in entity_id else ""
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(text or "").lower())
+
+
+def _names_room(name: str, area: str) -> bool:
+    """Does ``name`` say the room called ``area``, in whole words?
+
+    "Kitchen humidity" says the Kitchen; "Kitchenette lamp" does not. A
+    trailing "room" on the area is optional ("Laundry light" says the
+    Laundry Room) — the fold `facts_store._room_key` makes — but only
+    while a word is left, or every name with "room" in it says the Room.
+    """
+    have = _words(name)
+    want = _words(area)
+    if want[-1:] == ["room"] and len(want) > 1:
+        options = (want, want[:-1])
+    else:
+        options = (want,)
+    for words in options:
+        n = len(words)
+        if n and any(have[i:i + n] == words for i in range(len(have) - n + 1)):
+            return True
+    return False
+
+
 class House:
     """Lookups over a snapshot that several checks want."""
 
@@ -231,6 +256,34 @@ class House:
         """' in the Kitchen' or ''. For a sentence about an entity."""
         area = self.area_of(entity_id)
         return f" in the {area}" if area else ""
+
+    def placed(self, entity_id: str, *names: str) -> str:
+        """Where it is, as a sentence of its own, or '' when that adds nothing.
+
+        A finding's detail used to end with ``where()`` hung after its full
+        stop ("…its normal variation. in the Kitchen."), and when the name
+        already said a room the clause either repeated it or joined two
+        rooms into one phrase nobody could read. So this is a whole,
+        capitalised sentence with a leading space; nothing when there is no
+        area or when a name the row uses already says that room; and when a
+        name says a DIFFERENT room than the one it is assigned to, both
+        plainly, because which is right is the person's to say.
+
+        ``names`` are the names the row puts in front of a reader (the
+        entity's own by default); a room is "said" by a name when its words
+        appear there whole, case-folded, with a trailing "room" optional.
+        """
+        area = self.area_of(entity_id)
+        if not area:
+            return ""
+        said = [str(n) for n in (names or (self.name(entity_id),)) if n]
+        if any(_names_room(n, area) for n in said):
+            return ""
+        for other in sorted(set(self.areas.values()), key=len, reverse=True):
+            if other and other != area and any(_names_room(n, other)
+                                               for n in said):
+                return f" It is named for the {other} but assigned to the {area}."
+        return f" It is in the {area}."
 
     def exists(self, entity_id: str) -> bool:
         return entity_id in self.states or entity_id in self.registry

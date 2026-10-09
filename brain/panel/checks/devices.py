@@ -366,6 +366,14 @@ ENTRY_NOT_LOADED = frozenset({
 # connection" entity on a device that still answers is not the device
 # having gone away.
 SETTINGS_CATEGORIES = frozenset({"diagnostic", "config"})
+# Integrations whose entities are features somebody switches on or off on
+# the device itself. The companion app publishes a sensor per phone feature
+# (kiosk mode, a camera, an activity reading) and one that is turned off in
+# the app reads unavailable for ever while the phone goes on reporting
+# everything else — a setting, not a fault. On a device that still answers
+# such an entity says nothing; a phone that has gone quiet altogether is
+# still reported as the device.
+FEATURE_PLATFORMS = frozenset({"mobile_app"})
 
 
 def _down(st: dict | None) -> bool:
@@ -458,12 +466,19 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             # stopped reporting on a device that did not; a settings-page
             # entity on its own is not worth a card.
             rows = [r for r in rows if str((house.registry.get(r[0]) or {})
-                    .get("entity_category") or "") not in SETTINGS_CATEGORIES]
+                    .get("entity_category") or "") not in SETTINGS_CATEGORIES
+                    and (house.registry.get(r[0]) or {}).get("platform")
+                    not in FEATURE_PLATFORMS]
             if not rows:
                 continue
         rows.sort(key=lambda r: r[1], reverse=True)
         first, longest = rows[0]
-        if not house.should_report(first, "dev.unavailable"):
+        # The row is filed under whichever entity has been down longest, so
+        # a Wrong given about it is written under that one; the next pass
+        # may lead with a sibling (a restart re-stamps them all). It is one
+        # device and one answer, so any of its rows being answered stands
+        # the device down.
+        if not all(house.should_report(r[0], "dev.unavailable") for r in rows):
             continue
         name = house.device_name(dev)
         if answers:
@@ -471,11 +486,11 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                 "text": f"{house.name(first)} on {name} has been unavailable "
                         "for more than a day",
                 "detail": f"Since {when(house.states[first].get('last_changed'))}"
-                          f"{house.where(first)}"
                           + (f"; {len(rows)} of its entities are affected"
                              if len(rows) > 1 else "")
                           + f". {name} itself is still answering, so this is "
                             "that entity rather than the device."
+                          + house.placed(first, house.name(first), name)
                           + _restart_note(snap, house.states[first]),
                 "fix": "The device is reachable, so this is one of its "
                        "features: check what that entity reads from (a probe, "
@@ -489,10 +504,10 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{name} has been unavailable for more than a day",
             "detail": f"Since {when(house.states[first].get('last_changed'))}"
-                      f"{house.where(first)}"
                       + (f"; {len(rows)} of its entities are affected"
                          if len(rows) > 1 else "")
                       + "."
+                      + house.placed(first, name)
                       + _restart_note(snap, house.states[first]),
             "fix": "Check its power and its connection (batteries, Wi-Fi, "
                    "the hub it pairs through), then reload its integration.",
@@ -506,8 +521,8 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
-            "detail": f"Since {when(house.states[eid].get('last_changed'))}"
-                      f"{house.where(eid)}."
+            "detail": f"Since {when(house.states[eid].get('last_changed'))}."
+                      + house.placed(eid)
                       + _restart_note(snap, house.states[eid]),
             "fix": "Check whatever provides it, then reload its integration.",
             "severity": "serious",
@@ -574,8 +589,8 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
-            "detail": f"Since {when(house.states[eid].get('last_changed'))}"
-                      f"{house.where(eid)}."
+            "detail": f"Since {when(house.states[eid].get('last_changed'))}."
+                      + house.placed(eid)
                       + _restart_note(snap, house.states[eid]),
             "fix": fix,
             "severity": "warning",
@@ -720,8 +735,8 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         if level is not None and level <= BATTERY_LOW_PCT:
             out.append({
                 "text": f"{who} battery is low",
-                "detail": f"{level:g}% as of {when(st.get('last_updated'))}"
-                          f"{house.where(eid)}.",
+                "detail": f"{level:g}% as of {when(st.get('last_updated'))}."
+                          + house.placed(eid, who),
                 "fix": "Replace the battery.",
                 "severity": "warning" if level > 5 else "serious",
                 "fixable": False,
@@ -738,9 +753,10 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 and st.get("state") not in ("unavailable", "unknown"):
             out.append({
                 "text": f"{who} has stopped reporting its battery",
-                "detail": f"Last heard {when(reported)}{house.where(eid)}; "
+                "detail": f"Last heard {when(reported)}; "
                           f"it still shows {st.get('state')}%, which is the "
-                          "last thing it said, not what it is now.",
+                          "last thing it said, not what it is now."
+                          + house.placed(eid, who),
                 "fix": "Check whether the device is still alive; a flat "
                        "battery is the usual reason it went quiet.",
                 "severity": "warning",
@@ -804,10 +820,10 @@ def implausible(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
             "detail": f"{numfmt.quantity(value, key[1])} as of "
-                      f"{when(st.get('last_updated'))}"
-                      f"{house.where(eid)}; a {key[0]} sensor cannot read "
-                      f"outside {numfmt.number(lo)}–"
-                      f"{numfmt.quantity(hi, key[1])}.",
+                      f"{when(st.get('last_updated'))}; a {key[0]} sensor "
+                      f"cannot read outside {numfmt.number(lo)}–"
+                      f"{numfmt.quantity(hi, key[1])}."
+                      + house.placed(eid),
             "fix": "The sensor is faulty or misconfigured. Check its wiring "
                    "or pairing, and exclude it from automations until it "
                    "reads sanely.",
@@ -877,7 +893,7 @@ def frozen(snap: dict, now: float) -> list[dict]:
                     "for a week",
             "detail": f"{numfmt.quantity(lo, unit)} on every one of the "
                       f"last {len(days)} "
-                      f"days{house.where(eid)}. A real sensor moves.",
+                      "days. A real sensor moves." + house.placed(eid),
             "fix": "Check the sensor — it has probably stopped updating "
                    "while its integration keeps repeating the last value.",
             "severity": "warning",

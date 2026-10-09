@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.5
+
+- A finding names its room as a sentence of its own ("It is in the Kitchen."), leaves the room out when the device's name already says it, and says so when the name and the assigned room disagree. The room used to be stuck on after the full stop. (reports #134)
+- "Unavailable" no longer files about a phone feature that is turned off in the companion app while the phone itself is still answering. A Wrong on one entity of a dead device now covers the whole device even after another of its entities takes the lead. A device that is off for the season is best answered with Wrong and how long it will be off. (reports #133)
+
 ## 2.18.4
 
 - An insight card is as tall as what it shows: a page that draws nothing no longer leaves an empty box, and a card's buttons sit under its content rather than at the bottom of the row. (reports #129)
