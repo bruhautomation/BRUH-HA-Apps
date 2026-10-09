@@ -7,7 +7,9 @@
 // The redesign moved where that is said, not whether it is said:
 //
 //   * a card no look has reached yet says "Unchecked" on its meta line, in
-//     words, and the longer sentence about it is under Details;
+//     words, and the queue counts such cards once, in one line at its top —
+//     the stock "nothing has looked at this" sentence is under no card,
+//     Details included (it was, under five of eighteen on a real house);
 //   * a card a look elevated carries what that look said, under Details —
 //     "brAIn checked" and its reason — and nothing about it on the face;
 //   * the unchecked card offers the same row every finding has, Add to
@@ -62,8 +64,14 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
   if (!loose) note(where, 'the unchecked finding is not drawn');
   else {
     if (!/\bUnchecked\b/.test(loose.meta)) note(where, `the unchecked card's meta reads "${loose.meta}"`);
-    if (!/brAIn has not looked at this one yet/.test(loose.details)) {
-      note(where, 'Details does not say nothing has looked at it');
+    if (/brAIn has not looked at this one yet|Nothing finished looking|not looked at yet/i
+      .test(loose.details)) {
+      note(where, 'Details repeats the stock "nothing has looked at it" sentence');
+    }
+    const waiting = await page.evaluate(() =>
+      document.querySelector('#findList > .qwaiting')?.textContent || '');
+    if (!/waiting for brAIn's first look/.test(waiting)) {
+      note(where, `the queue does not count what no look has judged: "${waiting}"`);
     }
     if (loose.presses.join('|') !== 'Add to To Do|Check again|Dismiss|Snooze|Ignore') {
       note(where, `the unchecked card offers ${loose.presses.join(' · ')}`);
