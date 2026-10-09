@@ -4,6 +4,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.18.9
 
+### Changed
+
 - On a finding brAIn can change itself, the main button is **Fix** and opens a box already holding the card's suggested change: edit it or write your own instruction, and brAIn shows exactly what it will change for one Apply, with Undo. It was a bare **Plan** press that took no instruction. (reports #141)
 - A report waiting in ⚙ › Developer › Help develop brAIn says what it is waiting on — today's limit of new issues (and when the next one can go), a failed send or a missing token — instead of "will be sent". (reports #142)
 - A question brAIn asks you (Yes / No) wears a **Question** chip instead of Suggestion. (reports #143)
@@ -11,71 +13,128 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.18.8
 
+### Changed
+
 - A finding says what is wrong and what to do in the words the house uses: devices and automations by their names, a device named only by its hardware address counted rather than spelled out, and "remove them in Settings > Devices & services" rather than a `brain.*` service name. The ids are still on the card, under its evidence. Rows already on the list pick up the new wording on the next checks pass. (reports #135)
 
 ## 2.18.7
 
-- A voice command that did what was asked and then closed without saying anything more (the light went off) is answered with what it last said, or "Done.", instead of "some of it may already have happened", and is no longer counted as a failed voice run. A turn that really broke after acting still says so. (reports #137)
+### Changed
+
 - "N findings are still waiting for a look" now says why the looks did not judge them: how many of the first looks the account's usage limit refused or that failed in the last day, and what the look last reported. It used to point at a usage-limit row that is only shown once a tenth of the day's runs were refused. (reports #82)
+
+### Fixed
+
+- A voice command that did what was asked and then closed without saying anything more (the light went off) is answered with what it last said, or "Done.", instead of "some of it may already have happened", and is no longer counted as a failed voice run. A turn that really broke after acting still says so. (reports #137)
 
 ## 2.18.6
 
-- ⚙ Settings looks like one design: every switch sits in a grouped card with its name, one line under it and the switch beside them rather than across the page, one type scale and spacing scale throughout, and the content held to a readable width. Help develop brAIn's streams are cards, two across on a wide screen. (reports #139)
+### Added
+
 - A search box at the top of ⚙ Settings finds any setting by its words and opens it, highlighted. (reports #136)
 - The version brAIn is running is under the logo on every pane; pressing it opens the changelog at that release, and it says when Home Assistant needs a restart to load it. (reports #138)
 
+### Changed
+
+- ⚙ Settings looks like one design: every switch sits in a grouped card with its name, one line under it and the switch beside them rather than across the page, one type scale and spacing scale throughout, and the content held to a readable width. Help develop brAIn's streams are cards, two across on a wide screen. (reports #139)
+
 ## 2.18.5
 
+### Changed
+
 - A finding names its room as a sentence of its own ("It is in the Kitchen."), leaves the room out when the device's name already says it, and says so when the name and the assigned room disagree. The room used to be stuck on after the full stop. (reports #134)
+
+### Fixed
+
 - "Unavailable" no longer files about a phone feature that is turned off in the companion app while the phone itself is still answering. A Wrong on one entity of a dead device now covers the whole device even after another of its entities takes the lead. A device that is off for the season is best answered with Wrong and how long it will be off. (reports #133)
 
 ## 2.18.4
 
-- An insight card is as tall as what it shows: a page that draws nothing no longer leaves an empty box, and a card's buttons sit under its content rather than at the bottom of the row. (reports #129)
+### Added
+
 - A card and an open finding about the same thing now point at each other: the card says "Also on Needs you" and the finding says which report it came from, each a link to the other. (reports #127)
-- Tapping a tab or button on a phone no longer opens a tooltip, and a control whose label already says it shows none. (reports #130)
+
+### Changed
+
 - Ask on a phone with no conversations yet opens on the message box, and its floating controls are named. (reports #131)
 - History has one intro line per filter instead of two, and What happened shows no empty heading when there is nothing to say about the house right now. (reports #132)
 
+### Fixed
+
+- An insight card is as tall as what it shows: a page that draws nothing no longer leaves an empty box, and a card's buttons sit under its content rather than at the bottom of the row. (reports #129)
+- Tapping a tab or button on a phone no longer opens a tooltip, and a control whose label already says it shows none. (reports #130)
+
 ## 2.18.3
+
+### Changed
+
+- An unusual reading's fix names a machine in the same room that can move it (for humidity, a dehumidifier, fan or climate entity) or a sensor of the same kind beside it, instead of the same sentence on every row. (reports #126)
+- The room heat model says when its outdoor reference is a weather service's forecast value rather than a thermometer here, names a better outdoor sensor that is unavailable, and says how many rooms it measured of how many. (reports #120)
+
+### Fixed
 
 - A light group whose lights are all unavailable is no longer filed as a fault of its own beside each light; a group whose members are fine still is, and its fix names the members rather than "reload its integration". (reports #122)
 - Fewer "unavailable for a day" cards about things that are fine: entities of an integration that did not set up (that is its own card), entities you hid, and a settings or diagnostic entity on a device that is still answering. One feature of a device that is answering is now a warning naming that feature, not a "check its power" card about the whole device. (reports #116)
 - A battery's voltage is no longer reported as "frozen": a low DC voltage, one named for a battery, or one on a device that reports a battery level sits still by design. (reports #121)
 - Outside data feeds (space weather, air quality, flight trackers, and anything labelled weather or forecast) are no longer compared against the house's hour-of-week normal. (reports #123)
-- An unusual reading's fix names a machine in the same room that can move it (for humidity, a dehumidifier, fan or climate entity) or a sensor of the same kind beside it, instead of the same sentence on every row. (reports #126)
 - "Integration did not finish setting up" no longer pastes raw HTML from an error page: it says "HTTP 403" (or "an HTML error page") and names which integration each error belongs to. (reports #119)
-- The room heat model says when its outdoor reference is a weather service's forecast value rather than a thermometer here, names a better outdoor sensor that is unavailable, and says how many rooms it measured of how many. (reports #120)
 
 ## 2.18.2
 
-- A memory consolidation pass that fails now says why: the pass reads Claude's own verdict (it used to keep only an empty error stream and report "claude exited 1"), and it runs with no tools loaded, so a pass can no longer spend its single turn reaching for a tool it is not allowed. A retry after a refused flag never reuses a spent session id. (reports #117)
+### Changed
+
 - When the usage endpoint has refused brAIn for more than a day, the usage popover and the morning brief say so in plain words and that the figure shown is brAIn's own estimate, never as a sign-in problem. The back-off still keeps trying, every few hours at most. (reports #124)
+
+### Fixed
+
+- A memory consolidation pass that fails now says why: the pass reads Claude's own verdict (it used to keep only an empty error stream and report "claude exited 1"), and it runs with no tools loaded, so a pass can no longer spend its single turn reaching for a tool it is not allowed. A retry after a refused flag never reuses a spent session id. (reports #117)
 
 ## 2.18.1
 
-- ⚙ Settings is redesigned: one list of sections whose rows already say what you most often check (signed in, the model and this session's usage, whether brAIn asks before it acts, your notification sentence), every section one press away, and nothing inside a collapsible any more. On a wide screen the list sits beside the section; on a phone the list is the page and a row opens its section. Developer tools have their own section. (reports #115)
+### Added
+
 - **Run all tests** is the first thing in Diagnostics: one press runs every deep-check stage and shows "N of M passed", one row per stage with Passed, Failed or Skipped, the reason in words and when it ran. A stage that could not run yet is skipped with its reason, never counted as a failure. (reports #125)
+
+### Changed
+
+- ⚙ Settings is redesigned: one list of sections whose rows already say what you most often check (signed in, the model and this session's usage, whether brAIn asks before it acts, your notification sentence), every section one press away, and nothing inside a collapsible any more. On a wide screen the list sits beside the section; on a phone the list is the page and a row opens its section. Developer tools have their own section. (reports #115)
 
 ## 2.18.0
 
-- *What do you want to fix?* never loses a request: if the run that writes it up fails or answers nothing, your words are filed as you typed them. A request is never held back because an earlier report about the same screen was declined. The run is told your request is the issue, so it can no longer turn "rework the settings page" into "no tool can read the settings page". (reports #83, #95)
-- The line under the box says which issue your last request became and what the cloud said when it closed it, instead of only "Last sent".
+### Added
+
 - New stream, **Design review**: one read-only Claude run reads what brAIn actually showed this house (the insight cards, the findings as worded, what a look concluded) and files what makes it feel repetitive, generic or developer-only.
 - New switch, **Autopilot: let brAIn develop itself**: every stream on, nothing waiting for you to press Send, higher daily caps. Switching it off restores the switches you had.
+
+### Changed
+
+- The line under the box says which issue your last request became and what the cloud said when it closed it, instead of only "Last sent".
 - The cloud half now treats the owner's quoted words as the spec, does a screenshot UX audit on every run rather than weekly, and records how long each run took so the loop can speed itself up.
 
+### Fixed
+
+- *What do you want to fix?* never loses a request: if the run that writes it up fails or answers nothing, your words are filed as you typed them. A request is never held back because an earlier report about the same screen was declined. The run is told your request is the issue, so it can no longer turn "rework the settings page" into "no tool can read the settings page". (reports #83, #95)
+
 ## 2.17.23
+
+### Fixed
 
 - Findings no longer wait hours for a first look on a house with a busy protected device: a filed row is never dropped from the look queue while a live signal can be, the rows that have waited longest go first, and a row already being investigated is no longer counted as waiting. (reports #82)
 
 ## 2.17.22
 
-- A finding's "brAIn checked" line no longer repeats the finding's own words when the look that wrote it reached no conclusion; it shows nothing there instead. (reports #100)
-- A reason typed in the Repairs dialog that says why a report does not apply (for example "it's mains powered") is recorded as Not a problem with a rule for that device, never as "I've fixed it", so the check stops reporting it. (reports #110)
+### Changed
+
 - A card's earlier findings are shown to its next run, and one the fresh data no longer supports is taken off the list. It comes back if a later run reports it again. (reports #107)
 
+### Fixed
+
+- A finding's "brAIn checked" line no longer repeats the finding's own words when the look that wrote it reached no conclusion; it shows nothing there instead. (reports #100)
+- A reason typed in the Repairs dialog that says why a report does not apply (for example "it's mains powered") is recorded as Not a problem with a rule for that device, never as "I've fixed it", so the check stops reporting it. (reports #110)
+
 ## 2.17.21
+
+### Fixed
 
 - Health no longer says everything is running while voice is down: a worker pool whose process is alive but whose main loop has stopped now reads `failed`, and the reason line no longer vouches for processes brAIn could not see. (reports #98)
 - Health and the Status sensor now agree after an update: a pending Home Assistant restart makes health `degraded`, naming the restart, without writing a problem file for an ordinary update. (reports #98)
@@ -83,6 +142,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - The brAIn to-do list in Home Assistant now matches the To Do section exactly: a snoozed chore is hidden in both until its snooze lapses. (reports #104)
 
 ## 2.17.20
+
+### Fixed
 
 - "Devices not in an area" no longer counts service devices (Backup, the Sun, online services) or brAIn's own conversation agents and system device, none of which belong in a room. (reports #96)
 - A reading that moves in steps (a forecast resting at 1% that sometimes steps to 5%) no longer reports its usual step as hundreds of times its normal variation: its spread is now the size of the steps it takes. (reports #97)
@@ -92,97 +153,159 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.17.19
 
+### Fixed
+
 - Voice: a worker that died at spawn is now counted as dead even when its exit status lands a few milliseconds after its output closed. Read in that gap, the pool took the dead worker for a live one and the fallback that switches token streaming off after repeated early deaths could miss them.
 
 ## 2.17.18
 
+### Changed
+
 - Help develop brAIn: the *Look at…* box is now **What do you want to fix?** Say it the way you would to a person ("the settings page is too crowded") and press **Send**. One read-only Claude run works out the real problem behind it and files one issue (two if you named two) with your words quoted, the underlying problem, and a *Done when* line to check the fix against. An issue about a screen is labelled `devloop:ux`, so the fixer screenshots that pane before and after fixing it.
+
+### Fixed
+
 - Development-loop reports no longer replace the words "device", "entity", "report" and "everything" with aliases when a house has an entity named that, so titles like "Binary sensor 269 check" read as "device check" again.
 
 ## 2.17.17
+
+### Changed
 
 - The Usage tracker sensor now shows its state in words in Home Assistant ("Waiting for sign-in to renew", "Usage endpoint rate-limited"…) instead of an internal code. The stored state is unchanged, so automations keep working, and the exact code is also in a new `code` attribute. (reports #86)
 - brAIn's devices have distinct, consistent names: "brAIn Memory" and "brAIn Findings" are capitalised like the rest, and a conversation agent's device is now "<name> Agent", so the default agent no longer shares the name "brAIn" with the add-on. Entity ids and friendly names do not change. (reports #84)
 
 ## 2.17.16
 
+### Changed
+
+- The wake and bedtime measurement now has tests showing that a few odd days cannot stop it giving an answer. (reports #92)
+
+### Fixed
+
 - The "devices left in the registry with no entities" check no longer lists HomeKit Bridge devices, which never have entities of their own and break HomeKit if deleted. (reports #93)
 - The "refers to entities that do not exist" check no longer reports a scene the same automation or script makes with `scene.create`, and no longer reads steps marked as disabled. (reports #91)
 - A power sensor whose name says it is a fan, blower, booster, vent or duct (such as a dryer's vent booster fan) is no longer treated as the washer, dryer or dishwasher it is named after, so it no longer files "has finished and is still full". (reports #90)
-- The wake and bedtime measurement now has tests showing that a few odd days cannot stop it giving an answer. (reports #92)
 
 ## 2.17.15
 
-- Help develop brAIn: reports no longer rewrite ordinary words. An entity named only in Home Assistant's own vocabulary ("Battery", "Power", "Energy", brAIn's own "brAIn") was being swapped for its alias everywhere the word appeared, so a sentence like "non-battery sensors" arrived as "non-Binary sensor 269 sensors". Names a household chose, rooms, people and every entity id are still replaced.
+### Changed
+
 - Help develop brAIn: the Gaps, Ideas and Look at… runs are shown everything this house has already reported, and told not to report it again in new words. On the first house to use the loop, about one report in six was a rewording of one already filed.
 
+### Fixed
+
+- Help develop brAIn: reports no longer rewrite ordinary words. An entity named only in Home Assistant's own vocabulary ("Battery", "Power", "Energy", brAIn's own "brAIn") was being swapped for its alias everywhere the word appeared, so a sentence like "non-battery sensors" arrived as "non-Binary sensor 269 sensors". Names a household chose, rooms, people and every entity id are still replaced.
+
 ## 2.17.14
+
+### Changed
 
 - Help develop brAIn (the opt-in development loop): reports the developer closed as declined, not brAIn's or duplicate are no longer filed again, and a stream whose reports are mostly closed that way is slowed, with the reason and an Undo shown. Unmet requests are now reported as the thing brAIn said it could not do, once it has come up in two conversations, and never include what was typed. Every report says how often it happened and how many days, and the most frequent go first. Nothing changes while the loop is off.
 
 ## 2.17.13
+
+### Fixed
 
 - What you teach brAIn in the chat or the terminal is filed into memory again on a system where the sign-in hook could not read the conversation's credential. The add-on now runs that step itself with the credential every other run uses, instead of failing it as "not signed in". (reports #81)
 - A finding sent back for a second look (a re-report with new detail, a rise in severity, or the one-time re-look at startup) is now looked at again, rather than being marked "nothing finished looking at this one" within a minute and never offered again. The "waiting for a look" count in diagnostics now measures time spent waiting, not time since the finding was first filed. (reports #82)
 
 ## 2.17.12
 
+### Changed
+
+- A problem you raised in a question and the same problem found by a house check are one finding instead of two. (reports #79)
+- A fact about a moment ("in the last 12 hours", "right now", "today") now expires after two days instead of being kept for good. Ones already stored age out the same way. (reports #66)
+
+### Fixed
+
 - The missing-entity check no longer reads pieces of a template as entities: part of an id being built, a method on a loop variable, or a script field's example or default value. Real references inside a template are still checked. (reports #70, #75)
 - The "skipped because already running" warning stays quiet for an automation set to `max_exceeded: silent`, which says those skips are intended. (reports #77)
 - "Automations undoing each other" no longer reports a hand-over: one rule setting something another rule listens to is a chain, not a fight. (reports #76)
 - A battery that has read 0% for its whole history (a mains-powered device reporting a placeholder level) is no longer reported as flat. A real battery that ran down is still reported. (reports #78)
 - A Home Assistant restart or integration reload no longer makes recorded history look cut off, so the "history stops early" and "frozen sensor" checks agree. (reports #71)
-- A problem you raised in a question and the same problem found by a house check are one finding instead of two. (reports #79)
-- A fact about a moment ("in the last 12 hours", "right now", "today") now expires after two days instead of being kept for good. Ones already stored age out the same way. (reports #66)
 
 ## 2.17.11
 
+### Added
+
+- House › Reports has a Schedule list: each recurring card's cadence, last run, next run (or why it is waiting), and a switch to turn it off or on. (reports #47)
+
+### Changed
+
 - Memory › Knowledge names a fact's subject by its friendly name and room instead of its entity id (the id is in the tooltip), and marks a device Home Assistant no longer has as "removed". (reports #42)
 - Facts show at most two of their subjects as links, with "+N" for the rest, and no longer repeat the subject you are browsing. (reports #43)
-- House › Reports has a Schedule list: each recurring card's cadence, last run, next run (or why it is waiting), and a switch to turn it off or on. (reports #47)
 - ⚙ › Diagnostics says why a background job is off ("off — Assist is turned off") instead of showing true or false. A one-time ask now says it runs once, when what you described happens, and where its result goes. (reports #49, #46)
 
 ## 2.17.10
 
-- Findings that brAIn set aside are looked at again when a later report contradicts the reason they were set aside. Findings set aside before brAIn judged the claim itself, rather than one reading in it, get one fresh look after the update. (reports #54, #58)
-- One problem reported by several insight cards is one finding. Copies already on your list are merged once, after the update. (reports #59)
+### Added
+
 - When you keep marking a rule's findings Wrong, brAIn now asks once whether to stop raising them. Yes mutes the rule (Undo unmutes it). No is remembered, and you are asked again only if the Wrongs double. (reports #56, #60)
 - The problems list now says when findings have been waiting for a look for more than two hours, and how many. (reports #62)
+
+### Changed
+
+- One problem reported by several insight cards is one finding. Copies already on your list are merged once, after the update. (reports #59)
+
+### Fixed
+
+- Findings that brAIn set aside are looked at again when a later report contradicts the reason they were set aside. Findings set aside before brAIn judged the claim itself, rather than one reading in it, get one fresh look after the update. (reports #54, #58)
 - The unusual-readings check no longer goes quiet when the season turns. Sensors of one kind moving the same way together are set aside as the season, and the rest are still checked. (reports #63)
 
 ## 2.17.9
+
+### Changed
+
+- A failed run in the problems list now says which card or job it was and when it last failed. (reports #48)
+- The record of why brAIn said nothing keeps one row per standing decision with a count, instead of a new row each pass. And when you said you had fixed something and the check still finds it two hours later, the finding comes back instead of being silently dropped every pass. (reports #51, #57)
+
+### Fixed
 
 - The unusual-readings and drifting-readings checks no longer spend their limit on readings that are not about the house: brAIn's own sensors, a printer's job figures, durations and timestamps, targets and setpoints, daily totals, and weather or sky figures. A real fault in the house is reported again instead of the check going quiet because those filled its quota. (reports #36)
 - The morning brief no longer tells you to sign in again when the usage figures are only waiting (for example, while Anthropic is rate-limiting the usage endpoint). It still says so when a sign-in really failed. (reports #37, #61)
 - The Open findings sensor in Home Assistant now shows the same number as the panel's badge: findings, questions and suggestions waiting on you. (reports #39, #51)
 - Findings from a question you asked are filed under that card's title instead of "Custom", including ones already on your list. (reports #46)
-- A failed run in the problems list now says which card or job it was and when it last failed. (reports #48)
-- The record of why brAIn said nothing keeps one row per standing decision with a count, instead of a new row each pass. And when you said you had fixed something and the check still finds it two hours later, the finding comes back instead of being silently dropped every pass. (reports #51, #57)
 
 ## 2.17.8
+
+### Changed
+
+- A fact that says the same thing as one already there, or a newer reading of the same state ("back online" after "unavailable"), now replaces the older one instead of sitting beside it. Things you told brAIn, rules and calendar occasions are never replaced. (reports #45)
+- A fact about one of brAIn's own problems no longer stays true for ever. It is marked with the version that filed it, stops counting once brAIn has been updated, and is offered for removal in Clean up. Existing facts are tidied once, the first time the updated add-on runs. (reports #52)
+
+### Fixed
 
 - What brAIn knows is filed against real things. A number ("69.98") or a file name ("automations.yaml") is no longer stored as a device, and a fact about a device that does not exist is filed about the house instead. (reports #40)
 - One room is one room. A fact filed under a room's name, a nickname or a slightly different spelling now lands in that room instead of starting a second one beside it. (reports #41)
 - Facts read as sentences. A fact cut off mid-word now ends on a whole word, and a long device or integration id inside one is replaced by that device's or integration's name. (reports #44)
-- A fact that says the same thing as one already there, or a newer reading of the same state ("back online" after "unavailable"), now replaces the older one instead of sitting beside it. Things you told brAIn, rules and calendar occasions are never replaced. (reports #45)
-- A fact about one of brAIn's own problems no longer stays true for ever. It is marked with the version that filed it, stops counting once brAIn has been updated, and is offered for removal in Clean up. Existing facts are tidied once, the first time the updated add-on runs. (reports #52)
 
 ## 2.17.7
+
+### Added
 
 - brAIn can now tell you a 3D print has finished and is waiting to be taken off, from the status the printer's own integration publishes, with no power sensor needed. The same works for a washing machine, dryer or dishwasher that publishes its own running and finished status. It speaks only when the status really went from running to finished (not a status that has said "finished" all along or since a restart), waits twenty minutes in case you are already there, stops after fourteen hours, and ticking it off is never undone by the status still saying "finished". (reports #31)
 
 ## 2.17.6
 
+### Fixed
+
 - Memory › Knowledge no longer draws an empty rounded bar between the heading and the box you teach brAIn in, and that box's hint now fits on a phone instead of being cut off. (reports #16)
 
 ## 2.17.5
 
-- Findings no longer stay marked "nothing finished looking at this one" for good. When brAIn's first look gets to a finding after it has already been shown (because it had to wait, or the look before it failed), its answer now reaches the card instead of that sentence, without the finding disappearing from your list or notifying you again. Findings a rule filed are also no longer pushed out of the look by a busy house's stream of changes, and those changes can no longer use up the whole day's looks by mid-morning. (reports #24)
+### Changed
+
 - Two different insight cards reporting the same thing about the same sensor now share one finding instead of filing it again and again; the finding already there picks up the newer details. House checks, safety and correction findings, and anything you settled are unaffected. (reports #27)
 - brAIn's look and its investigation now judge what a finding actually claims against all the evidence it states. A finding that says two readings disagree (a sensor reading 0 on a day the air conditioning ran) is no longer set aside with a reason that only explains one of them, and the look now sees a finding's details rather than just its title. (reports #28)
 - Insight cards are now told to check related sensors and any recorder gap before saying something has not happened for hours or days, and to report the disagreement instead of the silence. (reports #32)
 
+### Fixed
+
+- Findings no longer stay marked "nothing finished looking at this one" for good. When brAIn's first look gets to a finding after it has already been shown (because it had to wait, or the look before it failed), its answer now reaches the card instead of that sentence, without the finding disappearing from your list or notifying you again. Findings a rule filed are also no longer pushed out of the look by a busy house's stream of changes, and those changes can no longer use up the whole day's looks by mid-morning. (reports #24)
+
 ## 2.17.4
+
+### Fixed
 
 - "Automations undoing each other" no longer reports a rule you set off by pressing a wall button, a scene controller or a remote (or a room mode you picked yourself) as fighting another rule: that is you acting, so it is treated the way pressing the light itself is. And answering Ignore on one of these now stops that pair being reported again, whichever of the two rules the next card is filed under. (reports #21)
 - "Sensors frozen on one value" no longer reports a sensor that says it is an estimate, a nominal or rated figure, or a fixed calculation: those publish one number by design. A real sensor stuck on one value is still reported. (reports #22)
@@ -190,16 +313,25 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.17.3
 
-- Learning from what you type in the chat and the terminal works again on houses that sign in through the panel: Claude Code does not hand its credential to the hooks it runs, so these passes were using an expired sign-in while everything else worked. They now use the same sign-in your chat or terminal is using. (reports #2)
+### Added
+
 - The health status now notices when one kind of background run keeps being refused its sign-in while the rest of brAIn works, and says to press Sign in again, instead of reporting everything as fine. A single refused run is not reported. (reports #23)
+
+### Fixed
+
+- Learning from what you type in the chat and the terminal works again on houses that sign in through the panel: Claude Code does not hand its credential to the hooks it runs, so these passes were using an expired sign-in while everything else worked. They now use the same sign-in your chat or terminal is using. (reports #2)
 - A run that was cut short because the add-on was stopping or restarting is now recorded as stopped rather than as a crash, and no longer counts as a failure. (reports #1)
 - Pressing Stop on your own chat is no longer recorded as a failed run or drawn as a red error; the chat just says it stopped. A chat turn that genuinely fails is still reported. (reports #3)
 
 ## 2.17.2
 
+### Changed
+
 - The development loop's cloud fixer now works through every open report in each run, fixing related reports together in a few pull requests and closing each report with the reason. No change to how brAIn behaves on your house.
 
 ## 2.17.1
+
+### Changed
 
 - Housekeeping for the development loop: recorded the first UX audit. No change to how brAIn behaves.
 
@@ -444,6 +576,8 @@ panel opens on what brAIn has found, not on a to-do queue.
 
 Security fixes from a code-scanning pass. Nothing you see changes.
 
+### Security
+
 - Error messages the panel sends back are built from the error's own text
   rather than the raw exception, so a traceback can never reach the page.
   The sentences are the same ones you saw before.
@@ -595,18 +729,23 @@ was wrong with the data, and what was confusing.**
 
 **A session limit no longer reads as brAIn breaking, and the help in ⚙ can be read.**
 
-- **The `?` help in Settings opens on top of the dialog.** It was opening behind
-  it, where nothing could read it.
+### Changed
+
 - **Capture for the corpus says what it is for.** It now opens by saying you do
   not need it to use brAIn: it saves card runs to help improve brAIn's own
   prompts, and is best left off.
+- **A problem report says each thing once.** The same failure ten times is one
+  line with a count, and a notification brAIn deliberately held until a later
+  time is no longer listed as stuck.
+
+### Fixed
+
+- **The `?` help in Settings opens on top of the dialog.** It was opening behind
+  it, where nothing could read it.
 - **"Most Claude runs are failing" counts only failures.** A run that fell back
   still made its card, and a run your account's session limit refused is the
   account saying wait. Counting both is how one evening's limit kept brAIn
   "degraded" for a whole day.
-- **A problem report says each thing once.** The same failure ten times is one
-  line with a count, and a notification brAIn deliberately held until a later
-  time is no longer listed as stuck.
 
 ## 2.11.0
 
@@ -1803,6 +1942,8 @@ Resident can correct its own first look.**
 
 **The classic terminal on a phone: Paste works, the keyboard stops fighting you.**
 
+### Fixed
+
 - **Paste works.** The toolbar's Paste button asked for the clipboard at the
   wrong moment of a tap — the start of it, which a phone does not count as you
   asking — so it was refused, and the refusal was thrown away without a word.
@@ -1832,6 +1973,8 @@ Resident can correct its own first look.**
 nowhere else, and the ESPHome and Music Assistant screens are gone — the tools
 stay.**
 
+### Added
+
 - **Minecraft, labels and light shows, by asking.** Eleven new tools drive BRUH
   Minecraft, BRUH Print and BRight through their own Home Assistant services:
   "teleport Emma to Dad", "put Steve in creative", "make it day", "who's on?",
@@ -1846,6 +1989,9 @@ stay.**
   at once. Every call goes through `call_service`, so an agent's Blocked services
   list and `protected_entities` apply as they do everywhere else. Scheduled runs
   may read the three status tools and nothing else.
+
+### Removed
+
 - **The add-on-wide voice options are gone.** `assist_tool_access` and
   `assist_exposure` were a fallback for agents set to "Follow the add-on"; each
   voice agent's own **What this agent can reach** (Settings → Devices & services
@@ -1853,6 +1999,14 @@ stay.**
   the add-on" is no longer offered. **An agent that was following the add-on is
   now a Voice assistant**, the narrowest level — if you had set either option
   wider, open that agent's Configure and pick Whole house or Full admin.
+- **No ESPHome or Music Assistant tabs.** Both have their own screens, and a
+  second copy inside brAIn was clutter. Everything they did is still one sentence
+  away in the chat or the terminal — edit, validate, install and read logs for an
+  ESPHome device; play, group, configure and clear stale players in Music
+  Assistant — through the same tools, which are unchanged.
+
+### Fixed
+
 - **ESPHome installs work again on Device Builder (ESPHome 2026.9).** The
   rewrite takes every command over one `/ws` socket with a job queue, and the
   old per-command addresses brAIn used (`/run`, `/validate`, `/logs`,
@@ -1865,25 +2019,14 @@ stay.**
   means flashed. A device that is offline is compiled now and flashed by the
   Builder when it comes back, and brAIn says so. An older dashboard (no `/ws`)
   still gets the old per-command sockets.
-- **No ESPHome or Music Assistant tabs.** Both have their own screens, and a
-  second copy inside brAIn was clutter. Everything they did is still one sentence
-  away in the chat or the terminal — edit, validate, install and read logs for an
-  ESPHome device; play, group, configure and clear stale players in Music
-  Assistant — through the same tools, which are unchanged.
 
 ## 2.9.0
 
 **A morning brief worth reading, a reach per voice agent, ESPHome builds on a
 current Supervisor, and a Knowledge tab you can find things in.**
 
-- **The morning brief names things.** It no longer counts the night ("40 changes,
-  31 with no recorded cause") — that was the logbook read aloud and nobody could act
-  on it. A brief goes out only for something specific: a problem found since the
-  last one (with its details and what to do), a serious one still waiting after a
-  day, something fixed overnight, a door or window open that is normally shut at
-  that hour, or a light left on all night by hand (one an automation turned on is
-  on on purpose and is left out). Findings triage held back and `info` notes are
-  never read aloud.
+### Added
+
 - **Each voice agent chooses its own reach.** When you add an agent — and later
   under **Configure** — pick *Voice assistant* (only what you expose to Assist,
   Home Assistant tools only), *Whole house* (every entity, still Home Assistant
@@ -1897,21 +2040,37 @@ current Supervisor, and a Knowledge tab you can find things in.**
   templates, the logbook, the room list and brAIn's own read tools only reach
   exposed entities, and house-wide reads (activity, findings, registries) are
   refused — one gate at the MCP server's tool dispatcher.
-- **ESPHome: "Home Assistant would not open an ingress session (Unauthorized)".**
-  The Supervisor now refuses add-ons the call brAIn used to open the ESPHome
-  dashboard. A new option, `esphome_ha_token` (a long-lived token from a Home
-  Assistant administrator), opens it the way your browser does; the ESPHome
-  add-on's own port is also tried when you have set one. The message now says
-  which of these to set.
 - **Knowledge tab.** A short explanation of how the memory document, the queue and
   the facts differ, and a real facts browser: every fact (not the few per device
   the old list showed), searchable by device name, filterable by kind and by who
   taught it, sortable, grouped by subject, paged. *Rules you set* lists the checks
   you told brAIn to stop raising.
 
+### Changed
+
+- **The morning brief names things.** It no longer counts the night ("40 changes,
+  31 with no recorded cause") — that was the logbook read aloud and nobody could act
+  on it. A brief goes out only for something specific: a problem found since the
+  last one (with its details and what to do), a serious one still waiting after a
+  day, something fixed overnight, a door or window open that is normally shut at
+  that hour, or a light left on all night by hand (one an automation turned on is
+  on on purpose and is left out). Findings triage held back and `info` notes are
+  never read aloud.
+
+### Fixed
+
+- **ESPHome: "Home Assistant would not open an ingress session (Unauthorized)".**
+  The Supervisor now refuses add-ons the call brAIn used to open the ESPHome
+  dashboard. A new option, `esphome_ha_token` (a long-lived token from a Home
+  Assistant administrator), opens it the way your browser does; the ESPHome
+  add-on's own port is also tried when you have set one. The message now says
+  which of these to set.
+
 ## 2.8.1
 
 **The documentation catches up.** No behaviour changes.
+
+### Changed
 
 - The in-panel **Help** tab and the Documentation tab describe the four tabs
   (Home, Ask, House, Help) and the answers every card now takes (Fix it, Add to
@@ -1927,11 +2086,8 @@ current Supervisor, and a Knowledge tab you can find things in.**
 
 **Insight cards: a heading that says what the card is about, Refine, and Share.**
 
-- **No more "CUSTOM".** A card you asked for is headed by what it is about
-  (its topics, e.g. "HVAC · Humidity"), or the name you gave it. The question
-  you typed is no longer repeated on the card; hover the heading or open
-  Refine to see it. The summary leads with the answer in bold, and asked
-  questions are now told to open with it ("Yes — dehumidify first.").
+### Added
+
 - **✎ Refine** on every card: say what should change and brAIn regenerates
   that card with the change, keeping what you did not ask to change. By
   default the change is kept for every future run, so the next refresh does
@@ -1947,8 +2103,14 @@ current Supervisor, and a Knowledge tab you can find things in.**
     so when a dashboard is kept in YAML or still built automatically, and the
     YAML for pasting it in by hand is still there. This replaces
     **⋯ → Add to dashboard**.
-- **Regenerate on an asked card re-runs it in place.** It used to ask the
-  question again and leave a second copy of the card beside the first.
+
+### Changed
+
+- **No more "CUSTOM".** A card you asked for is headed by what it is about
+  (its topics, e.g. "HVAC · Humidity"), or the name you gave it. The question
+  you typed is no longer repeated on the card; hover the heading or open
+  Refine to see it. The summary leads with the answer in bold, and asked
+  questions are now told to open with it ("Yes — dehumidify first.").
 - **Layout:**
   - The numbers sit in even rows: four across, three for five or six, and
     two on a narrow card.
@@ -1960,9 +2122,16 @@ current Supervisor, and a Knowledge tab you can find things in.**
     its tooltip.
   - Tags are edited from **⋯ → Edit tags**.
 
+### Fixed
+
+- **Regenerate on an asked card re-runs it in place.** It used to ask the
+  question again and leave a second copy of the card beside the first.
+
 ## 2.7.0
 
 **Music Assistant, run from brAIn.**
+
+### Added
 
 - **House → Music Assistant** shows whether brAIn can reach Music Assistant
   and as whom, every player with what it is playing, and every provider with
@@ -1996,6 +2165,8 @@ current Supervisor, and a Knowledge tab you can find things in.**
 
 ## 2.6.1
 
+### Fixed
+
 - **A finding brAIn decided not to bother you with stays off the Findings
   feed.** Triage holds back rows it looked into and judged not worth your
   time, and they belong under **Looked at** — but the feed was listing them
@@ -2005,7 +2176,6 @@ current Supervisor, and a Knowledge tab you can find things in.**
   which read as the button doing nothing. Held findings now appear only
   under **Looked at**; **Bring it to the front** there moves one onto the
   feed, where it arrives with the full row of answers.
-
 - **Two automations that are meant to follow each other are no longer
   reported as fighting.** *"'X' and 'Y' keep undoing each other"* fired on
   every pair where one rule sets something and another changes it back
@@ -2020,6 +2190,8 @@ current Supervisor, and a Knowledge tab you can find things in.**
 ## 2.6.0
 
 **ESPHome devices, managed from brAIn.**
+
+### Added
 
 - **House → ESPHome** lists every device file in `/config/esphome` with what
   it is and how it is doing: chip and board, online or not, the firmware it
@@ -2050,6 +2222,17 @@ current Supervisor, and a Knowledge tab you can find things in.**
 
 **One row of answers on every card.**
 
+### Added
+
+- **Dismiss is on every answerable card**, and it is the press that was
+  missing: "ignore this, and you may bring it up later". It was *Later* behind
+  the ⋯. It settles nothing and teaches nothing; brAIn brings the card back
+  later if it is still true, sooner the more it matters, and the toast says
+  when. The filter that holds them is called **Dismissed**. *Not a problem* is
+  the other no, and stays the one that is for good.
+
+### Changed
+
 - **Every problem card offers the same four presses, in the same order**: *Fix
   it* where brAIn could make the change itself, then *Add to list*, *Dismiss*
   and *Not a problem*. 2.5.0 gave each kind of row its own words — *Replaced
@@ -2059,22 +2242,26 @@ current Supervisor, and a Knowledge tab you can find things in.**
   problem* box opens with, never the buttons. *I've already fixed it* and
   *Check again* moved behind the ⋯. A guess offers *Yes · No · Dismiss*, a
   suggestion *Make the change · Try it for a week · Dismiss · No thanks*.
-- **Dismiss is on every answerable card**, and it is the press that was
-  missing: "ignore this, and you may bring it up later". It was *Later* behind
-  the ⋯. It settles nothing and teaches nothing; brAIn brings the card back
-  later if it is still true, sooner the more it matters, and the toast says
-  when. The filter that holds them is called **Dismissed**. *Not a problem* is
-  the other no, and stays the one that is for good.
+- The notification buttons carry the same words.
+
+### Fixed
+
 - **The card leaves when you press.** A case press repainted the feed before
   the findings list had been re-read, so for a moment the row that had just
   been moved was drawn off the stale list as an old-style card with different
   buttons under the case that had just gone. The press answers with every
   list it moved and the tab is painted from one consistent read.
-- The notification buttons carry the same words.
 
 ## 2.5.1
 
 **Accepted work is off the feed, and the feed is called Findings.**
+
+### Changed
+
+- **The pane is called Findings.** The Home group's first tab was itself
+  labelled *Home*; it is *Findings* now (Home → Findings), and the docs follow.
+
+### Fixed
 
 - **A chore no longer renders on the feed.** A finding moved to the to-do list
   came back beside the real findings as *Broken · Device check · battery is
@@ -2084,8 +2271,6 @@ current Supervisor, and a Knowledge tab you can find things in.**
   lives on the **To-do** tab with its own count, and the feed's badge stops
   counting it. Every finding on the feed still offers its way onto the list,
   its fixed ending and its dismiss.
-- **The pane is called Findings.** The Home group's first tab was itself
-  labelled *Home*; it is *Findings* now (Home → Findings), and the docs follow.
 
 ## 2.5.0
 
@@ -2204,6 +2389,8 @@ answer with a shape for automations, one event catalogue, voice that sees
 what you expose, and a panel with four tabs instead of eight.** Phases 3 and
 4 of the AI-first plan.
 
+### Added
+
 - **A rule in a sentence** (`panel/authoring.py`). *"Whenever the front door
   opens after dark, turn the hall light on"* used to get a refusal card; it
   is drafted now (reading tools only), **simulated** over the last month and
@@ -2238,6 +2425,9 @@ what you expose, and a panel with four tabs instead of eight.** Phases 3 and
   cannot disagree; an exposure that cannot be read empties the map and
   refuses acting rather than guessing, and `assist_exposure: all` is the
   whole house, which is what every release before this one gave voice.
+
+### Changed
+
 - **Four tabs** — Home (the feed, Insights, To-do, Proposals), Ask (the chat
   and the terminal), House (Knowledge, Activity), Help (the docs) — with the
   panes inside a tab on a strip under the bar. Every pane keeps its name and
@@ -2250,6 +2440,8 @@ what you expose, and a panel with four tabs instead of eight.** Phases 3 and
 call, memory gets a facts store with provenance underneath the document, a
 correction finally reaches the rule it corrects, and the terminal and the
 chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
+
+### Added
 
 - **Measurements are tools** (`what_is_normal`, `room_physics`,
   `appliance_status`, `house_rhythm`, `door_habits`, `habits`,
@@ -2272,6 +2464,14 @@ chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
   writes a standing exception for that entity under that check, and
   `dev.frozen`, `dev.implausible`, `chore.waiting` and `base.unusual`
   consult it before filing — the loop the Wrong button always promised.
+- **The terminal and the chat teach memory** (`scripts/brain-memory-extract.py`,
+  a `Stop` hook). A cheap extraction over each turn of a person's own
+  conversation queues durable facts, corrections and stated intents to the
+  memory inbox; machine-driven sessions are skipped by their claimed
+  session id, and `learning: false` switches it off with the rest.
+
+### Changed
+
 - **One habits module** (`panel/habits.py`). The three ledgers keep their
   files and lose their private arithmetic: the shape of when something
   happens — days, share, circular median, band, still happening — has one
@@ -2280,11 +2480,6 @@ chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
   re-exports, and the join over the three ledgers is `panel/habit_lookup.py`:
   the first cut closed an import ring (`habits → rhythm → house → routines
   → habits`) that CodeQL reported and nothing else could see.
-- **The terminal and the chat teach memory** (`scripts/brain-memory-extract.py`,
-  a `Stop` hook). A cheap extraction over each turn of a person's own
-  conversation queues durable facts, corrections and stated intents to the
-  memory inbox; machine-driven sessions are skipped by their claimed
-  session id, and `learning: false` switches it off with the rest.
 
 ## 2.1.0
 
@@ -2292,6 +2487,8 @@ chat teach memory the way voice already did.** Phase 2 of the AI-first plan.
 look at everything before you are shown any of it, investigates what
 deserves it, and files what it finds as one kind of thing — a case — with
 three endings.** Phase 1 of the AI-first plan.
+
+### Added
 
 - **Signals, not rules deciding** (`panel/signals.py`). Every house-check
   row, baseline deviation, thermal or appliance event, a state change on an
@@ -2327,6 +2524,13 @@ three endings.** Phase 1 of the AI-first plan.
   answered on the feed teaches brAIn what the same press on the old card
   did. Every store, mirror, Repairs issue and `todo.brain` row is unchanged
   underneath.
+- **A budget ledger** per tier per day: the first look never stops on it
+  (only on the usage tracker), investigations queue past their allowance,
+  and nothing on the top tiers runs unattended past its. Both halves ride in
+  `/api/diagnostics` under `resident` and `eventbus`.
+
+### Changed
+
 - **The Home feed.** The Findings tab is called Home and renders cases: the
   kind, the severity, the confidence and stakes in words, the claim, the
   evidence, what *Do it* would do and the consent each step needs, and the
@@ -2335,10 +2539,6 @@ three endings.** Phase 1 of the AI-first plan.
   house with problems as a house with none. The foot says what the day
   cost: looked, investigated, changed, watching. The badge counts open
   cases, one derivation for the tab and `/api/status`.
-- **A budget ledger** per tier per day: the first look never stops on it
-  (only on the usage tracker), investigations queue past their allowance,
-  and nothing on the top tiers runs unattended past its. Both halves ride in
-  `/api/diagnostics` under `resident` and `eventbus`.
 - Triage is retired into the first look — a filed row the look ignores is
   held with its reason and still carries *Raise it anyway* — and its
   per-day cap now counts first looks.
@@ -2354,6 +2554,22 @@ Phase 0 of the AI-first plan in `docs/design/brain-ai-first.md`; the
 resident attention loop, the measurement tools, standing automations by
 sentence and the four-tab panel follow as their own releases.
 
+### Added
+
+- **A thinking dial** (`thinking`: light / normal / generous, ⚙ → Insights).
+  *Light* steps down only the jobs where being wrong is cheap — a card, a
+  question — and never the run that applies a change; *generous* steps up
+  only the reasoning jobs, never a naming call. It rides `--effort` where
+  the installed CLI takes it, and where it does not the flag is dropped and
+  the run retried: the request is optional, the run is not.
+- **`brain.run_task` takes `tools: full | house | read_only`.** The scope is
+  derived from the analyst's own lists at run time, reaches every Claude
+  invocation the listener makes (the run, the landing and the retry), and a
+  scope that cannot be read refuses the run and says so rather than
+  widening it.
+
+### Changed
+
 - **Haiku looks, Sonnet thinks, Opus acts, Fable is a press**
   (`panel/model_plan.py`). Every scheduled and pressed run used to call one
   `model` option, so triage — a yes/no over a hundred rows a day — cost what
@@ -2367,12 +2583,6 @@ sentence and the four-tab panel follow as their own releases.
   — the consolidator, study, both listeners — reads the same table through
   `/data/.brain_env`, printed by `model_plan.py` itself at boot rather than
   copied.
-- **A thinking dial** (`thinking`: light / normal / generous, ⚙ → Insights).
-  *Light* steps down only the jobs where being wrong is cheap — a card, a
-  question — and never the run that applies a change; *generous* steps up
-  only the reasoning jobs, never a naming call. It rides `--effort` where
-  the installed CLI takes it, and where it does not the flag is dropped and
-  the run retried: the request is optional, the run is not.
 - **Structured answers** (`--json-schema`). Triage verdicts, fix plans, fix
   results, intent configs, curiosity answers and the card contract each
   carry a schema, so a reply that does not fit is refused by the CLI rather
@@ -2385,6 +2595,11 @@ sentence and the four-tab panel follow as their own releases.
   card once and the contract names `var(--c1)` and its neighbours.
 - **Triage is capped per day** (`triage.MAX_PER_DAY`), so a house that
   files two hundred rows in an afternoon spends a bounded number of runs.
+- **A study session carries a runaway cap** (60 turns; `0` still means
+  none) and reads its model below the env source, so the option reaches it.
+
+### Fixed
+
 - **The hypothesis queue stopped losing guesses.** The panel, a study
   session, the consolidator and `brain memory` each rewrote
   `hypotheses.jsonl` with nothing between the read and the rename, so a
@@ -2395,8 +2610,6 @@ sentence and the four-tab panel follow as their own releases.
   every read-modify-write. A lock that cannot be taken never refuses the
   work. The card prompt renders dismissed questions and dead ends as one
   deduped list, keyed on the claim, with the homeowner's reason winning.
-- **A study session carries a runaway cap** (60 turns; `0` still means
-  none) and reads its model below the env source, so the option reaches it.
 - **The memory excerpt in `/config/CLAUDE.md` cuts between lines.** It was
   `head -c 4096`: mid-fact, mid-character on any accented name, and never
   reaching the Device notes a run most needs. It keeps every section's
@@ -2407,11 +2620,6 @@ sentence and the four-tab panel follow as their own releases.
   raised the cap — which is what the consolidator's own "the document is
   full" message tells it to do — had every insight prompt cut mid-fact by
   the one budget that exists to prevent that.
-- **`brain.run_task` takes `tools: full | house | read_only`.** The scope is
-  derived from the analyst's own lists at run time, reaches every Claude
-  invocation the listener makes (the run, the landing and the retry), and a
-  scope that cannot be read refuses the run and says so rather than
-  widening it.
 
 ## 1.61.0
 
@@ -2419,22 +2627,7 @@ sentence and the four-tab panel follow as their own releases.
 finding waiting on you is a Repair, only what cannot wait rings your phone,
 and the Settings dialog is five sections instead of one scroll.**
 
-- **Pressing Fix it no longer changes anything.** It used to send Claude at
-  your house on the press, with nothing on screen first about which entity,
-  which file or which automation was about to move. The press now buys a
-  **read-only** look — it holds reading tools and cannot act, whatever it is
-  asked — which confirms the problem is still real, works out the cause, and
-  comes back with the steps it *would* take (which file, which entity, what it
-  becomes), one sentence on what could go wrong, and whether software should
-  be making this change at all. Those land on the card with **Apply** and
-  **Cancel** under them. Apply is the one press that changes the house, and
-  the run it starts is told to carry out exactly the steps you read — if the
-  house has moved on or a step turns out to be wrong it stops and says so,
-  rather than substituting a change nobody agreed to. Cancel leaves the
-  finding exactly as open as it was and **keeps the plan**, because it cost a
-  Claude run and reading it again should not cost a second one. A plan that
-  needs your hands, or that brAIn will not make itself, offers no Apply at
-  all: a button that cannot help is worse than the sentence.
+### Added
 
 - **A fix can be undone from the card.** Every file the run edited under
   `/config` goes back and the domains they belong to are reloaded — out of the
@@ -2451,7 +2644,6 @@ and the Settings dialog is five sections instead of one scroll.**
   carries the same four presses — `fix`, `apply`, `cancel` and `undo` — and
   prints the plan's steps, so applying from a terminal is not a press in the
   dark.
-
 - **A finding waiting on you is a Repair.** The Findings tab is behind ingress
   and Settings → System → Repairs is where Home Assistant puts the things that
   need a person — read by people who never open the brAIn panel. Every
@@ -2473,18 +2665,6 @@ and the Settings dialog is five sections instead of one scroll.**
   the row is answered anywhere, and held down between your press and the
   add-on applying it, without which the dialog reappeared the second it
   closed.
-
-- **`brain.check` runs the house checks now, and `button.brain_run_checks`
-  presses it.** The pass is the one thing in the add-on with an hours-long
-  timer in front of it, so "I just fixed that, is it clear yet" had no answer
-  but waiting. It rides the request queue the endings already use, which is
-  what keeps the order right: an answer given in the same breath is applied
-  *before* the pass, or the pass re-files what it just settled. Two asks in
-  one drain are one pass, and a pass already running consumes the request and
-  says so rather than queueing a second look at the same house. The button
-  sits on the brAIn System device, so a dashboard, an automation and a voice
-  command all land on one implementation.
-
 - **Only what cannot wait rings your phone, and it asks again until you
   answer.** Every finding above `findings_notify_min_severity` was pushed once
   and never again, so the floor was the only dial there was: turning it down
@@ -2504,39 +2684,6 @@ and the Settings dialog is five sections instead of one scroll.**
   before this one did. Quiet is not lost: a row under the floor reaches no
   phone and is still on the Findings tab, in `todo.brain` and in Repairs —
   places you look, rather than places that interrupt.
-
-- **`findings_notify_min_severity` now defaults to `critical`**, which is what
-  makes the tiers mean anything: a dying battery waits on the tab instead of
-  ringing a phone. Set it back to `serious` for the old behaviour — the option
-  says so, and nothing else about your configuration changes. ⚙ → Diagnostics
-  says what is escalating, when the next reminder is due and how many have
-  gone out, beside the quiet-hours hold queue.
-
-- **The Settings dialog is five sections, and three of them are shut.** ⚙ was
-  one flat scroll of a dozen headings with a paragraph of prose under nearly
-  every control — 5,910px of scrolling at 390 and 3,837 at 1,200 — so the
-  commonest visit (change the model, read the budget, check the login is still
-  good) meant scrolling past the corpus capture and the rehearsal to reach it.
-  It is now Claude account and Insights open, with Terminal & chat, Generation
-  defaults and Advanced behind a press: 1,946px and 1,372px. Advanced holds
-  Diagnostics, Problems, Capture, the deep check and the rehearsal, and its
-  five reads run when you open it rather than every time you open the dialog —
-  two of them start a three-second poll, so the old shape paid for a request
-  every three seconds behind a section nobody had looked at. Each section
-  remembers whether you left it open. Prose past two sentences moved onto a
-  **?** beside the control it is about, which is what a tooltip is for: right
-  for something wanted once, wrong as the only copy of something wanted every
-  time. The one sentence that stayed on the page is the sharing box's warning
-  that `/config` rides into Home Assistant backups — a credential leaving the
-  add-on is a fact you meet before pressing, not one you go and ask for.
-
-- **Every dropdown and number box in ⚙ stopped zooming iPhones.** The panel's
-  16px text floor is a bare `select` / `input[type=…]` selector, and the
-  dialog's own 13.5px rules are class-qualified and outrank it — so focusing a
-  picker in Settings zoomed the ingress iframe in and left it there, which is
-  the exact failure that floor exists to prevent, reached by the one route it
-  could not reach.
-
 - **A check for the updates waiting to be installed, on trial.** Nothing in
   brAIn noticed that Home Assistant Core, the OS, the Supervisor or an add-on
   had an update waiting — the most common thing a person opens Home Assistant
@@ -2561,10 +2708,73 @@ and the Settings dialog is five sections instead of one scroll.**
   skipped with nothing scored. `entry_skipped` separates the two claims, and
   the line says how many checks could not look.
 
+### Changed
+
+- **Pressing Fix it no longer changes anything.** It used to send Claude at
+  your house on the press, with nothing on screen first about which entity,
+  which file or which automation was about to move. The press now buys a
+  **read-only** look — it holds reading tools and cannot act, whatever it is
+  asked — which confirms the problem is still real, works out the cause, and
+  comes back with the steps it *would* take (which file, which entity, what it
+  becomes), one sentence on what could go wrong, and whether software should
+  be making this change at all. Those land on the card with **Apply** and
+  **Cancel** under them. Apply is the one press that changes the house, and
+  the run it starts is told to carry out exactly the steps you read — if the
+  house has moved on or a step turns out to be wrong it stops and says so,
+  rather than substituting a change nobody agreed to. Cancel leaves the
+  finding exactly as open as it was and **keeps the plan**, because it cost a
+  Claude run and reading it again should not cost a second one. A plan that
+  needs your hands, or that brAIn will not make itself, offers no Apply at
+  all: a button that cannot help is worse than the sentence.
+- **`brain.check` runs the house checks now, and `button.brain_run_checks`
+  presses it.** The pass is the one thing in the add-on with an hours-long
+  timer in front of it, so "I just fixed that, is it clear yet" had no answer
+  but waiting. It rides the request queue the endings already use, which is
+  what keeps the order right: an answer given in the same breath is applied
+  *before* the pass, or the pass re-files what it just settled. Two asks in
+  one drain are one pass, and a pass already running consumes the request and
+  says so rather than queueing a second look at the same house. The button
+  sits on the brAIn System device, so a dashboard, an automation and a voice
+  command all land on one implementation.
+- **`findings_notify_min_severity` now defaults to `critical`**, which is what
+  makes the tiers mean anything: a dying battery waits on the tab instead of
+  ringing a phone. Set it back to `serious` for the old behaviour — the option
+  says so, and nothing else about your configuration changes. ⚙ → Diagnostics
+  says what is escalating, when the next reminder is due and how many have
+  gone out, beside the quiet-hours hold queue.
+- **The Settings dialog is five sections, and three of them are shut.** ⚙ was
+  one flat scroll of a dozen headings with a paragraph of prose under nearly
+  every control — 5,910px of scrolling at 390 and 3,837 at 1,200 — so the
+  commonest visit (change the model, read the budget, check the login is still
+  good) meant scrolling past the corpus capture and the rehearsal to reach it.
+  It is now Claude account and Insights open, with Terminal & chat, Generation
+  defaults and Advanced behind a press: 1,946px and 1,372px. Advanced holds
+  Diagnostics, Problems, Capture, the deep check and the rehearsal, and its
+  five reads run when you open it rather than every time you open the dialog —
+  two of them start a three-second poll, so the old shape paid for a request
+  every three seconds behind a section nobody had looked at. Each section
+  remembers whether you left it open. Prose past two sentences moved onto a
+  **?** beside the control it is about, which is what a tooltip is for: right
+  for something wanted once, wrong as the only copy of something wanted every
+  time. The one sentence that stayed on the page is the sharing box's warning
+  that `/config` rides into Home Assistant backups — a credential leaving the
+  add-on is a fact you meet before pressing, not one you go and ask for.
+
+### Fixed
+
+- **Every dropdown and number box in ⚙ stopped zooming iPhones.** The panel's
+  16px text floor is a bare `select` / `input[type=…]` selector, and the
+  dialog's own 13.5px rules are class-qualified and outrank it — so focusing a
+  picker in Settings zoomed the ingress iframe in and left it there, which is
+  the exact failure that floor exists to prevent, reached by the one route it
+  could not reach.
+
 ## 1.60.0
 
 **The usage sensors renew their own credential, and a finding says what to
 do about it in this house.**
+
+### Added
 
 - **The usage tracker renews the account sign-in itself.** The account
   sign-in's access token lives a few hours, and brAIn waited for Claude Code
@@ -2579,29 +2789,6 @@ do about it in this house.**
   way the CLI writes it, so "between refreshes" is minutes long. It stands
   down while the panel's guided sign-in is running, because that flow reads
   the credential file changing as the sign-in having succeeded.
-- **"Wait" has a clock on it.** A verdict whose remedy is to do nothing is
-  only true while waiting can work, so `oauth_token_awaiting_refresh` that has
-  stood for more than three hours stops counting as fine: the health sensor
-  says so, the popover says so, and the add-on log says what the renewal ran
-  into. A renewal Anthropic refuses is a session that is over, reported once
-  as `http_401` with the remedy — sign in again — and never asked again with
-  that credential.
-- **"What you'd need to do" is written by the run that looked.** Every row of
-  a kind carried the same sentence the rule writes for all of them — "check
-  its power and its connection (batteries, Wi-Fi, the hub it pairs through),
-  then reload its integration" — which is useless to somebody holding the
-  device. Triage already looks at each finding with Home Assistant's own
-  tools before you are shown it; it now says what to do about *this* device
-  on *this* integration in *this* house, and the card carries that. A row it
-  writes nothing for keeps the card it always had.
-- **brAIn no longer files a device finding about its own sensors.** "brAIn
-  Usage Limits has been unavailable for more than a day — check its
-  batteries" was the add-on reporting itself under somebody else's remedy;
-  the health verdict is where that belongs, with the switch named.
-- **A report lists a missing measurement once.** Five climate checks skipped
-  on "snapshot is missing thermal", the snapshot row, and the Rooms store
-  were seven rows about one fact; the checks a missing key took down are now
-  named on that key's own row.
 
 And four things the Findings tab was missing:
 
@@ -2627,10 +2814,47 @@ And four things the Findings tab was missing:
   Assistant's front page with the row three taps away; on the companion app
   it now opens brAIn's own panel.
 
+### Changed
+
+- **"Wait" has a clock on it.** A verdict whose remedy is to do nothing is
+  only true while waiting can work, so `oauth_token_awaiting_refresh` that has
+  stood for more than three hours stops counting as fine: the health sensor
+  says so, the popover says so, and the add-on log says what the renewal ran
+  into. A renewal Anthropic refuses is a session that is over, reported once
+  as `http_401` with the remedy — sign in again — and never asked again with
+  that credential.
+- **"What you'd need to do" is written by the run that looked.** Every row of
+  a kind carried the same sentence the rule writes for all of them — "check
+  its power and its connection (batteries, Wi-Fi, the hub it pairs through),
+  then reload its integration" — which is useless to somebody holding the
+  device. Triage already looks at each finding with Home Assistant's own
+  tools before you are shown it; it now says what to do about *this* device
+  on *this* integration in *this* house, and the card carries that. A row it
+  writes nothing for keeps the card it always had.
+
+### Fixed
+
+- **brAIn no longer files a device finding about its own sensors.** "brAIn
+  Usage Limits has been unavailable for more than a day — check its
+  batteries" was the add-on reporting itself under somebody else's remedy;
+  the health verdict is where that belongs, with the switch named.
+- **A report lists a missing measurement once.** Five climate checks skipped
+  on "snapshot is missing thermal", the snapshot row, and the Rooms store
+  were seven rows about one fact; the checks a missing key took down are now
+  named on that key's own row.
+
 ## 1.59.0
 
 **The usage sensors ask when the number has changed, instead of every five
 minutes on the off-chance.**
+
+### Added
+
+- Diagnostics carries `usage.nudged_at`, so "the figure is 40 minutes old"
+  and "nothing has run since Tuesday" are different reports of the same
+  number and only one of them is worth looking into.
+
+### Changed
 
 - **A usage figure only moves when a run spends tokens.** The tracker was
   polling your account every 5 minutes — 288 requests a day to find a
@@ -2653,14 +2877,13 @@ minutes on the off-chance.**
   exist because asking again cannot help, and a finished run is not news to
   an endpoint that has just refused us — a nudge may only ever shorten the
   ordinary cadence, never a promised quiet.
-- Diagnostics carries `usage.nudged_at`, so "the figure is 40 minutes old"
-  and "nothing has run since Tuesday" are different reports of the same
-  number and only one of them is worth looking into.
 
 ## 1.58.0
 
 **Three things a real report showed, all of them brAIn being wrong about a
 house that was fine.**
+
+### Fixed
 
 - **The outdoor reference could be a dew point, and every room's physics was
   measured against it.** A weather integration publishes a dew point, a
@@ -2704,6 +2927,13 @@ asked to write a card, to study a topic, to make a repair — a finding is
 the side channel they drop what they noticed into on the way past, and
 nothing anywhere asked them whether it was worth a person's evening.
 
+### Added
+
+- ⚙ → Diagnostics carries how long the oldest row still waiting has waited.
+  A queue nobody can see is a queue that silently swallows.
+
+### Changed
+
 - **All five producers file through the same gate now**: the house checks,
   an insight run's `findings`, a study session's, whatever the fixer
   noticed while it was in there, and the rows a "Check again" press turns
@@ -2722,8 +2952,6 @@ nothing anywhere asked them whether it was worth a person's evening.
   Not signed in, runs paused, the budget spent, the run failed or came back
   unreadable, a row it skipped — every one of those still ends with the
   finding on the list marked *Not checked first*, and why.
-- ⚙ → Diagnostics carries how long the oldest row still waiting has waited.
-  A queue nobody can see is a queue that silently swallows.
 
 ## 1.56.0
 
@@ -2731,6 +2959,23 @@ nothing anywhere asked them whether it was worth a person's evening.
 You said it had basically zero utility, and it did: it was Home Assistant's
 own logbook with a cause column added, which on a real house is hundreds of
 rows an hour of a sensor reporting a number. Nobody thinks in state changes.
+
+### Added
+
+- **It says when the house was empty**, above the rows it is the context
+  for. A person brAIn never saw change is not a person who was out, so it
+  stays silent unless it really knows.
+
+**And one button: "What does this add up to?"** One Claude run over the
+window you are looking at, for a paragraph rather than a list read back. It
+is a *press* — a run behind a tab that refreshes on arrival is a bill nobody
+asked for — and the answer is kept against the window, so coming back is
+free. It writes about the house and never about the person.
+
+Everything else on that tab is still arithmetic over one fetch: opening it
+costs nothing, however often.
+
+### Changed
 
 - **A run is one row.** The TV paused for an ad break and switched off three
   hours later is one episode of *three hours*, not four rows. A door opened
@@ -2744,22 +2989,10 @@ rows an hour of a sensor reporting a number. Nobody thinks in state changes.
   and safety, people, heating, doors and blinds, media, cameras and motion,
   lights and switches — each with a line saying what is in it. A section
   with nothing in it is not drawn.
-- **It says when the house was empty**, above the rows it is the context
-  for. A person brAIn never saw change is not a person who was out, so it
-  stays silent unless it really knows.
 - **A row somebody undid says so on the row.** That used to be a count in a
   block above the list, which is not something anybody can act on.
 - Every row still names its cause, and tapping one still opens that
   entity's own recent history.
-
-**And one button: "What does this add up to?"** One Claude run over the
-window you are looking at, for a paragraph rather than a list read back. It
-is a *press* — a run behind a tab that refreshes on arrival is a bill nobody
-asked for — and the answer is kept against the window, so coming back is
-free. It writes about the house and never about the person.
-
-Everything else on that tab is still arithmetic over one fetch: opening it
-costs nothing, however often.
 
 ## 1.55.0
 
@@ -2774,6 +3007,8 @@ So there is a step between filing and surfacing. After each checks pass, one
 Claude run reads the history, the area, and what brAIn already knows about
 your house, and decides per finding whether it is worth your attention.
 
+### Added
+
 - **What it elevates carries the reason** on the card: *brAIn checked — its
   own month of statistics really does drift upward, and no other freezer
   here does.*
@@ -2781,6 +3016,9 @@ your house, and decides per finding whether it is worth your attention.
   tab, which appears only once something is in it. Every row there says what
   was checked, opens **the conversation brAIn had about it**, and carries one
   button that puts it back on the work list.
+
+### Changed
+
 - **Held is held, not deleted.** The row stays, so the next pass does not
   file the same thing again, and it clears itself when the check stops
   reporting it — exactly as an open one does.
@@ -2810,6 +3048,8 @@ CR2032 in the garage sensor*, *That cupboard is never opened*. Press one and
 the finding is settled in those words: the card clears and what the button
 said is what goes into memory, onto your to-do list, or into the correction.
 
+### Added
+
 - **The label is the record.** One string per option — it is both the button
   and the note that ending writes, so nothing is recorded that you did not
   read first.
@@ -2825,6 +3065,8 @@ said is what goes into memory, onto your to-do list, or into the correction.
 - A chore made this way carries the step the conversation worked out
   ("replace the CR2032 behind the garage sensor") rather than the generic fix
   the check could write without looking.
+
+### Fixed
 
 **Fixed: `get_dashboard` said "default" instead of which dashboard it read.**
 Asking for a dashboard without naming one reported `url_path: "default"` — an
@@ -3134,6 +3376,8 @@ store still wins, and a 401 is never masked.
 
 ## 1.51.0
 
+### Added
+
 **brAIn can now perform the sign-in that reads your usage, from the panel, with
 no terminal.** The report people kept meeting said the fix was to *"open the
 Terminal tab and run `claude /login`"* — and the reply to it was the right one:
@@ -3169,6 +3413,8 @@ button instead of a shell command, and a test scans all four so no remedy can
 send somebody back to a terminal they may not have.
 
 ## 1.50.2
+
+### Fixed
 
 **The deep check's fixer stage blamed the Supervisor token for a helper it
 had just created.** Home Assistant mints a storage collection's id by
@@ -3227,6 +3473,8 @@ with nothing left to remove it.
 
 ## 1.50.1
 
+### Fixed
+
 **Two of the eight faults in the report that prompted 1.50.0 were not
 faults.** The list opened with `Run (healing): ended healed` — an overnight
 repair that *worked* — and closed with `not running: assist_listener`, which
@@ -3282,6 +3530,8 @@ cleanup rather than over it: the run's own failure stays on the record,
 because it is the evidence that a cleanup failed.
 
 ## 1.50.0
+
+### Changed
 
 **Every report now opens with what is wrong.** A `brain report` used to
 begin *"Nothing failed to produce this file"* and then hand you six hundred
@@ -3352,6 +3602,8 @@ button in ⚙ → Diagnostics — it starts the pass rather than holding the pag
 open for the several minutes it takes, and costs no Claude turns.
 
 ## 1.49.0
+
+### Added
 
 **You can see the prompt now.** A card's Edit dialog had a box labelled
 *"Analysis focus (the prompt for this category)"*, and that box is one
@@ -3777,6 +4029,18 @@ requires `user:profile`, which only the interactive `claude /login` asks
 for. The sign-in works; every Claude run brAIn makes works; the one thing
 that cannot work is this figure. Running `ha login` again reproduces it.
 
+### Changed
+
+- **`ha login` says so at mint time.** It already warned that an API key
+  has no usage window; a long-lived token gets the same courtesy, at the
+  one moment somebody is looking, rather than leaving them to discover it
+  as four sensors going dark a day later.
+- The User-Agent is correct and unchanged; the docstring's parenthetical
+  about a version lag was measured against a stale npm copy left on the
+  box rather than the native binary the add-on runs, and says so now.
+
+### Fixed
+
 - **The body is what names the refusal.** The status alone cannot tell a
   scope verdict from any other permission refusal, and the body says
   `oauth_scope_insufficient` in as many words. `_error_code` narrows
@@ -3814,10 +4078,6 @@ that cannot work is this figure. Running `ha login` again reproduces it.
   is the same claim — this is the wrong credential — and keying that rule
   on the literal `http_401` is what left the other half of the
   401-stops-the-search bug in.
-- **`ha login` says so at mint time.** It already warned that an API key
-  has no usage window; a long-lived token gets the same courtesy, at the
-  one moment somebody is looking, rather than leaving them to discover it
-  as four sensors going dark a day later.
 - **The line naming the fix is said once, and said again if the problem
   comes back.** It was gated on `state["auth"]` — the same key
   `_note_source` writes the answering *store's name* into on every pass
@@ -3834,9 +4094,6 @@ that cannot work is this figure. Running `ha login` again reproduces it.
   help, which would take in the sign-in problems — is wrong: a restart is
   not a timer expiring, it is a person acting, and the thing they most
   often did first is sign in again.
-- The User-Agent is correct and unchanged; the docstring's parenthetical
-  about a version lag was measured against a stale npm copy left on the
-  box rather than the native binary the add-on runs, and says so now.
 
 ## 1.47.2
 
@@ -4976,6 +5233,8 @@ is broken, and both of these read from the tab as the second.
 ## 1.43.1
 
 Three things that ran, quietly, and did the wrong thing.
+
+### Fixed
 
 - **The morning brief never saw the health verdict.** `_send_brief` awaited
   `_diagnostics_payload()` — a plain function returning a dict — so every
@@ -8750,6 +9009,8 @@ tight cap the most expensive setting in the add-on.
 
 ## 1.1.1
 
+### Fixed
+
 - **Signing in once is now enough.** Signing in through the panel still left the
   terminal asking for a login. Credential sharing was built when Terminal and
   Insights were separate add-ons and only ran one way: the terminal's
@@ -8797,19 +9058,27 @@ tight cap the most expensive setting in the add-on.
 
 ## 1.0.1
 
+### Changed
+
+- **Renamed the files that were ours rather than Claude Code's**: `claude_client.py`
+  is now `panel/engine.py`, and the session picker and auth helper are
+  `brain-menu.sh` and `brain-auth-helper.sh`. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the
+  `claude` user, and the `claude-run` wrapper keep the name — they *are* Claude
+  Code's own file, env var, user, and binary.
+
+### Removed
+
+- **BRUH Terminal and BRUH Insights are removed.** brAIn replaces both; their test
+  suites now cover brAIn.
+
+### Fixed
+
 - **Fixed the panel's login failing with `su-exec: claude: No such file or directory`.**
   The CLI was looked up with the root user's `PATH` and then executed as the
   `claude` user. The binary lives at `/root/.local/bin/claude`, which is on neither
   user's `PATH`, so the lookup fell through to the bare name `claude` and su-exec
   couldn't find it. The panel now prefers the `claude-run` wrapper and otherwise
   resolves an absolute path.
-- **BRUH Terminal and BRUH Insights are removed.** brAIn replaces both; their test
-  suites now cover brAIn.
-- **Renamed the files that were ours rather than Claude Code's**: `claude_client.py`
-  is now `panel/engine.py`, and the session picker and auth helper are
-  `brain-menu.sh` and `brain-auth-helper.sh`. `CLAUDE.md`, `CLAUDE_CONFIG_DIR`, the
-  `claude` user, and the `claude-run` wrapper keep the name — they *are* Claude
-  Code's own file, env var, user, and binary.
 
 ## 1.0.0
 

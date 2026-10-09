@@ -356,7 +356,11 @@ not depend on the current one's result. So while a pull request is in CI:
   nothing else changed in those two files), and one entry at the top of
   `brain/CHANGELOG.md` with a line per fix, saying what changed for
   somebody using brAIn and naming each reports issue by its number only,
-  never its URL, because the reports repository is private.
+  never its URL, because the reports repository is private. Group the
+  lines under `### Added`, `### Changed`, `### Removed`, `### Fixed` and
+  `### Security` (in that order, leaving out any that are empty): something
+  new is Added, a behaviour or wording that was not wrong but is now
+  better is Changed, something that misbehaved is Fixed.
 - **Check it.** Every batch, before pushing:
   - `ruff check .`
   - `python3 .github/scripts/devloop_guard.py origin/main`;

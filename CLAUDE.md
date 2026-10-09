@@ -1164,6 +1164,7 @@ podman run -p 8099:8099 -p 7681:7681 -v $(pwd)/config:/config local/brain
 
 ### File Conventions
 - Shell scripts: `#!/usr/bin/with-contenv bashio` for HA scripts, `#!/bin/bash` for standalone
+- CHANGELOG entries: under each `## x.y.z`, group the lines under `### Added`, `### Changed`, `### Removed`, `### Fixed` and `### Security` ([Keep a Changelog](https://keepachangelog.com) order, empty ones left out), so a release can be scanned by kind
 - YAML: 2-space indentation
 - Shell: 4-space indentation
 - Error handling: `bashio::log.error` for HA scripts, colored output for user-facing tools
