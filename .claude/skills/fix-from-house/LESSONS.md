@@ -6,7 +6,7 @@ A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
 Last retro: 2026-10-07
-Last UX audit: 2026-10-08
+Last UX audit: 2026-10-09
 
 ## Lessons
 
@@ -37,3 +37,4 @@ Last UX audit: 2026-10-08
 One line per run: date, duration, issues by ending, slowest step.
 
 - 2026-10-08/09: ~10h, 20 issues closed: 16 fixed (PRs #380, #381, #382 and batch 4), 2 already fixed, 1 duplicate, 1 not brAIn; 6 rolling/evidence left open by design. Slowest step: the UI batch subagent (17 min) and waiting on CI.
+- 2026-10-09: ~3h this session (resumed run), 10 issues closed, all fixed (PRs #385, #386, #387 and this batch), 2 of them filed by the UX audit and fixed in the same run; 6 rolling/evidence left open by design. Slowest step: the Opus UI batch subagent (16 min); a worktree branch mix-up cost one re-push.

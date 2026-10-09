@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.9
+
+- On a finding brAIn can change itself, the main button is **Fix** and opens a box already holding the card's suggested change: edit it or write your own instruction, and brAIn shows exactly what it will change for one Apply, with Undo. It was a bare **Plan** press that took no instruction. (reports #141)
+- A report waiting in ⚙ › Developer › Help develop brAIn says what it is waiting on — today's limit of new issues (and when the next one can go), a failed send or a missing token — instead of "will be sent". (reports #142)
+- A question brAIn asks you (Yes / No) wears a **Question** chip instead of Suggestion. (reports #143)
+- Memory › Timeline puts the window length on the Earlier / Later row, and the label between them says "Now" or the dates you paged back to, rather than repeating the window. (reports #144)
+
 ## 2.18.8
 
 - A finding says what is wrong and what to do in the words the house uses: devices and automations by their names, a device named only by its hardware address counted rather than spelled out, and "remove them in Settings > Devices & services" rather than a `brain.*` service name. The ids are still on the card, under its evidence. Rows already on the list pick up the new wording on the next checks pass. (reports #135)
