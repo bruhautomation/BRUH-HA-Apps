@@ -2351,6 +2351,38 @@ async function refreshStatus() {
   // The dot reads the status line's own state, which the render key above
   // does not carry, so it is repainted on every poll — one attribute.
   renderStatusDot();
+  paintVersion();
+}
+
+// The version under the logo (`#versionChip`): one link to this release's
+// entry in the changelog. GitHub's anchor for "## 2.18.5" is "2185", the
+// heading with its dots dropped; a version that is not a number ("dev")
+// links to the top of the file. A pending restart is said in words beside
+// the number, in the restart signal's own sentence — the status line's
+// `needs_restart` can be outranked by a sign-in problem, so the chip reads
+// `integration` off the poll rather than the status state.
+const CHANGELOG_URL = "https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md";
+
+function paintVersion() {
+  const a = $("#versionChip");
+  const text = $("#versionText");
+  if (!a || !text) return;
+  const s = state.status || {};
+  let v = String(s.version || "").trim();
+  if (!v) v = text.textContent.trim().replace(/^v/, "").replace(/ ·.*$/, "");
+  if (!v || v.includes("{{")) return;
+  const integ = s.integration || {};
+  const pending = integ.restart_pending === true;
+  const restart = pending
+    ? "Restart Home Assistant to finish updating brAIn"
+      + (integ.loaded ? ` (Home Assistant is still running ${integ.loaded})` : "") + "."
+    : "";
+  text.textContent = "v" + v + (pending ? " · restart needed" : "");
+  a.href = CHANGELOG_URL + (/^\d+(\.\d+)*$/.test(v) ? "#" + v.replace(/\./g, "") : "");
+  a.classList.toggle("pending", pending);
+  a.title = pending ? restart : `What changed in brAIn ${v}`;
+  a.setAttribute("aria-label", `brAIn ${v}: what changed (opens the changelog)`
+    + (pending ? `. ${restart}` : ""));
 }
 
 async function refreshInsights() {
@@ -2946,6 +2978,123 @@ function showSettingsIndex() {
   window.scrollTo(0, 0);
 }
 
+// ⚙'s search. The index is the page's own markup, read at the moment of
+// asking: every switch's name and the line under it, every field label and
+// the hint after it, every group heading and the section names. A setting
+// inside something hidden (the development loop's controls while it is off)
+// is not offered, because a press that opens a section on nothing is a
+// press that seems to do nothing.
+function buildSettingsIndex() {
+  const out = [];
+  const seen = new Set();
+  const clean = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  // The line that explains a label: the hint straight after it, or after
+  // the control it names.
+  const hintAfter = (el) => {
+    let n = el.nextElementSibling;
+    if (n && n.matches("select, input, textarea")) n = n.nextElementSibling;
+    return n && n.matches(".hint") ? clean(n.textContent) : "";
+  };
+  document.querySelectorAll("#setModal .setsec").forEach((sec) => {
+    const where = clean((sec.querySelector(".setsecname") || {}).textContent);
+    const add = (name, about, target) => {
+      name = clean(name);
+      if (!name || !target) return;
+      const hiddenBy = target.closest("[hidden]");
+      if (hiddenBy && hiddenBy !== sec) return;
+      const key = sec.dataset.sec + "|" + name;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ sec: sec.dataset.sec, where, name, about: clean(about), target });
+    };
+    add(where, "", sec.querySelector(".setsechead"));
+    sec.querySelectorAll(".setsecbody label").forEach((l) => {
+      if (l.closest(".setcams, .diag")) return;
+      if (l.classList.contains("bigcheck") || l.classList.contains("check")) {
+        add((l.querySelector("b") || l).textContent,
+            (l.querySelector(".subtext") || {}).textContent,
+            l.querySelector("input") || l);
+        return;
+      }
+      const target = (l.htmlFor && document.getElementById(l.htmlFor))
+        || l.querySelector("input, select, textarea") || l;
+      add(l.textContent, hintAfter(l), target);
+    });
+    sec.querySelectorAll(".sethead, .setsubhead, .testsname").forEach((h) => {
+      if (h.querySelector("label")) return;
+      add(h.textContent, hintAfter(h), h);
+    });
+  });
+  return out;
+}
+
+function searchSettings(q) {
+  const words = String(q || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const scored = [];
+  buildSettingsIndex().forEach((e, i) => {
+    const name = e.name.toLowerCase();
+    const all = `${name} ${e.about.toLowerCase()} ${e.where.toLowerCase()}`;
+    if (!words.every((w) => all.includes(w))) return;
+    const inName = words.filter((w) => name.includes(w)).length;
+    scored.push({ e, score: inName * 10 + (name.startsWith(words[0]) ? 5 : 0), i });
+  });
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
+  return scored.slice(0, 12).map((x) => x.e);
+}
+
+let setSearchHits = [];
+
+function paintSettingsSearch() {
+  const box = $("#setSearch");
+  const list = $("#setSearchResults");
+  const nav = $("#setNav");
+  if (!box || !list || !nav) return;
+  const q = box.value.trim();
+  nav.classList.toggle("searching", !!q);
+  list.hidden = !q;
+  if (!q) { list.innerHTML = ""; setSearchHits = []; return; }
+  setSearchHits = searchSettings(q);
+  list.innerHTML = setSearchHits.length
+    ? setSearchHits.map((e, i) => `<button type="button" class="setresult" role="listitem"`
+        + ` data-sec="${esc(e.sec)}" data-hit="${i}"><span class="setresultname">${esc(e.name)}</span>`
+        + `<span class="setresultwhere">${esc(e.where)}${e.about && e.name !== e.where
+          ? " · " + esc(e.about.length > 70 ? e.about.slice(0, 68) + "…" : e.about) : ""}</span></button>`)
+      .join("")
+    : `<p class="setresultsnone">No setting matches “${esc(q)}”.</p>`;
+}
+
+// Open a setting where it lives: its section in front, the setting scrolled
+// into view, focused and marked for a moment — `openSettingsAt`'s landing.
+function jumpToSetting(target) {
+  if (!target) return;
+  const sec = target.closest(".setsec");
+  if (sec) showSettingsSection(sec.dataset.sec);
+  const row = target.closest(".setrow, .setfield, .setgroupfield") || target;
+  row.scrollIntoView({ block: "center" });
+  try { target.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+  document.querySelectorAll("#setModal .setflash").forEach((n) => n.classList.remove("setflash"));
+  row.classList.add("setflash");
+  setTimeout(() => row.classList.remove("setflash"), 2400);
+}
+
+if ($("#setSearch")) {
+  $("#setSearch").addEventListener("input", paintSettingsSearch);
+  $("#setSearch").addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { ev.target.value = ""; paintSettingsSearch(); }
+    if (ev.key === "Enter" && setSearchHits[0]) {
+      ev.preventDefault();
+      jumpToSetting(setSearchHits[0].target);
+    }
+  });
+  $("#setSearchResults").addEventListener("click", (ev) => {
+    const b = ev.target.closest(".setresult");
+    if (!b) return;
+    const hit = setSearchHits[Number(b.dataset.hit)];
+    if (hit) jumpToSetting(hit.target);
+  });
+}
+
 function restoreSettingsSections() {
   document.querySelectorAll("#setNav .setnavbtn").forEach((b) =>
     b.addEventListener("click", () => {
@@ -3118,7 +3267,7 @@ async function openSettingsAt(id) {
   if (sec) showSettingsSection(sec.dataset.sec);
   const sub = target.closest("details");
   if (sub && !sub.open) sub.open = true;
-  const row = target.closest(".setrow") || target;
+  const row = target.closest(".setrow, .setfield, .setgroupfield") || target;
   row.scrollIntoView({ block: "center" });
   try { target.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
   row.classList.add("setflash");
@@ -4011,14 +4160,22 @@ function paintDevloop(data) {
         : "";
       const opts = hours.map((h) => `<option value="${h}"${sched[st.name] === h
         ? " selected" : ""}>${esc(DEV_HOURS[h] || h + " hours")}</option>`).join("");
+      // A card: the stream's name and what it is for split at its colon,
+      // the switch beside them, and how often and Run along the foot with
+      // when it last ran — so a column of seven reads as seven of one thing.
+      const colon = String(st.label || "").indexOf(": ");
+      const name = colon > 0 ? st.label.slice(0, colon) : st.label;
+      const about = colon > 0 ? st.label.slice(colon + 2) : "";
       return `<div class="setrow top devstream"><label class="check bigcheck">`
         + `<input class="tog" type="checkbox" data-dev-stream="${esc(st.name)}"`
-        + `${on[st.name] ? " checked" : ""}${s.autopilot ? " disabled" : ""}><span><b>${esc(st.label)}</b><br>`
-        + `<span class="subtext">${esc(when)}</span></span></label>`
-        + `<div class="row tight"><select class="sel" data-dev-hours="${esc(st.name)}"`
-        + ` aria-label="How often">${opts}</select>`
+        + `${on[st.name] ? " checked" : ""}${s.autopilot ? " disabled" : ""}><span><b>${esc(name)}</b>`
+        + (about ? `<span class="subtext">${esc(about)}</span>` : "")
+        + `</span></label>`
+        + `<div class="devstreamfoot"><span class="devstreamwhen">${esc(when)}</span>`
+        + `<select class="sel" data-dev-hours="${esc(st.name)}"`
+        + ` aria-label="How often ${esc(name)} runs">${opts}</select>`
         + `<button class="btn tiny" data-dev-run="${esc(st.name)}"`
-        + ` aria-label="Run this stream now">Run</button></div></div>${slow}`;
+        + ` aria-label="Run ${esc(name)} now">Run</button></div>${slow}</div>`;
     }).join("");
   const looks = data.looks || {};
   // Where the last request went: each report it became, its issue, and

@@ -91,6 +91,9 @@ function seed(mode) {
   // with work nobody has to do is how you learn to ignore this one.
   $('#findBadge').textContent = '3';
   $('#findBadge').classList.remove('hidden');
+  // The version under the logo, as the panel paints it off /api/status.
+  const ver = $('#versionText');
+  if (ver) ver.textContent = 'v2.18.5';
   if (mode === 'broken') {
     $('#authChip').classList.remove('hidden');
     $('#authChip').classList.add('bad');
@@ -127,7 +130,7 @@ function probe(floors) {
   }
 
   // Everything you can press, measured as rendered.
-  const targets = [...bar.querySelectorAll('.viewtab, .btn.icon, .chip.clickable')]
+  const targets = [...bar.querySelectorAll('.viewtab, .btn.icon, .chip.clickable, #versionChip')]
     .filter((el) => getComputedStyle(el).display !== 'none')
     .map((el) => {
       const r = el.getBoundingClientRect();
@@ -156,7 +159,13 @@ function probe(floors) {
     .filter((el) => el !== tabbar && !el.classList.contains('spacer'))
     .filter((el) => getComputedStyle(el).display !== 'none')
     .map((el) => el.id || el.getAttribute('class').split(' ')[0]);
+  // The version: a link under the logo, to this release's changelog.
+  const ver = document.querySelector('#versionChip');
+  const version = ver && ver.tagName === 'A' && ver.closest('.topbar') === bar
+    && getComputedStyle(ver).display !== 'none' && ver.getBoundingClientRect().width > 0
+    && /CHANGELOG\.md/.test(ver.getAttribute('href') || '') ? 'ok' : 'missing';
   return {
+    version, versionName: ver ? ver.getAttribute('aria-label') || '' : '',
     fixedTabs: fixed,
     tabbarAtBottom: fixed && Math.abs(tr.bottom - window.innerHeight) < 1,
     tabsInside: tabRects.every((r) => r.left >= -0.5 && r.right <= window.innerWidth + 0.5),
@@ -210,7 +219,7 @@ function probe(floors) {
       // showing, and a third row only when a trouble chip joins the usage
       // pill. A phone: one header row of the logo, the dot and ⚙, and the
       // tabs on one row fixed along the bottom, named and inside the screen.
-      const header = new Set(['wordmark', 'statusDot', 'settingsBtn']);
+      const header = new Set(['versionChip', 'statusDot', 'settingsBtn']);
       const shape = bottom
         ? m.rows === 1 && m.height <= HEADER_MAX && m.fixedTabs && m.tabbarAtBottom
           && m.tabsInside && m.tabsOneRow && m.labelled === m.tabs
@@ -220,8 +229,12 @@ function probe(floors) {
           ? !m.fixedTabs && m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3)
             && m.labelled === m.tabs
           : !m.fixedTabs && m.rows === 1 && m.height === 56 && m.labelled === m.tabs;
+      // Every width shows the version, as a link with a name, beside the
+      // logo — and on a phone it is the logo's own row, not a fourth item.
+      const versioned = m.version !== 'missing' && !!m.versionName
+        && m.headerItems.includes('versionChip');
       const touch = !!m.smallest && m.undersized.length === 0;
-      rows.push({ width, mode, ...m, phone, shape, touch, overflow });
+      rows.push({ width, mode, ...m, phone, shape, touch, overflow, versioned });
 
       if (OUT && mode === 'running' && KEEP_SHOTS.has(width)) {
         await page.locator('.topbar').screenshot({ path: path.join(OUT, `bar-${width}.png`) });
@@ -232,7 +245,7 @@ function probe(floors) {
   console.log('width  state     height  rows  scrollW/clientW  smallest target    verdict');
   let bad = 0;
   for (const r of rows) {
-    const ok = r.shape && r.touch && !r.overflow;
+    const ok = r.shape && r.touch && !r.overflow && r.versioned;
     if (!ok) bad++;
     const t = r.smallest ? `${r.smallest.id} ${r.smallest.w}x${r.smallest.h}` : '—';
     console.log(
@@ -242,7 +255,8 @@ function probe(floors) {
       + (ok ? 'ok' : [!r.shape && `SHAPE rows=${r.rows} h=${r.height} labels=${r.labelled}/${r.tabs}`
                         + ` fixed=${r.fixedTabs} bottom=${r.tabbarAtBottom} header=${r.headerItems}`,
                       !r.touch && `TOUCH ${r.undersized.join(', ') || 'no targets'}`,
-                      r.overflow && `OVERFLOW +${r.barScrollW - r.barClientW}px`]
+                      r.overflow && `OVERFLOW +${r.barScrollW - r.barClientW}px`,
+                      !r.versioned && `VERSION ${r.version} name="${r.versionName}"`]
         .filter(Boolean).join(' ')));
   }
   console.log(bad
