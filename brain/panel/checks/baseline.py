@@ -207,6 +207,17 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
     platform = str(reg.get("platform") or "")
     if platform in devices.SELF_PLATFORMS:
         return "brAIn's own sensor"
+    # A machine that cycles is bimodal — near nothing, then hundreds of
+    # watts for hours — and an hour-of-the-week mean lands between the two
+    # where it never is: a dehumidifier running its usual morning 700 W
+    # was "218,300 times its normal variation" against a usual 0.07 W. The
+    # appliance store holds a measured idle/busy profile for exactly these
+    # sensors and is the authority on them (`chore.waiting` reads it), so a
+    # profiled sensor is not a band reading. Read off the snapshot the pass
+    # already holds; a snapshot with no store profiles nothing.
+    profiled = (house.snap.get("appliances") or {}).get("entities")
+    if isinstance(profiled, dict) and eid in profiled:
+        return "an appliance brAIn measures by its own on/off shape"
     if platform in PRINTER_PLATFORMS:
         return "a printer's job"
     if str(attrs.get("device_class") or "") in SPAN_CLASSES:

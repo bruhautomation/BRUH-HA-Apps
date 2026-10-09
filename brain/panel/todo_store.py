@@ -167,6 +167,14 @@ def _shape(entry: dict) -> dict:
         "note": _clean(entry.get("note"), MAX_NOTE),
         # When the check that filed it said it was not done after all.
         "came_back": int(entry.get("came_back") or 0),
+        # A finding about this item's entity that was NOT filed because the
+        # item is open (`findings_store.add_many`): when it was last seen,
+        # how many times, and what the report said. The To Do row says so,
+        # because a chore nobody has got round to that the house keeps
+        # reporting is worth a line, and a second card for it is not.
+        "seen_again_at": int(entry.get("seen_again_at") or 0),
+        "seen_again": int(entry.get("seen_again") or 0),
+        "seen_again_text": _clean(entry.get("seen_again_text"), MAX_TEXT),
     }
 
 
@@ -215,6 +223,49 @@ def get(item_id: int) -> dict | None:
         if int(entry.get("id") or 0) == int(item_id):
             return _shape(entry)
     return None
+
+
+def open_entities() -> dict[str, int]:
+    """`{entity id: item id}` for the open items that name an entity.
+
+    What `findings_store.add_many` asks before filing a row: a report about
+    an entity somebody has already put on this list is a chore they agreed
+    to, not a new decision. A list that cannot be read answers `{}` —
+    holding back nothing, the direction in which being wrong shows a card.
+    """
+    out: dict[str, int] = {}
+    for entry in _load():
+        item = _shape(entry)
+        if item["status"] == "open" and item["entity_id"]:
+            out.setdefault(item["entity_id"], item["id"])
+    return out
+
+
+@_mutates
+def seen_again(item_id: int, text: str = "",
+               now: float | None = None) -> dict | None:
+    """Note on an open item that the house reported its problem again.
+
+    Returns the item as it now is, or None if it is gone or finished — a
+    finished chore is not one a report can be held for.
+    """
+    items = _load()
+    found = None
+    for entry in items:
+        if int(entry.get("id") or 0) != int(item_id):
+            continue
+        if entry.get("status", "open") != "open":
+            return None
+        entry["seen_again_at"] = int(now if now is not None else time.time())
+        entry["seen_again"] = int(entry.get("seen_again") or 0) + 1
+        if str(text or "").strip():
+            entry["seen_again_text"] = _clean(text, MAX_TEXT)
+        found = _shape(entry)
+        break
+    if found is None:
+        return None
+    _write(items)
+    return found
 
 
 def counts() -> dict:

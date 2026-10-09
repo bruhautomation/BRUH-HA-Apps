@@ -271,7 +271,10 @@ _STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
 # its reason box already teach, case by case.
 # `security` is the tripwire (`security.py`): a producer nobody should be
 # able to silence with one press, any more than the safety lane.
-UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security"})
+# `check:safety.tripped` is the safety lane's deterministic half (a detector
+# reading tripped now, `checks/safety.py`), and is the same rule.
+UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security",
+                               "check:safety.tripped"})
 
 
 # ---------------------------------------------------------------------------

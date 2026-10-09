@@ -1030,7 +1030,7 @@ def candidates(scopes: dict[str, dict[str, dict]]) -> list[dict]:
                     and t["last_wrong_at"] > t["last_confirmed_at"]
                     and not set(t["flags"]) & set(NEVER_QUIETER_FLAGS)
                     and name not in SAFETY_SOURCES
-                    and name[len("check:"):] not in signals.SAFETY_CHECKS):
+                    and name[len("check:"):] not in signals.SAFETY_FLAG_CHECKS):
                 row = {"direction": "quieter",
                        "counts": f"{t['wrong']} of {labelled} it raised were "
                                  "marked not a problem"}

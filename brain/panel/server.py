@@ -8707,7 +8707,9 @@ async def _run_sre(reason: str = "schedule") -> None:
         open_rows = [f for f in findings_store.list_all()
                      if f.get("source") == sre.SOURCE]
         keep = ({findings_store.normalize(r["text"]) for r in rows}
-                | sre.keep_keys(open_rows, state, dig["available"]))
+                | sre.keep_keys(open_rows, state, dig["available"],
+                                {r["entity_id"] for r in rows
+                                 if r.get("entity_id")}))
         cleared = findings_store.clear_resolved({sre.SOURCE}, keep)
         return created, cleared
 

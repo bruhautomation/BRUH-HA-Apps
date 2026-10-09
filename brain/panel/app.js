@@ -6967,7 +6967,12 @@ function makeTodo(item) {
   text.appendChild(el("span", "todotitle", prettyText(item.text)));
   const meta = [item.origin === "finding" ? (item.source_title || "From a finding") : "Added by you"];
   if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
-  text.appendChild(el("span", "item-state", meta.join(" · ")));
+  // The house reported this chore's problem again while it waited, and the
+  // report was held here rather than filed as a second card.
+  if (item.seen_again_at) meta.push("seen again " + timeAgo(new Date(item.seen_again_at * 1000).toISOString()));
+  const metaLine = el("span", "item-state", meta.join(" · "));
+  if (item.seen_again_text) metaLine.title = "Last reported as: " + prettyText(item.seen_again_text);
+  text.appendChild(metaLine);
   if (item.fix) text.appendChild(el("span", "todofix", prettyText(item.fix)));
   row.appendChild(text);
   const actions = el("div", "todoactions");
