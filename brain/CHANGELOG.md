@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.12
+
+### Added
+
+- **What's new**: pressing the version under the logo opens brAIn's release notes inside the panel, newest first, marking the releases since the one you last read, and saying when some of them still need Home Assistant to restart. The notes come from the Supervisor, so nothing sends you to GitHub; if they cannot be loaded the dialog says why and links there instead. (reports #156)
+
+### Changed
+
+- ⚙ › Diagnostics lists faults in plain words: each row says what is not working and what to do, and the check ids, job names and exit codes sit under **Technical detail**. A rule with a "stop raising these?" question already waiting on Needs you gets one line pointing at it rather than a second telling. (reports #159)
+- The rule scorecard names each rule (a check by its title, a card you made by its title, brAIn's own parts by what they do), says its record as "right 1 of 4, wrong 3" with a verdict (trusted, doubtful, muted), and puts Ignore or Restore on the row. The same count reads the same way on Diagnostics and in the queue's mute question. Ignore is now offered on any rule marked wrong more often than right after at least three answers. (reports #161, #160)
+
 ## 2.18.11
 
 ### Changed
