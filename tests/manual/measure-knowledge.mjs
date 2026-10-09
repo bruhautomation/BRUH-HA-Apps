@@ -866,6 +866,10 @@ for (const width of WIDTHS) {
           subject: subj ? subj.textContent.trim() : '',
           subjectShown: seen(subj),
           links: [...r.querySelectorAll('.kfactsubs .kfactsubj')].map((n) => n.textContent.trim()),
+          // A subject chip that is a button narrows the list: it is a press.
+          subjH: [...r.querySelectorAll('button.kfactsubj')]
+            .filter((n) => n.getBoundingClientRect().width > 0)
+            .map((n) => Math.round(n.getBoundingClientRect().height)),
           moreN: (r.querySelector('.kfactmore') || {}).textContent || '',
           gone: (r.querySelector('.kfactgone') || {}).textContent || '',
           hasRun: !!run,
@@ -920,6 +924,9 @@ for (const width of WIDTHS) {
       }
       if (row.hasRun && row.runH < MIN_TARGET) {
         note(at, `row ${i} run link is ${row.runH}px, under ${MIN_TARGET}`);
+      }
+      for (const h of row.subjH) {
+        if (h < 40) note(at, `row ${i} subject chip is ${h}px tall, under the 40px chip floor`);
       }
     }
     if (row.right > f.hostRight + 0.5) note(at, `row ${i} overflows its host`);

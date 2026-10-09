@@ -161,7 +161,9 @@ export const FEED = [
     id: 'f:1109', severity: 'serious', stakes: 'high', situation: 'hands', unchecked: true,
     claim: 'The pool pump integration failed to set up',
     detail: 'Every entity it provides is unavailable.',
-    source: 'check:sys.entry_failed', source_title: 'System check',
+    // No stored title: before `source_name` the Details line printed the id.
+    source: 'check:sys.entry_failed', source_title: '',
+    source_name: 'Integrations that failed to set up',
     origin: { store: 'findings', key: 1109 },
     triage: { verdict: 'untriaged', reason: '', at: NOW - 4000 },
     answers: trio('f:1109', A('todo', 'Add to To Do', '/api/case/f:1109/do',
@@ -175,7 +177,10 @@ export const FEED = [
 export const LOOSE = [
   { ts: 2001, text: 'The landing motion sensor stopped reporting', severity: 'warning',
     status: 'triaging', waiting_look: true, fixable: false,
-    source: 'check:dev.unavailable', source_title: 'Device check',
+    // Filed with no title, as a check's row from before titles were kept:
+    // the producer reaches the screen only as the server's `source_name`.
+    source: 'check:dev.unavailable', source_title: '',
+    source_name: 'Devices that stopped reporting',
     detail: 'Unavailable since 06:40.', fix: 'Check its battery.',
     entity_id: 'binary_sensor.landing_motion', triage: {}, snoozed_until: 0 },
 ];
@@ -220,7 +225,10 @@ export const TODO = {
       added_at: NOW - 3600, snoozed_until: 0 },
     { id: 2, text: 'Hall sensor has not reported since 3 Sep', detail: '',
       fix: 'Re-pair it', entity_id: 'binary_sensor.hall', severity: 'serious',
-      origin: 'finding', source_title: 'Device check', status: 'open',
+      // A chore moved off an asked card's finding: the stored title is the
+      // card's id, which is what reached the screen before `source_name`.
+      origin: 'finding', source: 'custom-k9x2', source_title: 'custom-k9x2',
+      source_name: 'A question you asked', status: 'open',
       added_at: NOW - 86400, snoozed_until: 0 },
     { id: 3, text: 'A snoozed chore', detail: '', fix: '', entity_id: '',
       severity: 'info', origin: 'hand', status: 'open', added_at: NOW - 86400,

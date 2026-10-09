@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.14
+
+### Changed
+
+- The panel's text is readable in both light and dark: the inactive tab labels, counts, badges, primary buttons, the ⚙ second lines, status-coloured text and the insight cards' muted text all meet a 4.5:1 contrast ratio, through new text colours kept apart from the fill colours. (reports #163)
+- Every surface names a source the same way: a check by its title, a card by its title, a question you asked as "A question you asked" once its card is gone, and brAIn's own parts by what they do. No `check:`, `user-` or `custom-` id reaches Needs you, History, To Do or Diagnostics. (reports #164)
+- An unusual reading says what it usually is ("28 °C now. It usually reads between 19 °C and 21 °C for this hour of the week") instead of a multiple of its normal variation. (reports #164)
+
+### Fixed
+
+- The chat list's ⋯ no longer sits over a conversation's title, and the contents of a closed Details or Schedule fold no longer take up space under the buttons beside them. (reports #163)
+- The fact chips in Knowledge and the budget slider in ⚙ › Model & usage are full-size touch targets. (reports #163)
+
 ## 2.18.13
 
 ### Added

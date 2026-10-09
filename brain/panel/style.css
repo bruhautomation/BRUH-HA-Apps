@@ -9,7 +9,7 @@
   --surface-2: #15293f;
   --ink: #ffffff;
   --ink-2: #b9ccdd;
-  --ink-3: #7e96aa;
+  --ink-3: #93a9bc;
   --hairline: rgba(255, 255, 255, 0.10);
   --grid: #1c3349;
   --accent: #1e9fe0;
@@ -18,6 +18,23 @@
   --warning: #fab219;
   --serious: #ec835a;
   --critical: #d03b3b;
+  /* The four status colours as TEXT. The fills above are a dot, a bar or a
+     chip edge and only have to be seen; a word in one has to be read, and
+     at 4.5:1 against every surface it sits on (measure-tokens), which
+     #fab219 on white (1.8:1) and #d03b3b on the dark card (3.5:1) are not.
+     Same hue, moved in lightness per scheme. */
+  --good-ink: #1fc21f;
+  --warning-ink: #fab219;
+  --serious-ink: #ec835a;
+  --critical-ink: #f07575;
+  /* The azure that carries white ink: a filled button, a count badge. The
+     brand #1e9fe0 under a white label is 3.0:1 in either scheme, so a fill
+     takes this deeper azure (5.1:1) and the brand stays the outline, the
+     link and the text colour on dark. */
+  --accent-fill: #0b74ad;
+  /* The azure as TEXT: a link, an active label, a quiet button's word.
+     Brighter on dark, deeper on light — #1e9fe0 on white is 3.0:1. */
+  --accent-ink: #4db6ec;
   --radius: 12px;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
 
@@ -52,7 +69,7 @@
   --control-radius: 8px;
   --btn-h: 36px;
   --btn-pad-x: 16px;
-  --btn-primary-bg: var(--accent);
+  --btn-primary-bg: var(--accent-fill);
   --btn-primary-ink: #ffffff;
   /* Ink on an accent fill (a badge, a send button, a tick), and the
      terminal's own colours — which follow ttyd's theme, not the scheme. */
@@ -85,11 +102,16 @@
     --surface-2: #e8f1f8;
     --ink: #0a1622;
     --ink-2: #33506a;
-    --ink-3: #7e96aa;
+    --ink-3: #46607a;
     --hairline: rgba(10, 22, 34, 0.10);
     --grid: #dbe6ef;
     --accent: #1e9fe0;
-    --accent-2: #0d7fbe;
+    --accent-2: #0a6ba3;
+    --good-ink: #066a06;
+    --accent-ink: #0a6ba3;
+    --warning-ink: #875500;
+    --serious-ink: #a8421a;
+    --critical-ink: #b62f2f;
     --shadow: 0 8px 28px rgba(10, 22, 34, 0.08);
     --sel-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%2333506a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
@@ -111,6 +133,14 @@ html, body {
    Bare element selectors, so the 16px touch floor below still outranks
    this on every one of them. */
 input, select, textarea, button { font-family: inherit; font-size: inherit; }
+/* A closed disclosure's content is out of the layout, not only out of
+   sight. Chromium hands a box to the content of a closed <details> — at
+   the place it would be drawn — so anything that reads boxes (the house's
+   own photographs, a screen reader's hit-testing, a tap) found a card's
+   "See what it checked" and the Schedule's card names lying over the
+   presses below them. Important, because a class on a child (a grid row, a
+   flex line) would otherwise outrank a rule this general. */
+details:not([open]) > :not(summary) { display: none !important; }
 
 /* ---------------------------------------------------------------- header */
 
@@ -492,10 +522,10 @@ a.btn {
 .hl .l { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); }
 .hl .v { font-size: var(--fs-card); font-weight: 700; line-height: 1.25; margin-top: 2px; overflow-wrap: anywhere; }
 .hl .d { font-size: var(--fs-meta); color: var(--ink-2); margin-top: 2px; }
-.hl.status-good .v { color: var(--good); }
-.hl.status-warning .v { color: var(--warning); }
-.hl.status-serious .v { color: var(--serious); }
-.hl.status-critical .v { color: var(--critical); }
+.hl.status-good .v { color: var(--good-ink); }
+.hl.status-warning .v { color: var(--warning-ink); }
+.hl.status-serious .v { color: var(--serious-ink); }
+.hl.status-critical .v { color: var(--critical-ink); }
 
 /* The chart sits ON the card, edge to edge with the text above it. It was
    a bordered box inside the card, and most charts then drew a panel of
@@ -518,7 +548,7 @@ a.btn {
   color: var(--ink-3);
 }
 .card > .xlink { padding: 0 var(--card-pad); }
-.xlink a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.xlink a { color: var(--accent-ink); text-decoration: none; font-weight: 600; }
 .xlink a:hover, .xlink a:focus-visible { text-decoration: underline; }
 /* Where a cross-link landed, for a moment. */
 .xflash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
@@ -562,7 +592,7 @@ a.btn {
    nothing can correct. The words say it too: colour is never the only
    signal. */
 .card .foot .livemark { flex: 0 1 auto; color: var(--ink-2); }
-.card .foot .livemark.stale { color: var(--warning); }
+.card .foot .livemark.stale { color: var(--warning-ink); }
 
 /* dimmed disabled category */
 .card.off > :not(.card-head) { opacity: 0.45; }
@@ -575,7 +605,7 @@ a.btn {
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: var(--fs-meta);
   font-weight: 700;
   vertical-align: 1px;
@@ -710,8 +740,8 @@ a.btn {
   font-size: var(--fs-body);
   word-break: break-all;
 }
-.setup .urlbox a { color: var(--accent); font-weight: 600; }
-.setup .flowerr { color: var(--critical); font-size: var(--fs-body); margin-top: 10px; }
+.setup .urlbox a { color: var(--accent-ink); font-weight: 600; }
+.setup .flowerr { color: var(--critical-ink); font-size: var(--fs-body); margin-top: 10px; }
 
 /* A standing caution, not an error.
  *
@@ -853,7 +883,7 @@ body.modal-open {
 .edit-body .iconin { width: 64px; text-align: center; }
 .edit-body .steps { margin: 10px 0 6px; padding-left: 18px; color: var(--ink-2); font-size: var(--fs-body); }
 .edit-body .steps li { margin: 4px 0; }
-.btn.danger { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, var(--hairline)); }
+.btn.danger { color: var(--critical-ink); border-color: color-mix(in srgb, var(--critical) 45%, var(--hairline)); }
 .btn.danger:hover { background: color-mix(in srgb, var(--critical) 12%, var(--surface)); }
 
 /* feedback list inside the feedback modal */
@@ -1115,7 +1145,7 @@ body.modal-open {
   border-radius: 4px;
   padding: 1px 5px;
 }
-.kmd a { color: var(--accent); }
+.kmd a { color: var(--accent-ink); }
 .kmemedit {
   width: 100%;
   min-height: 240px;
@@ -1135,7 +1165,7 @@ body.modal-open {
   gap: 8px;
   font-size: var(--fs-meta);
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-ink);
   padding: 4px 0;
 }
 /* Only for a pass that is actually running. "Queued" is a fact about the
@@ -1167,7 +1197,7 @@ body.modal-open {
 .kdirty {
   font-size: var(--fs-meta);
   font-weight: 700;
-  color: var(--warning);
+  color: var(--warning-ink);
   border: 1px solid currentColor;
   border-radius: 999px;
   padding: 2px 9px;
@@ -1272,7 +1302,7 @@ body.modal-open {
   font: inherit;
   font-size: var(--fs-body);
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-ink);
   background: none;
   border: 0;
   border-radius: 8px;
@@ -1614,8 +1644,8 @@ body.modal-open {
 .testshead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .testsname { margin: 0; font-size: var(--fs-body); font-weight: 700; color: var(--ink); }
 .testshead .btn { flex: none; }
-.testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good); }
-.testssum.bad { color: var(--critical); }
+.testssum { margin: 10px 0 0; font-size: var(--fs-body); font-weight: 600; color: var(--good-ink); }
+.testssum.bad { color: var(--critical-ink); }
 .testlist { margin-top: 8px; }
 .testrow {
   display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 4px 10px;
@@ -1623,8 +1653,8 @@ body.modal-open {
   font-size: var(--fs-body);
 }
 .testword { font-size: var(--fs-meta); font-weight: 700; color: var(--ink-3); }
-.testrow.ok .testword { color: var(--good); }
-.testrow.failed .testword { color: var(--critical); }
+.testrow.ok .testword { color: var(--good-ink); }
+.testrow.failed .testword { color: var(--critical-ink); }
 .testtitle { font-weight: 600; color: var(--ink); }
 .testreason { color: var(--ink-2); line-height: 1.4; }
 .testrow.skipped .testtitle, .testrow.waiting .testtitle { color: var(--ink-2); }
@@ -1779,13 +1809,13 @@ body.modal-open {
 .authbox { margin: 10px 0 12px; font-size: var(--fs-body); }
 .authbox p { margin: 0 0 8px; }
 .authbox .subtext { color: var(--ink-2); }
-.authbox .authbad { color: var(--critical); }
+.authbox .authbad { color: var(--critical-ink); }
 /* The verdict of a real `claude -p` turn, which is the only liveness signal
    a pasted token has — so it is coloured like a state, not like prose. */
 .authverdict { color: var(--ink-2); }
-.authverdict.ok { color: var(--good); }
-.authverdict.bad { color: var(--critical); }
-.authverdict.busy { color: var(--warning); }
+.authverdict.ok { color: var(--good-ink); }
+.authverdict.bad { color: var(--critical-ink); }
+.authverdict.busy { color: var(--warning-ink); }
 /* All three stores, always — the panel used to be able to see only its own,
    which is how it reported somebody's working terminal login as nothing. */
 .authstores { margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--fs-meta); }
@@ -1843,13 +1873,13 @@ body.modal-open {
    text, so it rendered as the literal characters. */
 .diag .dk.dsub { padding-left: 16px; }
 .diag .dv { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.diag .dbad { color: var(--critical); }
+.diag .dbad { color: var(--critical-ink); }
 /* What's new (`#whatsNewModal`): one section per release, newest first;
    a release this browser has not read yet carries the word "New" beside
    its number, and a restart still owed sits above them all. */
 .wnrestart {
   margin: 0 0 12px; padding: 8px 10px; border-radius: 8px;
-  background: var(--surface-2, transparent); color: var(--serious);
+  background: var(--surface-2, transparent); color: var(--serious-ink);
   font-weight: 600;
 }
 .wnbody { display: flex; flex-direction: column; gap: 14px; }
@@ -1860,7 +1890,7 @@ body.modal-open {
   font-size: 16px; font-variant-numeric: tabular-nums;
 }
 .wnnew {
-  font-size: var(--fs-meta); font-weight: 600; color: var(--accent);
+  font-size: var(--fs-meta); font-weight: 600; color: var(--accent-ink);
   border: 1px solid currentColor; border-radius: 999px; padding: 0 7px;
 }
 .wntext { overflow-wrap: anywhere; }
@@ -2272,7 +2302,7 @@ body.modal-open {
   font-size: var(--fs-meta); line-height: 14px; font-weight: 500;
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
-.brandlink.pending .vertext { color: var(--serious); font-weight: 600; }
+.brandlink.pending .vertext { color: var(--serious-ink); font-weight: 600; }
 
 .wm-ink { fill: var(--wm-ink); }
 .wm-roof { fill: var(--wm-roof); }
@@ -2333,7 +2363,7 @@ body.modal-open {
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: var(--fs-meta);
   font-weight: 700;
@@ -2395,7 +2425,7 @@ body.modal-open {
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: var(--fs-meta);
   font-weight: 700;
@@ -2626,6 +2656,9 @@ body.modal-open {
 .crempty p { margin: 0; }
 .critem {
   display: grid;
+  /* One column no wider than the row, so a title with no space to break
+     at is clipped inside it rather than widening it under the ⋯. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   min-height: 44px;
   padding: 8px 10px;
@@ -2639,7 +2672,7 @@ body.modal-open {
 }
 .critem:hover { background: var(--surface-2); }
 .critem.active { background: var(--surface-2); cursor: default; }
-.critem.active .ctitle { color: var(--accent); }
+.critem.active .ctitle { color: var(--accent-ink); }
 .critem .ctitle {
   font-size: var(--fs-body);
   line-height: 1.35;
@@ -2649,6 +2682,7 @@ body.modal-open {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .critem .cwhen { font-size: var(--fs-meta); color: var(--ink-3); }
 .critem .crfoot { display: flex; align-items: center; gap: 6px; }
@@ -2679,7 +2713,7 @@ body.modal-open {
 .crask {
   border: 1px solid var(--warning);
   background: transparent;
-  color: var(--warning);
+  color: var(--warning-ink);
 }
 @keyframes crpulse {
   0%, 100% { opacity: 1; }
@@ -2717,7 +2751,7 @@ body.modal-open {
 .cmmodel:hover { color: var(--ink-2); }
 .cmctx { font-variant-numeric: tabular-nums; }
 .cmctx::before { content: "·"; margin-right: 10px; }
-.cmctx.warn { color: var(--warning); font-weight: 600; }
+.cmctx.warn { color: var(--warning-ink); font-weight: 600; }
 
 /* The model picker's rows, inside the shared #chipPop disclosure. */
 .mpick {
@@ -2734,7 +2768,7 @@ body.modal-open {
   cursor: pointer;
 }
 .mpick:hover { background: var(--surface-2); }
-.mpick.on { color: var(--accent); font-weight: 600; }
+.mpick.on { color: var(--accent-ink); font-weight: 600; }
 .mpick .mhint { display: block; font-size: var(--fs-meta); color: var(--ink-3); }
 
 #termFrame {
@@ -3342,13 +3376,14 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
    pointer it appears with the row's hover, because a column of controls
    turns a list of conversations into a list of things to do to them; on
    touch there is no hover, so it is simply there, at a thumb's size. */
-.crrow { position: relative; }
-.crrow > .critem { width: 100%; padding-right: 48px; }
+/* The ⋯ sits BESIDE the row's button, never over it: floated over the
+   row's right edge it was a control inside another control's box, and a
+   long title ran under it on a phone. */
+.crrow { display: flex; align-items: center; gap: 2px; }
+.crrow > .critem { flex: 1 1 auto; min-width: 0; width: auto; }
 .crmore {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
+  flex: none;
+  margin-right: 4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3415,7 +3450,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   white-space: nowrap;
   cursor: pointer;
 }
-.chatfinding .cftext:hover { color: var(--accent); text-decoration-color: currentColor; }
+.chatfinding .cftext:hover { color: var(--accent-ink); text-decoration-color: currentColor; }
 .chatfinding .cfhead .btn.icon { width: 32px; height: 32px; flex: none; }
 .chatfinding .cfacts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
@@ -3472,7 +3507,7 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   height: 44px;
   border: 0;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -3983,12 +4018,12 @@ body.term-classic #termMode .ico-out { display: block; }
   font-weight: 700;
   color: var(--ink-3);
 }
-.sev-warning .findsev { color: var(--warning); }
-.sev-serious .findsev { color: var(--serious); }
-.sev-critical .findsev { color: var(--critical); }
-.st-fixed .findstate { color: var(--good); }
+.sev-warning .findsev { color: var(--warning-ink); }
+.sev-serious .findsev { color: var(--serious-ink); }
+.sev-critical .findsev { color: var(--critical-ink); }
+.st-fixed .findstate { color: var(--good-ink); }
 .st-fixing .findstate { color: var(--accent-2); }
-.st-failed .findstate, .st-needsyou .findstate { color: var(--serious); }
+.st-failed .findstate, .st-needsyou .findstate { color: var(--serious-ink); }
 /* Where it came from is context, not status — the quietest thing in the row. */
 /* In the row's meta, a source title that is a sentence ("Noticed while
    fixing “…”") shouted across two lines; it is set as written and kept to
@@ -4075,7 +4110,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .findsteps li { margin: 4px 0; }
 /* Not a colour alone: the sentence opens with "What could go wrong", so
    the shade only reinforces what the words already say. */
-.findrisk { color: var(--warning); }
+.findrisk { color: var(--warning-ink); }
 .findfixfoot { margin: 8px 0 0; font-size: var(--fs-meta); color: var(--ink-3); }
 
 .findactions {
@@ -4094,7 +4129,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .finding.hypo {
   background: color-mix(in srgb, var(--accent) 5%, var(--surface));
 }
-.finding.hypo .findsev { color: var(--accent); }
+.finding.hypo .findsev { color: var(--accent-ink); }
 
 /* ------------------------------------------------------------------ cases
    One card per case over the four stores. Severity sorts the feed and is
@@ -4108,10 +4143,10 @@ body.term-classic #termMode .ico-out { display: block; }
   background: var(--surface-2);
   color: var(--ink-2);
 }
-.casekind.ck-problem { color: var(--serious); }
-.casekind.ck-opportunity { color: var(--accent); }
-.casekind.ck-question { color: var(--accent); }
-.casekind.ck-change { color: var(--good); }
+.casekind.ck-problem { color: var(--serious-ink); }
+.casekind.ck-opportunity { color: var(--accent-ink); }
+.casekind.ck-question { color: var(--accent-ink); }
+.casekind.ck-change { color: var(--good-ink); }
 /* How sure, and how much it matters — in words. Quieter than the pill
    because it qualifies the claim rather than naming what it is. */
 .casecert { color: var(--ink-3); font-weight: 600; opacity: 0.8;
@@ -4274,7 +4309,7 @@ body.term-classic #termMode .ico-out { display: block; }
   color: var(--ink-3);
   cursor: pointer;
 }
-.tagx:hover { color: var(--critical); }
+.tagx:hover { color: var(--critical-ink); }
 
 .tagedit { width: 24px; height: 24px; font-size: var(--fs-meta); opacity: 0.6; }
 .tagrow:hover .tagedit, .tagedit:focus { opacity: 1; }
@@ -4447,7 +4482,7 @@ body.term-classic #termMode .ico-out { display: block; }
 
 /* The press that spends, and the paragraph it buys. */
 .actask { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.actaskerr { color: var(--warning); font-size: var(--fs-body); }
+.actaskerr { color: var(--warning-ink); font-size: var(--fs-body); }
 .actsum {
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--hairline));
   border-radius: 10px;
@@ -4580,7 +4615,7 @@ body.term-classic #termMode .ico-out { display: block; }
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--warning);
+  color: var(--warning-ink);
   font-size: var(--fs-meta);
   font-weight: 600;
   white-space: nowrap;
@@ -4756,9 +4791,9 @@ body.term-classic #termMode .ico-out { display: block; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.krow[data-state="ready"] .kchip { color: var(--good); border-color: var(--good); }
-.krow[data-state="collecting"] .kchip { color: var(--accent); border-color: var(--accent); }
-.krow[data-state="stale"] .kchip { color: var(--warning); border-color: var(--warning); }
+.krow[data-state="ready"] .kchip { color: var(--good-ink); border-color: var(--good); }
+.krow[data-state="collecting"] .kchip { color: var(--accent-ink); border-color: var(--accent); }
+.krow[data-state="stale"] .kchip { color: var(--warning-ink); border-color: var(--warning); }
 
 /* A row that opens onto a card says so. Without it the card is behind a
    press nobody has a reason to make, which is the same as not having one. */
@@ -4768,7 +4803,7 @@ body.term-classic #termMode .ico-out { display: block; }
   padding: 1px 8px;
   border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--hairline));
   border-radius: 999px;
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: var(--fs-meta);
 }
 
@@ -4856,7 +4891,7 @@ body.term-classic #termMode .ico-out { display: block; }
   font-size: var(--fs-meta);
   cursor: pointer;
 }
-.kpick.on { border-color: var(--accent); color: var(--accent); }
+.kpick.on { border-color: var(--accent); color: var(--accent-ink); }
 .kflag { color: var(--ink-3); font-size: var(--fs-meta); }
 
 .kchart { margin-top: 8px; }
@@ -4919,7 +4954,7 @@ body.term-classic #termMode .ico-out { display: block; }
   font-weight: 600;
   color: var(--ink-3, var(--ink-2));
 }
-.findtriage.unchecked .findtriagelabel { color: var(--warning); }
+.findtriage.unchecked .findtriagelabel { color: var(--warning-ink); }
 .findlede {
   margin: 0 0 14px;
   color: var(--ink-2);
@@ -4957,7 +4992,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .pilltrial {
   flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 /* A proposal that CHANGES a rule somebody wrote rather than adding one
    beside it. Same shape again, and the neutral ink rather than a colour:
@@ -4972,22 +5007,22 @@ body.term-classic #termMode .ico-out { display: block; }
 .pillintent {
   flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 .pillintent.fired {
   background: color-mix(in srgb, var(--good) 16%, transparent);
-  color: var(--good);
+  color: var(--good-ink);
 }
 .pillintent.refused, .pillintent.overdue {
   background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning);
+  color: var(--warning-ink);
 }
 /* A set of four scenes. Same pill shape again, in the accent's sibling:
    it marks a different KIND of card rather than a stage of one. */
 .pillscene {
   flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--good) 14%, transparent);
-  color: var(--good);
+  color: var(--good-ink);
 }
 /* The swatches. This IS the evidence on a scene card — there is no replay
    and no week — so it is laid out to be read down, one row per mood. */
@@ -5042,7 +5077,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .pillbook {
   flex: none; font-size: var(--fs-meta); padding: 2px 8px; border-radius: 999px;
   background: color-mix(in srgb, var(--warning) 18%, transparent);
-  color: var(--warning);
+  color: var(--warning-ink);
 }
 /* What it would act on, grouped by what happens to it. This IS the
    evidence on a playbook card — there is no replay to show — so it is
@@ -5061,7 +5096,7 @@ body.term-classic #termMode .ico-out { display: block; }
    nobody can scan. */
 .propverb { flex: none; color: var(--ink); font-weight: 600; }
 .propnames { flex: 1 1 160px; min-width: 0; color: var(--ink-2); }
-.propgroup.skipped .propverb { color: var(--warning); }
+.propgroup.skipped .propverb { color: var(--warning-ink); }
 .propbooknote {
   margin: 10px 0 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-3);
 }
@@ -5076,7 +5111,7 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .propreh { margin: 0 0 10px; }
 .propreh > summary {
-  cursor: pointer; font-size: var(--fs-body); color: var(--accent);
+  cursor: pointer; font-size: var(--fs-body); color: var(--accent-ink);
   padding: 6px 0; list-style: none;
 }
 .propreh > summary::-webkit-details-marker { display: none; }
@@ -5134,12 +5169,12 @@ body.term-classic #termMode .ico-out { display: block; }
 }
 .crlive {
   border-color: color-mix(in srgb, var(--good) 55%, var(--hairline));
-  color: var(--good);
+  color: var(--good-ink);
   background: color-mix(in srgb, var(--good) 10%, var(--surface));
 }
 .crpaused, .crlost {
   border-color: var(--warning);
-  color: var(--warning);
+  color: var(--warning-ink);
   background: transparent;
 }
 /* The line above the composer. The same quiet register as the meta line
@@ -5177,14 +5212,14 @@ body.term-classic #termMode .ico-out { display: block; }
 .chatstate[data-state="live"] .cs-pill,
 .chatstate[data-state="answering"] .cs-pill {
   border-color: color-mix(in srgb, var(--good) 55%, var(--hairline));
-  color: var(--good);
+  color: var(--good-ink);
 }
 .chatstate[data-state="answering"] .cs-pill { animation: crpulse 1.6s ease-in-out infinite; }
 .chatstate[data-state="needs_ok"] .cs-pill,
 .chatstate[data-state="paused_room"] .cs-pill,
 .chatstate[data-state="context_lost"] .cs-pill {
   border-color: var(--warning);
-  color: var(--warning);
+  color: var(--warning-ink);
   background: transparent;
 }
 .chatstate .cs-text { flex: 1; min-width: 0; }
@@ -5341,7 +5376,7 @@ body.term-classic #termMode .ico-out { display: block; }
    and leaves editable the part that is yours. */
 .linkish {
   background: none; border: 0; padding: 0; font: inherit;
-  color: var(--accent); text-decoration: underline; cursor: pointer;
+  color: var(--accent-ink); text-decoration: underline; cursor: pointer;
 }
 .promptview { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
 .promptbar { align-items: center; gap: 8px; }
@@ -5822,7 +5857,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .btn-primary:hover { background: var(--btn-primary-bg); filter: brightness(1.1); }
 .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--hairline); }
 .btn-secondary:hover { background: var(--surface-2); }
-.btn-tertiary { background: transparent; color: var(--accent); border: 1px solid transparent; padding: 0 var(--sp-2); }
+.btn-tertiary { background: transparent; color: var(--accent-ink); border: 1px solid transparent; padding: 0 var(--sp-2); }
 .btn-tertiary:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .btn-primary:disabled, .btn-secondary:disabled, .btn-tertiary:disabled { opacity: 0.45; cursor: default; }
 .btn-primary:focus-visible, .btn-secondary:focus-visible, .btn-tertiary:focus-visible {
@@ -6042,7 +6077,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qdlabel { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); margin-right: var(--sp-2); }
 .qdid { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
 .qdpre { margin: 0; font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
-.qerror { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--serious); }
+.qerror { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--serious-ink); }
 .qtidylist { display: grid; gap: var(--sp-2); }
 .qtidyrow { display: flex; align-items: center; gap: var(--sp-2);
   font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); cursor: pointer; }
@@ -6052,7 +6087,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qtidychange { flex: none; font-size: var(--fs-meta); }
 .qtidyedit { display: grid; gap: var(--sp-2); padding: var(--sp-2) 0 var(--sp-2) 28px; }
 .qtidyedit input, .qtidyedit select { width: 100%; max-width: 360px; }
-.qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious); }
+.qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious-ink); }
 .qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
 .qcard .findnote { margin-top: 0; }
 
@@ -6105,7 +6140,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
    first coarse block on purpose — that one is the 16px text floor. */
 @media (pointer: coarse) {
   .crmore { opacity: 1; width: 44px; height: 44px; }
-  .crrow > .critem { padding-right: 52px; }
+  .crrow > .critem { min-width: 0; }
   .steps > summary { min-height: 44px; }
   .msgacts .btn { min-height: 44px; }
   .chatfinding .cftext { min-height: 44px; }
@@ -6158,7 +6193,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .segnav .segcount {
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--accent); color: var(--on-accent);
+  background: var(--accent-fill); color: var(--on-accent);
   font-size: var(--fs-meta); line-height: 1; font-weight: 600;
 }
 .segnav .segcount[hidden] { display: none; }
@@ -6279,22 +6314,22 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 15px; line-height: 1; color: var(--ink-2); background: var(--surface-2);
 }
-.histrow[data-filter="done"] .histico { color: var(--good);
+.histrow[data-filter="done"] .histico { color: var(--good-ink);
   background: color-mix(in srgb, var(--good) 14%, transparent); }
 .histrow[data-filter="ignored"] .histico { color: var(--ink-3); }
 .histrow[data-filter="snoozed"] .histico { color: var(--accent-2);
   background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.histrow[data-filter="aside"] .histico { color: var(--warning);
+.histrow[data-filter="aside"] .histico { color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .histactions { flex: none; display: flex; align-items: center; gap: var(--sp-1); }
 .histdel { color: var(--ink-3); }
 @media (pointer: coarse) { .histdel, .factdel { min-width: 44px; } }
-.histdel:hover { color: var(--critical); }
+.histdel:hover { color: var(--critical-ink); }
 #viewArchive .histtitle { white-space: normal; overflow: visible;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .archfoot { display: flex; justify-content: flex-end; margin-top: var(--sp-3); }
 .archfoot [hidden] { display: none; }
-.btn-tertiary.danger { color: var(--critical); }
+.btn-tertiary.danger { color: var(--critical-ink); }
 .emptystate { display: grid; justify-items: center; gap: var(--sp-2);
   padding: var(--sp-8) var(--sp-4); color: var(--ink-3); text-align: center; }
 .emptystate p { margin: 0; font-size: var(--fs-body); }
@@ -6367,7 +6402,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 }
 .filtertag .ftlabel { color: var(--ink-3); font-size: var(--fs-meta); }
 .filtertag .ftx { color: var(--ink-3); font-size: var(--fs-meta); }
-.filtertag:hover .ftx { color: var(--critical); }
+.filtertag:hover .ftx { color: var(--critical-ink); }
 #viewMemory .klist { gap: 0; border: var(--card-border); border-radius: var(--card-radius);
   background: var(--card-bg); overflow: hidden; }
 #viewMemory .klist > .kfact { margin: 0; border: 0; border-radius: 0;
@@ -6390,7 +6425,7 @@ button.kfactsubj:hover { color: var(--accent-2);
 .kfactsubs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
 .kfactgone, .kfactmore { font-size: var(--fs-meta); color: var(--ink-3); }
 .factdel { flex: none; color: var(--ink-3); align-self: center; }
-.factdel:hover { color: var(--critical); }
+.factdel:hover { color: var(--critical-ink); }
 @media (max-width: 899px) {
   .kbrowse { grid-template-columns: minmax(0, 1fr); }
   .ksubjects { display: none; }
@@ -6618,4 +6653,16 @@ button.kfactsubj:hover { color: var(--accent-2);
   #whatsNewClose { min-width: 44px; min-height: 44px; }
   .wnmore, .wnfallback { min-height: 44px; }
   .wnbody .btn { min-height: 44px; }
+}
+
+/* Two targets the house's photographs measured under a finger: a fact's
+   subject chip (19px — it narrows the list, so it is a press) and the
+   budget slider (16px, the thumb's own size). A chip takes the 40px chip
+   floor and the slider the 44px one; the slider's track stays thin and
+   centred, only the band a thumb can land on grows. After the text floor,
+   never before it. */
+@media (pointer: coarse) {
+  button.kfactsubj { display: inline-flex; align-items: center; min-height: 40px;
+    padding: 0 var(--sp-3); }
+  input[type="range"] { height: 44px; }
 }

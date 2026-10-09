@@ -36,3 +36,52 @@ export async function openView(page, view) {
   if (await sub.isVisible()) await sub.click();
   else await page.evaluate((v) => switchView(v), view);
 }
+
+// Controls whose boxes overlap, read the way the house's own photographs
+// audit them (brain/panel/devloop/screens.py's `controls_overlap`): every
+// control with a box, not pinned to the window, against every other that
+// is neither its ancestor nor its descendant, flagged when the overlap is
+// more than a quarter of the smaller one. The audit reads a box straight
+// off `getBoundingClientRect`, and Chromium hands one out for the content
+// of a CLOSED <details> — at the place it would be drawn — so a closed
+// disclosure's button "sits on" the press below it unless its content is
+// taken out of the layout. That is the case this exists to catch.
+export async function controlOverlaps(page, root = 'body') {
+  return page.evaluate((rootSel) => {
+    const host = document.querySelector(rootSel);
+    if (!host) return [`${rootSel} is not on the page`];
+    const shown = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && +cs.opacity > 0.05;
+    };
+    const pinned = (el) => {
+      for (let p = el; p && p !== document.body; p = p.parentElement) {
+        const pos = getComputedStyle(p).position;
+        if (pos === 'fixed' || pos === 'sticky') return true;
+      }
+      return false;
+    };
+    const name = (el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} "${
+      (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40)}"`;
+    const controls = [...host.querySelectorAll(
+      'button, a[href], [role=button], [role=tab], select, summary, input:not([type=hidden]), textarea')]
+      .filter(shown).filter((el) => !pinned(el));
+    const out = [];
+    for (let i = 0; i < controls.length; i++) {
+      const a = controls[i].getBoundingClientRect();
+      for (let j = i + 1; j < controls.length; j++) {
+        if (controls[i].contains(controls[j]) || controls[j].contains(controls[i])) continue;
+        const b = controls[j].getBoundingClientRect();
+        const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        const small = Math.min(a.width * a.height, b.width * b.height);
+        if (ix > 0 && iy > 0 && small > 0 && ix * iy > 0.25 * small) {
+          out.push(`${name(controls[i])} overlaps ${name(controls[j])}`);
+        }
+      }
+    }
+    return out;
+  }, root);
+}

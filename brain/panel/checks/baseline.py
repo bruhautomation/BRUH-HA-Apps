@@ -392,6 +392,38 @@ def unusual_fix(house: House, eid: str, st: dict) -> str:
     return GENERIC_FIX
 
 
+# How wide "usually" is, in spreads either side of the middle. A MAD is
+# about two thirds of a standard deviation, so two of them is the band
+# most ordinary readings sit in.
+USUAL_BAND_SPREADS = 2.0
+
+
+def usual_range(found: dict, unit: str) -> str:
+    """What a reading normally is, in its own units — never as a ratio.
+
+    The detail used to say "That is N times its normal variation", and a
+    near-flat sensor has a variation close to nothing, so the house's own
+    photographs printed "1,109,306 times its normal variation": a number
+    with a denominator nobody can see, and no idea of what is normal. A
+    range in the reading's own units says it, and a band so narrow it
+    rounds to one number is said as that number."""
+    median = float(found.get("median") or 0.0)
+    spread = abs(float(found.get("spread") or 0.0)) * USUAL_BAND_SPREADS
+    low, high = median - spread, median + spread
+    # A reading that is never negative is never usually negative: a plug
+    # resting on 0 W "usually reads between −0.4 W and 0.4 W" is noise.
+    if median >= 0 and low < 0:
+        low = 0.0
+    lo_text = numfmt.quantity(low, unit)
+    hi_text = numfmt.quantity(high, unit)
+    # A band narrower than the smallest move this check would ever report
+    # is a reading that holds one value: "between 0% and 0.000099%" is the
+    # ratio's problem said in a different shape.
+    if lo_text == hi_text or high - low < min_move(unit):
+        return f"about {numfmt.quantity(median, unit)}"
+    return f"between {lo_text} and {hi_text}"
+
+
 def unusual(snap: dict, now: float) -> list[dict]:
     """Readings well outside what this house normally does at this hour."""
     import baselines  # noqa: PLC0415 — the package stays importable without it
@@ -488,10 +520,8 @@ def unusual(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} is reading far outside its usual range",
             "detail": (
-                f"{numfmt.quantity(found['value'], unit)} now, against a "
-                f"usual {numfmt.quantity(found['median'], unit)} {against}. "
-                f"That is {numfmt.times(abs(found['sigmas']))} its normal "
-                "variation."
+                f"{numfmt.quantity(found['value'], unit)} now. It usually "
+                f"reads {usual_range(found, unit)} {against}."
                 + house.placed(eid)),
             "fix": unusual_fix(house, eid, house.states.get(eid) or {}),
             "severity": "info",

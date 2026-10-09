@@ -5604,7 +5604,7 @@ async function recheckFinding(f, btns, button) {
     toast(data.created
       ? "Still there — and it found something new, which brAIn is looking "
         + "at before showing you"
-      : `Still there — ${esc(f.source_title || "that check")} looked again `
+      : `Still there — ${esc(sourceName(f) || "that check")} looked again `
         + "just now and reported it");
   } catch (e) {
     toast(e.message);
@@ -6027,9 +6027,20 @@ function sourceTitleText(title) {
   return t;
 }
 
+// What a row names its producer as: the server's one wording
+// (`source_name`, `server._producer_label`), and the stored title only for
+// a payload from before it — never a raw `check:`/`user-`/`custom-` id.
+function sourceName(row) {
+  if (!row) return "";
+  if (row.source_name) return row.source_name;
+  const t = sourceTitleText(row.source_title || "");
+  return /^(check:|custom-|user-\d)/.test(t) ? "" : t;
+}
+
 function caseMeta(row) {
   const out = [];
-  if (row.source_title) out.push(sourceTitleText(row.source_title));
+  const src = sourceName(row);
+  if (src) out.push(src);
   const fs = row.finding_status;
   if (fs === "planning") out.push("Planning");
   else if (fs === "planned") out.push("Plan ready");
@@ -6079,7 +6090,7 @@ function casePlanNode(row) {
 // came from, why, what was read, the full steps and diff of a plan, the
 // entity's id, and any rows a run refused.
 function caseDetailsBody(box, row) {
-  qDetailLine(box, "Source", sourceTitleText(row.source_title) || row.source || "");
+  qDetailLine(box, "Source", sourceName(row));
   if (row.detail && row.detail.length > 180) qDetailLine(box, "In full", row.detail);
   const why = [caseConfidence(row.confidence), CASE_STAKES[row.stakes] || ""]
     .filter(Boolean).join(" · ");
@@ -6422,8 +6433,8 @@ function caseAsFinding(row) {
   return {
     ts: origin.key, text: row.claim, detail: row.detail, fix: row.fix,
     severity: row.severity, source: row.source,
-    source_title: row.source_title, entity_id: row.entity_id,
-    status: "open", triage: {},
+    source_title: row.source_title, source_name: row.source_name,
+    entity_id: row.entity_id, status: "open", triage: {},
   };
 }
 
@@ -6503,14 +6514,14 @@ function makeLooseFinding(f) {
   const card = qCard({
     id: `f:${f.ts}`, chip: f.severity === "critical" ? "urgent"
       : f.severity === "info" ? "tidy" : "problem",
-    meta: [f.source_title, f.waiting_look || !(f.triage || {}).verdict
+    meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
     title: f.text, body: f.detail,
   });
   const gap = f.source === "house_book";
   if (f.fix && !gap) card.appendChild(qFix(f.fix));
   const more = qDetails();
-  qDetailLine(more, "Source", f.source_title || f.source || "");
+  qDetailLine(more, "Source", sourceName(f));
   if (f.entity_id) more.appendChild(el("code", "qdid", f.entity_id));
   const seen = triageLine(f);
   if (seen) more.appendChild(seen);
@@ -7345,7 +7356,7 @@ function makeTodo(item) {
   row.dataset.todoId = item.id;
   const text = el("div", "todotext");
   text.appendChild(el("span", "todotitle", prettyText(item.text)));
-  const meta = [item.origin === "finding" ? (item.source_title || "From a finding") : "Added by you"];
+  const meta = [item.origin === "finding" ? (sourceName(item) || "From a finding") : "Added by you"];
   if (item.added_at) meta.push("added " + timeAgo(new Date(item.added_at * 1000).toISOString()));
   // The house reported this chore's problem again while it waited, and the
   // report was held here rather than filed as a second card.
