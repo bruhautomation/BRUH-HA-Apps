@@ -183,7 +183,7 @@ window.fetch = async (url, opts) => {
                                 cause: 'person', by_name: 'Ben' }] });
   }
   if (p.includes('api/situation')) {
-    return answer({ house_mode: 'home', sentence: 'Two people are in; the '
+    return answer({ house_mode: 'home', sentence: window.__noSentence ? '' : 'Two people are in; the '
       + 'lounge TV is on.', sentence_stale: false, frame: {} });
   }
   if (p.includes('api/activity')) {
@@ -608,6 +608,27 @@ for (const width of WIDTHS) {
     note('empty', 'a quiet window does not say what it left out');
   }
   console.log('ok  empty window: one sentence, no headings, nothing to spend');
+  await context.close();
+}
+
+// No situation sentence, no heading: a bold "Someone's home" with nothing
+// under it is a heading over nothing.
+{
+  const context = await browser.newContext({ viewport: { width: 390, height: 900 },
+    hasTouch: true, isMobile: true });
+  const page = await context.newPage();
+  page.on('pageerror', (error) => note('no sentence', `page error: ${error.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript('window.__noSentence = true;');
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'activity');
+  await page.waitForTimeout(800);
+  const shown = await page.evaluate(() => {
+    const n = document.querySelector('#actNow');
+    return !!n && !n.hidden && !!n.textContent.trim();
+  });
+  if (shown) note('no sentence', 'the situation heading shows with nothing under it');
+  else console.log('ok  no situation sentence, no heading');
   await context.close();
 }
 

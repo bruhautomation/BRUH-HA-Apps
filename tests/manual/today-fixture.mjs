@@ -227,6 +227,39 @@ export const HISTORY = {
   },
 };
 
+// Three insight cards, in `/api/insights`' shape with the server's derived
+// `entities` (what each card names). Not in the default stub — the measures
+// of the queue never open the cards — so a measure passes `{ insights:
+// INSIGHTS }`. One with a chart, one whose page draws nothing (its words
+// and tiles are the card), and one whose page is a single line: the three
+// heights a card's frame has to follow rather than reserve.
+const CHART_HTML = '<!doctype html><html><head><style>body{margin:0}</style></head>'
+  + '<body><svg viewBox="0 0 400 260" width="100%" height="260">'
+  + '<rect x="10" y="10" width="380" height="240" fill="#2a78d6"/></svg></body></html>';
+export const INSIGHTS = [
+  { id: 'custom-1', category: 'custom', icon: '🧊', eyebrow: 'Freezers',
+    title: 'The garage freezer is drifting warmer',
+    summary: 'Yes — sensor.garage_freezer has drifted six degrees in a week. '
+      + 'The kitchen one has not.',
+    highlights: [{ label: 'Now', value: '-12.4 °C' }, { label: 'A week ago', value: '-18.1 °C' }],
+    entities: ['sensor.garage_freezer'], html: CHART_HTML,
+    generated_at: new Date((NOW - 3600) * 1000).toISOString(), tags: [], meta: {} },
+  { id: 'custom-2', category: 'custom', icon: '🔒', eyebrow: 'Security',
+    title: 'The alarm was disarmed at 4:17 by an automation',
+    summary: 'automation.night_disarm turned the alarm off at 04:17 while everyone '
+      + 'was asleep. Nobody pressed anything.',
+    highlights: [{ label: 'Disarmed', value: '04:17' }, { label: 'By', value: 'Night disarm' },
+                 { label: 'People home', value: '2' }, { label: 'Doors opened', value: '0' }],
+    entities: ['alarm_control_panel.home', 'automation.night_disarm'],
+    live: ['alarm_control_panel.home'],
+    html: '<!doctype html><html><head><style>body{margin:0}</style></head><body></body></html>',
+    generated_at: new Date((NOW - 7200) * 1000).toISOString(), tags: [], meta: {} },
+  { id: 'custom-3', category: 'custom', icon: '💡', eyebrow: 'Lighting',
+    title: 'The porch light ran all night', summary: 'It stayed on from 19:02 to 07:40.',
+    highlights: [], entities: [], html: '<p style="margin:0">On for 12 h 38 min.</p>',
+    generated_at: new Date((NOW - 9200) * 1000).toISOString(), tags: [], meta: {} },
+];
+
 export const NAMES = {
   'sensor.garage_freezer': { name: 'Garage Freezer', area: 'Garage' },
   'binary_sensor.kitchen_leak': { name: 'Kitchen Leak', area: 'Kitchen' },
@@ -242,7 +275,7 @@ export const COUNTED = FEED.length + LOOSE.length + PROPOSALS.length + 1
 
 export function stub(over = {}) {
   const data = {
-    cases: FEED, names: NAMES, loose: LOOSE, proposals: PROPOSALS, intents: INTENTS,
+    cases: FEED, names: NAMES, loose: LOOSE, insights: [], proposals: PROPOSALS, intents: INTENTS,
     extras: TODAY_EXTRAS, todo: TODO, history: HISTORY, firstLookDone: true,
     open: COUNTED, brief: { sent_at: NOW - 7200, text: 'Quiet night. The garage '
       + 'freezer is still drifting; nothing else needs you.' },
@@ -284,7 +317,7 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/onboarding')) return answer({ onboarded: true, state: 'done' });
   if (p.includes('api/settings')) return answer({});
-  if (p.includes('api/insights')) return answer({ insights: [] });
+  if (p.includes('api/insights')) return answer({ insights: d.insights });
   if (p.includes('api/todo')) return answer(d.todo);
   if (p.includes('api/proposals')) {
     return answer({ proposals: d.proposals, intents: d.intents,

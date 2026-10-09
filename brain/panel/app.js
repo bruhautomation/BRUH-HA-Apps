@@ -86,8 +86,15 @@ function dismissTip() {
   if (tipState.box) tipState.box.classList.remove("on");
 }
 
+// A tooltip that repeats what the control already says is a box over the
+// screen for nothing — the bottom tabs carried their own labels as tips.
+function namedAlready(node) {
+  const said = (node.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return !!said && said === String(node.dataset.tip).replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function showTip(node) {
-  if (!node || !node.dataset.tip || node.disabled) return;
+  if (!node || !node.dataset.tip || node.disabled || namedAlready(node)) return;
   clearTimeout(tipState.timer);
   tipState.node = node;
   tipState.timer = setTimeout(() => {
@@ -100,7 +107,13 @@ function showTip(node) {
 // `pointerover` rather than `mouseenter`: it bubbles, and a touch that
 // becomes a press should not leave a bubble behind, which is why the
 // pointerdown handler below closes it.
+// A finger has no hover: a tap fires pointerover and then focuses the
+// button, and either one opened a bubble that stayed pinned over the
+// content after the tap — the bottom tab bar's labels, every time. So a
+// touch pointer opens nothing, and focus opens a tip only when it is
+// keyboard focus (`:focus-visible`, which a tap does not set).
 document.addEventListener("pointerover", (ev) => {
+  if (ev.pointerType === "touch") return;
   const node = ev.target.closest && ev.target.closest("[data-tip]");
   if (node !== tipState.node) { hideTip(); showTip(node); }
 });
@@ -111,7 +124,9 @@ document.addEventListener("pointerout", (ev) => {
 document.addEventListener("pointerdown", hideTip);
 document.addEventListener("focusin", (ev) => {
   const node = ev.target.closest && ev.target.closest("[data-tip]");
-  if (node) showTip(node);
+  let keyboard = true;
+  try { keyboard = ev.target.matches(":focus-visible"); } catch (_e) { keyboard = true; }
+  if (node && keyboard) showTip(node);
 });
 document.addEventListener("focusout", hideTip);
 // A tooltip is fixed to where the control WAS, so a scroll makes a visible
@@ -326,13 +341,18 @@ function timeUntil(epochS) {
 // reports the frame's own height back, the frame never grows, and the
 // chart below the fold sat behind a scrollbar inside the card.
 
+// A page that draws NOTHING reports 0 too (`last` starts below it so the
+// first answer is always sent), because a report needing words and tiles
+// and no picture is a real card, and its frame used to keep the 320px it
+// was born with — a blank band above the foot on every screen size.
+
 // JSON is not script-safe on its own: `JSON.stringify` leaves `<` alone, so
 // an id containing `</script>` would close the tag it is embedded in and the
 // rest would be parsed as markup. Escaping `<` covers `</script`, `<script`
 // and `<!--` in one go, and `<` is still the same string to the parser.
 const jsonInScript = (v) => JSON.stringify(v).replace(/</g, "\\u003c");
 
-const SIZE_SNIPPET = (id) => `<script>(function(){var last=0;function post(){var b=document.body;if(!b)return;var bottom=0,kids=b.children;for(var i=0;i<kids.length;i++){var r=kids[i].getBoundingClientRect();if(!r.width&&!r.height)continue;bottom=Math.max(bottom,Math.max(r.bottom,r.top+kids[i].scrollHeight)+(parseFloat(getComputedStyle(kids[i]).marginBottom)||0));}var cs=getComputedStyle(b);var h=bottom>0?bottom+window.scrollY+(parseFloat(cs.paddingBottom)||0):Math.max(b.offsetHeight,b.getBoundingClientRect().height);h=Math.ceil(h);if(h>0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{var ro=new ResizeObserver(post);ro.observe(document.body);window.addEventListener("load",function(){for(var i=0;i<document.body.children.length;i++)ro.observe(document.body.children[i]);});}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
+const SIZE_SNIPPET = (id) => `<script>(function(){var last=-9;function post(){var b=document.body;if(!b)return;var bottom=0,kids=b.children;for(var i=0;i<kids.length;i++){var r=kids[i].getBoundingClientRect();if(!r.width&&!r.height)continue;bottom=Math.max(bottom,Math.max(r.bottom,r.top+kids[i].scrollHeight)+(parseFloat(getComputedStyle(kids[i]).marginBottom)||0));}var cs=getComputedStyle(b);var h=bottom>0?bottom+window.scrollY+(parseFloat(cs.paddingBottom)||0):Math.max(b.offsetHeight,b.getBoundingClientRect().height);h=Math.ceil(h);if(h>=0&&Math.abs(h-last)>2){last=h;parent.postMessage({type:"bruh-size",id:${jsonInScript(id)},h:h},"*");}}try{var ro=new ResizeObserver(post);ro.observe(document.body);window.addEventListener("load",function(){for(var i=0;i<document.body.children.length;i++)ro.observe(document.body.children[i]);});}catch(e){}window.addEventListener("load",post);setTimeout(post,400);setTimeout(post,1200);})();<\/script>`;
 
 // The other direction, and the reason issue #300 asked for one: a card is
 // one Claude run rendered to a document, written once — so a card about
@@ -470,8 +490,17 @@ window.addEventListener("message", (ev) => {
   if (!frame || ev.source !== frame.contentWindow) return;
   // The expanded view may be as tall as the screen allows; a card in the
   // grid stops at 760 so one tall chart cannot push the rest off the page.
-  const cap = frame.id === "modalFrame" ? Math.max(320, window.innerHeight - 160) : 760;
-  frame.style.height = Math.min(Math.max(d.h, 120), cap) + "px";
+  const modal = frame.id === "modalFrame";
+  const cap = modal ? Math.max(320, window.innerHeight - 160) : 760;
+  // On a card the frame is exactly what the page drew. It used to be held
+  // at 120px at least, so a one-line page sat on 100px of nothing, and a
+  // page that drew nothing kept its 320px: a card is as tall as what it
+  // holds. Collapsed rather than hidden — a frame in a `display: none`
+  // subtree stops laying out, and could never report the chart that
+  // arrives after a slow load.
+  const blank = !modal && d.h < 4;
+  if (frame.parentElement) frame.parentElement.classList.toggle("blank", blank);
+  frame.style.height = (blank ? 0 : Math.min(Math.max(d.h, modal ? 120 : 16), cap)) + "px";
 });
 
 // ------------------------------------------------------------------ auth UI
@@ -1462,6 +1491,76 @@ function seedAsk(text) {
   input.setSelectionRange(input.value.length, input.value.length);
 }
 
+// ---- a report and a finding about the same thing ----------------------
+//
+// A card's prose and an open finding used to tell the same story twice
+// with nothing joining them: the security report said an automation
+// disarmed the alarm at 4:17, and Needs you held a finding about that
+// automation, and neither knew the other was there. They are linked by
+// what both NAME: a finding's entity (or an entity in its evidence) that
+// the card names (`entities`, derived on the server from the card's live
+// list and its words), or a finding the card itself filed (its source is
+// the card's id). One line each way, never the story a third time.
+function caseEntities(row) {
+  const out = new Set();
+  if (row.entity_id) out.add(row.entity_id);
+  (row.evidence || []).forEach((e) => { if (e && e.entity) out.add(e.entity); });
+  return out;
+}
+
+function casesForInsight(insight) {
+  if (!insight || !insight.id) return [];
+  const named = new Set(Array.isArray(insight.entities) ? insight.entities : []);
+  return (state.cases || []).filter((row) => {
+    if (row.kind === "chore" || (row.origin || {}).store !== "findings") return false;
+    if (row.source && row.source === insight.id) return true;
+    return [...caseEntities(row)].some((e) => named.has(e));
+  });
+}
+
+function insightForCase(row) {
+  return (state.insights || []).find((ins) => casesForInsight(ins).includes(row)) || null;
+}
+
+function crossLink(lead, text, go) {
+  const line = el("p", "xlink");
+  line.appendChild(document.createTextNode(lead));
+  const a = el("a", null, text);
+  a.href = "#";
+  a.addEventListener("click", (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    go();
+  });
+  line.appendChild(a);
+  return line;
+}
+
+// Land on a node and say which: the panes draw lists, so the one you
+// followed a link to is scrolled to and marked for a moment.
+function flashNode(node) {
+  if (!node) return;
+  node.scrollIntoView({ block: "center" });
+  node.classList.add("xflash");
+  setTimeout(() => node.classList.remove("xflash"), 1600);
+}
+
+function openCase(caseId) {
+  switchView("findings");
+  let node = document.querySelector(`[data-case-id="${CSS.escape(caseId)}"]`);
+  if (!node || !node.offsetParent) {
+    todayState.showAll = true;
+    renderFindings();
+    node = document.querySelector(`[data-case-id="${CSS.escape(caseId)}"]`);
+  }
+  flashNode(node);
+}
+
+function openInsightCard(id) {
+  switchView("insights");
+  flashNode(document.querySelector(`#grid .card[data-id="${CSS.escape(id)}"]`));
+}
+
 function makeCard(catInfo, insight, fallbackId) {
   const id = (insight && insight.id) || (catInfo && catInfo.id) || fallbackId;
   const job = jobFor(id);
@@ -1617,6 +1716,13 @@ function makeCard(catInfo, insight, fallbackId) {
     // same three claims were on the card, in the Memory tab, and counted
     // by neither, so answering one left the other two on screen looking
     // unanswered. The card reports; it no longer asks.
+    // The finding on Needs you about the same thing, if there is one.
+    const twins = view ? [] : casesForInsight(insight);
+    if (twins.length) {
+      card.appendChild(crossLink("Also on Needs you: ", prettyText(twins[0].claim)
+        + (twins.length > 1 ? ` (and ${twins.length - 1} more)` : ""),
+        () => openCase(twins[0].id)));
+    }
     card.appendChild(makeFrame(shown, !view));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
@@ -2058,6 +2164,9 @@ function renderIfChanged() {
        // every card's iframe every few minutes.
        c.refresh_hold ? c.refresh_hold.why : ""]),
     tagEdit: state.editingTags,
+    // A card's "Also on Needs you" line reads the cases, which arrive on
+    // their own fetch — often after the cards are drawn.
+    twins: state.insights.map((i) => casesForInsight(i).map((c) => c.id + c.claim).join(",")),
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
     // The Today strip is rendered by `render`, so what it reads has to be in
@@ -5583,6 +5692,13 @@ function makeCase(row) {
     card.appendChild(el("p", "qfixtext", prettyText(String(row.result).split("\n\n")[0])));
   }
 
+  // The report this finding is also on, so the two are one story.
+  const from = insightForCase(row);
+  if (from) {
+    card.appendChild(crossLink("From ", from.title || "a report",
+      () => openInsightCard(from.id)));
+  }
+
   const more = qDetails();
   caseDetailsBody(more, row);
   card.appendChild(more);
@@ -5635,6 +5751,7 @@ function takeCases(data) {
   state.cases = data.cases || [];
   state.names = data.names || {};
   updateFindBadge(data.open);
+  renderIfChanged();
 }
 
 function absorbAnswer(data) {
@@ -6543,11 +6660,13 @@ async function refreshHistory() {
 }
 
 // What each filter holds, said once above its rows, so the list explains
-// itself rather than being a pile of titles under a word.
+// itself rather than being a pile of titles under a word. It is the pane's
+// ONE intro line: a paragraph under the heading said what History is and
+// what Restore does, and this line said it again a few pixels lower.
 const HIST_HINTS = {
   snoozed: "Put off for now — each comes back by itself on the date shown. Restore brings it back now.",
-  ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them.",
-  done: "Things you finished or brAIn fixed. Restore puts one back on To Do.",
+  ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them; Delete clears the record, not your answer.",
+  done: "Things you finished or brAIn fixed. Restore puts one back on To Do; Delete clears the record, not your answer.",
   aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
 };
 
@@ -10238,10 +10357,12 @@ async function refreshActNow() {
   const node = $("#actNow");
   if (!node) return;
   node.textContent = "";
-  if (!d) { node.hidden = true; return; }
+  // The mode alone is a bold heading over nothing: without a sentence
+  // there is no line to show.
+  if (!d || !d.sentence) { node.hidden = true; return; }
   const mode = HOUSE_MODE_WORDS[d.house_mode] ? d.house_mode : "unknown";
   node.appendChild(el("b", "actnowmode", HOUSE_MODE_WORDS[mode]));
-  if (d.sentence) {
+  {
     const names = d.names || {};
     const said = prettyText(String(d.sentence).replace(/\b[a-z_]+\.[a-z0-9_]+\b/g,
       (id) => names[id] || id));
@@ -11723,6 +11844,8 @@ function chatDisconnect() {
 async function chatSend(text) {
   text = (text || "").trim();
   if (!text || chatState.runState === "busy") return;
+  // The first message makes a conversation: there is a list to go back to.
+  document.body.classList.remove("ask-empty");
   const input = $("#chatInput");
   input.value = "";
   $("#chatCmds").classList.add("hidden");
@@ -12490,6 +12613,13 @@ async function refreshChatRail() {
   renderConvKinds();
   renderChatRail();
   renderChatHead();
+  // Nothing anybody has asked yet, and nothing brAIn ran either: on a phone
+  // the list page would be "No chats yet." and a press before anybody could
+  // type, so Ask opens on the message box instead.
+  const empty = chatState.convSource === "you" && !chatState.convs.length
+    && !chatState.convSources.some((o) => o.id !== "you" && o.count);
+  document.body.classList.toggle("ask-empty", empty);
+  if (empty && askOnList()) askShow("chat");
 }
 
 function pickConvSource(id) {
