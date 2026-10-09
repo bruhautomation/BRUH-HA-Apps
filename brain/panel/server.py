@@ -7145,6 +7145,9 @@ def _status_payload() -> tuple[dict | None, dict]:
         "status": _brain_status(settings, usage, auth),
         "brief": _brief_link(),
         "first_look_done": _first_look_done(counts),
+        # The version chip in the top bar: the integration Home Assistant
+        # has loaded, and whether a restart is owed to load this release.
+        "integration": _integration_versions(),
     }
 
 
@@ -7249,6 +7252,10 @@ async def h_status(request: web.Request) -> web.Response:
         # the first-run card may give way to the queue.
         "brief": read["brief"],
         "first_look_done": read["first_look_done"],
+        # The version chip: `{loaded, required, restart_pending}`, read
+        # off disk rather than off `status`, which a signed-out house
+        # masks.
+        "integration": read["integration"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.

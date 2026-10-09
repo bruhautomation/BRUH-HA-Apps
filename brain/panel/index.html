@@ -16,6 +16,16 @@
        theme's ink, the roof is always azure (never recoloured), and the "AI"
        and the signal motif always match each other. The window in the roof
        is a knockout (fill-rule evenodd), so it shows the bar through. -->
+  <!-- The logo and the version under it are one link, to this release's
+       entry in the changelog: a person checking "what changed" reaches for
+       the logo, and the version under it is the answer to "which one is
+       this". One target, so the 56px phone row stays logo, dot and ⚙, and
+       the bar is no wider than the logo was. The server writes the version
+       in; `paintVersion` keeps it current off /api/status and adds
+       "restart needed" while Home Assistant still runs an older
+       integration. -->
+  <a id="versionChip" class="brandlink" href="https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md"
+     target="_blank" rel="noopener noreferrer" aria-label="brAIn {{VERSION}}: what changed (opens the changelog)">
   <svg class="wordmark" viewBox="0 0 496 342" role="img" aria-label="brAIn">
     <path class="wm-ink" fill-rule="evenodd" d="M159.55,176c0-23.95-12.76-43.53-32.59-55,19.83-11.43,32.59-31.09,32.59-55,0-38.69-33.29-66-75.87-66H4A4,4,0,0,0,0,4V331a4,4,0,0,0,4,4H19a4,4,0,0,0,4-4V245.83A3.84,3.84,0,0,1,26.83,242H92.4a3.93,3.93,0,0,1,3.22,1.69l41,89.62a3.9,3.9,0,0,0,3.21,1.69h19.27a4,4,0,0,0,3.28-6.29L121.81,242.6c-1.57-2.24-.18-4.71,2.17-6.13C141.54,225.88,159.55,206.48,159.55,176ZM23,26a4,4,0,0,1,4-4H79.36C113.11,22,136,38.27,136,66s-22.9,44-56.65,44H27a4,4,0,0,1-4-4ZM79.36,220H23V136a4,4,0,0,1,4-4H79.36c33.75,0,56.65,16.27,56.65,44S113.11,220,79.36,220Z"/>
     <g transform="translate(186 184) scale(1.1306) translate(-188.83 -175.5)">
@@ -34,6 +44,8 @@
     <rect class="wm-ink" x="471" y="198" width="15" height="135"/>
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
+  <span id="versionText" class="vertext">v{{VERSION}}</span>
+  </a>
 
   <!-- Three tabs: Insights, Ask, Memory. Insights is what brAIn has to
        tell you — the insight cards first, then what needs a decision
@@ -904,6 +916,17 @@
        renderSetSummaries: the answers people come here to check are on the
        list itself. -->
   <nav id="setNav" class="setnav" aria-label="Settings sections">
+    <!-- Search: words find a setting by its name and the line under it,
+         and a press opens its section with it in view. Client-side over the
+         page's own markup (`buildSettingsIndex`), so a setting added to a
+         section is findable by having been added. -->
+    <div class="setsearch" role="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="setSearch" type="search" autocomplete="off" spellcheck="false"
+        placeholder="Search settings" aria-label="Search settings"
+        aria-controls="setSearchResults">
+    </div>
+    <div id="setSearchResults" class="setresults" role="list" aria-label="Matching settings" hidden></div>
     <div class="setnavlist" role="tablist" aria-orientation="vertical">
       <button type="button" class="setnavbtn" data-sec="account" role="tab" aria-controls="setsecAccount">
         <span class="setnavname">Account</span><span class="setnavsum" id="setSumAccount">Your Claude sign-in</span></button>
@@ -946,13 +969,15 @@
           <!-- What sharing COSTS stays on the page, beside the switch: a
                credential leaving the add-on is a fact a person meets before
                pressing, not one they have to go and ask for. -->
-          <div class="sharebox">
-            <label class="check" for="authShareTog">
-              <input id="authShareTog" class="tog" type="checkbox">
-              <span><b>Share this login with other BRUH add-ons</b></span></label>
-            <p class="hint tight" id="authShareNote"></p>
-            <p class="hint tight" id="authShareCost">Shared logins are stored in Home Assistant
-              backups, which are not encrypted unless you turn that on.</p>
+          <div class="setgroup sharebox">
+            <div class="setrow top">
+              <label class="check bigcheck" for="authShareTog">
+                <input id="authShareTog" class="tog" type="checkbox">
+                <span><b>Share this login with other BRUH add-ons</b>
+                <span class="subtext" id="authShareNote"></span></span></label>
+            </div>
+            <p class="hint tight setgroupnote" id="authShareCost">Shared logins are stored in Home
+              Assistant backups, which are not encrypted unless you turn that on.</p>
           </div>
         </div>
       </section>
@@ -1005,18 +1030,19 @@
             <option value="max20">Claude Max (20×)</option>
           </select>
 
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setEnabled" class="tog" type="checkbox">
-              <span><b>Automatic insights</b><br>
-              <span class="subtext">Cards refresh on their own schedules. Asking by hand
-              always runs.</span></span></label>
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setEnabled" class="tog" type="checkbox">
+                <span><b>Automatic insights</b>
+                <span class="subtext">Cards refresh on their own schedules. Asking by hand
+                always runs.</span></span></label>
+            </div>
+            <div class="setgroupfield">
+              <label for="setBudget">Let automatic insights use up to
+                <b id="setBudgetVal">25%</b> of each 5-hour session</label>
+              <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
+            </div>
           </div>
-
-          <div class="setrow">
-            <label for="setBudget">Let automatic insights use up to
-              <b id="setBudgetVal">25%</b> of each 5-hour session</label>
-          </div>
-          <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
 
           <h4 class="sethead">Insight cards</h4>
           <label for="setGatherMode">How a card gets its data</label>
@@ -1071,9 +1097,10 @@
           <h2 class="setsecname">Permissions</h2>
         </header>
         <div class="setsecbody">
+          <div class="setgroup">
           <div class="setrow top" id="setSkipPermsRow">
             <label class="check bigcheck"><input id="setSkipPerms" class="tog" type="checkbox">
-              <span><b>Let brAIn act without asking</b><br>
+              <span><b>Let brAIn act without asking</b>
               <span class="subtext">The terminal and the chat stop asking before each command,
               edit or change.</span></span></label>
           </div>
@@ -1082,10 +1109,11 @@
                current value; this text is what it says otherwise. The
                caveat under it is never replaced: it is the half of the
                switch that is about safety. -->
-          <p class="hint" id="setSkipPermsNote">Applies to the next terminal session and chat
+          <p class="hint setgroupnote" id="setSkipPermsNote">Applies to the next terminal session and chat
             message.</p>
-          <p class="hint" id="setSkipPermsCaveat">Protected entities are refused through brAIn's
+          <p class="hint setgroupnote" id="setSkipPermsCaveat">Protected entities are refused through brAIn's
             own tools, not every shell command.</p>
+          </div>
 
           <h4 class="sethead">House rules</h4>
           <p class="hint tight">One per line, in your own words. They can only make brAIn more
@@ -1136,11 +1164,13 @@
             through, whatever this says.</p>
           <div id="setNotifyLearned" class="setlearned hidden"></div>
 
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setSpeakFirst" class="tog" type="checkbox">
-              <span><b>Say urgent problems aloud</b><br>
-              <span class="subtext">On the voice satellite in the room somebody is in, never
-              in quiet hours, then on the phone as usual.</span></span></label>
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setSpeakFirst" class="tog" type="checkbox">
+                <span><b>Say urgent problems aloud</b>
+                <span class="subtext">On the voice satellite in the room somebody is in, never
+                in quiet hours, then on the phone as usual.</span></span></label>
+            </div>
           </div>
         </div>
       </section>
@@ -1309,38 +1339,57 @@
           </div>
 
           <h4 class="sethead">Capture runs for the corpus</h4>
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
-              <span><b>Save a copy of each insight card run</b><br>
-              <span class="subtext">Off by default. Each file holds your entity names, so
-              read one before you share it.</span></span></label>
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setCapture" class="tog" type="checkbox">
+                <span><b>Save a copy of each insight card run</b>
+                <span class="subtext">Off by default. Each file holds your entity names, so
+                read one before you share it.</span></span></label>
+            </div>
+            <p class="hint tight setgroupnote">Nothing leaves this add-on until you press Export;
+              the newest <span id="capMax">50</span> are kept.</p>
           </div>
-          <p class="hint tight">Nothing leaves this add-on until you press Export; the newest
-            <span id="capMax">50</span> are kept.</p>
           <div id="capBody" class="diag">Loading…</div>
 
           <!-- The development loop (devloop/, brain/DEVLOOP.md). Off for
                everyone; the controls under the switch render only once it
                is on, and nothing is fetched until this section opens. -->
           <h4 class="sethead">Help develop brAIn</h4>
-          <div class="setrow top">
-            <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
-              <span><b>File this house's faults as issues in a private GitHub repository</b><br>
-              <span class="subtext">Off by default. Names, rooms and entity ids are replaced
-                with aliases before anything is sent.</span></span></label>
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
+                <span><b>File this house's faults as issues in a private GitHub repository</b>
+                <span class="subtext">Off by default. Names, rooms and entity ids are replaced
+                  with aliases before anything is sent.</span></span></label>
+            </div>
           </div>
           <div id="devloopBody" hidden>
-            <div class="setrow top">
-              <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
-                <span><b>Autopilot: let brAIn develop itself</b><br>
-                <span class="subtext">Every stream on, nothing waits for you to press Send,
-                  and the cloud fixes and ships what it finds.</span></span></label>
+            <div class="setgroup">
+              <div class="setrow top">
+                <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
+                  <span><b>Autopilot: let brAIn develop itself</b>
+                  <span class="subtext">Every stream on, nothing waits for you to press Send,
+                    and the cloud fixes and ships what it finds.</span></span></label>
+              </div>
+              <div class="setrow top">
+                <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
+                  <span><b>Ask before sending each new report</b>
+                  <span class="subtext">View shows exactly what would be sent.</span></span></label>
+              </div>
             </div>
-            <label for="devRepo">Private repository</label>
-            <input id="devRepo" type="text" maxlength="140" autocomplete="off"
-              spellcheck="false" placeholder="owner/brain-house-reports">
-            <label for="devToken">Fine-grained token (Issues: read and write, that repository only)</label>
-            <input id="devToken" type="password" autocomplete="off" placeholder="github_pat_…">
+
+            <h5 class="setsubhead">Repository</h5>
+            <div class="setfields">
+              <div class="setfield">
+                <label for="devRepo">Private repository</label>
+                <input id="devRepo" type="text" maxlength="140" autocomplete="off"
+                  spellcheck="false" placeholder="owner/brain-house-reports">
+              </div>
+              <div class="setfield">
+                <label for="devToken">Fine-grained token (Issues: read and write, that repository only)</label>
+                <input id="devToken" type="password" autocomplete="off" placeholder="github_pat_…">
+              </div>
+            </div>
             <div class="row">
               <button id="devSave" class="btn primary" aria-label="Save the repository and token">Save</button>
               <button id="devTest" class="btn" aria-label="Check the token can reach the repository">Recheck</button>
@@ -1348,28 +1397,34 @@
               <button id="devForget" class="btn" hidden aria-label="Remove the saved token">Remove</button>
             </div>
             <p id="devStatus" class="hint tight"></p>
-            <div id="devStreams"></div>
-            <label for="devLook">What do you want to fix?</label>
+
+            <h5 class="setsubhead">What it sends</h5>
+            <div id="devStreams" class="devstreams"></div>
+
+            <h5 class="setsubhead">Daily limits</h5>
+            <div class="row devcaps">
+              <div class="setfield">
+                <label for="devCapIssues">New issues a day</label>
+                <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
+              </div>
+              <div class="setfield">
+                <label for="devCapRuns">Claude runs a day</label>
+                <input id="devCapRuns" type="number" min="0" max="24" inputmode="numeric">
+              </div>
+              <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
+            </div>
+
+            <h5 class="setsubhead"><label for="devLook">What do you want to fix?</label></h5>
+            <p class="hint tight">Say it the way you would to a person. One Claude run works out
+              what is really wrong and files the issue that would fix it.</p>
             <textarea id="devLook" rows="3" maxlength="500" autocomplete="off"
               placeholder="e.g. The settings page is too crowded. I can never find the model picker."></textarea>
             <div class="row">
               <button id="devLookRun" class="btn primary" aria-label="Turn this into an issue and file it">Send</button>
               <span id="devLookState" class="hint tight"></span>
             </div>
-            <p class="hint tight">Say it the way you would to a person. One Claude run works out
-              what is really wrong and files the issue that would fix it.</p>
-            <div class="row">
-              <label for="devCapIssues">New issues a day</label>
-              <input id="devCapIssues" type="number" min="0" max="50" inputmode="numeric">
-              <label for="devCapRuns">Claude runs a day</label>
-              <input id="devCapRuns" type="number" min="0" max="24" inputmode="numeric">
-              <button id="devCapSave" class="btn" aria-label="Save the daily caps">Save</button>
-            </div>
-            <div class="setrow top">
-              <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">
-                <span><b>Ask before sending each new report</b><br>
-                <span class="subtext">View shows exactly what would be sent.</span></span></label>
-            </div>
+
+            <h5 class="setsubhead">Reports</h5>
             <div id="devQueue" class="diag">Loading…</div>
           </div>
         </div>

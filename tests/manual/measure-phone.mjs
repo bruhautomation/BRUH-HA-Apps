@@ -23,6 +23,9 @@
 //     with an aria-label is an icon button, and allowed), and no "?" bubble
 //     is anywhere;
 //   * on a desktop the tabs are in the header row and there is no dot.
+//   * the logo carries the version under it at every width, as one link
+//     (`#versionChip`) to this release's changelog — inside the phone's
+//     56px row, never a fourth thing in it.
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -200,10 +203,10 @@ for (const { width, touch } of [
     for (const s of r.small) note(where, `a header target is under ${MIN_TARGET}px: ${s}`);
     if (phone) {
       if (r.headerH > HEADER_MAX) note(where, `the header is ${r.headerH}px, over ${HEADER_MAX}`);
-      const allowed = new Set(['wordmark', 'statusDot', 'settingsBtn']);
+      const allowed = new Set(['versionChip', 'statusDot', 'settingsBtn']);
       const extra = r.header.filter((h) => !allowed.has(h));
       if (extra.length) note(where, `the header holds more than logo, dot and ⚙: ${extra}`);
-      for (const need of ['statusDot', 'settingsBtn']) {
+      for (const need of ['versionChip', 'statusDot', 'settingsBtn']) {
         if (!r.header.includes(need)) note(where, `the header has no ${need}`);
       }
       if (!r.fixed) note(where, 'the tabs are not a bar fixed to the bottom');
@@ -225,6 +228,7 @@ for (const { width, touch } of [
       if (r.fixed) note(where, 'the desktop tabs are a fixed bottom bar');
       if (r.header.includes('statusDot')) note(where, 'the desktop header shows the status dot');
       if (r.headerH !== 56) note(where, `the desktop header is ${r.headerH}px`);
+      if (!r.header.includes('versionChip')) note(where, 'the desktop header has no version');
     }
   }
 
