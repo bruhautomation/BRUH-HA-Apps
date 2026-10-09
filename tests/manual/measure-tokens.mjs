@@ -23,6 +23,12 @@
 //     the boxes that sit on a page like a card (a notice, a plan, a
 //     permission question, an activity row) have no coloured left bar
 //     either.
+//   * every visible piece of text reaches 4.5:1 against what is actually
+//     behind it (WCAG AA; 3:1 for large text), in the light scheme AND the
+//     dark one — the colour and every translucent background under it are
+//     composited the way the browser paints them, and a disabled control is
+//     exempt, as WCAG exempts it. A muted grey, a white label on the azure
+//     and a status colour used as text each failed this on a real house.
 //
 // It runs headless against static files, like every measure beside it.
 import { chromium } from 'playwright';
@@ -60,7 +66,10 @@ const insight = {
   id: 'energy', category: 'energy', title: 'Energy use this week',
   summary: 'The house used 12% less than last week. Most of it was the heat pump.',
   html: '<!doctype html><p>chart</p>', generated_at: new Date(NOW * 1000 - 3600e3).toISOString(),
-  tags: ['energy'], highlights: [{ label: 'This week', value: '142 kWh', delta: '-12%' }],
+  tags: ['energy'], highlights: [{ label: 'This week', value: '142 kWh', delta: '-12%' },
+               { label: 'Heat pump', value: 'Fine', status: 'good' },
+               { label: 'Freezer', value: 'Warm', status: 'warning' },
+               { label: 'Boiler', value: 'Off', status: 'critical' }],
   meta: {},
 };
 
@@ -130,7 +139,52 @@ const browser = await chromium.launch({
 
 // Everything on screen that the standard is about, read in one pass.
 function readPage({ sizes, grid, radius, boxes: BOXES }) {
-  const out = { sizes: [], upper: [], spaced: [], selects: [], boxes: [], cards: [], read: 0, picks: 0 };
+  const out = { sizes: [], upper: [], spaced: [], selects: [], boxes: [], cards: [], low: [], read: 0, picks: 0 };
+  // Any CSS colour (rgb, color(srgb …), color-mix's answer) resolved by the
+  // browser itself, as straight (not premultiplied) 0–1 RGBA.
+  const cvs = document.createElement('canvas');
+  cvs.width = cvs.height = 1;
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  const rgba = (str) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = '#000';
+    ctx.fillStyle = str;
+    ctx.fillRect(0, 0, 1, 1);
+    const d = ctx.getImageData(0, 0, 1, 1).data;
+    return [d[0] / 255, d[1] / 255, d[2] / 255, d[3] / 255];
+  };
+  const over = (top, under) => {
+    const a = top[3];
+    return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)).concat(1);
+  };
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const ratio = (a, b) => {
+    const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // What is painted behind a node: every background up the tree, composited
+  // from the page down. A gradient or an image is a background this cannot
+  // read, so the node is not judged rather than judged against a guess.
+  const backdrop = (n) => {
+    const layers = [];
+    for (let e = n; e; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      if (cs.backgroundImage && cs.backgroundImage !== 'none') return null;
+      const c = rgba(cs.backgroundColor);
+      if (c[3] > 0) layers.push(c);
+      if (c[3] >= 1) break;
+    }
+    let bg = rgba(getComputedStyle(document.documentElement).backgroundColor);
+    if (bg[3] < 1) bg = over(bg, [1, 1, 1, 1]);
+    for (const l of layers.reverse()) bg = over(l, bg);
+    return bg;
+  };
+  const fade = (n) => {
+    let o = 1;
+    for (let e = n; e; e = e.parentElement) o *= parseFloat(getComputedStyle(e).opacity) || 0;
+    return o;
+  };
   const visible = (n) => {
     if (!n.isConnected) return false;
     if (n.closest('#docsBody, .tipbox, [hidden], .hidden')) return false;
@@ -159,6 +213,20 @@ function readPage({ sizes, grid, radius, boxes: BOXES }) {
     const px = Math.round(parseFloat(cs.fontSize) * 100) / 100;
     if (!sizes.includes(px)) out.sizes.push(`${label(host)} "${text.slice(0, 30)}" at ${px}px`);
     if (cs.textTransform === 'uppercase') out.upper.push(`${label(host)} "${text.slice(0, 30)}"`);
+    if (!host.closest(':disabled, [aria-disabled="true"], .grad')
+        && cs.webkitTextFillColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundClip !== 'text') {
+      const bg = backdrop(host);
+      if (bg) {
+        const fg = rgba(cs.color);
+        fg[3] *= fade(host);
+        const r = ratio(over(fg, bg), bg);
+        const big = px >= 24 || (px >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
+        const need = big ? 3 : 4.5;
+        if (r < need - 0.005) {
+          out.low.push(`${label(host)} "${text.slice(0, 30)}" ${r.toFixed(2)}:1 (${cs.color})`);
+        }
+      }
+    }
     const ls = parseFloat(cs.letterSpacing);
     if (cs.letterSpacing !== 'normal' && ls > 0.3) {
       out.spaced.push(`${label(host)} "${text.slice(0, 30)}" letter-spacing ${cs.letterSpacing}`);
@@ -230,6 +298,7 @@ async function check(page, where) {
   for (const s of uniq(r.selects)) note(where, `a native select: ${s}`);
   for (const s of uniq(r.boxes)) note(where, `a native control: ${s}`);
   for (const s of uniq(r.cards)) note(where, `card: ${s}`);
+  for (const s of uniq(r.low)) note(where, `text under 4.5:1: ${s}`);
   if (r.read < MIN_TEXT) note(where, `only ${r.read} pieces of text were on screen — did it render?`);
   totals.screens += 1;
   totals.text += r.read;
@@ -240,16 +309,17 @@ async function check(page, where) {
 const VIEWS = ['findings', 'insights', 'todo', 'ideas', 'proposals', 'terminal',
                'memory', 'activity', 'upkeep', 'docs'];
 
-for (const [width, height, touch] of [[1200, 900, false], [390, 791, true]]) {
+for (const [width, height, touch, scheme] of [[1200, 900, false, 'light'], [390, 791, true, 'light'],
+                                              [1200, 900, false, 'dark'], [390, 791, true, 'dark']]) {
   const context = await browser.newContext({
-    viewport: { width, height }, hasTouch: touch, isMobile: touch });
+    viewport: { width, height }, hasTouch: touch, isMobile: touch, colorScheme: scheme });
   const page = await context.newPage();
   page.on('pageerror', (e) => note(`${width}px`, `page error: ${e.message}`));
   await page.addInitScript(STUB);
   await page.goto(`file://${path.join(PANEL, 'index.html')}`);
   await page.waitForTimeout(300);
   for (const view of VIEWS) {
-    const where = `${width}px ${view}`;
+    const where = `${width}px ${scheme} ${view}`;
     try {
       await openView(page, view);
     } catch (e) {
@@ -260,7 +330,7 @@ for (const [width, height, touch] of [[1200, 900, false], [390, 791, true]]) {
     await check(page, where);
   }
   // ⚙, every section open.
-  const where = `${width}px settings`;
+  const where = `${width}px ${scheme} settings`;
   try {
     await page.click('#settingsBtn');
     await page.waitForSelector('#setModal.open', { timeout: 3000 });
@@ -284,4 +354,5 @@ if (failures.length) {
   process.exit(1);
 }
 console.log(`measure-tokens: OK — ${totals.text} pieces of text on ${totals.screens} screens `
-  + `on the type scale, ${totals.selects} selects all styled, no capitals, cards on the grid`);
+  + `on the type scale and at 4.5:1 in both schemes, ${totals.selects} selects all styled, `
+  + 'no capitals, cards on the grid');

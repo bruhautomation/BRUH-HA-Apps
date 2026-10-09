@@ -97,7 +97,8 @@ class TestTheAreaIsASentence(unittest.TestCase):
     def test_no_area_says_nothing_about_one(self):
         detail = baseline.unusual(_humid(area=""), NOW)[0]["detail"]
         self.assertNotIn("It is in", detail)
-        self.assertTrue(detail.endswith("variation."), detail)
+        self.assertTrue(detail.endswith("."), detail)
+        self.assertNotIn("variation", detail)
 
 
 class TestAPhoneFeatureNotInUse(unittest.TestCase):
