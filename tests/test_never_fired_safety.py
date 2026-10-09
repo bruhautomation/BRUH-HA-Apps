@@ -191,7 +191,7 @@ class TestATriggerUnderTarget(unittest.TestCase):
         snap["automations"] = [cfg]
         found = automations.trigger_unavailable(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("light.porch", found[0]["detail"])
+        self.assertIn("light.porch", [e["entity"] for e in found[0]["evidence"]])
 
     def test_an_area_target_says_nothing(self):
         # "Every light in the kitchen" with one of them down is still an

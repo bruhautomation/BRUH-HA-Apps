@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import re
 
-from ._util import House, age_days, counted_names, domain_of, join_names
+from ._util import (House, age_days, counted_names, domain_of, evidence_for,
+                    join_names, without_mac)
 from .devices import SELF_PLATFORMS
 
 # A house is "using areas" past this many. Below it, "not in an area" is
@@ -92,7 +93,7 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
     if not hits:
         return []
     hits.sort()
-    shown = [f"{name} ({eid})" for eid, name, _ in hits[:6]]
+    shown = [house.label(eid) for eid, _name, _ in hits[:6]]
     return [{
         "text": "Some entities are still named after their hardware id",
         "detail": f"{len(hits)} of them, including "
@@ -106,6 +107,7 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
         "severity": "info",
         "fixable": True,
         "entity_id": hits[0][0],
+        "evidence": evidence_for([h[0] for h in hits], "named after hardware"),
     }]
 
 
@@ -211,7 +213,7 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
                     and house.should_report(e, "reg.unused_helper"))
     if not unused:
         return []
-    names = [f"{house.name(e)} ({e})" for e in unused]
+    names = [house.label(e) for e in unused]
     return [{
         "text": "Some helpers are not used by anything",
         "detail": f"{len(unused)} helper{'' if len(unused) == 1 else 's'} "
@@ -225,6 +227,7 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
         "severity": "info",
         "fixable": False,
         "entity_id": unused[0],
+        "evidence": evidence_for(unused, "nothing refers to it"),
     }]
 
 
@@ -288,15 +291,28 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
         orphans.append(house.device_name(dev))
     if not orphans:
         return []
-    orphans.sort()
+    # Named the way the Devices page lists them, less the MAC address an
+    # integration puts in brackets; a device named by nothing BUT its
+    # address is counted rather than spelled out.
+    named = sorted(n for n in (without_mac(o) for o in orphans) if n)
+    bare = len(orphans) - len(named)
+    if named:
+        listed = counted_names(named) if not bare else join_names(named)
+        if bare:
+            listed = (f"{len(orphans)}: {listed}, and {bare} named only by "
+                      "a hardware address")
+    else:
+        listed = (f"{bare} named only by a hardware address" if bare > 1
+                  else "One, named only by a hardware address")
     return [{
         "text": "Some devices are left in the registry with no entities",
-        "detail": counted_names(orphans)
+        "detail": listed
                   + ". They are usually what is left after an integration "
                     "was reconfigured or a device was replaced.",
-        "fix": "Remove them from Settings > Devices & services > Devices, "
-               "or run brain.delete_orphaned_devices (it is a dry run "
-               "unless you tell it otherwise).",
+        "fix": "Remove them in Settings > Devices & services > Devices: "
+               "open each one and choose Delete from its menu. A device "
+               "with no Delete there is still claimed by its integration — "
+               "reconfigure or remove that integration instead.",
         "severity": "info",
         "fixable": True,
         "entity_id": "",

@@ -114,7 +114,7 @@ class TestASceneTheAutomationMakesItself(unittest.TestCase):
         ])
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("scene.before_movie", found[0]["detail"])
+        self.assertIn("scene.before_movie", [e["entity"] for e in found[0]["evidence"]])
 
     def test_a_disabled_scene_create_creates_nothing(self):
         snap = self._snap([
@@ -125,7 +125,7 @@ class TestASceneTheAutomationMakesItself(unittest.TestCase):
         ])
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("scene.before_movie", found[0]["detail"])
+        self.assertIn("scene.before_movie", [e["entity"] for e in found[0]["evidence"]])
 
 
 class TestADisabledStepCannotFail(unittest.TestCase):
@@ -163,7 +163,7 @@ class TestADisabledStepCannotFail(unittest.TestCase):
              "target": {"entity_id": "light.gone"}})
         found = automations.dead_ref(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("light.gone", found[0]["detail"])
+        self.assertIn("light.gone", [e["entity"] for e in found[0]["evidence"]])
 
 
 class TestAFanIsNotTheMachineItServes(unittest.TestCase):

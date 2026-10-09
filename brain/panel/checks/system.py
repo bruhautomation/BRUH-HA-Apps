@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import re
 
-from ._util import age_days, history_cut, join_names, num, when
+from ._util import (House, age_days, evidence_for, history_cut, join_names,
+                    num, when)
 
 GB = 1024.0 ** 3
 BACKUP_STALE_DAYS = 7
@@ -411,10 +412,11 @@ def history_incomplete(snap: dict, now: float) -> list[dict]:
     if not cut:
         return []
     probed = int((snap.get("history_health") or {}).get("probed") or 0)
+    house = House(snap)
     names = []
     for eid in sorted(cut):
         row = cut[eid]
-        names.append(f"{eid} (history ends {when(row.get('history_ends'))}, "
+        names.append(f"{house.label(eid)} (history ends {when(row.get('history_ends'))}, "
                      f"last changed {when(row.get('live_changed'))})")
     return [{
         "text": HISTORY_INCOMPLETE_TEXT,
@@ -431,6 +433,7 @@ def history_incomplete(snap: dict, now: float) -> list[dict]:
         "severity": "serious",
         "fixable": False,
         "entity_id": "",
+        "evidence": evidence_for(sorted(cut), "history stops early"),
     }]
 
 

@@ -686,7 +686,11 @@ Answer with ONE JSON object and nothing else. What it means:
 - NAME things the way the person does. Call a device or an automation by
   its friendly name ("the laundry room countertop light", "Motion -
   Laundry Room") in "claim", "detail" and "fix"; the entity id goes in
-  "evidence", where it is checkable, and nowhere else.
+  "evidence", where it is checkable, and nowhere else. The same goes for
+  YAML keys, trigger ids, MAC addresses and service names (`brain.*`):
+  say what to change where the person changes it ("in the automation
+  editor, delete the four button-press triggers"), never in the file's
+  own words.
 - "evidence" — every row is something you ACTUALLY READ. Each names the
   entity it came from, the value you saw and when. This is the half that
   makes a claim checkable, and it is the half you must not invent: if you
