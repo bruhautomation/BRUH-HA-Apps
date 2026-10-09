@@ -60,6 +60,14 @@
 //     release's changelog anchor (`CHANGELOG.md#2185`), named, a 44px target
 //     on touch, and saying "restart needed" with the restart sentence while
 //     Home Assistant still runs an older integration.
+//   * pressing it opens What's new in the panel: the notes newest first,
+//     the releases since this browser last looked marked "New" in words, a
+//     pending restart said, and the published file as the fallback when the
+//     Supervisor will not hand the notes over.
+//   * Diagnostics says what is wrong in words — a job by what it does, no
+//     check id, job word or exit code on the face of a row, the ids under a
+//     closed technical part — and the scorecard names every rule, counts in
+//     words ("right 8 of 14, wrong 6") and gives a verdict.
 //
 // Drives the panel's REAL markup and its real `openSettings` /
 // `restoreSettingsSections` behind a stubbed fetch. A copy of the page in
@@ -109,6 +117,7 @@ const IDS = [
   'setMemQueue', 'setMemCount', 'diagAccuracy', 'diagMeasures', 'diagOvernight',
   'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
   'setSearch', 'setSearchResults', 'versionChip', 'versionText',
+  'whatsNewModal', 'whatsNewBody', 'whatsNewClose', 'whatsNewRestart',
 ];
 
 // The sections, in order, and which one a wide page lands on the first
@@ -232,6 +241,17 @@ window.fetch = async (url, opts) => {
       categories: [], jobs: {}, queue_size: 0, findings_open: 0,
     });
   }
+  if (p.includes('api/changelog')) {
+    if (window.__changelogFails) {
+      return answer({ version: '2.18.5', sections: [],
+                      error: 'The Supervisor did not answer.' });
+    }
+    return answer({ version: '2.18.5', error: '', sections: [
+      { version: '2.18.5', text: '### Fixed\\n\\n- **Health** speaks plainly.' },
+      { version: '2.18.4', text: '### Added\\n\\n- What is new, in the panel.' },
+      { version: '2.18.3', text: '### Changed\\n\\n- An older change.' },
+    ] });
+  }
   if (p.includes('api/onboarding')) return answer({ state: 'done', onboarded: true });
   if (p.endsWith('api/auth')) {
     return answer({
@@ -247,7 +267,25 @@ window.fetch = async (url, opts) => {
   if (p.includes('api/diagnostics')) {
     return answer({
       generated_at: ${NOW}, version: 'test',
-      health: { state: 'ok', reason: '' }, faults: [],
+      health: { state: 'ok', reason: '' },
+      // Two rows in the shape \`reports.faults\` sends: the machine fields
+      // the development loop fingerprints, and the words a person reads.
+      faults: [
+        { where: 'Run (memory)', what: 'ended crash (6 times)',
+          detail: 'claude exited 1; last at Mon 14:13',
+          title: 'Filing facts into memory',
+          sentence: 'It did not finish (6 times in the last day, last at Mon 14:13). '
+            + 'brAIn tries again on its own; if it keeps happening, use Report a problem below.',
+          technical: 'Run (memory): ended crash (6 times); claude exited 1; last at Mon 14:13' },
+        { where: 'Producer Sensors frozen on one value (check:dev.frozen)',
+          what: 'ignored 3 of 4 times', detail: 'this rule is firing on a healthy house',
+          title: 'Sensors frozen on one value',
+          sentence: '3 marked wrong of 4 answers. brAIn has asked on Needs you whether '
+            + 'to stop raising these; answer it there.',
+          technical: 'check:dev.frozen: 3 wrong, 1 confirmed' },
+        { where: 'Looks', what: '9 findings are still waiting for a look',
+          detail: 'The oldest has waited 5 h 0 min.' },
+      ],
       runs: { total: 12, failures: [] }, checks: { ran: 15, skipped: [] },
       daemons: {
         usage_tracker: { running: true },
@@ -329,10 +367,17 @@ window.fetch = async (url, opts) => {
   if (p.includes('api/insights')) return answer({ insights: [] });
   if (p.includes('api/findings')) {
     return answer({ findings: [], hypotheses: [], open: 0, settled: [],
+      // The rows as \`server._scorecard\` sends them: a name, the count in
+      // words and a verdict, with the id kept on \`source\`.
       scorecard: [{ source: 'check:dev.frozen', title: 'Sensors frozen on one value',
-                    confirmed: 8, total: 14, wrong: 6 },
+                    name: 'Sensors frozen on one value', count_words: 'right 8 of 14, wrong 6',
+                    verdict: 'trusted', confirmed: 8, total: 14, wrong: 6 },
                   { source: 'check:forecast.decline', title: 'Declining readings',
-                    confirmed: 0, total: 3, wrong: 3 }],
+                    name: 'Declining readings', count_words: 'right 0 of 3, wrong 3',
+                    verdict: 'doubtful', confirmed: 0, total: 3, wrong: 3 },
+                  { source: 'user-1789499215', title: 'user-1789499215',
+                    name: 'Laundry watch', count_words: 'right 3 of 4, wrong 1',
+                    verdict: 'trusted', confirmed: 3, total: 4, wrong: 1 }],
       muted: [{ source: 'check:auto.conflict', title: 'Automations that fight' }] });
   }
   return answer({});
@@ -580,6 +625,76 @@ for (const width of WIDTHS) {
     note(where, `reading the version failed: ${String(e.message).split('\n')[0]}`);
   }
 
+  // ---- What's new: the version opens the release notes in the panel -----
+  // Read off the Supervisor (`/api/changelog`), newest first, the releases
+  // since this browser last looked marked as new, a pending restart said,
+  // and the published file as the fallback when the notes will not come.
+  try {
+    const open = async () => {
+      await page.click('#versionChip');
+      await page.waitForSelector('#whatsNewModal.open', { timeout: 4000 });
+      await page.waitForFunction(() => !/Loading/.test(
+        document.querySelector('#whatsNewBody').textContent), null, { timeout: 4000 });
+    };
+    const read = () => page.evaluate(() => {
+      const box = document.querySelector('#whatsNewModal .box').getBoundingClientRect();
+      const close = document.querySelector('#whatsNewClose').getBoundingClientRect();
+      return {
+        url: location.href,
+        versions: [...document.querySelectorAll('#whatsNewBody .wnrel')].map((r) => r.dataset.version),
+        fresh: [...document.querySelectorAll('#whatsNewBody .wnrel.new')].map((r) => r.dataset.version),
+        newWords: [...document.querySelectorAll('#whatsNewBody .wnrel.new .wnnew')]
+          .map((n) => n.textContent.trim()),
+        bold: !!document.querySelector('#whatsNewBody .wnrel b'),
+        restart: (document.querySelector('#whatsNewRestart') || { hidden: true }).hidden ? ''
+          : document.querySelector('#whatsNewRestart').textContent,
+        text: document.querySelector('#whatsNewBody').textContent.replace(/\s+/g, ' '),
+        link: (() => { const a = document.querySelector('#whatsNewBody a.wnfallback');
+          return a ? { href: a.getAttribute('href'), target: a.getAttribute('target') } : null; })(),
+        right: box.right, vw: document.documentElement.clientWidth,
+        closeH: Math.round(close.height), closeW: Math.round(close.width),
+        sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      };
+    });
+    const shut = () => page.click('#whatsNewClose');
+    await page.evaluate(() => { try { localStorage.setItem('brain.whatsnew.seen', '2.18.3'); } catch (e) { /* */ } });
+    const before = page.url();
+    await open();
+    const w = await read();
+    if (w.url !== before) note(where, 'the version left the panel instead of opening What\'s new');
+    if (w.versions.join(',') !== '2.18.5,2.18.4,2.18.3') note(where, `What's new lists ${w.versions.join(',')}`);
+    if (w.fresh.join(',') !== '2.18.5,2.18.4') note(where, `the new releases marked are ${w.fresh.join(',') || 'none'}`);
+    if (!w.newWords.length || w.newWords.some((x) => !/new/i.test(x))) note(where, 'a new release is marked by colour alone');
+    if (!w.bold) note(where, 'the notes are not rendered as markdown');
+    if (w.restart) note(where, 'a restart is mentioned with none pending');
+    if (w.right > w.vw + 0.5 || w.sideways) note(where, 'What\'s new is wider than the screen');
+    if (touch && Math.min(w.closeH, w.closeW) < MIN_TARGET) note(where, `What's new's close is ${w.closeW}x${w.closeH}`);
+    await shut();
+    await open();
+    const again = await read();
+    if (again.fresh.length) note(where, `releases still marked new after reading them: ${again.fresh.join(',')}`);
+    await shut();
+    await page.evaluate(async () => { window.__restartPending = true; await refreshStatus(); });
+    await open();
+    const r = await read();
+    if (!/restart/i.test(r.restart) || !/Home Assistant/.test(r.restart)) {
+      note(where, `What's new does not say a restart is still owed ("${r.restart}")`);
+    }
+    await shut();
+    await page.evaluate(async () => { window.__restartPending = false; await refreshStatus(); });
+    await page.evaluate(() => { window.__changelogFails = true; });
+    await open();
+    const f = await read();
+    if (!/did not answer/.test(f.text)) note(where, 'a release-notes failure is not said');
+    if (!f.link || !/CHANGELOG\.md/.test(f.link.href) || f.link.target !== '_blank') {
+      note(where, 'a release-notes failure offers no link to the published notes');
+    }
+    await shut();
+    await page.evaluate(() => { window.__changelogFails = false; });
+  } catch (e) {
+    note(where, `driving What's new failed: ${String(e.message).split('\n')[0]}`);
+  }
+
   // ---- search: words find a setting, and pressing it opens the section ---
   try {
     await page.click('#settingsBtn');
@@ -804,6 +919,23 @@ for (const width of WIDTHS) {
     const d = await page.evaluate(() => ({
       first: (document.querySelector('#diagBody .drow .dk') || {}).textContent || '',
       accuracy: document.querySelector('#diagAccuracy').textContent,
+      // What a person reads without opening anything: the rows' text with
+      // every closed technical part left out.
+      ...(() => {
+        const shown = (sel) => {
+          const box = document.querySelector(sel).cloneNode(true);
+          box.querySelectorAll('details').forEach((dd) => dd.remove());
+          // Elements read side by side are words apart, as on the screen.
+          box.querySelectorAll('*').forEach((n) => n.append(' '));
+          return box.textContent.replace(/\s+/g, ' ');
+        };
+        const tech = (sel) => [...document.querySelectorAll(`${sel} details`)]
+          .map((dd) => ({ open: dd.open, text: dd.textContent.replace(/\s+/g, ' ') }));
+        return { faultText: shown('#diagBody'), faultTech: tech('#diagBody'),
+                 accuracyShown: shown('#diagAccuracy'), accuracyTech: tech('#diagAccuracy'),
+                 accuracyButtons: [...document.querySelectorAll('#diagAccuracy button')]
+                   .map((b) => b.textContent.trim()) };
+      })(),
       measures: document.querySelectorAll('#kStores .krow').length,
       measureText: document.querySelector('#diagMeasures').textContent,
       access: document.querySelector('#diagAccess').textContent,
@@ -814,7 +946,30 @@ for (const width of WIDTHS) {
       bubbles: document.querySelectorAll('#setModal .btn.icon.tiny').length,
     }));
     if (d.first !== 'Anything wrong?') note(where, `Diagnostics opens on "${d.first}"`);
-    if (!/8 of 14 confirmed/.test(d.accuracy)) note(where, 'the accuracy rows are missing');
+    // The fault list in words: a job's name, a sentence, the ids folded.
+    if (!/Filing facts into memory/.test(d.faultText)) note(where, 'a failed job is not named in words');
+    for (const word of ['check:dev', 'Producer', 'Run (memory)', 'exited 1', 'crash']) {
+      if (d.faultText.includes(word)) note(where, `the fault list shows "${word}" without a press`);
+    }
+    if (!d.faultTech.some((t) => /claude exited 1/.test(t.text) && !t.open)) {
+      note(where, 'the exit code is not kept under a closed technical part');
+    }
+    if (!/Needs you/.test(d.faultText)) note(where, 'a rule with a question open does not point at it');
+    // The scorecard: names, the count in words, a verdict, no bare ids.
+    if (!/right 8 of 14, wrong 6/.test(d.accuracyShown)) note(where, 'the accuracy rows are missing');
+    if (!/Laundry watch/.test(d.accuracyShown)) note(where, 'a card you made is not named');
+    if (!/\btrusted\b/.test(d.accuracyShown) || !/\bdoubtful\b/.test(d.accuracyShown)) {
+      note(where, 'the scorecard has no verdict words');
+    }
+    if (/user-\d|custom-\d|check:\S|\d+\/\d+/.test(d.accuracyShown)) {
+      note(where, `the scorecard shows an id or a bare pair: "${d.accuracyShown.slice(0, 120)}"`);
+    }
+    if (!d.accuracyTech.some((t) => /check:forecast\.decline/.test(t.text))) {
+      note(where, 'a rule\'s id is not kept under its row');
+    }
+    if (!d.accuracyButtons.includes('Ignore') || !d.accuracyButtons.includes('Restore')) {
+      note(where, `the scorecard's presses are ${JSON.stringify(d.accuracyButtons)}`);
+    }
     if (!/Automations that fight/.test(d.accuracy)) note(where, 'a muted producer is not listed');
     if (d.measures !== 7) note(where, `${d.measures} measurement rows, not 7`);
     if (!/4 of 10 days/.test(d.measureText)) note(where, 'a collecting measurement does not say how far');

@@ -2381,9 +2381,103 @@ function paintVersion() {
   a.href = CHANGELOG_URL + (/^\d+(\.\d+)*$/.test(v) ? "#" + v.replace(/\./g, "") : "");
   a.classList.toggle("pending", pending);
   a.title = pending ? restart : `What changed in brAIn ${v}`;
-  a.setAttribute("aria-label", `brAIn ${v}: what changed (opens the changelog)`
+  a.setAttribute("aria-label", `brAIn ${v}: what's new (the changelog)`
     + (pending ? `. ${restart}` : ""));
 }
+
+// What's new: the version opens the release notes INSIDE the panel, read
+// off the Supervisor (`/api/changelog`) — the owner wants to read them
+// without leaving Home Assistant. The link's own href (GitHub) stays, so a
+// middle-click or a page with no script still reaches the published file,
+// and it is the fallback the dialog offers when the notes will not come.
+// The releases newer than the one this browser last read are marked "New"
+// (in words — a colour alone is the design system's own refusal), and a
+// restart Home Assistant still owes is said above them, because some of
+// what the notes describe arrives only when it happens.
+const WHATS_NEW_SEEN = "brain.whatsnew.seen";
+const WHATS_NEW_SHOWN = 12;
+
+function versionNewer(a, b) {
+  const pa = String(a || "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d > 0;
+  }
+  return false;
+}
+
+function whatsNewRelease(sec, seen) {
+  const fresh = !!seen && versionNewer(sec.version, seen);
+  const box = el("section", "wnrel" + (fresh ? " new" : ""));
+  box.dataset.version = sec.version;
+  const head = el("h3", "wnhead", "v" + sec.version);
+  if (fresh) head.appendChild(el("span", "wnnew", "New"));
+  box.appendChild(head);
+  const body = el("div", "wntext");
+  // `mdToHtml` escapes before it emits anything, so the notes are text.
+  body.innerHTML = mdToHtml(sec.text || "");
+  box.appendChild(body);
+  return box;
+}
+
+async function openWhatsNew() {
+  const body = $("#whatsNewBody");
+  const restart = $("#whatsNewRestart");
+  body.textContent = "Loading…";
+  const integ = (state.status || {}).integration || {};
+  restart.hidden = integ.restart_pending !== true;
+  restart.textContent = restart.hidden ? "" :
+    "Some of these changes take effect only after Home Assistant restarts "
+    + "(Settings › System › Restart)"
+    + (integ.loaded ? `; it is still running ${integ.loaded}.` : ".");
+  openBox("#whatsNewModal");
+  let data;
+  try {
+    data = await api("api/changelog");
+  } catch (e) {
+    data = { sections: [], error: e.message };
+  }
+  const sections = data.sections || [];
+  body.textContent = "";
+  if (!sections.length) {
+    body.appendChild(el("p", "wnerror",
+      (data.error || "brAIn could not read the release notes.")
+      + " They are also published online."));
+    const a = el("a", "btn wnfallback", "Open the release notes");
+    a.href = $("#versionChip").href || CHANGELOG_URL;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    body.appendChild(a);
+    return;
+  }
+  const seen = prefGet(WHATS_NEW_SEEN) || "";
+  let shown = 0;
+  const more = () => {
+    const next = sections.slice(shown, shown + WHATS_NEW_SHOWN);
+    next.forEach((sec) => moreBtn.before(whatsNewRelease(sec, seen)));
+    shown += next.length;
+    moreBtn.hidden = shown >= sections.length;
+  };
+  const moreBtn = el("button", "btn wnmore", "Show older releases");
+  moreBtn.type = "button";
+  moreBtn.addEventListener("click", more);
+  body.appendChild(moreBtn);
+  more();
+  // Read now: what is marked new is what arrived since this moment.
+  prefSet(WHATS_NEW_SEEN, sections[0].version);
+}
+
+$("#versionChip").addEventListener("click", (ev) => {
+  // A modified press keeps the link's own meaning (a new tab, a window).
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
+  ev.preventDefault();
+  openWhatsNew();
+});
+$("#whatsNewClose").addEventListener("click", () => closeBox("#whatsNewModal"));
+$("#whatsNewModal").addEventListener("click", (ev) => {
+  if (ev.target === $("#whatsNewModal")) closeBox("#whatsNewModal");
+});
 
 async function refreshInsights() {
   const data = await api("api/insights");
@@ -3410,11 +3504,28 @@ function faultRows(d) {
   const out = [diagRow("Anything wrong?",
     `${rows.length} thing${rows.length > 1 ? "s" : ""} to look at`, true)];
   rows.forEach((r) => out.push(diagRow(
-    r.where || "?",
-    esc(r.what || "")
-    + (r.detail ? ` <span class="hint">${esc(r.detail)}</span>` : ""),
-    true, true)));
+    r.title || r.where || "?", faultValue(r), true, true)));
   return out;
+}
+
+// One fault in the owner's words: what is not working and what to do,
+// with the ids, job words and codes (the machine `where`/`what`/`detail`
+// the report file and the development loop read) folded under a closed
+// "Technical detail". A row from an older server carries no words of its
+// own, and reads as it always did.
+function faultValue(r) {
+  if (!r.sentence) {
+    return esc(r.what || "")
+      + (r.detail ? ` <span class="faultsay">${esc(r.detail)}</span>` : "");
+  }
+  return `<span class="faultsay">${esc(r.sentence)}</span>`
+    + techDetail(r.technical);
+}
+
+function techDetail(text) {
+  if (!text) return "";
+  return `<details class="techdetails"><summary>Technical detail</summary>`
+    + `<span class="techtext">${esc(text)}</span></details>`;
 }
 
 function renderDiagnostics(d) {
@@ -14970,31 +15081,61 @@ async function loadDiagAccuracy() {
     return;
   }
   rows.forEach((r) => {
+    const name = scoreName(r);
+    const doubtful = scoreVerdict(r) === "doubtful";
     const row = el("div", "drow");
-    row.appendChild(el("div", "dk", r.title || r.source || "?"));
-    const v = el("div", "dv" + (!r.confirmed && r.wrong ? " dbad" : ""),
-      `${r.confirmed} of ${r.total} confirmed`);
-    if (r.source && !r.confirmed && r.wrong >= 3) {
+    row.appendChild(el("div", "dk", name));
+    const v = el("div", "dv" + (doubtful ? " dbad" : ""));
+    v.appendChild(el("span", "scoreverdict", scoreVerdict(r)));
+    v.appendChild(document.createTextNode(" · " + scoreCount(r)));
+    if (r.source && doubtful) {
       const stop = el("button", "btn tiny", "Ignore");
-      stop.setAttribute("aria-label", `Ignore: stop raising ${r.title || r.source}`);
+      stop.setAttribute("aria-label", `Ignore: stop raising ${name}`);
       stop.addEventListener("click", () => setMute(r.source, true, stop));
       v.appendChild(document.createTextNode(" "));
       v.appendChild(stop);
     }
+    v.insertAdjacentHTML("beforeend", techDetail(r.source));
     row.appendChild(v);
     host.appendChild(row);
   });
+  const counts = new Map((data.scorecard || []).map((r) => [r.source, r]));
   muted.forEach((m) => {
+    const scored = counts.get(m.source);
+    const name = (scored && scored.name) || m.title || m.source;
     const row = el("div", "drow");
-    row.appendChild(el("div", "dk", m.title || m.source));
-    const v = el("div", "dv", "Not raised any more ");
+    row.appendChild(el("div", "dk", name));
+    const v = el("div", "dv");
+    v.appendChild(el("span", "scoreverdict", "muted"));
+    v.appendChild(document.createTextNode(
+      scored ? ` · ${scoreCount(scored)} · not raised any more ` : " · not raised any more "));
     const again = el("button", "btn tiny", "Restore");
-    again.setAttribute("aria-label", `Restore: raise ${m.title || m.source} again`);
+    again.setAttribute("aria-label", `Restore: raise ${name} again`);
     again.addEventListener("click", () => setMute(m.source, false, again));
     v.appendChild(again);
+    v.insertAdjacentHTML("beforeend", techDetail(m.source));
     row.appendChild(v);
     host.appendChild(row);
   });
+}
+
+// A scorecard row's words come from the server (`server._score_words`, on
+// `plain_words`): its name, its count and its verdict, worded once so the
+// fault list, this list and the queue's question cannot read one record
+// two ways. An older server sends only the numbers, and gets the same
+// sentence shapes here.
+function scoreName(r) {
+  return r.name || r.title || "An unnamed rule";
+}
+function scoreCount(r) {
+  if (r.count_words) return r.count_words;
+  const ok = Number(r.confirmed) || 0;
+  const bad = Number(r.wrong) || 0;
+  return `right ${ok} of ${ok + bad}, wrong ${bad}`;
+}
+function scoreVerdict(r) {
+  if (r.verdict) return r.verdict;
+  return (Number(r.wrong) || 0) > (Number(r.confirmed) || 0) ? "doubtful" : "trusted";
 }
 
 async function setMute(source, on, btn) {

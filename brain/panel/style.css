@@ -1831,7 +1831,45 @@ body.modal-open {
 .diag .dk.dsub { padding-left: 16px; }
 .diag .dv { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .diag .dbad { color: var(--critical); }
+/* What's new (`#whatsNewModal`): one section per release, newest first;
+   a release this browser has not read yet carries the word "New" beside
+   its number, and a restart still owed sits above them all. */
+.wnrestart {
+  margin: 0 0 12px; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface-2, transparent); color: var(--serious);
+  font-weight: 600;
+}
+.wnbody { display: flex; flex-direction: column; gap: 14px; }
+.wnrel { border-bottom: 1px solid var(--hairline); padding-bottom: 12px; }
+.wnrel:last-of-type { border-bottom: 0; }
+.wnhead {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 4px;
+  font-size: 16px; font-variant-numeric: tabular-nums;
+}
+.wnnew {
+  font-size: var(--fs-meta); font-weight: 600; color: var(--accent);
+  border: 1px solid currentColor; border-radius: 999px; padding: 0 7px;
+}
+.wntext { overflow-wrap: anywhere; }
+.wntext h3, .wntext h4 { font-size: 14px; margin: 10px 0 4px; }
+.wntext ul { margin: 4px 0; padding-left: 18px; }
+.wntext li { margin: 3px 0; }
+.wnmore, .wnfallback { align-self: flex-start; }
+.wnerror { margin: 0 0 8px; }
 .diag ul { margin: 4px 0 0; padding-left: 16px; }
+/* A fault and a scorecard row say what they mean in words; the ids, job
+   words and codes they came from sit under a closed "Technical detail",
+   muted and wrapped anywhere (an id has no spaces to break at). */
+.diag .faultsay { display: block; color: var(--ink); }
+.diag .scoreverdict { font-weight: 600; }
+.diag .techdetails { margin-top: 2px; color: var(--ink-3); }
+.diag .techdetails > summary {
+  display: inline-flex; align-items: center; cursor: pointer;
+  font-size: var(--fs-meta); color: var(--ink-3);
+}
+.diag .techdetails .techtext {
+  display: block; overflow-wrap: anywhere; font-family: var(--mono, monospace);
+}
 .diag li { margin: 2px 0; }
 /* The captured-runs list reuses .drow, and its per-row controls sit under
    the description rather than beside it: a 40%/60% split leaves no room
@@ -5219,6 +5257,7 @@ body.term-classic #termMode .ico-out { display: block; }
   /* The rest of ⚙'s presses, to the same floor: the account's Details,
      a run's row, the Recheck/Run/Share/Save buttons under each reading. */
   #setModal .authdetails > summary,
+  #setModal .techdetails > summary,
   #setModal .diagrunrow,
   #setModal .row > .btn,
   #setModal .drow .btn.tiny { min-height: 44px; }
@@ -6527,3 +6566,11 @@ button.kfactsubj:hover { color: var(--accent-2);
 #devStreams .devstream { flex-direction: column; align-items: stretch; gap: 6px; }
 #devStreams .devstream .row.tight { margin-top: 0; flex-wrap: nowrap; }
 #devStreams .devstream select { flex: 1 1 auto; min-width: 0; }
+
+/* What's new's presses on touch: its close and the two buttons in the list
+   clear the 44px floor like every other press. */
+@media (pointer: coarse) {
+  #whatsNewClose { min-width: 44px; min-height: 44px; }
+  .wnmore, .wnfallback { min-height: 44px; }
+  .wnbody .btn { min-height: 44px; }
+}
