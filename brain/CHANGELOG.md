@@ -2,6 +2,11 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.7
+
+- A voice command that did what was asked and then closed without saying anything more (the light went off) is answered with what it last said, or "Done.", instead of "some of it may already have happened", and is no longer counted as a failed voice run. A turn that really broke after acting still says so. (reports #137)
+- "N findings are still waiting for a look" now says why the looks did not judge them: how many of the first looks the account's usage limit refused or that failed in the last day, and what the look last reported. It used to point at a usage-limit row that is only shown once a tenth of the day's runs were refused. (reports #82)
+
 ## 2.18.6
 
 - ⚙ Settings looks like one design: every switch sits in a grouped card with its name, one line under it and the switch beside them rather than across the page, one type scale and spacing scale throughout, and the content held to a readable width. Help develop brAIn's streams are cards, two across on a wide screen. (reports #139)
