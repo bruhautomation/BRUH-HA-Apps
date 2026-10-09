@@ -53,7 +53,7 @@ sys.path.insert(0, str(TESTS_DIR))
 
 import checks  # noqa: E402
 import findings_store  # noqa: E402
-from checks import _util  # noqa: E402
+_util = checks._util
 from test_house_checks import NOW, house  # noqa: E402
 
 registry = checks.registry
