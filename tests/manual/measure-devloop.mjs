@@ -95,6 +95,18 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
         toggle: !!r.querySelector('[data-dev-stream]'),
         hours: [...(r.querySelector('[data-dev-hours]')?.options || [])].map((o) => o.value),
         run: !!r.querySelector('[data-dev-run]'),
+        left: Math.round(r.getBoundingClientRect().left),
+        // The switch is beside its name, in the card's right-hand column.
+        gap: (() => {
+          const t = r.querySelector('[data-dev-stream]');
+          const b = r.querySelector('label b');
+          return t && b ? Math.round(t.getBoundingClientRect().left - b.getBoundingClientRect().left) : 9999;
+        })(),
+        nameRight: (() => {
+          const t = r.querySelector('[data-dev-stream]');
+          const b = r.querySelector('label > span');
+          return t && b ? t.getBoundingClientRect().left >= b.getBoundingClientRect().right - 0.5 : false;
+        })(),
       })),
       look: visible(document.querySelector('#devLook')) && visible(document.querySelector('#devLookRun')),
       caps: document.querySelector('#devCapIssues').value === '10'
@@ -109,7 +121,14 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
     };
   });
   if (m.rows.length !== 7) note(where, `${m.rows.length} stream rows, expected 7 (every stream but What do you want to fix?)`);
+  // Seven cards: two columns on a wide screen, one on a phone, each with
+  // its switch to the right of its name and never a page's width from it.
+  const columns = new Set(m.rows.map((r) => r.left)).size;
+  if (width >= 900 && columns !== 2) note(where, `the streams are in ${columns} column(s), not 2`);
+  if (width < 600 && columns !== 1) note(where, `the streams are in ${columns} columns on a phone`);
   m.rows.forEach((r, i) => {
+    if (!r.nameRight) note(where, `stream row ${i}'s switch is not to the right of its name`);
+    if (r.gap > 360) note(where, `stream row ${i}'s switch is ${r.gap}px from its name`);
     if (!r.toggle || !r.run) note(where, `stream row ${i} is missing its switch or its Run`);
     if (r.hours.join(',') !== '0,1,3,6,12,24,168') note(where, `stream row ${i} offers hours ${r.hours}`);
   });

@@ -50,6 +50,16 @@
 //   * every visible button says one of the doc's verbs.
 //   * every text control clears the 16px iOS floor at 390, the page never
 //     scrolls sideways, and every element id handlers bind to is present.
+//   * a search box sits above the list: words find a setting by its name and
+//     the line under it, a press opens its section with it in view and
+//     marked, nothing found says so, and clearing it brings the list back.
+//   * every switch is a row in a group — its words on the left, the switch
+//     in the right-hand column beside them, never more than 640px from the
+//     start of its label on a wide screen — cameras and calendars included.
+//   * the header carries the version under the logo as one link to this
+//     release's changelog anchor (`CHANGELOG.md#2185`), named, a 44px target
+//     on touch, and saying "restart needed" with the restart sentence while
+//     Home Assistant still runs an older integration.
 //
 // Drives the panel's REAL markup and its real `openSettings` /
 // `restoreSettingsSections` behind a stubbed fetch. A copy of the page in
@@ -98,6 +108,7 @@ const IDS = [
   'setCalendarsNote', 'setMemView', 'setMemEdit', 'setMemExport', 'setMemTa',
   'setMemQueue', 'setMemCount', 'diagAccuracy', 'diagMeasures', 'diagOvernight',
   'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
+  'setSearch', 'setSearchResults', 'versionChip', 'versionText',
 ];
 
 // The sections, in order, and which one a wide page lands on the first
@@ -209,7 +220,12 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/status')) {
     return answer({
-      version: 'test', authenticated: true, auth_type: 'oauth_token',
+      version: '2.18.5', authenticated: true, auth_type: 'oauth_token',
+      integration: window.__restartPending
+        ? { loaded: '2.18.4', required: '2.18.5', restart_pending: true }
+        : { loaded: '2.18.5', required: '2.18.5', restart_pending: false },
+      ...(window.__restartPending ? { status: { state: 'needs_restart',
+        label: 'Needs restart', sentence: 'Restart Home Assistant to finish updating brAIn' } } : {}),
       auth_source: 'local', auth_check: { state: 'ok', error: '' },
       model: 'claude-sonnet-4-5', settings: { onboarded: true },
       usage: { percent: 18, source: 'account' }, auto: { enabled: true },
@@ -355,7 +371,8 @@ window.__hintSentences = () => {
 window.__visibleButtons = () => [...document.querySelectorAll(
   '#setModal button, #setModal a.btn')]
   .filter((b) => b.offsetParent !== null && !b.hidden && !b.classList.contains('krow')
-    && !b.classList.contains('setnavbtn') && !b.classList.contains('setback'))
+    && !b.classList.contains('setnavbtn') && !b.classList.contains('setback')
+    && !b.classList.contains('setresult'))
   .map((b) => b.textContent.replace(/\\s+/g, ' ').trim());
 `;
 
@@ -526,6 +543,93 @@ for (const width of WIDTHS) {
       note(where, `reaching ${w.what} failed: ${String(e.message).split('\n')[0]}`);
     }
   }
+  // ---- the version in the header: a link to this release's changelog ------
+  try {
+    await page.waitForFunction(() => /2\.18\.5/.test(
+      (document.querySelector('#versionChip') || {}).textContent || ''), null, { timeout: 4000 });
+    const v = await page.evaluate(() => {
+      const a = document.querySelector('#versionChip');
+      const r = a.getBoundingClientRect();
+      return { tag: a.tagName, text: a.textContent.replace(/\s+/g, ' ').trim(),
+               href: a.getAttribute('href'), target: a.getAttribute('target'),
+               rel: a.getAttribute('rel') || '', name: a.getAttribute('aria-label') || '',
+               w: Math.round(r.width), h: Math.round(r.height),
+               inBar: !!a.closest('.topbar'), shown: a.offsetParent !== null };
+    });
+    if (v.tag !== 'A') note(where, `the version is a <${v.tag}>, not a link`);
+    if (!v.shown || !v.inBar) note(where, 'the version is not in the header');
+    if (!/^v2\.18\.5$/.test(v.text)) note(where, `the version reads "${v.text}"`);
+    if (v.href !== 'https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md#2185') {
+      note(where, `the version links to "${v.href}"`);
+    }
+    if (v.target !== '_blank' || !/noopener/.test(v.rel)) note(where, 'the changelog does not open in a new tab');
+    if (!/2\.18\.5/.test(v.name) || !/changelog/i.test(v.name)) note(where, `the version's name is "${v.name}"`);
+    if (touch && Math.min(v.w, v.h) < MIN_TARGET) note(where, `the version link is ${v.w}x${v.h}`);
+    await page.evaluate(async () => { window.__restartPending = true; await refreshStatus(); });
+    const rv = await page.evaluate(() => {
+      const a = document.querySelector('#versionChip');
+      return { text: a.textContent.replace(/\s+/g, ' ').trim(), title: a.getAttribute('title') || '',
+               name: a.getAttribute('aria-label') || '' };
+    });
+    if (!/^v2\.18\.5 · restart needed$/.test(rv.text)) note(where, `a pending restart reads "${rv.text}"`);
+    if (!/Restart Home Assistant/.test(rv.title) || !/Restart Home Assistant/.test(rv.name)) {
+      note(where, `a pending restart is not named: "${rv.title}"`);
+    }
+    await page.evaluate(async () => { window.__restartPending = false; await refreshStatus(); });
+  } catch (e) {
+    note(where, `reading the version failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- search: words find a setting, and pressing it opens the section ---
+  try {
+    await page.click('#settingsBtn');
+    await page.click('#settingsBtn');
+    await page.waitForSelector('#setModal.open');
+    const box = await page.evaluate(() => {
+      const n = document.querySelector('#setSearch');
+      const r = n ? n.getBoundingClientRect() : { top: 0, height: 0 };
+      const list = document.querySelector('#setNav .setnavlist').getBoundingClientRect();
+      return { shown: !!n && n.offsetParent !== null, above: r.top < list.top,
+               h: Math.round(r.height), size: n ? parseFloat(getComputedStyle(n).fontSize) : 0 };
+    });
+    if (!box.shown || !box.above) note(where, 'there is no search box above the list');
+    if (touch && box.size < MIN_TEXT) note(where, `the search box is ${box.size}px`);
+    if (touch && box.h < MIN_TARGET) note(where, `the search box is ${box.h}px tall`);
+    for (const [words, sec, target] of [['subscription', 'usage', 'setPlan'],
+                                        ['say aloud', 'notifications', 'setSpeakFirst'],
+                                        ['conversations running', 'permissions', 'setChatSessions']]) {
+      await page.fill('#setSearch', words);
+      const hits = await page.evaluate(() => [...document.querySelectorAll('#setSearchResults .setresult')]
+        .filter((b) => b.offsetParent !== null).map((b) => ({ text: b.textContent, sec: b.dataset.sec,
+          h: Math.round(b.getBoundingClientRect().height) })));
+      if (!hits.length) { note(where, `searching "${words}" found nothing`); continue; }
+      if (hits[0].sec !== sec) note(where, `searching "${words}" first finds ${hits[0].sec}: "${hits[0].text}"`);
+      if (touch && hits.some((h) => h.h < MIN_TARGET)) note(where, `a search result is under ${MIN_TARGET}px`);
+      await page.click('#setSearchResults .setresult');
+      await page.waitForFunction((s) => !document.querySelector(`#setModal .setsec[data-sec="${s}"]`).hidden,
+        sec, { timeout: 3000 });
+      const landed = await page.evaluate((id) => {
+        const n = document.getElementById(id);
+        const r = n.getBoundingClientRect();
+        return { inView: r.bottom > 0 && r.top < window.innerHeight,
+                 flashed: !!document.querySelector('#setModal .setflash')
+                   && document.querySelector('#setModal .setflash').contains(n) };
+      }, target);
+      if (!landed.inView) note(where, `searching "${words}" did not bring #${target} into view`);
+      if (!landed.flashed) note(where, `searching "${words}" did not mark #${target}`);
+      if (narrow) await page.locator('#setModal .setsec:not([hidden]) .setback').click();
+    }
+    await page.fill('#setSearch', 'zzqx nothing like this');
+    const none = await page.evaluate(() => document.querySelector('#setSearchResults').textContent);
+    if (!/No setting matches/.test(none)) note(where, `an empty search says "${none.trim()}"`);
+    await page.fill('#setSearch', '');
+    const back = await page.evaluate(() => document.querySelectorAll('#setNav .setnavbtn').length
+      === [...document.querySelectorAll('#setNav .setnavbtn')].filter((b) => b.offsetParent !== null).length);
+    if (!back) note(where, 'clearing the search did not bring the list back');
+  } catch (e) {
+    note(where, `driving the search failed: ${String(e.message).split('\n')[0]}`);
+  }
+
   await showSection(page, 'account');
   const acct = await page.evaluate(() => ({
     backupVisible: document.querySelector('#authShareCost').offsetParent !== null,
@@ -773,6 +877,41 @@ for (const width of WIDTHS) {
     note(where, `driving Developer failed: ${String(e.message).split('\n')[0]}`);
   }
 
+  // ---- every switch is a row: words on the left, the switch beside them ---
+  try {
+    for (const sec of ['account', 'usage', 'permissions', 'notifications', 'developer']) {
+      await showSection(page, sec);
+      if (sec === 'developer') {
+        await page.evaluate(() => { document.querySelector('#devloopBody').hidden = false; });
+      }
+      const rows = await page.evaluate(() => [...document.querySelectorAll(
+        '#setModal .setsec:not([hidden]) input[type="checkbox"]')]
+        .filter((i) => i.offsetParent !== null && !i.closest('#setCameras, #setCalendars, #probBody'))
+        .map((i) => {
+          const label = i.closest('label');
+          const lr = label.getBoundingClientRect();
+          const ir = i.getBoundingClientRect();
+          const words = [...label.children].filter((c) => c !== i);
+          const textRight = Math.max(...words.map((c) => c.getBoundingClientRect().right));
+          const textLeft = Math.min(...words.map((c) => c.getBoundingClientRect().left));
+          return { id: i.id || i.dataset.devStream || '?', rowW: Math.round(ir.right - lr.left),
+                   right: ir.left >= textRight - 0.5 && ir.left > textLeft,
+                   grouped: !!i.closest('.setgroup'), h: Math.round(lr.height) };
+        }));
+      for (const r of rows) {
+        if (!r.right) note(where, `${sec}: the switch #${r.id} is not to the right of its words`);
+        if (!narrow && r.rowW > 640) note(where, `${sec}: #${r.id} sits ${r.rowW}px from its label`);
+        if (!r.grouped) note(where, `${sec}: the switch #${r.id} is not in a group`);
+        if (touch && r.h < MIN_TARGET) note(where, `${sec}: the #${r.id} row is ${r.h}px`);
+      }
+      if (sec === 'developer') {
+        await page.evaluate(() => { document.querySelector('#devloopBody').hidden = true; });
+      }
+    }
+  } catch (e) {
+    note(where, `measuring the switch rows failed: ${String(e.message).split('\n')[0]}`);
+  }
+
   // ---- the page remembers its section, and ⚙ is the way back -------------
   try {
     await showSection(page, 'permissions');
@@ -859,6 +998,9 @@ for (const width of WIDTHS) {
       const note = document.querySelector('#setCalendarsNote');
       return {
         rows: rows.map((r) => ({ id: r.querySelector('input').dataset.entity,
+          // The switch sits in the right-hand column, after the words.
+          switchRight: r.querySelector('input').getBoundingClientRect().left
+            >= r.querySelector('span').getBoundingClientRect().right - 0.5,
           h: Math.round(r.getBoundingClientRect().height),
           checked: r.querySelector('input').checked, right: r.getBoundingClientRect().right })),
         text: document.getElementById('setCameras').textContent,
@@ -877,6 +1019,7 @@ for (const width of WIDTHS) {
     if (!/1 vacuum map is left out/.test(src.text)) note(where, 'the camera list does not say a vacuum map was left out');
     src.rows.forEach((r, i) => {
       if (r.h < MIN_TARGET) note(where, `camera row ${i} is ${r.h}px`);
+      if (!r.switchRight) note(where, `camera row ${i}'s switch is not to the right of its name`);
       if (r.right > src.bodyRight + 0.5) note(where, `camera row ${i} overflows`);
     });
     if (!/3 of 12/.test(src.text)) note(where, 'the camera list does not say how many looks are used');

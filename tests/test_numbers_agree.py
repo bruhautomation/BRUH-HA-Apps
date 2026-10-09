@@ -351,6 +351,31 @@ class TestOneCountForTheQueue(ServerStoresCase):
                          self.server.todo_store.listing()["open"])
         self.assertEqual(read["list_count"], 1)
 
+    def test_the_version_chip_reads_the_integration_off_api_status(self):
+        """The header's version link says "restart needed" off this field,
+        which is read off disk rather than off `status`: a signed-out
+        house's status line outranks `needs_restart`."""
+        import tempfile
+        from pathlib import Path
+        d = Path(tempfile.mkdtemp())
+        loaded, marker = d / "loaded.json", d / "restart_required"
+        old = (self.server.INTEGRATION_LOADED_FILE, self.server.RESTART_MARKER_FILE)
+        self.server.INTEGRATION_LOADED_FILE = loaded
+        self.server.RESTART_MARKER_FILE = marker
+        try:
+            loaded.write_text(json.dumps({"version": "2.18.4"}))
+            marker.write_text(json.dumps({"required_version": "2.18.5"}))
+            _auth, read = self.server._status_payload()
+            self.assertEqual(read["integration"],
+                             {"loaded": "2.18.4", "required": "2.18.5",
+                              "restart_pending": True})
+            marker.unlink()
+            _auth, read = self.server._status_payload()
+            self.assertFalse(read["integration"]["restart_pending"])
+        finally:
+            (self.server.INTEGRATION_LOADED_FILE,
+             self.server.RESTART_MARKER_FILE) = old
+
     def test_the_status_object_rides_api_status(self):
         _auth, read = self.server._status_payload()
         self.assertEqual(set(read["status"]),

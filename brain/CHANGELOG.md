@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.6
+
+- ⚙ Settings looks like one design: every switch sits in a grouped card with its name, one line under it and the switch beside them rather than across the page, one type scale and spacing scale throughout, and the content held to a readable width. Help develop brAIn's streams are cards, two across on a wide screen. (reports #139)
+- A search box at the top of ⚙ Settings finds any setting by its words and opens it, highlighted. (reports #136)
+- The version brAIn is running is under the logo on every pane; pressing it opens the changelog at that release, and it says when Home Assistant needs a restart to load it. (reports #138)
+
 ## 2.18.5
 
 - A finding names its room as a sentence of its own ("It is in the Kitchen."), leaves the room out when the device's name already says it, and says so when the name and the assigned room disagree. The room used to be stuck on after the full stop. (reports #134)
