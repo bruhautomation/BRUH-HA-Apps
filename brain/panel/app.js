@@ -124,7 +124,7 @@ document.addEventListener("pointerout", (ev) => {
 document.addEventListener("pointerdown", hideTip);
 document.addEventListener("focusin", (ev) => {
   const node = ev.target.closest && ev.target.closest("[data-tip]");
-  let keyboard = true;
+  let keyboard;
   try { keyboard = ev.target.matches(":focus-visible"); } catch (_e) { keyboard = true; }
   if (node && keyboard) showTip(node);
 });
