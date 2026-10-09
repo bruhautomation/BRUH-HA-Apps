@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 
 import atomic_write
+import plain_words
 
 log = logging.getLogger("brain.mute_offer")
 
@@ -100,10 +101,15 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
                 # The subject and never the counts, or the store's dedupe
                 # would see a new question every time a number moved.
                 "text": TEXT_PREFIX + source,
-                "claim": (f"{title}: {wrong} of {total} reports were marked "
-                          "wrong — stop raising it?"),
-                "detail": (f"You have ended {total} reports from this rule and "
-                           f"{wrong} of them as wrong, the latest included. "
+                # The count is worded where ⚙ › Diagnostics words it
+                # (`plain_words.record_words`): two wordings of one pair of
+                # numbers read as two different facts.
+                "claim": (f"{plain_words.producer_name(source, title)}: "
+                          f"{plain_words.record_words(wrong, total)} — stop "
+                          "raising it?"),
+                "detail": (f"You have answered {total} of this rule's cards "
+                           f"and marked {wrong} of them wrong, the latest "
+                           "included. "
                            "Yes stops brAIn raising it (and takes what it "
                            "has open off the list); you can start it again "
                            "from the scorecard. No keeps it, and brAIn will "

@@ -60,6 +60,7 @@ import atomic_write
 # traceback a long way from its cause.
 import health as health_rules
 import journal
+import plain_words
 
 log = logging.getLogger("brain.reports")
 
@@ -308,13 +309,53 @@ def faults(diagnostics) -> list[dict]:
     except Exception as exc:  # noqa: BLE001 — see the docstring
         return [{"where": "this report",
                  "what": "brAIn could not work out what is wrong",
-                 "detail": f"{type(exc).__name__}: {exc}"[:200]}]
+                 "detail": f"{type(exc).__name__}: {exc}"[:200],
+                 "title": "This list",
+                 "sentence": "brAIn could not work out what is wrong. "
+                             "Use Report a problem below to send what it has.",
+                 "technical": f"{type(exc).__name__}: {exc}"[:400]}]
 
 
-def _row(out: list, where: str, what: str, detail: str = "") -> None:
-    if what:
-        out.append({"where": where, "what": str(what)[:200],
-                    "detail": str(detail or "")[:400]})
+def _sentence(*parts) -> str:
+    """Join sentence parts, each ending in a full stop, first letter up."""
+    out = []
+    for part in parts:
+        part = str(part or "").strip()
+        if not part:
+            continue
+        part = part[:1].upper() + part[1:]
+        if part[-1] not in ".!?…)":
+            part += "."
+        out.append(part)
+    return " ".join(out)
+
+
+def _row(out: list, where: str, what: str, detail: str = "", *,
+         title: str | None = None, sentence: str | None = None,
+         technical: str | None = None) -> None:
+    """One fault row.
+
+    `where`, `what` and `detail` are the machine fields: the report file
+    prints them and the development loop fingerprints `where|what`, so
+    their values do not move. `title`, `sentence` and `technical` are what
+    ⚙ › Diagnostics shows — a name, what is not working and what to do, in
+    words, and the ids and codes folded under it. A row given no human
+    words is one whose machine words already are (`what` and its detail,
+    as a sentence)."""
+    if not what:
+        return
+    if sentence is None:
+        sentence = _sentence(what, detail)
+        if technical is None:
+            technical = ""
+    elif technical is None:
+        technical = "; ".join(p for p in (f"{where}: {what}",
+                                          str(detail or "")) if p)
+    out.append({"where": where, "what": str(what)[:200],
+                "detail": str(detail or "")[:400],
+                "title": str(title or where)[:120],
+                "sentence": str(sentence)[:500],
+                "technical": str(technical or "")[:600]})
 
 
 # The sentence `checks.run_all` writes for a check it could not run because
@@ -440,18 +481,56 @@ def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
             f"refused {limited} of {total} runs in the last {span}", detail)
 
 
+# What a snapshot key is, as a person would say what brAIn could not read.
+SNAPSHOT_WORDS = {
+    "supervisor": "the add-ons and backups",
+    "recorder": "the recorder database",
+    "zha_devices": "the Zigbee devices",
+    "traces": "the automation traces",
+    "thermal": "the room temperatures",
+    "baselines": "what is normal for each sensor",
+    "closures": "the doors and windows",
+    "appliances": "the machines' power use",
+    "config_entries": "the integrations",
+    "updates": "the waiting updates",
+    "statistics": "the long-term statistics",
+}
+
+
+def _run_sentence(outcome: str, n: int, when: str) -> str:
+    """What a failed background job means for the owner, and what to do."""
+    times = (f"{n} times in the last day" if n > 1 else "once in the last day")
+    last = f", last at {when}" if when else ""
+    if outcome == "auth":
+        return (f"It could not sign in to Claude ({times}{last}). Press Sign "
+                "in again in ⚙ › Account.")
+    if outcome == "timeout":
+        return (f"It ran out of time ({times}{last}). brAIn tries again on "
+                "its own; a lighter model in ⚙ › Model & usage helps if it "
+                "keeps happening.")
+    return (f"It did not finish ({times}{last}). brAIn tries again on its "
+            "own; if it keeps happening, use Report a problem below.")
+
+
 def _faults(diag) -> list[dict]:
     if callable(diag):
         try:
             diag = diag()
         except Exception as exc:  # noqa: BLE001
             return [{"where": "diagnostics", "what": "could not be read",
-                     "detail": f"{type(exc).__name__}: {exc}"[:200]}]
+                     "detail": f"{type(exc).__name__}: {exc}"[:200],
+                     "title": "Diagnostics",
+                     "sentence": "brAIn could not read its own diagnostics. "
+                                 "Restart the add-on; if this stays, use "
+                                 "Report a problem below.",
+                     "technical": f"{type(exc).__name__}: {exc}"[:400]}]
     if not isinstance(diag, dict):
         return []
     out: list[dict] = []
     if diag.get("error") and len(diag) == 1:
-        _row(out, "Diagnostics", "could not be read", diag["error"])
+        _row(out, "Diagnostics", "could not be read", diag["error"],
+             sentence="brAIn could not read its own diagnostics. Restart "
+                      "the add-on; if this stays, use Report a problem below.")
         return out
 
     # The verdict first: it is the one thing derived from everything else,
@@ -462,9 +541,11 @@ def _faults(diag) -> list[dict]:
             # A pending restart has its own row below, with the versions in
             # it; saying it twice is one fact read as two.
             if isinstance(problem, dict) and problem.get("id") not in HEALTH_ROWS_OF_THEIR_OWN:
-                _row(out, "Health", problem.get("what"), problem.get("fix"))
+                _row(out, "Health", problem.get("what"), problem.get("fix"),
+                     title="brAIn itself")
         if not (health.get("problems") or []):
-            _row(out, "Health", health.get("reason"), health.get("fix"))
+            _row(out, "Health", health.get("reason"), health.get("fix"),
+                 title="brAIn itself")
 
     # Runs that failed. The journal is the one place every Claude run, checks
     # pass, baseline build and overnight heal already passes through.
@@ -499,11 +580,17 @@ def _faults(diag) -> list[dict]:
             error, f"last at {when}" if when else "") if part)
         _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
              (f"{subject}: " if subject else "") + f"ended {outcome}"
-             + (f" ({n} times)" if n > 1 else ""), detail)
+             + (f" ({n} times)" if n > 1 else ""), detail,
+             title=plain_words.job_name(where)
+             + (f": {subject}" if subject else ""),
+             sentence=_run_sentence(outcome, n, when))
     if len(distinct) > FAULTS_PER_KIND:
         rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",
-             "see the journal below")
+             "see the journal below", title="Other background jobs",
+             sentence=f"{plain_words.plural(rest, 'more job')} did not "
+                      "finish in the last day. Nothing to do unless it "
+                      "keeps happening.")
 
     # Runs the account refused. A usage limit is not a failure — it is
     # absent from `FAILURE_OUTCOMES` on purpose, a window that resets, and
@@ -514,7 +601,9 @@ def _faults(diag) -> list[dict]:
     # account saying wait, with when it stops saying it.
     rate_row = _rate_limited_row(runs, diag.get("usage") or {})
     if rate_row:
-        _row(out, *rate_row)
+        _row(out, *rate_row,
+             sentence=_sentence(rate_row[1].replace("refused", "The account "
+                                                    "refused", 1), rate_row[2]))
 
     # The integration a version behind the add-on. run.sh deploys new
     # integration files at every start and Home Assistant runs the old ones
@@ -540,7 +629,10 @@ def _faults(diag) -> list[dict]:
     auth = diag.get("auth") or {}
     if str(auth.get("state") or "ok") not in ("ok", "unchecked"):
         _row(out, "Claude sign-in", f"the last check said {auth.get('state')}",
-             auth.get("error"))
+             auth.get("error"),
+             sentence="brAIn could not confirm its Claude sign-in, so the "
+                      "jobs that use Claude may not run. Press Sign in "
+                      "again in ⚙ › Account.")
     usage = diag.get("usage") or {}
     limits = usage.get("limits") if isinstance(usage.get("limits"), dict) else {}
     if limits.get("needs_nothing"):
@@ -554,11 +646,16 @@ def _faults(diag) -> list[dict]:
     elif limits.get("code"):
         _row(out, "Usage figures",
              f"the tracker last answered {limits.get('code')}",
-             limits.get("detail"))
+             limits.get("detail"),
+             sentence=_sentence("Your account's usage figures are not "
+                                "arriving", limits.get("detail")))
     elif usage.get("source") and usage.get("source") != "account":
         _row(out, "Usage figures",
              "the pill is showing brAIn's own estimate, not the account's",
-             f"source: {usage.get('source')}")
+             f"source: {usage.get('source')}",
+             sentence="The usage figures are brAIn's own estimate, not your "
+                      "account's. Nothing to do; they return when the "
+                      "account answers.")
 
     # Checks that could not look. "I could not look" and "it went away" are
     # different claims, and only the first belongs here.
@@ -583,12 +680,31 @@ def _faults(diag) -> list[dict]:
             taken_down.setdefault(key, []).append(cid)
         else:
             own_skips.append((cid, why))
+    titles = diag.get("check_titles") if isinstance(
+        diag.get("check_titles"), dict) else {}
+
+    def check_name(cid) -> str:
+        return str(titles.get(cid) or "") or plain_words.producer_name(
+            f"check:{cid}")
+
     for cid, why in own_skips[:FAULTS_PER_KIND]:
-        _row(out, f"Check {cid}", "could not run", why)
+        _row(out, f"Check {cid}", "could not run", why,
+             title=f"House check: {check_name(cid)}"
+             if cid in titles else check_name(cid),
+             sentence="This check could not look at the house on its last "
+                      "pass, so it is not watching for this right now. It "
+                      "tries again on the next pass.")
     for cid, why in sorted((checks.get("errors") or {}).items())[:FAULTS_PER_KIND]:
-        _row(out, f"Check {cid}", "raised while running", why)
+        _row(out, f"Check {cid}", "raised while running", why,
+             title=f"House check: {check_name(cid)}"
+             if cid in titles else check_name(cid),
+             sentence="This check broke while it ran, so it is not watching "
+                      "for this right now. If it keeps happening, use "
+                      "Report a problem below.")
     if checks.get("error"):
-        _row(out, "House checks", "the pass itself failed", checks.get("error"))
+        _row(out, "House checks", "the pass itself failed", checks.get("error"),
+             sentence="The last pass of house checks failed, so nothing "
+                      "was checked. It runs again on its schedule.")
     for key, why in sorted(snapshot_errors.items()):
         skipped = taken_down.get(key) or []
         detail = str(why or "")
@@ -596,7 +712,15 @@ def _faults(diag) -> list[dict]:
             detail = (f"{detail} — so {len(skipped)} check"
                       f"{'s' if len(skipped) != 1 else ''} did not run: "
                       + ", ".join(skipped)).strip(" —")
-        _row(out, f"Snapshot ({key})", "could not be fetched", detail)
+        _row(out, f"Snapshot ({key})", "could not be fetched", detail,
+             title=f"Reading {SNAPSHOT_WORDS.get(key) or plain_words.words_of(key).lower()}",
+             sentence=_sentence(
+                 f"brAIn could not read "
+                 f"{SNAPSHOT_WORDS.get(key) or plain_words.words_of(key).lower()} "
+                 "from Home Assistant on its last pass",
+                 f"so {plain_words.plural(len(skipped), 'check')} did not "
+                 "run" if skipped else "",
+                 "It tries again on the next pass"))
 
     # The measurement stores. A store that measured nothing of what it
     # asked about is the shape the doors-and-windows bug wore for the life
@@ -655,7 +779,10 @@ def _faults(diag) -> list[dict]:
                  "a `brain_test_*` automation, entity or helper is still in "
                  "the house — `brain doctor` names it and `brain doctor "
                  "--sweep` takes it out (⚙ → Diagnostics → Clear up what "
-                 "was left). It creates nothing and spends nothing.")
+                 "was left). It creates nothing and spends nothing.",
+                 sentence="A test run left a test automation or helper in "
+                          "the house. Press Delete under Rehearsal in ⚙ › "
+                          "Developer; it creates nothing and spends nothing.")
         if reh.get("swept"):
             _row(out, "Rehearsal", "had to clear up after an earlier run",
                  "took out: " + ", ".join(str(x) for x in reh["swept"][:8]))
@@ -673,7 +800,10 @@ def _faults(diag) -> list[dict]:
     deep = diag.get("doctor_deep") or {}
     if deep.get("verdict") and deep.get("verdict") != "ok":
         _row(out, "Deep check", f"last run {deep.get('verdict')}",
-             f"it stopped at the {deep.get('failed_stage') or 'unknown'} stage")
+             f"it stopped at the {deep.get('failed_stage') or 'unknown'} stage",
+             title="The full self-test",
+             sentence="The last full self-test did not pass. Press Run all "
+                      "tests at the top of Diagnostics to see which step.")
 
     # Notifications: the one failure whose only symptom is silence.
     notify = diag.get("notify") or {}
@@ -683,7 +813,10 @@ def _faults(diag) -> list[dict]:
              "the last message brAIn tried to send did not go"
              + (f" ({notify['last_service']})" if notify.get("last_service")
                 else ""),
-             failed)
+             failed,
+             sentence="The last message brAIn sent to your phone did not "
+                      "arrive. Check the notification target in ⚙ › "
+                      "Notifications.")
     # A row the dispatcher held to a time ("tell me at 7") is waiting by
     # design; only something that should already have left is a fault — an
     # untimed hold outside quiet hours, or a timed one whose time has passed.
@@ -701,13 +834,16 @@ def _faults(diag) -> list[dict]:
         part = diag.get(key) or {}
         err = part.get("brief_last_error") or part.get("last_error")
         if err:
-            _row(out, label, "did not go out", err)
+            _row(out, label, "did not go out", err,
+                 sentence=f"The last {label.lower()} did not go out. It "
+                          "tries again next time.")
 
     # Producers the homeowner keeps marking Wrong. This is the Findings tab
     # saying a rule is wrong about this house, which is the whole reason
     # that number is on the screen — and it is a fault in brAIn rather than
     # in the home, which is exactly what a bug report is for.
     findings = diag.get("findings") or {}
+    offered = set(findings.get("mute_offers_open") or [])
     for row in (findings.get("scorecard") or []):
         if not isinstance(row, dict):
             continue
@@ -720,10 +856,24 @@ def _faults(diag) -> list[dict]:
             source = str(row.get("source") or "?")
             title = str(row.get("title") or "")
             name = f"{title} ({source})" if title and title != source else source
+            friendly = plain_words.producer_name(source, title)
+            record = plain_words.record_words(wrong, total)
+            if source in offered:
+                sentence = _sentence(
+                    f"{record}. brAIn has asked on Needs you whether to "
+                    "stop raising these; answer it there")
+            else:
+                sentence = _sentence(
+                    f"{record}, so it is often wrong about this house",
+                    "Ignore one of its cards with “Ignore all like this” "
+                    "ticked to stop it")
             _row(out, f"Producer {name}",
                  f"ignored {wrong} of {total} times",
                  "this rule is firing on a healthy house, which is worse "
-                 "than not having it")
+                 "than not having it",
+                 title=friendly, sentence=sentence,
+                 technical=f"{source}: {wrong} wrong, "
+                           f"{total - wrong} confirmed")
 
     # Findings nothing has finished looking at. A look that fails leaves its
     # rows on `triaging` or showing "Nothing finished looking at this one",
@@ -737,7 +887,13 @@ def _faults(diag) -> list[dict]:
              f"{waiting} findings are still waiting for a look",
              f"The oldest has waited {oldest // 3600} h "
              f"{oldest % 3600 // 60} min. "
-             + _why_looks_waited(diag.get("journal"), diag.get("resident")))
+             + _why_looks_waited(diag.get("journal"), diag.get("resident")),
+             title="New findings waiting to be checked",
+             sentence=f"brAIn checks each new finding before showing it, and "
+                      f"{plain_words.plural(waiting, 'finding has', 'findings have')} "
+                      f"waited, the oldest {oldest // 3600} h. They are "
+                      "checked as soon as brAIn can run again; nothing to "
+                      "do unless this stays for a day.")
 
     # Refusals a producer carried because nothing on the tab could show
     # them. These are not cards anybody can answer.
@@ -749,9 +905,15 @@ def _faults(diag) -> list[dict]:
         refused = part.get("refused")
         if isinstance(refused, list) and refused:
             _row(out, label, f"refused {len(refused)}",
-                 "; ".join(str(r)[:80] for r in refused[:3]))
+                 "; ".join(str(r)[:80] for r in refused[:3]),
+                 sentence=f"brAIn could not offer "
+                          f"{plain_words.plural(len(refused), 'suggestion')}. "
+                          "Nothing to do.")
         elif isinstance(refused, int) and refused:
-            _row(out, label, f"refused {refused}")
+            _row(out, label, f"refused {refused}",
+                 sentence=f"brAIn could not offer "
+                          f"{plain_words.plural(refused, 'suggestion')}. "
+                          "Nothing to do.")
 
     # The overnight healer: a skip is a refusal doing its job and is NOT a
     # fault; an attempt that failed is.
@@ -759,7 +921,9 @@ def _faults(diag) -> list[dict]:
         if isinstance(attempt, dict) and attempt.get("error"):
             _row(out, "Overnight repair",
                  f"could not {attempt.get('remedy') or 'act'}",
-                 attempt.get("error"))
+                 attempt.get("error"),
+                 sentence="An overnight repair did not work. The card it "
+                          "was for is still on Needs you.")
 
     # Answers given in Home Assistant that never reached the store.
     reqs = diag.get("finding_requests") or {}
@@ -793,13 +957,20 @@ def _faults(diag) -> list[dict]:
     if down:
         _row(out, "Daemons", "not running: " + ", ".join(down),
              "each of these was asked for by an option that is on — the "
-             "health verdict above says which of them stops brAIn working")
+             "health verdict above says which of them stops brAIn working",
+             title="Background jobs",
+             sentence=_sentence(
+                 "Not running: " + ", ".join(dict.fromkeys(
+                     plain_words.daemon_name(d) for d in down)),
+                 "Restart the add-on to start them again"))
 
     if len(out) > MAX_FAULTS:
         extra = len(out) - MAX_FAULTS
         out = out[:MAX_FAULTS]
         _row(out, "This list", f"{extra} more not shown",
-             "the full diagnostics below carry them")
+             "the full diagnostics below carry them",
+             sentence=f"{plain_words.plural(extra, 'more thing')} not shown "
+                      "here. Report a problem below carries them all.")
     return out
 
 

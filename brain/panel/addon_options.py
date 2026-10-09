@@ -175,3 +175,43 @@ async def write(changes: dict) -> dict:
         _options = merged
         _read_at = time.time()
     return dict(merged)
+
+
+# The release notes are a few hundred kilobytes at most; anything past this
+# is not a changelog and is not shown.
+CHANGELOG_MAX_BYTES = 2_000_000
+
+
+async def changelog() -> tuple[str | None, str]:
+    """This add-on's release notes, as the Supervisor serves them.
+
+    `CHANGELOG.md` is not in the image; the Supervisor keeps the copy the
+    store installed from and answers `GET /addons/self/changelog` with it,
+    as plain text, to the add-on itself — the same service and the same
+    token `refresh` uses. Returns ``(text, "")``, or ``(None, sentence)``
+    naming why there is none, because "the Supervisor would not answer"
+    and "there are no notes" are different things to tell somebody.
+    """
+    if not available():
+        return None, "brAIn cannot reach the Supervisor from here."
+    try:
+        async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
+            async with session.get(
+                    f"{SUPERVISOR_URL}/addons/self/changelog",
+                    headers=_headers()) as resp:
+                if resp.status != 200:
+                    return None, (f"The Supervisor would not hand over the "
+                                  f"release notes (HTTP {resp.status}).")
+                raw = await resp.content.read(CHANGELOG_MAX_BYTES + 1)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        log.debug("supervisor changelog read failed: %s", exc)
+        return None, "The Supervisor did not answer."
+    if len(raw) > CHANGELOG_MAX_BYTES:
+        return None, "The release notes were too large to show."
+    text = raw.decode("utf-8", errors="replace")
+    if text.lstrip().startswith("{"):
+        # A JSON error envelope where text was asked for.
+        return None, "The Supervisor answered with no release notes."
+    if not text.strip():
+        return None, "The Supervisor has no release notes for this add-on."
+    return text, ""

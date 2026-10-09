@@ -7,6 +7,7 @@ Routes
 GET  /                       — dashboard HTML
 GET  /style.css, /app.js     — static assets
 GET  /api/status             — auth state, categories, job states, settings, usage
+GET  /api/changelog          — the release notes, read from the Supervisor, newest first
 GET  /api/settings           — runtime settings + budget state + plans + the
                                add-on Configuration-tab defaults
 PUT  /api/settings           — update {auto_enabled, plan, budget_percent,
@@ -197,6 +198,7 @@ import milestones
 import model_plan
 import music_assistant
 import mute_offer
+import plain_words
 import notify_learn
 import notify_router
 import numfmt
@@ -3647,13 +3649,78 @@ def _scorecard() -> list[dict]:
     "Device check" are three things nobody can tell apart. The catalog's
     own title is the one a person recognises (`_muted_rows`' rule)."""
     rows = findings_store.scorecard()
+    try:
+        muted = set(settings_store.muted())
+    except Exception:  # noqa: BLE001 — a verdict word, never the read
+        muted = set()
     for row in rows:
         src = str(row.get("source") or "")
         if src.startswith("check:"):
             spec = checks.get_check(src[len("check:"):]) or {}
             if spec.get("title"):
                 row["title"] = str(spec["title"])
+        elif src.startswith(user_categories.ID_PREFIX):
+            # A card the homeowner made is named by the card, never by
+            # its id ("user-1789499215" is what the scorecard printed).
+            try:
+                cat = resolve_category(src) or {}
+            except Exception:  # noqa: BLE001
+                cat = {}
+            if cat.get("title"):
+                row["title"] = str(cat["title"])
+        _score_words(row, src in muted)
     return rows
+
+
+def _score_words(row: dict, muted: bool) -> dict:
+    """What ⚙ › Diagnostics prints for one scorecard row, worded once
+    (`plain_words`): the rule's name, its count in words and a verdict.
+    The id stays on `source` for whoever is debugging."""
+    confirmed = int(row.get("confirmed") or 0)
+    wrong = int(row.get("wrong") or 0)
+    row["name"] = plain_words.producer_name(row.get("source") or "",
+                                            row.get("title") or "")
+    row["count_words"] = plain_words.score_words(confirmed, wrong)
+    row["record_words"] = plain_words.record_words(wrong, confirmed + wrong)
+    row["muted"] = bool(muted)
+    row["verdict"] = plain_words.verdict(confirmed, wrong, muted)
+    return row
+
+
+def _check_titles(last) -> dict:
+    """{check id: its catalog title} for the checks a pass skipped or
+    raised in — the ones the fault list names."""
+    if not isinstance(last, dict):
+        return {}
+    out = {}
+    for key in ("skipped", "errors"):
+        for cid in (last.get(key) or {}):
+            try:
+                spec = checks.get_check(str(cid)) or {}
+            except Exception:  # noqa: BLE001
+                spec = {}
+            if spec.get("title"):
+                out[str(cid)] = str(spec["title"])
+    return out
+
+
+def _mute_offers_open() -> list[str]:
+    """The producers a mute suggestion is waiting about on the queue right
+    now, so ⚙ › Diagnostics can point at that question rather than word
+    the same record a second time."""
+    try:
+        state = mute_offer.load()
+        live = [f for f in findings_store.list_all()
+                if f.get("source") == mute_offer.SOURCE
+                and f.get("status") in findings_store.LIVE_STATUSES]
+    except Exception:  # noqa: BLE001 — a pointer, never the read
+        return []
+    out = []
+    for finding in live:
+        source = mute_offer.source_for_finding(state, finding)
+        if source and source not in out:
+            out.append(source)
+    return out
 
 
 def _producer_titles(folded: list[dict]) -> dict[str, str]:
@@ -7196,6 +7263,47 @@ def _note_first_look(now: float | None = None) -> None:
             schedule_store.set(FIRST_LOOK_KEY, time.time() if now is None else now)
     except Exception:  # noqa: BLE001
         pass
+
+
+# A release heading in CHANGELOG.md: `## 2.18.10`.
+_RELEASE_HEADING = re.compile(r"^##[ \t]+v?(\d+(?:\.\d+)*)[ \t]*$", re.M)
+
+
+def changelog_sections(text: str) -> list[dict]:
+    """The release notes cut at each `## x.y.z`, newest first.
+
+    The file is written newest first; it is sorted anyway, by the version's
+    numbers, because "since you last looked" is a comparison of versions
+    and a file edited out of order must not make an old release look new.
+    The preamble above the first heading is not a release and is dropped.
+    """
+    marks = list(_RELEASE_HEADING.finditer(text or ""))
+    out = []
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        body = text[mark.end():end].strip("\n")
+        out.append({"version": mark.group(1), "text": body})
+    out.sort(key=lambda r: tuple(int(p) for p in r["version"].split(".")),
+             reverse=True)
+    return out
+
+
+async def h_changelog(request: web.Request) -> web.Response:
+    """What is new, for the dialog the version under the logo opens.
+
+    Read from the Supervisor (`addon_options.changelog`) because the
+    release notes are not in the image; a refusal is a sentence the panel
+    shows beside the link to the published file, never an empty dialog
+    that reads as "nothing changed"."""
+    text, error = await addon_options.changelog()
+    sections = changelog_sections(text) if text else []
+    if text and not sections:
+        error = "The release notes had no versions in them."
+    return web.json_response({
+        "version": ADDON_VERSION,
+        "sections": sections,
+        "error": error,
+    })
 
 
 async def h_status(request: web.Request) -> web.Response:
@@ -15260,6 +15368,9 @@ def _diagnostics_payload() -> dict:
             "triage_runs_today": _triage_runs_today(time.time()),
             "triage_runs_per_day": triage.MAX_PER_DAY,
             "scorecard": _scorecard(),
+            # Rules a mute suggestion is waiting about on the queue: the
+            # fault list points at the question instead of repeating it.
+            "mute_offers_open": _mute_offers_open(),
             # Which producers the homeowner has switched off. A quiet check
             # and a muted one look identical from the list, and only one
             # of them is a fault worth reading the log about.
@@ -15271,6 +15382,10 @@ def _diagnostics_payload() -> dict:
             "facts": _facts_summary_safe(),
         },
         "checks": CHECKS_STATE["last"],
+        # The catalog's own title for each check the last pass skipped or
+        # broke, so the fault list names a check in words (`reports.faults`
+        # is pure and cannot ask the catalog itself).
+        "check_titles": _check_titles(CHECKS_STATE["last"]),
         # What brAIn decided not to say, counted by reason over the last
         # day, and whether the trail can be read or written at all: a
         # trail that stopped writing makes every "why didn't you tell me"
@@ -22214,6 +22329,7 @@ def make_app() -> web.Application:
     app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
     app.router.add_get("/favicon.svg", _static("favicon.svg", "image/svg+xml"))
     app.router.add_get("/api/status", h_status)
+    app.router.add_get("/api/changelog", h_changelog)
     app.router.add_get("/api/settings", h_settings_get)
     app.router.add_put("/api/settings", h_settings_put)
     app.router.add_get("/api/insights", h_insights)
