@@ -23,9 +23,11 @@
        the bar is no wider than the logo was. The server writes the version
        in; `paintVersion` keeps it current off /api/status and adds
        "restart needed" while Home Assistant still runs an older
-       integration. -->
+       integration. A plain press opens What's new in the panel
+       (`openWhatsNew`, the notes read off the Supervisor); the href stays
+       the published changelog, for a modified press and as the fallback. -->
   <a id="versionChip" class="brandlink" href="https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md"
-     target="_blank" rel="noopener noreferrer" aria-label="brAIn {{VERSION}}: what changed (opens the changelog)">
+     target="_blank" rel="noopener noreferrer" aria-label="brAIn {{VERSION}}: what's new (the changelog)">
   <svg class="wordmark" viewBox="0 0 496 342" role="img" aria-label="brAIn">
     <path class="wm-ink" fill-rule="evenodd" d="M159.55,176c0-23.95-12.76-43.53-32.59-55,19.83-11.43,32.59-31.09,32.59-55,0-38.69-33.29-66-75.87-66H4A4,4,0,0,0,0,4V331a4,4,0,0,0,4,4H19a4,4,0,0,0,4-4V245.83A3.84,3.84,0,0,1,26.83,242H92.4a3.93,3.93,0,0,1,3.22,1.69l41,89.62a3.9,3.9,0,0,0,3.21,1.69h19.27a4,4,0,0,0,3.28-6.29L121.81,242.6c-1.57-2.24-.18-4.71,2.17-6.13C141.54,225.88,159.55,206.48,159.55,176ZM23,26a4,4,0,0,1,4-4H79.36C113.11,22,136,38.27,136,66s-22.9,44-56.65,44H27a4,4,0,0,1-4-4ZM79.36,220H23V136a4,4,0,0,1,4-4H79.36c33.75,0,56.65,16.27,56.65,44S113.11,220,79.36,220Z"/>
     <g transform="translate(186 184) scale(1.1306) translate(-188.83 -175.5)">
@@ -1612,6 +1614,24 @@
         <button type="button" id="convViewAsk" class="btn small">Ask about it</button>
       </div>
       <div id="convViewLog" class="viewlog"></div>
+    </div>
+  </div>
+</div>
+
+<!-- What's new: the release notes, opened by the version under the logo.
+     Read from the Supervisor (`/api/changelog`) because CHANGELOG.md is
+     not in the image; the releases since this browser last looked are
+     marked, and a restart Home Assistant still owes is said above them. -->
+<div id="whatsNewModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="whatsNewTitle">
+  <div class="box edit">
+    <header>
+      <span id="whatsNewTitle">What's new</span>
+      <div class="spacer"></div>
+      <button id="whatsNewClose" class="btn icon" data-tip="Close" aria-label="Close">✕</button>
+    </header>
+    <div class="edit-body">
+      <p id="whatsNewRestart" class="wnrestart" hidden></p>
+      <div id="whatsNewBody" class="wnbody">Loading…</div>
     </div>
   </div>
 </div>

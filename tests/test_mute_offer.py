@@ -87,7 +87,7 @@ class TestTheServerHalf(DispatchCase):
     def test_the_pass_asks_once_and_mutes_nothing(self):
         [q] = self.run_pass()
         self.assertEqual((q["source"], q["kind"]), (mute_offer.SOURCE, "question"))
-        self.assertIn("4 of 4", q["claim"])
+        self.assertIn("4 marked wrong of 4 answers", q["claim"])
         self.assertEqual(self.muted(), set())
         self.assertEqual(self.run_pass(), [], "asked again while it waits")
 
