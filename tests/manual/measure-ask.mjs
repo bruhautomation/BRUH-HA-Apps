@@ -124,7 +124,7 @@ const CUT = [/Resume now/, /resumes this conversation/i, /Select conversations/,
   /Discussing/];
 // The verbs a button on this tab may say (the redesign's vocabulary, plus
 // the approval card's own answers, which are the CLI's question).
-const STRIP_VERBS = new Set(['Plan', 'Done', 'Snooze', 'Ignore']);
+const STRIP_VERBS = new Set(['Fix', 'Done', 'Snooze', 'Ignore']);
 
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);

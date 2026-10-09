@@ -176,11 +176,21 @@ for (const { width, touch, top, fits } of CASES) {
   for (const card of cards) {
     const id = card.id || card.title.slice(0, 30);
     if (card.chips.length !== 1) note(where, `${id} carries ${card.chips.length} status chips`);
-    if (!['urgent', 'problem', 'tidy', 'suggestion'].includes(card.chips[0])) {
+    if (!['urgent', 'problem', 'tidy', 'suggestion', 'question'].includes(card.chips[0])) {
       note(where, `${id} chip is "${card.chips[0]}"`);
     }
-    if (!['Urgent', 'Problem', 'Tidy-up', 'Suggestion'].includes(card.chipWord)) {
+    if (!['Urgent', 'Problem', 'Tidy-up', 'Suggestion', 'Question'].includes(card.chipWord)) {
       note(where, `${id} chip word "${card.chipWord}"`);
+    }
+    // A Yes / No / Snooze card is a question, and says so: it wore
+    // "Suggestion" beside the proposals, which ask for an Apply.
+    const isQuestion = card.buttons.some((b) => b.label === 'Yes')
+      && card.buttons.some((b) => b.label === 'No');
+    if (isQuestion && card.chipWord !== 'Question') {
+      note(where, `${id} is a question wearing "${card.chipWord}"`);
+    }
+    if (!isQuestion && card.chipWord === 'Question') {
+      note(where, `${id} wears "Question" and offers no Yes / No`);
     }
     const presses = card.buttons.filter((b) => !b.icon);
     if (presses.filter((b) => b.primary).length > 1) note(where, `${id} has two primaries`);

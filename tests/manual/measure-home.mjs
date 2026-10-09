@@ -9,8 +9,8 @@
 // dismiss" — and then wrong again with Fix it · Add to To Do · Dismiss · Not a
 // problem on every card whether or not brAIn could act:
 //
-//   * a problem brAIn could act on leads with Plan; one only a person can
-//     fix leads with Add to To Do and offers no Plan; a plan waiting for
+//   * a problem brAIn could act on leads with Fix; one only a person can
+//     fix leads with Add to To Do and offers no Fix; a plan waiting for
 //     consent leads with Apply; a question is Yes · No · Snooze and never a
 //     verb; a change brAIn made is Done · Undo and nothing else;
 //   * every card a person answers carries Snooze and a way to say no
@@ -46,13 +46,13 @@ const KEPT_IDS = ['viewFindings', 'findList', 'findBadge', 'todayMore', 'todoLis
 
 // What each case in the fixture must lead with, and what it may never offer.
 const ROWS = {
-  'f:1100': { lead: 'Add to To Do', never: ['Plan', 'Apply'] },
-  'f:1101': { lead: 'Plan', never: ['Apply'] },
-  'f:1102': { lead: 'Apply', never: ['Plan'] },
+  'f:1100': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
+  'f:1101': { lead: 'Fix', never: ['Plan', 'Apply'] },
+  'f:1102': { lead: 'Apply', never: ['Fix', 'Plan'] },
   'h:1103': { lead: 'Yes', exact: ['Yes', 'No', 'Snooze'] },
   'f:1104': { lead: 'Done', exact: ['Done', 'Undo'] },
-  'f:1105': { lead: 'Add to To Do', never: ['Plan', 'Apply'] },
-  'f:1106': { lead: 'Plan', never: ['Apply'] },
+  'f:1105': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
+  'f:1106': { lead: 'Fix', never: ['Plan', 'Apply'] },
 };
 
 const failures = [];
@@ -158,6 +158,30 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   const checkAgain = await page.locator(
     '[data-case-id="f:1101"] .card-actions button:text-is("Check again")').count();
   if (!checkAgain) note(where, 'the freezer card has no Check again on its face');
+
+  // Fix opens a box holding the card's own suggestion, by name, which the
+  // person may edit; sending it posts that text as the agreed change to the
+  // plan route — never a bare press, and never as a note.
+  await page.locator('[data-case-id="f:1101"] .card-actions button:text-is("Fix")').click();
+  const fixForm = page.locator('[data-case-id="f:1101"] .findnote');
+  if (!(await fixForm.count())) note(where, 'Fix opens no box');
+  else {
+    const prefilled = await fixForm.locator('textarea').inputValue();
+    if (!/door seal on Garage Freezer/.test(prefilled)) {
+      note(where, `Fix's box holds "${prefilled}", not the card's suggestion by name`);
+    }
+    if (await fixForm.locator('.findnotecheck').count()) {
+      note(where, 'Fix offers "Ignore all like this"');
+    }
+    await fixForm.locator('textarea').fill('Replace the door seal on Garage Freezer.');
+    await fixForm.locator('.findnoteactions button', { hasText: 'Fix' }).click();
+    await page.waitForTimeout(200);
+    const fixSent = (await posts(page)).find((p) => /api\/finding\/1101\/fix$/.test(p.url));
+    if (!fixSent || fixSent.body?.change !== 'Replace the door seal on Garage Freezer.'
+        || 'note' in (fixSent.body || {})) {
+      note(where, `Fix sent ${JSON.stringify(fixSent)}`);
+    }
+  }
 
   // Snooze sends the case's not_now.
   await page.locator('[data-case-id="f:1102"] .card-actions button:text-is("Snooze")').click();

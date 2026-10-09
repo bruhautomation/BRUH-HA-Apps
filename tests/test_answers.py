@@ -137,7 +137,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         """One primary, then Check again (a check's row), Dismiss, Snooze ·
         Ignore — the same words in the same places on a battery, a quiet
         device, a stuck sensor and a Resident's case, so a row of buttons
-        can be read without reading the words. The primary is Plan where
+        can be read without reading the words. The primary is Fix where
         brAIn could act and Add to To Do where a person's hands are
         needed. "The dismiss and check again buttons are useful": an old
         card that is no longer true is the commonest card there is."""
@@ -150,10 +150,10 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
             self.assertEqual(got, [("todo", "Add to To Do")] + tail, name)
         got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES["generic"])]
-        self.assertEqual(got, [("fix", "Plan")] + tail)
+        self.assertEqual(got, [("fix", "Fix")] + tail)
         got = [(a["verb"], a["label"]) for a in answers.answers(
             case(source="check:auto.dead_ref", fixable=True))]
-        self.assertEqual(got, [("fix", "Plan")] + check)
+        self.assertEqual(got, [("fix", "Fix")] + check)
 
     def test_dismiss_clears_the_row_and_records_nothing(self):
         got = [a for a in answers.answers(SHAPES["battery"])
@@ -169,7 +169,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
         button's label is one of these words and nothing else — Yes and No
         being the answer to a question rather than a verb."""
-        vocab = {"Apply", "Plan", "Add to To Do", "Snooze", "Ignore", "Done",
+        vocab = {"Apply", "Fix", "Add to To Do", "Snooze", "Ignore", "Done",
                  "Restore", "Undo", "Ask", "Send", "Recheck", "Check again",
                  "Dismiss", "Run", "Save",
                  "Share", "Delete", "Yes", "No"}
@@ -256,7 +256,7 @@ class TestTheButtonsThatFit(unittest.TestCase):
         legacy = case(finding_status="planned", fixable=True, plan={
             "can_fix": True, "ops_refused": answers.LEGACY_PLAN_MARK + " …"})
         got = answers.answers(legacy)
-        self.assertEqual([(a["verb"], a["label"]) for a in got][0], ("fix", "Plan"))
+        self.assertEqual([(a["verb"], a["label"]) for a in got][0], ("fix", "Fix"))
 
     def test_a_change_is_got_it_and_undo_only_inside_a_window(self):
         self.assertEqual(self.verbs(SHAPES["change"]), ["ack"])

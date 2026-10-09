@@ -15792,7 +15792,39 @@ def _devloop_payload() -> dict:
         "token_set": devloop.token_set(),
         "status": devloop.upstream.status(),
         "queue": queue,
+        "held": _devloop_held(),
     }
+
+
+def _devloop_held(now: float | None = None) -> dict:
+    """Why a report marked to send may still be waiting: the day's cap.
+
+    Send sends at once, so a row still `ready` afterwards was HELD, and
+    the commonest holder is `max_issues_per_day` — counted, as `send_due`
+    counts it, over issues this house created in the last 24 hours. The
+    panel words a held row from this rather than promising a send ("will
+    be sent" read as brAIn stalling). `frees_at` is when the oldest of
+    today's issues leaves the window, which is when the next one can go.
+    Read-only, and "could not tell" is `today: None`, never a full day."""
+    now = time.time() if now is None else now
+    try:
+        limit = int(devloop.load_settings().get("max_issues_per_day") or 0)
+    except Exception:  # noqa: BLE001 — a payload field, never a 500
+        limit = 0
+    today, frees_at = None, 0.0
+    try:
+        items = (devloop.upstream._load() or {}).get("items") or {}
+        stamps = sorted(float(e.get("sent_at") or 0) for e in items.values()
+                        if isinstance(e, dict) and e.get("created_here")
+                        and now - float(e.get("sent_at") or 0) < 86400)
+        today = len(stamps)
+        if stamps and today >= limit:
+            frees_at = stamps[max(0, today - limit)] + 86400 if limit else 0.0
+    except Exception:  # noqa: BLE001
+        today = None
+    return {"limit": limit, "today": today,
+            "full": today is not None and today >= limit,
+            "frees_at": frees_at}
 
 
 def _devloop_last_look(queue: list[dict]) -> dict | None:

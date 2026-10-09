@@ -371,8 +371,11 @@ for (const width of WIDTHS) {
   }
   // A rolling window is named as one: "Today" over yesterday's rows was
   // the label lying about the list under it.
-  if (m.range !== 'Last 24 hours') {
-    note(`${width}px`, `the window is labelled "${m.range}"`);
+  // The window's length is the select's to say; the label between Earlier
+  // and Later says only what the select does not: "Now" for the current
+  // window, and the dates of one paged back to.
+  if (m.range !== 'Now') {
+    note(`${width}px`, `the current window is labelled "${m.range}"`);
   }
   // The restart is a row, and what began around it says so.
   const restart = rows.find((r) => r.rkind === 'restart');
@@ -544,6 +547,40 @@ for (const width of WIDTHS) {
   if (await page.locator('.actwhy').count()) {
     note(`${width}px`, 'a second tap did not close the history pane');
   }
+
+  // The length select sits on the Earlier/Later row, width-fit, never a
+  // full-width row of its own (it was on a phone: "24 hours" alone across
+  // the screen, above a label saying "Last 24 hours").
+  const nav = await page.evaluate(() => {
+    const top = (id) => document.getElementById(id)?.getBoundingClientRect();
+    const prev = top('actPrev');
+    const hours = top('actHours');
+    return prev && hours ? { prevTop: Math.round(prev.top),
+      hoursTop: Math.round(hours.top), hoursH: Math.round(hours.height),
+      hoursW: Math.round(hours.width), inNav: !!document.querySelector('.actnav #actHours') }
+      : null;
+  });
+  if (!nav) note(`${width}px`, 'the window select or Earlier is missing');
+  else {
+    if (!nav.inNav) note(`${width}px`, 'the window select is not on the Earlier/Later row');
+    if (Math.abs(nav.prevTop + 0 - nav.hoursTop) > nav.hoursH) {
+      note(`${width}px`, `the window select is on its own row (top ${nav.hoursTop} vs ${nav.prevTop})`);
+    }
+    if (nav.hoursW > width * 0.5) {
+      note(`${width}px`, `the window select is ${nav.hoursW}px wide — not width-fit`);
+    }
+  }
+  // Paged back, the label names the window's dates.
+  await page.locator('#actPrev').click();
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => document.querySelector('#actRange')?.textContent.trim() || '');
+  if (!/\u2013/.test(back) || /hours/i.test(back)) {
+    note(`${width}px`, `a window paged back to is labelled "${back}"`);
+  }
+  const backWide = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1);
+  if (backWide) note(`${width}px`, 'a window paged back to scrolls the page sideways');
+  await page.locator('#actNext').click();
+  await page.waitForTimeout(300);
 
   console.log(`${failures.length ? 'ok? ' : 'ok  '}${String(width).padStart(4)}px  `
     + `${m.sections.length} sections, ${rows.length} rows, `

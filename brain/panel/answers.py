@@ -24,14 +24,14 @@ Four rules.
 **Every card has one primary, then Snooze · Ignore, always those words
 and that order** (docs/design/ui-redesign-2026-10.md, "One queue, one
 card"), so a row of buttons can be read without reading the words. The
-primary is the one press that fits the card: *Plan* where brAIn could
+primary is the one press that fits the card: *Fix* where brAIn could
 work out a change (a read-only run that changes nothing), *Apply* once a
 plan is on the card, *Add to To Do* where it needs a person's hands, *Done*
 on a chore check, *Send* on a house-book question. A problem also shows
 *Check again* (on a check's row) and *Dismiss* between the primary and
 the pair, because a card that is old or no longer true is the commonest
 card there is and those are the two presses that answer it. Everything
-rarer — *Ask*, *Done*, *Plan* — is behind the ⋯, at most three. The
+rarer — *Ask*, *Done*, *Fix* — is behind the ⋯, at most three. The
 first cut of this module gave each situation its own vocabulary
 (*Replaced it*, *It's back*, *It's off on purpose*) and what it taught
 was that the row changed from card to card and had to be read every
@@ -52,7 +52,7 @@ second teaches and only the second is for good.
 `fixable` is the row's own claim about whose sentence the fix is, and a
 card whose fix is *Replace the battery* leads with the to-do list, never
 with a plan run: the run costs money to work out that a person has to
-open a cover. Where brAIn could act, *Plan* leads, and what it drafts
+open a cover. Where brAIn could act, *Fix* leads, and what it drafts
 is applied only by the *Apply* you press on the plan.
 
 **Every answer names its route and its wire action**, so the panel does
@@ -327,15 +327,30 @@ def _done(key, primary: bool = False) -> dict:
         done="Done — recorded")
 
 
-def _plan(key, primary: bool = False) -> dict:
-    """The read-only plan run. Called **Plan** and never Apply: it changes
-    nothing, and Apply is the press that consents to what it drafts."""
-    return _answer(
-        "fix", "Plan",
-        "brAIn drafts exactly what it would change and shows you first. "
-        "Nothing changes until you press Apply.",
+def _plan(key, primary: bool = False, fix: str = "") -> dict:
+    """**Fix**: a short box holding the card's own suggested change, which
+    the person may edit or replace, then the read-only plan run with what
+    they sent as the agreed change (`_run_plan`'s `change`, the same brief
+    a discussion's `plan` resolution hands it). Never Apply: it changes
+    nothing, and Apply is the press that consents to what it drafts.
+
+    It was a bare press called **Plan**, which bought a plan nobody had
+    said anything about and was the button nobody pressed. `instruct`
+    tells the panel to open the box; the wire id stays `fix`, because the
+    HA mirror, Repairs and the notification actions read it."""
+    answer = _answer(
+        "fix", "Fix",
+        "Say what to change — brAIn's suggestion is already in the box. It "
+        "shows exactly what it will change, and nothing changes until you "
+        "press Apply.",
         route=f"/api/finding/{key}/fix", primary=primary,
-        done="Planning — nothing has changed yet")
+        prefill=" ".join(str(fix or "").split()),
+        done="Working out the change — nothing has changed yet")
+    answer["instruct"] = True
+    answer["ask"] = ("What should brAIn change? Edit its suggestion or write "
+                     "your own.")
+    answer["placeholder"] = "Turn the hall light off at 23:00 instead."
+    return answer
 
 
 def _ask(key) -> dict:
@@ -403,7 +418,7 @@ def answers(case: dict) -> list[dict]:
                 done="Applying — brAIn is making the change")
         elif plan_is_legacy(plan):
             # "This plan is out of date." The remedy is to plan again.
-            lead = _plan(key, primary=True)
+            lead = _plan(key, primary=True, fix=case.get("fix"))
         else:
             # brAIn will not make this change: a person's hands.
             lead = _todo(cid, primary=True)
@@ -436,7 +451,7 @@ def answers(case: dict) -> list[dict]:
 
     if sit == "tidy":
         return _problem_row(case, _answer(
-            "fix", "Plan", "brAIn suggests names, rooms and aliases in this "
+            "fix", "Fix", "brAIn suggests names, rooms and aliases in this "
             "house's own style, as one card to review. Nothing changes "
             "until you press Apply on it.", route="/api/tidy/run",
             primary=True, done="Suggesting — they arrive as one card here"))
@@ -502,12 +517,12 @@ def answers(case: dict) -> list[dict]:
     # A chore check (empty the dishwasher, shut the back door) is the one
     # problem whose honest first press is "Done": the work is minutes and
     # putting it on a list is sillier than doing it. Everything else leads
-    # with Plan where brAIn could act and the list where it could not.
+    # with Fix where brAIn could act and the list where it could not.
     if sit == "chore_check":
         return _problem_row(case, _done(key, primary=True))
     if (sit not in HANDS and sit != "fix_failed" and case.get("fixable")
             and not plan_refused(plan)):
-        lead = _plan(key, primary=True)
+        lead = _plan(key, primary=True, fix=case.get("fix"))
     else:
         lead = _todo(cid, primary=True)
     return _problem_row(case, lead, prefill=PREFILL.get(sit, ""))
@@ -515,22 +530,24 @@ def answers(case: dict) -> list[dict]:
 
 # The one status chip on a card (docs/design/ui-redesign-2026-10.md,
 # "Visual standard"): a dot and one word, four kinds and no fifth.
-CHIPS = ("urgent", "problem", "tidy", "suggestion")
+CHIPS = ("urgent", "problem", "tidy", "suggestion", "question")
 CHIP_WORDS = {"urgent": "Urgent", "problem": "Problem", "tidy": "Tidy-up",
-              "suggestion": "Suggestion"}
+              "suggestion": "Suggestion", "question": "Question"}
 
 
 def chip(case: dict, urgent: bool = False) -> str:
     """Which of `CHIPS` this case wears. `urgent` is the caller's, because
     it is `notify_router.is_urgent`'s rule and this module is a leaf.
 
-    A question rides as a suggestion: it is brAIn proposing something it
-    thinks is true, in the asking colour, and a fifth chip for it would be
-    the two-severities-at-once card the design doc cut."""
+    A question wears its own word: it rode as a suggestion, and a card
+    asking Yes / No under the same chip as one asking for an Apply was two
+    different asks a person had to tell apart by the buttons."""
     if urgent:
         return "urgent"
     kind = case.get("kind")
-    if kind in ("opportunity", "question"):
+    if kind == "question":
+        return "question"
+    if kind == "opportunity":
         return "suggestion"
     if situation(case) == "tidy" or case.get("severity") == "info":
         return "tidy"
@@ -539,7 +556,7 @@ def chip(case: dict, urgent: bool = False) -> str:
 
 def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
     """What goes behind the ⋯: at most `MAX_MORE` of Ask, Check again
-    (where the row has no room for it), Done and Plan — the design doc's four, chosen per kind — never one already
+    (where the row has no room for it), Done and Fix — the design doc's four, chosen per kind — never one already
     on the row.
 
     `overflow` (`cases.overflow`'s whole list) is read only for the verb
@@ -573,7 +590,7 @@ def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
         plan = case.get("plan") or {}
         if (case.get("fixable") and sit not in HANDS and sit != "watching"
                 and (plan_refused(plan) or sit == "fix_failed")):
-            add(_plan(key))
+            add(_plan(key, fix=case.get("fix")))
         return out
     for item in overflow or []:
         if item.get("verb") == "trial":
@@ -593,7 +610,7 @@ def request_answers(row: dict) -> list[dict]:
     written by the store and the store cannot import `cases`. The
     situation is read the same way; only the presses HA can carry back as
     a request survive. A phone cannot start a plan run, so a problem whose
-    card leads with *Plan* is offered *Add to To Do* in its place — the
+    card leads with *Fix* is offered *Add to To Do* in its place — the
     lock screen's way of saying "I'll handle it" — and *Snooze* rides at
     the end of any row that somehow left it off, because "not this
     minute" is the lock-screen answer.

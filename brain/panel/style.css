@@ -4357,6 +4357,7 @@ body.term-classic #termMode .ico-out { display: block; }
 .actside { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .actfilters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .actnav { display: flex; align-items: center; gap: 10px; }
+.actnav #actHours { flex: none; width: auto; max-width: none; }
 .actrange { color: var(--ink-2); font-size: var(--fs-body); white-space: nowrap; }
 
 /* When the house was empty. Above the list rather than in it, because it
@@ -5710,7 +5711,8 @@ body.term-classic #termMode .ico-out { display: block; }
 .chip-status[data-kind="urgent"]::before { background: var(--status-urgent); }
 .chip-status[data-kind="problem"]::before { background: var(--status-problem); }
 .chip-status[data-kind="tidy"]::before { background: var(--status-tidy); }
-.chip-status[data-kind="suggestion"]::before { background: var(--status-suggestion); }
+.chip-status[data-kind="suggestion"]::before,
+.chip-status[data-kind="question"]::before { background: var(--status-suggestion); }
 
 /* An item's state is plain meta text, never a chip: "Snoozed until Thu",
    "Applied 4 Oct · Undo", "Ignored". */
@@ -6319,12 +6321,14 @@ button.kfactsubj:hover { color: var(--accent-2);
 @media (max-width: 640px) {
   .actfilters .sel { flex: 1 1 calc(50% - var(--sp-2)); max-width: none; min-width: 0; }
   .actsearch { flex-basis: 100%; }
-  /* Search on its own row; room and cause share the next; the window the
-     one after, beside nothing, so no select is squeezed to its caret. */
+  /* Search on its own row; room and cause share the next. The window's
+     length is on the Earlier/Later row, sized to its words. */
   .actfilters .actsearch { order: 0; }
   .actfilters #actArea { order: 1; }
   .actfilters #actCause { order: 2; }
-  .actfilters #actHours { order: 3; flex-basis: 100%; }
+  .actnav { gap: var(--sp-2); }
+  .actnav .actrange { flex: 1 1 auto; min-width: 0; white-space: normal;
+    text-align: center; }
   .actkinds .pill { display: none; }
   .actkinds .actkindsel { display: block; width: 100%; }
 }
@@ -6493,7 +6497,7 @@ button.kfactsubj:hover { color: var(--accent-2);
 @media (pointer: coarse) {
   .segnav .segbtn, .segnav .segsel, .reportsearch, .pill, .filtertag, .ksub,
   .archsearch, .actsearch, .ksubfind, .histdel, .factdel, .needstrip,
-  .kfact .kfactopen, .actfilters select.sel { min-height: 44px; }
+  .kfact .kfactopen, .actfilters select.sel, .actnav select.sel { min-height: 44px; }
   .reportrow .btn, .bookwrap .btn, .card .cardask { min-height: 44px; }
   .refinelink { display: inline-flex; align-items: center; min-height: 44px; }
 }

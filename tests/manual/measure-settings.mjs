@@ -86,7 +86,7 @@ const MAX_SCROLL = { 390: 900, 768: 1000, 1200: 1000 };
 // The verbs a button in ⚙ may say. The doc's vocabulary, plus the few
 // labels it names for this dialog itself (Sign in again, Sign out, Edit,
 // Export) and the generic pair a dialog row needs (Cancel, Remove, View).
-const VERBS = new Set(['Apply', 'Plan', 'Add to To Do', 'Snooze', 'Ignore', 'Done',
+const VERBS = new Set(['Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore', 'Done',
   'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Run', 'Save', 'Share', 'Delete',
   'Sign in again', 'Sign out', 'Edit', 'Export', 'Cancel', 'Remove', 'View', '✕']);
 
