@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.13
+
+### Added
+
+- A new safety check reports any smoke, gas, carbon monoxide or water-leak detector that is reading tripped right now, as a critical card that cannot be muted and is announced through quiet hours. Before, a detector already tripped when brAIn started, or that tripped while the panel was down, was reported only if brAIn's first look happened to act on it. (reports #149)
+
+### Fixed
+
+- The "unusual reading" and "drifting reading" checks no longer judge a machine brAIn already measures by its own on/off shape (a dehumidifier, a dryer) against its hourly average, which reported an ordinary morning run as thousands of times its normal variation. (reports #154)
+- The overnight health check files each cause under the device it is about, so it can be folded with the device's other cards, corrected per device, and matched to your To Do list. (reports #152)
+- A problem you have already added to To Do is no longer filed again as a new card when a check or the overnight check reports it in different words: the To Do row says it was seen again instead. Ticking the item off or deleting it lets brAIn raise it again. Safety cards are always filed. (reports #155)
+
 ## 2.18.12
 
 ### Added
