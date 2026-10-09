@@ -30,7 +30,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openView } from './tabs.mjs';
+import { openView, controlOverlaps } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -200,6 +200,11 @@ for (const { width, touch } of CASES) {
     if (!list.chatShown) note(where, 'no transcript beside the rail');
   }
   if (list.rows.length !== 3) note(where, `${list.rows.length} rows of 3`);
+  // A row's title and its ⋯ are two presses, side by side: the house's
+  // photographs found the title running under the ⋯ on a phone. On a
+  // pointer the ⋯ appears with the row's hover, so it is hovered here.
+  if (!touch) await page.hover('#chatRailList .crrow').catch(() => {});
+  for (const o of await controlOverlaps(page, '#chatRailList')) note(where, `controls overlap: ${o}`);
   if (list.pills.map((b) => b.source).join() !== 'you,voice') {
     note(where, `the kind pills are ${JSON.stringify(list.pills.map((b) => b.source))}`);
   }

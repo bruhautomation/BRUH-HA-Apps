@@ -584,6 +584,13 @@ for (const width of WIDTHS) {
         return r.width > 0 && r.height > 0 && !n.closest('details:not([open])');
       }, w.id);
       if (!seen) note(where, `${w.what} is not visible one press after opening ⚙`);
+      // The budget is a slider a thumb has to land on: the 44px floor, not
+      // the 16px of its own round thumb.
+      if (touch && w.id === 'setBudget') {
+        const h = await page.evaluate(() => Math.round(
+          document.getElementById('setBudget').getBoundingClientRect().height));
+        if (h < MIN_TARGET) note(where, `the budget slider is ${h}px tall, under ${MIN_TARGET}`);
+      }
     } catch (e) {
       note(where, `reaching ${w.what} failed: ${String(e.message).split('\n')[0]}`);
     }
@@ -950,6 +957,12 @@ for (const width of WIDTHS) {
     if (!/Filing facts into memory/.test(d.faultText)) note(where, 'a failed job is not named in words');
     for (const word of ['check:dev', 'Producer', 'Run (memory)', 'exited 1', 'crash']) {
       if (d.faultText.includes(word)) note(where, `the fault list shows "${word}" without a press`);
+    }
+    // The one vocabulary Needs you and History are held to (measure-today's
+    // RAW_WORDS): no producer id and no machine word on the face.
+    for (const [what, text] of [['fault list', d.faultText], ['scorecard', d.accuracyShown]]) {
+      const raw = text.match(/check:[a-z]|\buser-\d|\bcustom-[a-z0-9]|\bProducer\b|\bRun \(/g);
+      if (raw) note(where, `the ${what} shows ${[...new Set(raw)].join(', ')}`);
     }
     if (!d.faultTech.some((t) => /claude exited 1/.test(t.text) && !t.open)) {
       note(where, 'the exit code is not kept under a closed technical part');

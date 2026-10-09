@@ -84,7 +84,10 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
     if (r.right > width + 1) note(where, `row ${r.id} overflows`);
   }
   const fromFinding = m.rows.find((r) => r.id === '2');
-  if (fromFinding && !/Device check/.test(fromFinding.meta)) {
+  // Named by the server's one wording (`source_name`), never the id the
+  // row was filed under: its stored title is an asked card's id.
+  if (fromFinding && (!/A question you asked/.test(fromFinding.meta)
+                      || /custom-|check:|user-\d/.test(fromFinding.meta))) {
     note(where, `a moved finding reads "${fromFinding.meta}"`);
   }
   if (m.input.placeholder !== 'Add to To Do…') note(where, `add box says "${m.input.placeholder}"`);

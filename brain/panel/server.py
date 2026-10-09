@@ -3672,6 +3672,63 @@ def _scorecard() -> list[dict]:
     return rows
 
 
+# A stored title that is itself an id: a card's category id, an asked
+# card's source, a check's. Shown, it is the raw id the owner reported.
+_ID_SHAPED_TITLE = re.compile(r"^(?:check:|custom-|user-\d)\S*$")
+
+
+def _producer_label(source: str, title: str = "") -> str:
+    """What a card, a row or a chore names its producer as, on every screen.
+
+    One answer (`plain_words.producer_name`, with `_scorecard`'s rule in
+    front of it): a check by its own catalog title, never its group's
+    "Device check"; a card the homeowner made by that card's title; an
+    asked card by the card it came from; and never an id. Needs you named
+    one producer three ways — "Device check", a card title, a raw
+    `check:…`/`user-…`/`custom-…` — off whatever the row was filed under.
+    """
+    src = str(source or "")
+    title = str(title or "").strip()
+    if src.startswith("check:"):
+        spec = checks.get_check(src[len("check:"):]) or {}
+        if spec.get("title"):
+            return str(spec["title"])
+    elif src.startswith(user_categories.ID_PREFIX):
+        try:
+            cat = resolve_category(src) or {}
+        except Exception:  # noqa: BLE001 — a label, never the read
+            cat = {}
+        if cat.get("title"):
+            return str(cat["title"])
+    elif _CARD_SOURCE.match(src) and (not title or title == "Custom"
+                                      or _ID_SHAPED_TITLE.match(title)):
+        # The card it came from, while it exists; a card since deleted is
+        # "A question you asked", the scorecard's word for the same row.
+        try:
+            title = (_card_source_title(src, "")
+                     if (INSIGHTS_DIR / f"{src}.json").is_file() else "")
+        except Exception:  # noqa: BLE001
+            title = ""
+    if _ID_SHAPED_TITLE.match(title):
+        title = ""
+    return plain_words.producer_name(src, title)
+
+
+def _name_producers(rows) -> None:
+    """Stamp `source_name` on every row that has a producer. Never raises:
+    the rows go out whether or not a name could be worked out."""
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        if not (row.get("source") or row.get("source_title")):
+            continue
+        try:
+            row["source_name"] = _producer_label(row.get("source") or "",
+                                                 row.get("source_title") or "")
+        except Exception:  # noqa: BLE001 — a label, never the payload
+            row["source_name"] = plain_words.producer_name(row.get("source") or "")
+
+
 def _score_words(row: dict, muted: bool) -> dict:
     """What ⚙ › Diagnostics prints for one scorecard row, worded once
     (`plain_words`): the rule's name, its count in words and a verdict.
@@ -16332,6 +16389,8 @@ def _cases_payload(now: float | None = None) -> dict:
     # urgent first inside it, then worst severity (`answers.feed_key`):
     # `sorted` is stable, so ties keep `cases._sort`'s newest-first order.
     rows.sort(key=answers_mod.feed_key)
+    # The producer in words, worded once (`_producer_label`).
+    _name_producers(rows)
     return {
         "cases": rows,
         "names": names,
@@ -16527,6 +16586,7 @@ def _findings_payload() -> dict:
     on me", which is the only question a badge on a work list can be asked.
     """
     payload = findings_store.listing()
+    _name_producers(payload.get("findings"))
     # Awake only: a guess somebody dismissed is still open and is not
     # being asked. Listed here it came straight back onto the feed as a
     # loose card beside the case list that had correctly hidden it.
@@ -16569,7 +16629,8 @@ def _muted_rows() -> list[dict]:
     and three rows reading "Device check" are three things nobody can tell
     apart); the category's title for an insight category; the title the
     producer filed under, off a live row or the settled ledger; what it was
-    called when it was muted; and the id itself when nothing knows better.
+    called when it was muted; and the id put into words when nothing knows
+    better (`plain_words.producer_name`), never the bare id.
     """
     titles = findings_store.source_titles()
     out = []
@@ -16583,7 +16644,8 @@ def _muted_rows() -> list[dict]:
             title = str(cat.get("title") or "")
         out.append({"source": source,
                     "title": (title or titles.get(source)
-                              or MUTED_TITLES.get(source) or source)})
+                              or MUTED_TITLES.get(source)
+                              or plain_words.producer_name(source))})
     return out
 
 
@@ -16954,6 +17016,8 @@ def _todo_payload() -> dict:
     list has to know which of its items are asleep — a snoozed chore that
     stayed on To Do would read as a press that did nothing."""
     payload = todo_store.listing()
+    _name_producers(payload.get("items"))
+    _name_producers(payload.get("done"))
     try:
         asleep = cases.snoozes()
     except Exception:  # noqa: BLE001 — nothing snoozed shows the item

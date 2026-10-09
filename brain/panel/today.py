@@ -38,6 +38,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import plain_words
 
 HIDDEN_FILE = Path(os.environ.get("BRAIN_TODAY_HIDDEN_FILE",
                                   "/data/today-hidden.json"))
@@ -298,7 +299,8 @@ def history(*, findings: list[dict], settled: list[dict], muted: list[dict],
         })
     for row in muted or []:
         raw["ignored"].append({
-            "title": f"Everything like this: {row.get('title') or row.get('source')}",
+            "title": "Everything like this: " + plain_words.producer_name(
+                row.get("source") or "", row.get("title") or ""),
             "meta": "Ignored · not raised at all", "at": 0,
             "press": _press("Restore", "/api/findings/unmute",
                             {"source": row.get("source") or ""}),

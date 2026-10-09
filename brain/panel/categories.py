@@ -368,7 +368,7 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
 # dashboard mirror, a card kept in history) while the model is told only
 # the variable names. A card from before 2.0 carries its own colours and
 # is left exactly as it was.
-CARD_STYLES = """:root{--bg:#ffffff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;
+CARD_STYLES = """:root{--bg:#ffffff;--ink:#0b0b0b;--ink2:#52514e;--muted:#706e69;--grid:#e1e0d9;--axis:#c3c2b7;
 --c1:#2a78d6;--c2:#008300;--c3:#e87ba4;--c4:#eda100;--c5:#1baf7a;--c6:#eb6834;--c7:#4a3aa7;--c8:#e34948;--other:#898781;
 --seq-lo:#cde2fb;--seq-hi:#0d366b;--div-mid:#f0efec;
 --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;color-scheme:light dark}

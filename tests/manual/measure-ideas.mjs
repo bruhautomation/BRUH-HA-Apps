@@ -30,7 +30,7 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openView } from './tabs.mjs';
+import { openView, controlOverlaps } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -347,7 +347,10 @@ for (const { width, touch } of CASES) {
   const { context, page } = await open(width, touch, payload());
   await page.evaluate(() => {
     window.__cats = [
-      { id: 'energy', title: 'Energy', icon: '⚡', enabled: true, refresh_hours: 24,
+      // A long name, the shape a real house's cards come with: the name has
+      // to wrap inside its own column, never run under the cells beside it.
+      { id: 'energy', title: 'Two Dehumidifiers: What the Damp Cost Over the Whole Winter',
+        icon: '💧', enabled: true, refresh_hours: 24,
         generated_at: new Date(Date.now() - 3 * 3600e3).toISOString(),
         next_due: Date.now() / 1000 + 5 * 3600, job: {} },
       { id: 'climate', title: 'Climate', icon: '🌡', enabled: true, schedule: ['07:00', '19:00'],
@@ -359,6 +362,11 @@ for (const { width, touch } of CASES) {
     return refreshStatus().then(() => render());
   });
   await page.waitForSelector('#schedList .scheditem', { state: 'attached' });
+  // Closed, nothing it holds may sit over the presses below it: the house's
+  // own photographs found a card's name lying over a Run button.
+  for (const o of await controlOverlaps(page, '#viewInsights')) {
+    note(`${width}px schedule closed`, `controls overlap: ${o}`);
+  }
   await page.click('#schedRow summary');
   const sched = await page.evaluate(() => ({
     rows: [...document.querySelectorAll('#schedList .scheditem')].map((r) => ({
@@ -366,7 +374,24 @@ for (const { width, touch } of CASES) {
       togH: Math.round(r.querySelector('.schedtog').getBoundingClientRect().height),
       togW: Math.round(r.querySelector('.schedtog').getBoundingClientRect().width),
       on: r.querySelector('input').checked,
-      right: r.getBoundingClientRect().right })),
+      right: r.getBoundingClientRect().right,
+      // Every child's box against every other's, and the name's text
+      // against its own box: an overlap is ink drawn over a control.
+      overlaps: (() => {
+        const kids = [...r.children].map((k) => [k.className, k.getBoundingClientRect()]);
+        const hits = [];
+        for (let a = 0; a < kids.length; a++) {
+          for (let b = a + 1; b < kids.length; b++) {
+            const [na, ra] = kids[a]; const [nb, rb] = kids[b];
+            const x = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+            const y = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+            if (x > 1 && y > 1) hits.push(`${na} over ${nb}`);
+          }
+        }
+        const nm = r.querySelector('.schedname');
+        if (nm.scrollWidth > nm.clientWidth + 1) hits.push('the name runs out of its own box');
+        return hits;
+      })() })),
     count: document.getElementById('schedCount').textContent,
     docWidth: document.documentElement.scrollWidth, viewport: window.innerWidth,
   }));
@@ -377,6 +402,7 @@ for (const { width, touch } of CASES) {
     if (want[i] && !want[i].test(r.text)) note(at, `row ${i} does not say its cadence: "${r.text}"`);
     if (touch && (r.togH < 44 || r.togW < 44)) note(at, `row ${i} switch is ${r.togW}x${r.togH}`);
     if (r.right > sched.viewport + 0.5) note(at, `row ${i} overflows the viewport`);
+    for (const o of r.overlaps) note(at, `row ${i}: ${o}`);
   });
   if (!/3 h ago/.test(sched.rows[0].text)) note(at, 'the last run is not dated');
   if (!/in 5 h/.test(sched.rows[0].text)) note(at, `the next run is not dated: "${sched.rows[0].text}"`);
@@ -385,6 +411,7 @@ for (const { width, touch } of CASES) {
   if (sched.rows[2].on || !/off/.test(sched.rows[2].text)) note(at, 'a disabled card is not shown off');
   if (sched.count !== '2 of 3 on') note(at, `the count reads "${sched.count}"`);
   if (sched.docWidth > sched.viewport + 0.5) note(at, 'the page scrolls sideways');
+  for (const o of await controlOverlaps(page, '#viewInsights')) note(at, `controls overlap: ${o}`);
   await page.click('#schedList .scheditem:nth-child(3) .schedtog');
   await page.waitForFunction(() => window.__calls.some(
     (c) => c.method === 'PUT' && /api\/prompt\/security/.test(c.url)), null, { timeout: 5000 })

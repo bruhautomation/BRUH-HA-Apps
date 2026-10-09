@@ -50,6 +50,7 @@ import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything } from './today-fixture.mjs';
+import { controlOverlaps } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -63,6 +64,9 @@ const CASES = [
   { width: 1190, touch: false, top: 350, fits: 3 },
 ];
 const MIN_TARGET = 44;
+// What no screen a person reads may print: a producer's id (`check:…`,
+// `user-…`, `custom-…`) or the machine's own words for itself.
+const RAW_WORDS = /check:[a-z]|\buser-\d|\bcustom-[a-z0-9]|\bProducer\b|\bRun \(/;
 
 const failures = [];
 const note = (where, message) => failures.push(`${where}: ${message}`);
@@ -211,6 +215,20 @@ for (const { width, touch, top, fits } of CASES) {
   await openEverything(page);
   cards = await readCards(page, CUT);
   if (cards.length !== total) note(where, `${cards.length} cards after Show more, not ${total}`);
+  // No press sits on another, Details closed: a closed disclosure's "See
+  // what it checked" was reported by the house's own photographs lying
+  // over the card's and the To Do row's buttons.
+  for (const o of await controlOverlaps(page, '#viewFindings')) note(where, `controls overlap: ${o}`);
+  // One vocabulary: a producer is named in words, never by the id it was
+  // filed under — Details and To Do included (textContent reads a closed
+  // disclosure too).
+  {
+    const raw = await page.evaluate((src) => {
+      const re = new RegExp(src, 'g');
+      return document.getElementById('viewFindings').textContent.match(re) || [];
+    }, RAW_WORDS.source);
+    if (raw.length) note(where, `raw ids or machine words on Needs you: ${[...new Set(raw)].join(', ')}`);
+  }
   if (process.env.SHOT_DIR) {
     await page.screenshot({ path: path.join(process.env.SHOT_DIR, `today-${width}-open.png`),
                             fullPage: true });
@@ -386,6 +404,13 @@ for (const { width, touch, top, fits } of CASES) {
     note(where, `History filters: ${hist.filters.join(' | ')}`);
   }
   if (!hist.hint) note(where, 'History does not say what a filter holds');
+  for (const f of ['snoozed', 'ignored', 'done', 'aside']) {
+    await page.click(`#histFilters button[data-filter="${f}"]`);
+    const raw = await page.evaluate((src) => document.getElementById('viewArchive')
+      .textContent.match(new RegExp(src, 'g')) || [], RAW_WORDS.source);
+    if (raw.length) note(where, `raw ids or machine words in History › ${f}: ${[...new Set(raw)].join(', ')}`);
+  }
+  await page.click('#histFilters button[data-filter="snoozed"]');
   // One intro line, the filter's own: a paragraph under the heading said
   // what History is and what Restore does, and the filter's line under the
   // search box said it again.
