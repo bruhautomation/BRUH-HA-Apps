@@ -325,6 +325,10 @@ a.btn {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(460px, 100%), 1fr));
   gap: 18px;
+  /* A card is as tall as what it holds. Stretched to its row (the grid's
+     default), a text-and-tiles report beside a chart carried 250-450px of
+     nothing above its foot. */
+  align-items: start;
 }
 
 .card {
@@ -505,6 +509,19 @@ a.btn {
   overflow: hidden;
   background: transparent;
 }
+.card .viz.blank { margin: 0; }
+
+/* One line joining a report and a finding about the same thing. */
+.xlink {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.card > .xlink { padding: 0 var(--card-pad); }
+.xlink a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.xlink a:hover, .xlink a:focus-visible { text-decoration: underline; }
+/* Where a cross-link landed, for a moment. */
+.xflash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
 .card .viz iframe {
   display: block;
   width: 100%;
@@ -2246,6 +2263,23 @@ body.modal-open {
     padding-top: 16px;
   }
 }
+/* A phone with no conversations opens on the message box (`ask-empty`):
+   the list page was "No chats yet." and a press before anybody could type.
+   There is no list to go back to, ⤢ has nothing to fold for (unless the bar
+   is already folded — then it is the way back and stays), and ⋯ says what
+   it is rather than floating as a bare glyph over an empty screen. */
+.termfabname { display: none; }
+@media (max-width: 899px) {
+  body.ask-empty:not(.term-classic) #chatBack { display: none; }
+  body.ask-empty:not(.term-classic):not(.term-immersive) #termExpand { display: none; }
+  body.ask-empty:not(.term-classic) #termMenu { width: auto; gap: 6px; padding: 0 12px; opacity: 1; }
+  body.ask-empty:not(.term-classic) #termMenu .termfabname {
+    display: inline; font-size: var(--fs-body); font-weight: 600;
+  }
+  body.ask-empty:not(.term-classic):not(.ask-list) #viewTerminal.active .chathead {
+    padding-left: var(--sp-4, 16px);
+  }
+}
 @media (min-width: 900px) {
   /* Beside a rail, the rail is the list: the menu item would open nothing. */
   #chatOpen { display: none; }
@@ -3606,12 +3640,10 @@ body.term-classic #termMode .ico-out { display: block; }
   #findList > :not(.finding):not(.propcard):not(.qcard),
   #ideasList > :not(.finding):not(.propcard),
   #propList > :not(.propcard) { grid-column: 1 / -1; }
-  /* Two cards share a row, so the shorter one used to end half way down
-     it with a hole under its buttons. Each card fills its row and its
-     buttons sit on the row's floor, so a pair reads as a pair. */
-  #findList { align-items: stretch; }
-  #findList > .qcard { display: flex; flex-direction: column; }
-  #findList > .qcard > .card-actions { margin-top: auto; }
+  /* Each card is as tall as what it holds. They were stretched to the
+     row with the buttons pushed to its floor, so a pair read as a pair —
+     and a question's Yes/No sat ~100px under the question it answers,
+     which is the one place the answer has to be. */
 }
 
 /* Adding something to the to-do list. One row, and it wraps rather than

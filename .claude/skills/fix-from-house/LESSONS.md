@@ -23,7 +23,17 @@ Last UX audit: 2026-10-08
   `python3 -m pytest tests -q -n 4 --dist loadfile` (1m41s) with the Bash
   `timeout` raised or in the background, and always `python3 -m pytest`,
   because the bare `pytest` on PATH cannot see the dependencies.
+- 2026-10-09: A test that replaces a module function and registers
+  `addCleanup` AFTER the replacement restores the fake, not the original,
+  and the leak fails an unrelated class later in the same worker
+  (`SceneDesignCase`). Register the cleanup with the original first.
+- 2026-10-09: `test_bright_addon` and BRUH Print's tests both import a
+  top-level `stores` package; on one xdist worker the first loaded wins and
+  the other fails. A failure that passes alone is worth checking for this
+  before calling it a flake.
 
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
+
+- 2026-10-08/09: ~10h, 20 issues closed: 16 fixed (PRs #380, #381, #382 and batch 4), 2 already fixed, 1 duplicate, 1 not brAIn; 6 rolling/evidence left open by design. Slowest step: the UI batch subagent (17 min) and waiting on CI.

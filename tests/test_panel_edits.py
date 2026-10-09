@@ -805,3 +805,62 @@ class TestManualConsolidation(PanelCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCardNamesItsEntities(PanelCase):
+    """A report and a finding about the same thing link to each other, and
+    the join is what the card NAMES: `/api/insights` derives `entities`
+    from the card's live list and its words, never from its page."""
+
+    def setUp(self):
+        super().setUp()
+        self._old_names = dict(self.server._NAMES)
+
+    def tearDown(self):
+        self.server._NAMES.clear()
+        self.server._NAMES.update(self._old_names)
+        super().tearDown()
+
+    def _card(self):
+        return {
+            "id": "custom-9", "category": "custom", "tags": [],
+            "title": "The alarm was disarmed at 4:17",
+            "summary": "automation.night_disarm turned it off at 04:17; "
+                       "see automations.yaml. It read 69.98 at the time.",
+            "highlights": [{"label": "By", "value": "switch.siren"}],
+            "learned": ["sensor.hall_motion saw nobody."],
+            "live": ["alarm_control_panel.home"],
+            # A chart's script names ids no reader takes as a claim.
+            "html": "<script>var x='light.never_named';</script>",
+            "generated_at": "2026-07-18T10:00:00",
+        }
+
+    def test_the_card_names_what_its_words_and_live_list_name(self):
+        self.server._NAMES.clear()
+        self.assertEqual(self.server._card_entities(self._card()), [
+            "alarm_control_panel.home", "automation.night_disarm",
+            "switch.siren", "sensor.hall_motion"])
+
+    def test_once_the_house_is_known_only_its_entities_count(self):
+        self.server._NAMES.clear()
+        self.server._NAMES.update({"automation.night_disarm": {"name": "Night"}})
+        self.assertEqual(self.server._card_entities(self._card()),
+                         ["alarm_control_panel.home", "automation.night_disarm"])
+
+    def test_the_route_serves_it(self):
+        self.server._NAMES.clear()
+        self.server.save_insight(self._card())
+
+        async def run():
+            client = self._client()
+            await client.start_server()
+            try:
+                data = await (await client.get("/api/insights")).json()
+                card = data["insights"][0]
+                self.assertIn("automation.night_disarm", card["entities"])
+                self.assertNotIn("light.never_named", card["entities"])
+                self.assertNotIn("automations.yaml", card["entities"])
+            finally:
+                await client.close()
+
+        asyncio.run(run())

@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.4
+
+- An insight card is as tall as what it shows: a page that draws nothing no longer leaves an empty box, and a card's buttons sit under its content rather than at the bottom of the row. (reports #129)
+- A card and an open finding about the same thing now point at each other: the card says "Also on Needs you" and the finding says which report it came from, each a link to the other. (reports #127)
+- Tapping a tab or button on a phone no longer opens a tooltip, and a control whose label already says it shows none. (reports #130)
+- Ask on a phone with no conversations yet opens on the message box, and its floating controls are named. (reports #131)
+- History has one intro line per filter instead of two, and What happened shows no empty heading when there is nothing to say about the house right now. (reports #132)
+
 ## 2.18.3
 
 - A light group whose lights are all unavailable is no longer filed as a fault of its own beside each light; a group whose members are fine still is, and its fix names the members rather than "reload its integration". (reports #122)

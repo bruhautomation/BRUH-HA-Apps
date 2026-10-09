@@ -19,6 +19,11 @@
 //   * No "Resume" anywhere: sending is what resumes. A discussion is
 //     titled by its card, linked back to it, with the card's own verbs.
 //   * Nothing under 44px on touch, nothing scrolls sideways.
+//   * With no conversations at all, a phone opens on the message box — the
+//     list page was "Your chats / No chats yet. / [Ask]" and a press before
+//     anybody could type — and the two floating controls (⋯ and ⤢) are
+//     either gone or carry their names, never bare glyphs over an empty
+//     screen.
 //
 // A copy of the renderers in this file would only ever agree with itself,
 // so it is the real app.js, measure-activity's arrangement.
@@ -82,6 +87,10 @@ window.fetch = async (url, opts = {}) => {
   if (p.includes('api/chat/conversations')) {
     window.__convAsked = (window.__convAsked || []).concat([p]);
     const voice = /source=voice/.test(p);
+    if (window.__noConvs) {
+      return answer({ conversations: [], current: '', sessions: [], max_sessions: 3,
+                      sources: [{ id: 'you', label: 'Chats', count: 0 }] });
+    }
     return answer({ conversations: voice ? ${JSON.stringify(VOICE_CONVS)} : ${JSON.stringify(CONVS)},
                     current: 'c-here',
                     sources: [{ id: 'you', label: 'Chats', count: 3 },
@@ -441,6 +450,42 @@ for (const { width, touch } of CASES) {
 
   console.log(`${String(width).padStart(5)}  list ${list.rows.length} rows · folds `
     + replied.folds.map((f) => `"${f.label}"`).join(', '));
+  await context.close();
+}
+
+// Nothing to list: a phone opens on the composer.
+for (const { width, touch } of CASES) {
+  const where = `${width}px empty`;
+  const context = await browser.newContext({
+    viewport: { width, height: 860 }, hasTouch: touch, isMobile: touch });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript('window.__noConvs = true;');
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForTimeout(600);
+  const m = await page.evaluate(() => {
+    const shown = (n) => {
+      if (!n) return false;
+      const r = n.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && getComputedStyle(n).visibility !== 'hidden';
+    };
+    const fab = (id) => {
+      const n = document.getElementById(id);
+      return { shown: shown(n), said: n ? (n.innerText || '').trim() : '' };
+    };
+    return { composer: shown(document.getElementById('chatInput')),
+             list: document.body.classList.contains('ask-list'),
+             menu: fab('termMenu'), expand: fab('termExpand') };
+  });
+  if (!m.composer) note(where, 'no message box with nothing to list');
+  if (touch && m.list) note(where, 'a phone opens on an empty list');
+  if (touch) {
+    for (const [name, f] of [['⋯', m.menu], ['⤢', m.expand]]) {
+      if (f.shown && !f.said) note(where, `the ${name} control floats there unnamed`);
+    }
+  }
   await context.close();
 }
 

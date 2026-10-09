@@ -45,16 +45,16 @@
        handler, measure and deep link under one binds as it did. The one
        badge counts the decisions waiting on you (`queue_count`). -->
   <nav class="viewtabs" role="tablist">
-    <button class="viewtab active" data-view="insights" data-group="insights" role="tab" data-tip="Insights">
+    <button class="viewtab active" data-view="insights" data-group="insights" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/></svg>
       <span>Insights</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
-    <button class="viewtab" data-view="terminal" data-group="ask" role="tab" data-tip="Ask">
+    <button class="viewtab" data-view="terminal" data-group="ask" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
       <span>Ask</span>
     </button>
-    <button class="viewtab" data-view="memory" data-group="memory" role="tab" data-tip="Memory">
+    <button class="viewtab" data-view="memory" data-group="memory" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
       <span>Memory</span>
     </button>
@@ -485,9 +485,9 @@
     <header class="panehead">
       <div>
         <h1 class="panetitle">History</h1>
-        <p class="panesub">What you've already answered. <b>Restore</b> puts
-          something back on To Do; <b>Delete</b> clears it from this
-          record — your answer stands, so brAIn won't raise it again.</p>
+        <!-- No intro paragraph: the filter's own line under the search box
+             says what is here and what Restore does, and a paragraph above
+             it saying the same was two intros to one list. -->
       </div>
     </header>
     <div class="archbar">
@@ -743,6 +743,9 @@
     <button id="termMenu" class="termfab" data-tip="Chat options"
             aria-label="Chat options" aria-expanded="false">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+      <!-- Shown only over a phone's first, empty chat (body.ask-empty),
+           where a bare ⋯ is the one control on the screen nobody can read. -->
+      <span class="termfabname">Options</span>
     </button>
     <button id="termExpand" class="termfab" data-tip="Full-screen terminal"
             aria-label="Full-screen terminal" aria-pressed="false">
