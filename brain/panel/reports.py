@@ -364,6 +364,41 @@ def _clock(epoch) -> str:
     return time.strftime("%a %H:%M", time.localtime(epoch))
 
 
+def _why_looks_waited(runs, resident) -> str:
+    """Why rows waited for a look, out of what the payload already says.
+
+    The row used to send a reader to "the failed runs and the usage limit
+    above", and the usage-limit row stands down under `RATE_LIMITED_SHARE`
+    of the day's runs — so twelve refused looks (two hours of a look every
+    ten minutes, this row's own threshold) produced a row pointing at
+    nothing. It names the Resident's own refusals and failures, and what
+    the Resident last said (a gate holding its looks says so there), and
+    only falls back to the general sentence when the payload holds none.
+    """
+    by = ((runs or {}).get("by_source") or {}).get("resident") \
+        if isinstance(runs, dict) else None
+    by = by if isinstance(by, dict) else {}
+    limited = int(by.get("rate_limited") or 0)
+    failed = sum(int(n or 0) for word, n in by.items()
+                 if word in journal.FAILURE_OUTCOMES
+                 and isinstance(n, (int, float)))
+    said = str((resident or {}).get("last_error") or "").strip() \
+        if isinstance(resident, dict) else ""
+    parts = []
+    if limited:
+        parts.append(f"The account's usage limit refused {limited} of the "
+                     "Resident's runs in the last day; the rows are judged "
+                     "by the first look after it lifts.")
+    if failed:
+        parts.append(f"{failed} of its runs failed.")
+    if said:
+        parts.append(f"The Resident last said: {said[:140]}.")
+    if not parts:
+        parts.append("Each failed look puts its rows back for the next one, "
+                     "so this is looks failing or paused, not a row lost.")
+    return " ".join(parts)
+
+
 def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
     """The fault row for a day the account's usage limit refused a large
     share of brAIn's runs, or None. Pure over the journal summary and the
@@ -701,9 +736,8 @@ def _faults(diag) -> list[dict]:
         _row(out, "Looks",
              f"{waiting} findings are still waiting for a look",
              f"The oldest has waited {oldest // 3600} h "
-             f"{oldest % 3600 // 60} min. Each failed look puts its rows back "
-             "for the next one, so this is looks failing (see the failed "
-             "runs and the usage limit above) or paused, not a row lost.")
+             f"{oldest % 3600 // 60} min. "
+             + _why_looks_waited(diag.get("journal"), diag.get("resident")))
 
     # Refusals a producer carried because nothing on the tab could show
     # them. These are not cards anybody can answer.

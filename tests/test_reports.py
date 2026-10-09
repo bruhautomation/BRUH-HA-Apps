@@ -1087,6 +1087,37 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         self.assertNotIn("waiting for a look", rows(7, 600))
         self.assertNotIn("waiting for a look", rows(1, 9 * 3600))
 
+    def test_findings_waiting_for_a_look_say_why_the_looks_did_not_judge_them(self):
+        """The row said "see the failed runs and the usage limit above"
+        and nothing above it said either. The usage-limit row stands down
+        under a tenth of the day's runs, so a house whose Resident was
+        refused twelve times — two hours of looks every ten minutes, which
+        is exactly this row's threshold — read "18 findings are still
+        waiting for a look" with no reason anywhere in the report, and the
+        fault came back after two fixes to the look plumbing. The reason
+        is in the payload; the row says it."""
+        diag = {**FIELD,
+                "journal": {"runs": 260, "claude_runs": 260,
+                            "by_outcome": {"ok": 248, "rate_limited": 12},
+                            "by_source": {"resident": {"ok": 123,
+                                                       "rate_limited": 12}}},
+                "findings": {"waiting_for_look": 3,
+                             "waiting_for_look_oldest_s": 2 * 3600 + 300}}
+        said = _said(reports.faults(diag))
+        self.assertNotIn("Claude usage limit", said)
+        self.assertIn("3 findings are still waiting for a look", said)
+        self.assertIn("12", said.split("waiting for a look", 1)[1],
+                      "the row did not say the looks were refused")
+        self.assertNotIn("above", said.split("waiting for a look", 1)[1],
+                         "the row points at a row the report does not carry")
+        # A look held by a gate says which gate, in the Resident's own words.
+        held = {**diag, "journal": {"runs": 10, "claude_runs": 10,
+                                    "by_outcome": {"ok": 10},
+                                    "by_source": {"resident": {"ok": 10}}},
+                "resident": {"last_error": "the session usage budget is spent"}}
+        said = _said(reports.faults(held))
+        self.assertIn("the session usage budget is spent", said)
+
     def test_an_anecdote_is_not_a_producer_being_wrong(self):
         """Two endings say nothing about a rule. `findings_store`'s own
         floor, and the reason the tab hides a producer below it."""
