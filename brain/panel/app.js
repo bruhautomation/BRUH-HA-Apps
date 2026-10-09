@@ -4202,41 +4202,131 @@ function devUsefulness(u) {
   return parts.join(" · ");
 }
 
+// The reports list (report #167: "getting massive… add filters and/or an
+// archival system… submit multiple issues at the same time"). Every row
+// says its status in words, two pill rows filter it by status and by kind,
+// and fixed, closed and archived rows are off the default view. Archive is
+// the panel's own note (`devloop_archive`); several rows can be ticked and
+// sent in one press (`/api/devloop/send`). What the cloud did about a sent
+// report is on its issue — the session that fixed it is not one brAIn can
+// read — so the issue link is on the row and a line under the list says so.
+const devQ = { status: "active", kind: "all", picked: new Set(), data: null };
+
+const DEV_KINDS = { faults: "fault", ideas: "idea", gaps: "idea", design: "idea",
+  look: "request", unmet: "request" };
+const DEV_KIND_PILLS = [["all", "All"], ["fault", "Faults"], ["idea", "Ideas"],
+  ["request", "Requests"], ["other", "Other"]];
+const DEV_STATUS_PILLS = [["active", "Open and sent"], ["open", "Open"],
+  ["sent", "Sent"], ["fixed", "Fixed"], ["closed", "Closed"], ["archived", "Archived"]];
+
+function devKind(r) { return DEV_KINDS[r.stream] || "other"; }
+
+// The status a row is in, as a filter key and in words.
+function devStatus(r) {
+  if (r.archived) {
+    return { key: "archived", words: r.archived_why === "no longer seen"
+      ? "Archived · no longer seen" : "Archived" };
+  }
+  if (r.verdict && r.verdict !== "open") {
+    const w = DEV_VERDICT_WORDS[r.verdict] || r.verdict;
+    return { key: r.verdict === "fixed" ? "fixed" : "closed",
+      words: w.charAt(0).toUpperCase() + w.slice(1) };
+  }
+  if (r.stood_down) return { key: "closed", words: "Not sent · the cloud said " + r.stood_down };
+  if (r.state === "discarded") return { key: "closed", words: "Never sent" };
+  if (r.state === "sent") {
+    return { key: "sent", words: r.cleared_noted ? "Sent · no longer seen" : "Sent" };
+  }
+  if (r.state === "pending") return { key: "open", words: "Open · waiting for you" };
+  return { key: "open", words: "Open" };
+}
+
+function devStatusMatch(key, want) {
+  return want === "active" ? (key === "open" || key === "sent") : key === want;
+}
+
+function devPills(pills, current, counts, attr, label) {
+  return `<div class="pillseg devfilter" role="group" aria-label="${esc(label)}">`
+    + pills.filter(([k]) => k === "all" || k === current || counts[k])
+      .map(([k, name]) => `<button type="button" class="pill${k === current ? " active" : ""}"`
+        + ` ${attr}="${k}" aria-pressed="${k === current}">${esc(name)}`
+        + ` <span class="pillcount">${counts[k] || 0}</span></button>`).join("")
+    + `</div>`;
+}
+
 function devQueueRows(data) {
-  const rows = data.queue || [];
-  if (!rows.length) {
+  const all = data.queue || [];
+  if (!all.length) {
     return "<p class=\"hint tight\">Nothing queued. The next hourly pass files "
          + "whatever is on the fault list.</p>";
   }
-  return rows.map((r) => {
+  const rows = all.map((r) => ({ r, st: devStatus(r), kind: devKind(r) }));
+  // Each pill row is counted under the other's choice, so a count is how
+  // many that press shows.
+  const statusCounts = {};
+  const kindCounts = { all: 0 };
+  rows.forEach(({ st, kind }) => {
+    if (devQ.kind === "all" || kind === devQ.kind) {
+      statusCounts[st.key] = (statusCounts[st.key] || 0) + 1;
+      if (st.key === "open" || st.key === "sent") {
+        statusCounts.active = (statusCounts.active || 0) + 1;
+      }
+    }
+    if (devStatusMatch(st.key, devQ.status)) {
+      kindCounts.all += 1;
+      kindCounts[kind] = (kindCounts[kind] || 0) + 1;
+    }
+  });
+  const shown = rows.filter(({ st, kind }) => devStatusMatch(st.key, devQ.status)
+    && (devQ.kind === "all" || kind === devQ.kind));
+  const live = new Set(all.map((r) => r.fp));
+  devQ.picked.forEach((fp) => { if (!live.has(fp)) devQ.picked.delete(fp); });
+  const sendable = (r) => r.state === "pending" || r.state === "ready";
+  const picked = [...devQ.picked].filter((fp) => {
+    const hit = all.find((r) => r.fp === fp);
+    return hit && sendable(hit);
+  });
+  const canArchive = shown.some(({ st }) => st.key !== "archived");
+  const bar = `<div class="row tight devbatch">`
+    + `<button type="button" class="btn small primary" data-dev-send-picked`
+    + `${picked.length ? "" : " disabled"}>Send ${picked.length || ""} ticked</button>`
+    + (canArchive ? `<button type="button" class="btn small" data-dev-archive-shown>`
+      + `Archive all shown</button>` : "")
+    + `</div>`;
+  const list = shown.map(({ r, st }) => {
     const when = r.last_seen
       ? timeAgo(new Date(r.last_seen * 1000).toISOString()) : "";
-    let state = r.state === "ready" ? devHeldReason(r, data)
-      : (DEV_STATE_WORDS[r.state] || r.state);
-    if (r.state === "sent" && r.cleared_noted) state = "sent · no longer seen";
-    // What the cloud said when it closed the issue, read back hourly.
-    if (r.verdict && r.verdict !== "open") {
-      state = "closed · " + (DEV_VERDICT_WORDS[r.verdict] || r.verdict);
-    }
-    if (r.stood_down) state = "not sent · the cloud said " + r.stood_down;
+    const held = r.state === "ready" && st.key === "open"
+      ? `<div class="hint tight devheld">${esc(devHeldReason(r, data))}</div>` : "";
     const link = r.issue_url
-      ? ` · <a href="${esc(r.issue_url)}" target="_blank" rel="noopener">#${esc(String(r.issue))}</a>`
+      ? ` · <a href="${esc(r.issue_url)}" target="_blank" rel="noopener">issue #${esc(String(r.issue))}</a>`
       : "";
-    // A held row's error is its state already; saying it twice is noise.
     const err = r.error && r.state !== "ready"
       ? `<div class="hint tight">${esc(r.error)}</div>` : "";
-    const open = r.state === "pending" || r.state === "ready";
-    return `<div class="drow"><div class="dk">${esc(state)}</div>`
+    const tick = sendable(r)
+      ? `<label class="devpick"><input type="checkbox" data-dev-pick="${esc(r.fp)}"`
+        + `${devQ.picked.has(r.fp) ? " checked" : ""} aria-label="Tick to send"></label>` : "";
+    return `<div class="drow" data-fp="${esc(r.fp)}"><div class="dk">${tick}`
+      + `<span class="devstatus">${esc(st.words)}</span></div>`
       + `<div class="dv">${esc(r.where || "")}: ${esc(r.what || "")}`
-      + ` <span class="hint tight">seen ${esc(when)}${link}</span>${err}`
+      + ` <span class="hint tight">seen ${esc(when)}${link}</span>${held}${err}`
       + `<div class="row tight">`
       + `<button class="btn tiny" data-dev-view="${esc(r.fp)}">View</button>`
       + (r.state === "pending"
         ? `<button class="btn tiny" data-dev-send="${esc(r.fp)}">Send</button>` : "")
-      + (open ? `<button class="btn tiny" data-dev-discard="${esc(r.fp)}"`
+      + (st.key === "archived"
+        ? `<button class="btn tiny" data-dev-unarchive="${esc(r.fp)}">Unarchive</button>`
+        : `<button class="btn tiny" data-dev-archive="${esc(r.fp)}">Archive</button>`)
+      + (sendable(r) ? `<button class="btn tiny" data-dev-discard="${esc(r.fp)}"`
         + ` aria-label="Never send this report">Delete</button>` : "")
       + `</div></div></div>`;
   }).join("");
+  return devPills(DEV_STATUS_PILLS, devQ.status, statusCounts, "data-dev-status", "Status")
+    + devPills(DEV_KIND_PILLS, devQ.kind, kindCounts, "data-dev-kind", "Kind")
+    + bar
+    + (list || `<p class="hint tight">Nothing here.</p>`)
+    + `<p class="hint tight devissuehint">What was done about a sent report is`
+    + ` written on its issue. The session that fixes it is not one brAIn can read.</p>`;
 }
 
 function devLookOutcome(last) {
@@ -4282,6 +4372,7 @@ function paintDevloop(data) {
     line = "Last pass " + timeAgo(new Date(st.last_sweep * 1000).toISOString()) + ".";
   }
   $("#devStatus").textContent = line;
+  devQ.data = data;
   $("#devQueue").innerHTML = devQueueRows(data);
   // One row per stream, from the server's own list: a switch, how often it
   // runs, and Run. A stream that is not built has no row rather than a
@@ -4451,7 +4542,71 @@ $("#devTest").addEventListener("click", async () => {
 $("#devRun").addEventListener("click", () =>
   devloopCall("api/devloop/run", { method: "POST" }, "Pass finished"));
 
+function repaintDevQueue() {
+  if (devQ.data) $("#devQueue").innerHTML = devQueueRows(devQ.data);
+}
+
+async function devArchive(fps, archived) {
+  if (!fps.length) return;
+  const out = await devloopCall("api/devloop/archive", { method: "POST",
+    body: JSON.stringify({ fps, archived }) });
+  if (!out) return;
+  toast(archived ? (fps.length === 1 ? "Archived" : `Archived ${fps.length}`)
+    : "Back on the list");
+}
+
+$("#devQueue").addEventListener("change", (ev) => {
+  const box = ev.target.closest("[data-dev-pick]");
+  if (!box) return;
+  const fp = box.getAttribute("data-dev-pick");
+  if (box.checked) devQ.picked.add(fp); else devQ.picked.delete(fp);
+  repaintDevQueue();
+});
+
 $("#devQueue").addEventListener("click", async (ev) => {
+  const statusPill = ev.target.closest("[data-dev-status]");
+  const kindPill = ev.target.closest("[data-dev-kind]");
+  if (statusPill || kindPill) {
+    if (statusPill) devQ.status = statusPill.getAttribute("data-dev-status");
+    if (kindPill) devQ.kind = kindPill.getAttribute("data-dev-kind");
+    repaintDevQueue();
+    return;
+  }
+  const arch = ev.target.closest("[data-dev-archive]");
+  const unarch = ev.target.closest("[data-dev-unarchive]");
+  if (arch || unarch) {
+    await devArchive([(arch || unarch).getAttribute(arch ? "data-dev-archive"
+      : "data-dev-unarchive")], !!arch);
+    return;
+  }
+  if (ev.target.closest("[data-dev-archive-shown]")) {
+    const fps = [...$("#devQueue").querySelectorAll("[data-dev-archive]")]
+      .map((b) => b.getAttribute("data-dev-archive"));
+    await devArchive(fps, true);
+    return;
+  }
+  const many = ev.target.closest("[data-dev-send-picked]");
+  if (many) {
+    const fps = [...devQ.picked];
+    if (!fps.length) return;
+    many.disabled = true;
+    const out = await devloopCall("api/devloop/send", { method: "POST",
+      body: JSON.stringify({ fps }) });
+    if (!out) { many.disabled = false; return; }
+    devQ.picked.clear();
+    repaintDevQueue();
+    const rows = (out.queue || []).filter((r) => fps.includes(r.fp));
+    const sent = rows.filter((r) => r.state === "sent").length;
+    const held = rows.filter((r) => r.state !== "sent");
+    let msg = `Sent ${sent} of ${fps.length}`;
+    if (held.length) {
+      const why = devHeldReason(held[0], { ...out, status: { ...(out.status || {}),
+        error: out.error || (out.status || {}).error } }, out.capped);
+      msg += ` — the rest ${why}`;
+    }
+    toast(msg);
+    return;
+  }
   const view = ev.target.closest("[data-dev-view]");
   const send = ev.target.closest("[data-dev-send]");
   const drop = ev.target.closest("[data-dev-discard]");
@@ -6005,7 +6160,8 @@ function makeCase(row) {
 
   const plan = casePlanNode(row);
   const ran = row.finding_status === "fixed" || row.finding_status === "needs_you";
-  if (row.fix && !ran && !(plan && plan.classList.contains("qplan"))) {
+  const gap = row.situation === "gap";
+  if (row.fix && !ran && !gap && !(plan && plan.classList.contains("qplan"))) {
     card.appendChild(qFix(row.fix));
   }
   if (plan) card.appendChild(plan);
@@ -6041,6 +6197,11 @@ function makeCase(row) {
     }
   }
   answers.forEach((answer) => {
+    if (gap && answer.verb === "answer") {
+      card.appendChild(gapAnswerBox(row.id, answer.route, {
+        hint: answer.ask, placeholder: answer.placeholder, done: answer.done }, btns));
+      return;
+    }
     const btn = qButton(answer.label, answer.primary);
     btn.dataset.verb = answer.verb;
     btns.push(btn);
@@ -6172,6 +6333,43 @@ function instructThenFix(row, answer, btns) {
     fixBoxOptions(answer, answer.prefill || row.fix));
 }
 
+// "Report to brAIn": a card or a reply that says brAIn cannot do
+// something, filed in one press through the development loop's own "What
+// do you want to fix?" box (`/api/devloop/look`) — the same run, the same
+// issue, the same caps. Offered only while the loop is on (`devloop` on
+// /api/status), and only where the words say brAIn could not: offered on
+// every card it would be a press beside every decision that most cards are
+// not about, and the owner's ask was for the "can't do" ones.
+const CANT_RE = /\b(?:can(?:'|\u2019)?t|cannot|can not|unable to|not able to|isn(?:'|\u2019)?t able to)\b/i;
+
+function devloopOn() {
+  return !!(state.status && state.status.devloop);
+}
+
+function saysBrainCannot(...texts) {
+  return texts.some((t) => CANT_RE.test(String(t || "")));
+}
+
+async function reportToBrain(title, text) {
+  const topic = (`brAIn said it cannot do this: "${String(title || "").trim()}"`
+    + (text ? ` — ${String(text).replace(/\s+/g, " ").trim()}` : "")).slice(0, 500);
+  try {
+    await api("api/devloop/look", { method: "POST", body: JSON.stringify({ topic }) });
+    toast("Reported. The development loop files it when it is ready");
+    return true;
+  } catch (e) {
+    let msg = e.message;
+    try { msg = JSON.parse(msg).error || msg; } catch (_) { /* plain text */ }
+    toast("Could not report it: " + msg);
+    return false;
+  }
+}
+
+function reportMenuItem(title, text) {
+  return ["", "Report to brAIn", "File this as something brAIn should be able to "
+    + "do. It goes to the development loop.", () => reportToBrain(title, text)];
+}
+
 // The ⋯: at most three of Ask, Check again, Done, Fix, Run — the server's
 // `more`, as words with no glyph in front of them.
 function caseOverflow(row, btns) {
@@ -6186,7 +6384,13 @@ function caseOverflow(row, btns) {
       + "how it was before. You press this; brAIn never does it on its own.",
       () => restoreCalls(f, btns)]);
   }
-  return items.length ? cardMenuButton(items.slice(0, 3)) : null;
+  const shown = items.slice(0, 3);
+  if (devloopOn() && (planRefused(row.plan) || saysBrainCannot(
+    row.claim, row.detail, row.fix, row.result, (row.plan || {}).reason))) {
+    shown.push(reportMenuItem(row.claim, row.detail || row.result
+      || (row.plan || {}).reason || ""));
+  }
+  return shown.length ? cardMenuButton(shown) : null;
 }
 
 async function runCaseOverflow(row, item, btns) {
@@ -6231,6 +6435,63 @@ function prettyText(text) {
     (names[id] && names[id].name) ? names[id].name : id);
 }
 
+// A house-book gap question is answered in words, so the box and Send are
+// on the card's face (report #166: "I can't actually answer it, there's no
+// send"). Its Send was a button that opened a box, and on a row still
+// waiting for a look there was no Send at all. What is typed survives a
+// re-render of Today (`gapDrafts`), because a poll repaints the list.
+const gapDrafts = {};
+
+function gapAnswerBox(id, route, opts, btns) {
+  const form = el("div", "findnote gapanswer");
+  form.appendChild(el("p", "findnotehint", opts.hint
+    || "Your answer goes into memory and the house book exactly as you write it."));
+  const ta = document.createElement("textarea");
+  ta.className = "findnotebox";
+  ta.rows = 2;
+  ta.maxLength = 400;
+  ta.placeholder = opts.placeholder || "Behind the boiler, the red lever.";
+  ta.setAttribute("aria-label", "Your answer");
+  ta.value = gapDrafts[id] || "";
+  form.appendChild(ta);
+  const row = el("div", "findnoteactions");
+  const send = el("button", "btn small primary", "Send");
+  // Unlike the reason box, an answer IS required: "where is the stopcock"
+  // with nothing typed is not an answer, and the route refuses one.
+  const unanswered = () => !ta.value.trim();
+  send.dataset.verb = "answer";
+  send.disabled = unanswered();
+  row.appendChild(send);
+  form.appendChild(row);
+  ta.addEventListener("input", () => {
+    gapDrafts[id] = ta.value;
+    send.disabled = unanswered();
+  });
+  ta.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); if (!send.disabled) send.click(); }
+  });
+  send.addEventListener("click", async () => {
+    const note = ta.value.trim();
+    if (!note) return;
+    const all = btns.concat([send]);
+    all.forEach((b) => { b.disabled = true; });
+    try {
+      const data = await api(route.replace(/^\//, ""), {
+        method: "POST", body: JSON.stringify({ note }) });
+      delete gapDrafts[id];
+      absorbAnswer(data);
+      await refreshToday();
+      renderFindings();
+      toast(opts.done || "Filed into memory and the house book", data && data.undo);
+    } catch (e) {
+      toast(e.message || "that didn't work");
+      all.forEach((b) => { b.disabled = false; });
+      send.disabled = unanswered();
+    }
+  });
+  return form;
+}
+
 // ---- cards no case covers --------------------------------------------------
 
 // A finding the case list does not cover — a row still waiting for a first
@@ -6246,7 +6507,8 @@ function makeLooseFinding(f) {
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
     title: f.text, body: f.detail,
   });
-  if (f.fix) card.appendChild(qFix(f.fix));
+  const gap = f.source === "house_book";
+  if (f.fix && !gap) card.appendChild(qFix(f.fix));
   const more = qDetails();
   qDetailLine(more, "Source", f.source_title || f.source || "");
   if (f.entity_id) more.appendChild(el("code", "qdid", f.entity_id));
@@ -6263,8 +6525,15 @@ function makeLooseFinding(f) {
     actions.appendChild(b);
     b.addEventListener("click", fn);
   };
-  press("Add to To Do", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
-    "Added to To Do", btns));
+  if (gap) {
+    // A house-book question an older release left waiting for a look is
+    // still a question: the box, not the to-do list.
+    card.insertBefore(gapAnswerBox(`f:${f.ts}`,
+      `api/house_book/question/${f.ts}/answer`, {}, btns), more.nextSibling);
+  } else {
+    press("Add to To Do", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
+      "Added to To Do", btns));
+  }
   if (String(f.source || "").startsWith("check:")) {
     press("Check again", false, (ev) => recheckFinding(f, btns, ev.currentTarget));
   }
@@ -11514,7 +11783,7 @@ function chatEndReply() {
 // the conversation it was given in. One button per reply, on its LAST
 // answer — a reply that says "let me look" before the real answer would
 // otherwise offer to save the preamble.
-function chatOfferReport(node) {
+function chatOfferReport(node, text) {
   if (!node || !chatState.question) return;
   const prev = chatState.answerNode;
   if (prev && prev !== node) {
@@ -11542,6 +11811,17 @@ function chatOfferReport(node) {
     }
   });
   row.appendChild(save);
+  if (devloopOn() && saysBrainCannot(text)) {
+    const rep = el("button", "btn tiny ghost reportbrain", "Report to brAIn");
+    rep.type = "button";
+    rep.title = "File this as something brAIn should be able to do";
+    rep.addEventListener("click", async () => {
+      rep.disabled = true;
+      if (await reportToBrain(question, text)) rep.textContent = "Reported";
+      else rep.disabled = false;
+    });
+    row.appendChild(rep);
+  }
   node.appendChild(row);
 }
 
@@ -12022,7 +12302,7 @@ function chatRender(ev) {
     case "text": {
       const streamed = chatState.live;
       const node = chatSealLive(ev.text) ? streamed : chatAppend(chatMarkdown(ev.text));
-      chatOfferReport(node);
+      chatOfferReport(node, ev.text);
       chatStatus();
       break;
     }

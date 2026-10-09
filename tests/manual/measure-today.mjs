@@ -49,7 +49,8 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything } from './today-fixture.mjs';
+import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything, FEED, LOOSE, kase, A, posts }
+  from './today-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -539,6 +540,108 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   await page.click('[data-case-id="f:1101"] .xlink a');
   await page.waitForTimeout(300);
   if (await page.evaluate(() => currentView) !== 'insights') note(where, 'the finding\'s link does not open the card');
+  await context.close();
+}
+
+// A house-book gap question is answered on its card: a box and Send on the
+// face, never a button that opens one, and the same on a row an older
+// release left waiting for a look (report #166: "I can't actually answer
+// it, there's no send"). What Send posts is the typed answer to the
+// question's own route. And a card that says brAIn cannot do something
+// offers "Report to brAIn" behind its ⋯ while the development loop is on,
+// sent through the "What do you want to fix?" route.
+const GAP = kase({
+  id: 'f:1300', kind: 'question', chip: 'question', situation: 'gap',
+  group: 'questions', severity: 'info', source: 'house_book',
+  source_title: 'House book', origin: { store: 'findings', key: 1300 },
+  claim: 'Where is the dryer vent booster blower, and can it be switched off by hand?',
+  detail: 'About the dryer vent.', fix: 'Answer it here and the house book will say so.',
+  answers: [
+    A('answer', 'Send', '/api/house_book/question/1300/answer', { primary: true,
+      note: true, done: 'Filed into memory for the house book',
+      ask: 'Your answer goes into memory exactly as you write it.',
+      placeholder: 'Behind the boiler, the red lever.' }),
+    A('not_now', 'Snooze', '/api/case/f:1300/not_now'),
+    A('wrong', 'Ignore', '/api/case/f:1300/wrong', { note: true })],
+});
+const CANT = kase({
+  id: 'f:1301', situation: 'hands', origin: { store: 'findings', key: 1301 },
+  claim: "brAIn can't turn the dryer booster off: it has no switch in Home Assistant",
+  detail: 'It is on a plain plug.', source: 'resident', source_title: 'brAIn',
+  answers: [A('todo', 'Add to To Do', '/api/case/f:1301/do', { primary: true }),
+    A('not_now', 'Snooze', '/api/case/f:1301/not_now'),
+    A('wrong', 'Ignore', '/api/case/f:1301/wrong', { note: true })],
+  more: [{ verb: 'discuss', label: 'Ask', route: '/api/finding/1301/discuss', hint: 'Talk.' }],
+});
+const OLD_GAP = { ts: 2301, text: 'House book: Where is the stopcock?', severity: 'info',
+  status: 'triaging', waiting_look: true, fixable: false, source: 'house_book',
+  source_title: 'House book', detail: 'About the water main.',
+  fix: 'Answer it here and the house book will say so.', triage: {}, snoozed_until: 0 };
+for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touch: false }]) {
+  const where = `${width}px gap`;
+  const { page, context } = await open(width, touch, {
+    cases: [GAP, CANT, ...FEED], loose: [...LOOSE, OLD_GAP], devloop: true,
+    open: COUNTED + 3 });
+  await openEverything(page);
+  const faces = await page.evaluate(() => ['f:1300', 'f:2301'].map((id) => {
+    const c = document.querySelector(`[data-case-id="${id}"]`)
+      || [...document.querySelectorAll('#findList .qcard')].find((x) => x.dataset.id === id);
+    if (!c) return { id, found: false };
+    const box = c.querySelector(':scope > .gapanswer textarea');
+    const send = c.querySelector(':scope > .gapanswer button[data-verb="answer"]');
+    const fs = box ? parseFloat(getComputedStyle(box).fontSize) : 0;
+    return { id, found: true, box: !!box && !!box.offsetParent, send: !!send && !!send.offsetParent,
+             disabled: send ? send.disabled : null, fs,
+             sendH: send ? send.getBoundingClientRect().height : 0,
+             todo: [...c.querySelectorAll('.card-actions button')].some((b) => /To Do/.test(b.textContent)),
+             fixHead: !!c.querySelector(':scope > .qfix') };
+  }));
+  for (const f of faces) {
+    if (!f.found) { note(where, `${f.id} is not on Today`); continue; }
+    if (!f.box || !f.send) note(where, `${f.id} has no answer box and Send on its face`);
+    if (f.disabled !== true) note(where, `${f.id}'s Send is pressable with nothing typed`);
+    if (touch && f.fs < 16) note(where, `${f.id}'s answer box is ${f.fs}px on touch`);
+    if (touch && f.sendH < MIN_TARGET) note(where, `${f.id}'s Send is ${f.sendH}px tall`);
+    if (f.todo) note(where, `${f.id} offers Add to To Do for a question`);
+    if (f.fixHead) note(where, `${f.id} shows a Fix block over a question`);
+  }
+  for (const [id, words] of [['f:1300', 'Behind the dryer, a wall switch.'],
+                             ['f:2301', 'Under the sink.']]) {
+    const sel = `[data-case-id="${id}"] .gapanswer`;
+    if (!await page.locator(sel).count()) continue;
+    await page.fill(`${sel} textarea`, words);
+    await page.click(`${sel} button[data-verb="answer"]`);
+    await page.waitForTimeout(200);
+  }
+  const sent = await posts(page);
+  const want = { 'api/house_book/question/1300/answer': 'Behind the dryer, a wall switch.',
+                 'api/house_book/question/2301/answer': 'Under the sink.' };
+  for (const [url, note_] of Object.entries(want)) {
+    const hit = sent.find((pp) => pp.url.endsWith(url));
+    if (!hit || !hit.body || hit.body.note !== note_) {
+      note(where, `Send did not post {note: "${note_}"} to ${url} (${JSON.stringify(hit)})`);
+    }
+  }
+  // Report to brAIn, behind the ⋯ of the card that says brAIn can't.
+  const menuBtn = page.locator('[data-case-id="f:1301"] .card-actions .btn.icon');
+  if (!await menuBtn.count()) {
+    note(where, 'the "can\'t" card has no ⋯');
+  } else {
+    await menuBtn.first().click();
+    const items = await page.evaluate(() => [...document.querySelectorAll('#chipPop .cardmenuitem b')]
+      .map((b) => b.textContent));
+    const i = items.indexOf('Report to brAIn');
+    if (i < 0) note(where, `the "can't" card's ⋯ offers ${items.join(', ')}`);
+    else {
+      await page.evaluate((n) => document.querySelector(
+        `#chipPop .cardmenuitem[data-i="${n}"]`).click(), i);
+      await page.waitForTimeout(200);
+      const look = (await posts(page)).find((pp) => pp.url.endsWith('api/devloop/look'));
+      if (!look || !/dryer booster/.test(look.body?.topic || '')) {
+        note(where, `Report to brAIn posted ${JSON.stringify(look)}`);
+      }
+    }
+  }
   await context.close();
 }
 

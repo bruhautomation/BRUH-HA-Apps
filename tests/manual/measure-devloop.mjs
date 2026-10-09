@@ -51,7 +51,20 @@ const PAYLOAD = {
           // Held because sending failed: the error is the reason.
           { fp: 'abcdefabcdefabcd', stream: 'faults', where: 'Checks',
             what: 'could not look', state: 'ready', seen: 1,
-            last_seen: NOW - 200, error: 'GitHub answered 502' }],
+            last_seen: NOW - 200, error: 'GitHub answered 502' },
+          // Waiting for a press: tickable, and sent in one batch.
+          { fp: '1111222233334444', stream: 'gaps', where: 'Gaps',
+            what: 'the brief never names the room', state: 'pending', seen: 1,
+            last_seen: NOW - 100 },
+          // Fixed by the cloud, and one somebody archived: off the default
+          // view, each under its own pill.
+          { fp: '5555666677778888', stream: 'look', where: 'Fix: settings',
+            what: 'settings too crowded', state: 'sent', seen: 1, verdict: 'fixed',
+            last_seen: NOW - 5000, issue: 9,
+            issue_url: 'https://github.com/me/brain-house-reports/issues/9' },
+          { fp: '9999aaaabbbbcccc', stream: 'faults', where: 'Old',
+            what: 'archived fault', state: 'sent', seen: 1, archived: true,
+            archived_why: 'you', last_seen: NOW - 9000 }],
   held: { limit: 10, today: 10, full: true, frees_at: NOW + 3 * 3600 },
 };
 
@@ -59,8 +72,10 @@ const STUB = `
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.__posts = [];
+window.fetch = async (url, opts) => {
   const p = String(url);
+  if (opts && opts.method === 'POST') window.__posts.push({ url: p, body: opts.body || '' });
   const body = p.includes('api/devloop') ? ${JSON.stringify(PAYLOAD)} : {};
   return new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -72,10 +87,11 @@ const note = (where, what) => problems.push(`${where}: ${what}`);
 const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH || undefined, args: ['--no-sandbox'] });
 
-for (const [width, touch] of [[390, true], [1200, false]]) {
-  const where = `${width}px`;
+for (const [width, touch, scheme] of [[390, true, 'light'], [390, true, 'dark'],
+                                      [1200, false, 'light'], [1200, false, 'dark']]) {
+  const where = `${width}px ${scheme}`;
   const context = await browser.newContext({
-    viewport: { width, height: 900 }, hasTouch: touch, isMobile: touch });
+    viewport: { width, height: 900 }, hasTouch: touch, isMobile: touch, colorScheme: scheme });
   const page = await context.newPage();
   page.on('pageerror', (e) => {
     if (/devloop|devStreams|devLook|devCap/i.test(e.stack || e.message)) {
@@ -133,7 +149,8 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
   // A held report says why and what ends the wait; "will be sent" read
   // as brAIn stalling.
   const queue = await page.evaluate(() => [...document.querySelectorAll('#devQueue .drow')]
-    .map((r) => ({ state: r.querySelector('.dk')?.textContent.trim() || '',
+    .map((r) => ({ state: ((r.querySelector('.dk')?.textContent.trim() || '') + ' '
+                     + (r.querySelector('.devheld')?.textContent.trim() || '')).trim(),
                    what: r.querySelector('.dv')?.textContent || '' })));
   if (queue.some((q) => /will be sent/.test(q.state))) note(where, 'a row still says "will be sent"');
   const stateOf = (re) => (queue.find((q) => re.test(q.what)) || {}).state || '';
@@ -158,6 +175,95 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
   });
   if (!m.look) note(where, 'the What do you want to fix? box or its Send is missing');
   if (!m.caps) note(where, 'the daily caps were not painted');
+  // The reports list: a status in words on every row, filters by status
+  // and by kind, fixed and archived rows off the default view, Archive on
+  // every row, a batch Send over ticked rows, the issue link, and the line
+  // saying where what was done is written (report #167).
+  const rl = await page.evaluate(() => {
+    const q = document.querySelector('#devQueue');
+    const rows = () => [...q.querySelectorAll('.drow')];
+    const out = {
+      statusPills: q.querySelectorAll('[data-dev-status]').length,
+      kindPills: q.querySelectorAll('[data-dev-kind]').length,
+      words: rows().map((r) => r.querySelector('.devstatus')?.textContent.trim() || ''),
+      shown: rows().map((r) => r.dataset.fp),
+      archive: rows().every((r) => r.querySelector('[data-dev-archive], [data-dev-unarchive]')),
+      link: !!q.querySelector('a[href*="/issues/12"]'),
+      hint: /written on its issue/.test(q.textContent),
+      batch: !!q.querySelector('[data-dev-send-picked]'),
+      archiveAll: !!q.querySelector('[data-dev-archive-shown]'),
+    };
+    q.querySelector('[data-dev-status="fixed"]')?.click();
+    out.fixed = rows().map((r) => r.dataset.fp);
+    q.querySelector('[data-dev-status="archived"]')?.click();
+    out.archived = rows().map((r) => r.dataset.fp);
+    out.unarchive = !!q.querySelector('[data-dev-unarchive]');
+    q.querySelector('[data-dev-status="active"]')?.click();
+    for (const fp of ['1111222233334444', 'abcdefabcdefabcd']) {
+      const box = q.querySelector(`[data-dev-pick="${fp}"]`);
+      if (box) { box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true })); }
+    }
+    q.querySelector('[data-dev-send-picked]')?.click();
+    return out;
+  });
+  await page.waitForTimeout(200);
+  const posts = await page.evaluate(() => window.__posts);
+  if (rl.statusPills < 4 || rl.kindPills < 2) note(where, 'the reports list has no status and kind filters');
+  const WORDS = /^(Open|Open · waiting for you|Sent|Sent · no longer seen|Fixed|Declined|Not brAIn's|Duplicate|Closed|Never sent|Archived|Archived · no longer seen)$/;
+  rl.words.forEach((w, i) => { if (!WORDS.test(w)) note(where, `report ${i} reads "${w}", not a status in words`); });
+  if (rl.shown.includes('5555666677778888') || rl.shown.includes('9999aaaabbbbcccc')) {
+    note(where, 'a fixed or archived report is on the default view');
+  }
+  if (!rl.fixed.includes('5555666677778888')) note(where, 'the Fixed filter does not show the fixed report');
+  if (!rl.archived.includes('9999aaaabbbbcccc') || !rl.unarchive) note(where, 'the Archived filter has no Unarchive');
+  if (!rl.archive || !rl.archiveAll) note(where, 'a report has no Archive, or there is no Archive all shown');
+  if (!rl.link) note(where, 'a sent report does not link to its issue');
+  if (!rl.hint) note(where, 'nothing says what was done is written on the issue');
+  const batch = posts.find((pp) => /api\/devloop\/send$/.test(pp.url));
+  if (!rl.batch || !batch) note(where, 'no batch Send for ticked reports');
+  else {
+    const fps = (JSON.parse(batch.body || '{}').fps || []).sort().join(',');
+    if (fps !== '1111222233334444,abcdefabcdefabcd') note(where, `batch Send posted ${fps}`);
+  }
+
+  // Every switch on the page is the Settings switch: as wide as the
+  // other sections' (`--toggle-w` × `--toggle-h`), wider than tall, to the
+  // right of its words on the same row, and on reads unlike off. A touch
+  // rule once gave every input here a 44px min-height, which stood each
+  // switch on end (report: "toggles vertical or weird looking").
+  const sw = await page.evaluate(() => {
+    // The size every Settings switch is drawn at: the dialog's own
+    // `--toggle-w`/`--toggle-h`, which a rule that stretches one input
+    // does not change.
+    const root = getComputedStyle(document.querySelector('#setModal'));
+    const px = (v) => parseFloat(v);
+    const want = { w: px(root.getPropertyValue('--toggle-w')), h: px(root.getPropertyValue('--toggle-h')) };
+    const sec = document.querySelector('#setsecDeveloper') || document.querySelector('#devloopBody');
+    const toggles = [...sec.querySelectorAll('input[type="checkbox"]')]
+      .filter((t) => t.offsetParent && (t.classList.contains('tog') || t.closest('label.check, label.bigcheck')));
+    const rows = toggles.map((t) => {
+      const r = t.getBoundingClientRect();
+      const label = t.closest('label');
+      const words = label && label.querySelector(':scope > span, b');
+      const wr = words ? words.getBoundingClientRect() : null;
+      return { id: t.id || t.getAttribute('data-dev-stream') || '?', w: r.width, h: r.height,
+               right: !wr || r.left >= wr.right - 0.5,
+               sameRow: !wr || (r.top < wr.bottom && r.bottom > wr.top),
+               bg: getComputedStyle(t).backgroundColor, on: t.checked };
+    });
+    return { want, rows };
+  });
+  const ons = new Set(sw.rows.filter((r) => r.on).map((r) => r.bg));
+  const offs = new Set(sw.rows.filter((r) => !r.on).map((r) => r.bg));
+  if ([...ons].some((c) => offs.has(c))) note(where, 'a switch reads the same on as off');
+  if (sw.rows.length < 10) note(where, `only ${sw.rows.length} switches found on Developer`);
+  sw.rows.forEach((r) => {
+    if (r.h >= r.w) note(where, `switch ${r.id} stands on end: ${Math.round(r.w)}x${Math.round(r.h)}`);
+    if (Math.abs(r.w - sw.want.w) > 0.5 || Math.abs(r.h - sw.want.h) > 0.5) {
+      note(where, `switch ${r.id} is ${Math.round(r.w)}x${Math.round(r.h)}, not the Settings switch's ${sw.want.w}x${sw.want.h}`);
+    }
+    if (!r.right || !r.sameRow) note(where, `switch ${r.id} is not to the right of its words on one row`);
+  });
   if (touch && m.small.length) note(where, `targets under 44px: ${m.small.join(', ')}`);
   if (touch && m.tiny.length) note(where, `text controls under 16px: ${m.tiny.join(', ')}`);
   if (m.sideways) note(where, 'the page scrolls sideways');
@@ -170,4 +276,4 @@ if (problems.length) {
   for (const p of problems) console.error('  ' + p);
   process.exit(1);
 }
-console.log('measure-devloop: OK at 390 and 1200px');
+console.log('measure-devloop: OK at 390 and 1200px, light and dark');

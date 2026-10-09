@@ -1553,6 +1553,19 @@ body.modal-open {
 #setModal .devstream .devslow { margin: 0; }
 #setModal #devloopBody > .row { margin-top: var(--sp-3); }
 
+/* The reports list (`devQueueRows`): a status pill row, a kind pill row,
+   the batch bar, then the rows, each opening with its status in words and,
+   where it can still be sent, a tick box for Send ticked. */
+#setModal .devfilter { margin: var(--sp-2) 0 0; }
+#setModal .devbatch { margin: var(--sp-2) 0; gap: var(--sp-2); flex-wrap: wrap; }
+#setModal #devQueue .dk { display: flex; align-items: center; gap: var(--sp-2); }
+#setModal .devpick {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 32px; min-height: 32px; margin: 0; cursor: pointer;
+}
+#setModal .devheld { margin-top: 2px; }
+#setModal .devissuehint { margin-top: var(--sp-2); }
+
 /* Search: above the list, and while it holds words the list gives way to
    what matched — each a setting's own name, its section, and a press that
    opens the section with the setting in view and marked. */
@@ -5253,7 +5266,13 @@ body.term-classic #termMode .ico-out { display: block; }
   #setModal textarea { font-size: 16px; }
   #setModal .setsearch input[type="search"] { min-height: 44px; }
   #setModal .devstreamfoot .sel, #setModal .devstreamfoot .btn { min-height: 44px; }
-  #setModal #devloopBody input { min-height: 44px; }
+  /* Text boxes only: a switch's target is its whole row (`bigcheck`), and
+     a 44px min-height on the checkbox itself stood every switch under Help
+     develop brAIn on end, 40 wide by 44 tall. */
+  #setModal #devloopBody input:not([type="checkbox"]) { min-height: 44px; }
+  /* The reports list's filters, its batch bar and its tick boxes. */
+  #setModal .devfilter .pill, #setModal .devbatch .btn { min-height: 44px; }
+  #setModal .devpick { min-width: 44px; min-height: 44px; }
   /* The rest of ⚙'s presses, to the same floor: the account's Details,
      a run's row, the Recheck/Run/Share/Save buttons under each reading. */
   #setModal .authdetails > summary,

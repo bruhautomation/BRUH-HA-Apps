@@ -153,6 +153,7 @@ import devloop.github
 import devloop.screens
 import devloop.streams
 import devloop.upstream
+import devloop_archive
 import card_tags
 import cases
 from checks._util import House
@@ -7216,7 +7217,19 @@ def _status_payload() -> tuple[dict | None, dict]:
         # The version chip in the top bar: the integration Home Assistant
         # has loaded, and whether a restart is owed to load this release.
         "integration": _integration_versions(),
+        # Whether the development loop is on, so a card or a reply that
+        # says brAIn cannot do something can offer "Report to brAIn".
+        "devloop": _devloop_on(),
     }
+
+
+def _devloop_on() -> bool:
+    """The development loop's switch, for the panel. Never raises: a file
+    that cannot be read is "off", which offers nothing."""
+    try:
+        return bool(devloop.enabled())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # A brief older than this is not "this morning's" any more, and the link on
@@ -7365,6 +7378,7 @@ async def h_status(request: web.Request) -> web.Response:
         # off disk rather than off `status`, which a signed-out house
         # masks.
         "integration": read["integration"],
+        "devloop": read["devloop"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -8910,16 +8924,30 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None,
                          if f.get("source") == house_book.SOURCE)
         rows = house_book.question_rows(parsed["questions"],
                                         state.get("asked") or [], open_count)
+        # A question is for the person, so it is filed as a case — on the
+        # list at once, answerable at once — and never sent to a look:
+        # through `triage.gate` it sat `triaging`, which is not a case,
+        # and the card drawn for it had no box to answer in (report #166).
+        # The run that wrote it is the judgement `add_case` asks for.
+        created = []
+        # `add_case` is not the gate, so the mute is read here, the way
+        # `_notify_learn_pass` reads it: "Stop raising these" must still
+        # stop these.
+        muted = house_book.SOURCE in settings_store.muted()
         for row in rows:
             state.setdefault("asked", []).append(row.pop("_subject"))
-        created = findings_store.add_many(triage.gate(rows))
+            if muted:
+                continue
+            filed = findings_store.add_case(
+                row, run_id=str((result.get("meta") or {}).get("session_id")
+                                or ""), when=now)
+            if filed:
+                created.append(filed)
         _republish_book(state, now)
         house_book.save(state)
         return created
 
     created = await asyncio.to_thread(store)
-    if created:
-        _offer_findings(created, now)
     added = sum(len(s["entries"]) for s in parsed["sections"])
     MAINT_STATE["book"]["last_note"] = (
         f"{added} entr{'y' if added == 1 else 'ies'}"
@@ -9100,10 +9128,37 @@ async def h_book_answer(request: web.Request) -> web.Response:
     note = str(body.get("note") or "").strip()[:findings_store.MAX_NOTE]
     if not note:
         raise web.HTTPBadRequest(text="Type the answer first.")
-    payload, _fact = await _end_finding(finding, FINDING_VERBS["confirm"],
-                                        house_book.redact_text(note))
+    note = house_book.redact_text(note)
+    payload, _fact = await _end_finding(finding, FINDING_VERBS["confirm"], note)
+
+    # The book says it too, in the person's own words and cited to them:
+    # the card promised "the house book will say so", and a line that only
+    # reached memory waited for the next weekly rewrite to appear, if it
+    # appeared at all. Under "Worth knowing", because a question carries
+    # no section; the person can move or edit it like any written line.
+    def into_book() -> None:
+        line = house_book.answer_fact(finding.get("memory_hint") or "", note)
+        if not line:
+            return
+        state = house_book.load()
+        try:
+            state["book"] = house_book.add_written(state.get("book"),
+                                                   ANSWER_SECTION, line)
+        except ValueError:
+            return
+        _republish_book(state, time.time())
+        house_book.save(state)
+
+    try:
+        await asyncio.to_thread(into_book)
+    except Exception as exc:  # noqa: BLE001 — the answer is in memory already
+        log.warning("house book: could not write the answer in: %s", exc)
     return web.json_response({**payload, **await asyncio.to_thread(
         _cases_payload, time.time())})
+
+
+# Where an answered gap question is written into the book.
+ANSWER_SECTION = "other"
 
 
 # -- the access review --------------------------------------------------------
@@ -15965,8 +16020,9 @@ _DEVLOOP_TASKS: set = set()
 
 def _devloop_payload() -> dict:
     queue = devloop.upstream.listing()
+    settings = devloop.load_settings()
     return {
-        "settings": devloop.load_settings(),
+        "settings": settings,
         "streams": devloop.catalog(),
         "hours": list(devloop.HOURS_CHOICES),
         "caps": {k: list(v) for k, v in devloop.CAP_LIMITS.items()},
@@ -15974,7 +16030,9 @@ def _devloop_payload() -> dict:
                   "last": _devloop_last_look(queue)},
         "token_set": devloop.token_set(),
         "status": devloop.upstream.status(),
-        "queue": queue,
+        # Each row says whether it is archived, and why: the panel's own
+        # note (`devloop_archive`), never a change to the loop's files.
+        "queue": devloop_archive.decorate(queue, settings),
         "held": _devloop_held(),
         # A line under a stream that cannot do its job on this box.
         "notes": ({} if devloop.screens.find_browser() else
@@ -16160,6 +16218,53 @@ async def h_devloop_item(request: web.Request) -> web.Response:
     if doc is None:
         return web.json_response({"error": "no such report"}, status=404)
     return web.json_response(doc)
+
+
+def _fps_from(body) -> list[str]:
+    fps = (body or {}).get("fps") if isinstance(body, dict) else None
+    if not isinstance(fps, list):
+        return []
+    return [f for f in fps[:200] if isinstance(f, str)
+            and devloop.upstream.FP_RE.match(f)]
+
+
+async def h_devloop_archive(request: web.Request) -> web.Response:
+    """Archive or unarchive reports in ⚙'s list: `{fps, archived}`. A
+    panel-side note only — nothing is sent, nothing in the loop changes."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    fps = _fps_from(body)
+    if not fps:
+        return web.json_response({"error": "no reports named"}, status=400)
+    archived = (body or {}).get("archived", True) is not False
+    moved = await asyncio.to_thread(devloop_archive.set_archived, fps, archived)
+    return web.json_response({"moved": moved,
+                              **await asyncio.to_thread(_devloop_payload)})
+
+
+async def h_devloop_send_many(request: web.Request) -> web.Response:
+    """Send several reports in one press: each is marked as its own Send
+    would mark it, then ONE pass sends what the day's cap allows. The
+    answer names what went and, for the rest, the panel reads why off the
+    rows (`devHeldReason`) — the same words a single Send's toast uses."""
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    fps = _fps_from(body)
+    if not fps:
+        return web.json_response({"error": "no reports named"}, status=400)
+    marked, refused = [], []
+    for fp in fps:
+        ok = await asyncio.to_thread(devloop.upstream.mark, fp, "ready")
+        (marked if ok else refused).append(fp)
+    out: dict = {}
+    if marked:
+        out = await asyncio.to_thread(devloop.upstream.send_due)
+    return web.json_response({**out, "marked": marked, "refused": refused,
+                              **await asyncio.to_thread(_devloop_payload)})
 
 
 async def h_devloop_item_verb(request: web.Request) -> web.Response:
@@ -22384,6 +22489,8 @@ def make_app() -> web.Application:
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
     app.router.add_get("/api/devloop/screen/{capture}/{name}", h_devloop_screen)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
+    app.router.add_post("/api/devloop/archive", h_devloop_archive)
+    app.router.add_post("/api/devloop/send", h_devloop_send_many)
     app.router.add_get("/api/resident/outcomes", h_resident_outcomes)
     app.router.add_get("/api/resident/eval", h_resident_eval_get)
     app.router.add_post("/api/resident/eval", h_resident_eval_start)
