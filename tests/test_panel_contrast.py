@@ -49,7 +49,8 @@ def _resolve(tokens, name):
 
 
 def panel_schemes():
-    css = open(os.path.join(PANEL, "style.css"), encoding="utf-8").read()
+    with open(os.path.join(PANEL, "style.css"), encoding="utf-8") as fh:
+        css = fh.read()
     root = re.search(r"^:root\s*\{(.*?)^\}", css, re.S | re.M).group(1)
     light = re.search(r"@media \(prefers-color-scheme: light\)\s*\{\s*:root\s*\{(.*?)\}",
                       css, re.S).group(1)
