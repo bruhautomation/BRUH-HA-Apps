@@ -16,6 +16,13 @@
 // it can't find a browser itself. Run it after adding a control with a
 // tooltip, or after touching placeTip/.tipbox — a bubble that opens off the
 // screen is invisible, and invisible is indistinguishable from "no tooltip".
+//
+// And two places a tooltip must NOT open. A tap on a phone: tapping a tab in
+// the bottom bar left a dark bubble repeating the tab's own label pinned
+// above the bar over the content, because the tap focused the button and
+// focus opened it. And a control whose name is already on it: a tooltip
+// that says what the button already says is a box over the screen for
+// nothing.
 import { chromium } from 'playwright';
 import path from 'node:path';
 
@@ -120,6 +127,62 @@ for (const width of WIDTHS) {
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(OUT, `tip-${width}.png`) });
   }
+  await page.close();
+}
+// A tap opens nothing, on any bottom tab, and stays opened-nothing after.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 },
+    hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  await serveP(page);
+  await page.goto('http://panel/index.html');
+  await page.waitForTimeout(600);
+  console.log('--- 390px touch ---');
+  for (const group of ['memory', 'ask', 'insights']) {
+    await page.tap(`.viewtab[data-group="${group}"]`);
+    await page.waitForTimeout(400);
+    const on = await page.evaluate(() => {
+      const box = document.querySelector('.tipbox');
+      return box && box.classList.contains('on') ? box.textContent : '';
+    });
+    if (on) { bad++; console.log(`TAPPED  ${group} tab left a tooltip "${on}"`); }
+    else console.log(`ok      tap on the ${group} tab opens no tooltip`);
+  }
+  // A tap on any other control with a tooltip opens nothing either.
+  await page.evaluate(() => switchView('findings'));
+  await page.waitForTimeout(400);
+  const ctl = page.locator('.topbar [data-tip]:visible').first();
+  if (await ctl.count()) {
+    await ctl.tap();
+    await page.waitForTimeout(400);
+    const on = await page.evaluate(() => document.querySelector('.tipbox.on')?.textContent || '');
+    if (on) { bad++; console.log(`TAPPED  a top-bar control left a tooltip "${on}"`); }
+  }
+  await ctx.close();
+}
+
+// A control whose visible name is its tooltip opens no tooltip on hover.
+{
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  await serveP(page);
+  await page.goto('http://panel/index.html');
+  await page.waitForTimeout(600);
+  const named = await page.evaluate(() => [...document.querySelectorAll('.viewtab')]
+    .filter((b) => b.dataset.tip).map((b) => b.dataset.tip));
+  if (named.length) { bad++; console.log(`NAMED   tabs carry a tooltip of their own label: ${named.join(', ')}`); }
+  await page.evaluate(() => {
+    const b = document.createElement('button');
+    b.id = 'tipSame';
+    b.textContent = 'Save';
+    b.style.cssText = 'position:fixed;left:300px;top:300px;z-index:9999';
+    b.dataset.tip = 'Save';
+    document.body.appendChild(b);
+  });
+  await page.hover('#tipSame');
+  await page.waitForTimeout(300);
+  const on = await page.evaluate(() => document.querySelector('.tipbox.on')?.textContent || '');
+  if (on) { bad++; console.log(`NAMED   a button reading "Save" opened the tooltip "${on}"`); }
+  else console.log('ok      a control whose name is on it opens no tooltip');
   await page.close();
 }
 await browser.close();

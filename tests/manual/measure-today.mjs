@@ -26,11 +26,20 @@
 //   * the empty state is one line, "Nothing needs you.";
 //   * a first-time owner sees the three-step setup card in place of the
 //     queue;
-//   * on touch every press is 44px, and nothing scrolls sideways.
+//   * on touch every press is 44px, and nothing scrolls sideways;
+//   * History opens on ONE intro line — the filter's own — and not a
+//     paragraph under the heading saying the same thing;
+//   * a card is as tall as what it holds: a question's answers sit right
+//     under it rather than on the floor of a row its neighbour set, and an
+//     insight card carries no blank band above its foot — not from a
+//     taller neighbour, not from a frame that drew nothing, and not from a
+//     one-line frame held at a minimum height;
+//   * an insight card and a finding about the same thing say so, each
+//     with a link to the other.
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stub, COUNTED, VOCAB, CUT } from './today-fixture.mjs';
+import { stub, COUNTED, VOCAB, CUT, INSIGHTS } from './today-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
@@ -294,6 +303,12 @@ for (const { width, touch, top, fits } of CASES) {
     note(where, `History filters: ${hist.filters.join(' | ')}`);
   }
   if (!hist.hint) note(where, 'History does not say what a filter holds');
+  // One intro line, the filter's own: a paragraph under the heading said
+  // what History is and what Restore does, and the filter's line under the
+  // search box said it again.
+  const intro = await page.evaluate(() => [...document.querySelectorAll('#viewArchive .panesub')]
+    .filter((n) => n.offsetParent && n.textContent.trim()).length);
+  if (intro) note(where, 'History opens on two intro lines');
   const cooling = hist.rows.filter((r) => /Cooling time/.test(r.title));
   if (cooling.length !== 1 || !/^6 times since/.test(cooling[0]?.meta || '')) {
     note(where, `the duplicate reads ${JSON.stringify(cooling)}`);
@@ -359,6 +374,92 @@ for (const { width, touch, top, fits } of CASES) {
     if (setup.running !== 'Running') note(where, `the first look reads "${setup.running}"`);
     await c3.close();
   }
+}
+
+// A card is as tall as what it holds. At 1200 the queue and the insight
+// grid are two columns, and every card used to be stretched to its row's
+// tallest: a question's Yes/No/Snooze sat ~100px under its Details and a
+// text-and-tiles report carried 250-450px of nothing above its foot. A
+// report whose page drew nothing reserved the frame's 320px, and a page of
+// one line was held at 120px, so even a phone had blank bands.
+const BLANK_MAX = 28;
+for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
+  const where = `${width}px cards`;
+  const { page, context } = await open(width, touch, { insights: INSIGHTS });
+  await page.evaluate(() => {
+    const b = document.getElementById('todayMore');
+    if (b && !b.hidden) b.click();
+  });
+  await page.waitForTimeout(300);
+  const q = await page.evaluate(() => {
+    const c = document.querySelector('[data-case-id="h:1103"]');
+    if (!c) return null;
+    const det = c.querySelector(':scope > details');
+    const act = c.querySelector(':scope > .card-actions');
+    return { gap: Math.round(act.getBoundingClientRect().top
+      - (det || c.querySelector('.card-title')).getBoundingClientRect().bottom) };
+  });
+  if (!q) note(where, 'no question card');
+  else if (q.gap > BLANK_MAX) note(where, `a question's answers sit ${q.gap}px under it`);
+  // The finding names the card it came up on, and the link goes there.
+  const from = await page.evaluate(() => {
+    const x = document.querySelector('[data-case-id="f:1101"] .xlink');
+    return x ? x.textContent.trim() : '';
+  });
+  if (!/^From The garage freezer is drifting warmer/.test(from)) {
+    note(where, `the freezer finding links to its card as "${from}"`);
+  }
+  await page.evaluate(() => switchView('insights'));
+  await page.waitForFunction(() => document.querySelectorAll('#grid .card').length === 3);
+  // Each card in view in turn, so a lazy frame loads and reports its size.
+  for (const id of ['custom-1', 'custom-2', 'custom-3']) {
+    await page.evaluate((i) => document.querySelector(`#grid .card[data-id="${i}"]`)
+      .scrollIntoView({ block: 'center' }), id);
+    await page.waitForTimeout(700);
+  }
+  await page.waitForTimeout(600);
+  const cards = await page.evaluate(() => [...document.querySelectorAll('#grid .card')].map((c) => {
+    const foot = c.querySelector(':scope > .foot');
+    const viz = c.querySelector(':scope > .viz');
+    const vizH = viz && getComputedStyle(viz).display !== 'none'
+      ? Math.round(viz.getBoundingClientRect().height) : 0;
+    let bottom = 0;
+    [...c.children].forEach((k) => {
+      if (k === foot || k === viz) return;
+      bottom = Math.max(bottom, k.getBoundingClientRect().bottom);
+    });
+    if (vizH) bottom = Math.max(bottom, viz.getBoundingClientRect().bottom);
+    const x = c.querySelector('.xlink');
+    return { id: c.dataset.id, vizH, gap: Math.round(foot.getBoundingClientRect().top - bottom),
+             link: x ? x.textContent.trim() : '' };
+  }));
+  const by = Object.fromEntries(cards.map((c) => [c.id, c]));
+  if (!(by['custom-1']?.vizH >= 200)) note(where, `the chart was not kept (${by['custom-1']?.vizH}px)`);
+  if (by['custom-2']?.vizH) note(where, `a page that drew nothing still takes ${by['custom-2'].vizH}px`);
+  if (!(by['custom-3']?.vizH > 0 && by['custom-3'].vizH <= 60)) {
+    note(where, `a one-line page takes ${by['custom-3']?.vizH}px`);
+  }
+  for (const c of cards) {
+    if (c.gap > BLANK_MAX) note(where, `${c.id} has ${c.gap}px of blank above its foot`);
+  }
+  if (!/^Also on Needs you: Garage Freezer has been six degrees warmer/.test(by['custom-1']?.link || '')) {
+    note(where, `the freezer card links to its finding as "${by['custom-1']?.link}"`);
+  }
+  if (by['custom-3']?.link) note(where, `a card nothing else names links to "${by['custom-3'].link}"`);
+  // Following the link lands on that finding.
+  if (!await page.locator('#grid .card[data-id="custom-1"] .xlink a').count()) {
+    await context.close();
+    continue;
+  }
+  await page.click('#grid .card[data-id="custom-1"] .xlink a');
+  await page.waitForTimeout(300);
+  const landed = await page.evaluate(() => ({ view: currentView,
+    shown: !!document.querySelector('[data-case-id="f:1101"]')?.offsetParent }));
+  if (landed.view !== 'findings' || !landed.shown) note(where, `the link lands on ${JSON.stringify(landed)}`);
+  await page.click('[data-case-id="f:1101"] .xlink a');
+  await page.waitForTimeout(300);
+  if (await page.evaluate(() => currentView) !== 'insights') note(where, 'the finding\'s link does not open the card');
+  await context.close();
 }
 
 await browser.close();

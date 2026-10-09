@@ -7264,6 +7264,38 @@ async def h_status(request: web.Request) -> web.Response:
     })
 
 
+def _card_entities(insight: dict) -> list[str]:
+    """The entity ids a stored card NAMES: its live list, and every id in
+    the words it shows (title, summary, tiles, what it learned).
+
+    Derived at read time from what is already stored, so the panel can
+    join a report to an open finding about the same thing — the two used
+    to tell one story twice with nothing between them. Never the `html`:
+    a visualization's script is full of ids nobody reads as a claim. Ids
+    are kept only if entity-shaped (not a decimal, not `automations.yaml`)
+    and, once a checks pass has named the house, only if the house has
+    them — a word that merely looks like an id must not link two things.
+    """
+    texts = [str(insight.get("title") or ""), str(insight.get("summary") or "")]
+    for h in insight.get("highlights") or []:
+        if isinstance(h, dict):
+            texts += [str(h.get(k) or "") for k in ("label", "value", "delta")]
+    texts += [str(x) for x in insight.get("learned") or [] if isinstance(x, str)]
+    # The live list was validated when the card was written; it stands.
+    out = [e for e in insight.get("live") or []
+           if isinstance(e, str) and facts_store.entity_shaped(e)]
+    known = _NAMES
+    for text in texts:
+        for m in _ENTITY_IN_TEXT_RE.finditer(text):
+            eid = m.group(0)
+            if eid in out or not facts_store.entity_shaped(eid):
+                continue
+            if known and eid not in known:
+                continue
+            out.append(eid)
+    return out
+
+
 async def h_insights(request: web.Request) -> web.Response:
     # Tags are resolved at read time, not stored: a hand-edited tag is a diff
     # against whatever the latest run wrote, so a new run's new tag still
@@ -7274,6 +7306,7 @@ async def h_insights(request: web.Request) -> web.Response:
         edits = card_tags.load_edits()
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
+            ins["entities"] = _card_entities(ins)
             # The heading an asked card carries in place of "Custom". A
             # category card is headed by its category, which the panel
             # reads live off the definition so a rename shows at once.
