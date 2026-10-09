@@ -778,8 +778,15 @@ def local_file(base: Path, capture: str, name: str) -> Path | None:
     """A kept picture by name, or None for anything that is not one."""
     if not CAPTURE_RE.match(str(capture or "")) or not SHOT_RE.match(str(name or "")):
         return None
-    path = shots_dir(base) / capture / name
-    return path if path.is_file() else None
+    # The same rule, written where it can be followed from the open():
+    # the joined path normalised and required to sit under the folder.
+    # Redundant with the two patterns above on purpose — a guard a static
+    # analyser cannot see is a guard somebody deletes.
+    root = os.path.normpath(str(shots_dir(base)))
+    full = os.path.normpath(os.path.join(root, str(capture), str(name)))
+    if not full.startswith(root + os.sep):
+        return None
+    return Path(full) if os.path.isfile(full) else None
 
 
 KIND_WORDS = {
