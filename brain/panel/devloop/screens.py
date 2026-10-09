@@ -544,6 +544,19 @@ async def _launch(binary: str, profile: str):
     raise RuntimeError("Chromium did not start")
 
 
+async def _stop(proc) -> None:
+    """Wait for the browser to exit, and kill it if it will not."""
+    try:
+        await asyncio.wait_for(proc.wait(), 5)
+        return
+    except asyncio.TimeoutError:
+        proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), 5)
+    except asyncio.TimeoutError:
+        log.warning("devloop screens: Chromium did not exit after it was killed")
+
+
 async def _redact_frame(cdp: CDP, session: str, frame_id: str, context: int | None,
                         confidential: list[str], aliases) -> None:
     params = {"expression": _COLLECT_JS, "returnByValue": True}
@@ -627,32 +640,38 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
     shots: list[dict] = []
     problems: list[dict] = []
     errors: list[str] = []
-    with tempfile.TemporaryDirectory(prefix="brain-shot-") as profile:
+    # The profile is removed by hand, after the browser has gone: its helper
+    # processes go on writing to it for a moment after the browser is told
+    # to stop, and a TemporaryDirectory that raised on "directory not
+    # empty" would throw away a capture that had finished.
+    profile = tempfile.mkdtemp(prefix="brain-shot-")
+    proc = None
+    try:
         proc, port, ws_path = await _launch(binary, profile)
-        try:
-            async with aiohttp.ClientSession() as http:
-                async with http.ws_connect(f"ws://127.0.0.1:{port}{ws_path}",
-                                           max_msg_size=64 * 1024 * 1024) as ws:
-                    cdp = CDP(ws)
-                    for width, height, touch, scheme in (views or VIEWS):
-                        for slug, label, script in (screens or SCREENS):
-                            try:
-                                shot = await _one(cdp, url, slug, label, script, width,
-                                                  height, touch, scheme, out_dir,
-                                                  confidential, aliases)
-                            except Exception as exc:  # noqa: BLE001 — one screen
-                                errors.append(f"{label} at {width}px {scheme}: {exc}"[:200])
-                                continue
-                            problems += shot.pop("problems")
-                            shots.append(shot)
-                    cdp.reader.cancel()
-        finally:
-            if proc.returncode is None:
-                proc.kill()
+        async with aiohttp.ClientSession() as http:
+            async with http.ws_connect(f"ws://127.0.0.1:{port}{ws_path}",
+                                       max_msg_size=64 * 1024 * 1024) as ws:
+                cdp = CDP(ws)
+                for width, height, touch, scheme in (views or VIEWS):
+                    for slug, label, script in (screens or SCREENS):
+                        try:
+                            shot = await _one(cdp, url, slug, label, script, width,
+                                              height, touch, scheme, out_dir,
+                                              confidential, aliases)
+                        except Exception as exc:  # noqa: BLE001 — one screen
+                            errors.append(f"{label} at {width}px {scheme}: {exc}"[:200])
+                            continue
+                        problems += shot.pop("problems")
+                        shots.append(shot)
                 try:
-                    await asyncio.wait_for(proc.wait(), 5)
-                except asyncio.TimeoutError:
-                    pass  # killed and not yet reaped; the profile is removed anyway
+                    await cdp.call("Browser.close", timeout=5)
+                except Exception:  # noqa: BLE001 — it is killed below if it did not go
+                    pass
+                cdp.reader.cancel()
+    finally:
+        if proc is not None:
+            await _stop(proc)
+        shutil.rmtree(profile, ignore_errors=True)
     return {"shots": shots, "problems": problems, "errors": errors}
 
 
