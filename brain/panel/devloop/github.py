@@ -11,8 +11,11 @@ revoked" lead to different sentences on the screen.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -177,3 +180,49 @@ def update_issue(token: str, repo: str, number: int, title: str, body: str
     if status != 200:
         return False, _message(status, out)
     return True, ""
+
+
+# A path inside the reports repository the loop may write: the Screens
+# stream's pictures and nothing else, so a bug that built a path from the
+# wrong string cannot overwrite a file somebody put there by hand.
+FILE_PATH_RE = re.compile(r"^screens/brain-[0-9A-Za-z.-]{1,40}/[a-z0-9-]{1,40}-\d{3,4}-(?:light|dark)\.png$")
+
+
+def _blob_sha(data: bytes) -> str:
+    """The sha git gives these bytes: what the contents API answers for a
+    file, so an unchanged picture is never sent again."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324 — git's own id
+
+
+def put_file(token: str, repo: str, path: str, data: bytes, message: str
+             ) -> tuple[str, str]:
+    """Write one picture to the repository's default branch. Answers
+    ``(url, "")`` — a link that shows the image to somebody who can read
+    the repository — or ``("", why)``. Needs Contents: read and write."""
+    if not FILE_PATH_RE.match(path or ""):
+        return "", "refused: not a path the loop writes"
+    status, body = _call(token, "GET", f"/repos/{repo}/contents/{path}")
+    sha = body.get("sha") if status == 200 and isinstance(body, dict) else None
+    if sha and sha == _blob_sha(data):
+        url = str(body.get("html_url") or "")
+        return (url + "?raw=true" if url else ""), ("" if url else "GitHub gave no link")
+    if status not in (200, 404):
+        return "", _file_message(status, body)
+    payload = {"message": message[:200],
+               "content": base64.b64encode(data).decode("ascii")}
+    if sha:
+        payload["sha"] = sha
+    status, body = _call(token, "PUT", f"/repos/{repo}/contents/{path}", payload)
+    if status not in (200, 201) or not isinstance(body, dict):
+        return "", _file_message(status, body)
+    url = str(((body.get("content") or {}).get("html_url")) or "")
+    if not url:
+        return "", "GitHub stored the picture and gave no link to it"
+    return url + "?raw=true", ""
+
+
+def _file_message(status: int, body) -> str:
+    if status in (403, 404):
+        return ("the token cannot write files there — give it Contents: "
+                "Read and write on that repository, or switch Screens off")
+    return _message(status, body)

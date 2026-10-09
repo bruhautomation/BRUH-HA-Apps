@@ -1891,6 +1891,17 @@ body.modal-open {
   line-height: 1.45;
   white-space: pre;
 }
+/* A Screens report's pictures, as this box redacted them: a grid of
+   thumbnails, each opening the full picture. */
+.capview.devshots {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px; white-space: normal; font-family: inherit;
+}
+.devshots a { display: flex; flex-direction: column; gap: 4px; color: var(--ink-2, inherit);
+  text-decoration: none; min-width: 0; }
+.devshots img { width: 100%; height: 160px; object-fit: cover; object-position: top;
+  border: 1px solid var(--hairline); border-radius: 6px; background: var(--plane, #fff); }
+.devshots span { font-size: var(--fs-meta); overflow-wrap: anywhere; }
 
 
 /* ----------------------------------------------------------------- docs

@@ -19,6 +19,8 @@ client makes, so a request shape the code gets wrong fails here.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import re
 import sys
@@ -52,6 +54,10 @@ class FakeGitHub:
         self.issues: list[dict] = []
         self.comments: list[tuple[int, str]] = []
         self.requests: list[tuple[str, str]] = []
+        # The contents API, for the Screens stream's pictures: path -> bytes,
+        # and whether a token without Contents: write is being simulated.
+        self.files: dict[str, bytes] = {}
+        self.contents_forbidden = False
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -93,7 +99,35 @@ class FakeGitHub:
                 if m:
                     self._send(200, fake.issues[int(m.group(1)) - 1])
                     return
+                m = re.match(r"^/repos/me/reports/contents/(.+)$", path)
+                if m and m.group(1) in fake.files:
+                    data = fake.files[m.group(1)]
+                    self._send(200, {
+                        "sha": hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest(),
+                        "html_url": f"https://github.test/me/reports/blob/main/{m.group(1)}"})
+                    return
                 self._send(404, {"message": "Not Found"})
+
+            def do_PUT(self):
+                fake.requests.append(("PUT", self.path))
+                if not self._authed():
+                    return
+                m = re.match(r"^/repos/me/reports/contents/(.+)$", self.path)
+                if not m:
+                    self._send(404, {"message": "Not Found"})
+                    return
+                if fake.contents_forbidden:
+                    self._send(403, {"message": "Resource not accessible by personal access token"})
+                    return
+                body = self._body()
+                path = m.group(1)
+                if path in fake.files and not body.get("sha"):
+                    self._send(422, {"message": "sha wasn't supplied"})
+                    return
+                fake.files[path] = base64.b64decode(body["content"])
+                self._send(201 if "sha" not in body else 200, {"content": {
+                    "path": path,
+                    "html_url": f"https://github.test/me/reports/blob/main/{path}"}})
 
             def do_POST(self):
                 fake.requests.append(("POST", self.path))
