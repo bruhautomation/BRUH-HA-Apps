@@ -41,6 +41,11 @@ Last UX audit: 2026-10-09
   evidence. The body is not refreshed, so a live row's new detail is not
   visible from here.
 
+- 2026-10-09: A `[Producer …] ignored N of M times` fault reads the
+  all-time scorecard, so it keeps reporting after the rule is fixed. Compare
+  the Wrong count with the last `[Scorecard]` issue from before the fix:
+  only a Wrong count above what the fixed cause explains is new evidence.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
@@ -48,3 +53,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-08/09: ~10h, 20 issues closed: 16 fixed (PRs #380, #381, #382 and batch 4), 2 already fixed, 1 duplicate, 1 not brAIn; 6 rolling/evidence left open by design. Slowest step: the UI batch subagent (17 min) and waiting on CI.
 - 2026-10-09: ~3h this session (resumed run), 10 issues closed, all fixed (PRs #385, #386, #387 and this batch), 2 of them filed by the UX audit and fixed in the same run; 6 rolling/evidence left open by design. Slowest step: the Opus UI batch subagent (16 min); a worktree branch mix-up cost one re-push.
 - 2026-10-09 06:00: ~15 min, 6 reopened faults closed with no code change: 3 re-stamps of rows still inside their window or count (#137, #117, #116), 1 duplicate count (#5), 1 not brAIn (#4), 1 handed to a person after three fixes did not clear a live count (#82). UX audit skipped: already done today on this same main. Slowest step: reading the reopen history.
+- 2026-10-09 06:30: ~15 min, 1 issue closed with no code change: #146, the frozen-sensor rule's all-time Wrong count, explained by the battery-voltage cause fixed in 2.18.3. UX audit skipped: already done today on this same main. Slowest step: tracing which Wrongs predate the fix.
