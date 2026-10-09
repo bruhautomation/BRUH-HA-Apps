@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.3
+
+- A light group whose lights are all unavailable is no longer filed as a fault of its own beside each light; a group whose members are fine still is, and its fix names the members rather than "reload its integration". (reports #122)
+- Fewer "unavailable for a day" cards about things that are fine: entities of an integration that did not set up (that is its own card), entities you hid, and a settings or diagnostic entity on a device that is still answering. One feature of a device that is answering is now a warning naming that feature, not a "check its power" card about the whole device. (reports #116)
+- A battery's voltage is no longer reported as "frozen": a low DC voltage, one named for a battery, or one on a device that reports a battery level sits still by design. (reports #121)
+- Outside data feeds (space weather, air quality, flight trackers, and anything labelled weather or forecast) are no longer compared against the house's hour-of-week normal. (reports #123)
+- An unusual reading's fix names a machine in the same room that can move it (for humidity, a dehumidifier, fan or climate entity) or a sensor of the same kind beside it, instead of the same sentence on every row. (reports #126)
+- "Integration did not finish setting up" no longer pastes raw HTML from an error page: it says "HTTP 403" (or "an HTML error page") and names which integration each error belongs to. (reports #119)
+- The room heat model says when its outdoor reference is a weather service's forecast value rather than a thermometer here, names a better outdoor sensor that is unavailable, and says how many rooms it measured of how many. (reports #120)
+
 ## 2.18.2
 
 - A memory consolidation pass that fails now says why: the pass reads Claude's own verdict (it used to keep only an empty error stream and report "claude exited 1"), and it runs with no tools loaded, so a pass can no longer spend its single turn reaching for a tool it is not allowed. A retry after a refused flag never reuses a spent session id. (reports #117)
