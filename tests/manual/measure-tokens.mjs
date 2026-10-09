@@ -147,8 +147,9 @@ function readPage({ sizes, grid, radius, boxes: BOXES }) {
   const ctx = cvs.getContext('2d', { willReadFrequently: true });
   const rgba = (str) => {
     ctx.clearRect(0, 0, 1, 1);
-    ctx.fillStyle = '#000';
-    ctx.fillStyle = str;
+    // A string the canvas cannot parse leaves fillStyle unchanged, so it
+    // reads as black rather than as the previous colour.
+    ctx.fillStyle = CSS.supports('color', str) ? str : '#000';
     ctx.fillRect(0, 0, 1, 1);
     const d = ctx.getImageData(0, 0, 1, 1).data;
     return [d[0] / 255, d[1] / 255, d[2] / 255, d[3] / 255];
