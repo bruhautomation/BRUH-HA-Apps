@@ -449,6 +449,14 @@ def _base(store: str, key, *, kind: str, claim: str, detail: str,
     }
 
 
+def _unchecked(row: dict) -> bool:
+    """A row on the list with no look's judgement on it — `untriaged` and
+    not one a person brought back."""
+    record = row.get("triage") if isinstance(row.get("triage"), dict) else {}
+    return (record.get("verdict") == "untriaged"
+            and not record.get("elevated_by_person"))
+
+
 def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     """A finding, as a case.
 
@@ -507,9 +515,17 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
                     if isinstance(c, str)],
         "checked_at": int(row.get("checked_at") or 0),
         # A reason that only repeats the row's own text or claim is not a
-        # conclusion (`findings_store.echoes`), so the card shows none.
-        "triage": dict(findings_store.without_echo(
+        # conclusion (`findings_store.echoes`), and one about where the row
+        # is listed, or the stock "nothing looked" sentence, says nothing
+        # about the house (`findings_store.house_reason`): the card shows
+        # none of them.
+        "triage": dict(findings_store.shown_look(
             dict(row.get("triage") or {}), row)),
+        # Nothing has judged this row yet: the stale sweep or a failed look
+        # put it on the list as filed. The card says "Unchecked" and the
+        # queue counts these once, rather than each card printing the same
+        # stock sentence.
+        "unchecked": _unchecked(row),
         # The store's own rule, not a second reading of it: absent means
         # fixable and only an explicit false means hands are required, so
         # a row written before the key existed keeps the answer

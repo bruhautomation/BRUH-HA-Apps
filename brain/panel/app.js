@@ -1550,6 +1550,8 @@ function openCase(caseId) {
   let node = document.querySelector(`[data-case-id="${CSS.escape(caseId)}"]`);
   if (!node || !node.offsetParent) {
     todayState.showAll = true;
+    const entry = todayCards().find((c) => c.id === caseId);
+    if (entry) todayState.groupOpen[entry.group] = true;
     renderFindings();
     node = document.querySelector(`[data-case-id="${CSS.escape(caseId)}"]`);
   }
@@ -5643,17 +5645,17 @@ function fixFootLine(f) {
 // saying nothing happened is a badge people stop reading.
 function triageLine(f) {
   const t = f.triage || {};
-  if (!t.verdict && f.waiting_look) {
-    const box = el("p", "findtriage unchecked");
-    box.appendChild(el("span", "findtriagelabel", "Not looked at yet"));
-    box.appendChild(el("span", null, "brAIn has not looked at this one yet, "
-      + "so it is shown as it was filed rather than left waiting out of sight."));
-    return box;
-  }
+  // Nothing has judged it (still waiting, or a look that did not finish):
+  // the card says "Unchecked" and the queue counts these once at the top,
+  // so a stock sentence under every such card would say it twice.
   if (!t.verdict) return null;
-  const box = el("p", "findtriage");
   const untriaged = t.verdict === "untriaged";
   const reason = stripSignalRefs(t.reason || "");
+  if (untriaged && !reason) return null;
+  // A look whose reason said nothing about the house (an echo, or where the
+  // row is listed — blanked by the server) and left no record to open.
+  if (!reason && !t.run_id && !t.elevated_by_person) return null;
+  const box = el("p", "findtriage");
   if (untriaged) {
     box.classList.add("unchecked");
     box.appendChild(el("span", "findtriagelabel", "Not checked first"));
@@ -5757,6 +5759,8 @@ const CHIP_WORDS = {
 
 const todayState = {
   showAll: false,          // "Show N more" was pressed this visit
+  groupOpen: {},           // a group somebody opened or closed this visit
+  moreBtn: null,           // #todayMore, which moves with the lead group
   extras: { tidy: null, updates: [] },  // /api/today: the cards no store owns
   history: null,           // /api/history, fetched when the drawer opens
   histFilter: "snoozed",
@@ -5877,7 +5881,7 @@ function caseMeta(row) {
   else if (fs === "fixing") out.push("Applying");
   else if (fs === "fixed") out.push(row.ended && row.ended.when
     ? `Applied ${shortDate(row.ended.when)}` : "Applied");
-  if (row.waiting_look) out.push("Unchecked");
+  if (row.waiting_look || row.unchecked) out.push("Unchecked");
   if (row.snoozed_until && row.snoozed_until * 1000 > Date.now()) {
     out.push(`Snoozed until ${untilWords(row.snoozed_until)}`);
   }
@@ -6238,7 +6242,8 @@ function makeLooseFinding(f) {
   const card = qCard({
     id: `f:${f.ts}`, chip: f.severity === "critical" ? "urgent"
       : f.severity === "info" ? "tidy" : "problem",
-    meta: [f.source_title, f.waiting_look || !(f.triage || {}).verdict ? "Unchecked" : ""],
+    meta: [f.source_title, f.waiting_look || !(f.triage || {}).verdict
+      || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
     title: f.text, body: f.detail,
   });
   if (f.fix) card.appendChild(qFix(f.fix));
@@ -6708,10 +6713,36 @@ function todayHideButtons(key, title, btns, actions) {
 
 // ---- the screen --------------------------------------------------------------
 
-// The cards, in the order the doc gives: urgent first, then problems and
-// questions in the server's own band order, then suggestions, the name
-// tidy and the updates. The case list is the server's (`_cases_payload`),
-// and anything live it does not cover is drawn after it.
+// The groups Needs you is read in, top first (`answers.GROUPS`): what is
+// broken or at risk, worst first, then the questions, the chores and
+// ideas, and the tidy-ups, each under a heading with its count. The case
+// list arrives in that order (`answers.feed_key`); a card no case covers
+// is placed by the same rule here, and a group is sorted stably so the
+// server's order stands wherever the two agree.
+const GROUP_WORDS = { problems: "Problems", questions: "Questions",
+  chores: "Chores and suggestions", tidy: "Tidy-ups" };
+const GROUP_ORDER = ["problems", "questions", "chores", "tidy"];
+const SEVERITY_RANK = { critical: 0, serious: 1, warning: 2, info: 3 };
+
+function caseGroup(c) {
+  if (GROUP_WORDS[c.group]) return c.group;
+  const chip = c.chip || "problem";
+  if (chip === "urgent") return "problems";
+  if (chip === "question" || c.kind === "question") return "questions";
+  if (chip === "suggestion" || c.kind === "opportunity") return "chores";
+  if (chip === "tidy") return "tidy";
+  return "problems";
+}
+
+function todayRank(c) {
+  return [c.urgent ? 0 : 1, c.change ? 1 : 0,
+    SEVERITY_RANK[c.severity] ?? 2];
+}
+
+// Every card Today draws, as {id, group, make, unchecked, …}. `unchecked`
+// is a row no look has judged: its card says "Unchecked" and the queue
+// counts them once at the top rather than every card printing the same
+// stock sentence.
 function todayCards() {
   const feed = state.cases || [];
   const covered = new Set(feed.map((c) => c.id));
@@ -6725,38 +6756,128 @@ function todayCards() {
   const intents = (propState.data && propState.data.intents) || [];
   const extras = todayState.extras || {};
   const out = [];
-  feed.forEach((c) => out.push(() => makeCase(c)));
-  looseClaims.forEach((h) => out.push(() => makeLooseQuestion(h)));
-  loose.forEach((f) => out.push(() => makeLooseFinding(f)));
-  props.forEach((r) => out.push(() => makeSuggestion(r)));
-  if (extras.tidy) out.push(() => makeTidyCard(extras.tidy));
-  (extras.updates || []).forEach((u) => out.push(() => makeUpdateCard(u)));
-  intents.forEach((r) => out.push(() => makeIntent(r)));
+  feed.forEach((c) => out.push({ id: c.id, group: caseGroup(c), urgent: !!c.urgent,
+    change: c.kind === "change" || c.finding_status === "fixed", severity: c.severity,
+    unchecked: !!(c.unchecked || c.waiting_look), make: () => makeCase(c) }));
+  looseClaims.forEach((h) => out.push({ id: `h:${h.ts}`, group: "questions",
+    make: () => makeLooseQuestion(h) }));
+  loose.forEach((f) => {
+    const t = f.triage || {};
+    out.push({ id: `f:${f.ts}`, group: f.severity === "info" ? "tidy" : "problems",
+      urgent: f.severity === "critical", severity: f.severity,
+      unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),
+      make: () => makeLooseFinding(f) });
+  });
+  props.forEach((r) => out.push({ id: `p:${r.ts}`, group: "chores",
+    make: () => makeSuggestion(r) }));
+  intents.forEach((r) => out.push({ id: `i:${r.ts}`, group: "chores",
+    make: () => makeIntent(r) }));
+  if (extras.tidy) out.push({ id: extras.tidy.key, group: "tidy",
+    make: () => makeTidyCard(extras.tidy) });
+  (extras.updates || []).forEach((u) => out.push({ id: u.key,
+    group: (u.advice || {}).verdict === "wait" ? "problems" : "tidy",
+    severity: "info", make: () => makeUpdateCard(u) }));
   return out;
+}
+
+// The cards by group, each group in its own order.
+function todayGroups(cards) {
+  const groups = Object.fromEntries(GROUP_ORDER.map((g) => [g, []]));
+  cards.forEach((c) => (groups[c.group] || groups.problems).push(c));
+  groups.problems.sort((a, b) => {
+    const x = todayRank(a);
+    const y = todayRank(b);
+    for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return x[i] - y[i];
+    return 0;
+  });
+  return groups;
+}
+
+// The one line at the top of the queue about rows no look has judged.
+function waitingNote(n) {
+  return el("p", "qwaiting", n === 1
+    ? "1 card is waiting for brAIn's first look (Unchecked)."
+    : `${n} cards are waiting for brAIn's first look (Unchecked).`);
+}
+
+// Which group opens by itself: the problems when there are any, else the
+// first group that has cards — a queue that opened on four closed headings
+// would hide the one decision waiting.
+function todayLeadGroup(groups) {
+  return GROUP_ORDER.find((g) => groups[g].length) || "problems";
+}
+
+function groupIsOpen(g, lead) {
+  const remembered = todayState.groupOpen[g];
+  return remembered === undefined ? g === lead : remembered;
+}
+
+// One group: a heading with its count, and its cards while it is open.
+// The lead group shows what fits — one card on a phone, three on a
+// desktop — with "Show N more" under it; any other group shows all of its
+// cards once somebody opens it.
+function todayGroup(g, items, lead) {
+  const sec = el("section", "qgroup");
+  sec.dataset.group = g;
+  const open = groupIsOpen(g, lead);
+  const head = el("button", "qgrouphead");
+  head.type = "button";
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+  head.appendChild(el("span", "qgroupname", GROUP_WORDS[g]));
+  head.appendChild(el("span", "qgroupcount", String(items.length)));
+  head.appendChild(el("span", "qgroupchev", ""));
+  head.addEventListener("click", () => {
+    todayState.groupOpen[g] = !groupIsOpen(g, lead);
+    const fresh = todayGroup(g, items, lead);
+    sec.replaceWith(fresh);
+    fresh.querySelector(".qgrouphead").focus();
+  });
+  sec.appendChild(head);
+  if (!open) return sec;
+  const body = el("div", "qgroupbody");
+  sec.appendChild(body);
+  const moreBtn = todayMoreButton();
+  const fits = g === lead && !todayState.showAll ? todayFits() : items.length;
+  const shown = Math.min(fits, items.length);
+  items.slice(0, shown).forEach((c) => body.appendChild(c.make()));
+  const rest = items.length - shown;
+  if (g === lead && moreBtn) {
+    moreBtn.hidden = rest <= 0;
+    moreBtn.textContent = `Show ${rest} more`;
+    if (rest > 0) sec.appendChild(moreBtn);
+  }
+  return sec;
+}
+
+// "Show N more" is one button, moved under whichever group leads; held
+// here because a re-render takes it out of the page with the list.
+function todayMoreButton() {
+  if (!todayState.moreBtn) todayState.moreBtn = $("#todayMore");
+  return todayState.moreBtn;
 }
 
 function renderFindings() {
   renderTodayChrome();
   const list = $("#findList");
-  const moreBtn = $("#todayMore");
+  const moreBtn = todayMoreButton();
   if (!list) return;
   list.textContent = "";
+  // Back to its own place, hidden, until a group that needs it takes it.
+  if (moreBtn) { moreBtn.hidden = true; list.after(moreBtn); }
   const setupShown = !$("#todaySetup").hidden;
   list.hidden = setupShown;
-  if (setupShown) {
-    moreBtn.hidden = true;
-  } else {
+  if (!setupShown) {
     const cards = todayCards();
     if (!cards.length) {
       list.appendChild(el("p", "empty-line", "Nothing needs you."));
-      moreBtn.hidden = true;
     } else {
-      const fits = todayFits();
-      const shown = todayState.showAll ? cards.length : Math.min(fits, cards.length);
-      cards.slice(0, shown).forEach((make) => list.appendChild(make()));
-      const rest = cards.length - shown;
-      moreBtn.hidden = rest <= 0;
-      moreBtn.textContent = `Show ${rest} more`;
+      const waiting = cards.filter((c) => c.unchecked).length;
+      if (waiting) list.appendChild(waitingNote(waiting));
+      const groups = todayGroups(cards);
+      const lead = todayLeadGroup(groups);
+      GROUP_ORDER.forEach((g) => {
+        if (groups[g].length) list.appendChild(todayGroup(g, groups[g], lead));
+      });
     }
   }
   renderTodo();
@@ -6894,7 +7015,7 @@ function adoptSetupScreens() {
   }
 }
 
-$("#todayMore")?.addEventListener("click", () => {
+todayMoreButton()?.addEventListener("click", () => {
   todayState.showAll = true;
   renderFindings();
 });

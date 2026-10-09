@@ -7,8 +7,18 @@
 //
 //   * no sub-tab bar on Today, and the tab is called Today;
 //   * the first card's top is at most 240px down at 1190 and 360px at 390;
-//   * the queue shows what fits — 3 cards on a desktop, 1 on a phone — and
-//     "Show N more" reveals exactly the rest;
+//   * the queue reads in groups — Problems, Questions, Chores and
+//     suggestions, Tidy-ups — each a heading with its count, only the lead
+//     one open by itself, and the problems worst first (urgent, then
+//     serious, then the rest, a change brAIn made after the faults): a
+//     serious fault sat seventh under a finished print and a mute question
+//     on a real house;
+//   * the lead group shows what fits — 3 cards on a desktop, 1 on a phone —
+//     and "Show N more" reveals exactly the rest of it; opening the other
+//     groups draws every card;
+//   * a row no look has judged says "Unchecked" on its card and is counted
+//     once, in one line at the top of the queue — never a stock "nothing
+//     looked" sentence on each card, face or Details;
 //   * every card carries ONE status chip from the four, at most one primary
 //     button, labels from the action vocabulary only (no glyphs), Snooze
 //     before Ignore wherever both are, a closed Details, and a body of at
@@ -39,15 +49,18 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stub, COUNTED, VOCAB, CUT, INSIGHTS } from './today-fixture.mjs';
+import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything } from './today-fixture.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = path.resolve(HERE, '..', '..', 'brain', 'panel');
 const CASES = [
   { width: 390, touch: true, top: 360, fits: 1 },
   // 240 until the segmented control (Insights · Needs you · History) went
-  // above the queue: the pane is one press in from the cards now.
-  { width: 1190, touch: false, top: 290, fits: 3 },
+  // above the queue: the pane is one press in from the cards now. 290 until
+  // the queue was read in groups: the first card now sits under the line
+  // counting what no look has judged and the Problems heading (+56px). On
+  // a phone the same two fit inside the 360 that was already there.
+  { width: 1190, touch: false, top: 350, fits: 3 },
 ];
 const MIN_TARGET = 44;
 
@@ -159,16 +172,76 @@ for (const { width, touch, top, fits } of CASES) {
     note(where, `the first card starts at ${cards[0].top}px (budget ${top})`);
   }
   const total = COUNTED + 1;   // the armed one-off is drawn and not counted
-  if (chrome.moreText !== `Show ${total - fits} more`) {
-    note(where, `"${chrome.moreText}" where "Show ${total - fits} more" was due`);
+  // The groups, before anything is opened: four headings in order, each
+  // with its count, the lead one open and the rest closed.
+  const groups = await page.evaluate(() => [...document.querySelectorAll(
+    '#findList > .qgroup')].map((g) => ({
+    group: g.dataset.group,
+    name: g.querySelector('.qgroupname')?.textContent || '',
+    count: Number(g.querySelector('.qgroupcount')?.textContent || 'NaN'),
+    open: g.querySelector('.qgrouphead')?.getAttribute('aria-expanded') === 'true',
+    h: Math.round(g.querySelector('.qgrouphead')?.getBoundingClientRect().height || 0),
+  })));
+  const names = groups.map((g) => g.name).join('|');
+  if (names !== 'Problems|Questions|Chores and suggestions|Tidy-ups') {
+    note(where, `the queue's groups read ${names || '(none)'}`);
   }
-  if (process.env.SHOT_DIR) {
-    await page.screenshot({ path: path.join(process.env.SHOT_DIR, `today-${width}.png`),
-                            fullPage: true });
+  if (groups.filter((g) => g.open).map((g) => g.group).join('|') !== 'problems') {
+    note(where, `open groups: ${groups.filter((g) => g.open).map((g) => g.group).join(', ')}`);
   }
-  await page.click('#todayMore');
+  if (groups.reduce((n, g) => n + g.count, 0) !== total) {
+    note(where, `the group counts add to ${groups.reduce((n, g) => n + g.count, 0)}, not ${total}`);
+  }
+  if (touch) {
+    for (const g of groups) if (g.h < MIN_TARGET) note(where, `the ${g.name} heading is ${g.h}px`);
+  }
+  const problems = groups.find((g) => g.group === 'problems')?.count || 0;
+  if (chrome.moreText !== `Show ${problems - fits} more`) {
+    note(where, `"${chrome.moreText}" where "Show ${problems - fits} more" was due`);
+  }
+  // One line at the top of the queue about the rows nothing has judged:
+  // the serious fault the stale sweep showed, and the loose row still
+  // waiting. Before it, every such card carried its own stock sentence.
+  const waiting = await page.evaluate(() => [...document.querySelectorAll('#findList .qwaiting')]
+    .map((n) => ({ text: n.textContent, first: n === document.querySelector('#findList').firstElementChild })));
+  if (waiting.length !== 1 || !/^2 cards are waiting for brAIn's first look/.test(waiting[0].text)
+      || !waiting[0].first) {
+    note(where, `the waiting line reads ${JSON.stringify(waiting)}`);
+  }
+  await openEverything(page);
   cards = await readCards(page, CUT);
   if (cards.length !== total) note(where, `${cards.length} cards after Show more, not ${total}`);
+  if (process.env.SHOT_DIR) {
+    await page.screenshot({ path: path.join(process.env.SHOT_DIR, `today-${width}-open.png`),
+                            fullPage: true });
+  }
+  // The problems, worst first: urgent, then serious, then the rest, and
+  // the change brAIn made after them. A chore never sits above a fault.
+  const order = await page.evaluate(() => [...document.querySelectorAll(
+    '#findList .qgroup[data-group="problems"] .qcard')].map((c) => c.dataset.caseId));
+  const want = ['f:1100', 'f:1101', 'f:1109'];
+  if (order.slice(0, 3).join('|') !== want.join('|')) {
+    note(where, `problems open with ${order.slice(0, 3).join(', ')}, not ${want.join(', ')}`);
+  }
+  if (order[order.length - 1] !== 'f:1104') note(where, `the change is not last: ${order.join(', ')}`);
+  const allIds = cards.map((c) => c.id);
+  if (allIds.indexOf('f:1107') < allIds.indexOf('f:1109')) {
+    note(where, 'the finished print sits above the serious fault');
+  }
+  // "Unchecked" on the card nothing judged, and no stock sentence on any
+  // card, Details included.
+  const unchecked = await page.evaluate(() => ({
+    meta: [...document.querySelectorAll('[data-case-id="f:1109"] .meta .item-state')]
+      .map((x) => x.textContent).join(' · '),
+    loose: [...document.querySelectorAll('[data-case-id="f:2001"] .meta .item-state')]
+      .map((x) => x.textContent).join(' · '),
+    stock: [...document.querySelectorAll('#findList .qcard')].filter((c) =>
+      /nothing finished looking|has not looked at this one|not looked at yet|not checked first|look at this one did not finish/i
+        .test(c.textContent)).map((c) => c.dataset.caseId),
+  }));
+  if (!unchecked.meta.split(' · ').includes('Unchecked')) note(where, `f:1109 meta reads "${unchecked.meta}"`);
+  if (!unchecked.loose.split(' · ').includes('Unchecked')) note(where, `f:2001 meta reads "${unchecked.loose}"`);
+  if (unchecked.stock.length) note(where, `a stock "nothing looked" sentence on ${unchecked.stock.join(', ')}`);
   if (cards.filter((c) => c.counted).length !== COUNTED) {
     note(where, `${cards.filter((c) => c.counted).length} counted cards, not ${COUNTED}`);
   }
@@ -396,10 +469,7 @@ const BLANK_MAX = 28;
 for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
   const where = `${width}px cards`;
   const { page, context } = await open(width, touch, { insights: INSIGHTS });
-  await page.evaluate(() => {
-    const b = document.getElementById('todayMore');
-    if (b && !b.hidden) b.click();
-  });
+  await openEverything(page);
   await page.waitForTimeout(300);
   const q = await page.evaluate(() => {
     const c = document.querySelector('[data-case-id="h:1103"]');

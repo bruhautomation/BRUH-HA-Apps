@@ -5974,7 +5974,32 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 .todaystep.done { color: var(--ink-2); }
 #todaySetupBody { display: grid; gap: var(--sp-3); min-width: 0; }
 .todayqueue { gap: var(--card-gap); }
-.todaymore { justify-self: start; margin-top: calc(var(--sp-3) * -1); }
+.todayqueue > .qgroup + .qgroup { margin-top: var(--sp-2); }
+.todaymore { justify-self: start; }
+/* The queue's groups: a heading with its count, then the cards. A group
+   other than the lead one opens on a press. */
+.qgroup { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--card-gap); }
+.qgroupbody { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--card-gap); }
+.qgrouphead {
+  appearance: none; display: flex; align-items: center; gap: var(--sp-2);
+  width: 100%; min-height: var(--btn-h); padding: 0; margin: 0;
+  border: 0; border-bottom: 1px solid var(--hairline); background: none;
+  font: inherit; font-size: var(--fs-card); line-height: var(--lh-card);
+  font-weight: var(--fw-card); color: var(--ink); text-align: left; cursor: pointer;
+}
+.qgroupcount {
+  font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600;
+  color: var(--ink-2); background: var(--surface-2);
+  border-radius: 999px; padding: 2px var(--sp-2);
+}
+.qgroupchev { margin-left: auto; width: 8px; height: 8px; flex: none;
+  border-right: 2px solid var(--ink-3); border-bottom: 2px solid var(--ink-3);
+  transform: rotate(-45deg); transition: transform 0.15s; }
+.qgrouphead[aria-expanded="true"] .qgroupchev { transform: rotate(45deg); }
+.qgrouphead:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.qwaiting {
+  margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-3);
+}
 
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
@@ -6047,6 +6072,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   .todaypane .btn.icon, .todaypane .findnoteactions .btn { min-height: 44px; }
   .todaypane .btn.icon { min-width: 44px; }
   .qdetails > summary { min-height: 44px; }
+  .qgrouphead { min-height: 44px; }
   .qdetails .btn { min-height: 44px; }
   .todaypane .findnotecheck { min-height: 44px; }
   .todaypane .todoadd input, .todaypane .findnotebox { font-size: 16px; min-height: 44px; }
