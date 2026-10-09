@@ -5,9 +5,12 @@ can be taken back.
   * a code in an automation never reaches the run, and a code the run
     writes anyway never reaches the page (redacted on the way in AND out);
   * a sentence citing nothing that was given is dropped and counted;
-  * gap questions are filed as question cases through `triage.gate`, at
+  * gap questions are filed as question cases through `add_case` — open
+    at once, never sent to a look, because a row left `triaging` is not a
+    case and its card had nowhere to type the answer (report #166) — at
     most three a run, never twice about one subject, and their answer is
-    TYPED — the route refuses an empty one;
+    TYPED — the route refuses an empty one — and lands in the book too,
+    cited to the person;
   * Publish writes under the book's own token in a folder the card-mirror
     sweep does not touch (driven against the real `_sync_card_mirrors`),
     and Revoke deletes it and rotates the token so the old URL is dead;
@@ -317,8 +320,23 @@ class TestThePass(BookPassCase):
         self.assertEqual(self.calls[0]["job"], "house_book")
         [row] = [f for f in self.server.findings_store.list_all()
                  if f.get("source") == house_book.SOURCE]
-        self.assertEqual(row["status"], "triaging")
+        # Open at once: a question is for the person, not for a look.
+        self.assertEqual(row["status"], "open")
         self.assertEqual(row["kind"], "question")
+        import cases
+        [case] = [c for c in cases.list_cases("open")
+                  if c["origin"]["key"] == row["ts"]]
+        self.assertEqual(cases.situation(case), "gap")
+        visible = cases.answers(case)
+        self.assertEqual(visible[0]["verb"], "answer")
+        self.assertTrue(visible[0]["note"])
+
+    def test_a_muted_book_files_no_question(self):
+        self.settings_store.save({"onboarded": True, "auto_enabled": True,
+                                  "muted_sources": [house_book.SOURCE]})
+        asyncio.run(self.server._run_book("pressed", snap()))
+        self.assertEqual([f for f in self.server.findings_store.list_all()
+                          if f.get("source") == house_book.SOURCE], [])
 
     def test_the_answer_is_typed_and_goes_into_memory(self):
         asyncio.run(self.server._run_book("pressed", snap()))
@@ -343,6 +361,12 @@ class TestThePass(BookPassCase):
         inbox = "\n".join(p.read_text() for p in
                           Path(self.server.MEMORY_INBOX_DIR).glob("*"))
         self.assertIn("Behind the boiler", inbox)
+        # ...and the book says it, in their words, cited to them.
+        book = house_book.load()["book"]
+        lines = [e for sec in book["sections"] for e in sec["entries"]
+                 if "Behind the boiler" in e["text"]]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["by"], house_book.YOU_KEY)
 
 
 class TestTheWeeklyRegeneration(BookPassCase):

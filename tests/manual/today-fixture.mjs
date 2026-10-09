@@ -358,7 +358,7 @@ window.fetch = async (url, opts) => {
       model: 'default', settings: {}, usage: {}, auto: {},
       categories: [], jobs: {}, queue_size: 0, findings_open: d.open,
       queue_count: d.open, status: d.status, brief: d.brief,
-      first_look_done: d.firstLookDone,
+      first_look_done: d.firstLookDone, devloop: !!d.devloop,
     });
   }
   if (p.includes('api/onboarding')) return answer({ onboarded: true, state: 'done' });

@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 
 import aiohttp
@@ -182,36 +183,92 @@ async def write(changes: dict) -> dict:
 CHANGELOG_MAX_BYTES = 2_000_000
 
 
+# The Supervisor answers a changelog request it cannot serve with HTTP 200
+# and a sentence (its frontend cannot show an error response there), so the
+# sentence has to be recognised as a refusal rather than shown as notes.
+_CHANGELOG_REFUSAL = re.compile(
+    r"^\s*(?:no changelog found\b|(?:add-?on|app)\s+\S+\s+does not exist\b)",
+    re.I)
+
+
+async def _own_slug(session: aiohttp.ClientSession) -> str | None:
+    """This add-on's real slug — `<repo hash>_brain` for a store install.
+
+    The store's changelog route looks the slug up literally and does NOT
+    resolve `self` (it answered `/addons/self/changelog` with "Addon self
+    does not exist", as a 200), so the notes are asked for by name.
+    """
+    slug = os.environ.get("BRAIN_ADDON_SLUG", "").strip() or _info.get("slug")
+    if slug:
+        return slug
+    try:
+        async with session.get(f"{SUPERVISOR_URL}/addons/self/info",
+                               headers=_headers()) as resp:
+            if resp.status != 200:
+                return None
+            body = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        log.debug("supervisor self info read failed: %s", exc)
+        return None
+    slug = ((body or {}).get("data") or {}).get("slug")
+    if isinstance(slug, str) and slug.strip():
+        _info["slug"] = slug.strip()
+        return _info["slug"]
+    return None
+
+
 async def changelog() -> tuple[str | None, str]:
     """This add-on's release notes, as the Supervisor serves them.
 
     `CHANGELOG.md` is not in the image; the Supervisor keeps the copy the
-    store installed from and answers `GET /addons/self/changelog` with it,
-    as plain text, to the add-on itself — the same service and the same
-    token `refresh` uses. Returns ``(text, "")``, or ``(None, sentence)``
+    store installed from and serves it as plain text at
+    `/store/addons/<slug>/changelog` (and the legacy `/addons/<slug>/
+    changelog`). Both look the slug up literally, so the real slug is read
+    off `/addons/self/info` first; `self` is tried only when it cannot be. Returns ``(text, "")``, or ``(None, sentence)``
     naming why there is none, because "the Supervisor would not answer"
     and "there are no notes" are different things to tell somebody.
     """
     if not available():
         return None, "brAIn cannot reach the Supervisor from here."
+    error = "The Supervisor did not answer."
+    headers = {**_headers(), "Accept": "text/plain"}
     try:
         async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
-            async with session.get(
-                    f"{SUPERVISOR_URL}/addons/self/changelog",
-                    headers=_headers()) as resp:
-                if resp.status != 200:
-                    return None, (f"The Supervisor would not hand over the "
-                                  f"release notes (HTTP {resp.status}).")
-                raw = await resp.content.read(CHANGELOG_MAX_BYTES + 1)
+            slug = await _own_slug(session)
+            # `self` only when the slug could not be read: asked after a
+            # real slug, its "does not exist" would replace the true reason.
+            paths = ([f"/store/addons/{slug}/changelog",
+                      f"/addons/{slug}/changelog"] if slug
+                     else ["/addons/self/changelog"])
+            for path in paths:
+                try:
+                    async with session.get(f"{SUPERVISOR_URL}{path}",
+                                           headers=headers) as resp:
+                        if resp.status != 200:
+                            error = (f"The Supervisor would not hand over the "
+                                     f"release notes (HTTP {resp.status}).")
+                            continue
+                        raw = await resp.content.read(CHANGELOG_MAX_BYTES + 1)
+                except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    log.debug("supervisor changelog read failed: %s", exc)
+                    error = "The Supervisor did not answer."
+                    continue
+                if len(raw) > CHANGELOG_MAX_BYTES:
+                    return None, "The release notes were too large to show."
+                text = raw.decode("utf-8", errors="replace")
+                if text.lstrip().startswith("{"):
+                    # A JSON error envelope where text was asked for.
+                    error = "The Supervisor answered with no release notes."
+                    continue
+                if not text.strip():
+                    error = "The Supervisor has no release notes for this add-on."
+                    continue
+                if _CHANGELOG_REFUSAL.match(text):
+                    error = ("The Supervisor would not hand over the release "
+                             "notes: " + text.strip().splitlines()[0][:160])
+                    continue
+                return text, ""
     except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
         log.debug("supervisor changelog read failed: %s", exc)
         return None, "The Supervisor did not answer."
-    if len(raw) > CHANGELOG_MAX_BYTES:
-        return None, "The release notes were too large to show."
-    text = raw.decode("utf-8", errors="replace")
-    if text.lstrip().startswith("{"):
-        # A JSON error envelope where text was asked for.
-        return None, "The Supervisor answered with no release notes."
-    if not text.strip():
-        return None, "The Supervisor has no release notes for this add-on."
-    return text, ""
+    return None, error
