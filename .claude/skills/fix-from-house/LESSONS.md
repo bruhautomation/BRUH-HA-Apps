@@ -32,9 +32,19 @@ Last UX audit: 2026-10-09
   the other fails. A failure that passes alone is worth checking for this
   before calling it a flake.
 
+- 2026-10-09: Every add-on update makes the house comment "Back again"
+  on every faults issue whose row it still holds, all in the same second,
+  with "last seen" in the house's local time (UTC−4) at that moment. Before
+  calling one a regression, ask what the row reads: a 24-hour journal
+  window still holds pre-fix runs, a scorecard's all-time Wrong count never
+  falls, and only a live count (like waiting looks) present after the fix is
+  evidence. The body is not refreshed, so a live row's new detail is not
+  visible from here.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
 
 - 2026-10-08/09: ~10h, 20 issues closed: 16 fixed (PRs #380, #381, #382 and batch 4), 2 already fixed, 1 duplicate, 1 not brAIn; 6 rolling/evidence left open by design. Slowest step: the UI batch subagent (17 min) and waiting on CI.
 - 2026-10-09: ~3h this session (resumed run), 10 issues closed, all fixed (PRs #385, #386, #387 and this batch), 2 of them filed by the UX audit and fixed in the same run; 6 rolling/evidence left open by design. Slowest step: the Opus UI batch subagent (16 min); a worktree branch mix-up cost one re-push.
+- 2026-10-09 06:00: ~15 min, 6 reopened faults closed with no code change: 3 re-stamps of rows still inside their window or count (#137, #117, #116), 1 duplicate count (#5), 1 not brAIn (#4), 1 handed to a person after three fixes did not clear a live count (#82). UX audit skipped: already done today on this same main. Slowest step: reading the reopen history.
