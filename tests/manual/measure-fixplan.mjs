@@ -11,9 +11,9 @@
 //     names, and "What could go wrong", all on its face; Apply is its one
 //     primary and sends the finding's apply;
 //   * a plan brAIn will not carry out says "brAIn can't apply this" with
-//     its reason and offers neither Apply nor Plan;
+//     its reason and offers neither Apply nor Fix;
 //   * a plan written before brAIn checked each step reads "This plan is out
-//     of date." and offers Plan, never Apply;
+//     of date." and offers Fix, never Apply;
 //   * a card whose plan is being written says nothing is changing yet, and
 //     one being applied says so — neither offers a press;
 //   * a change brAIn made says how many files and service calls BEFORE its
@@ -93,14 +93,14 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
       || !/doing what it was written to do/.test(refused.face)) {
     note(where, 'a refused plan does not say so, with its reason');
   }
-  if (refused && refused.presses.some((p) => p === 'Apply' || p === 'Plan')) {
+  if (refused && refused.presses.some((p) => p === 'Apply' || p === 'Fix')) {
     note(where, `a refused plan offers ${refused.presses.join(' · ')}`);
   }
   const legacy = await read(page, 'f:1106');
   if (!legacy || !/This plan is out of date\./.test(legacy.face)) {
     note(where, 'a legacy plan does not say it is out of date');
   }
-  if (legacy && (legacy.presses.includes('Apply') || legacy.primary.join() !== 'Plan')) {
+  if (legacy && (legacy.presses.includes('Apply') || legacy.primary.join() !== 'Fix')) {
     note(where, `a legacy plan offers ${legacy.presses.join(' · ')}`);
   }
   for (const [id, re] of [['f:1201', /nothing is changing yet/], ['f:1202', /Applying/]]) {

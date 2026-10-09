@@ -770,7 +770,10 @@ class TestThePanelSaysEachThingOnce(unittest.TestCase):
 
     def test_a_rolling_window_is_not_called_today(self):
         self.assertNotIn('"Today"', self.body("actDayLabel"))
-        self.assertIn("Last ${h} hours", self.body("actDayLabel"))
+        # The current window is "Now" — the length select beside it says
+        # how long — and a window paged back to is named by its dates.
+        self.assertIn('return "Now"', self.body("actDayLabel"))
+        self.assertNotIn("Last ${h} hours", self.body("actDayLabel"))
 
     def test_no_cause_is_said_once_and_not_on_every_row(self):
         self.assertNotIn("CAUSE_WORDS.unattributed", self.body("epCause"))

@@ -70,7 +70,8 @@ export const FEED = [
     origin: { store: 'findings', key: 1101 },
     triage: { verdict: 'elevated', reason: 'A real drift.', run_id: 'look-1', at: NOW - 600 },
     evidence: [{ entity: 'sensor.garage_freezer', value: '-12.4 °C', when: '15 Sep 08:10' }],
-    answers: trio('f:1101', A('fix', 'Plan', '/api/finding/1101/fix', { primary: true }), true),
+    answers: trio('f:1101', A('fix', 'Fix', '/api/finding/1101/fix', { primary: true, instruct: true,
+      prefill: 'Check the door seal on sensor.garage_freezer, then the compressor relay.', ask: 'What should brAIn change? Edit its suggestion or write your own.' }), true),
     more: [ask(1101), done(1101)],
   }),
   kase({
@@ -87,7 +88,7 @@ export const FEED = [
     more: [ask(1102)],
   }),
   kase({
-    id: 'h:1103', kind: 'question', chip: 'suggestion', situation: 'question',
+    id: 'h:1103', kind: 'question', chip: 'question', situation: 'question',
     severity: 'info', claim: 'The garage fridge is meant to run 24/7',
     source: 'hypothesis', source_title: 'energy', mutable: false,
     origin: { store: 'hypotheses', key: 1103 },
@@ -127,7 +128,7 @@ export const FEED = [
               + 'as an operation it can carry out, so there is nothing to approve' },
     source: 'check:reg.no_area', source_title: 'Registry check',
     origin: { store: 'findings', key: 1106 },
-    answers: trio('f:1106', A('fix', 'Plan', '/api/finding/1106/fix', { primary: true }), true),
+    answers: trio('f:1106', A('fix', 'Fix', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
     more: [ask(1106)],
   }),
 ];
@@ -332,7 +333,7 @@ window.fetch = async (url, opts) => {
 
 // Every label a button on Today may carry: the design doc's vocabulary,
 // plus Yes and No — the answer to a question rather than a verb.
-export const VOCAB = new Set(['Apply', 'Plan', 'Add to To Do', 'Snooze', 'Ignore',
+export const VOCAB = new Set(['Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
   'Delete', 'Yes', 'No', 'Cancel', 'Change']);

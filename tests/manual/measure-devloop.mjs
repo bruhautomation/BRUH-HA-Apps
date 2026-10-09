@@ -42,7 +42,17 @@ const PAYLOAD = {
   queue: [{ fp: '0123456789abcdef', stream: 'faults', where: 'Daemons',
             what: 'not running: automation_listener', state: 'sent', seen: 4,
             last_seen: NOW - 600, issue: 12,
-            issue_url: 'https://github.com/me/brain-house-reports/issues/12' }],
+            issue_url: 'https://github.com/me/brain-house-reports/issues/12' },
+          // Pressed Send and held by the day's cap: it must say so, and
+          // what ends the wait, never promise a send.
+          { fp: 'fedcba9876543210', stream: 'faults', where: 'Runs',
+            what: 'card ended timeout 3 times', state: 'ready', seen: 2,
+            last_seen: NOW - 300 },
+          // Held because sending failed: the error is the reason.
+          { fp: 'abcdefabcdefabcd', stream: 'faults', where: 'Checks',
+            what: 'could not look', state: 'ready', seen: 1,
+            last_seen: NOW - 200, error: 'GitHub answered 502' }],
+  held: { limit: 10, today: 10, full: true, frees_at: NOW + 3 * 3600 },
 };
 
 const STUB = `
@@ -120,6 +130,20 @@ for (const [width, touch] of [[390, true], [1200, false]]) {
       sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
   });
+  // A held report says why and what ends the wait; "will be sent" read
+  // as brAIn stalling.
+  const queue = await page.evaluate(() => [...document.querySelectorAll('#devQueue .drow')]
+    .map((r) => ({ state: r.querySelector('.dk')?.textContent.trim() || '',
+                   what: r.querySelector('.dv')?.textContent || '' })));
+  if (queue.some((q) => /will be sent/.test(q.state))) note(where, 'a row still says "will be sent"');
+  const stateOf = (re) => (queue.find((q) => re.test(q.what)) || {}).state || '';
+  const capped = stateOf(/card ended timeout/);
+  if (!/limit of 10 new issues/.test(capped) || !/Daily limits/.test(capped)
+      || !/after/.test(capped)) {
+    note(where, `a report held by the cap reads "${capped}"`);
+  }
+  const failed = stateOf(/could not look/);
+  if (!/GitHub answered 502/.test(failed)) note(where, `a failed send reads "${failed}"`);
   if (m.rows.length !== 7) note(where, `${m.rows.length} stream rows, expected 7 (every stream but What do you want to fix?)`);
   // Seven cards: two columns on a wide screen, one on a phone, each with
   // its switch to the right of its name and never a page's width from it.

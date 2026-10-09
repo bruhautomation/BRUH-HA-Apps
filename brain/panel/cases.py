@@ -980,7 +980,7 @@ def overflow(case: dict) -> list[dict]:
             # line that is only true once the work is finished.
             add("done", "Done", f"/api/finding/{key}/done")
             if status == "open":
-                add("fix", "Plan", f"/api/finding/{key}/fix")
+                add("fix", "Fix", f"/api/finding/{key}/fix")
             if status == "watching":
                 # `elevate` is `unsettle`'s press one lifecycle earlier:
                 # it stops the suppression and changes nothing else.

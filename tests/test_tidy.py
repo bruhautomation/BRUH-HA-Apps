@@ -483,8 +483,11 @@ class TestThePress(unittest.TestCase):
                 "source": "check:reg.hardware_name", "fixable": True, "plan": {}}
         got = answers.answers(case)
         self.assertEqual(got[0]["route"], "/api/tidy/run")
-        # Plan, never Apply: the run drafts a table and changes nothing.
-        self.assertEqual(got[0]["label"], "Plan")
+        # Fix, never Apply: the run drafts a table and changes nothing. It
+        # takes no instruction — a table of names is the answer, reviewed
+        # row by row on its own card.
+        self.assertEqual(got[0]["label"], "Fix")
+        self.assertFalse(got[0].get("instruct"))
         self.assertEqual([a["verb"] for a in got],
                          ["fix", "recheck", "dismiss", "not_now", "wrong"])
 

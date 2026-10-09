@@ -2529,7 +2529,7 @@ function openEdit(cat) {
 // are live — the findings block, what brAIn has measured, what this card
 // said last time — so showing a stored copy of what produced the card on
 // screen would be showing a house that has moved on. What somebody
-// iterating needs is "what will be sent if I press Save & regenerate",
+// iterating needs is "what goes out if I press Save & regenerate",
 // and that is what this asks for.
 async function loadPromptView() {
   const box = $("#editPrompt");
@@ -4037,9 +4037,38 @@ async function copyOrSelect(text, okMessage) {
 // only says whether one is set. View is the first press on a report for the
 // same reason it is on a capture: a Send you could not read is not consent.
 const DEV_STATE_WORDS = {
-  pending: "waiting for you", ready: "will be sent",
-  sent: "sent", discarded: "never sent",
+  pending: "waiting for you", sent: "sent", discarded: "never sent",
 };
+
+// A `ready` row is one somebody pressed Send on (or review is off), and
+// Send sends at once — so one still ready has been HELD, and the row says
+// by what and what ends it. It read as a promise of a send, which the owner took
+// for brAIn stalling. The day's cap is the commonest holder (`held`, off
+// `_devloop_held`), a failed send the next; `capped` is the Send route's
+// own count of what the cap held back on that press.
+function devHeldReason(r, data, capped) {
+  const s = data.settings || {};
+  const st = data.status || {};
+  const held = data.held || {};
+  if (r && r.error) return "held: the send failed — " + r.error;
+  if (st.error) return "held: " + st.error;
+  if (!s.repo || !data.token_set) return "held: set a repository and a token to send";
+  if (held.full) {
+    const limit = Number(held.limit) || 0;
+    if (!limit) return "held: Daily limits allows no new issues — raise it to send";
+    let when = "tomorrow";
+    if (held.frees_at) {
+      const d = new Date(held.frees_at * 1000);
+      const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      when = d.toDateString() === new Date().toDateString()
+        ? time : d.toLocaleDateString([], { weekday: "short" }) + " " + time;
+    }
+    return `held: today's limit of ${limit} new issue${limit === 1 ? "" : "s"} is used`
+      + ` — goes out after ${when}, or raise Daily limits`;
+  }
+  if (capped) return "held: only a few go in one pass — the rest go on the next pass, within the hour";
+  return "queued: goes out on the next pass, within the hour";
+}
 
 const DEV_VERDICT_WORDS = {
   fixed: "fixed", declined: "declined", not_brain: "not brAIn's",
@@ -4069,7 +4098,8 @@ function devQueueRows(data) {
   return rows.map((r) => {
     const when = r.last_seen
       ? timeAgo(new Date(r.last_seen * 1000).toISOString()) : "";
-    let state = DEV_STATE_WORDS[r.state] || r.state;
+    let state = r.state === "ready" ? devHeldReason(r, data)
+      : (DEV_STATE_WORDS[r.state] || r.state);
     if (r.state === "sent" && r.cleared_noted) state = "sent · no longer seen";
     // What the cloud said when it closed the issue, read back hourly.
     if (r.verdict && r.verdict !== "open") {
@@ -4079,7 +4109,9 @@ function devQueueRows(data) {
     const link = r.issue_url
       ? ` · <a href="${esc(r.issue_url)}" target="_blank" rel="noopener">#${esc(String(r.issue))}</a>`
       : "";
-    const err = r.error ? `<div class="hint tight">${esc(r.error)}</div>` : "";
+    // A held row's error is its state already; saying it twice is noise.
+    const err = r.error && r.state !== "ready"
+      ? `<div class="hint tight">${esc(r.error)}</div>` : "";
     const open = r.state === "pending" || r.state === "ready";
     return `<div class="drow"><div class="dk">${esc(state)}</div>`
       + `<div class="dv">${esc(r.where || "")}: ${esc(r.what || "")}`
@@ -4103,7 +4135,8 @@ function devLookOutcome(last) {
       + (last.error ? " (" + esc(last.error) + ")" : "") + ".";
   }
   return asked + " became " + filed.map((f) => {
-    let state = DEV_STATE_WORDS[f.state] || f.state || "";
+    let state = f.state === "ready" ? "held — the queue below says why"
+      : (DEV_STATE_WORDS[f.state] || f.state || "");
     if (f.verdict && f.verdict !== "open") {
       state = "closed · " + (DEV_VERDICT_WORDS[f.verdict] || f.verdict);
     }
@@ -4326,10 +4359,16 @@ $("#devQueue").addEventListener("click", async (ev) => {
     if (!out) return;
     // The press is accepted before GitHub is asked, so the toast reads the
     // row afterwards rather than claiming a send that may not have happened.
+    // A press the day's cap held back says so, with when it goes and the
+    // setting that ends the wait, rather than a vague "queued".
     const row = (out.queue || []).find((r) => r.fp === fp);
     if (row && row.state === "sent") toast("Sent");
-    else toast((row && row.error) || out.error || (out.status || {}).error
-               || "Queued; it goes on the next pass");
+    else if (out.skipped && !(row && row.error)) toast("Not sent: " + out.skipped);
+    else {
+      const why = devHeldReason(row || {}, { ...out, status: { ...(out.status || {}),
+        error: out.error || (out.status || {}).error } }, out.capped);
+      toast(why.charAt(0).toUpperCase() + why.slice(1));
+    }
     return;
   }
   if (drop) {
@@ -5589,7 +5628,8 @@ function planRefused(plan) {
 // verb does.
 
 const CHIP_WORDS = {
-  urgent: "Urgent", problem: "Problem", tidy: "Tidy-up", suggestion: "Suggestion" };
+  urgent: "Urgent", problem: "Problem", tidy: "Tidy-up", suggestion: "Suggestion",
+  question: "Question" };
 
 const todayState = {
   showAll: false,          // "Show N more" was pressed this visit
@@ -5877,9 +5917,11 @@ function makeCase(row) {
     btn.dataset.verb = answer.verb;
     btns.push(btn);
     actions.appendChild(btn);
-    btn.addEventListener("click", () => answer.note
-      ? askThenRun(row, answer, btns)
-      : runAnswer(row, answer, btns));
+    btn.addEventListener("click", () => answer.instruct
+      ? instructThenFix(row, answer, btns)
+      : answer.note
+        ? askThenRun(row, answer, btns)
+        : runAnswer(row, answer, btns));
   });
   const menu = caseOverflow(row, btns);
   if (menu) { btns.push(menu); actions.appendChild(menu); }
@@ -5926,7 +5968,7 @@ async function refreshToday() {
                      refreshProposalData(), refreshTodayExtras()]);
 }
 
-async function runAnswer(row, answer, btns, note, ignoreAll) {
+async function runAnswer(row, answer, btns, note, ignoreAll, change) {
   const finding = caseAsFinding(row);
   if (answer.verb === "recheck" && finding) {
     return recheckFinding(finding, btns, btns.find((b) => b.dataset.verb === "recheck"));
@@ -5936,6 +5978,9 @@ async function runAnswer(row, answer, btns, note, ignoreAll) {
   try {
     const data = await api(answer.route.replace(/^\//, ""), {
       method: answer.method || "POST",
+      // A Fix box sends the change and never a note, so at most one of
+      // these is set.
+      ...(change ? { body: JSON.stringify({ change }) } : {}),
       ...(note ? { body: JSON.stringify({ note }) } : {}),
     });
     absorbAnswer(data);
@@ -5980,7 +6025,26 @@ function askThenRun(row, answer, btns) {
     });
 }
 
-// The ⋯: at most three of Ask, Check again, Done, Plan, Run — the server's
+// Fix: a short box holding the card's own suggested change, by name, which
+// the person may edit or replace. What they send rides to the plan route as
+// `{change}` — the agreed change `_run_plan` drafts from — and the card then
+// shows exactly what Apply will change. An empty box is a plain plan run.
+function fixBoxOptions(answer, suggestion) {
+  return {
+    hint: answer.ask || "What should brAIn change? Edit its suggestion or write your own.",
+    placeholder: answer.placeholder || "Turn the hall light off at 23:00 instead.",
+    send: "Fix",
+    prefill: prettyText(suggestion || ""),
+  };
+}
+
+function instructThenFix(row, answer, btns) {
+  openNoteForm(btns.card, btns.actions,
+    (change, formBtns) => runAnswer(row, answer, btns.concat(formBtns), "", false, change),
+    fixBoxOptions(answer, answer.prefill || row.fix));
+}
+
+// The ⋯: at most three of Ask, Check again, Done, Fix, Run — the server's
 // `more`, as words with no glyph in front of them.
 function caseOverflow(row, btns) {
   const items = (row.more || []).map((item) => [
@@ -6001,6 +6065,7 @@ async function runCaseOverflow(row, item, btns) {
   const finding = caseAsFinding(row);
   if (item.verb === "discuss" && finding) return discussFinding(finding, btns);
   if (item.verb === "recheck" && finding) return recheckFinding(finding, btns);
+  if (item.instruct && btns.card && btns.actions) return instructThenFix(row, item, btns);
   return runAnswer(row, item, btns);
 }
 
@@ -6090,7 +6155,7 @@ function makeLooseFinding(f) {
 }
 
 function makeLooseQuestion(h) {
-  const card = qCard({ id: `h:${h.ts}`, chip: "suggestion",
+  const card = qCard({ id: `h:${h.ts}`, chip: "question",
     meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "" });
   const actions = el("div", "card-actions");
   const btns = [];
@@ -10191,16 +10256,16 @@ function actTime(ts) {
     { hour: "2-digit", minute: "2-digit" });
 }
 
-// The window is a rolling one — `hours` back from `end` — so it is named as
-// one. It was labelled "Today" and opened on yesterday evening's rows,
-// which is the label lying about the list under it.
+// The label between Earlier and Later says what the length select beside
+// it does not. The current window is "Now" (it was "Last 24 hours", the
+// select's own words again); one paged back to is named by its dates, so
+// a person three presses back can tell which evening they are reading.
 function actDayLabel(end, hours) {
-  const h = hours || 24;
-  if (!end) return `Last ${h} hours`;
-  const d = new Date(end * 1000);
-  return `${h} hours to `
-    + d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })
-    + ", " + actTime(end);
+  if (!end) return "Now";
+  const start = end - (hours || 24) * 3600;
+  const at = (ts) => new Date(ts * 1000).toLocaleDateString([],
+    { weekday: "short", day: "numeric", month: "short" }) + " " + actTime(ts);
+  return `${at(start)} \u2013 ${at(end)}`;
 }
 
 async function refreshActivity() {
@@ -12384,24 +12449,29 @@ $("#chatFindingText").addEventListener("click", () => {
   if (chatState.finding) showCardOnToday(chatState.finding.ts);
 });
 
-async function chatFindingAction(verb, done, note, extraBtns) {
+async function chatFindingAction(verb, done, note, extraBtns, extra) {
   const f = chatState.finding;
   if (!f) return;
   const btns = [...$("#chatFinding").querySelectorAll("button")]
     .concat(extraBtns || []);
-  await findAction(f, verb, done, btns, note);
+  await findAction(f, verb, done, btns, note, extra);
   // Settled: the discussion can carry on, but it is no longer a decision
   // waiting on you, so the bar goes.
   setChatFinding(null);
 }
 
 $("#chatFindingClose").addEventListener("click", () => setChatFinding(null));
-// Fix it buys the read-only look here too, so the toast says that rather
-// than announcing a change nothing has made — and it names where the steps
-// land, because this strip closes on the press and the plan is on the card.
-$("#chatFindingFix").addEventListener("click", () =>
-  chatFindingAction("fix",
-    "Working out what it would change — the steps land on the card in Today"));
+// Fix opens the same box the card does, holding the card's suggestion, and
+// sends what is in it as the agreed change. It buys the read-only plan, so
+// the toast says that rather than announcing a change nothing has made —
+// and it names where the steps land, because this strip closes on the press
+// and the plan is on the card.
+$("#chatFindingFix").addEventListener("click", () => openNoteForm(
+  $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
+  (change, formBtns) => chatFindingAction("fix",
+    "Working out the change — the steps land on the card in Today",
+    "", formBtns, change ? { change } : null),
+  fixBoxOptions({}, (chatState.finding || {}).fix)));
 $("#chatFindingDone").addEventListener("click", () => openNoteForm(
   $("#chatFinding"), $("#chatFinding").querySelector(".cfacts"),
   (note, formBtns) => chatFindingAction(

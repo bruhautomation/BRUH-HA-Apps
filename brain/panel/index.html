@@ -550,16 +550,19 @@
                spellcheck="false" placeholder="Search devices" aria-label="Search devices">
         <select id="actArea" class="sel" aria-label="Room"></select>
         <select id="actCause" class="sel" aria-label="Caused by"></select>
+      </div>
+      <div class="actnav">
+        <button id="actPrev" class="btn small ghost"
+                data-tip="The window before this one">&lsaquo; Earlier</button>
+        <!-- The window's length sits with the buttons that move it, sized to
+             its words: a full-width row of its own on a phone, above a
+             label repeating it, was the same fact twice. -->
         <select id="actHours" class="sel" aria-label="Window">
           <option value="6">6 hours</option>
           <option value="12">12 hours</option>
           <option value="24" selected>24 hours</option>
           <option value="48">2 days</option>
         </select>
-      </div>
-      <div class="actnav">
-        <button id="actPrev" class="btn small ghost"
-                data-tip="The window before this one">&lsaquo; Earlier</button>
         <span id="actRange" class="actrange"></span>
         <button id="actNext" class="btn small ghost"
                 data-tip="The window after this one">Later &rsaquo;</button>
@@ -693,7 +696,7 @@
         </button>
       </div>
       <div class="cfacts">
-        <button id="chatFindingFix" class="btn small primary">Plan</button>
+        <button id="chatFindingFix" class="btn small primary">Fix</button>
         <button id="chatFindingDone" class="btn small">Done</button>
         <button id="chatFindingLater" class="btn small ghost">Snooze</button>
         <button id="chatFindingWrong" class="btn small ghost">Ignore</button>
