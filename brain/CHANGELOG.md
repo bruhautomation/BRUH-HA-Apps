@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.15
+
+### Added
+
+- A house-book question can be answered on its card: the card carries an answer box and Send on its face, and the answer goes into memory and into the house book, cited to you. (reports #166)
+- With the development loop on, a card's ⋯ and a chat reply that says brAIn cannot do something offer **Report to brAIn**, which files it as a request for the loop. (reports #166)
+- ⚙ › Developer › Reports: the status in words, status and kind filters, fixed, closed and archived rows off the default view, Archive per row and for everything shown, Send on ticked rows, the issue's link, and a line saying what was done about it. A fault the loop reports as no longer seen is archived on its own. (reports #167)
+
+### Fixed
+
+- What's new reads the release notes again: the Supervisor answers "Addon self does not exist" with a 200, so the notes are now asked for by the add-on's real slug and a 200 refusal is read as one. (reports #168)
+- House-book questions are filed open at once rather than waiting for a look that never judged them. (reports #166)
+- The switches under Help develop brAIn sit on their side again on a phone; a touch rule had given every input there a 44px height. (reports #167)
+
 ## 2.18.14
 
 ### Changed

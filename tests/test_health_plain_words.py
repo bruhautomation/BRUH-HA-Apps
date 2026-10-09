@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import os
 import re
 import sys
 import unittest
@@ -235,9 +236,19 @@ class TestWhatsNewIsReadFromTheSupervisor(unittest.TestCase):
 
     def setUp(self):
         self._old = (addon_options.SUPERVISOR_URL, addon_options.TOKEN)
+        # The real slug is cached for the process once read; a slug another
+        # test left there would send this fake Supervisor (which knows only
+        # `self`) a path it does not serve.
+        self._info = dict(addon_options._info)
+        addon_options._info.pop("slug", None)
+        self._env = os.environ.pop("BRAIN_ADDON_SLUG", None)
 
     def tearDown(self):
         (addon_options.SUPERVISOR_URL, addon_options.TOKEN) = self._old
+        addon_options._info.clear()
+        addon_options._info.update(self._info)
+        if self._env is not None:
+            os.environ["BRAIN_ADDON_SLUG"] = self._env
 
     def _ask(self, supervisor: FakeSupervisor) -> dict:
         async def run():
