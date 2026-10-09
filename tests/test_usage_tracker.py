@@ -1932,3 +1932,68 @@ class TestAVerdictCarriesHowLongItHasStood(unittest.TestCase):
             self.assertAlmostEqual(got["since"], time.time(), delta=5)
         finally:
             usage_store.LIMITS_FILE = old
+
+
+class TestADayOfRateLimitsIsSaid(unittest.TestCase):
+    """A house answered `http_429` for about thirty hours with the figure
+    an estimate the whole time, and health called it nothing to do because
+    the code was on the list. Two halves: the ladder itself must go on
+    asking (a wall that lifts has to be noticed), and a streak that has
+    stood past a day has to reach the panel in its own words — through the real
+    writer into the real reader, because the clock is one key two processes
+    spell."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.mod = load_tracker({"CLAUDE_CONFIG_DIR": None})
+        self.mod.USAGE_FILE = os.path.join(self.tmp.name, "usage.json")
+
+    def test_the_ladder_keeps_asking_however_long_the_wall_stands(self):
+        """Worst case on every rung: the server names an absurd Retry-After
+        every time. The tracker still asks at least every RETRY_AFTER_MAX_S,
+        so thirty hours is at least five chances to see the wall lift."""
+        elapsed, asks, strikes = 0.0, 0, 0
+        while elapsed < 30 * 3600:
+            strikes += 1
+            wait = self.mod._rate_limit_delay(strikes, 10 ** 9)
+            self.assertLessEqual(wait, self.mod.RETRY_AFTER_MAX_S)
+            elapsed += wait
+            asks += 1
+        self.assertGreaterEqual(asks, 5)
+
+    def test_a_restart_cannot_push_the_next_ask_past_the_cap(self):
+        """A promise on disk a day out (a clock jump, an older build) is
+        resumed capped, so a restart loop cannot park the tracker."""
+        when = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+        with open(self.mod.USAGE_FILE, "w") as fh:
+            json.dump({"last_error": "http_429", "next_attempt_at": when,
+                       "rate_limit_strikes": 7}, fh)
+        wait, _ = self.mod._resume_backoff()
+        self.assertLessEqual(wait, self.mod.RETRY_AFTER_MAX_S)
+
+    def test_a_day_old_streak_reaches_the_panel_in_words(self):
+        since = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+        with open(self.mod.USAGE_FILE, "w") as fh:
+            json.dump({"error": "http_429", "error_since": since}, fh)
+        # Another rung of the ladder: both writers keep the clock.
+        self.mod.write_error_status("http_429",
+                                    self.mod.ERROR_DETAIL.get("http_429"))
+        self.mod._record_failure("http_429", 14400, 6)
+        sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
+        try:
+            import usage_store
+        finally:
+            sys.path.pop(0)
+        old = usage_store.LIMITS_FILE
+        usage_store.LIMITS_FILE = self.mod.USAGE_FILE
+        try:
+            got = usage_store.limits_problem()
+        finally:
+            usage_store.LIMITS_FILE = old
+        self.assertEqual(got["code"], "http_429")
+        # Still nothing to do; the sentence is what moved.
+        self.assertTrue(got["needs_nothing"])
+        self.assertTrue(got["overdue"])
+        self.assertIn("refused every request", got["detail"])
+        self.assertIn("next_attempt", got)

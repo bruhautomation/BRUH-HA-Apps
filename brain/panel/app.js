@@ -754,6 +754,16 @@ function limitsNote(u) {
         + `again from <b>⚙ › Account › Sign in again</b> is what `
         + `usually fixes it.`);
     case "http_429":
+      // Still nothing to do (`needs_nothing` stays true at any age), but
+      // past a day the sentence that says it lifts on its own is the one
+      // a person stops believing, so it says how long it has stood.
+      if (lim.overdue) {
+        return say("Anthropic's usage endpoint has refused brAIn for over a day.",
+          `Every request has been answered with a rate limit, so the figure `
+          + `above is brAIn's own estimate. This is not your account's usage; `
+          + `brAIn keeps asking every few hours and the add-on log says what `
+          + `it was told.`);
+      }
       return say("Anthropic is rate-limiting the usage endpoint itself.",
         `This is not your account's usage and no amount of quota clears it. `
         + `The figure above is an estimate until it lifts.`);
