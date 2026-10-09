@@ -22,6 +22,8 @@ reworded.
 """
 from __future__ import annotations
 
+import re
+
 from ._util import age_days, history_cut, join_names, num, when
 
 GB = 1024.0 ** 3
@@ -267,24 +269,60 @@ def entry_name(entry: dict) -> str:
     return f"{title} ({domain})" if title and title != domain else domain
 
 
+_TAG = re.compile(r"<[^>]*>?")
+_TITLE = re.compile(r"<title[^>]*>\s*([^<]*)", re.I)
+_STATUS = re.compile(r"\b([1-5]\d\d)\b")
+REASON_MAX = 160
+
+
+def clean_reason(text: str) -> str:
+    """An integration's error as a sentence: markup out, a page as its status.
+
+    Integrations put whatever came back into the reason, and what came back
+    is often a whole HTML error page cut off mid-tag. The words before the
+    markup are the integration's own and are kept; the page itself becomes
+    "HTTP 403" when its title carries a status, and "an HTML error page"
+    when it does not — never the bytes.
+    """
+    text = str(text or "").strip()
+    if "<" not in text:
+        return " ".join(text.split())[:REASON_MAX]
+    head, _, page = text.partition("<")
+    page = "<" + page
+    looks_like_page = bool(re.search(r"<\s*(!doctype|html|head|body|title)",
+                                     page, re.I))
+    if looks_like_page:
+        title = _TITLE.search(page)
+        status = _STATUS.search(title.group(1)) if title else None
+        what = f"HTTP {status.group(1)}" if status else "an HTML error page"
+        head = " ".join(head.split()).rstrip()
+        return (f"{head} {what}" if head else what)[:REASON_MAX]
+    return " ".join(_TAG.sub("", text).split())[:REASON_MAX]
+
+
 def entry_failed(snap: dict, now: float) -> list[dict]:
     """Nothing errors and no entity is unavailable — the entities are gone.
 
     An integration that fails setup takes everything it provides out of
     the house at once. There is no state to look wrong because there are
     no states, which is why nothing else on this page can see it.
+
+    Each error is said beside the entry it belongs to: "Cloud thing
+    (cloudthing): HTTP 403" rather than a list of names and then a list
+    of errors nobody can pair up.
     """
     rows = failed_entries(snap)
     if not rows:
         return []
-    names = sorted(entry_name(e) for e in rows)
-    reasons = sorted({str(e.get("reason") or "").strip()
-                      for e in rows if e.get("reason")})
+    named = sorted(((entry_name(e), clean_reason(e.get("reason") or ""))
+                    for e in rows), key=lambda r: r[0])
+    names = [n for n, _r in named]
     detail = (f"{len(names)}: " + join_names(names)
               + ". Everything they provide — entities, services, devices — "
                 "is missing from Home Assistant until they load.")
-    if reasons:
-        detail += " Home Assistant says: " + "; ".join(reasons[:3])[:200]
+    said = [f"{n}: {r}" for n, r in named if r][:3]
+    if said:
+        detail += " Home Assistant says — " + "; ".join(said) + "."
     return [{
         "text": ENTRY_FAILED_TEXT,
         "detail": detail,

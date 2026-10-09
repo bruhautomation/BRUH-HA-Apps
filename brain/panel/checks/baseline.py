@@ -25,7 +25,7 @@ import re
 import numfmt
 
 from . import devices
-from ._util import House, domain_of
+from ._util import House, domain_of, join_names
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -145,7 +145,18 @@ OUTSIDE_PLATFORMS = frozenset({
     "weatherkit", "weatherflow", "weatherflow_cloud", "co2signal",
     "electricity_maps", "nordpool", "entsoe", "astroweather", "weatherbit",
     "visual_crossing", "meteoblue", "openuv", "sun", "moon", "season",
+    # Relays of data about somewhere else entirely: space weather (solar
+    # flux, the Kp index, X-ray flares), outdoor air quality, pollen and
+    # aircraft overhead. Their numbers move with the sun, the wind and the
+    # season, never with the hour of this house's week.
+    "noaa_space_weather", "waqi", "airnow", "airvisual", "luftdaten",
+    "iqvia", "opensky",
 })
+# A label somebody gave an entity that says the same thing: they filed it
+# under the weather. Matched on the label id's whole words, since a label
+# named "Weather" has the id `weather` and one named "Space weather" has
+# `space_weather`.
+OUTSIDE_LABEL_WORDS = frozenset({"weather", "forecast", "outdoor", "outside"})
 # A tariff or an intensity: anything per kWh/MWh/Wh, which is the grid's
 # number rather than the house's.
 _PER_ENERGY = re.compile(r"/\s*[kmg]?wh$", re.I)
@@ -166,6 +177,9 @@ def outside_cause(house: House, eid: str, st: dict, unit: str) -> str:
         return "a tariff or intensity per unit of energy"
     if str(reg.get("platform") or "") in OUTSIDE_PLATFORMS:
         return "a weather, grid or phone integration"
+    for label in reg.get("labels") or ():
+        if set(re.split(r"[^a-z0-9]+", str(label).lower())) & OUTSIDE_LABEL_WORDS:
+            return "labelled as weather or outdoors"
     device = reg.get("device_id")
     if device and any(e.get("device_id") == device
                       and str(e.get("entity_id") or "").startswith("device_tracker.")
@@ -275,6 +289,98 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     return not not_a_house_reading(house, eid, st)
 
 
+# What in a room can move a reading of each kind. A fix that says "look at
+# what it is measuring" under every row is a sentence nobody can act on; one
+# that names the dehumidifier in the same room is a place to look. Domains
+# that act on the quantity count whatever they are called; a switch or a
+# sensor counts only when its name says it is one of those machines (a
+# smart plug carries no class for what is plugged into it).
+RELATED_ACTORS = {
+    "humidity": ({"humidifier", "fan", "climate"},
+                 {"dehumidifier", "humidifier", "extractor", "ventilation",
+                  "fan", "dryer"}),
+    "temperature": ({"climate", "water_heater", "fan"},
+                    {"heater", "radiator", "heating", "boiler", "fan",
+                     "aircon", "ac"}),
+    "carbon_dioxide": ({"fan", "climate"},
+                       {"fan", "extractor", "ventilation", "purifier"}),
+    "volatile_organic_compounds": ({"fan"},
+                                   {"fan", "extractor", "purifier"}),
+    "pm25": ({"fan"}, {"fan", "extractor", "purifier"}),
+    "pm10": ({"fan"}, {"fan", "extractor", "purifier"}),
+    "illuminance": ({"light", "cover"}, set()),
+}
+NAMED_ACTOR_DOMAINS = frozenset({"switch", "sensor", "binary_sensor",
+                                 "input_boolean", "fan", "humidifier",
+                                 "climate"})
+RELATED_MAX = 2
+
+
+def related_nearby(house: House, eid: str, st: dict) -> tuple[list, list]:
+    """(machines that can move this reading, sensors measuring the same)
+    in the same area as `eid`, by friendly name, stable order.
+
+    Read off the registries the pass already has, so the fix names what is
+    there rather than guessing; an entity with no area has no neighbours.
+    """
+    area = house.area_id_of(eid)
+    if not area:
+        return [], []
+    attrs = st.get("attributes") or {}
+    klass = str(attrs.get("device_class") or "")
+    domains, words = RELATED_ACTORS.get(klass, (set(), set()))
+    own_device = (house.registry.get(eid) or {}).get("device_id")
+    actors, peers = [], []
+    for other in sorted(house.states):
+        if other == eid or house.area_id_of(other) != area:
+            continue
+        if not house.enabled(other):
+            continue
+        other_st = house.states.get(other) or {}
+        dom = domain_of(other)
+        name = house.name(other)
+        if dom in domains:
+            actors.append(name)
+            continue
+        if dom in NAMED_ACTOR_DOMAINS and words:
+            found = set(re.split(r"[^a-z0-9]+", f"{name} {other}".lower()))
+            if found & words:
+                actors.append(name)
+                continue
+        other_attrs = other_st.get("attributes") or {}
+        if (dom == "sensor" and klass
+                and other_attrs.get("device_class") == klass
+                and (house.registry.get(other) or {}).get("device_id")
+                != own_device):
+            peers.append(name)
+    return (list(dict.fromkeys(actors))[:RELATED_MAX],
+            list(dict.fromkeys(peers))[:RELATED_MAX])
+
+
+GENERIC_FIX = ("Look at what it is measuring. If this is normal for a "
+               "reason brAIn cannot see — a guest, a heatwave, a new "
+               "appliance — press Ignore and say why, and it will stop "
+               "reporting it.")
+
+
+def unusual_fix(house: House, eid: str, st: dict) -> str:
+    """The fix for one unusual reading, naming what is nearby when there is."""
+    actors, peers = related_nearby(house, eid, st)
+    room = house.area_of(eid)
+    where = f" in the {room}" if room else ""
+    if actors:
+        return (f"Check {join_names(actors)}{where}: whether it was running, "
+                "off, or set differently from usual is the likeliest reason. "
+                "If this is normal here, press Ignore and say why, and it "
+                "will stop reporting it.")
+    if peers:
+        return (f"Compare it with {join_names(peers)}{where}: if that moved "
+                "too, something in the room changed; if not, the sensor "
+                "itself may be at fault. If this is normal here, press "
+                "Ignore and say why.")
+    return GENERIC_FIX
+
+
 def unusual(snap: dict, now: float) -> list[dict]:
     """Readings well outside what this house normally does at this hour."""
     import baselines  # noqa: PLC0415 — the package stays importable without it
@@ -377,10 +483,7 @@ def unusual(snap: dict, now: float) -> list[dict]:
                 f"That is {numfmt.times(abs(found['sigmas']))} its normal "
                 "variation."
                 + (f" {where}." if where else "")),
-            "fix": ("Look at what it is measuring. If this is normal for a "
-                    "reason brAIn cannot see — a guest, a heatwave, a new "
-                    "appliance — press Ignore and say why, and it will stop "
-                    "reporting it."),
+            "fix": unusual_fix(house, eid, house.states.get(eid) or {}),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
