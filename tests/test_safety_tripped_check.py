@@ -22,6 +22,7 @@ sys.path.insert(0, str(PANEL_DIR))
 sys.path.insert(0, str(BASE_DIR / "tests"))
 
 import checks  # noqa: E402
+import checks.safety  # noqa: E402
 from test_house_checks import NOW, by_source, house, iso  # noqa: E402
 
 LEAK = "binary_sensor.utility_leak"
@@ -92,10 +93,9 @@ class TestATrippedDetectorIsAFinding(unittest.TestCase):
 
     def test_the_classes_and_states_are_the_lanes_own(self):
         import signals
-        from checks import safety
-        self.assertEqual(set(safety.TRIPPED_CLASSES),
+        self.assertEqual(set(checks.safety.TRIPPED_CLASSES),
                          set(signals.HOT_SAFETY_CLASSES))
-        self.assertEqual(set(safety.TRIPPED_STATES),
+        self.assertEqual(set(checks.safety.TRIPPED_STATES),
                          set(signals.HOT_SAFETY_STATES))
 
 
