@@ -77,6 +77,30 @@ class TestARateLimitIsNotAReason(unittest.TestCase):
                                  brief.frame(["x"], state(stale, limits)))
 
 
+class TestADayOfRateLimitsIsSaidButNeverAsASignIn(unittest.TestCase):
+    """Past a day `http_429` still needs nothing (the verdict is a person's
+    to change), but its sentence says how long it has stood and that the
+    figure is an estimate — and never "sign in again"."""
+
+    def test_the_prompt_says_how_long_and_rules_out_a_sign_in(self):
+        import time as _time
+        from datetime import datetime, timezone
+        since = datetime.fromtimestamp(_time.time() - 30 * 3600,
+                                       timezone.utc).isoformat()
+        limits = limits_for({"error": "http_429", "error_since": since})
+        self.assertTrue(limits["needs_nothing"])
+        self.assertTrue(limits["overdue"])
+        verdict = health.verdict({"usage": {"limits": limits}}, {}, now=NOW)
+        self.assertEqual(verdict["state"], "ok")
+        st = state(verdict, limits)
+        self.assertEqual(brief.worth_saying(st), [])
+        text = brief.frame(["x"], st)
+        self.assertIn("over a day", text)
+        self.assertIn("estimate", text)
+        self.assertIn("signing in again will not help", text)
+        self.assertNotIn("Sign in again", text)
+
+
 class TestARealSignInProblemIsStillSaid(unittest.TestCase):
 
     def test_a_refused_sign_in_is_a_reason(self):

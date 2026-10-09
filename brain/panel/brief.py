@@ -169,6 +169,14 @@ def usage_line(state: dict) -> str:
     if not limits:
         return ""
     code = str(limits.get("code") or "")
+    if code == "http_429" and limits.get("overdue"):
+        # Still needs nothing, and still never a sign-in — but "it clears
+        # on its own" stopped being true a day ago, and the model reads the
+        # tracker's long sentence through `get_health` anyway.
+        return ("Anthropic's usage endpoint has refused brAIn's requests "
+                "for over a day (http_429), so the usage figure is an "
+                "estimate. If you mention it, it is not the account's "
+                "usage and signing in again will not help.")
     if limits.get("needs_nothing"):
         return ("The Claude usage figures are missing right now "
                 f"({code}) for a reason that needs nothing from anybody — "

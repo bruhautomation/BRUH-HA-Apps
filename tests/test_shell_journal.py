@@ -246,6 +246,179 @@ class TestTheConsolidatorRecordsItsPass(ShellCase):
         self.assertEqual(rows[0]["extra"]["exit"], 2)
 
 
+class TestTheConsolidatorHearsTheCliItRuns(ShellCase):
+    """The CLI as 2.1.295 really answers, not as a fixture guessed.
+
+    In `-p` text mode the CLI prints its OWN verdict on a failed run —
+    "Error: Reached max turns (1)", "Execution error", an API error, a
+    signed-out account — to STDOUT, and exits 1 with stderr empty (read off
+    the bundle: `print()` writes through the stdout writer). The
+    consolidator kept stdout as the answer file, deleted it on failure, and
+    handed the journal only stderr: six passes out of seven in a day were
+    filed as "claude exited 1" with the reason thrown away. The fake above
+    (`test_a_pass_that_failed_carries_why`) writes its error to stderr,
+    which is the shape the code guessed rather than the shape the CLI has.
+    """
+
+    CONSOLIDATOR = TestTheConsolidatorRecordsItsPass.CONSOLIDATOR
+    _run = TestTheConsolidatorRecordsItsPass._run
+
+    MERGED = ("# Home Memory\n\n## Preferences\n"
+              "- 'the beacon' = light.office_lamp\n\n"
+              "## Entity nicknames\n\n## Household patterns\n\n"
+              "## Device notes\n-----VOICE-----\n- beacon\n")
+
+    def _cli(self, verdict: dict | None) -> Path:
+        """A CLI that answers like the real one: an envelope under
+        `--output-format json`, the result text (or its error line on
+        stdout, exit 1) otherwise."""
+        fake = self.base / "fake_cli.py"
+        fake.write_text(
+            "#!" + sys.executable + "\n"
+            "import json, sys\n"
+            "sys.stdin.read()\n"
+            f"verdict = {verdict!r}\n"
+            f"merged = {self.MERGED!r}\n"
+            "args = sys.argv[1:]\n"
+            "as_json = 'json' in args and '--output-format' in args\n"
+            "if verdict is None:\n"
+            "    env = {'type': 'result', 'subtype': 'success', 'is_error': False,\n"
+            "           'result': merged, 'num_turns': 1,\n"
+            "           'usage': {'input_tokens': 40, 'output_tokens': 60}}\n"
+            "    print(json.dumps(env) if as_json else merged, end='')\n"
+            "    sys.exit(0)\n"
+            "env = dict({'type': 'result', 'is_error': True, 'num_turns': 1}, **verdict)\n"
+            "if as_json:\n"
+            "    print(json.dumps(env))\n"
+            "else:\n"
+            "    print(verdict.get('line') or env.get('result') or '')\n"
+            "sys.exit(1)\n")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        return fake
+
+    def _row(self) -> dict:
+        rows = [r for r in self.rows() if r["source"] == "memory"]
+        self.assertEqual(len(rows), 1, self.rows())
+        return rows[0]
+
+    def test_an_api_error_is_named_on_the_row(self):
+        self._run(self._cli({"subtype": "success",
+                             "result": "API Error: 529 Overloaded"}))
+        row = self._row()
+        self.assertIn("529", row["error"])
+        self.assertNotEqual(row["error"], "claude exited 1")
+
+    def test_a_signed_out_account_is_auth_not_a_crash(self):
+        proc = self._run(self._cli({
+            "subtype": "success",
+            "result": "Invalid API key \u00b7 Please run /login"}))
+        row = self._row()
+        self.assertEqual(row["outcome"], "auth", row)
+        self.assertIn("Invalid API key", proc.stdout)
+
+    def test_the_turn_cap_is_max_turns_not_a_crash(self):
+        # The error_max_turns envelope carries no `result`: the reason is
+        # its subtype, and the row has to say so in words too.
+        self._run(self._cli({"subtype": "error_max_turns",
+                             "line": "Error: Reached max turns (1)"}))
+        row = self._row()
+        self.assertEqual(row["outcome"], "max_turns", row)
+        self.assertNotEqual(row["error"], "claude exited 1")
+
+    def test_a_pass_that_worked_files_the_result_and_counts_it(self):
+        proc = self._run(self._cli(None))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        memory = (self.base / "memory" / "memory.md").read_text()
+        self.assertIn("the beacon", memory)
+        self.assertNotIn('"type"', memory)
+        row = self._row()
+        self.assertEqual((row["outcome"], row["tokens"]), ("ok", 100))
+
+
+class TestTheConsolidatorLoadsNoTools(ShellCase):
+    """A pass is one turn, and a tool the model may reach for spends it.
+
+    `--disallowedTools "*"` denies every tool and leaves every one in the
+    model's list, so a model that reaches for Write to update memory.md spends
+    its single `--max-turns 1` turn on the refusal and the CLI ends
+    `error_max_turns`. `--tools ""` loads none at all (the engine's
+    `run_claude` rule); the deny stays beside it. A CLI too old for `--tools`
+    loses that flag and only that flag, and the retry never carries the
+    session id the first attempt spent.
+    """
+
+    CONSOLIDATOR = TestTheConsolidatorRecordsItsPass.CONSOLIDATOR
+    _run = TestTheConsolidatorRecordsItsPass._run
+    MERGED = TestTheConsolidatorHearsTheCliItRuns.MERGED
+
+    def _cli(self, rejects_tools: bool) -> Path:
+        calls = self.base / "calls.jsonl"
+        fake = self.base / "fake_cli.py"
+        fake.write_text(
+            "#!" + sys.executable + "\n"
+            "import json, sys, pathlib\n"
+            "sys.stdin.read()\n"
+            f"calls = pathlib.Path({str(calls)!r})\n"
+            f"merged = {self.MERGED!r}\n"
+            f"rejects = {rejects_tools!r}\n"
+            "args = sys.argv[1:]\n"
+            "seen = [json.loads(l) for l in calls.read_text().splitlines()]"
+            " if calls.exists() else []\n"
+            "with calls.open('a') as fh:\n"
+            "    fh.write(json.dumps(args) + '\\n')\n"
+            "if '--session-id' in args:\n"
+            "    sid = args[args.index('--session-id') + 1]\n"
+            "    for old in seen:\n"
+            "        if '--session-id' in old and old[old.index('--session-id') + 1] == sid:\n"
+            "            print(f'Error: Session ID {sid} is already in use.', file=sys.stderr)\n"
+            "            sys.exit(1)\n"
+            "if '--tools' in args and rejects:\n"
+            "    print(\"error: unknown option '--tools'\", file=sys.stderr)\n"
+            "    sys.exit(1)\n"
+            "no_tools = '--tools' in args and args[args.index('--tools') + 1] == ''\n"
+            "if not no_tools and not rejects:\n"
+            "    print(json.dumps({'type': 'result', 'subtype': 'error_max_turns',\n"
+            "                      'is_error': True, 'num_turns': 2}))\n"
+            "    sys.exit(1)\n"
+            "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,\n"
+            "                  'result': merged, 'num_turns': 1,\n"
+            "                  'usage': {'input_tokens': 40, 'output_tokens': 60}}))\n")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        return fake
+
+    def _calls(self) -> list:
+        path = self.base / "calls.jsonl"
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def test_a_pass_offers_the_model_no_tool_to_spend_its_turn_on(self):
+        proc = self._run(self._cli(rejects_tools=False))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("the beacon",
+                      (self.base / "memory" / "memory.md").read_text())
+        args = self._calls()[0]
+        self.assertEqual(args[args.index("--tools") + 1], "")
+        self.assertEqual(args[args.index("--disallowedTools") + 1], "*")
+        rows = [r for r in self.rows() if r["source"] == "memory"]
+        self.assertEqual([r["outcome"] for r in rows], ["ok"], rows)
+
+    def test_a_cli_without_tools_drops_that_flag_and_spends_a_new_id(self):
+        proc = self._run(self._cli(rejects_tools=True))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("the beacon",
+                      (self.base / "memory" / "memory.md").read_text())
+        first, second = self._calls()
+        self.assertIn("--tools", first)
+        self.assertNotIn("--tools", second)
+        self.assertEqual(second[second.index("--disallowedTools") + 1], "*")
+        self.assertIn("--max-turns", second)
+        if "--session-id" in second:
+            self.assertNotEqual(
+                second[second.index("--session-id") + 1],
+                first[first.index("--session-id") + 1])
+        rows = [r for r in self.rows() if r["source"] == "memory"]
+        self.assertEqual([r["outcome"] for r in rows], ["ok"], rows)
+
+
 class TestThePanelBooksThem(ShellCase):
     def setUp(self):
         super().setUp()
