@@ -47,14 +47,17 @@ from __future__ import annotations
 # off the package the way server.py calls it; its aiohttp import is lazy,
 # inside the collector, so this costs the test suite nothing.
 from . import (automations, baseline, chores, dashboards,  # noqa: F401
-               devices, evening, forecasts, registry, security, snapshot,
-               system, thermal)
+               devices, evening, forecasts, registry, safety, security,
+               snapshot, system, thermal)
 from ._util import CouldNotLook, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
 # order the Findings tab shows a fresh batch: what breaks an automation
 # before what tidies a registry.
 CHECKS: list[dict] = [
+    # First: a detector reading wet, smoke or gas NOW is the one row in a
+    # house that is wrong by itself (see checks/safety.py).
+    *safety.CHECKS,
     *automations.CHECKS,
     *devices.CHECKS,
     *dashboards.CHECKS,
@@ -112,6 +115,7 @@ GROUP_TITLES = {
     "chore": "Chore",
     "climate": "Climate check",
     "sec": "Security check",
+    "safety": "Safety check",
 }
 
 

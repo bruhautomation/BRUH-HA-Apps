@@ -27,6 +27,9 @@ PRODUCER_URGENCY = {
     # lets it through quiet hours, which is the only hour a leak in a
     # bedroom ceiling is ever reported in.
     "safety": "now",
+    # The same detectors read on a checks pass rather than off the bus: a
+    # sensor that was already wet when nothing was watching. Just as now.
+    "check:safety.tripped": "now",
     # The tripwire (`security.py`): something tried to act on an entity
     # nothing should touch. That is now, whatever the hour.
     "security": "now",

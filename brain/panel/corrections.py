@@ -84,13 +84,14 @@ MAX_DAYS = 2 * 366
 
 # What no wide scope may ever cover. Domains and device classes are the
 # ones `signals` and `checks.automations` already treat as safety; the
-# freeze check is `signals.SAFETY_CHECKS`. The tests hold these equal to
+# freeze check is `signals.SAFETY_CHECKS` and the tripped-detector check
+# `signals.TRIPPED_CHECKS`. The tests hold these equal to
 # their sources rather than importing them here, because this module is
 # read by the checks snapshot and must stay a leaf.
 NEVER_DOMAINS = frozenset({"lock", "alarm_control_panel"})
 NEVER_CLASSES = frozenset({"smoke", "gas", "carbon_monoxide", "moisture",
                            "safety"})
-NEVER_CHECKS = frozenset({"climate.freeze"})
+NEVER_CHECKS = frozenset({"climate.freeze", "safety.tripped"})
 
 # Who files an offer, so the ending that answers it can tell it apart from
 # every other question on the feed (`server._end_finding`).
