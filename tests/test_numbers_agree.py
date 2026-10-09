@@ -355,7 +355,6 @@ class TestOneCountForTheQueue(ServerStoresCase):
         """The header's version link says "restart needed" off this field,
         which is read off disk rather than off `status`: a signed-out
         house's status line outranks `needs_restart`."""
-        import json
         import tempfile
         from pathlib import Path
         d = Path(tempfile.mkdtemp())
