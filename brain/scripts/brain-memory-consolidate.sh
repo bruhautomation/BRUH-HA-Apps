@@ -497,6 +497,52 @@ claude_pass() {
     return 0
 }
 
+# Facts the model would only have deduped, removed before it is asked.
+#
+# A pass is a whole-document rewrite on the memory tier, and the inbox is
+# written by a dozen producers that each say "the office lamp is the
+# beacon" in their own turn: the same fact queued twice in a batch, or a
+# fact the document already states word for word, cost a full pass to be
+# merged into nothing (the "filed nothing" log line below is that case). This
+# drops exactly two kinds of line and nothing else: a repeat inside the
+# batch (the newest copy stays) and a fact whose words already appear in
+# memory.md. FORGET requests and corrections are never touched, a line it
+# cannot parse is kept, and any failure here hands back the batch whole —
+# the filter may only make a pass cheaper, never decide what is true.
+prefilter_inbox() {
+    local lines="$1" memory="$2" kept
+    if ! kept=$(printf '%s\n' "$lines" | jq -Rrs --arg mem "$memory" '
+        def norm: ascii_downcase | gsub("[^a-z0-9]+"; " ") | gsub("^ +| +$"; "");
+        ($mem | norm) as $m
+        | split("\n") | map(select(length > 0))
+        | map({raw: ., rec: (try fromjson catch null)})
+        | map(.key = (if (.rec | type) == "object"
+                         and ((.rec.fact | type) == "string")
+                         and (.rec.source != "correction")
+                         and ((.rec.fact | startswith("FORGET:")) | not)
+                      then (.rec.fact | norm) else null end))
+        | . as $all
+        | [range(0; length) as $i | $all[$i] | . as $e
+           | select($e.key == null or (
+               (($e.key | length) < 12 or ((" " + $m + " ") | contains(" " + $e.key + " ") | not))
+               and (([$all[$i + 1:][] | .key] | any(. == $e.key)) | not)))]
+        | .[].raw' 2>/dev/null); then
+        printf '%s\n' "$lines"
+        return 0
+    fi
+    printf '%s\n' "$kept"
+}
+
+archive_inbox_files() {
+    local files="$1" f
+    mkdir -p "$PROCESSED_DIR"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        mv "$f" "$PROCESSED_DIR/$(basename "$f")" 2>/dev/null || rm -f "$f"
+    done <<< "$files"
+    find "$PROCESSED_DIR" -type f -mtime +"$PROCESSED_PRUNE_DAYS" -delete 2>/dev/null || true
+}
+
 consolidate_once() {
     mkdir -p "$MEMORY_DIR" "$INBOX_DIR"
 
@@ -517,6 +563,20 @@ consolidate_once() {
     current_memory=$(cat "$MEMORY_FILE" 2>/dev/null || echo "")
     local read_fingerprint
     read_fingerprint=$(memory_fingerprint)
+
+    local queued_total kept_lines
+    queued_total=$(printf '%s\n' "$inbox_lines" | grep -c . || true)
+    kept_lines=$(prefilter_inbox "$inbox_lines" "$current_memory" | grep . || true)
+    if [ "$kept_lines" != "$inbox_lines" ]; then
+        log "dropped $((queued_total - $(printf '%s\n' "$kept_lines" | grep -c . || true))) of ${queued_total} queued line(s) the document already holds or the batch repeats"
+        inbox_lines="$kept_lines"
+    fi
+    if [ -z "$inbox_lines" ]; then
+        log "every queued fact is already in memory — nothing to ask the model"
+        archive_inbox_files "$files"
+        touch "$MARKER_FILE" 2>/dev/null || true
+        return 0
+    fi
 
     local prompt output out_file attempt=1 retry_note=""
     local asked_to_shrink_memory=""
@@ -742,13 +802,7 @@ consolidate_once() {
     fi
 
     # Archive the processed inbox files; prune old archives.
-    mkdir -p "$PROCESSED_DIR"
-    local f
-    while IFS= read -r f; do
-        [ -n "$f" ] || continue
-        mv "$f" "$PROCESSED_DIR/$(basename "$f")" 2>/dev/null || rm -f "$f"
-    done <<< "$files"
-    find "$PROCESSED_DIR" -type f -mtime +"$PROCESSED_PRUNE_DAYS" -delete 2>/dev/null || true
+    archive_inbox_files "$files"
 
     touch "$MARKER_FILE" 2>/dev/null || true
     refresh_context

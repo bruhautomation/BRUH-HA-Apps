@@ -2457,3 +2457,66 @@ def test_the_pass_regenerates_after_the_document_is_written():
     body = src[src.index("consolidate_once() {"):src.index("refresh_context() {")]
     assert "refresh_context" in body
     assert body.index("record_change") < body.index("refresh_context")
+
+
+# --- the pass is not spent on what it would only dedupe --------------------
+
+def _seed_lines(memory_dir: Path, records: list[dict]) -> None:
+    inbox = memory_dir / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    (inbox / "1-assist.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in records))
+
+
+def _recording_claude(tmp_path: Path) -> tuple[Path, Path]:
+    """A stand-in that records the prompt it was handed and answers a merge."""
+    seen = tmp_path / "prompt-seen.txt"
+    script = tmp_path / "recording_claude.sh"
+    script.write_text(
+        f"#!/bin/bash\ncat > {seen}\ncat << 'OUT'\n"
+        + FAKE_MERGED_MEMORY + "-----VOICE-----\n" + FAKE_VOICE + "OUT\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return script, seen
+
+
+def test_a_batch_the_document_already_holds_costs_no_model_run(tmp_path):
+    memory_dir = tmp_path / "memory"
+    (memory_dir / "memory.md").parent.mkdir(parents=True)
+    (memory_dir / "memory.md").write_text(
+        "# Home Memory\n\n## Device notes\n"
+        "- We call the office lamp 'the beacon' (observed 2026-09-01)\n")
+    _seed_lines(memory_dir, [
+        {"ts": 1, "source": "assist", "fact": "We call the office lamp 'the Beacon'"},
+        {"ts": 2, "source": "study:x", "fact": "we call the office lamp the beacon"},
+    ])
+    fake, seen = _recording_claude(tmp_path)
+    result = run_consolidator(memory_dir, fake)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not seen.exists(), "the model was asked about facts it would only dedupe"
+    assert inbox_lines(memory_dir) == []
+    assert len(list((memory_dir / "inbox" / "processed").glob("*.jsonl"))) == 1
+    assert "beacon" in (memory_dir / "memory.md").read_text()
+
+
+def test_repeats_collapse_but_corrections_and_forgets_always_reach_the_model(tmp_path):
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "memory.md").write_text(
+        "# Home Memory\n\n## Device notes\n- The hall sensor is wired to the porch\n")
+    _seed_lines(memory_dir, [
+        {"ts": 1, "source": "assist", "fact": "The garage door opens at six"},
+        {"ts": 2, "source": "voice", "fact": "The garage door opens at six."},
+        {"ts": 3, "source": "correction", "fact": "The hall sensor is wired to the porch"},
+        {"ts": 4, "source": "panel", "fact": "FORGET: The hall sensor is wired to the porch"},
+        "not json at all",
+    ])
+    fake, seen = _recording_claude(tmp_path)
+    result = run_consolidator(memory_dir, fake)
+    assert result.returncode == 0, result.stdout + result.stderr
+    prompt = seen.read_text()
+    facts = prompt.split("<<<FACTS", 1)[1].split("FACTS", 1)[0]
+    assert facts.count("garage door opens at six") == 1
+    assert '"ts": 2' in facts  # the newest copy stays
+    assert '"source": "correction"' in facts
+    assert "FORGET: The hall sensor" in facts
+    assert "not json at all" in facts

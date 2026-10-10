@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.16
+
+### Changed
+
+- The memory pass no longer spends a model run on facts it would only have deduplicated. Before a pass, the queue drops a fact whose words are already in memory.md and keeps only the newest copy of a fact queued twice; a batch left with nothing is filed away with no model run at all. Corrections and removal requests are never dropped, and a line that cannot be read is kept.
+
 ## 2.18.15
 
 ### Added
