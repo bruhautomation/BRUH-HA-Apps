@@ -90,6 +90,47 @@ class TestTheRule(unittest.TestCase):
             {"sensor.hall_temp": rows}, LIVE, NOW), {})
 
 
+class TestARestoredOrphanIsNotCut(unittest.TestCase):
+    """Core re-publishes an entity nothing provides any more as
+    `unavailable` carrying `restored: true`, with a fresh `last_changed`
+    and no recorder row — the clock moved, nothing about the device did.
+    Read as a cut it stood `dev.frozen` down and filed a recorder fault
+    that was not there."""
+
+    OLD = [{"entity_id": "sensor.old_plug", "state": "12.0",
+            "last_changed": iso(ago(days=3))}]
+
+    def live(self, state, **attrs):
+        return {"sensor.old_plug": {
+            "entity_id": "sensor.old_plug", "state": state,
+            "attributes": attrs,
+            "last_changed": iso(ago(minutes=20))}}
+
+    def test_a_restored_unavailable_entity_is_not_judged(self):
+        self.assertEqual(ha_data.history_cutoffs(
+            {"sensor.old_plug": self.OLD},
+            self.live("unavailable", restored=True), NOW), {})
+
+    def test_an_unavailable_entity_whose_history_ends_unavailable_is_not_cut(self):
+        # Unavailable then, unavailable now: no state change was missing.
+        rows = [{"entity_id": "sensor.old_plug", "state": "unavailable",
+                 "last_changed": iso(ago(days=3))}]
+        self.assertEqual(ha_data.history_cutoffs(
+            {"sensor.old_plug": rows}, self.live("unknown"), NOW), {})
+
+    def test_a_live_reading_after_the_history_stops_is_still_cut(self):
+        # The rule is narrow: a real device changing after its rows end
+        # is still a hole, restored flag or not.
+        self.assertEqual(set(ha_data.history_cutoffs(
+            {"sensor.old_plug": self.OLD},
+            self.live("13.0", restored=True), NOW)), {"sensor.old_plug"})
+
+    def test_an_unavailable_entity_whose_history_was_a_reading_is_still_cut(self):
+        self.assertEqual(set(ha_data.history_cutoffs(
+            {"sensor.old_plug": self.OLD}, self.live("unavailable"), NOW)),
+            {"sensor.old_plug"})
+
+
 class _Core(unittest.IsolatedAsyncioTestCase):
     """A Core whose `/history/period` answers the walkthrough's shape."""
 
