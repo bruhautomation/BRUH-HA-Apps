@@ -4361,7 +4361,8 @@ async def _generate(insight_id: str) -> None:
                        hypothesis_budget=hypotheses.budget(),
                        pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
-                       findings=findings_store.prompt_block(own=own),
+                       findings=findings_store.prompt_block(
+                           own=own, figures=True),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
@@ -7190,6 +7191,11 @@ def _queue_count(now: float | None = None) -> int:
 # sensor and the panel's badge cannot be two answers (see `findings_store.
 # QUEUE_COUNT` for why the store is handed it rather than asking).
 findings_store.QUEUE_COUNT = _queue_count
+# A model-written row in the house's own words (`findings_store.plain`): the
+# names off the last checks pass (`_NAMES`, never a read of its own) and the
+# house's zone, handed in because the store imports neither.
+findings_store.DISPLAY_NAMES = lambda: _NAMES
+findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
 # The to-do mirror hides a snoozed chore the way To Do does; the snoozes
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
@@ -7969,7 +7975,7 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
                    findings=findings_store.prompt_block(
-                       own=findings_store.own_reports(cat_id)),
+                       own=findings_store.own_reports(cat_id), figures=True),
                    house=await _house_prompt_block())
 
     # The named blocks, in the order `_framing` puts them, each with what
@@ -9005,6 +9011,11 @@ async def _run_book(reason: str = "pressed", snap: dict | None = None,
         return created
 
     created = await asyncio.to_thread(store)
+    # Filed open, and still offered to the first look: a question the
+    # house already answers (an automation does it, a fact says it) is one
+    # the look may set aside with its reason (`look_may_set_aside`).
+    if created:
+        _offer_findings(created, now)
     added = sum(len(s["entries"]) for s in parsed["sections"])
     MAINT_STATE["book"]["last_note"] = (
         f"{added} entr{'y' if added == 1 else 'ies'}"
@@ -11021,6 +11032,11 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
             let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
                 decided[ts] = ("held", why)
+            continue
+        if ts and signal.get("source") == house_book.SOURCE:
+            # A house-book question is already on screen as the question it
+            # is: anything but `ignore` leaves it there, and nothing about
+            # a question for the person is worth an investigation's run.
             continue
         safety = bool(signal.get("safety")) or _is_safety_signal(signal)
         if ts and not safety and not answer.get("fallback") and (
