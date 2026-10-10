@@ -306,9 +306,18 @@ def digest(snap: dict) -> dict:
                          "area": house.area_of(eid),
                          "class": str(attrs.get("device_class") or "")})
         index[f"entity:{eid}"] = house.name(eid)
+    # What the registry already answers, for `parse` to refuse a question
+    # about and never for the prompt: every entity with a room by its own
+    # area id or its device's (the id, not the name — an area the list
+    # could not name is still a room), and every entity an automation
+    # operates, whose "how do you…?" the automation already answers.
+    placed = sorted(e for e in set(house.states) | set(house.registry)
+                    if (house.registry.get(e) or {}).get("area_id")
+                    or (house.device_of(e) or {}).get("area_id"))
+    automated = sorted(house.entity_refs([snap.get("automations")]))
     return {"automations": autos, "scripts": scripts, "scenes": scenes,
             "facts": facts, "areas": areas, "entities": entities,
-            "index": index}
+            "index": index, "placed": placed, "automated": automated}
 
 
 SYSTEM = """You write the house book: a plain-language manual of one home,
@@ -449,8 +458,30 @@ def entry_id(section: str, text: str) -> str:
     return hashlib.sha1(f"{section}|{_norm(text)}".encode()).hexdigest()[:12]
 
 
-# A question asking where something is, or which room it is in.
-_ASKS_WHERE = re.compile(r"\bwhere\b|\bwhich\s+(?:room|area|floor)\b", re.I)
+# A question asking where something is, or which room it is in. "What
+# room" and "located" are the same question in other words, and the first
+# cut asked only for "where" and "which room".
+_ASKS_WHERE = re.compile(
+    r"\bwhere\b|\b(?:which|what)\s+(?:room|area|floor|part\s+of\s+the\s+house)\b"
+    r"|\blocat(?:ed|ion)\b|\bin\s+which\b", re.I)
+# A question asking how to OPERATE something. About an entity an automation
+# already operates, the automation is the answer and the book says so.
+_ASKS_HOW = re.compile(
+    r"^\s*how\s+(?:do|does|can|could|should|would|to)\b", re.I)
+
+
+def _about_entity(key: str, dig: dict) -> str:
+    """The entity a question's subject is about: an entity subject's id, or
+    the entity a cited fact was filed under; "" for anything else."""
+    if key.startswith("entity:"):
+        return key.split(":", 1)[1]
+    if key.startswith("fact:"):
+        fid = key.split(":", 1)[1]
+        for f in dig.get("facts") or []:
+            if isinstance(f, dict) and str(f.get("id")) == fid:
+                subject = str(f.get("subject") or "")
+                return subject if "." in subject and ":" not in subject else ""
+    return ""
 
 
 def parse(answer: dict | None, dig: dict, request: str = "",
@@ -511,6 +542,8 @@ def parse(answer: dict | None, dig: dict, request: str = "",
     questions = []
     placed = {f"entity:{e.get('id')}" for e in dig.get("entities") or []
               if isinstance(e, dict) and e.get("area")}
+    placed |= {f"entity:{e}" for e in dig.get("placed") or ()}
+    automated = {f"entity:{e}" for e in dig.get("automated") or ()}
     q_in = (answer or {}).get("questions") if isinstance(answer, dict) else None
     for q in q_in if isinstance(q_in, list) and not request else []:
         if len(questions) >= MAX_QUESTIONS_PER_RUN or not isinstance(q, dict):
@@ -524,7 +557,12 @@ def parse(answer: dict | None, dig: dict, request: str = "",
         # "Where is it?" about something the registry already places —
         # through its own area or its device's — asks the homeowner for
         # what brAIn was handed. Any other question about it may stand.
-        if key in placed and _ASKS_WHERE.search(text):
+        about = f"entity:{_about_entity(key, dig)}"
+        if about in placed and _ASKS_WHERE.search(text):
+            continue
+        # "How do you arm the alarm?" about an alarm an automation arms:
+        # the automation is the answer, and the book cites it.
+        if about in automated and _ASKS_HOW.search(text):
             continue
         questions.append({"question": textclip.clip(text, MAX_QUESTION),
                           "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),

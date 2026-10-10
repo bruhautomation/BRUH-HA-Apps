@@ -468,7 +468,7 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say. Anything long-winded is a failed run.
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the ONE thing worth knowing, with its number",
@@ -478,13 +478,13 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
  "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
-highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Never pad with filler ("Overall status", "Things look normal") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
-tags: what the card is actually ABOUT, not the category it was asked for — a lighting card that found a battery problem carries "batteries" too. Reuse plain common words.
-hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap ("The garage fridge is meant to run 24/7 — right?"). Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document. A confirmed guess becomes a remembered fact; a rejected one is a dead end never revisited.
+highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Never pad with filler ("Overall status") — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
+tags: what the card is ABOUT, not the category it was asked for — a lighting card that found a battery problem carries "batteries" too. Reuse plain common words.
+hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap ("The garage fridge is meant to run 24/7 — right?"). Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document.
 learned: durable NEW discoveries about this home (a pattern, a quirk, how something behaves — "The dryer draws about 3 kWh per cycle"), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot ("3 lights are on" is a state).
 findings: things that are BROKEN and have an owner — a dead battery, a sensor that stopped reporting, an unavailable device, an automation that can never fire, a setting that contradicts itself. A work list, not observations. Something is actually WRONG (a high reading is not a finding; a value unchanged for six days is); it names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (editing a config, renaming, calling a service — never batteries, unplugging, re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. Most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it ("When the back door opens after sunset, turn on the patio light"), with the entity_ids it names. brAIn replays it before offering it. Never something broken (a finding).
-live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is part of the story (a door that is open, a machine running, a temperature being held). brAIn injects `window.brainLive(callback)` into the page: register once and you are handed {entity_id: {state, attributes, unit, name}} immediately and on every refresh — but the page must render correctly with NO live data at all, so draw the snapshot values first and let the callback update them. Never poll or fetch. Omit the field for a period that has ended, which is most cards.
+live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is part of the story. brAIn injects `window.brainLive(callback)` into the page: register once and you are handed {entity_id: {state, attributes, unit, name}} immediately and on every refresh — but the page must render correctly with NO live data at all, so draw the snapshot values first and let the callback update them. Never poll or fetch. Omit the field for a period that has ended, which is most cards.
 
 THE HTML DOCUMENT:
 - ONE focused visual that carries the story — a single chart, timeline or state map. No stat-tile rows duplicating the highlights, no second chart unless the story needs a pair, no prose inside the HTML.
@@ -498,16 +498,17 @@ ANALYSIS RULES:
 - RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time; delete any that doesn't. No hedging, no methodology, no restating a highlight. Depth goes into WHICH data points you surface, never into word count.
 - Be specific to this home: real friendly names, real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
 - Find the STORY — a trend, an outlier, a pattern, a risk — then compress it to its data points.
-- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain: a phone on "OfficeNet" near 5th & Main and stationary means at work, not "away"; tie HVAC runtime to room temps and weather, an energy spike to the device that turned on at that minute, a light left on to whether the room saw motion. Use the "device_context" section (entities on the same physical device as a presence tracker) as those clues.
+- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain: tie HVAC runtime to room temps and weather, an energy spike to the device that turned on at that minute, a light left on to whether the room saw motion. Use the "device_context" section (entities sharing a device with a presence tracker) as those clues.
 - BUILD ON what you know: KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth — use them, never rediscover or contradict them without new evidence, never re-ask.
 - GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeat of the same headline is a failed run.
-- If the data for the requested angle is thin, say so in the summary and visualize what IS there.
+- If the data for the requested angle is thin, visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow.
 - Times in the data are ISO timestamps in the home's local timezone unless suffixed Z; present them in a friendly way ("6:42 PM").
 - Never invent data. Every number shown must come from the data you were given or fetched.
-- A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, say so, draw it as a gap; too little left means no comparison.
+- A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
-- Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time."""
+- Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
+- The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a number in the title appears in the summary with the same meaning."""
 
 
 SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.

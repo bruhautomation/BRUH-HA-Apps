@@ -75,6 +75,7 @@ from pathlib import Path
 
 import answers
 import atomic_write
+import house_words
 import textclip
 import triage
 
@@ -225,6 +226,9 @@ UNSETTLED_STATUSES = ("open", "planned", "fixed", "failed", "needs_you")
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
 PROMPT_OPEN = 12
+# How much of a live row's detail a card is shown: its figures and window,
+# not its whole evidence.
+PROMPT_DETAIL = 240
 PROMPT_IGNORED = 20
 PROMPT_FIXED = 20
 
@@ -322,6 +326,74 @@ def _titled(source: str, title: str) -> str:
         log.debug("could not name %s: %s", source, exc)
         return title
     return str(named or title)[:120]
+
+
+# A model-written row in the words the house uses (`house_words`): an id
+# the house has a name for becomes the name, a UTC time becomes the house's
+# local one, the add-on's Supervisor slug becomes "brAIn". The panel holds
+# the names map and the zone, so it hands both in, `QUEUE_COUNT`'s
+# arrangement: `DISPLAY_NAMES() -> {entity_id: name | {"name": ...}}` and
+# `HOUSE_TZ() -> tzinfo`. Unset (a test, a tool), only the slug is changed.
+DISPLAY_NAMES = None
+HOUSE_TZ = None
+# Model-written sources whose words are left alone: a person's correction is
+# their words, and the safety lane and the tripwire are written by code
+# (the tripwire's card must never name its entity).
+PLAIN_EXEMPT = frozenset({"correction", "safety", "security"})
+
+
+def _model_written(source: str) -> bool:
+    """A producer whose sentences a model wrote: no colon, not exempt."""
+    source = str(source or "")
+    return bool(source) and ":" not in source and source not in PLAIN_EXEMPT
+
+
+def _names_now() -> dict:
+    hook = DISPLAY_NAMES
+    if hook is None:
+        return {}
+    try:
+        return dict(hook() or {})
+    except Exception as exc:  # noqa: BLE001 — a nicer sentence, never the write
+        log.debug("could not read the names map: %s", exc)
+        return {}
+
+
+def _tz_now():
+    hook = HOUSE_TZ
+    if hook is None:
+        return None
+    try:
+        return hook()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not read the house's zone: %s", exc)
+        return None
+
+
+def plain(text: str, names: dict | None = None, tz=None) -> str:
+    """`house_words.plain` with the panel's names and zone when not handed."""
+    if not isinstance(text, str) or not text:
+        return text
+    return house_words.plain(
+        text, names if names is not None else _names_now(),
+        tz if tz is not None else _tz_now())
+
+
+def _plain_row(row: dict, keys=("claim", "detail", "fix")) -> dict:
+    """A copy of a model-written row with `keys` in the house's words.
+
+    `text` is in `keys` only where the caller says: it is the dedupe key,
+    and for a check — or anything a person or code wrote — it is left
+    exactly as its producer wrote it."""
+    if not isinstance(row, dict) or not _model_written(row.get("source")
+                                                      or RESIDENT_SOURCE):
+        return row
+    names, tz = _names_now(), _tz_now()
+    out = dict(row)
+    for key in keys:
+        if isinstance(out.get(key), str) and out[key]:
+            out[key] = plain(out[key], names, tz)
+    return out
 
 
 def _queue_now(now: float) -> int | None:
@@ -1361,6 +1433,14 @@ def add_many(objs: list[dict]) -> list[dict]:
     refreshed = False
     for obj in objs:
         entry = coerce(obj)
+        if entry is not None and _model_written(entry.get("source")):
+            # A model's words in the house's own. `text` too, except for
+            # the producers whose text is a key code chose (a question's
+            # subject, a playbook, a fix's record).
+            entry = _plain_row(entry, (
+                ("claim", "detail", "fix")
+                if entry.get("source") in SUBJECT_FOLD_EXCLUDED
+                else ("text", "claim", "detail", "fix")))
         if entry is None or normalize(entry["text"]) in seen:
             continue
         about = str(entry.get("entity_id") or "")
@@ -1473,6 +1553,13 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     """
     if not isinstance(row, dict):
         return None
+    # A case is a model's sentence: stored in the house's own words, `text`
+    # included where it is the claim (the Resident's), and left alone where
+    # code chose it as a key (`SUBJECT_FOLD_EXCLUDED`'s producers).
+    row = _plain_row(row, (
+        ("claim", "detail", "fix")
+        if str(row.get("source") or "") in SUBJECT_FOLD_EXCLUDED
+        else ("claim", "detail", "fix", "text")))
     claim = str(row.get("claim") or "").strip()[:MAX_CLAIM]
     if not claim:
         return None
@@ -1525,6 +1612,8 @@ def refine(ts: int, case: dict, run_id: str = "",
     """
     if not isinstance(case, dict):
         return None
+    # The run that looked wrote these; `text` is not among them and never is.
+    case = _plain_row({**case, "source": RESIDENT_SOURCE})
     items = _load()
     for entry in items:
         if int(entry.get("ts") or 0) != int(ts):
@@ -1752,10 +1841,22 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
         if ts not in verdicts:
             continue
         late = entry.get("status") != "triaging"
-        if late and not late_verdict_welcome(entry):
-            continue
         verdict, reason = verdicts[ts][:2]
         if verdict not in triage.VERDICTS:
+            continue
+        if late and verdict == "held" and look_may_set_aside(entry):
+            # A house-book question the look found the house already
+            # answers: held with the look's reason, announced to nobody,
+            # still in History where it can be put back.
+            if echoes(reason, entry.get("text"), entry.get("claim")):
+                reason = ""
+            entry["status"] = "held"
+            entry["triage"] = _clean_triage({
+                "verdict": "held", "reason": reason, "run_id": run_id,
+                "at": stamp, "wrote_fix": False, "v": triage.LOOK_VERSION})
+            wrote = True
+            continue
+        if late and not late_verdict_welcome(entry):
             continue
         if echoes(reason, entry.get("text"), entry.get("claim")):
             reason = ""
@@ -1808,6 +1909,29 @@ def _send_to_look(entry: dict, now: float | None = None) -> None:
     """Back to the first look, stamped with when — see `waiting_since`."""
     entry["status"] = "triaging"
     entry["triaging_since"] = int(now if now is not None else time.time())
+
+
+# The one producer whose open row a look's `ignore` may set aside. A
+# house-book question is filed open at once (a question is for the person),
+# so it never waits in `triaging` for a look — and a question the house
+# already answers (the registry places the thing, an automation does it)
+# is one brAIn should not have asked. Every other row already on screen
+# keeps `late_verdict_welcome`'s rule: it never vanishes into a run.
+# `house_book.SOURCE`, spelled here because the store imports no producer;
+# the test holds the two equal.
+LOOK_MAY_SET_ASIDE = frozenset({"house_book"})
+
+
+def look_may_set_aside(entry: dict) -> bool:
+    """An open house-book question nobody has put back."""
+    if not isinstance(entry, dict) or entry.get("status") != "open":
+        return False
+    if str(entry.get("source") or "") not in LOOK_MAY_SET_ASIDE:
+        return False
+    if str(entry.get("kind") or "") != "question":
+        return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    return not record.get("elevated_by_person")
 
 
 def late_verdict_welcome(entry: dict) -> bool:
@@ -2493,7 +2617,9 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     hands back no undo token. Refuses an empty sentence and an author the
     row cannot name (`FIX_AUTHORS`); answers None for a row that is gone.
     """
-    fix = textclip.clip(str(fix or "").strip(), MAX_FIX)
+    # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
+    # in the house's words.
+    fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
     if not fix or by not in FIX_AUTHORS:
         return None
     items = _load()
@@ -2993,7 +3119,7 @@ def clear_unreported(source: str, shown, keep_keys,
     return gone
 
 
-def prompt_block(exclude_sources=(), own=None) -> str:
+def prompt_block(exclude_sources=(), own=None, figures: bool = False) -> str:
     """What the analyst needs to know about findings before it reports more.
 
     ``exclude_sources`` leaves a producer's own live rows out, and exists
@@ -3060,7 +3186,30 @@ def prompt_block(exclude_sources=(), own=None) -> str:
                   + (f" ({r['entity_id']})" if r.get("entity_id") else "")
                   for r in own]
         parts.append("")
-    if live:
+    if live and figures:
+        # A card about a device a live row is about tells one story with
+        # the row, so it is handed the row's own name, figures and window
+        # (`figures`, the card prompt's call only: a check rewrites its
+        # detail every pass, and the refresh fingerprint reads this block
+        # without it so a moved number on somebody else's row is not news).
+        names = _names_now()
+        parts.append(
+            "PROBLEMS ALREADY ON THE FINDINGS LIST — do NOT report these "
+            "again. When this card talks about a device one of them covers, "
+            "call it by the name shown, quote that row's figures and time "
+            "window rather than working out different ones, and mention it "
+            "in one clause rather than retelling it:")
+        for f in live:
+            eid = str(f.get("entity_id") or "")
+            row = names.get(eid)
+            name = (row.get("name") if isinstance(row, dict) else row) or ""
+            about = (f" ({name}, {eid})" if name and eid
+                     else f" ({eid})" if eid else "")
+            detail = textclip.clip(str(f.get("detail") or "").strip(),
+                                   PROMPT_DETAIL)
+            parts.append(f"- {f['text']}{about}"
+                         + (f"\n  {detail}" if detail else ""))
+    elif live:
         parts.append(
             "PROBLEMS ALREADY ON THE FINDINGS LIST — do NOT report these again:")
         parts += [f"- {f['text']}" for f in live]

@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.19
+
+### Changed
+
+- Findings written by brAIn's own looks read in the house's words: a device id the house has a name for becomes the name, a time given in UTC becomes local time, and the add-on's Supervisor slug becomes "brAIn". The looks are also told to describe automations in plain words and never to ask you to read a log brAIn can read itself. (reports #174, #175)
+- A house-book question brAIn can answer itself is not asked: no "where is it?" for something already placed in a room, directly or through its device, and no "how do you…?" for something an automation already operates. A question a look finds the house already answers is set aside with the look's reason. (reports #175)
+- Insight card titles name the device, door or room being measured, a number in the title means the same thing in the summary, and cards no longer talk about the recorder, retention or a comparison they could not make. (reports #176)
+- An insight card about a device that already has an open finding is handed that finding's name, figures and time window, quotes them rather than working out different ones, and mentions the finding in one clause instead of retelling it. (reports #177)
+
 ## 2.18.18
 
 ### Changed
