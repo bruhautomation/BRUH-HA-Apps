@@ -5867,6 +5867,7 @@ body.term-classic #termMode .ico-out { display: block; }
 /* The select: the browser's chrome off, a drawn caret on. Sized by the
    control token, which the touch floor raises to 16px, and by nothing
    else — a class rule with its own size outranks the floor. */
+select.sel[hidden] { display: none; }
 select.sel {
   appearance: none;
   -webkit-appearance: none;

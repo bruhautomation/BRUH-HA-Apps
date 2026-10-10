@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.18
+
+### Changed
+
+- Needs you no longer repeats the urgent card in a banner above it. With one urgent case leading the queue there is no banner; with several, the banner says how many and Show takes you to them. (reports #182)
+- Timeline: when Home Assistant's logbook cannot be read, the filters are hidden and the message says in plain words what to check, with no file or check names. (reports #183)
+
 ## 2.18.17
 
 ### Fixed
