@@ -161,8 +161,12 @@ for (const { width, touch, top, fits } of CASES) {
   if (!/^Watching · last look 9 min ago$/.test(chrome.status.trim())) {
     note(where, `status line reads "${chrome.status}"`);
   }
-  if (!chrome.banner || !/Kitchen Leak/.test(chrome.bannerText)) {
-    note(where, `the urgent banner is missing or unnamed: "${chrome.bannerText}"`);
+  // One urgent case, and it is the first card on screen: the card already
+  // says Urgent and names the problem, so a banner repeating it is the same
+  // thing twice. (Structural assertion moved by this redesign: it used to
+  // require the banner to name "Kitchen Leak".)
+  if (chrome.banner) {
+    note(where, `the banner repeats the leading urgent card: "${chrome.bannerText}"`);
   }
   if (chrome.badge !== String(COUNTED)) {
     note(where, `badge ${chrome.badge} for ${COUNTED} counted cards`);
@@ -446,6 +450,25 @@ for (const { width, touch, top, fits } of CASES) {
     if (small.length) note(where, `History under the touch floor: ${JSON.stringify(small.slice(0, 6))}`);
   }
   await context.close();
+
+  // Two urgent cases: the banner says a count and no title; one urgent case
+  // that is not on screen is named, with a press to reach it.
+  {
+    const second = { ...FEED[0], id: 'f:1199', claim: 'sensor.cellar_leak is reporting water',
+      entity_name: 'Cellar Leak', origin: { store: 'findings', key: 1199 } };
+    const { page: p4, context: c4 } = await open(width, touch, {
+      cases: [FEED[0], second, ...FEED.slice(1)] });
+    const two = await p4.evaluate(() => ({
+      shown: !document.getElementById('todayBanner').hidden,
+      text: document.getElementById('todayBanner').textContent,
+      press: !!document.querySelector('#todayBanner button'),
+    }));
+    if (!two.shown || !/2 urgent/.test(two.text) || /Leak/.test(two.text)) {
+      note(where, `two urgent cases read "${two.text}" (shown ${two.shown})`);
+    }
+    if (!two.press) note(where, 'the urgent count has no press to reach the cards');
+    await c4.close();
+  }
 
   // The empty house: one line, no banner.
   {

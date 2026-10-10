@@ -6,7 +6,7 @@ A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
 Last retro: 2026-10-07
-Last UX audit: 2026-10-09
+Last UX audit: 2026-10-10
 
 ## Lessons
 
@@ -45,6 +45,12 @@ Last UX audit: 2026-10-09
   all-time scorecard, so it keeps reporting after the rule is fixed. Compare
   the Wrong count with the last `[Scorecard]` issue from before the fix:
   only a Wrong count above what the fixed cause explains is new evidence.
+- 2026-10-10: A stray real `/config/.brain/memory` left in the cloud
+  container by an earlier run makes `test_task_failures`' memory test fail
+  locally on `main` too; check a local-only failure against `main` before
+  chasing it. Every add-on update still re-opens every fault issue whose
+  row it holds (nine this run, all re-stamps); the house side of that is
+  in `brain/panel/devloop/`, a person's file.
 
 ## Loop health
 

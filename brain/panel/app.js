@@ -7177,14 +7177,37 @@ function renderTodayBanner() {
   renderNeedsStrip();
   const box = $("#todayBanner");
   if (!box) return;
-  const urgent = (state.cases || []).filter((c) => c.urgent);
   box.textContent = "";
-  box.hidden = !urgent.length;
-  if (!urgent.length) return;
+  // The card already says "Urgent" and names the problem, so a banner
+  // repeating its title above it is the same thing twice before anybody can
+  // act. It speaks only when it adds something the queue does not: more
+  // than one urgent case (a count, and a press to them), or an urgent case
+  // that is not the card on screen.
+  const groups = todayGroups(todayCards());
+  const lead = todayLeadGroup(groups);
+  const urgent = groups.problems.filter((c) => c.urgent);
+  const fits = lead === "problems" && groupIsOpen("problems", lead)
+    ? (todayState.showAll ? urgent.length : todayFits()) : 0;
+  const onScreen = urgent.filter((_, i) => i < fits).length;
+  const quiet = urgent.length === 1 && onScreen === 1;
+  box.hidden = !urgent.length || quiet;
+  if (box.hidden) return;
   box.appendChild(statusChip("urgent"));
-  box.appendChild(el("span", null, urgent.length === 1
-    ? prettyText(urgent[0].claim)
-    : `${urgent.length} urgent: ${prettyText(urgent[0].claim)}`));
+  const first = urgent[0];
+  const claim = ((state.cases || []).find((c) => c.id === first.id) || {}).claim;
+  box.appendChild(el("span", null, urgent.length > 1
+    ? `${urgent.length} urgent`
+    : (claim ? prettyText(claim) : "Something urgent")));
+  const go = el("button", "btn small ghost", "Show");
+  go.type = "button";
+  go.addEventListener("click", () => {
+    todayState.showAll = true;
+    todayState.groupOpen.problems = true;
+    renderFindings();
+    const node = document.querySelector(`[data-case-id="${CSS.escape(first.id)}"]`);
+    if (node) node.scrollIntoView({ block: "center", behavior: "smooth" });
+  });
+  box.appendChild(go);
 }
 
 function renderTodayStatus() {
@@ -11143,15 +11166,16 @@ function renderActivity() {
   if (!data.available) {
     renderActFilters({});
     renderActActive({});
+    // Filters over a tab that cannot read anything are controls with nothing
+    // to choose, so they go until the logbook answers.
+    document.querySelectorAll("#actArea, #actCause").forEach((n) => { n.hidden = true; });
     list.innerHTML = `<div class="actempty">Home Assistant's logbook could not be `
-      + `read, so nothing here can say what happened or what caused it.`
-      + (data.error ? ` <code>${esc(data.error)}</code>` : "")
-      + ` The <code>logbook</code> integration is part of the default config; `
-      + `if it has been removed from <code>configuration.yaml</code>, this tab `
-      + `and the "automations you keep undoing" check both go quiet.</div>`;
+      + `read, so this tab cannot show what happened. Check that the Logbook is `
+      + `turned on in Home Assistant (it should appear in its sidebar).</div>`;
     return;
   }
 
+  document.querySelectorAll("#actArea, #actCause").forEach((n) => { n.hidden = false; });
   renderActFilters(data);
   renderActNarrow(data);
   const sections = data.sections || [];

@@ -156,6 +156,7 @@ window.__activity = {
   capped: false, dropped: 1842, changes: 20, episodes: ${TOTAL_ROWS},
 };
 window.__empty = false;
+window.__unreadable = false;
 window.__summaryCalls = 0;
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
@@ -188,6 +189,10 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/activity')) {
     (window.__activityQueries = window.__activityQueries || []).push(p);
+    if (window.__unreadable) {
+      return answer({ available: false, error: 'logbook could not be read',
+                      actions: [], overrides: [], counts: {}, sections: [] });
+    }
     if (window.__empty) {
       return answer({ available: true, error: '', sections: [], away: [],
                       counts: {}, dropped: 40, changes: 0, episodes: 0,
@@ -645,6 +650,34 @@ for (const width of WIDTHS) {
     note('empty', 'a quiet window does not say what it left out');
   }
   console.log('ok  empty window: one sentence, no headings, nothing to spend');
+  await context.close();
+}
+
+// A logbook that cannot be read: plain words, one thing to do, and no
+// control that is only a caret.
+for (const [width, touch] of [[390, true], [1200, false]]) {
+  const context = await browser.newContext({ viewport: { width, height: 900 },
+    ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  const page = await context.newPage();
+  page.on('pageerror', (error) => note('unreadable', `page error: ${error.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript('window.__unreadable = true;');
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'activity');
+  await page.waitForSelector('.actempty');
+  const out = await page.evaluate(() => ({
+    text: document.querySelector('.actempty')?.textContent || '',
+    visibleSelects: [...document.querySelectorAll('#actArea, #actCause')]
+      .filter((s) => s.getBoundingClientRect().width > 0).length,
+  }));
+  if (/configuration\.yaml|keep undoing|integration/i.test(out.text)) {
+    note(`unreadable ${width}px`, 'developer wording on the failure sentence');
+  }
+  if (!/Logbook/.test(out.text)) note(`unreadable ${width}px`, 'no plain remedy naming the Logbook');
+  if (out.visibleSelects) note(`unreadable ${width}px`, 'filters shown over a tab that cannot filter anything');
+  await page.screenshot({ path: path.join(process.env.ACTIVITY_SHOT_DIR || '/tmp',
+    `activity-unreadable-${width}.png`) });
+  console.log(`ok  unreadable logbook at ${width}px`);
   await context.close();
 }
 
