@@ -185,6 +185,12 @@ HISTORY_GAP_S = 3600
 # and its own second is its own. (A scene moving six lights at once is
 # six real changes, recorded at that second, so they are never cut.)
 SHARED_CHANGE_MIN = 6
+# A live state that is no reading at all. Core re-publishes an entity
+# nothing provides any more as `unavailable` with `restored: true` and a
+# fresh `last_changed`, and writes no row for it; and an entity that was
+# unavailable when its history ends and is unavailable now changed
+# nothing either. Neither is a window missing its end.
+NO_READING = frozenset({"unavailable", "unknown"})
 
 
 def _epoch(value: Any) -> float | None:
@@ -238,7 +244,11 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
     about. Nor is one whose live change is a second it shares with
     `SHARED_CHANGE_MIN` or more other states: that is a restart or a
     reload resetting the clock, which writes no row because nothing
-    changed. Pure, so every caller reads one rule.
+    changed. Nor is a live state that is no reading (`NO_READING`) when
+    it carries `restored: true` — a restored orphan Core re-published at
+    startup — or when the history's last row was no reading either: no
+    state change is missing between the two. Pure, so every caller reads
+    one rule.
     """
     stop = _epoch(end)
     shared = _shared_seconds(live)
@@ -254,14 +264,20 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
             continue
         if int(changed) in shared:
             continue
+        no_reading = st.get("state") in NO_READING
+        if no_reading and (st.get("attributes") or {}).get("restored") is True:
+            continue
         last = None
+        last_state = None
         for row in rows:
             if not isinstance(row, dict):
                 continue
             when = _epoch(row.get("last_changed") or row.get("last_updated"))
             if when is not None and (last is None or when > last):
-                last = when
+                last, last_state = when, row.get("state")
         if last is None or changed - last <= gap_s:
+            continue
+        if no_reading and last_state in NO_READING:
             continue
         out[eid] = {"history_ends": last, "live_changed": changed}
     return out

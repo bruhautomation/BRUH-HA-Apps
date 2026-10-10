@@ -389,6 +389,165 @@ class TestTheChecksThatUseIt(unittest.TestCase):
             self.check.stale_baselines(self.house(baselines={}), self.now), [])
 
 
+def _iso(when: float) -> str:
+    return dt.datetime.fromtimestamp(when, tz=dt.timezone.utc).isoformat()
+
+
+class TestHumidityAHouseExplains(unittest.TestCase):
+    """Two ways humidity falls far below its band on a healthy house:
+    the weather drying every room at once, and a room's own dehumidifier
+    doing what it is for. Neither is a fault in a sensor."""
+
+    def setUp(self):
+        from checks import baseline as check  # noqa: PLC0415
+        self.check = check
+        self.now = MONDAY + 10 * HOUR
+        self.bucket = str(baselines.hour_of_week(self.now, dt.timezone.utc))
+        self.snap = {"now": self.now, "states": {}, "entities": [],
+                     "devices": [], "areas": [], "baselines": {
+                         "built_at": int(self.now - 3600), "tz": "UTC",
+                         "days": 28, "entities": {}}}
+
+    def area(self, area_id):
+        if not any(a["area_id"] == area_id for a in self.snap["areas"]):
+            self.snap["areas"].append({"area_id": area_id,
+                                       "name": area_id.title()})
+
+    def entity(self, eid, state, area_id, attrs=None, name=None,
+               changed_ago=None, device_id=None):
+        self.area(area_id)
+        when = self.now - (changed_ago if changed_ago is not None else 86400)
+        self.snap["states"][eid] = {
+            "state": state, "attributes": dict(attrs or {}),
+            "last_changed": _iso(when), "last_updated": _iso(when)}
+        row = {"entity_id": eid, "name": name or eid, "area_id": area_id}
+        if device_id:
+            row["device_id"] = device_id
+        self.snap["entities"].append(row)
+
+    def humidity(self, eid, area_id, value, median=55.0, spread=2.0):
+        self.entity(eid, str(value), area_id, {
+            "device_class": "humidity", "state_class": "measurement",
+            "unit_of_measurement": "%"}, name=f"{area_id.title()} humidity")
+        self.snap["baselines"]["entities"][eid] = {
+            "unit": "%", "samples": 672,
+            "overall": {"median": median, "spread": spread, "n": 672},
+            "buckets": {self.bucket: {"median": median, "spread": spread,
+                                      "n": 4}}}
+
+    def found(self):
+        return sorted(f["entity_id"] for f in
+                      self.check.unusual(self.snap, self.now))
+
+    # -- the weather, under the cap -------------------------------------
+    def test_three_rooms_falling_together_are_the_weather_under_the_cap(self):
+        for room in ("bedroom", "study", "lounge"):
+            self.humidity(f"sensor.{room}_humidity", room, 30)
+        self.assertLessEqual(3, self.check.MAX_ROWS)
+        self.assertEqual(self.found(), [])
+
+    def test_two_rooms_falling_together_still_report(self):
+        for room in ("bedroom", "study"):
+            self.humidity(f"sensor.{room}_humidity", room, 30)
+        self.assertEqual(self.found(), ["sensor.bedroom_humidity",
+                                        "sensor.study_humidity"])
+
+    def test_the_weather_leaves_a_real_anomaly_of_another_kind(self):
+        for room in ("bedroom", "study", "lounge"):
+            self.humidity(f"sensor.{room}_humidity", room, 30)
+        self.entity("sensor.pump_power", "1500", "garage", {
+            "device_class": "power", "state_class": "measurement",
+            "unit_of_measurement": "W"})
+        self.snap["baselines"]["entities"]["sensor.pump_power"] = {
+            "unit": "W", "samples": 672,
+            "overall": {"median": 100.0, "spread": 10.0, "n": 672},
+            "buckets": {self.bucket: {"median": 100.0, "spread": 10.0,
+                                      "n": 4}}}
+        self.assertEqual(self.found(), ["sensor.pump_power"])
+
+    def test_three_moving_opposite_ways_are_not_the_weather(self):
+        self.humidity("sensor.bedroom_humidity", "bedroom", 30)
+        self.humidity("sensor.study_humidity", "study", 30)
+        self.humidity("sensor.lounge_humidity", "lounge", 80)
+        self.assertEqual(len(self.found()), 3)
+
+    # -- the room's own dehumidifier ------------------------------------
+    def test_a_dehumidifier_running_in_the_room_explains_dry_air(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("humidifier.basement", "on", "basement",
+                    {"device_class": "dehumidifier"}, name="Basement unit")
+        self.assertEqual(self.found(), [])
+
+    def test_a_dehumidifier_that_stopped_an_hour_ago_still_explains_it(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("humidifier.basement", "off", "basement",
+                    {"device_class": "dehumidifier"}, changed_ago=3600)
+        self.assertEqual(self.found(), [])
+
+    def test_a_plug_named_for_a_dehumidifier_drawing_power_explains_it(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("sensor.plug_power", "310", "basement", {
+            "device_class": "power", "unit_of_measurement": "W"},
+            name="Dehumidifier power")
+        self.assertEqual(self.found(), [])
+
+    def test_a_switch_on_a_device_named_dehumidifier_explains_it(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.snap["devices"].append({"id": "dev1", "name": "Dehumidifier",
+                                     "area_id": "basement"})
+        self.entity("switch.plug_1", "on", "basement", name="Plug 1",
+                    device_id="dev1")
+        self.assertEqual(self.found(), [])
+
+    def test_a_measured_dehumidifier_that_ran_this_afternoon_explains_it(self):
+        """At rest now, but the appliance store's five-minute readings —
+        already fetched by the pass — show it ran for hours."""
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("sensor.plug_power", "0.8", "basement", {
+            "device_class": "power", "unit_of_measurement": "W"},
+            name="Dehumidifier power")
+        start = self.now - 5 * HOUR
+        points = [{"start": start + i * 300,
+                   "mean": 300.0 if i < 36 else 0.8} for i in range(60)]
+        self.snap["appliances"] = {
+            "entities": {"sensor.plug_power": {
+                "idle_w": 0.8, "busy_w": 300.0, "threshold_w": 50.0,
+                "settle_min": 10.0}},
+            "built_at": self.now - 3600, "recent": {"sensor.plug_power": points}}
+        self.assertEqual(self.found(), [])
+
+    def test_damp_air_beside_a_running_dehumidifier_is_still_reported(self):
+        self.humidity("sensor.basement_humidity", "basement", 80)
+        self.entity("humidifier.basement", "on", "basement",
+                    {"device_class": "dehumidifier"})
+        self.assertEqual(self.found(), ["sensor.basement_humidity"])
+
+    def test_a_dehumidifier_in_another_room_explains_nothing(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("humidifier.attic", "on", "attic",
+                    {"device_class": "dehumidifier"})
+        self.assertEqual(self.found(), ["sensor.basement_humidity"])
+
+    def test_a_dehumidifier_off_since_yesterday_explains_nothing(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("humidifier.basement", "off", "basement",
+                    {"device_class": "dehumidifier"}, changed_ago=86400)
+        self.assertEqual(self.found(), ["sensor.basement_humidity"])
+
+    def test_a_humidifier_is_not_a_dehumidifier(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("humidifier.basement", "on", "basement",
+                    {"device_class": "humidifier"})
+        self.assertEqual(self.found(), ["sensor.basement_humidity"])
+
+    def test_a_plug_named_for_it_resting_at_idle_explains_nothing(self):
+        self.humidity("sensor.basement_humidity", "basement", 30)
+        self.entity("sensor.plug_power", "1.2", "basement", {
+            "device_class": "power", "unit_of_measurement": "W"},
+            name="Dehumidifier power")
+        self.assertEqual(self.found(), ["sensor.basement_humidity"])
+
+
 class TestAReadingThatMovesInStepsIsMeasuredInItsSteps(unittest.TestCase):
     """A forecast that sits on 1% for days and steps to 5% has a MAD of
     zero, because more than half its readings are the same number — so
