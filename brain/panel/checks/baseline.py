@@ -25,7 +25,7 @@ import re
 import numfmt
 
 from . import devices
-from ._util import House, domain_of, join_names
+from ._util import House, domain_of, join_names, parse_ts
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -300,6 +300,105 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     return not not_a_house_reading(house, eid, st)
 
 
+# --- a room's own dehumidifier ------------------------------------------
+# Humidity far below its band right after the room's dehumidifier ran is
+# the machine doing what it is for. Decided from the live states the pass
+# already holds: a `humidifier` whose device class says dehumidifier, or —
+# the fallback, a whole-word name gate in the cheap direction (a missed
+# dry room costs one card, a false one the list) — anything whose own
+# name or device's name says dehumidifier, on or drawing power. "Recently"
+# is the last change of an off one: humidity takes hours to come back.
+DEHUMIDIFIER_WORDS = frozenset({"dehumidifier", "dehumidifiers",
+                                "dehumidifer", "dehumidifying"})
+DEHUMIDIFIER_RECENT_S = 6 * 3600
+# A plug resting at standby is not a machine running.
+DEHUMIDIFIER_RUNNING_W = 20.0
+DEHUMIDIFIER_SWITCHED = frozenset({"switch", "input_boolean", "fan",
+                                   "humidifier", "climate", "binary_sensor"})
+
+
+def _says_dehumidifier(house: House, eid: str) -> bool:
+    st = house.states.get(eid) or {}
+    dev = house.device_of(eid) or {}
+    names = (house.name(eid), eid, dev.get("name"), dev.get("name_by_user"),
+             (house.registry.get(eid) or {}).get("original_name"))
+    words = set()
+    for name in names:
+        words |= set(w for w in re.split(r"[^a-z0-9]+", str(name or "").lower())
+                     if w)
+    if words & DEHUMIDIFIER_WORDS:
+        return True
+    attrs = st.get("attributes") or {}
+    return (domain_of(eid) == "humidifier"
+            and str(attrs.get("device_class") or "") == "dehumidifier")
+
+
+def _dehumidifier_running(house: House, eid: str, now: float) -> bool:
+    st = house.states.get(eid) or {}
+    state = str(st.get("state") or "")
+    dom = domain_of(eid)
+    if dom == "sensor":
+        attrs = st.get("attributes") or {}
+        if str(attrs.get("device_class") or "") != "power":
+            return False
+        try:
+            watts = float(state)
+        except (TypeError, ValueError):
+            watts = 0.0
+        unit = str(attrs.get("unit_of_measurement") or "W")
+        if unit == "kW":
+            watts *= 1000.0
+        if watts >= DEHUMIDIFIER_RUNNING_W:
+            return True
+        return _ran_recently(house, eid, now)
+    if dom not in DEHUMIDIFIER_SWITCHED:
+        return False
+    if state in ("on", "dry", "auto", "heat_cool", "cool"):
+        return True
+    if state != "off":
+        return False
+    changed = parse_ts(st.get("last_changed"))
+    return changed is not None and 0 <= now - changed <= DEHUMIDIFIER_RECENT_S
+
+
+def _ran_recently(house: House, eid: str, now: float) -> bool:
+    """Whether the appliance store's own shape for this power sensor says
+    it ran within `DEHUMIDIFIER_RECENT_S` — the five-minute readings the
+    checks pass already fetched for `chore.waiting`, never a new read."""
+    store = house.snap.get("appliances") or {}
+    shape = (store.get("entities") or {}).get(eid)
+    points = (store.get("recent") or {}).get(eid)
+    if not shape or not points:
+        return False
+    try:
+        import appliances  # noqa: PLC0415 — the package stays importable without it
+        found = appliances.state_at(shape, points, now)
+    except Exception:  # noqa: BLE001 — a stand-down, never a reason to fail
+        return False
+    if found.get("state") == appliances.RUNNING:
+        return True
+    ended = float(found.get("finished_at") or 0.0)
+    return bool(ended) and 0 <= now - ended <= DEHUMIDIFIER_RECENT_S
+
+
+def dehumidified(house: House, eid: str, now: float) -> str:
+    """The name of a dehumidifier in `eid`'s room that is running or ran
+    within `DEHUMIDIFIER_RECENT_S`, or "" — read off the live states and
+    registries the pass already has, never a fetch."""
+    area = house.area_id_of(eid)
+    if not area:
+        return ""
+    for other in sorted(house.states):
+        if other == eid or house.area_id_of(other) != area:
+            continue
+        if not house.enabled(other):
+            continue
+        if _says_dehumidifier(house, other) and _dehumidifier_running(
+                house, other, now):
+            return house.name(other)
+    return ""
+
+
 # What in a room can move a reading of each kind. A fix that says "look at
 # what it is measuring" under every row is a sentence nobody can act on; one
 # that names the dehumidifier in the same room is a place to look. Domains
@@ -468,28 +567,41 @@ def unusual(snap: dict, now: float) -> list[dict]:
             st.get("attributes") or {}).get("unit_of_measurement")
         if abs(value - found["median"]) < min_move(measured_in):
             continue
+        # Dry air beside the room's own dehumidifier is the machine
+        # working. Below the band only: damp air beside a running one is
+        # still worth a card.
+        attrs = st.get("attributes") or {}
+        if (str(attrs.get("device_class") or "") == "humidity"
+                and value < found["median"]):
+            machine = dehumidified(house, eid, now)
+            if machine:
+                house.gave_up("base.unusual", [{"entity_id": eid}],
+                              f"humidity below its usual range beside "
+                              f"{machine}, which was running — that is the "
+                              "dehumidifier doing its job")
+                continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
-    if len(hits) > MAX_ROWS:
-        # When the seasons change, a lot of sensors are far outside their
-        # hour-of-the-week usual at once — 23, 17 and 17 rows against a
-        # limit of 4 — and giving up whole left every real anomaly among
-        # them unchecked. Sensors of one kind that moved the SAME way
-        # together are the season (`forecast.decline`'s rule, shared), so
-        # they stand down and what is left is reported if it now fits.
-        def kind(h):
-            attrs = (house.states.get(h[1]) or {}).get("attributes") or {}
-            return str(attrs.get("device_class") or h[3].get("unit")
-                       or attrs.get("unit_of_measurement") or "")
+    # When the seasons change, or the weather dries the house, a lot of
+    # sensors are far outside their hour-of-the-week usual at once — 23,
+    # 17 and 17 rows against a limit of 4, and three rooms' humidity
+    # falling in the same pass under it. Sensors of one kind that moved
+    # the SAME way together are the season (`forecast.decline`'s rule,
+    # shared, so three or more), whatever the total, and what is left is
+    # reported if it fits.
+    def kind(h):
+        attrs = (house.states.get(h[1]) or {}).get("attributes") or {}
+        return str(attrs.get("device_class") or h[3].get("unit")
+                   or attrs.get("unit_of_measurement") or "")
 
-        seasonal = moved_together(
-            hits, kind, lambda h: 1 if h[2]["value"] >= h[2]["median"] else -1)
-        if seasonal:
-            house.gave_up("base.unusual", [{"entity_id": h[1]} for h in seasonal],
-                          "several sensors of the same kind moved the same "
-                          "way at once — that is the season or the weather "
-                          "moving, not one device")
-            hits = [h for h in hits if h not in seasonal]
+    seasonal = moved_together(
+        hits, kind, lambda h: 1 if h[2]["value"] >= h[2]["median"] else -1)
+    if seasonal:
+        house.gave_up("base.unusual", [{"entity_id": h[1]} for h in seasonal],
+                      "several sensors of the same kind moved the same "
+                      "way at once — that is the season or the weather "
+                      "moving, not one device")
+        hits = [h for h in hits if h not in seasonal]
     if len(hits) > MAX_ROWS:
         # Too many is the measurement being wrong, not the house. Said
         # nothing rather than said fifty times — and the trail says so.

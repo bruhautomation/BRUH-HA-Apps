@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.18
+
+### Changed
+
+- Needs you no longer repeats the urgent card in a banner above it. With one urgent case leading the queue there is no banner; with several, the banner says how many and Show takes you to them. (reports #182)
+- Timeline: when Home Assistant's logbook cannot be read, the filters are hidden and the message says in plain words what to check, with no file or check names. (reports #183)
+
+## 2.18.17
+
+### Fixed
+
+- Three or more sensors of one kind moving the same way in one pass (humidity across three rooms on a dry day) are read as the weather, not as three faults, even when the total is under the check's limit. (reports #171)
+- A room's humidity below its usual range is not reported while that room's own dehumidifier is running or ran in the last six hours: that is the machine doing its job. Damp air beside one is still reported. (reports #173)
+- An entity that is unavailable after a restart (Home Assistant re-publishes it with a fresh timestamp and records nothing) is no longer read as the recorder missing rows, so it no longer stands the frozen-sensor check down or files a recorder finding. (reports #172)
+
 ## 2.18.16
 
 ### Changed
