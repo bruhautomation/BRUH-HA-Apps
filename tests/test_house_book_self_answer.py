@@ -21,7 +21,7 @@ places answer for it:
 import sys
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock as mock
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
