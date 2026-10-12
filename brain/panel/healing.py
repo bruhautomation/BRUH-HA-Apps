@@ -558,6 +558,7 @@ def _entry_attempts(finding: dict, snap: dict, patterns: list[str]) -> list[dict
                        if e.get("entity_id")
                        and e.get("config_entry_id") == entry_id)
         name = sys_checks.entry_name(entry)
+        refused = credential_refused(entry)
         out.append({
             "remedy": "entry.reload",
             "verb": "reload",
@@ -577,7 +578,44 @@ def _entry_attempts(finding: dict, snap: dict, patterns: list[str]) -> list[dict
             "resolvable": linked,
             "sentence": f"reloaded the {name} integration",
         })
+        if refused:
+            # Carried on the candidate rather than dropped, so the planner
+            # can say why the row was left when this is all there is.
+            out[-1]["refused"] = (
+                f"the {name} integration's sign-in was refused ({refused}); "
+                "a reload sends the same credential again and cannot clear "
+                "that — it needs signing in again in Settings > Devices & "
+                "services")
     return out
+
+
+# An entry whose setup error says its credential was REFUSED. A reload
+# re-sends the credential that was refused, so it cannot clear one and
+# only adds a failed sign-in to whatever the far end counts. Deliberately
+# narrow — the obvious words and status codes and nothing inferred — so a
+# connection failure, a timeout or an unknown error is still reloaded.
+_AUTH_REFUSED = re.compile(
+    r"\b(?:HTTP\s*)?40[13]\b"
+    r"|\bunauthori[sz]ed\b"
+    r"|\bforbidden\b"
+    r"|\baccess\s+denied\b"
+    r"|\bauth(?:entication)?\s+(?:failed|failure|error)\b"
+    r"|\binvalid\s+(?:auth|authentication|credentials?|api[\s_-]?key|token)\b",
+    re.I)
+
+
+def credential_refused(entry: dict) -> str:
+    """The words in an entry's setup error that say its sign-in was
+    refused, or `""`. Read off `reason` as `sys.entry_failed` shows it (an
+    HTML error page becomes "HTTP 403"), never guessed from anything else."""
+    from checks import system as sys_checks  # noqa: PLC0415
+
+    raw = str(entry.get("reason") or "")
+    for text in (sys_checks.clean_reason(raw), raw):
+        hit = _AUTH_REFUSED.search(text)
+        if hit:
+            return " ".join(hit.group(0).split())
+    return ""
 
 
 # The closed playbook. A source that is not a key here is a finding
@@ -677,9 +715,15 @@ def plan(findings: list[dict], snap: dict, patterns: list[str],
         if not found:
             skip(row, "nothing in the house matches this row any more")
             continue
+        usable = [c for c in found if not c.get("refused")]
+        if not usable:
+            # Every target this row could heal said its credential was
+            # refused: a reload re-sends it and cannot clear that.
+            skip(row, str(found[0]["refused"]))
+            continue
         # One attempt per finding. See the module docstring: the finding
         # is the unit that clears, and the clearing is the verification.
-        candidate = found[0]
+        candidate = usable[0]
         refusal = _protected_refusal(candidate.get("entities"),
                                      bool(candidate.get("resolvable")),
                                      patterns)
@@ -705,14 +749,77 @@ def plan(findings: list[dict], snap: dict, patterns: list[str],
 # Doing it
 # ---------------------------------------------------------------------------
 
+# The channel a heal's ledger row carries. Not one of
+# `actions.PERSON_CHANNELS`, so the timeline files what it moved as brAIn.
+LEDGER_CHANNEL = "healing"
+# A reload's row names every entity the entry owns, so the changes it
+# causes are attributed; past this many the rest are left unnamed.
+LEDGER_MAX_ENTITIES = 200
+# Where the rows go when set; otherwise `actions.LEDGER_FILE`, read at call
+# time so the reader and this writer cannot name two different files.
+LEDGER_FILE: str | None = None
+
+
+def ledger_row(attempt: dict, when: float | None = None) -> dict | None:
+    """The action-ledger row for one heal, in `ha_mcp_server.record_action`'s
+    shape (`typed_fix.ledger_row`, never a third copy of it).
+
+    The heal calls Core and the Supervisor directly, not through the MCP
+    chokepoint that writes the ledger, so without this row a reload's
+    changes read as unattributed in the timeline and `get_activity`.
+    """
+    import typed_fix  # noqa: PLC0415
+
+    kind = str(attempt.get("kind") or "")
+    if kind == "supervisor":
+        domain, service = "hassio", f"addon_{attempt.get('verb') or 'start'}"
+        target = {"addon": str(attempt.get("target") or "")}
+    elif kind == "service":
+        domain = str(attempt.get("domain") or "")
+        service = str(attempt.get("service") or "")
+        data = attempt.get("data") or {}
+        target = ({"entry_id": str(data["entry_id"])}
+                  if isinstance(data, dict) and data.get("entry_id") else {})
+    else:
+        return None
+    entities = [e for e in (attempt.get("entities") or [])
+                if isinstance(e, str) and e][:LEDGER_MAX_ENTITIES]
+    row = typed_fix.ledger_row(domain, service, entities, before={},
+                               channel=LEDGER_CHANNEL, when=when)
+    if target and any(target.values()):
+        row["target"] = target
+    return row
+
+
+def record_ledger(attempt: dict, path: str | None = None) -> None:
+    """Append the heal's ledger row. Never raises and never creates the
+    directory (`facts_store.writable`'s rule, through `append_ledger`)."""
+    try:
+        import actions  # noqa: PLC0415
+        import typed_fix  # noqa: PLC0415
+
+        row = ledger_row(attempt)
+        if row is not None:
+            typed_fix.append_ledger(
+                row, path or LEDGER_FILE or actions.LEDGER_FILE)
+    except Exception:  # noqa: BLE001 — accounting must not fail the heal
+        log.debug("healing: the action ledger row was not written",
+                  exc_info=True)
+
+
 async def perform(session, attempt: dict) -> tuple[bool, str]:
     """Make the one call. Returns `(ok, why not)` and never raises.
 
     A failure is recorded and **not retried tonight**, which needs no
     machinery: the attempt is written to the store whatever happened to
     it, and the store is what the next pass reads.
+
+    The call is written to the action ledger first, as the MCP chokepoint
+    writes a call before it makes it, so what it changes is brAIn's.
     """
     kind = str(attempt.get("kind") or "")
+    if kind in ("supervisor", "service"):
+        record_ledger(attempt)
     try:
         if kind == "supervisor":
             import aiohttp  # noqa: PLC0415
@@ -790,7 +897,8 @@ def _ordinal(n: int) -> str:
 
 __all__ = [
     "CHRONIC_DAYS", "CHRONIC_HEALS", "CHRONIC_SAYS", "CHRONIC_SOURCE",
-    "chronic_finding", "heals_in_window", "log_excerpt", "read_logs",
+    "LEDGER_CHANNEL", "chronic_finding", "credential_refused", "ledger_row",
+    "record_ledger", "heals_in_window", "log_excerpt", "read_logs",
     "record_heal", "system_log_lines", "target_key",
     "CALL_TIMEOUT_S", "MAX_PER_NIGHT", "OUTCOME_FAIL", "OUTCOME_OK",
     "NEEDS", "OUTCOME_SKIP", "REMEDIES", "SETTLE_GRACE_MIN",

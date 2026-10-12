@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- **What you use is recorded again.** Home Assistant takes a hidden panel off the page and later puts the same one back, and Morph stopped sending what you tapped after the first time that happened. A send that failed also threw its taps away. Morph now restarts when it comes back, sends what it has when you switch away, and keeps taps whose send failed until the next one. Buttons and light-group members now count towards their card.
+- **Two cards in one room no longer get the same name.** When shortening would make two names the same (two speakers both "Mini"), Morph keeps their full names, and adds a number when even those match.
+- **Removing the room name takes the separator with it.** "Kitchen - Bread Stretch" in the Kitchen shows as "Bread Stretch", not "- Bread Stretch". A name that only starts with the room's letters ("Kitchenette Lamp") is left whole.
+
 ## 0.2.0
 
 ### Added

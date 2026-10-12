@@ -233,6 +233,8 @@ const hass = {
       window.__shots = (window.__shots || []).concat([msg.png]);
       return { shot: 'f'.repeat(31) + window.__shots.length, bytes: msg.png.length };
     }
+    // A suspended connection refuses a send; the measure sets this to make one fail.
+    if (t === 'morph/usage' && window.__usageFail > 0) { window.__usageFail -= 1; window.__ws.pop(); throw new Error('Connection lost'); }
     if (t === 'morph/usage' || t === 'morph/report' || t === 'morph/finding') return { ok: true };
     if (t === 'morph/yaml') return { text: 'title: Home\\n' };
     if (t === 'history/history_during_period') {

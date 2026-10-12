@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.28
+
+### Fixed
+
+- The overnight repair no longer reloads an integration whose sign-in was refused (an HTTP 401 or 403, "forbidden", "invalid credentials"). A reload re-sends the same credential, so it could never help; the row now says to sign the integration in again under Settings > Devices & services. Another failed integration that a reload can fix is no longer hidden behind the refused one.
+- Every overnight repair (reloading an integration, pinging a Z-Wave node, starting an add-on) is now written to the action ledger, so the Timeline and `get_activity` show it as something brAIn did. Before, those changes had no recorded cause.
+- `get_error_log` is readable when one integration floods the log. Colour codes are stripped, a repeated line is shown once with how many times it happened and when, and the 100-line window is filled after folding, so an error from before the flood is still there. Two new optional filters: `level` (the lowest level to show) and `match` (a logger or text to look for).
+- The development loop's list of what a house has already reported is cut at a word, not mid-sentence, and keeps up to 400 characters of each report. Other prose it hands to a model is cut at a word too.
+
 ## 2.18.27
 
 ### Added

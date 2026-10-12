@@ -38,6 +38,8 @@ const TELL_SUGS = {
   dashboard: ['Add a Pets section', 'Make a section for the garden', 'Tidy the Whole house floor'],
 };
 const KIND_WORD = { card: 'card', section: 'section', floor: 'floor', story: 'story', upcoming: 'Coming up', scenes: 'scenes', dashboard: 'dashboard' };
+// Uses waiting to be sent when the connection is down; past this the oldest go.
+const USAGE_KEEP = 400;
 
 class MorphPanel extends HTMLElement {
   constructor() {
@@ -75,13 +77,42 @@ class MorphPanel extends HTMLElement {
 
   connectedCallback() {
     if (this._hass && !this.engine) this.boot();
+    // Home Assistant takes a panel out of the page while it is hidden (five
+    // minutes in the background, another panel in front) and puts the SAME
+    // element back: boot() does not run again, so whatever
+    // disconnectedCallback stopped has to be started here or it stays
+    // stopped — which is how the usage log went quiet for good after the
+    // first time somebody switched apps.
+    else if (this._hass && this.engine) { this.startLive(); this.load(); }
   }
 
   disconnectedCallback() {
+    this.flushUsage();
+    this.stopLive();
+  }
+
+  // The live half: the subscription, the ticks, and flushing the usage log
+  // when the page is hidden (the websocket is still open then; by the time
+  // Home Assistant takes the panel out it has suspended the connection).
+  startLive() {
+    if (this._live || !this._hass) return;
+    this._live = true;
+    this._unsub = this.hass.connection.subscribeMessage(() => this.load(), { type: 'morph/subscribe' }).catch(() => null);
+    this._tick = setInterval(() => { this.schedule(); this.flushUsage(); this.pollTell(); }, 10000);
+    this._since = setInterval(() => this.tickSince(), 1000);
+    this._onHide = (e) => { if (e.type === 'pagehide' || document.visibilityState === 'hidden') this.flushUsage(); };
+    document.addEventListener('visibilitychange', this._onHide);
+    window.addEventListener('pagehide', this._onHide);
+  }
+
+  stopLive() {
+    if (!this._live) return;
+    this._live = false;
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
     clearInterval(this._tick);
     clearInterval(this._since);
-    this.flushUsage();
+    document.removeEventListener('visibilitychange', this._onHide);
+    window.removeEventListener('pagehide', this._onHide);
   }
 
   boot() {
@@ -104,9 +135,7 @@ class MorphPanel extends HTMLElement {
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
     this.ro.observe(this.$('[data-board]'));
     this.load();
-    this._unsub = this.hass.connection.subscribeMessage(() => this.load(), { type: 'morph/subscribe' }).catch(() => null);
-    this._tick = setInterval(() => { this.schedule(); this.flushUsage(); this.pollTell(); }, 10000);
-    this._since = setInterval(() => this.tickSince(), 1000);
+    this.startLive();
     try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { this.engine.invalidate(); this.engine.layout(false, true); }); } catch (e) { /* no font API */ }
   }
 
@@ -424,7 +453,16 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
 
   cardName(card, sec) {
     if (card.name) return card.name;
-    if (card.entity) return shortName(friendly(this.hass, card.entity), sec.title);
+    if (card.entity) {
+      const full = friendly(this.hass, card.entity);
+      const short = shortName(full, sec.title);
+      if (short === full) return full;
+      // Two cards in one section must not read the same: where another card
+      // here would show this shortened name too, both keep their full names.
+      const clash = this.sectionCards(sec).some((c) => c !== card && c.entity && c.entity !== card.entity
+        && String(c.name || shortName(friendly(this.hass, c.entity), sec.title)).toLowerCase() === short.toLowerCase());
+      return clash ? full : short;
+    }
     if (card.type === 'lovelace') return (card.card && (card.card.title || card.card.name)) || 'Card';
     return card.type;
   }
@@ -1095,7 +1133,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       this.mptr = null;
       if (mp.drag && this.s.memberPreview) { const v = this.s.memberPreview.v; this.call(v <= 1 ? { domain: 'light', service: 'turn_off', data: { entity_id: mp.id } } : { domain: 'light', service: 'turn_on', data: { entity_id: mp.id, brightness_pct: v } }); setTimeout(() => { this.s.memberPreview = null; this.schedule(); }, 900); }
       else if (!mp.drag) this.call({ domain: 'light', service: 'toggle', data: { entity_id: mp.id } });
-      this.track('toggle', null, null, mp.id);
+      { const at = this.tileOf(mp.el); this.track('toggle', at.card, at.section, mp.id); }
       return;
     }
     if (this.drag) { this.secUp(); return; }
@@ -1266,7 +1304,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         }
         let data = {}; try { data = JSON.parse(el.dataset.data || '{}'); } catch (e) { /* none */ }
         this.call({ domain: el.dataset.domain, service: el.dataset.service, data });
-        this.track('toggle', null, null, data.entity_id && String(data.entity_id));
+        { const at = this.tileOf(el); this.track('toggle', at.card, at.section, data.entity_id && String(data.entity_id)); }
         return;
       }
       case 'scene': this.call({ domain: 'scene', service: 'turn_on', data: { entity_id: v } }); this.track('scene', null, null, v); return;
@@ -1513,10 +1551,27 @@ ${hist == null ? '<p class="sm">Reading…</p>' : hist.length ? hist.map((h) => 
     if (this.usage.length >= 40) this.flushUsage();
   }
 
+  // A send that failed (the connection suspended, a reconnect in progress)
+  // puts its events back for the next tick rather than dropping them: the
+  // splice used to take them off the queue first and the catch threw them
+  // away, so every use made just before the app went to the background was
+  // lost. Capped, so a connection that never comes back cannot grow it.
   flushUsage() {
-    if (!this.usage.length || !this.hass) return;
+    if (!this.usage.length || !this.hass || this._flushing) return;
     const events = this.usage.splice(0, 50);
-    this.hass.callWS({ type: 'morph/usage', events }).catch(() => {});
+    this._flushing = true;
+    let sent;
+    try { sent = Promise.resolve(this.hass.callWS({ type: 'morph/usage', events })); } catch (e) { sent = Promise.reject(e); }
+    sent.catch(() => { this.usage = events.concat(this.usage).slice(-USAGE_KEEP); })
+      .finally(() => { this._flushing = false; });
+  }
+
+  // Which card and section a control inside a tile belongs to, so a press on
+  // a button or a light-group member counts toward the card it is on.
+  tileOf(el) {
+    const tile = el && el.closest && el.closest('[data-tile]');
+    const hit = tile && this.findCard(tile.getAttribute('data-tile'));
+    return hit ? { card: hit.card.id, section: hit.sec.id } : { card: null, section: null };
   }
 
   report(kind, message, detail, cardType) {

@@ -487,6 +487,14 @@ class PerformCase(unittest.IsolatedAsyncioTestCase):
         healing.SUPERVISOR_API = base
         self.addCleanup(self._restore_sup)
 
+        # Every heal writes an action-ledger row; never into a real
+        # /config/.brain on the machine running the suite.
+        self._ledger_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._ledger_dir.cleanup)
+        self._ledger = healing.LEDGER_FILE
+        healing.LEDGER_FILE = str(Path(self._ledger_dir.name) / "actions.jsonl")
+        self.addCleanup(lambda: setattr(healing, "LEDGER_FILE", self._ledger))
+
         import ha_data
         self.ha_data = ha_data
         self._core = ha_data.CORE_API
