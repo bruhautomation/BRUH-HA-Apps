@@ -470,8 +470,16 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   const notes = () => p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.note')].map((n) => n.textContent.replace(/\s+/g, ' ')).join(' | '));
   const btn = p.locator('[data-act="code-redo"]');
   if (!(await btn.count())) { fail(`redo ${name}`, 'no Make it again on a paused copy'); await ctx.close(); continue; }
+  // The service answers slowly while the house keeps changing (each change
+  // redraws the panel): the note has to say it is working the whole time.
+  await p.evaluate(() => { window.__redoDelay = 2500; window.__busy = setInterval(() => window.__push && window.__push(), 200); });
   await btn.first().click();
-  await settle(p, 400);
+  await settle(p, 900);
+  const waiting = await notes();
+  if (!/Handing it to brAIn/.test(waiting)) fail(`redo ${name}`, `nothing says brAIn is being asked while the service answers (${waiting.slice(0, 120)})`);
+  if (await btn.count()) fail(`redo ${name}`, 'Make it again is back while the first press is still being answered');
+  await settle(p, 2200);
+  await p.evaluate(() => clearInterval(window.__busy));
   const working = await notes();
   if (!/brAIn is making your change to Morph’s morph-panel\.js again/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
   if (!(await p.locator('.note [data-tell]').count())) fail(`redo ${name}`, 'brAIn’s box did not open in the note');
@@ -480,6 +488,19 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   const done = await notes();
   if (!/Reload to see it/.test(done) || !/Undo/.test(done)) fail(`redo ${name}`, `the finished redo does not offer Reload and Undo (${done.slice(0, 160)})`);
   if (/is paused/.test(done)) fail(`redo ${name}`, 'the note still says the change is paused after brAIn made it again');
+  await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="settings"]'); b && b.click(); });
+  await settle(p, 700);
+  if (!(await p.evaluate(() => window.__panel.shadowRoot.textContent.includes('Morph 0.5.3')))) fail(`redo ${name}`, 'Settings does not say which Morph is running');
+  await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="home"]'); b && b.click(); });
+  await settle(p, 700);
+  // A press brAIn could not take says why, in the note, and can be tried again.
+  await p.evaluate(() => { window.__redoDelay = 0; window.__redoError = 'brAIn is installed but its Automation integration is off.'; window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
+  await settle(p, 700);
+  await p.locator('[data-act="code-redo"]').first().click();
+  await settle(p, 700);
+  const refused = await notes();
+  if (!/brAIn did not start: brAIn is installed but its Automation integration is off/.test(refused)) fail(`redo ${name}`, `a refusal is not said in the note (${refused.slice(0, 160)})`);
+  if (!(await p.locator('[data-act="code-redo"]').count())) fail(`redo ${name}`, 'a refused press cannot be tried again');
   await ctx.close();
 }
 
