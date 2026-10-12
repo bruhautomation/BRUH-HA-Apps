@@ -212,9 +212,15 @@ def build(house: dict) -> dict:
         groups = []
         if scenes:
             groups.append({"cards": [{"type": "scenes", "entities": scenes[:8]}]})
+        # Fans and blinds are how a room feels rather than how it is lit, and
+        # the prototype keeps them apart under a quiet "Comfort" label.
+        labels = {"motion": "Comfort"}
         for key in ("lights", "motion", "switches", "media", "cameras"):
             if buckets[key]:
-                groups.append({"cards": buckets[key]})
+                group = {"cards": buckets[key]}
+                if key in labels:
+                    group["label"] = labels[key]
+                groups.append(group)
         count = sum(len(g["cards"]) for g in groups)
         if not count:
             return None

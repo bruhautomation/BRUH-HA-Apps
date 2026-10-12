@@ -138,7 +138,8 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. Rules for card cod
 3. **No chrome.** No Done buttons, tabs, chevrons or drag handles in normal use.
 4. **One control, one place.** Never repeat a control in a second card.
 5. **Scenes sit above lights**, as words.
-6. **Quiet by default.** A group gets a label only when it needs one.
+6. **Quiet by default.** A group gets a label only when it needs one. Fans and
+   blinds sit after a room's lights in a group labelled **Comfort**.
 7. **Tiles don't waste space.** Things of one kind go together, and a row only
    holds things of the same height.
 8. **History belongs to its device**, in the device's colour.

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.3.0
+
+### Changed
+
+- **Morph looks like its design again.** Several things had drifted from the
+  prototype in the move to Home Assistant, and are back:
+  - A strip's status line is quiet text, and its colour lives in the fill and
+    the icon. A light says its level and its colour (*40% · Warm*), a group
+    says how many are on (*All 6 · 35%*, *2 of 4 · mixed*), a fan says how
+    fast (*Medium · 40%*).
+  - Fills run strong at the left and fade toward the thumb, and a light's
+    strip is no longer tinted behind the fill.
+  - A light group is twice the width of a strip, and opens downward.
+  - Closed blinds are plain. The slats are drawn only over the part that is
+    open.
+  - The bulb, group, fan and blinds icons are the prototype's. A bulb's rays
+    show only while it is on.
+  - A camera is a title, a line of state and a picture with a LIVE mark.
+  - brAIn's notes and Morph's suggestions come after a room's tiles. They read
+    as a sentence with a row of words under it, and the yes is first, in ink.
+  - A room's line says whether it is asleep (and since when), how warm it is
+    and whether anyone is there. What is on was already on its tiles.
+  - A floor's line says what the thermostat is doing (*73.2° · cooling to
+    72°*) and which rooms are asleep.
+  - Coming up spans the whole width, clear of the Now marker.
+  - The Ask suggestions show only while you are asking.
+  - The overlay chart is the prototype's:
+    - beside the plot, a column of labels that follow the line ends (or your
+      finger) and pick a line out;
+    - under the lines, the thermostats' target through the day as a band, and
+      when the system ran (*Cooling · 4 h 12 m*);
+    - then a time axis, and the extremes on their own line with sparklines.
+- **New dashboards group fans and blinds under "Comfort"**, after the lights.
+- On a phone, a strip's name has a little more room before it is cut off.
 ## 0.2.1
 
 ### Fixed

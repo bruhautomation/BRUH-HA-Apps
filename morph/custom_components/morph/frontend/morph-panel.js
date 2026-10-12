@@ -25,7 +25,7 @@ import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, domainOf, UNAVAILABLE, fmt } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, domainOf, UNAVAILABLE, fmt, climateDoing } from './util.js';
 
 const HOLD_MS = 540;
 const TELL_SUGS = {
@@ -328,13 +328,14 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     if (!list.length && !this.s.edit) return '';
     let lastLeft = -100;
     const items = list.map((e) => {
-      let left = 6 + ((e.t - now) / (end - now)) * 90;
-      if (left - lastLeft < 15) left = lastLeft + 15;
+      // Clear of the Now marker, then spread across the whole width.
+      let left = 11 + ((e.t - now) / (end - now)) * 85;
+      if (left - lastLeft < 12) left = lastLeft + 12;
       lastLeft = left;
       return `<button type="button" class="ev" data-act="upc" data-v="${esc(e.eid || '')}" style="left:${Math.min(97, left).toFixed(1)}%"><span class="t">${esc(clock(e.t))}</span><span class="dot" style="border:2px ${e.solid ? 'solid' : 'dashed'} ${e.color}"></span><span class="n">${esc(e.label)}<i>${esc(e.sub || '')}</i></span></button>`;
     }).join('');
     return `<div class="holdable${holding}" data-hold="upcoming" style="display:flex;flex-direction:column;gap:6px"><div class="rowb"><span class="label">Coming up</span><span class="small">next 12 hours</span></div>
-<div class="upc"><div class="track"><div class="line"></div><div class="past"></div><span class="now nowdot"></span><span class="nowl">Now</span>${items || '<span class="small" style="position:absolute;left:60px;top:28px">Nothing scheduled.</span>'}</div></div>${this.tellBox('upcoming')}</div>`;
+<div class="upc"><div class="utrack"><div class="line"></div><div class="past"></div><span class="now nowdot"></span><span class="nowl">Now</span>${items || '<span class="small" style="position:absolute;left:60px;top:28px">Nothing scheduled.</span>'}</div></div>${this.tellBox('upcoming')}</div>`;
   }
 
   scenesHtml(dash) {
@@ -378,29 +379,37 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     return { bySec: out, top };
   }
 
+  // A note reads as brAIn speaking, not as an alert: a soft violet wash, the
+  // sentence first, then a row of words — the first one the yes, in ink,
+  // the rest quiet. A serious finding warms the wash; nothing shouts.
   noteHtml(n) {
+    const wash = (c) => `background:linear-gradient(100deg, ${mix(c, 11)}, ${mix('var(--teal)', 4)} 70%, transparent)`;
+    const act = (attrs, label, first) => `<button type="button" class="wd${first ? ' first' : ''}" ${attrs}>${esc(label)}</button>`;
+    const shell = (who, color, say, sub, acts) => `<div class="note bnote rise" data-ctl="1" style="${wash(color)}">${SPARK}<div class="bnin"><span class="sr">${esc(who)}: </span><span class="say">${esc(say)}</span>${sub}${acts ? `<div class="acts">${acts}</div>` : ''}</div></div>`;
     if (n.kind === 'finding') {
       const f = n.f;
-      const color = f.severity === 'critical' ? 'var(--rose)' : f.severity === 'warning' ? 'var(--amber)' : 'var(--sky)';
+      const color = f.severity === 'critical' ? 'var(--rose)' : f.severity === 'warning' ? 'var(--amber)' : 'var(--violet)';
       const answers = (f.answers || []).slice(0, 3);
-      return `<div class="note rise" style="background:${mix(color, 9)};box-shadow:inset 0 0 0 1px ${mix(color, 25)}"><div class="row">${SPARK}<span class="small" style="color:${color};font-weight:700">brAIn noticed</span></div><p>${esc(f.text)}</p>${f.detail ? `<span class="sm">${esc(f.detail)}</span>` : ''}${answers.length && this.admin() ? `<div class="acts">${answers.map((a) => `<button type="button" class="wd ${a.action === 'fixed' ? 'go' : ''}" data-ctl="1" data-act="finding" data-ts="${f.ts}" data-v="${esc(a.action)}">${esc(a.label)}</button>`).join('')}</div>` : ''}</div>`;
+      const acts = answers.length && this.admin() ? answers.map((a, i) => act(`data-act="finding" data-ts="${f.ts}" data-v="${esc(a.action)}"`, a.label, i === 0)).join('') : '';
+      return shell('brAIn noticed', color, f.text, f.detail ? `<span class="sub">${esc(f.detail)}</span>` : '', acts);
     }
     const g = n.g;
     const tellState = g.tell ? this.tellStatus[g.tell] : null;
-    let acts;
+    let acts = '';
+    let extra = '';
     if (g.status === 'doing') {
-      acts = `<span class="sm">${esc((tellState && (tellState.say || (tellState.steps || []).slice(-1).map((x) => x.t)[0])) || 'brAIn is on it…')}</span>`;
+      extra = `<span class="sub">${esc((tellState && (tellState.say || (tellState.steps || []).slice(-1).map((x) => x.t)[0])) || 'brAIn is on it…')}</span>`;
     } else if (this.s.sugNo === g.id) {
-      acts = `<input class="fld" type="text" data-keep="sugno" placeholder="Why not? (optional — it teaches Morph)"><div class="acts"><button type="button" class="wd strong" data-act="sug" data-v="no" data-id="${esc(g.id)}">Don't suggest it again</button><button type="button" class="wd" data-act="sug-cancel">Cancel</button></div>`;
-    } else if (g.kind === 'code') {
+      extra = `<input class="fld" type="text" data-keep="sugno" placeholder="Why not? (optional — it teaches Morph)">`;
+      acts = act(`data-act="sug" data-v="no" data-id="${esc(g.id)}"`, "Don't suggest it again", true) + act('data-act="sug-cancel"', 'Cancel');
+    } else if (this.admin()) {
       // Morph's own code, not this dashboard: the yes is "send it as an
       // issue", and nothing is filed until somebody presses it.
-      acts = this.admin() ? `<div class="acts"><button type="button" class="wd go" data-act="sug" data-v="send" data-id="${esc(g.id)}">Send as issue</button><button type="button" class="wd" data-act="sug" data-v="not_now" data-id="${esc(g.id)}">Not now</button><button type="button" class="wd" data-act="sug-no" data-id="${esc(g.id)}">No</button></div>` : '';
-    } else {
-      acts = this.admin() ? `<div class="acts"><button type="button" class="wd go" data-act="sug" data-v="do" data-id="${esc(g.id)}">Do it</button><button type="button" class="wd" data-act="sug" data-v="not_now" data-id="${esc(g.id)}">Not now</button><button type="button" class="wd" data-act="sug-no" data-id="${esc(g.id)}">No</button></div>` : '';
+      const yes = g.kind === 'code' ? act(`data-act="sug" data-v="send" data-id="${esc(g.id)}"`, 'Send as issue', true) : act(`data-act="sug" data-v="do" data-id="${esc(g.id)}"`, 'Do it', true);
+      acts = yes + act(`data-act="sug" data-v="not_now" data-id="${esc(g.id)}"`, 'Not now') + act(`data-act="sug-no" data-id="${esc(g.id)}"`, 'No');
     }
-    const head = g.kind === 'code' ? 'Morph needs a fix' : 'Morph suggests';
-    return `<div class="note rise" style="background:${mix('var(--violet)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--violet)', 25)}"><div class="row">${SPARK}<span class="small" style="color:var(--violet);font-weight:700">${head}</span></div><p>${esc(g.title)}</p>${g.why ? `<span class="sm">${esc(g.why)}</span>` : ''}${g.last_error ? `<span class="sm" style="color:var(--rose)">Last try: ${esc(g.last_error)}</span>` : ''}${acts}</div>`;
+    const sub = (g.why ? `<span class="sub">${esc(g.why)}</span>` : '') + (g.last_error ? `<span class="sub" style="color:var(--rose)">Last try: ${esc(g.last_error)}</span>` : '') + extra;
+    return shell(g.kind === 'code' ? 'Morph needs a fix' : 'Morph suggests', 'var(--violet)', g.title, sub, acts);
   }
 
   topNotesHtml() {
@@ -467,18 +476,53 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     return card.type;
   }
 
+  // What a person wants to know about a floor at a glance: how warm it is
+  // and what the air is doing, whether lights are on, who is asleep, and
+  // anything left open.
   floorFacts(fl) {
     const H = this.hass; const facts = [];
-    const ents = this.floorEntities(fl);
-    const temps = ents.map((e) => H.states[e]).filter((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
-    if (temps.length) { const v = temps.map((s) => parseFloat(s.state)).sort((a, b) => a - b); facts.push({ t: fmt(v[Math.floor(v.length / 2)], temps[0].attributes.unit_of_measurement || '°') }); }
+    const ents = [...new Set(this.floorEntities(fl))];
     const clim = ents.map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'climate');
-    if (clim.length) { const a = clim[0].attributes.hvac_action; if (a) facts.push({ t: a === 'idle' ? 'holding' : a, color: a === 'heating' ? 'var(--rose)' : a === 'cooling' ? 'var(--teal)' : '' }); }
-    const lights = [...new Set(ents)].filter((e) => domainOf(e) === 'light' && H.states[e] && H.states[e].state === 'on' && !(H.states[e].attributes.entity_id || []).length).length;
-    facts.push({ t: lights ? `${lights} light${lights > 1 ? 's' : ''} on` : 'lights off' });
-    const open = [...new Set(ents)].filter((e) => { const s = H.states[e]; return s && ((domainOf(e) === 'binary_sensor' && ['door', 'window', 'garage_door', 'moisture'].includes(s.attributes.device_class) && s.state === 'on') || (domainOf(e) === 'lock' && s.state === 'unlocked')); });
+    const temps = ents.map((e) => H.states[e]).filter((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
+    const c = clim[0];
+    if (c) {
+      const a = c.attributes; const cur = a.current_temperature;
+      const doing = climateDoing(c);
+      facts.push({ t: [cur != null ? fmt(cur, '°') : '', doing].filter(Boolean).join(' · ') });
+    } else if (temps.length) {
+      const v = temps.map((s) => parseFloat(s.state)).sort((a, b) => a - b);
+      facts.push({ t: fmt(v[Math.floor(v.length / 2)], temps[0].attributes.unit_of_measurement || '°') });
+    }
+    const lights = ents.filter((e) => domainOf(e) === 'light' && H.states[e] && H.states[e].state === 'on' && !(H.states[e].attributes.entity_id || []).length).length;
+    facts.push({ t: lights ? `${lights} light${lights > 1 ? 's' : ''} on` : 'Lights off', color: lights ? '' : 'var(--quiet)' });
+    const asleep = (fl.sections || []).filter((sec) => this.asleepSince(sec));
+    if (asleep.length) facts.push({ t: asleep.length === 1 ? `${asleep[0].title} asleep` : `${asleep.length} rooms asleep`, color: 'var(--violet)' });
+    const open = ents.filter((e) => { const s = H.states[e]; return s && ((domainOf(e) === 'binary_sensor' && ['door', 'window', 'garage_door', 'moisture'].includes(s.attributes.device_class) && s.state === 'on') || (domainOf(e) === 'lock' && s.state === 'unlocked')); });
     open.slice(0, 2).forEach((e) => facts.push({ t: `${friendly(H, e)} ${H.states[e].state === 'unlocked' ? 'unlocked' : 'open'}`, color: 'var(--rose)' }));
     return facts;
+  }
+
+  // A room is asleep when its mode says so: a select set to Sleep, or a
+  // sleep switch that is on. The time is when it went to sleep.
+  asleepSince(sec) {
+    const H = this.hass;
+    for (const e of this.sectionEntities(sec)) {
+      const s = H.states[e]; if (!s) continue;
+      const d = domainOf(e);
+      const isSleep = ((d === 'input_select' || d === 'select') && /^(sleep|sleeping|asleep|night)$/i.test(s.state))
+        || ((d === 'input_boolean' || d === 'switch' || d === 'binary_sensor') && /sleep/i.test(e + ' ' + (s.attributes.friendly_name || '')) && s.state === 'on');
+      if (isSleep) return s.last_changed;
+    }
+    return null;
+  }
+
+  // Somebody in the room, read off its motion, occupancy and presence
+  // sensors; null when the room has none.
+  presence(sec) {
+    const H = this.hass;
+    const ss = this.sectionEntities(sec).map((e) => H.states[e]).filter((s) => s && domainOf(s.entity_id) === 'binary_sensor' && ['motion', 'occupancy', 'presence'].includes(s.attributes.device_class) && !UNAVAILABLE.includes(s.state));
+    if (!ss.length) return null;
+    return ss.some((s) => s.state === 'on');
   }
 
   // The model the engine lays out: sections with groups of items, each item
@@ -490,13 +534,15 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
         if (sec.hidden && !this.s.edit) return;
         const groups = [];
         const ns = notes.bySec[sec.id] || [];
-        if (ns.length) groups.push({ key: sec.id + ':notes', label: '', items: ns.map((n) => ({ id: 'n:' + sec.id + ':' + n.key, span: 4, full: true, grow: 4, hk: 'x:n' })) });
         (sec.groups || []).forEach((g, gi) => {
           const items = (g.cards || []).map((c) => { const t = typeOf(c).item; return { id: c.id, span: c.span || t.span, grow: Math.max(c.span || 0, t.grow || t.span), dir: t.dir, want: t.want, full: !!t.full, hk: t.hk || 'x:' + c.id }; });
           if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' });
           groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
         });
         if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' }] });
+        // A note follows the room's own tiles: the room first, then what
+        // brAIn has to say about it (the prototype's order).
+        if (ns.length) groups.push({ key: sec.id + ':notes', label: '', items: ns.map((n) => ({ id: 'n:' + sec.id + ':' + n.key, span: 4, full: true, grow: 4, hk: 'x:n' })) });
         sections.push({ id: sec.id, w: sec.width || 2, floor: fi, floorId: fl.id, groups });
       });
       if (this.s.edit) sections.push({ id: '__new@' + fi, w: 2, floor: fi, floorId: fl.id, groups: [] });
@@ -585,9 +631,13 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     const edit = this.s.edit;
     const open = this.s.secEdit === sec.id;
     const ents = this.sectionEntities(sec);
-    const on = ents.filter((e) => domainOf(e) === 'light' && this.hass.states[e] && this.hass.states[e].state === 'on' && !(this.hass.states[e].attributes.entity_id || []).length).length;
+    // The room's line: asleep since when, how warm, and whether anyone is
+    // there. What is on is already on the tiles below it.
     const temp = ents.map((e) => this.hass.states[e]).find((s) => s && s.attributes.device_class === 'temperature' && !isNaN(parseFloat(s.state)));
-    const meta = [temp ? fmt(temp.state, temp.attributes.unit_of_measurement) : '', on ? `${on} on` : ''].filter(Boolean).join(' · ') + (sec.hidden ? ' · hidden' : '');
+    const clim = temp ? null : ents.map((e) => this.hass.states[e]).find((s) => s && domainOf(s.entity_id) === 'climate' && s.attributes.current_temperature != null);
+    const slept = this.asleepSince(sec);
+    const here = slept ? null : this.presence(sec);
+    const meta = [slept ? 'Asleep since ' + clock(slept) : '', temp ? fmt(temp.state, '°') : clim ? fmt(clim.attributes.current_temperature, '°') : '', here == null ? '' : here ? 'someone here' : 'empty'].filter(Boolean).join(' · ') + (sec.hidden ? ' · hidden' : '');
     let editor = '';
     if (edit && open) {
       const floors = (this.dash.floors || []);
@@ -1032,6 +1082,9 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
 
   bindEvents() {
     const root = this.shadowRoot;
+    // The Ask suggestions only show while the field has focus, so pressing
+    // one must not take the focus away first (Safari never focuses a button).
+    root.addEventListener('mousedown', (e) => { if (e.target.closest && e.target.closest('[data-act="ask-sug"]')) e.preventDefault(); });
     root.addEventListener('pointerdown', (e) => this.onDown(e));
     root.addEventListener('pointermove', (e) => this.onMove(e));
     root.addEventListener('pointerup', (e) => this.onUp(e));
@@ -1049,6 +1102,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       }
     });
     root.addEventListener('pointermove', (e) => this.scrub(e));
+    root.addEventListener('pointerout', (e) => this.scrubEnd(e));
   }
 
   // Anything outside the open thing folds it back (§1.10).
@@ -1234,6 +1288,24 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const line = ch.querySelector('.scrub'); line.hidden = false; line.style.left = (frac * plotW) + 'px';
     const out = this.shadowRoot.querySelector(`[data-readout="${ch.dataset.chart}"]`);
     if (out) out.innerHTML = history.scrubAt(ch.dataset.chart, frac);
+    if (ch.dataset.ov) this.paintOverlay(ch, history.overlayAt(ch.dataset.chart, frac));
+  }
+
+  // The overlay chart answers a finger in place: its labels follow the
+  // instant, a dot sits on every line, and the header says the time.
+  paintOverlay(ch, at) {
+    if (!at) return;
+    const key = ch.dataset.chart; const box = ch.closest('.ov') || ch.parentElement;
+    const labs = box.querySelector(`[data-ovlabels="${key}"]`); if (labs) labs.innerHTML = at.labels;
+    const dots = box.querySelector(`[data-ovdots="${key}"]`); if (dots) dots.innerHTML = at.dots;
+    const sub = box.querySelector('[data-ovsub]'); if (sub) sub.textContent = at.sub;
+  }
+
+  scrubEnd(e) {
+    const ch = e.target.closest && e.target.closest('.chart[data-chart]');
+    if (!ch || (e.relatedTarget && ch.contains(e.relatedTarget))) return;
+    const line = ch.querySelector('.scrub'); if (line) line.hidden = true;
+    if (ch.dataset.ov) this.paintOverlay(ch, history.overlayRest(ch.dataset.chart));
   }
 
   onClick(e) {

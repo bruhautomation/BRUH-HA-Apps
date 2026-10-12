@@ -234,14 +234,84 @@ export function block(hass, card, st, H, color, name) {
   return '';
 }
 
-// Many readings of one kind, overlaid (§3.3): one line per sensor coloured
-// by how warm it is now, labels at the line ends, slide to read every value
-// at one instant, tap a name to pick it out, and extremes (attic, outside)
-// on one quiet line below so they do not flatten the rest.
-export function readings(hass, card, H, colorFor) {
+// Many readings of one kind, overlaid (§3.3, and the prototype's chart):
+// one line per room coloured by how warm it is now; a column of labels
+// beside the plot that follow the line ends (or the finger) and pick a line
+// out when tapped; under the lines, what the house was aiming for (the
+// thermostats' target over the day, or a fixed comfortable band) and when
+// the system actually ran; then a time axis, and the extremes (attic,
+// outside) on one quiet line of their own so they do not flatten the rest.
+
+const OV = new Map(); // chart key → what the overlay needs to answer a finger
+const CH = 150;       // plot height, px (the viewBox is 600 × CH)
+const LABEL_GAP = 19;
+
+function hhmm(ms) {
+  const m = Math.round(ms / 60000); const h = Math.floor(m / 60), r = m % 60;
+  return h ? `${h} h${r ? ' ' + r + ' m' : ''}` : `${r} m`;
+}
+
+// The value of a stepwise series at an instant (the last point at or before).
+function valueAt(pts, t) {
+  let v = null;
+  for (const p of pts) { if (p[0] > t) break; if (isFinite(p[1])) v = p[1]; }
+  if (v == null) { const f = pts.find((p) => isFinite(p[1])); v = f ? f[1] : null; }
+  return v;
+}
+
+function climateTargets(rows) {
+  return (rows || []).map((r) => {
+    const a = r.a || {};
+    const lo = a.target_temp_low != null ? a.target_temp_low : a.temperature;
+    const hi = a.target_temp_high != null ? a.target_temp_high : a.temperature;
+    return [r.t, r.s === 'off' || lo == null ? null : [Number(lo), Number(hi)], a.hvac_action || null];
+  });
+}
+
+function labelsHtml(o, at) {
+  const { lines, yOf, focus, unit, digits } = o;
+  let lab = lines.map((l) => { const v = at == null ? l.now : valueAt(l.pts, at); return { l, v, y: v == null ? CH : yOf(v) }; }).sort((a, b) => a.y - b.y);
+  for (let i = 1; i < lab.length; i++) lab[i].y = Math.max(lab[i].y, lab[i - 1].y + LABEL_GAP);
+  const over = lab.length ? lab[lab.length - 1].y - (CH - 9) : 0;
+  if (over > 0) { lab[lab.length - 1].y -= over; for (let i = lab.length - 2; i >= 0; i--) lab[i].y = Math.min(lab[i].y, lab[i + 1].y - LABEL_GAP); }
+  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b>${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
+}
+
+// What the overlay says under a finger: the labels' values, a dot on every
+// line, and the time (with what the house was aiming for then).
+export function overlayAt(key, frac) {
+  const o = OV.get(key); if (!o) return null;
+  const t = o.t0 + frac * (o.t1 - o.t0);
+  const dots = o.lines.map((l) => { const v = valueAt(l.pts, t); return v == null ? '' : `<span class="ovdot" style="left:${(frac * 100).toFixed(2)}%;top:${o.yOf(v).toFixed(1)}px;background:${l.color};opacity:${o.focus && o.focus !== l.id ? 0.25 : 1}"></span>`; }).join('');
+  const b = o.bandAt ? o.bandAt(t) : null;
+  const sub = clock(t) + (b ? ` · ${o.bandWord} ${fmt(b[0], '')}${b[1] !== b[0] ? '–' + fmt(b[1], '') : ''}${o.unit}` : '');
+  return { labels: labelsHtml(o, t), dots, sub };
+}
+export function overlayRest(key) {
+  const o = OV.get(key); if (!o) return null;
+  return { labels: labelsHtml(o, null), dots: '', sub: o.sub };
+}
+
+function sparkPts(pts, w, h) {
+  const v = pts.filter((p) => isFinite(p[1]));
+  if (v.length < 2) return '';
+  const t0 = v[0][0], t1 = v[v.length - 1][0];
+  let lo = Math.min(...v.map((p) => p[1])), hi = Math.max(...v.map((p) => p[1])); if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  return v.map((p) => `${((p[0] - t0) / (t1 - t0 || 1) * w).toFixed(1)},${(1 + (1 - (p[1] - lo) / (hi - lo)) * (h - 2)).toFixed(1)}`).join(' ');
+}
+
+export function readings(hass, card, H, colorFor, head) {
+  const hd = head || {};
   const ids = (card.entities || []).filter((e) => hass.states[e]);
-  if (!ids.length) return '<p class="sm">None of these sensors exist.</p>';
+  const header = (sub) => `<div class="ovhead"><b>${esc(hd.name || '')}</b><span class="ovsub" data-ovsub="1">${esc(sub || '')}</span><span class="flex1"></span>${hd.hint ? `<span class="hint">${esc(hd.hint)}</span>` : ''}</div>`;
+  if (!ids.length) return header('') + '<p class="sm">None of these sensors exist.</p>';
   const now = Date.now(), t0 = now - 86400000;
+  const opts = card.options || {};
+  const first = hass.states[ids[0]];
+  const unitRaw = first.attributes.unit_of_measurement || '';
+  const humidity = first.attributes.device_class === 'humidity' || unitRaw === '%';
+  const unit = humidity ? '%' : '°';
+  const digits = humidity ? 0 : 1;
   const series = [];
   let pending = false;
   ids.forEach((eid) => {
@@ -249,21 +319,102 @@ export function readings(hass, card, H, colorFor) {
     if (rows === undefined) { pending = true; return; }
     const pts = rows && !rows.error && rows.length ? rows.map((p) => [p.t, p.mean]) : [];
     const st = hass.states[eid];
-    series.push({ id: eid, name: (st.attributes.friendly_name || eid), short: (st.attributes.friendly_name || eid).replace(/\s*(temperature|humidity|temp)$/i, ''), color: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
+    const nm = st.attributes.friendly_name || eid;
+    series.push({ id: eid, name: nm, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
   });
-  if (pending && !series.length) return '<p class="sm">Reading the day…</p>';
-  const meds = series.map((s) => s.now).filter(isFinite).sort((a, b) => a - b);
+  if (pending && !series.length) return header('') + '<p class="sm">Reading the day…</p>';
+  // Extremes (an attic, the outside) leave the plot for the line below it.
+  const meds = series.map((x) => x.now).filter(isFinite).sort((a, b) => a - b);
   const med = meds[Math.floor(meds.length / 2)];
   const spread = meds.length > 3 ? (meds[Math.floor(meds.length * 0.75)] - meds[Math.floor(meds.length * 0.25)]) || 2 : Infinity;
-  const main = series.filter((s) => !isFinite(spread) || Math.abs(s.now - med) <= 3 * spread);
-  const extreme = series.filter((s) => !main.includes(s));
-  const unit = (hass.states[ids[0]].attributes.unit_of_measurement) || '';
-  let band = null;
-  if (card.options && Array.isArray(card.options.band)) band = card.options.band;
-  const legend = `<div class="legend">${main.map((s) => `<button type="button" class="wd" data-act="r-focus" data-v="${esc(s.id)}" aria-pressed="${H.focus === s.id}" style="color:${s.color}">${esc(s.short)} ${esc(fmt(s.now, unit))}</button>`).join('')}</div>`;
-  const chart = lineChart(main, t0, now, { unit, focus: H.focus, height: 150, band, caption: 'Slide along it to read every room at that moment.' });
-  const ext = extreme.length ? `<div class="small" style="margin-top:6px">${extreme.map((s) => `<span style="color:${s.color}">${esc(s.short)} ${esc(fmt(s.now, unit))}</span>`).join(' · ')}</div>${lineChart(extreme, t0, now, { unit, height: 50, caption: ' ' })}` : '';
-  return legend + chart + ext;
+  const main = series.filter((x) => !isFinite(spread) || Math.abs(x.now - med) <= 3 * spread);
+  const extreme = series.filter((x) => !main.includes(x));
+  (opts.env || []).forEach((eid) => {
+    const st = hass.states[eid]; if (!st || series.some((x) => x.id === eid)) return;
+    const rows = stats(hass, eid, t0, now, '5minute');
+    const nm = st.attributes.friendly_name || eid;
+    extreme.push({ id: eid, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: rows && !rows.error ? rows.map((p) => [p.t, p.mean]) : [] });
+  });
+
+  // What the house was aiming for: a band the card names, or the
+  // thermostats' own target through the day.
+  let bandAt = null; let bandWord = humidity ? 'comfortable' : 'target'; let runs = []; let runsLabel = '';
+  let bandColor = humidity ? 'var(--sky)' : 'var(--teal)';
+  if (Array.isArray(opts.band) && opts.band.length === 2) {
+    const fixed = [Number(opts.band[0]), Number(opts.band[1])];
+    bandAt = () => fixed;
+  } else if (!humidity) {
+    const climates = (opts.climate ? [].concat(opts.climate) : Object.keys(hass.states).filter((e) => e.startsWith('climate.'))).filter((e) => hass.states[e]).slice(0, 4);
+    const tls = climates.map((c) => climateTargets(timeline(hass, c, t0, now, true))).filter((r) => r.length);
+    if (tls.length) {
+      const at = (rows, t) => { let cur = null; for (const r of rows) { if (r[0] > t) break; cur = r; } return cur || rows[0]; };
+      bandAt = (t) => {
+        const bs = tls.map((rows) => at(rows, t)[1]).filter(Boolean);
+        if (!bs.length) return null;
+        return [Math.min(...bs.map((b) => b[0])), Math.max(...bs.map((b) => b[1]))];
+      };
+      // When it actually ran: any thermostat heating or cooling.
+      const acts = {};
+      tls.forEach((rows) => rows.forEach((r, i) => {
+        const a = r[2]; if (a !== 'cooling' && a !== 'heating') return;
+        const end = i + 1 < rows.length ? rows[i + 1][0] : now;
+        runs.push({ a: Math.max(t0, r[0]), b: Math.min(now, end), color: a === 'cooling' ? 'var(--teal)' : 'var(--rose)' });
+        acts[a] = (acts[a] || 0) + (Math.min(now, end) - Math.max(t0, r[0]));
+      }));
+      const top = Object.entries(acts).sort((a, b) => b[1] - a[1])[0];
+      if (top) runsLabel = `${top[0] === 'cooling' ? 'Cooling' : 'Heating'} · ${hhmm(top[1])}`;
+    }
+  }
+  if (opts.runs && hass.states[opts.runs]) {
+    const rows = timeline(hass, opts.runs, t0, now);
+    if (rows && !rows.error) {
+      const segs = segments(rows, t0, now, (r) => isActive(r.s));
+      runs = segs.map((x) => ({ ...x, color: bandColor }));
+      runsLabel = `${(hass.states[opts.runs].attributes.friendly_name || opts.runs)} · ${hhmm(segs.reduce((a, x) => a + (x.b - x.a), 0))}`;
+    }
+  }
+
+  // Scale: every line and the band.
+  const vals = main.flatMap((x) => x.pts.map((p) => p[1])).filter((v) => v != null && isFinite(v));
+  const BN = 96; const bandPts = [];
+  if (bandAt) for (let i = 0; i < BN; i++) { const t = t0 + (i / (BN - 1)) * (now - t0); const b = bandAt(t); bandPts.push([t, b]); if (b) vals.push(b[0], b[1]); }
+  if (!vals.length) return header('') + '<p class="sm">Nothing recorded for this stretch.</p>';
+  let lo = Math.min(...vals), hi = Math.max(...vals); const m = (hi - lo) * 0.12 || 1; lo -= m; hi += m;
+  const X = (t) => ((t - t0) / (now - t0)) * 600;
+  const yOf = (v) => 3 + (1 - (v - lo) / (hi - lo)) * (CH - 6);
+  const focus = H.focus;
+  const lines = main.map((x) => ({ ...x, pts: x.pts.filter((p) => p[1] != null && isFinite(p[1])) }));
+  const polys = lines.map((l) => `<polyline points="${l.pts.map((p) => X(p[0]).toFixed(1) + ',' + yOf(p[1]).toFixed(1)).join(' ')}" vector-effect="non-scaling-stroke" stroke-width="${focus === l.id ? 2.4 : 1.6}" stroke-linejoin="round" stroke-linecap="round" style="fill:none;stroke:${l.color};opacity:${focus ? (focus === l.id ? 1 : 0.14) : 0.9}"></polyline>`).join('');
+  // The band as one shape; a stretch with no target (the system off) breaks it.
+  let band = '';
+  if (bandPts.length) {
+    const runsOf = []; let cur = [];
+    bandPts.forEach((bp) => { if (bp[1]) cur.push(bp); else if (cur.length) { runsOf.push(cur); cur = []; } });
+    if (cur.length) runsOf.push(cur);
+    band = runsOf.filter((r) => r.length > 1).map((r) => `<polygon points="${r.map((bp) => X(bp[0]).toFixed(1) + ',' + yOf(bp[1][1]).toFixed(1)).concat(r.slice().reverse().map((bp) => X(bp[0]).toFixed(1) + ',' + yOf(bp[1][0]).toFixed(1))).join(' ')}" style="fill:${mix(bandColor, 9)}"></polygon>`).join('');
+  }
+  const nowBand = bandAt ? bandAt(now) : null;
+  const sub = `${lines.length} room${lines.length === 1 ? '' : 's'}${nowBand ? ` · ${bandWord} ${fmt(nowBand[0], '')}${nowBand[1] !== nowBand[0] ? '–' + fmt(nowBand[1], '') : ''}${unit}` : ''}`;
+  const key = 'c' + (++chartSeq);
+  const o = { t0, t1: now, lines, yOf, focus, unit, digits, bandAt, bandWord, sub };
+  OV.set(key, o); if (OV.size > 30) OV.delete(OV.keys().next().value);
+  CHARTS.set(key, { series: lines, t0, t1: now, unit });
+  if (CHARTS.size > 60) CHARTS.delete(CHARTS.keys().next().value);
+
+  const PH = (t) => Math.max(0, Math.min(100, (t - t0) / (now - t0) * 100));
+  const runsRow = runs.length ? `<div class="ovrow" style="margin-top:8px;align-items:center"><div class="ovruns" aria-hidden="true">${runs.map((r) => `<span style="left:${PH(r.a).toFixed(2)}%;width:${Math.max(0.8, PH(r.b) - PH(r.a)).toFixed(2)}%;background:${r.color}"></span>`).join('')}</div><span class="ovside small">${esc(runsLabel)}</span></div>` : '';
+  // The axis: midnight, 6 AM, noon, 6 PM where they fall, and Now.
+  const ticks = [];
+  const d = new Date(t0); d.setMinutes(0, 0, 0);
+  for (let t = d.getTime(); t <= now; t += 3600000) {
+    const h = new Date(t).getHours();
+    if (h % 6 || t < t0 + 1.5 * 3600000 || t > now - 3.6 * 3600000) continue;
+    ticks.push(`<span style="left:${PH(t).toFixed(2)}%;transform:translateX(-50%)">${h === 0 ? 'Midnight' : h === 12 ? 'Noon' : clock(t).replace(':00', '')}</span>`);
+  }
+  ticks.push('<span style="left:100%;transform:translateX(-100%)">Now</span>');
+  const axis = `<div class="ovrow" aria-hidden="true" style="margin-top:4px"><div class="ovaxis">${ticks.join('')}</div><span class="ovside"></span></div>`;
+  const env = extreme.length ? `<div class="ovenv">${extreme.map((x) => `<div class="ovenvi"><span class="nm">${esc(x.short)}</span><b style="color:${x.color}">${isFinite(x.now) ? esc(Number(x.now).toFixed(digits) + unit) : '—'}</b><svg width="56" height="14" viewBox="0 0 56 14" aria-hidden="true"><polyline points="${sparkPts(x.pts, 56, 14)}" stroke-width="1.25" style="fill:none;stroke:${x.color};opacity:.6"></polyline></svg></div>`).join('')}</div>` : '';
+  return `${header(sub)}<div class="ovrow" data-ctl="1" style="margin-top:10px"><div class="chart ovplot" data-chart="${key}" data-ov="1" role="img" aria-label="${esc(hd.name || 'Readings')}, last 24 hours, one line per room. Slide along it to read any moment."><svg width="100%" height="${CH}" viewBox="0 0 600 ${CH}" preserveAspectRatio="none" aria-hidden="true">${band}${polys}</svg><span class="scrub" hidden></span><div class="ovdots" data-ovdots="${key}"></div></div><div class="ovside ovlabels" data-ovlabels="${key}">${labelsHtml(o, null)}</div></div>${runsRow}${axis}${env}`;
 }
 
 export function clearCache() { CACHE.clear(); }
