@@ -86,6 +86,64 @@ def normalize(text: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+# Words that name a day relative to when they were said. A guess is read
+# for up to a fortnight, and "yesterday afternoon" read a week later is a
+# different afternoon every morning, so they are written as the weekday
+# they meant when the guess was filed (`absolute_days`). Longest first, so
+# "yesterday afternoon" is taken whole before "yesterday" is.
+_RELATIVE_DAYS = (
+    (r"yesterday (morning|afternoon|evening|night)", -1, None),
+    (r"last night", -1, "night"),
+    (r"this (morning|afternoon|evening)", 0, None),
+    (r"tonight", 0, "night"),
+    (r"yesterday", -1, ""),
+    (r"today", 0, ""),
+)
+_LEADING_PREP = re.compile(
+    r"\b(?:since|until|till|from|by|before|after|on|of|for)\s+$", re.I)
+
+
+def absolute_days(text: str, now: float | None = None) -> str:
+    """``text`` with today / yesterday / this morning / last night / tonight
+    written as the weekday they meant at ``now`` (local time).
+
+    Whole words only, a possessive kept ("today's run" is "Wednesday's
+    run"), "on" added unless a preposition already stands in front, and a
+    capital kept at the start of a sentence. Anything else is untouched.
+    """
+    import datetime as _dt
+    if not isinstance(text, str) or not text:
+        return text
+    when = _dt.datetime.fromtimestamp(time.time() if now is None else now)
+    out = text
+    for pattern, offset, part in _RELATIVE_DAYS:
+        day = (when + _dt.timedelta(days=offset)).strftime("%A")
+        rx = re.compile(r"\b" + pattern + r"\b('s)?", re.I)
+
+        def swap(m, day=day, part=part):
+            said = m.group(0)
+            poss = m.group(m.lastindex) if m.lastindex and m.group(
+                m.lastindex) == "'s" else ""
+            if part is None:
+                piece = m.group(1).lower()
+                phrase = f"{day} {piece}"
+            elif part:
+                phrase = f"{day} {part}"
+            else:
+                phrase = day
+            if poss:
+                return phrase + "'s"
+            before = m.string[:m.start()]
+            if _LEADING_PREP.search(before):
+                return phrase
+            word = "on " + phrase
+            if said[:1].isupper():
+                word = word[:1].upper() + word[1:]
+            return word
+        out = rx.sub(swap, out)
+    return out
+
+
 def _read() -> list[dict]:
     try:
         raw = HYPOTHESES_FILE.read_text(encoding="utf-8")
@@ -201,7 +259,7 @@ def list_all(status: str | None = None) -> list[dict]:
             continue
         out.append({
             "ts": int(e.get("ts") or 0),
-            "text": str(e.get("text"))[:MAX_TEXT_CHARS],
+            "text": textclip.clip(str(e.get("text")), MAX_TEXT_CHARS),
             "topic": str(e.get("topic") or ""),
             "status": st,
             "settled_at": int(e.get("settled_at") or 0),
@@ -262,7 +320,9 @@ def propose(text: str, topic: str = "", *, subject: str = "",
     and a queue whose whole design is that it holds three ends up holding
     four.
     """
-    text = str(text or "").strip()[:MAX_TEXT_CHARS]
+    stamp = time.time()
+    text = textclip.clip(absolute_days(str(text or "").strip(), stamp),
+                         MAX_TEXT_CHARS)
     key = normalize(text)
     if not text or not key:
         return None
@@ -280,7 +340,8 @@ def propose(text: str, topic: str = "", *, subject: str = "",
         if subject:
             entry["subject"] = str(subject)[:255]
         if fact:
-            entry["fact"] = str(fact).strip()[:MAX_TEXT_CHARS]
+            entry["fact"] = textclip.clip(
+                absolute_days(str(fact).strip(), stamp), MAX_TEXT_CHARS)
         entries.append(entry)
         _write(entries)
     return entry
