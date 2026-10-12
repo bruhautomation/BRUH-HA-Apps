@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.20
+
+### Changed
+
+- The memory filing daemon backs off after a failed pass instead of retrying every five minutes: the wait doubles with each consecutive failure (5 min, 10, 20 … up to 2 hours) and resets after a success. A full memory document used to cost two whole-document model runs every five minutes until the cap was raised; a timeout or a signed-out account was retried all night the same way. Lock contention and a pass that gave way to your edit do not count as failures.
+
 ## 2.18.19
 
 ### Changed
