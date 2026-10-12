@@ -119,6 +119,10 @@ MIN_GAIN = 0.15
 # nightly pass into a statistics job. Sorted before capping, so the cap
 # takes the same rooms every night.
 MAX_ROOMS = 60
+# How many rooms the store explains having left out. The rest are counted
+# by nothing; a house with more thermometers in rooms than this is a house
+# whose diagnostics are already a page long.
+UNMEASURED_MAX = 120
 # What the words in an entity's name have to say for it to be the outdoor
 # reference. Longest phrase first is not needed here — these do not nest.
 OUTDOOR_WORDS = ("outdoor", "outside", "exterior", "garden", "backyard",
@@ -255,28 +259,41 @@ def fit_loss(points: list[tuple[float, float]]) -> dict | None:
     was warming the room at zero delta, and a large one is the room saying
     the night hours were not free-running after all.
     """
+    return fit_loss_why(points)[0]
+
+
+def fit_loss_why(points: list[tuple[float, float]]) -> tuple[dict | None, str]:
+    """`fit_loss`, with the sentence saying why when there is no fit."""
     import baselines  # noqa: PLC0415 — panel-local, and this module is
                       # imported by the checks package without it
 
     if len(points) < MIN_POINTS:
-        return None
+        return None, (f"only {len(points)} night hours held both this room's "
+                      f"reading and the outdoor one; the fit needs {MIN_POINTS}")
     deltas = [p[0] for p in points]
     span = max(deltas) - min(deltas)
     if span < MIN_DELTA_SPAN:
-        return None
+        return None, (f"the difference between inside and outside moved only "
+                      f"{span:.1f}° across the nights (the fit needs "
+                      f"{MIN_DELTA_SPAN:g}°), so there was nothing to measure "
+                      "a loss rate against")
     line = baselines.least_squares(points)
     if line is None:
-        return None
+        return None, "the night readings could not be fitted to a line"
     slope, intercept = line
     k = -slope
     if k <= 0:
         # A room that warms as it gets colder outside is not a room this
         # can describe: something is heating it, or the reference is not
         # outdoors. Either way the honest answer is no model.
-        return None
+        return None, ("it did not cool faster on colder nights: something "
+                      + "heats it at night, or the outdoor reference does "
+                      + "not describe it")
     tau = 1.0 / k
     if not (MIN_TAU_H <= tau <= MAX_TAU_H):
-        return None
+        return None, (f"the fit gave a time constant of {tau:.1f} hours, "
+                      f"outside what a room can have ({MIN_TAU_H:g} to "
+                      f"{MAX_TAU_H:g} hours)")
     residuals = [y - (slope * x + intercept) for x, y in points]
     scatter = baselines.mad(residuals)
     signal = k * span
@@ -284,7 +301,9 @@ def fit_loss(points: list[tuple[float, float]]) -> dict | None:
     # room: the ratio is infinite and the fit passes, which is right.
     ratio = float("inf") if scatter <= 0 else signal / scatter
     if ratio < MIN_FIT_RATIO:
-        return None
+        return None, (f"the night readings were too noisy to trust a fit "
+                      f"(its signal was {ratio:.1f} times the scatter; it "
+                      f"needs {MIN_FIT_RATIO:g})")
     return {
         "k": round(k, 5),
         "tau_h": round(tau, 2),
@@ -292,7 +311,7 @@ def fit_loss(points: list[tuple[float, float]]) -> dict | None:
         "span": round(span, 2),
         "fit": round(ratio, 2) if ratio != float("inf") else None,
         "points": len(points),
-    }
+    }, ""
 
 
 def fit_gain(points: list[tuple[float, float]], k: float) -> dict | None:
@@ -492,7 +511,8 @@ def _empty() -> dict:
     return {"built_at": 0, "tz": "", "outdoor": "", "unit": "", "rooms": {},
             "coldest": None, "reason": "", "outdoor_source": "",
             "outdoor_why": "", "outdoor_candidates": [],
-            "outdoor_modelled": False, "outdoor_unavailable": []}
+            "outdoor_modelled": False, "outdoor_unavailable": [],
+            "unmeasured": {}}
 
 
 def load(path: str | None = None) -> dict:
@@ -510,6 +530,7 @@ def load(path: str | None = None) -> dict:
     if not isinstance(data, dict):
         return _empty()
     data.setdefault("rooms", {})
+    data.setdefault("unmeasured", {})
     return data
 
 
@@ -536,9 +557,15 @@ def progress(payload: dict | None = None, path: str | None = None,
     payload = load(path) if payload is None else payload
     rooms = payload.get("rooms") or {}
     built = int(payload.get("built_at") or 0) or None
+    # Each room considered and left out, with the reason — so "1 of 9
+    # rooms" reads as eight answers rather than eight silences.
+    left_out = {eid: str(v.get("reason") or "")
+                for eid, v in (payload.get("unmeasured") or {}).items()
+                if isinstance(v, dict)}
     detail = {"outdoor": payload.get("outdoor") or "",
               "rooms": len(rooms),
-              "coldest": payload.get("coldest")}
+              "coldest": payload.get("coldest"),
+              "unmeasured": left_out}
     common = {"unit": "rooms", "need": 1, "have": len(rooms),
               "detail": detail, "updated_at": built,
               "per_unit_s": baselines.PROGRESS_UNIT_S, "now": now}
@@ -1063,20 +1090,55 @@ def room_candidates(states: dict, outdoor: str, unit: str,
     to be one a person could be living in, which is what keeps the freezer
     and the hot water tank out.
     """
+    return room_candidates_why(states, outdoor, unit, areas, world)[0]
+
+
+def room_candidates_why(states: dict, outdoor: str, unit: str,
+                        areas: dict | None = None, world=None
+                        ) -> tuple[list[str], dict[str, str]]:
+    """`room_candidates`, and why each thermometer IN A ROOM was left out.
+
+    Only a sensor with an indoor area is given a reason: that is a room
+    somebody can ask about by name, and "no measured room by that name"
+    is the wrong answer about a room with a thermometer in it. A sensor
+    with no area, or one in the garden, is not a room to explain.
+    """
     areas = areas or {}
     out = []
+    why: dict[str, str] = {}
     for eid, st, own in _temperature_sensors(states):
-        if eid == outdoor or own != unit or _looks_outdoor(eid, st, world):
+        if eid == outdoor:
+            continue
+        room = areas.get(eid) and not _area_is_outdoors(areas[eid])
+        if _looks_outdoor(eid, st, world):
+            if room:
+                why[eid] = ("its name says it is outdoors, so it is read as "
+                            "an outdoor thermometer rather than a room")
             continue
         # A dew point sitting in a room's area reads inside the band and
         # carries the class, so the band alone lets one through as a room.
         if is_derived(eid, st, world):
+            if room:
+                why[eid] = ("it is a derived reading (a dew point, a "
+                            "feels-like), not the temperature of the room")
+            continue
+        if own != unit:
+            if room:
+                why[eid] = (f"it reports in {own or 'an unknown unit'} and "
+                            f"the outdoor reference in {unit}; a loss rate "
+                            "needs both in the same degrees")
             continue
         try:
             value = float(st.get("state"))
         except (TypeError, ValueError):
+            if room:
+                why[eid] = ("it had no reading when the nightly pass ran "
+                            f"(it read {st.get('state')!s:.20})")
             continue
         if not in_room_band(value, unit):
+            if room:
+                why[eid] = (f"it read {value:g}{unit}, outside the range a "
+                            "room people live in sits in")
             continue
         if not areas.get(eid):
             # Without an area the finding cannot name a room, and an
@@ -1087,7 +1149,11 @@ def room_candidates(states: dict, outdoor: str, unit: str,
             # called — and it is one of `rank_outdoor`'s candidates.
             continue
         out.append(eid)
-    return sorted(out)[:MAX_ROOMS]
+    ranked = sorted(out)
+    for eid in ranked[MAX_ROOMS:]:
+        why[eid] = (f"the nightly pass reads at most {MAX_ROOMS} rooms and "
+                    "this one was past the cap")
+    return ranked[:MAX_ROOMS], why
 
 
 # ---------------------------------------------------------------------------
@@ -1136,19 +1202,29 @@ def _pairs(room: dict[int, float], out: dict[int, float],
 def build_room(room_rows: list, outdoor_rows: list, tz: dt.tzinfo,
                unit: str) -> dict | None:
     """One room's model, or None when it cannot be measured honestly."""
+    return build_room_why(room_rows, outdoor_rows, tz, unit)[0]
+
+
+def build_room_why(room_rows: list, outdoor_rows: list, tz: dt.tzinfo,
+                   unit: str) -> tuple[dict | None, str]:
+    """`build_room`, with the sentence saying why when there is no model."""
     room = _hourly_map(room_rows)
     out = _hourly_map(outdoor_rows)
-    if not room or not out:
-        return None
+    if not room:
+        return None, "the recorder holds no hourly readings for it this month"
+    if not out:
+        return None, ("the recorder holds no hourly readings for the "
+                      + "outdoor reference")
     # A thermometer that spent the month outside the band people live in
     # is not a room, whatever it is called: the live state is one instant
     # and this is the month.
     middle = percentile(sorted(room.values()), 50.0)
     if middle is None or not in_room_band(middle, unit):
-        return None
-    loss = fit_loss(_pairs(room, out, tz, night_only=True))
+        return None, ("it spent the month outside the range a room people "
+                      + "live in sits in")
+    loss, why = fit_loss_why(_pairs(room, out, tz, night_only=True))
     if loss is None:
-        return None
+        return None, why
     entry = dict(loss)
     entry["unit"] = unit
     # What the room was actually SEEN to do, beside what the model says it
@@ -1166,7 +1242,7 @@ def build_room(room_rows: list, outdoor_rows: list, tz: dt.tzinfo,
     if gain:
         entry["gain"] = gain["gain"]
         entry["gain_points"] = gain["points"]
-    return entry
+    return entry, ""
 
 
 async def fetch_hourly(session, ids: list[str], now: float,
@@ -1261,8 +1337,22 @@ async def build(session, states: dict, registries: dict | None = None,
         save(payload, path)
         return payload
 
-    ids = room_candidates(states, outdoor, unit, areas, world)
+    ids, left_out = room_candidates_why(states, outdoor, unit, areas, world)
     payload["asked"] = len(ids)
+
+    def _not_measured(eid: str, reason: str) -> None:
+        # Why a room somebody might ask about by name has no model — the
+        # one answer "no measured room by that name" could never give.
+        if len(payload["unmeasured"]) >= UNMEASURED_MAX:
+            return
+        name = ((states.get(eid) or {}).get("attributes") or {}).get(
+            "friendly_name")
+        payload["unmeasured"][eid] = {
+            "name": str(name or "")[:60], "area": areas.get(eid) or "",
+            "reason": reason}
+
+    for eid, reason in sorted(left_out.items()):
+        _not_measured(eid, reason)
     if not ids:
         payload["reason"] = (
             "no indoor temperature sensor in an area reports in "
@@ -1296,8 +1386,10 @@ async def build(session, states: dict, registries: dict | None = None,
         payload["coldest"] = round(min(outdoor_map.values()), 2)
         payload["outdoor_hours"] = len(outdoor_map)
     for eid in ids:
-        entry = build_room(rows.get(eid) or [], outdoor_rows, tz, unit)
+        entry, why = build_room_why(rows.get(eid) or [], outdoor_rows, tz,
+                                    unit)
         if not entry:
+            _not_measured(eid, why)
             continue
         name = ((states.get(eid) or {}).get("attributes") or {}).get(
             "friendly_name")
@@ -1320,10 +1412,10 @@ __all__ = [
     "GAIN_PCT", "HISTORY_DAYS", "MAX_ROOMS", "MAX_TAU_H", "MIN_DELTA_SPAN",
     "MIN_FIT_RATIO", "MIN_POINTS", "MIN_TAU_H", "NIGHT_FROM", "NIGHT_TO",
     "MIN_FALL", "MIN_SPAN_MIN", "RECENT_HOURS", "STORE", "area_map", "build",
-    "build_room", "ceiling", "coast", "expected_fall", "fetch_recent", "fit_gain",
-    "fit_loss", "fetch_hourly", "hours_to_fall", "hours_to_warm", "latest",
+    "build_room", "build_room_why", "ceiling", "coast", "expected_fall", "fetch_recent", "fit_gain",
+    "fit_loss", "fit_loss_why", "fetch_hourly", "hours_to_fall", "hours_to_warm", "latest",
     "in_room_band", "is_night", "is_stale", "load", "normalise_unit",
     "OUTDOOR_TRIALS", "choose_outdoor", "daily_swing", "rank_outdoor",
     "percentile", "pick_outdoor", "progress", "recent_fall",
-    "room_candidates", "save",
+    "room_candidates", "room_candidates_why", "save",
 ]

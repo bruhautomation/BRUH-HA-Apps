@@ -33,7 +33,11 @@ whichever days they were.
 **The spread is what says whether the number means anything.** A house
 that stirs anywhere between 05:00 and 11:00 has no wake time, and
 reporting its median as one would be a confident answer where the data
-holds none. `MAX_SPREAD_MIN` is what refuses it.
+holds none. `MAX_SPREAD_MIN` is what refuses it. A few odd days are not
+that house: the usual days are found where the days cluster and the odd
+ones are trimmed before their spread is taken, so a lie-in or a day
+nobody touched anything until noon cannot veto the mornings that agree
+(`_shape`), and an answer reached that way says `confidence: low`.
 
 **And the median is CIRCULAR.** Settle times sit either side of midnight
 — 23:40 and 00:20 are forty minutes apart and average to *noon* on a
@@ -76,8 +80,28 @@ MIN_DAYS = 10
 # whose hours changed in the spring is not being quoted its winter.
 KEEP_DAYS = 90.0
 # Past this much scatter there is no usual time — an answer here would be
-# a confident number over data that holds none.
+# a confident number over data that holds none. It is also how far from
+# the usual time a day may sit and still count as one of the usual days.
 MAX_SPREAD_MIN = 90.0
+# Two ways to an answer (see `_shape`). Every day agreeing: the spread of
+# ALL the days about their circular median is under WHOLE_SPREAD_MAX —
+# tighter than MAX_SPREAD_MIN, because a median absolute deviation of
+# ninety minutes is what mornings spread evenly from 05:00 to 11:00 give,
+# and that house has no wake time. Or the usual days agreeing with odd
+# days beside them: the centre is looked for where the days actually
+# cluster — the densest arc of +/- CORE_HALF_MIN — rather than at the
+# median of every day, which a run of lie-ins pulls off the usual
+# mornings; the days within MAX_SPREAD_MIN of it are the usual ones, and
+# they have to be at least MIN_USUAL_SHARE of the days, tight
+# (CORE_SPREAD_MAX), and without a rival: a second cluster half their
+# size is two kinds of day, not one usual one with odd ones.
+WHOLE_SPREAD_MAX = 60.0
+CORE_HALF_MIN = 45.0
+CORE_SPREAD_MAX = 20.0
+MIN_USUAL_SHARE = 0.4
+# Below this share of the days the answer stands, but says it is a
+# majority of the usual days and not of every day.
+HIGH_CONFIDENCE_SHARE = 0.75
 
 WEEKDAY = "weekday"
 WEEKEND = "weekend"
@@ -233,25 +257,71 @@ def _date(key: str):
 # The answer
 # ---------------------------------------------------------------------------
 
+def _densest(minutes: list[int]) -> list[int]:
+    """The days inside the most crowded +/- CORE_HALF_MIN arc of the clock.
+
+    Measured around the clock, so a cluster either side of midnight is one
+    cluster. Ties go to the earliest arc in sorted order, which is
+    deterministic; a tie between two equal clusters is refused later as a
+    rival anyway.
+    """
+    best: list[int] = []
+    for m in sorted(set(minutes)):
+        core = [x for x in minutes if circular_distance(x, m) <= CORE_HALF_MIN]
+        if len(core) > len(best):
+            best = core
+    return best
+
+
+def _near(minutes: list[int], centre: float) -> list[int]:
+    return [m for m in minutes
+            if circular_distance(m, centre) <= MAX_SPREAD_MIN]
+
+
 def _shape(rows: list[dict], field: str) -> dict | None:
     minutes = [int(r[field]) for r in rows
                if isinstance(r.get(field), int)]
     if len(minutes) < MIN_DAYS:
         return None
+    # Every day agreeing: a median absolute deviation, not a range
+    # (`circular_spread`), so a holiday or a late night cannot veto it.
     centre = circular_median(minutes)
     if centre is None:
         return None
-    # A median absolute deviation, not a range (`circular_spread`): odd
-    # days — a holiday, a late night — cannot veto the answer; only more
-    # than half the days being over MAX_SPREAD_MIN out can, and that is a
-    # house that genuinely has no usual time.
     spread = circular_spread(minutes, centre)
-    if spread > MAX_SPREAD_MIN:
+    if spread <= WHOLE_SPREAD_MAX:
+        return {"minute": round(centre, 1), "at": clock(centre),
+                "spread_min": round(spread, 1), "days": len(minutes),
+                "usual_days": len(_near(minutes, centre)),
+                "confidence": "high"}
+    # The usual days agreeing, with odd ones beside them. A run of odd days
+    # on one side pulls a plain median off the usual mornings and then the
+    # spread measured from it says there is no usual time, which is how a
+    # house went a month without one.
+    centre = circular_median(_densest(minutes))
+    kept = _near(minutes, centre)
+    centre = circular_median(kept)
+    kept = _near(minutes, centre)
+    if not kept or len(kept) < MIN_USUAL_SHARE * len(minutes):
         # No usual time. Saying so is the honest answer; a median here
         # would be a confident number over data that holds none.
         return None
+    # The spread of the usual days alone: the odd ones are already out, so
+    # this says how tight the usual ones are — and "usual" days spread
+    # evenly across three hours are a house that stirs anywhere.
+    spread = circular_spread(kept, centre)
+    if spread > CORE_SPREAD_MAX:
+        return None
+    rest = [m for m in minutes if circular_distance(m, centre) > MAX_SPREAD_MIN]
+    if rest and 2 * len(_densest(rest)) >= len(kept):
+        # A second cluster half the size of the first: two kinds of day.
+        return None
+    share = len(kept) / len(minutes)
     return {"minute": round(centre, 1), "at": clock(centre),
-            "spread_min": round(spread, 1), "days": len(minutes)}
+            "spread_min": round(spread, 1), "days": len(minutes),
+            "usual_days": len(kept),
+            "confidence": ("high" if share >= HIGH_CONFIDENCE_SHARE
+                           else "low")}
 
 
 def profile(payload: dict | None = None, path: str | None = None) -> dict:

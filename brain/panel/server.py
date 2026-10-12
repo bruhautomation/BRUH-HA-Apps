@@ -14417,6 +14417,25 @@ def _thermal_payload(store: dict) -> dict:
             "warmest": entry.get("warmest"),
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
+            "measured": True,
+        })
+    # The rooms the nightly pass considered and could not measure, each with
+    # its reason, as rows of their own: the `room_physics` tool answers from
+    # this list, and "no measured room by that name" about a room with a
+    # thermometer in it is an answer that cannot be acted on, where "only
+    # three nights of readings" can.
+    measured_ids = {r["id"] for r in rooms}
+    for eid, left in sorted((store.get("unmeasured") or {}).items()):
+        if not isinstance(left, dict) or eid in measured_ids:
+            continue
+        rooms.append({
+            "id": eid,
+            "name": left.get("name") or eid.split(".", 1)[-1].replace("_", " "),
+            "area": left.get("area") or "",
+            "k": None, "tau_h": None, "gain": None,
+            "warmest": None, "coolest": None, "hours_to_warm": None,
+            "measured": False,
+            "why_not_measured": str(left.get("reason") or "")[:300],
         })
     # The reference every `k` above was measured against, why it was the
     # one, and what else could have been — so the tab can say it and the
@@ -15660,6 +15679,14 @@ def _diagnostics_payload() -> dict:
             "outdoor_why": _thermal_store.get("outdoor_why", ""),
             "coldest": _thermal_store.get("coldest"),
             "reason": _thermal_store.get("reason", ""),
+            # Each room considered and left out, and why — one measured of
+            # nine is a fault or a floor, and only the reasons say which.
+            "unmeasured": {
+                eid: str((left or {}).get("reason") or "")[:200]
+                for eid, left in sorted(
+                    (_thermal_store.get("unmeasured") or {}).items())[:20]
+                if isinstance(left, dict)},
+            "unmeasured_count": len(_thermal_store.get("unmeasured") or {}),
         },
         # How many conversations the chat is holding open, how many are
         # answering, and what the cap is. A session the cap stopped and one
