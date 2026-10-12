@@ -87,6 +87,8 @@ def warm_up(binary: str) -> None:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90,
             check=False)
     except (OSError, subprocess.TimeoutExpired):
+        # Only a warm-up: whether it worked is answered by the timed launch,
+        # which fails the test if the browser cannot start at all.
         pass
     finally:
         shutil.rmtree(profile, ignore_errors=True)
