@@ -132,6 +132,12 @@ export function icon(kind, opts) {
   return `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:${color}"><path d="${ic.base}"></path><g class="${cls}" style="transform-box:view-box;transform-origin:${ic.origin};${tf}${dur}${op}transition:transform .6s cubic-bezier(.25,1,.3,1),opacity .4s ease"><path d="${ic.part}"></path></g></svg>`;
 }
 
+// Morph's mark, light and minimal: a tile with three square corners and one
+// rounded all the way into the arc of a circle, with a dot at that circle's
+// centre (branding/morph/). It is the press in an opened card that says
+// "change this", so it is drawn in the current colour and stays quiet.
+export const MARK = (size = 18) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" style="flex-shrink:0"><path d="M4 5.2A1.2 1.2 0 0 1 5.2 4H18.8A1.2 1.2 0 0 1 20 5.2V12A8 8 0 0 1 12 20H5.2A1.2 1.2 0 0 1 4 18.8Z"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/></svg>`;
+
 export const SPARK = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" style="flex-shrink:0"><path d="M12 3c.7 4.4 2.3 6.1 6.8 6.8-4.5.7-6.1 2.4-6.8 6.8-.7-4.4-2.3-6.1-6.8-6.8C9.7 9.1 11.3 7.4 12 3z" fill="var(--violet)"></path><path d="M19 14.5c.3 1.9 1 2.6 2.9 2.9-1.9.3-2.6 1-2.9 2.9-.3-1.9-1-2.6-2.9-2.9 1.9-.3 2.6-1 2.9-2.9z" fill="var(--teal)"></path></svg>';
 
 export function friendly(hass, eid, fallback) {

@@ -54,7 +54,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "learn_now", "tell_issue")
+READ_ONLY_KINDS = ("history", "tell", "learn_now", "tell_issue", "report", "report_withdraw")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -123,10 +123,14 @@ async def retry_generate() -> None:
 
 # ---------------------------------------------------------------- mirrors
 
-def publish() -> None:
+def publish() -> dict:
     mirror = store.publish(gitrepo.head())
     STATE["last_revision"] = mirror["revision"]
     publish_state()
+    return mirror
+
+
+tell.ON_PUBLISH = publish
 
 
 def publish_state() -> None:
@@ -193,6 +197,18 @@ async def handle(kind: str, p: dict) -> dict:
         return {"ok": "error" not in st, **st}
     if kind == "tell_issue":
         out = await asyncio.to_thread(tell.answer_issue, str(p.get("id") or ""), str(p.get("verb") or ""))
+        await asyncio.to_thread(devloop.publish, VERSION)
+        await asyncio.to_thread(publish_state)
+        return out
+    if kind == "report":
+        context = f"Morph {VERSION} · dashboard at {gitrepo.head() or 'no commit yet'}"
+        out = await asyncio.to_thread(devloop.note_request, str(p.get("text") or ""),
+                                      bool(p.get("ui")), context)
+        await asyncio.to_thread(devloop.publish, VERSION)
+        await asyncio.to_thread(publish_state)
+        return out
+    if kind == "report_withdraw":
+        out = await asyncio.to_thread(devloop.withdraw, str(p.get("fp") or ""))
         await asyncio.to_thread(devloop.publish, VERSION)
         await asyncio.to_thread(publish_state)
         return out

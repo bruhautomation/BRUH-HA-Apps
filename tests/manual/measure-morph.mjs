@@ -251,6 +251,30 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   calls = await p.evaluate(() => window.__calls);
   if (!calls.some((x) => x.service === 'open_cover')) fail(name, 'a second tap did not open the garage door');
 
+  // Outside Edit, an opened card carries Morph's mark; pressing it opens
+  // the Tell box for that card without going through Edit.
+  {
+    c = await tileCenter(p, 'c_kitchen_cans');
+    await p.mouse.move(c.x, c.y); await p.mouse.down(); await p.waitForTimeout(700); await p.mouse.up();
+    await settle(p, 900);
+    const mark = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-act="tell-card"]'); if (!b) return null; const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, svg: !!b.querySelector('svg') }; });
+    if (!mark) fail(name, 'an opened card does not carry Morph\'s mark');
+    else {
+      if (mark.w < 36 || mark.h < 36 || !mark.svg) fail(name, `Morph's mark in an opened card is not a ${mark.w}×${mark.h} press with the mark in it`);
+      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-act="tell-card"]').click());
+      await settle(p, 900);
+      const box = await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-tell] textarea'));
+      if (!box) fail(name, 'Morph\'s mark did not open the Tell box in the card');
+      atRest(`${name} with a Tell opened from the mark`, await snapshot(p));
+      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-cancel"]').click());
+      await settle(p, 700);
+      const back = await p.evaluate(() => { const v = window.__panel.s.view; return v && v.id === 'c_kitchen_cans' ? v.mode : ''; });
+      if (back !== 'adv') fail(name, `cancelling a Tell opened from the mark did not go back to the opened card (${back || 'closed'})`);
+      await p.evaluate(() => window.__panel.closeView());
+      await settle(p, 700);
+    }
+  }
+
   // Edit: hold a card, Tell brAIn opens inside it, Send, Keep · Undo.
   await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
   await settle(p, 1200);
@@ -293,6 +317,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   const box = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tell]'); return { text: b ? b.innerText : '', figs: b ? b.querySelectorAll('figure.shot img').length : 0 }; });
   if (!/Looking at the screenshot/.test(box.text)) fail(name, 'brAIn\'s own steps are not shown while it works');
   if (!/brAIn saw:/.test(box.text)) fail(name, 'the finished tell does not say what brAIn saw');
+  if (!/On the dashboard now/i.test(box.text) || !/Cans/.test(box.text)) fail(name, 'the finished tell does not say what is on the dashboard now (read back from the file)');
   if (box.figs < 2) fail(name, `the finished tell shows ${box.figs} picture(s), not before and after`);
   atRest(`${name} with a tell open`, await snapshot(p));
   // Tell it more: a second turn, photographed again, with the first above it.
@@ -324,8 +349,37 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   const set = await p.evaluate(() => ({ text: window.__panel.shadowRoot.querySelector('.settings').innerText, sideways: window.__panel.shadowRoot.querySelector('.scroll').scrollWidth > window.__panel.shadowRoot.querySelector('.scroll').clientWidth + 1 }));
   for (const h of ['brAIn', 'Learning', 'Improving Morph itself', 'Appearance', 'History', 'Dashboard']) if (!set.text.includes(h)) fail(name, `Settings has no ${h} section`);
   if (set.sideways) fail(name, 'Settings scrolls sideways');
+  // What do you want to fix in Morph? — sent as typed, listed with Take back.
+  if (!/What do you want to fix in Morph\?/i.test(set.text)) fail(name, 'Settings has no box to report a problem with Morph');
+  await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('textarea[data-keep="report"]'); ta.value = 'The scenes line wraps badly on my phone'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); const cb = window.__panel.shadowRoot.querySelector('input[data-keep="report-ui"]'); cb.checked = true; cb.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="report-send"]').click());
+  await settle(p, 900);
+  const rep = await p.evaluate(() => ({ req: window.__ws.find((x) => x.type === 'morph/request' && x.kind === 'report'), text: window.__panel.shadowRoot.querySelector('.settings').innerText }));
+  if (!rep.req || rep.req.payload.text !== 'The scenes line wraps badly on my phone' || rep.req.payload.ui !== true) fail(name, `the report was not sent as typed: ${JSON.stringify(rep.req)}`);
+  if (!/Take back/.test(rep.text)) fail(name, 'a sent report is not listed with Take back');
 
   if (errors.length) fail(name, `page errors: ${errors.join(' | ')}`);
+  await ctx.close();
+}
+
+// A house's card file that changes is loaded again at its new version, and
+// a page can define a custom element only once: that is a reload to offer,
+// never a fault to report (house report: "the name morph-scenes has already
+// been used with this registry").
+{
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  await route(ctx, { narrow: false });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await settle(p, 1800);
+  for (const v of [1, 2]) {
+    await p.evaluate((ver) => { window.__cardModules = [{ name: 'morph-twice.js', v: ver }]; return window.__panel.load(); }, v);
+    await settle(p, 700);
+  }
+  const got = await p.evaluate(() => ({ reports: window.__ws.filter((m) => m.type === 'morph/report').map((m) => m.message), bar: (window.__panel.shadowRoot.querySelector('.bar') || {}).innerText || '', defined: !!customElements.get('morph-twice') }));
+  if (!got.defined) fail('card code', 'the card file was never loaded');
+  if (got.reports.some((x) => /morph-twice/.test(x))) fail('card code', `a changed card file was reported as a fault: ${got.reports.join(' | ')}`);
+  if (!/Reload/.test(got.bar)) fail('card code', `a changed card file does not offer a reload: ${got.bar}`);
   await ctx.close();
 }
 

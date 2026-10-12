@@ -47,7 +47,7 @@ from .const import (
 
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
                "tell_issue", "settings", "suggestion", "learn_now", "regenerate", "lessons",
-               "code_reset", "code_redo")
+               "code_reset", "code_redo", "report", "report_withdraw")
 BRAIN_FILES = ("findings_state.json", "situation.json", "status.json")
 TELL_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")

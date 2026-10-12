@@ -56,7 +56,7 @@ def _pre(prefix: str, text) -> str:
 
 
 def empty() -> dict:
-    return {"title": "Home", "story": True, "ask": True, "coming_up": True,
+    return {"title": "Home", "greeting": True, "story": True, "ask": True, "coming_up": True,
             "scenes": [], "floors": []}
 
 
@@ -161,7 +161,7 @@ def normalize(raw) -> tuple[dict, list[str]]:
         raw = {}
     out = empty()
     out["title"] = str(raw.get("title") or "Home")[:60]
-    for flag in ("story", "ask", "coming_up"):
+    for flag in ("greeting", "story", "ask", "coming_up"):
         if flag in raw:
             out[flag] = bool(raw[flag])
     out["scenes"] = _entities(raw.get("scenes"))

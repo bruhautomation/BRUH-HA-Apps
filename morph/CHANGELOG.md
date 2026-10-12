@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- **A new mark for Morph.** A tile with three square corners and one rounded
+  all the way into the arc of a circle, with a dot at that circle's centre — a
+  card becoming something else in place. It is Morph's icon in the add-on
+  store, in the sidebar's integration page and beside MORPH in the bar.
+- **Change a card without going through Edit.** An opened card carries a light
+  version of the mark; press it and the Tell box opens in the card. Say what
+  should change and Send. Cancel goes back to the opened card.
+- **Settings → Improving Morph itself → What do you want to fix in Morph?**
+  Type what is wrong, tick *It is about how Morph looks* if it is, and Send.
+  Your words go as they are to brAIn's development loop, which files them in
+  your private reports repository so Morph's code gets fixed. What you sent is
+  listed, with **Take back** until brAIn picks it up.
+- `greeting: false` in dashboard.yaml hides "Good evening." at the top.
+
+### Fixed
+
+- **A Tell no longer says it changed the dashboard when it did not.** When
+  brAIn finishes, Morph reads the dashboard back and says what is different
+  on screen, worked out from the file rather than from brAIn's words (*On the
+  dashboard now: The greeting is hidden.*). If nothing changed it says
+  *Nothing on the dashboard changed* and quotes what brAIn said. If brAIn left
+  dashboard.yaml unreadable it says *Not applied*, and Undo puts the file
+  back. The dashboard is republished the moment brAIn finishes, the open page
+  reloads it, and a page that has not caught up offers **Refresh**.
+- A Tell's Undo no longer sends brAIn to put back a Home Assistant change when
+  the only thing changed was dashboard.yaml.
+- Leaving Edit no longer reports "Sections overlap at rest": the "Add section"
+  places left behind invisible markers that were measured against the rooms.
+- A custom card file that changes no longer reports *failed to load* (a page
+  can define a card only once). Morph offers **Reload** instead, and
+  AGENTS.md's example card guards its `define`.
+
 ## 0.4.0
 
 ### Added
