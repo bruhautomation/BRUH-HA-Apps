@@ -68,6 +68,46 @@ def scorecard(score_rows: list[dict], diagnostics: dict, version: str) -> list[d
              "what": f"brAIn {version}", "detail": "", "body": body}]
 
 
+# ----------------------------------------------------------------- morph
+
+MORPH_MAX_ROWS = 40
+
+
+def morph(outbox: Path) -> list[dict] | None:
+    """Morph's own faults, as Morph published them for this loop.
+
+    Morph (the dashboard add-on) keeps the ledger and writes the rows in
+    this module's own shape to ``/config/.morph/devloop/outbox.json``; this
+    reads them, keeps only well-formed rows whose ``where`` names Morph (the
+    cloud routine reads that word to know the fix belongs under ``morph/``),
+    and caps them. ``None`` is "Morph is not installed or could not be read",
+    which is a different answer from an empty list: only the second may let
+    an issue be told it has not been seen since.
+    """
+    try:
+        data = json.loads(Path(outbox).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        return None
+    out = []
+    for row in data["rows"]:
+        if not isinstance(row, dict):
+            continue
+        where, what = str(row.get("where") or ""), str(row.get("what") or "")
+        if not where.startswith("Morph") or not what:
+            continue
+        item = {"where": where[:80], "what": what[:200],
+                "detail": str(row.get("detail") or "")[:600],
+                "body": str(row.get("body") or "")[:6000]}
+        if isinstance(row.get("impact"), dict):
+            item["impact"] = row["impact"]
+        out.append(item)
+        if len(out) >= MORPH_MAX_ROWS:
+            break
+    return out
+
+
 # ---------------------------------------------------------------- wrongs
 
 WRONG_MIN = 3

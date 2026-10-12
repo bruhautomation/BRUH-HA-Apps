@@ -362,15 +362,21 @@ not depend on the current one's result. So while a pull request is in CI:
   repeated, unnamed or only meaningful to a developer? Then screenshot it
   again after the fix and look again. A UX fix judged only by a measure
   that passes is a fix nobody has seen. Its `Done when:` line is the bar.
-- **Fix them** in `brain/`, `tests/`, `docs/` or `CLAUDE.md` only. Never in
-  another add-on, never in a `needs_human_paths` file, never in an option's
-  meaning (an existing install must not change behaviour because of a
-  default you moved).
+- **Fix them** in `brain/`, `tests/`, `docs/` or `CLAUDE.md` only — or in
+  `morph/` for an issue labelled `devloop:morph` (its title begins
+  "Morph"): those are faults the Morph dashboard add-on found in its own
+  code, filed through brAIn's loop, and `morph/AGENTS.md` is how Morph is
+  built. Never in any other add-on, never in a `needs_human_paths` file,
+  never in an option's meaning (an existing install must not change
+  behaviour because of a default you moved). A batch is brAIn's or Morph's,
+  never both, so each carries one version bump.
 - **Version**, last, just before pushing, so a prepared batch never
   carries a stale number. One patch bump per batch in `brain/config.yaml` and
   `brain/custom_components/brain/manifest.json` (the same number in both,
-  nothing else changed in those two files), and one entry at the top of
-  `brain/CHANGELOG.md` with a line per fix, saying what changed for
+  nothing else changed in those two files) — for a Morph batch,
+  `morph/config.yaml`, `morph/custom_components/morph/manifest.json` and
+  `const.py`'s `VERSION` — and one entry at the top of that add-on's
+  `CHANGELOG.md` with a line per fix, saying what changed for
   somebody using brAIn and naming each reports issue by its number only,
   never its URL, because the reports repository is private. Group the
   lines under `### Added`, `### Changed`, `### Removed`, `### Fixed` and

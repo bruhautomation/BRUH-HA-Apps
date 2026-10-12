@@ -48,6 +48,7 @@ jobs:
       pytest_args: ${{ steps.scope.outputs.pytest_args }}
       bright: ${{ steps.scope.outputs.bright }}
       print: ${{ steps.scope.outputs.print }}
+      morph: ${{ steps.scope.outputs.morph }}
     steps:
       - uses: actions/checkout@v7
 
@@ -74,6 +75,7 @@ jobs:
               echo "pytest_args="
               echo "bright=true"
               echo "print=true"
+              echo "morph=true"
             } >> "$out"
             echo "Everything runs: $1" >> "$summary"
             exit 0
@@ -139,6 +141,7 @@ jobs:
           narrow "BRight" bright test_bright_
           narrow "BRUH Print" bruh-print test_bruh_print_
           narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
+          narrow "Morph" morph test_morph_
 
           # The two layout groups that boot an add-on's panel run when that
           # add-on or one of the files only that group reads changed. The
@@ -151,13 +154,18 @@ jobs:
           if grep -qE '^(bruh-print/|tests/manual/(bruh_print_demo_panel\.py|measure-print-(panel|card)\.mjs))' <<<"$changed"; then
             print=true
           fi
-          echo "Layout groups: static-a and static-b run; bright=$bright print=$print"
-          echo "Layout: bright=$bright print=$print" >> "$summary"
+          morph=false
+          if grep -qE '^(morph/|tests/manual/(morph-fixture|measure-morph)\.mjs)' <<<"$changed"; then
+            morph=true
+          fi
+          echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph"
+          echo "Layout: bright=$bright print=$print morph=$morph" >> "$summary"
 
           {
             echo "pytest_args=${args# }"
             echo "bright=$bright"
             echo "print=$print"
+            echo "morph=$morph"
           } >> "$out"
 
   tests:
@@ -253,9 +261,9 @@ jobs:
       # the first red group hides the second until the next push.
       fail-fast: false
       matrix:
-        group: [static-a, static-b, bright, print]
+        group: [static-a, static-b, bright, print, morph]
     env:
-      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || 'true' }}
+      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || (matrix.group == 'morph' && needs.changes.outputs.morph) || 'true' }}
     steps:
       - name: Say why this group has nothing to do
         if: env.GROUP_RUNS != 'true'
@@ -520,6 +528,14 @@ jobs:
         if: matrix.group == 'print' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-print-card.mjs
 
+      # morph: Morph's panel, its real modules against a stubbed `hass`. Its
+      # layout engine's acceptance tests are about MOTION — no frame in
+      # which two sections overlap while a card opens and folds back, an
+      # opened card that keeps its column — which only a browser can check.
+      - name: Measure Morph's panel
+        if: matrix.group == 'morph' && env.GROUP_RUNS == 'true'
+        run: node tests/manual/measure-morph.mjs
+
   hassfest:
     name: HA integration validation
     runs-on: ubuntu-latest
@@ -543,6 +559,7 @@ jobs:
           cp -r bruh-minecraft-server/custom_components/bruh_minecraft \
                 custom_components/bruh_minecraft
           cp -r bright/custom_components/bright custom_components/bright
+          cp -r morph/custom_components/morph custom_components/morph
 
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3  # master @ 2026-08-03
@@ -564,7 +581,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -597,7 +614,10 @@ jobs:
             bruh-minecraft-server/translations/en.yaml \
             bright/config.yaml \
             bright/build.yaml \
-            bright/translations/en.yaml
+            bright/translations/en.yaml \
+            morph/config.yaml \
+            morph/build.yaml \
+            morph/translations/en.yaml
 
   shellcheck:
     name: Shellcheck
@@ -627,6 +647,17 @@ jobs:
             bright/custom_components
             bright/panel
             bright/integrations
+
+      - name: Run shellcheck (morph)
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./morph
+          severity: error
+          ignore_paths: >-
+            morph/custom_components
+            morph/service
 
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -668,6 +699,12 @@ jobs:
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: bright/Dockerfile
+          failure-threshold: error
+
+      - name: Lint Morph Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
+        with:
+          dockerfile: morph/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -726,6 +763,26 @@ jobs:
       - name: Check BRight changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bright
 
+      # Morph carries its version in THREE places: config.yaml (what the
+      # store offers), the manifest (what Core loads) and const.py, which
+      # versions the panel's module URL — a const that lags is a browser
+      # holding last release's modules beside this release's integration.
+      - name: Check Morph version parity
+        run: |
+          addon_version=$(grep -E '^version:' morph/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("morph/custom_components/morph/manifest.json"))["version"])')
+          const_version=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' morph/custom_components/morph/const.py)
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          echo "panel modules:  $const_version"
+          if [ "$addon_version" != "$manifest_version" ] || [ "$addon_version" != "$const_version" ]; then
+            echo "::error::Morph's add-on ($addon_version), manifest ($manifest_version) and const.py ($const_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check Morph changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh morph
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -751,3 +808,6 @@ jobs:
 
       - name: Verify BRight version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bright
+
+      - name: Verify Morph version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" morph
