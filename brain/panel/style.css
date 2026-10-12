@@ -6105,10 +6105,16 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 /* On a phone the row is the primary, Snooze, Ignore and the ⋯ (the rest
    folded behind it, `foldsSecondary`), and it has to be one row at 390px:
    at the desktop's 16px inset "Add to To Do · Snooze · Ignore · ⋯" came to
-   350px on a 329px card. The height and the 44px touch floor stay. */
+   350px on a 329px card, and a runner's wider font still wrapped it at 6px
+   gaps; it does not wrap now, and a label that still does not fit is cut
+   with an ellipsis rather than pushing the row onto a second line. The
+   height and the 44px touch floor stay. */
 @media (max-width: 640px) {
-  .qcard > .card-actions { gap: 6px; }
-  .qcard > .card-actions > button:not(.icon) { padding-left: 10px; padding-right: 10px; }
+  .qcard > .card-actions { gap: 4px; flex-wrap: nowrap; }
+  .qcard > .card-actions > button:not(.icon) {
+    padding-left: 8px; padding-right: 8px; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .qcard > .card-actions > button.icon { flex: none; }
 }
 .qcard .findnote { margin-top: 0; }
 
