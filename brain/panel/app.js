@@ -6055,7 +6055,7 @@ function caseMeta(row) {
     out.push("confirmed " + timeAgo(new Date(row.checked_at * 1000).toISOString()));
   }
   // A guess is about the day it was made, so the card says when that was.
-  if (row.asked_at) out.push("Asked " + agoWords(row.asked_at));
+  if (row.asked_at) out.push("asked " + agoWords(row.asked_at));
   return out;
 }
 
