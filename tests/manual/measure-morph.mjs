@@ -329,6 +329,34 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await ctx.close();
 }
 
+// Morph's own code, changed by the house: a copy is served in place of
+// Morph's own, and a copy that fails to load falls back to Morph's own with
+// a sentence saying so (boot.js, static.py).
+{
+  const { readFileSync } = await import('node:fs');
+  const shipped = readFileSync(new URL('../../morph/custom_components/morph/frontend/styles.js', import.meta.url), 'utf8');
+  for (const [label, overrides, broken] of [
+    ['a working copy', { 'styles.js': shipped.replace('`;\n', '.hello{color:rgb(1, 2, 3)!important}\n`;\n') }, false],
+    ['a broken copy', { 'util.js': 'export const esc = (;' }, true],
+  ]) {
+    const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+    await route(ctx, { narrow: false, overrides });
+    const p = await ctx.newPage();
+    await p.goto(ORIGIN + '/');
+    await settle(p, 2500);
+    const got = await p.evaluate(() => {
+      const root = window.__panel && window.__panel.shadowRoot;
+      const hello = root && root.querySelector('.hello');
+      return { drew: !!hello, color: hello ? getComputedStyle(hello).color : '', fallback: window.__morphFallback || '', note: root ? root.textContent.includes('did not load, so Morph is running its own copy') : false };
+    });
+    if (!got.drew) fail('own code', `${label}: the panel did not draw`);
+    if (!broken && got.color !== 'rgb(1, 2, 3)') fail('own code', `${label} was not served in place of Morph's own (${got.color})`);
+    if (broken && !got.fallback) fail('own code', `${label}: Morph did not fall back to its own copy`);
+    if (broken && !got.note) fail('own code', `${label}: the page does not say a change did not load`);
+    await ctx.close();
+  }
+}
+
 await browser.close();
 if (problems.length) {
   console.error(`measure-morph: ${problems.length} problem(s)`);

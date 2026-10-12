@@ -196,7 +196,8 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
 
 def code_suggestions(reports: list) -> list[dict]:
     """A pass's ``code_reports`` as suggestions of kind ``code``: the
-    household is asked "send it as an issue?" rather than the model's
+    household is asked whether brAIn should make it on this house's copy of
+    Morph (Do it) or only send it as an issue, rather than the model's
     sentence being filed in their name."""
     out = []
     for rep in (reports or [])[:5]:
@@ -204,7 +205,8 @@ def code_suggestions(reports: list) -> list[dict]:
             continue
         what = str(rep["what"]).strip()[:140]
         out.append({"kind": "code", "title": what[:80],
-                    "why": "This needs a change to Morph itself, not to your dashboard.",
+                    "why": "A change to Morph itself. brAIn can make it here now, then ask whether to "
+                           "send it to Morph's developers.",
                     "change": f"{what}\n\n{str(rep.get('detail') or '').strip()[:1100]}"})
     return out
 
@@ -465,8 +467,8 @@ def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) ->
         "and declined suggestions teach. Lessons are rules about how THIS household wants its",
         "dashboard to look and behave; a fact about the house (what a device is, who uses a room)",
         "is not a lesson and does not belong in the list. Put a problem that needs Morph's own",
-        "code changed (not this dashboard) in code_reports; the household is asked whether to",
-        "send each one, so say plainly what Morph cannot do.",
+        "code changed (not this dashboard) in code_reports; the household can have brAIn make",
+        "it on this house's copy of Morph, or send it as an issue, so say plainly what should change.",
     ]
     return "\n".join(lines)
 

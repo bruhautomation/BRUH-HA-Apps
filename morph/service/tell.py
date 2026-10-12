@@ -33,9 +33,12 @@ rather than a text box that sends a sentence somewhere:
   follow-up, which is putting back a house change a Tell made.
 * **What brAIn is doing, while it does it.** brAIn's task-progress hook
   writes a line per tool call; this turns them into steps the panel shows.
-* **Morph's own code is an issue somebody chooses to send.** When the
-  request needs Morph itself changed, the answer carries ``code_issue`` and
-  the panel asks whether to send it; nothing is filed until they say yes.
+* **Morph's own code is the house's to change too.** When the request needs
+  Morph itself changed (the header, the layout, a built-in card type),
+  brAIn copies that module into /config/morph/frontend/ and changes the
+  copy (``morphcode.py``), so it is one commit and Undo puts Morph's own
+  back. Then the panel asks whether to send the change to Morph's
+  developers as an issue; nothing is filed until somebody says yes.
 
 A tell is a job with a state file the integration reads directly
 (``/config/.morph/tells/<id>.json``), so the panel can poll it without a
@@ -86,13 +89,15 @@ RESULT_SCHEMA = {
         "code_issue": {
             "type": "object", "required": ["title", "detail"],
             "properties": {
-                "title": {"type": "string", "description": "Under 90 characters: what Morph cannot do."},
+                "title": {"type": "string",
+                          "description": "Under 90 characters: what Morph itself should do differently."},
                 "detail": {"type": "string",
-                           "description": "What Morph's code would need, and what you did instead."},
+                           "description": "What you changed in Morph's own code here and why, so Morph's "
+                                          "developers can make it part of Morph for everybody."},
             },
-            "description": "Only when doing this properly needs Morph's OWN code changed (a built-in "
-                           "card type, the layout, the panel), not dashboard.yaml or a cards/*.js "
-                           "file. Morph asks the person whether to send it as an issue.",
+            "description": "Whenever you changed Morph's OWN code (a file in /config/morph/frontend/), "
+                           "or doing this properly needs it and you could not. Morph asks the person "
+                           "whether to send it to Morph's developers as an issue.",
         },
     },
 }
@@ -248,8 +253,9 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         "MORPH · a change request from the dashboard editor.",
         "",
         "Morph is this house's dashboard. It lives in /config/morph: dashboard.yaml is the",
-        "dashboard, cards/ holds custom card code, AGENTS.md is how it works (READ IT FIRST),",
-        "and LEARNED.md is what this household has taught Morph about how it wants things.",
+        "dashboard, cards/ holds custom card code, frontend/ holds this house's changes to Morph's",
+        "own code, AGENTS.md is how it works (READ IT FIRST), and LEARNED.md is what this",
+        "household has taught Morph about how it wants things.",
         "",
         f"Target: {what}",
     ]
@@ -299,8 +305,9 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         ]
     else:
         lines += [
-            "Scope: THE DASHBOARD ONLY. Change /config/morph/dashboard.yaml and /config/morph/cards/*.js",
-            "(registered in dashboard.yaml as AGENTS.md describes). Look at Home Assistant with your",
+            "Scope: MORPH ONLY — the dashboard and Morph itself. Change /config/morph/dashboard.yaml,",
+            "/config/morph/cards/*.js (registered in dashboard.yaml as AGENTS.md describes) and, when",
+            "the request is about Morph's own panel, /config/morph/frontend/ (below). Look at Home Assistant with your",
             "read tools as much as you need to get the dashboard right, but do NOT change Home",
             "Assistant itself — entity ids, names, areas, automations, scripts, scenes, helpers,",
             "integrations — unless the request asks for that change in Home Assistant in so many",
@@ -321,15 +328,20 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         "- What you learn about the HOUSE (what a device is, where it is, who uses it) is brAIn's",
         "  memory: record it with remember_fact. LEARNED.md and `lesson` are only for how this",
         "  household wants its DASHBOARD to look and behave.",
-        "- If doing this properly needs Morph's OWN code changed — a built-in card type that is",
-        "  wrong or cannot do this, the layout, the panel — and not dashboard.yaml or a cards/*.js",
-        "  file, fill code_issue and do the best you can meanwhile. Do not file anything yourself:",
-        "  Morph asks the person whether to send it.",
+        "- Nothing about Morph is out of reach. If the request is about Morph's OWN panel — its",
+        "  header, the gear, the layout, a built-in card type, its styles — change it: copy the module",
+        f"  from Morph's own copy in {paths.SHIPPED}/ (read-only; do not edit it there) to",
+        "  /config/morph/frontend/<the same name> and edit the copy. Morph serves your copy in place",
+        "  of its own after a page reload. Copy only the files you change, keep each module's",
+        "  exports, and never replace boot.js. A copy that fails to load is replaced by Morph's own,",
+        "  so check your JavaScript. Never say you cannot change Morph's code: you can.",
+        "- When you changed Morph's own code, fill code_issue saying what you changed and why, so",
+        "  Morph can offer to send it to Morph's developers. Do not file anything yourself.",
         "",
         "Answer with the JSON object the schema describes: summary (what you did, for the person),",
         "saw, changed, reload (true if the dashboard changed), needs_person only if something is",
         "left for a person, lesson only if the request taught a durable preference about this",
-        "dashboard, and code_issue only as described above.",
+        "dashboard, and code_issue whenever you changed Morph's own code (as described above).",
     ]
     return "\n".join(lines)
 
@@ -458,9 +470,21 @@ async def _run(state: dict) -> None:
         state["needs_person"] = str((data or {}).get("needs_person") or "")[:600]
         state["saw"] = str((data or {}).get("saw") or "")[:400]
         issue = (data or {}).get("code_issue")
+        code_files = [f.split("/", 1)[1] for f in (await asyncio.to_thread(gitrepo.changed_files, commit) if commit else [])
+                      if f.startswith("frontend/") and f.endswith(".js")]
+        if code_files:
+            # Morph changed itself: the page has to reload to run the new
+            # code, and the person is asked whether Morph should have it for
+            # everybody — whether or not brAIn remembered to say so.
+            state["code"] = code_files
+            _step(state, "Changed Morph's own " + ", ".join(code_files[:4]), "good")
         if isinstance(issue, dict) and str(issue.get("title") or "").strip():
             state["code_issue"] = {"title": str(issue["title"]).strip()[:140],
                                    "detail": str(issue.get("detail") or "").strip()[:1500]}
+        elif code_files:
+            state["code_issue"] = {"title": (summary or state["text"])[:140],
+                                   "detail": "brAIn changed Morph's own " + ", ".join(code_files) + " for this."}
+        if state.get("code_issue"):
             state["issue"] = "asked"
         state["reload"] = bool(commit) or bool((data or {}).get("reload"))
         lesson = str((data or {}).get("lesson") or "").strip()
@@ -545,6 +569,13 @@ def answer_issue(tid: str, verb: str) -> dict:
         "What Morph would need:",
         issue.get("detail") or "(not said)",
     ])
+    if state.get("code") and state.get("commit"):
+        # The change this house made to Morph's own code, as a patch, so it
+        # can be made part of Morph for everybody.
+        patch = gitrepo.diff(state["commit"], "frontend/", limit=3600)
+        if patch.strip():
+            detail += ("\n\nThe change, made in /config/morph/frontend/ (a copy of Morph's own "
+                       "custom_components/morph/frontend/):\n```diff\n" + patch + "\n```")
     devloop.note_fault("Tell", issue["title"], detail, source="person")
     state["issue"] = "sent"
     _save(state)

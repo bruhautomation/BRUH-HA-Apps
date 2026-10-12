@@ -14,6 +14,7 @@ updated, so do not edit it. Your notes belong in `LEARNED.md`.
 |---|---|---|
 | `dashboard.yaml` | The whole dashboard | Edit mode, you, a person with a text editor |
 | `cards/*.js` | Custom card code: one Lovelace custom card per file | You |
+| `frontend/*.js` | This house's changes to Morph's own panel (below) | You |
 | `LEARNED.md` | What this household has taught Morph, as rules | Morph's learning loop, you, the household |
 | `AGENTS.md` | This page | Morph |
 
@@ -101,6 +102,33 @@ rendered by Home Assistant's own card helpers, untouched. A Lovelace card's
 YAML is therefore always valid here, including any custom card the house has
 installed.
 
+## Morph's own code (`frontend/*.js`)
+
+Nothing about Morph is out of reach — not the dashboard and not Morph itself:
+its header and gear, the Edit bar, the layout engine, a built-in card type, its
+styles. Never tell somebody you cannot change Morph's code. You can.
+
+Morph's own panel modules are in `/config/custom_components/morph/frontend/`
+(`morph-panel.js` the page, `cards.js` the built-in cards, `styles.js` the
+styles, `engine.js` the layout, `history.js` the charts, `util.js` the icons
+and helpers). That copy is Morph's: read it, never edit it there (an update
+replaces it). To change one:
+
+1. Copy it to `/config/morph/frontend/` under the same name, and edit the copy.
+   A new module of your own can go there too, imported by a copy.
+2. Morph serves your copy in place of its own. The page has to reload to run
+   it; Morph offers the reload.
+3. Copy only the files you change, keep every export the other modules import,
+   and never replace `boot.js`. If a copy fails to load, Morph runs its own
+   for that page load and says so, so check your JavaScript.
+4. Fill `code_issue` saying what you changed and why. Morph asks the person
+   whether to open an issue so Morph's code gets the change for everybody.
+
+It is one commit like any other, so Undo puts Morph's own back. When Morph is
+updated and its own copy of a file you changed moves, your change is
+**paused** (Morph's own runs) until somebody asks you to make it again on the
+new file.
+
 ## Custom card code (`cards/*.js`)
 
 When nothing that exists will do, write a card. Each `cards/<name>.js` is an ES
@@ -168,9 +196,9 @@ bends in your `summary`.
   is brAIn's memory: record it with `remember_fact`. `LEARNED.md` and `lesson`
   are only for how this household wants its dashboard.
 - When a request needs **Morph's own code** changed — a built-in card type that
-  is wrong or cannot do it, the layout, the panel — and not this folder, fill
-  `code_issue` and do the best you can meanwhile. Morph asks the person whether
-  to send it as an issue; never file one yourself.
+  is wrong or cannot do it, the layout, the panel, the header — change it as
+  *Morph's own code* above, and fill `code_issue`. Morph asks the person
+  whether to open an issue; never file one yourself.
 - `protected_entities` still applies. If a request needs one, say so in
   `needs_person`.
 - Read `LEARNED.md` and follow it. If the request teaches a lasting preference

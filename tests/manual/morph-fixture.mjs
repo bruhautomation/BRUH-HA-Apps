@@ -20,7 +20,7 @@ import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -262,7 +262,7 @@ const hass = {
 };
 window.loadCardHelpers = async () => ({ createCardElement(cfg) { const el = document.createElement('div'); el.className = 'fake-ll'; el.style.cssText = 'padding:14px;border-radius:12px;background:#223;color:#cde;font:14px sans-serif'; el.textContent = 'Lovelace ' + cfg.type + ' · ' + (cfg.entity || ''); return el; } });
 function push() { const h = { ...hass, states }; el.hass = h; }
-await import('${ORIGIN}/morph_static/${VERSION}/morph-panel.js');
+await import('${ORIGIN}/morph_static/${VERSION}/boot.js');
 const el = document.createElement('morph-panel');
 el.panel = { config: { version: '${VERSION}', cards_url: '/morph_cards' } };
 el.narrow = ${o.narrow ? 'true' : 'false'};
@@ -279,6 +279,10 @@ export async function route(context, opts) {
     if (url.pathname === '/' || url.pathname === '/index.html') return r.fulfill({ contentType: 'text/html', body: page(opts) });
     const m = url.pathname.match(/^\/morph_static\/[^/]+\/(.+)$/);
     if (m) {
+      // This house's copy of one of Morph's modules (static.py's rule):
+      // served in place of Morph's own, except under shipped/.
+      const own = (opts && opts.overrides) || {};
+      if (!m[1].startsWith('shipped/') && own[m[1]] != null) return r.fulfill({ contentType: 'text/javascript', body: own[m[1]] });
       try { return r.fulfill({ contentType: 'text/javascript', body: readFileSync(path.join(FRONTEND, path.basename(m[1])), 'utf8') }); } catch (e) { return r.fulfill({ status: 404 }); }
     }
     if (url.pathname.startsWith('/api/camera_proxy/')) {

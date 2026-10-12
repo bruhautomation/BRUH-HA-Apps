@@ -28,6 +28,7 @@ import os
 import subprocess
 import threading
 
+import morphcode
 import paths
 
 AUTHORS = {
@@ -84,6 +85,12 @@ def _commit_locked(message: str, who: str = "morph") -> str:
     """Commit everything that changed. Returns the new head, or "" when
     there was nothing to commit — which is an answer, not a failure."""
     ensure()
+    # A change to Morph's own code is committed with the record of which
+    # Morph it was written against (morphcode.py), so Undo puts both back.
+    try:
+        morphcode.record_bases()
+    except Exception:  # noqa: BLE001 — a record is a convenience; the commit is not
+        pass
     _git("add", "-A")
     if not _git("diff", "--cached", "--quiet", check=False).returncode:
         return ""
@@ -183,6 +190,16 @@ def log(limit: int = 60) -> list[dict]:
 def changed_files(sha: str) -> list[str]:
     r = _git("show", "--name-only", "--format=", sha, check=False)
     return [x for x in r.stdout.splitlines() if x.strip()]
+
+
+def diff(sha: str, prefix: str = "", limit: int = 12000) -> str:
+    """What one commit changed, as a patch (under ``prefix`` only when
+    given), cut at ``limit`` characters with a line saying so."""
+    args = ["show", "--format=", "--no-color", sha]
+    if prefix:
+        args += ["--", prefix]
+    out = _git(*args, check=False).stdout
+    return out if len(out) <= limit else out[:limit] + f"\n… (cut: {len(out) - limit} more characters)\n"
 
 
 def is_reverted(sha: str) -> bool:
