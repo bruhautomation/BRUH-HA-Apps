@@ -80,6 +80,25 @@ from an automation.
 
 📖 [add-on README](bruh-print/) · [full documentation](bruh-print/DOCS.md)
 
+### [Morph](morph/)
+
+**A dashboard that moves, and that you change by saying what you want.**
+Morph lives in the sidebar: rooms are sections, cards open in place while
+everything else makes room, and in Edit you hold anything and tell brAIn what
+should change.
+
+- **One grammar** — tap does the main thing, slide sets a level, hold opens
+  the card in place with its history
+- **Any Lovelace card**, hosted inside a section
+- **Tell brAIn** — it acts at once, on the dashboard or the house, and every
+  change is one git commit you can keep or undo
+- **It learns, and asks first** — suggestions from how the dashboard is used,
+  shown in place with Do it, Not now and No
+- **It fixes itself** — Morph's own faults go through brAIn's development loop
+  to be fixed in its code
+
+📖 [add-on README](morph/) · [full documentation](morph/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):

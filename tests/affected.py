@@ -142,13 +142,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
-ADDONS = ("brain", "bright", "bruh-print", "bruh-minecraft-server")
+ADDONS = ("brain", "bright", "bruh-print", "bruh-minecraft-server", "morph")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
     "bright": "test_bright_",
     "bruh-print": "test_bruh_print_",
     "bruh-minecraft-server": "test_minecraft_",
+    "morph": "test_morph_",
 }
 # What a test writes when it means the add-on: its directory, and the
 # underscore spelling its integration domain uses.
@@ -157,6 +158,7 @@ ADDON_NAMES = {
     "bright": ("bright",),
     "bruh-print": ("bruh-print", "bruh_print"),
     "bruh-minecraft-server": ("bruh-minecraft-server", "bruh_minecraft"),
+    "morph": ("morph",),
 }
 ADDON_WIDE_FILES = {"run.sh", "config.yaml", "build.yaml", "Dockerfile",
                     "apparmor.txt"}
@@ -167,6 +169,7 @@ ADDON_WIDE_TESTS = {
                    "tests/test_bruh_print_addon.py"),
     "bruh-minecraft-server": ("tests/test_addon_hardening.py",
                               "tests/test_minecraft_config.py"),
+    "morph": ("tests/test_addon_hardening.py", "tests/test_morph_addon.py"),
 }
 # The demo panel a browser measure boots, where it drives the real server
 # rather than loading the page's files: a change to that add-on's panel
@@ -187,7 +190,8 @@ QUIET_DIRS = ("docs/", ".github/", ".claude/")
 # ruff.toml is the linter's, and no pytest test reads it.
 QUIET_NAMES = {".gitignore", ".gitattributes", "ruff.toml"}
 UI_SUFFIXES = {".js", ".css", ".html", ".mjs"}
-UI_DIRS = ("panel", "lovelace", "ttyd-assets")
+# Morph has no panel of its own: its page is the integration's frontend.
+UI_DIRS = ("panel", "lovelace", "ttyd-assets", "custom_components/morph/frontend")
 # What a source-tree sweep reads; prose and pictures are not among them.
 CODE_SUFFIXES = {".py", ".sh", ".js", ".mjs", ".css", ".html", ".yaml",
                  ".yml", ".json", ".conf"}
@@ -201,6 +205,7 @@ _MEASURE_PANEL = re.compile(
 _MEASURE_DEMO = (
     (re.compile(r"bright_demo_panel"), "bright"),
     (re.compile(r"bruh_print_demo_panel"), "bruh-print"),
+    (re.compile(r"morph-fixture"), "morph"),
     (re.compile(r"(?<![\w])demo_panel"), "brain"),
 )
 

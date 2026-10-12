@@ -15956,6 +15956,8 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
         if stream == "screens":
             return await _devloop_screens(payload, names, version)
+        if stream == "morph":
+            return await _devloop_morph(payload, names)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -16010,6 +16012,32 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
     except Exception as exc:  # noqa: BLE001 — one stream, not the loop
         log.warning("devloop: the %s stream failed: %s", stream, exc)
         return {"error": str(exc)[:200]}
+
+
+MORPH_SHARED = Path(os.environ.get("BRAIN_MORPH_SHARED", "/config/.morph"))
+
+
+async def _devloop_morph(payload: dict, names: dict) -> dict:
+    """File what Morph published about its own code, and tell Morph it was
+    picked up — its Settings view says when, so "nothing filed" can be told
+    apart from "nobody came". Morph absent is a skip, never an empty pass: an
+    empty pass would tell every open Morph issue it had not been seen since.
+    """
+    outbox = MORPH_SHARED / "devloop" / "outbox.json"
+    rows = await asyncio.to_thread(devloop.streams.morph, outbox)
+    if rows is None:
+        return {"skipped": "Morph is not installed, or has published nothing yet"}
+    out = await asyncio.to_thread(devloop.upstream.ingest, "morph", rows, payload, names)
+
+    def _ack() -> None:
+        try:
+            atomic_write.write_text(MORPH_SHARED / "devloop" / "ack.json", json.dumps(
+                {"at": time.time(), "filed": len(rows), "loop_on": True}))
+        except OSError as exc:
+            log.info("devloop: could not tell Morph its reports were read: %s", exc)
+
+    await asyncio.to_thread(_ack)
+    return out
 
 
 DEVLOOP_SCREENS_TIMEOUT_S = 900
