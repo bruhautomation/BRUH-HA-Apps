@@ -72,12 +72,32 @@ export function lightColor(st) {
   return 'var(--amber)';
 }
 
-const I = (base, part, cls, origin) => ({ base, part, cls: cls || '', origin: origin || '50% 50%' });
+// `hide`: the moving part is only there while the thing is on (a bulb's rays).
+// The words for a light's colour, the same split lightColor draws.
+export function lightTone(st) {
+  const c = lightColor(st);
+  return c.startsWith('rgb') ? 'Color' : c === 'var(--sky)' ? 'Daylight' : c === 'var(--sand)' ? 'Soft' : 'Warm';
+}
+
+// What a thermostat is doing, as a floor reads it: "cooling to 72°".
+export function climateDoing(st) {
+  const a = (st && st.attributes) || {};
+  const t = a.temperature, lo = a.target_temp_low, hi = a.target_temp_high;
+  const to = t != null ? fmt(t, '°') : lo != null && hi != null ? `${fmt(lo, '')}–${fmt(hi, '°')}` : '';
+  if (!st || st.state === 'off') return st ? 'HVAC off' : '';
+  if (st.state === 'cool') return to ? 'cooling to ' + to : 'cooling';
+  if (st.state === 'heat') return to ? 'heating to ' + to : 'heating';
+  if (['heat_cool', 'auto'].includes(st.state)) return to ? 'keeping ' + to : 'auto';
+  return st.state.replace('_', ' ');
+}
+
+const I = (base, part, cls, origin, hide) => ({ base, part, cls: cls || '', origin: origin || '50% 50%', hide: !!hide });
 export const ICONS = {
-  bulb: I('M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.5 1 2.5h6c0-1 .3-1.8 1-2.5A6 6 0 0 0 12 3z', 'M12 -.5v1.6M4.2 3.2l1.1 1.1M19.8 3.2l-1.1 1.1M1.5 10h1.6M20.9 10h1.6', 'breathe'),
-  group: I('M7 18h4M8 21h2M9 4a4.5 4.5 0 0 0-3 7.9c.5.5.8 1.2.8 2.1h4.4c0-.9.3-1.6.8-2.1A4.5 4.5 0 0 0 9 4zM17 8a3 3 0 0 0-2 5.3c.4.4.5.8.5 1.4h3c0-.6.1-1 .5-1.4A3 3 0 0 0 17 8z', 'M9 .5v1.4M17 5v1.2', 'breathe'),
-  fan: I('M12 13.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2z', 'M12 10.4C12 6 9.3 3 7.4 4s.1 5 4.6 6.4M13.6 12c4.4 0 7.4-2.7 6.4-4.6s-5-.1-6.4 4.6M12 13.6c0 4.4 2.7 7.4 4.6 6.4s-.1-5-4.6-6.4M10.4 12C6 12 3 14.7 4 16.6s5 .1 6.4-4.6', 'spin'),
-  blinds: I('M3 3h18M5 3v18M19 3v18', 'M5 7h14M5 11h14M5 15h14M5 19h14', '', '50% 0%'),
+  bulb: I('M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2v.2h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0 0 12 3z', 'M4.6 4.6l1 1M19.4 4.6l-1 1M2.4 10h1.4M20.2 10h1.4', 'breathe', '12px 9px', true),
+  group: I('M4 5h4v3H4zM10 5h4v3h-4zM16 5h4v3h-4z', 'M5 10.5l-1 4M7 10.5l1 4M11 10.5l-1 4M13 10.5l1 4M17 10.5l-1 4M19 10.5l1 4', 'breathe', '12px 9px', true),
+  led: I('M3 18h18', 'M3 12.5c3-4 6-4 9 0s6 4 9 0', 'wave', '12px 12px'),
+  fan: I('M13.6 12a1.6 1.6 0 1 1-3.2 0 1.6 1.6 0 0 1 3.2 0z', 'M12 10.4C11 6 12 3 15 3c2 0 2 3-1.5 7.5M13.6 12.6c4 1.6 6.4 4 5 6.5-1 1.8-3.6.6-5.6-4.4M10.6 13c-2.8 3.4-6 4.2-7.2 1.8-.9-1.8 1.4-3.3 6.6-3.6', 'spin', '12px 12px'),
+  blinds: I('M3 4h18M12 4v1.5', 'M5 7h14M5 10h14M5 13h14M5 16h14M5 19h14', '', '12px 6px'),
   lock: I('M6 11h12v10H6zM12 15v2', 'M8 11V7a4 4 0 0 1 8 0v4'),
   power: I('M12 3v8', 'M7 6.5a7 7 0 1 0 10 0'),
   thermo: I('M14 14.76V4.5a2 2 0 0 0-4 0v10.26a4 4 0 1 0 4 0z', 'M12 9v8', '', '50% 100%'),
@@ -108,7 +128,7 @@ export function icon(kind, opts) {
   const cls = o.active ? ic.cls : '';
   const dur = o.dur ? `animation-duration:${o.dur};` : '';
   const tf = o.transform ? `transform:${o.transform};` : '';
-  const op = o.partOpacity != null ? `opacity:${o.partOpacity};` : '';
+  const op = o.partOpacity != null ? `opacity:${o.partOpacity};` : ic.hide && !o.active ? 'opacity:0;' : '';
   return `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="color:${color}"><path d="${ic.base}"></path><g class="${cls}" style="transform-box:view-box;transform-origin:${ic.origin};${tf}${dur}${op}transition:transform .6s cubic-bezier(.25,1,.3,1),opacity .4s ease"><path d="${ic.part}"></path></g></svg>`;
 }
 

@@ -20,7 +20,7 @@ import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.1.0';
+export const VERSION = '0.3.0';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -238,7 +238,16 @@ const hass = {
     if (t === 'morph/usage' || t === 'morph/report' || t === 'morph/finding') return { ok: true };
     if (t === 'morph/yaml') return { text: 'title: Home\\n' };
     if (t === 'history/history_during_period') {
-      const out = {}; (msg.entity_ids || []).forEach((e) => { const s = states[e]; const st = Date.parse(msg.start_time) / 1000; out[e] = [{ s: s && s.state === 'on' ? 'off' : 'on', lu: st }, { s: 'on', lu: st + 3600 * 3 }, { s: 'off', lu: st + 3600 * 5 }, { s: s ? s.state : 'off', lu: st + 3600 * 7 }]; }); return out;
+      const out = {}; (msg.entity_ids || []).forEach((e) => {
+        const s = states[e]; const st = Date.parse(msg.start_time) / 1000;
+        if (e.startsWith('climate.') && !msg.no_attributes) {
+          // A thermostat's day: a setback overnight, cooling in runs.
+          const tgt = (s && s.attributes.temperature) || 72;
+          out[e] = Array.from({ length: 24 }, (_, i) => ({ s: s ? s.state : 'cool', lu: st + i * 3600, a: { temperature: i < 7 ? tgt + 2 : tgt, hvac_action: i % 3 === 0 ? 'cooling' : 'idle' } }));
+          return;
+        }
+        out[e] = [{ s: s && s.state === 'on' ? 'off' : 'on', lu: st }, { s: 'on', lu: st + 3600 * 3 }, { s: 'off', lu: st + 3600 * 5 }, { s: s ? s.state : 'off', lu: st + 3600 * 7 }];
+      }); return out;
     }
     if (t === 'recorder/statistics_during_period') {
       const step = msg.period === 'day' ? 86400000 : msg.period === 'hour' ? 3600000 : 300000; const out = {};

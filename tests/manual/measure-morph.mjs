@@ -100,6 +100,58 @@ async function sample(p, where, ms) {
   if (bad.size) fail(where, `sections overlapped mid-motion: ${[...bad].slice(0, 4).join(', ')}`);
 }
 
+// The prototype's look (docs/design/morph-ui.html), where it was lost in
+// translation once: status lines in quiet text, a light group twice a strip,
+// notes after a room's tiles, Coming up across the whole width, the Ask
+// suggestions only while asking, and the overlay chart with its target band,
+// its runs, a label column and an axis.
+async function design(p, name, narrow) {
+  const d = await p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const q = (s) => root.querySelector(s);
+    const r = (el) => el && el.getBoundingClientRect();
+    const muted = getComputedStyle(root.host).getPropertyValue('--muted').trim();
+    const probe = document.createElement('span'); probe.style.color = 'var(--muted)'; q('.scroll').appendChild(probe);
+    const mutedRgb = getComputedStyle(probe).color; probe.remove();
+    const val = q('[data-tile="c_countertop"] .nv span');
+    const grp = r(q('[data-tile="c_kitchen_cans"]')); const one = r(q('[data-tile="c_countertop"]'));
+    const notesLate = [...root.querySelectorAll('[data-sec]')].every((sec) => {
+      const tiles = [...sec.querySelectorAll('[data-tile]')];
+      const notes = tiles.filter((t) => t.getAttribute('data-tile').startsWith('n:')).map(r);
+      const rest = tiles.filter((t) => !t.getAttribute('data-tile').startsWith('n:')).map(r);
+      return notes.every((n) => rest.every((x) => n.top >= x.bottom - 1));
+    });
+    const upc = r(q('.upc .utrack')), upcBox = r(q('.upc'));
+    const sugs = q('.sugs');
+    const ov = q('[data-tile="c_temps"]') || [...root.querySelectorAll('.ov')][0];
+    return {
+      muted, valColor: val && getComputedStyle(val).color, mutedRgb,
+      valText: val && val.textContent,
+      grpText: (q('[data-tile="c_kitchen_cans"] .nv span') || {}).textContent,
+      grpW: grp && grp.width, oneW: one && one.width,
+      notesLate,
+      upcW: upc && upc.width, upcBoxW: upcBox && upcBox.width,
+      sugsShown: !!(sugs && sugs.offsetParent),
+      ovLabels: ov ? ov.querySelectorAll('.ovlab').length : 0,
+      ovBand: ov ? ov.querySelectorAll('polygon').length : 0,
+      ovRuns: ov ? ov.querySelectorAll('.ovruns span').length : 0,
+      ovAxis: ov ? [...ov.querySelectorAll('.ovaxis span')].map((x) => x.textContent) : [],
+    };
+  });
+  const where = `${name} design`;
+  if (d.valColor !== d.mutedRgb) fail(where, `a light's status line is not quiet text (${d.valColor})`);
+  if (!/^\d+% · (Warm|Soft|Daylight|Color)$/.test(d.valText || '')) fail(where, `a light's status line does not say its level and colour: "${d.valText}"`);
+  if (!/^(All \d+|\d+ of \d+) · (\d+%|mixed)$|^All \d+ off$/.test(d.grpText || '')) fail(where, `a light group's status line is not the design's: "${d.grpText}"`);
+  if (!narrow && !(d.grpW > d.oneW * 1.8)) fail(where, `a light group is not twice a strip (${d.grpW} vs ${d.oneW})`);
+  if (!d.notesLate) fail(where, 'a note sits above its room\'s tiles');
+  if (!narrow && !(d.upcW >= d.upcBoxW - 20)) fail(where, `Coming up does not use the whole width (${d.upcW} of ${d.upcBoxW})`);
+  if (d.sugsShown) fail(where, 'the Ask suggestions show before anybody asks');
+  if (d.ovLabels < 2) fail(where, 'the overlay chart has no label column');
+  if (!d.ovBand) fail(where, 'the overlay chart draws no target band');
+  if (!d.ovRuns) fail(where, 'the overlay chart draws no runs');
+  if (!d.ovAxis.includes('Now')) fail(where, 'the overlay chart has no time axis');
+}
+
 for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phone', true]]) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: false });
   await route(ctx, { narrow });
@@ -109,6 +161,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await p.goto(ORIGIN + '/');
   await settle(p, 2500);
   atRest(`${name} at rest`, await snapshot(p));
+  await design(p, name, narrow);
 
   // Hold-open, then tap outside, on every kind.
   for (const id of KINDS) {

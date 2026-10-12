@@ -18,7 +18,7 @@
 // dispatches it. `svc` is a service call described in the markup, so a new
 // control is markup, not a new handler.
 
-import { esc, mix, clamp, lightColor, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf } from './util.js';
+import { esc, mix, clamp, lightColor, lightTone, fmt, since, clock, icon, friendly, shortName, UNAVAILABLE, domainOf } from './util.js';
 import * as history from './history.js';
 
 const STRIP = { span: 1, grow: 2, dir: 'side', want: 3, hk: 's' };
@@ -34,23 +34,33 @@ const pct = (st) => {
   return st && st.state === 'on' ? 100 : 0;
 };
 const off = (st) => !st || UNAVAILABLE.includes(st.state);
+const fanLevel = (p) => ['Low', 'Low', 'Medium', 'Medium', 'High', 'High'][Math.min(5, Math.floor(p / 20))];
 
+// The prototype's tones (docs/design/morph-ui.html): a fill runs strong at
+// the left and fades toward the thumb, the strip itself is untinted (only a
+// switch tints its strip, because a switch has no fill to show it is on), and
+// the status line is quiet text — the colour lives in the fill and the icon.
 export function stripFace(o) {
   const active = !!o.active;
   const accent = o.accent;
   const fillW = clamp(o.pct == null ? 0 : o.pct, 0, 100);
+  const fa = o.fillA || mix(accent, 34), fb = o.fillB || mix(accent, 12);
   let layer = '';
-  if (o.kind === 'fill' && fillW > 0) {
-    layer = `<div aria-hidden="true" class="fill" style="width:${fillW}%;background:linear-gradient(90deg, ${mix(accent, 26)}, ${mix(accent, 52)})"></div><div aria-hidden="true" class="thumb" style="left:${fillW}%"></div>`;
-  } else if (o.kind === 'slats') {
-    layer = `<div aria-hidden="true" class="slats" style="width:${100 - fillW}%"></div>${fillW > 0 ? `<div aria-hidden="true" class="fill" style="width:${fillW}%;background:linear-gradient(90deg, ${mix(accent, 14)}, ${mix(accent, 30)})"></div>` : ''}`;
+  if ((o.kind === 'fill' || o.kind === 'slats') && fillW > 0) {
+    layer = `<div aria-hidden="true" class="fill" style="width:${fillW}%;background:linear-gradient(90deg, ${fa}, ${fb})"></div>`;
+    // A blind's slats are drawn over the part that is OPEN: closed is plain.
+    if (o.kind === 'slats') layer += `<div aria-hidden="true" class="slats" style="width:${fillW}%"></div>`;
+    else layer += `<div aria-hidden="true" class="thumb" style="left:${fillW}%"></div>`;
   } else if (o.kind === 'lanes') {
-    layer = `<div aria-hidden="true" class="lanes">${(o.lanes || []).map((l) => `<span class="lane" style="background:${l.on ? mix(l.color, 8) : 'transparent'}"><span style="width:${l.on ? l.pct : 0}%;background:linear-gradient(90deg, ${mix(l.color, 22)}, ${mix(l.color, 50)});box-shadow:inset -1.5px 0 0 ${l.on ? mix(l.color, 80) : 'transparent'}"></span></span>`).join('')}</div>`;
+    layer = `<div aria-hidden="true" class="lanes">${(o.lanes || []).map((l) => `<span class="lane" style="background:${l.on ? mix(l.color, 5) : 'transparent'}"><span style="width:${l.on ? Math.max(3, l.pct) : 0}%;background:linear-gradient(90deg, ${mix(l.color, 34)}, ${mix(l.color, 14)});box-shadow:inset -1.5px 0 0 ${l.on ? mix(l.color, 70) : 'transparent'}"></span></span>`).join('')}</div>`;
   }
-  const sw = o.kind === 'switch' ? `<span aria-hidden="true" class="track" style="background:${active ? mix(accent, 30) : 'transparent'};box-shadow:inset 0 0 0 1px ${active ? 'transparent' : 'var(--line2)'}"><span class="knob" style="left:${active ? 15 : 3}px;background:${active ? accent : 'var(--quiet)'}"></span></span>` : '';
-  return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, 32) : 'var(--line)'};background-color:${active ? mix(accent, 9) : 'transparent'}">${layer}
-<div class="sline">${icon(o.icon, { color: active ? accent : 'var(--quiet)', active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b>${esc(o.name)}</b><span style="color:${o.valColor || (active ? accent : 'var(--muted)')}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${sw}</div></div>`;
+  const isSwitch = o.kind === 'switch';
+  const sw = isSwitch ? `<span aria-hidden="true" class="track" style="background:${active ? mix(accent, 30) : 'transparent'};box-shadow:inset 0 0 0 1px ${active ? 'transparent' : 'var(--line2)'}"><span class="knob" style="left:${active ? 15 : 3}px;background:${active ? accent : 'var(--quiet)'}"></span></span>` : '';
+  const valColor = o.valColor || (isSwitch ? (active ? accent : 'var(--muted)') : active ? 'var(--text)' : 'var(--quiet)');
+  const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
+  return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
+<div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
+<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -82,7 +92,8 @@ const light = {
   accent: (ctx) => (ctx.st && ctx.st.state === 'on' ? lightColor(ctx.st) : 'var(--amber)'),
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on'; const p = ctx.preview != null ? ctx.preview : pct(st);
-    return stripFace({ kind: 'fill', icon: 'bulb', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, name: ctx.name, val: off(st) ? (st ? 'Unavailable' : 'Missing') : on || ctx.preview > 0 ? p + '%' : 'Off', hint: ctx.hint });
+    const lit = on || ctx.preview > 0;
+    return stripFace({ kind: 'fill', icon: /\b(strip|led)\b/i.test(ctx.name || '') ? 'led' : 'bulb', accent: ctx.accent, active: lit, pct: on || ctx.preview != null ? p : 0, name: ctx.name, val: off(st) ? (st ? 'Unavailable' : 'Missing') : lit ? `${p}% · ${lightTone(st)}` : 'Off', valColor: lit ? 'var(--muted)' : 'var(--quiet)', hint: ctx.hint });
   },
   more: (ctx) => lightMore(ctx, ctx.card.entity) + histBlock(ctx),
   tap: (ctx) => ({ domain: 'light', service: 'toggle', data: { entity_id: ctx.card.entity } }),
@@ -91,14 +102,21 @@ const light = {
 };
 
 const lightGroup = {
-  item: STRIP,
+  // A group is a room's worth of lights: twice a strip, and it grows down
+  // into its members rather than sideways.
+  item: { span: 2, grow: 3, dir: 'down', want: 4, hk: 's' },
   accent: light.accent,
   members: (ctx) => ((ctx.st && ctx.st.attributes.entity_id) || []).filter((e) => domainOf(e) === 'light'),
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on';
     const lanes = lightGroup.members(ctx).map((m) => { const ms = ctx.hass.states[m]; return { on: (ms && ms.state === 'on') || ctx.preview > 0, pct: ctx.preview != null ? ctx.preview : pct(ms), color: ms && ms.state === 'on' ? lightColor(ms) : ctx.accent }; });
-    const n = lanes.filter((l) => l.on).length;
-    return stripFace({ kind: 'lanes', lanes, icon: 'group', accent: ctx.accent, active: on, name: ctx.name, val: off(st) ? 'Unavailable' : on ? (ctx.preview != null ? ctx.preview + '%' : `${n} of ${lanes.length} on · ${pct(st)}%`) : 'Off', hint: ctx.hint });
+    const lit = lanes.filter((l) => l.on);
+    const n = lit.length, total = lanes.length;
+    const mixed = n > 1 && lit.some((l) => l.pct !== lit[0].pct);
+    const avg = n ? Math.round(lit.reduce((a, l) => a + l.pct, 0) / n) : 0;
+    const val = off(st) ? 'Unavailable' : ctx.preview != null ? ctx.preview + '%'
+      : n ? `${n === total ? 'All ' + total : n + ' of ' + total} · ${mixed ? 'mixed' : avg + '%'}` : total ? `All ${total} off` : 'Off';
+    return stripFace({ kind: 'lanes', lanes, icon: 'group', accent: ctx.accent, active: n > 0, name: ctx.name, val, hint: ctx.hint });
   },
   more: (ctx) => {
     const members = lightGroup.members(ctx);
@@ -120,7 +138,7 @@ const fan = {
   accent: () => 'var(--teal)',
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on'; const p = ctx.preview != null ? ctx.preview : (st && st.attributes.percentage != null ? st.attributes.percentage : on ? 100 : 0);
-    return stripFace({ kind: 'fill', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.4 - (p || 0) / 50).toFixed(2) + 's', name: ctx.name, val: off(st) ? 'Unavailable' : on ? (p ? p + '%' : 'On') : 'Off', hint: ctx.hint });
+    return stripFace({ kind: 'fill', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.4 - (p || 0) / 50).toFixed(2) + 's', name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? 'Unavailable' : on || ctx.preview > 0 ? (p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];
@@ -143,7 +161,7 @@ const cover = {
     if (isGarage(st)) {
       return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--rose)' : 'var(--teal)', active: open, name: ctx.name, val: off(st) ? 'Unavailable' : ctx.confirm || (st.state[0].toUpperCase() + st.state.slice(1)), iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
     }
-    return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, active: pos > 0, pct: pos, iconTransform: `scaleY(${(0.35 + 0.65 * (1 - pos / 100)).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
+    return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, iconColor: 'var(--sky)', edgeMix: 28, fillA: mix(ctx.accent, 20), fillB: mix(ctx.accent, 6), active: pos > 0, pct: pos, iconTransform: `scaleY(${Math.max(0.08, (100 - pos) / 100).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];
@@ -252,7 +270,10 @@ ${tgt != null ? `<div data-ctl="1" class="row" style="gap:4px"><button type="but
 function warmth(v, unit) {
   const c = String(unit || '').includes('F') ? (v - 32) / 1.8 : v;
   if (!isFinite(c)) return 'var(--muted)';
-  return c < 16 ? 'var(--sky)' : c < 20 ? 'var(--teal)' : c < 23 ? 'var(--lime)' : c < 26 ? 'var(--amber)' : 'var(--rose)';
+  // The prototype's bands, which are fine enough to tell rooms of one house
+  // apart: 69°F and under is cool, 71.5 comfortable, 73.5 warm, 75.5 hot.
+  const f = c * 1.8 + 32;
+  return f <= 69 ? 'var(--sky)' : f <= 71.5 ? 'var(--teal)' : f <= 73.5 ? 'var(--sand)' : f <= 75.5 ? 'var(--amber)' : 'var(--rose)';
 }
 
 function sparkline(hass, eid, color) {
@@ -292,8 +313,8 @@ const readings = {
     const first = ctx.hass.states[(ctx.card.entities || [])[0]];
     const unit = first && first.attributes.unit_of_measurement;
     const dc = first && first.attributes.device_class;
-    const color = dc === 'humidity' ? (v) => (v < 35 ? 'var(--amber)' : v > 60 ? 'var(--sky)' : 'var(--teal)') : (v) => warmth(v, unit);
-    return `<div class="box" style="padding:12px 14px">${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<div class="rowb"><b style="font-size:14px">${esc(ctx.card.name || (dc === 'humidity' ? 'Humidity' : 'Temperature'))}</b><span class="small">last 24 h · tap a name to pick it out</span></div><div data-ctl="1">${history.readings(ctx.hass, ctx.card, ctx.H, color)}</div></div>`;
+    const color = dc === 'humidity' ? (v) => (v < 35 ? 'var(--amber)' : v <= 55 ? 'var(--teal)' : v <= 60 ? 'var(--sky)' : 'var(--indigo)') : (v) => warmth(v, unit);
+    return `<div class="box ov" style="box-shadow:inset 0 0 0 1px var(--line)">${history.readings(ctx.hass, ctx.card, ctx.H, color, { name: ctx.card.name || (dc === 'humidity' ? 'Humidity' : 'Temperature'), hint: ctx.hint })}</div>`;
   },
   more: () => '',
   tap: () => null,
@@ -350,6 +371,7 @@ ${st && !off(st) && st.state !== 'off' ? `<div class="row" style="gap:4px">${t('
 
 // ----------------------------------------------------------------- camera
 
+const CAM_STATE = { idle: 'Quiet', streaming: 'Live', recording: 'Recording' };
 const camera = {
   item: { span: 1, grow: 2, dir: 'side', want: 3, hk: 'c' },
   accent: () => 'var(--rose)',
@@ -357,7 +379,9 @@ const camera = {
     const st = ctx.st; const a = (st && st.attributes) || {};
     const bucket = Math.floor(Date.now() / 10000);
     const src = a.access_token ? `/api/camera_proxy/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}&t=${bucket}` : '';
-    return `<div style="position:relative;border-radius:18px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)">${src ? `<img class="cam" src="${esc(src)}" alt="${esc(ctx.name)}" loading="lazy">` : '<div class="cam"></div>'}<div class="row" style="position:absolute;left:0;right:0;bottom:0;padding:8px 12px;background:linear-gradient(transparent, rgba(0,0,0,.55));color:#fff"><b style="font-size:13px">${esc(ctx.name)}</b><span class="flex1"></span><span style="font-size:12px;opacity:.8">${st ? esc(st.state) : 'Missing'}</span></div>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div>`;
+    const sub = !st ? 'Missing' : UNAVAILABLE.includes(st.state) ? 'Unavailable' : CAM_STATE[st.state] || st.state[0].toUpperCase() + st.state.slice(1);
+    const live = st && !UNAVAILABLE.includes(st.state);
+    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${src ? `<img class="cam" src="${esc(src)}" alt="${esc(ctx.name)}" loading="lazy">` : ''}${live ? '<span class="live"><i></i>LIVE</span>' : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Events'),
   tap: () => null,
