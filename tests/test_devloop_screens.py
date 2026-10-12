@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,33 @@ def browser() -> str:
     for cand in sorted(root.glob("chromium-*/chrome-linux/chrome")) if root.is_dir() else []:
         return str(cand)
     return ""
+
+
+def warm_up(binary: str) -> None:
+    """Start the browser once before the timed launch, and ignore how it goes.
+
+    `screens._launch` gives Chromium fifteen seconds to write its port file.
+    A first start on a cold CI runner, beside three other test workers, has
+    taken longer than that, which failed this test with "Chromium did not
+    start" before anything it asserts had run. A start from a warm disk
+    cache is what the budget was measured against, so that is what the
+    timed launch below gets; a browser that will not start at all still
+    fails the test there.
+    """
+    if not binary:
+        return
+    profile = tempfile.mkdtemp()
+    try:
+        subprocess.run(
+            [binary, "--headless=new", "--no-sandbox", "--disable-gpu",
+             "--disable-dev-shm-usage", f"--user-data-dir={profile}",
+             "--dump-dom", "about:blank"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90,
+            check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 class TestRedact(unittest.TestCase):
@@ -265,6 +293,7 @@ PAGE = """<!doctype html><html><head><meta name=viewport content="width=device-w
 class TestARealBrowser(unittest.TestCase):
     def test_nothing_confidential_is_on_the_page_when_it_is_photographed(self):
         os.environ["BRAIN_CHROMIUM"] = browser()
+        warm_up(os.environ["BRAIN_CHROMIUM"])
         seen: list[str] = []
 
         async def look(cdp, session):
