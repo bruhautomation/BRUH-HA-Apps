@@ -13,8 +13,8 @@ import datetime as dt
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -76,7 +76,7 @@ class TestProposeFilesTheAbsoluteDay(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_the_stored_guess_names_the_weekday(self):
-        with mock.patch.object(hypotheses.time, "time", return_value=NOW):
+        with unittest.mock.patch.object(hypotheses.time, "time", return_value=NOW):
             entry = hypotheses.propose(
                 "You turned the fan on yesterday afternoon — right?",
                 fact="The fan was turned on yesterday afternoon.")
@@ -89,7 +89,7 @@ class TestProposeFilesTheAbsoluteDay(unittest.TestCase):
 
     def test_the_case_says_when_it_was_asked(self):
         import cases
-        with mock.patch.object(hypotheses.time, "time", return_value=NOW):
+        with unittest.mock.patch.object(hypotheses.time, "time", return_value=NOW):
             entry = hypotheses.propose("The porch light is on a timer?")
         case = cases._from_hypothesis(
             {**entry, "snoozed_until": 0}, {})

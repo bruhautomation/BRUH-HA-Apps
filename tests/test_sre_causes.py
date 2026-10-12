@@ -77,7 +77,7 @@ class TestALogLineNamesItsEntity(unittest.TestCase):
     def test_the_entity_the_message_names_is_the_subject(self):
         h = house([log_row("Error fetching sensor.solar_forecast_today: "
                            "rate limited")])
-        _dig, _p, [row] = one_row(h, logs)
+        row = one_row(h, logs)[2][0]
         self.assertEqual(row["entity_id"], "sensor.solar_forecast_today")
 
     def test_a_template_warning_with_no_integration_still_names_one(self):
@@ -85,14 +85,14 @@ class TestALogLineNamesItsEntity(unittest.TestCase):
                            "attribute 'x' when rendering "
                            "'{{ states.sensor.solar_forecast_today.attributes.x }}'",
                            logger="homeassistant.helpers.template")])
-        _dig, _p, [row] = one_row(h, logs)
+        row = one_row(h, logs)[2][0]
         self.assertEqual(row["entity_id"], "sensor.solar_forecast_today")
 
     def test_a_device_named_in_the_message_is_mapped_to_its_entity(self):
         h = house([log_row("Garage Plug did not respond at 10.0.0.1",
                            logger="homeassistant.components.tplink",
                            level="ERROR", count=3)])
-        _dig, _p, [row] = one_row(h, logs)
+        row = one_row(h, logs)[2][0]
         self.assertIn(row["entity_id"],
                       ("switch.garage_plug", "sensor.garage_plug_power"))
 
