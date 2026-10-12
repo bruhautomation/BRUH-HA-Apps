@@ -5401,7 +5401,7 @@ async def _regressed(row: dict, day: int | None, detail: str, now: float,
             await asyncio.to_thread(findings_store.annotate, ts, text)
     else:
         created = await asyncio.to_thread(findings_store.add_many, triage.gate([{
-            "text": f"{str(row.get('finding_text') or 'A fixed problem')[:200]}"
+            "text": f"{textclip.clip(str(row.get('finding_text') or 'A fixed problem'), 200)}"
                     " — came back after brAIn's fix",
             "detail": text, "source": "followup",
             "source_title": "Follow-up looks",
@@ -8881,6 +8881,8 @@ async def _run_sre(reason: str = "schedule") -> None:
         rows = sre.rows(parsed["causes"], dig, state, now)
         summary.update(ran=True, causes=len(parsed["causes"]),
                        refused=parsed["refused"], invented=parsed["invented"],
+                       bundled=parsed["bundled"],
+                       rewritten=parsed["rewritten"],
                        run_id=_run_id(result))
     else:
         summary["note"] = "nothing in the log or the mesh worth a run"
@@ -15122,9 +15124,39 @@ async def h_activity(request: web.Request) -> web.Response:
             "dropped": grouped["dropped"],
             "changes": sum(e["count"] for e in grouped["episodes"]),
             "episodes": len(grouped["episodes"]),
+            **_activity_rows(mined, request.query),
         }
 
     return web.json_response(await asyncio.to_thread(shape))
+
+
+ACTIVITY_ROWS_DEFAULT = 200
+ACTIVITY_ROWS_MAX = 1000
+
+
+def _activity_rows(mined: dict, query) -> dict:
+    """The mined change rows, for a caller that asks for them by `limit`.
+
+    The MCP `get_activity` tool reads `total` and `actions` off this route
+    and always sends `limit`; the Timeline never does, and reads episodes.
+    So a request carrying `limit` gets the rows — newest first, narrowed by
+    `cause`, capped at `ACTIVITY_ROWS_MAX` — and one without gets none, as
+    before (a page of rows nobody draws is a page the tab does not need).
+    """
+    if "limit" not in query:
+        return {}
+    try:
+        limit = int(query.get("limit") or ACTIVITY_ROWS_DEFAULT)
+    except (TypeError, ValueError):
+        limit = ACTIVITY_ROWS_DEFAULT
+    limit = max(1, min(ACTIVITY_ROWS_MAX, limit))
+    cause = str(query.get("cause") or "").strip()[:40]
+    rows = [r for r in (mined.get("actions") or []) if isinstance(r, dict)]
+    if cause in actions.CAUSES:
+        rows = [r for r in rows if r.get("cause") == cause]
+    rows.sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
+    return {"total": len(rows), "actions": rows[:limit],
+            "overrides": list(mined.get("overrides") or [])}
 
 
 def _activity_narrow(grouped: dict, query) -> tuple[list[dict], list[dict], list[dict]]:

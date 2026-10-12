@@ -30,6 +30,19 @@ dropped, an id that is not in the digest is dropped from the cause and
 counted, and what reaches the Findings tab carries the cited records as
 its evidence. That is the difference between a root cause and a story.
 
+**A cause is one problem, about one thing.** A log record carries the
+entities (and, by their own names, the devices) its message names, so a
+cause about one sensor is filed under it; the cited records are grouped by
+the problem they are evidence of (the Zigbee mesh is one, each Z-Wave node
+is its own, a log line belongs to the device it names), and records about
+another problem are taken off a cause, with the sentences about them,
+rather than riding in its detail under a fix for something else. And a log
+record says whether anything the owner wrote refers to the entity it names
+(`referenced_by_you`, read off their YAML and the UI template helpers by
+`read_user_text`): a fix telling them to edit a template over a record that
+says nothing of theirs refers to it is replaced with one naming the
+integration.
+
 The text a cause is filed under is the one stable thing about it, so it
 is reused by **anchor** (the first record the cause cites): the same
 router being the cause tomorrow is the same finding, whatever words the
@@ -46,6 +59,7 @@ import os
 import re
 
 import atomic_write
+import textclip
 
 STORE = os.environ.get("BRAIN_SRE_FILE", "/data/sre.json")
 SOURCE = "sre"
@@ -82,7 +96,7 @@ def _redact(text: str) -> str:
     before it goes anywhere, and cap it."""
     from capture import redact
     text = redact(str(text or ""))
-    return _TOKENISH.sub("[redacted]", text)[:240]
+    return textclip.clip(_TOKENISH.sub("[redacted]", text), 240)
 
 
 def _rid(prefix: str, *parts: str) -> str:
@@ -146,14 +160,139 @@ async def collect(session) -> dict:
         out["errors"]["states"] = str(exc)[:200]
     cfg = load_configs()
     out["automations"] = cfg.get("automations") or []
+    # What the owner wrote, read off the files Home Assistant loads them
+    # from: a log line about an entity nothing of theirs refers to is the
+    # integration's to answer for, not a template of theirs to edit.
+    out["user_text"] = read_user_text()
+    out["available"]["configs"] = out["user_text"] is not None
     return out
+
+
+# Bounds on reading the owner's config: a house with a thousand package
+# files is still read in a moment, and one that is not is asked about
+# what it was possible to read rather than held up.
+MAX_USER_FILES = 300
+MAX_USER_BYTES = 4_000_000
+_INCLUDE_DIR_RE = re.compile(r"!include_dir_\w+\s+['\"]?([^\s'\"#]+)")
+_REFUSED_NAMES = frozenset({"secrets.yaml", "secrets.yml"})
+
+
+def read_user_text(config_dir: str | None = None) -> str | None:
+    """Everything the owner wrote that could refer to an entity, as one
+    string, or None when the config folder cannot be read at all.
+
+    The top-level YAML (never ``secrets.yaml``), ``packages/`` and every
+    folder ``configuration.yaml`` names with ``!include_dir_*``, plus the
+    options of the template helpers made in the UI (their templates live
+    in ``.storage/core.config_entries``, not in any YAML). Read as text on
+    purpose: whether an entity id appears anywhere the owner wrote is the
+    whole question, and a structural parse misses what HA's tags hide.
+    """
+    from checks.snapshot import CONFIG_DIR  # noqa: PLC0415
+    root = config_dir or CONFIG_DIR
+    if not os.path.isdir(root):
+        return None
+    parts: list[str] = []
+    budget = [MAX_USER_BYTES, MAX_USER_FILES]
+
+    def take(path: str) -> None:
+        if budget[0] <= 0 or budget[1] <= 0:
+            return
+        if os.path.basename(path).lower() in _REFUSED_NAMES:
+            return
+        if os.path.islink(path) or not os.path.isfile(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read(budget[0])
+        except OSError:
+            return
+        budget[0] -= len(text)
+        budget[1] -= 1
+        parts.append(text)
+
+    def walk(folder: str) -> None:
+        real_root = os.path.realpath(root)
+        real = os.path.realpath(folder)
+        if not real.startswith(real_root + os.sep) or not os.path.isdir(real):
+            return
+        for here, dirs, files in os.walk(real, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if not d.startswith("."))
+            for name in sorted(files):
+                if name.endswith((".yaml", ".yml")) and not name.startswith("."):
+                    take(os.path.join(here, name))
+
+    try:
+        top = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for name in top:
+        if name.endswith((".yaml", ".yml")) and not name.startswith("."):
+            take(os.path.join(root, name))
+    walk(os.path.join(root, "packages"))
+    try:
+        with open(os.path.join(root, "configuration.yaml"), "r",
+                  encoding="utf-8", errors="replace") as fh:
+            for m in _INCLUDE_DIR_RE.finditer(fh.read()):
+                rel = m.group(1)
+                if (rel.startswith(("/", ".")) or ".." in rel.split("/")):
+                    continue
+                walk(os.path.join(root, rel))
+    except OSError:
+        # No configuration.yaml to read is fewer folders, not a failure:
+        # the top-level files and packages above were still read.
+        pass
+    try:
+        with open(os.path.join(root, ".storage", "core.config_entries"), "r",
+                  encoding="utf-8") as fh:
+            entries = (json.load(fh).get("data") or {}).get("entries") or []
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("domain") == "template":
+                parts.append(json.dumps(entry.get("options") or {}))
+    except (OSError, ValueError, AttributeError):
+        # The UI helpers are one more place a reference could be; without
+        # them the YAML read above still answers.
+        pass
+    return "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
 # The digest: records with ids
 # ---------------------------------------------------------------------------
 
-def _log_records(rows: list, now: float) -> list[dict]:
+# An entity id anywhere in a message, overlapping matches included, so
+# "states.sensor.x.attributes" still offers "sensor.x"; only ids the house
+# has are kept, which is what keeps a file name or a version out.
+_ID_IN_TEXT = re.compile(r"(?=(?<![a-z0-9_])([a-z_]+\.[a-z0-9_]+))")
+MIN_DEVICE_NAME = 6
+
+
+def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]:
+    """``(entity ids, device ids)`` a log message names: ids the house has,
+    and registry devices whose own name appears as whole words."""
+    text = str(message or "")
+    ents = sorted({m.group(1) for m in _ID_IN_TEXT.finditer(text)
+                   if m.group(1) in known})
+    devs = []
+    for d in devices or []:
+        if not isinstance(d, dict) or not d.get("id"):
+            continue
+        for name in {str(d.get("name_by_user") or ""), str(d.get("name") or "")}:
+            if len(name) >= MIN_DEVICE_NAME and re.search(
+                    r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
+                devs.append(str(d["id"]))
+                break
+    return ents[:4], sorted(set(devs))[:4]
+
+
+def _refers(user_text: str, eid: str) -> bool:
+    return bool(re.search(r"(?<![\w])" + re.escape(eid) + r"(?![\w])",
+                          user_text))
+
+
+def _log_records(rows: list, now: float, known: set[str] | None = None,
+                 devices: list | None = None, user_text: str | None = None,
+                 platforms: dict | None = None) -> list[dict]:
     out = []
     for row in rows:
         if not isinstance(row, dict) or row.get("level") not in LOG_LEVELS:
@@ -167,7 +306,7 @@ def _log_records(rows: list, now: float) -> list[dict]:
         where = (f"{source[0]}:{source[1]}" if isinstance(source, list)
                  and len(source) >= 2 else str(source or ""))
         logger = str(row.get("name") or "")
-        out.append({
+        rec = {
             "id": _rid("log", logger, where, str(first or "")[:80]),
             "kind": "log", "level": row.get("level"), "logger": logger[:80],
             "integration": integration_of(logger),
@@ -175,7 +314,26 @@ def _log_records(rows: list, now: float) -> list[dict]:
             "count": count,
             "last_hours_ago": round(max(0.0, now - float(
                 row.get("timestamp") or now)) / 3600, 1),
-        })
+        }
+        ents, devs = _named_in(str(first or ""), known or set(), devices)
+        if ents:
+            rec["entities"] = ents
+            owners = sorted({(platforms or {}).get(e) for e in ents} - {None, ""})
+            if len(owners) == 1:
+                # The integration that provides what the line is about —
+                # which is not always the logger that printed it.
+                rec["owner"] = owners[0]
+            if user_text is not None:
+                # Whether anything the owner wrote refers to it: a template
+                # entity is theirs by construction, and otherwise the id
+                # has to appear in their config. Absent means "could not
+                # tell", never "no".
+                rec["referenced_by_you"] = any(
+                    (platforms or {}).get(e) == "template"
+                    or _refers(user_text, e) for e in ents)
+        if devs:
+            rec["devices"] = devs
+        out.append(rec)
     order = {"CRITICAL": 0, "ERROR": 1, "WARNING": 2}
     out.sort(key=lambda r: (order.get(r["level"], 3), -r["count"], r["id"]))
     return out[:MAX_LOG_RECORDS]
@@ -370,7 +528,15 @@ def _subjects(records: list[dict], entities: list) -> dict[str, str]:
         elif rec["kind"] == "automation":
             eid = (sorted(rec.get("switches_off") or []) or [""])[0]
         elif rec["kind"] == "log":
-            eid = platforms.get(str(rec.get("integration") or ""), "")
+            named = rec.get("entities") or []
+            devs = rec.get("devices") or []
+            if len(named) == 1:
+                eid = named[0]
+            elif not named and len(devs) == 1:
+                eid = devices.get(devs[0], "")
+            if not eid:
+                eid = platforms.get(str(rec.get("integration") or "")
+                                    or str(rec.get("owner") or ""), "")
         if eid:
             out[rec["id"]] = eid
     return out
@@ -405,7 +571,15 @@ def digest(collected: dict, now: float) -> dict:
     for rec in zha:
         if rec.get("device_id") in owned:
             rec["entities"] = sorted(owned[rec["device_id"]])[:4]
-    records = (_log_records(collected.get("log") or [], now) + zha
+    reg = [e for e in collected.get("entities") or [] if isinstance(e, dict)
+           and e.get("entity_id")]
+    known = ({str(e["entity_id"]) for e in reg}
+             | set((collected.get("states") or {}).keys()))
+    platforms = {str(e["entity_id"]): str(e.get("platform") or "") for e in reg}
+    logs = _log_records(collected.get("log") or [], now, known,
+                        collected.get("devices") or [],
+                        collected.get("user_text"), platforms)
+    records = (logs + zha
                + _zwave_records(collected.get("states") or {},
                                 collected.get("entities") or [],
                                 collected.get("devices") or [])
@@ -414,8 +588,17 @@ def digest(collected: dict, now: float) -> dict:
     # `subjects` rides beside the records and never in the prompt (`frame`
     # sends the records alone): it is the code's answer to which entity a
     # cause is about, not something for the run to choose from.
+    # Which device each entity is on, for the entities a cause can name —
+    # so "which problem is this cause about" can be asked of a device.
+    named: set[str] = set()
+    for r in records:
+        named |= _record_entities(r)
+    entity_device = {str(e["entity_id"]): str(e.get("device_id") or "")
+                     for e in reg if e.get("device_id")
+                     and str(e["entity_id"]) in named}
     return {"records": records,
             "subjects": _subjects(records, collected.get("entities") or []),
+            "entity_device": entity_device,
             "available": dict(collected.get("available") or {})}
 
 
@@ -448,6 +631,17 @@ problems that explain them. One cause that explains five records is worth
 more than five causes. Example: "Your bedtime automation switches off the
 only Zigbee router upstairs" explains a router going unavailable and the
 sensors behind it going quiet.
+
+One cause is one problem. Records about different devices that do not
+explain each other — a second Z-Wave node's errors, a third device's log
+lines — are separate causes, each with its own fix; never fold them into
+the detail of a cause about something else.
+
+A log record carrying "referenced_by_you": false names an entity that
+nothing the homeowner wrote (no automation, script or template of theirs)
+refers to: the line comes from the integration ("owner", or "integration"),
+so never tell them to edit a template, automation or script for it — name
+that integration as the source.
 
 For each cause:
 - "title": one sentence a homeowner understands, under 15 words.
@@ -495,7 +689,8 @@ def frame(dig: dict) -> str:
 
 def _record_label(rec: dict) -> str:
     if rec["kind"] == "log":
-        return f"{rec['level'].title()} ×{rec['count']}: {rec['message'][:90]}"
+        return (f"{rec['level'].title()} ×{rec['count']}: "
+                f"{textclip.clip(rec['message'], 90)}")
     if rec["kind"] == "zigbee":
         bits = [rec["type"] or "device"]
         if rec.get("lqi") is not None:
@@ -512,19 +707,98 @@ def _record_entities(rec: dict) -> set[str]:
     return set(rec.get("switches_off") or []) | set(rec.get("entities") or [])
 
 
+def _groups(by_id: dict, entity_device: dict) -> dict:
+    """``{record id: problem}`` — which problem each record is evidence of,
+    or absent for a record that names no device (a log line about nothing
+    in particular may sit beside anything).
+
+    The Zigbee mesh is one problem however many of its devices a cause
+    cites (a router and the sensors behind it are the canonical cause);
+    each Z-Wave node is its own; a log line is about the one device it
+    names, which is that node's or the mesh's problem when it is one of
+    theirs.
+    """
+    zw = {rid.split(":", 1)[1]: rid for rid, r in by_id.items()
+          if r["kind"] == "zwave"}
+    mesh = {str(r.get("device_id")) for r in by_id.values()
+            if r["kind"] == "zigbee" and r.get("device_id")}
+
+    def of_device(dev: str) -> str:
+        if dev in zw:
+            return zw[dev]
+        if dev in mesh:
+            return "mesh"
+        return f"dev:{dev}"
+
+    out: dict[str, str] = {}
+    for rid, r in by_id.items():
+        if r["kind"] in ("zigbee", "automation"):
+            out[rid] = "mesh"
+        elif r["kind"] == "zwave":
+            out[rid] = rid
+        elif r["kind"] == "log":
+            devs = set(r.get("devices") or [])
+            devs |= {entity_device[e] for e in r.get("entities") or []
+                     if entity_device.get(e)}
+            if len(devs) == 1:
+                out[rid] = of_device(devs.pop())
+    return out
+
+
+def _names_of(rec: dict) -> set[str]:
+    names = {rec["id"]} | _record_entities(rec)
+    for key in ("name", "automation"):
+        if rec.get(key) and len(str(rec[key])) >= 4:
+            names.add(str(rec[key]))
+    return names
+
+
+_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+
+
+def _without(text: str, names: set[str]) -> str:
+    """``text`` less every sentence that mentions one of ``names``."""
+    if not text or not names:
+        return text
+    lowered = [n.lower() for n in names if n]
+    kept = [s for s in _SENTENCES.split(text)
+            if not any(n in s.lower() for n in lowered)]
+    return " ".join(kept).strip()
+
+
+_TEMPLATE_WORDS = re.compile(r"\btemplates?\b", re.I)
+
+
+def _not_your_template_fix(logs: list[dict]) -> str:
+    who = next((str(r.get("owner") or r.get("integration") or "")
+                for r in logs if r.get("owner") or r.get("integration")), "")
+    where = f"the {who} integration" if who else "an integration"
+    return (f"This comes from {where}, not from anything you wrote: check "
+            "that integration's settings, or report it to its author if it "
+            "keeps happening.")
+
+
 def parse_causes(answer: dict | None, dig: dict) -> dict:
-    """`{causes, refused, invented}` — only causes citing real records.
+    """`{causes, refused, invented, bundled, rewritten}` — only causes
+    citing real records, each about one problem.
 
     `invented` counts ids that were not in the digest at all: a cause can
     survive one of those if it also cites a real record, and the number is
     kept because a run that keeps making ids up is a run worth reading.
+    `bundled` counts causes that cited records about another problem as
+    well (those records, and the sentences about them, are taken off), and
+    `rewritten` the fixes that told the homeowner to edit a template no
+    template of theirs could be behind.
     """
     by_id = {r["id"]: r for r in dig.get("records") or []}
     entities: set[str] = set()
     for r in by_id.values():
         entities |= _record_entities(r)
+    entity_device = dig.get("entity_device") or {}
+    groups = _groups(by_id, entity_device)
     causes_in = (answer or {}).get("causes") if isinstance(answer, dict) else None
     causes, refused, invented = [], 0, 0
+    bundled = rewritten = 0
     for raw in causes_in if isinstance(causes_in, list) else []:
         if len(causes) >= MAX_CAUSES:
             break
@@ -534,22 +808,73 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         cited = [str(c) for c in raw.get("records") or [] if isinstance(c, str)]
         real = [c for c in dict.fromkeys(cited) if c in by_id]
         invented += len([c for c in cited if c not in by_id])
-        title = re.sub(r"\s+", " ", str(raw.get("title") or "")).strip()[:MAX_TITLE]
+        title = textclip.clip(
+            re.sub(r"\s+", " ", str(raw.get("title") or "")).strip(), MAX_TITLE)
         if not real or not title:
             refused += 1
             continue
         severity = raw.get("severity")
         eid = str(raw.get("entity_id") or "").strip()
+        cited: set[str] = set()
+        for r in real:
+            cited |= _record_entities(by_id[r])
+        # The entity has to be one the cause's OWN records name: a cause
+        # about the cellar node is not filed under the landing plug because
+        # that plug is somewhere else in tonight's digest.
+        eid = eid if eid in entities and eid in cited else ""
+        detail = re.sub(r"\s+", " ", str(raw.get("detail") or "")).strip()
+        fix = re.sub(r"\s+", " ", str(raw.get("fix") or "")).strip()
+        # One cause, one problem: the one its entity is on, else the one
+        # its first (most fundamental) record is evidence of.
+        subject = ""
+        if eid and entity_device.get(eid):
+            dev = entity_device[eid]
+            subject = next((g for rid, g in groups.items()
+                            if rid.split(":", 1)[-1] == dev
+                            or (g == "mesh" and by_id[rid].get("device_id") == dev)
+                            or g == f"dev:{dev}"), f"dev:{dev}")
+        if not subject or not any(groups.get(r) == subject for r in real):
+            # An entity on a device none of the cited records is about says
+            # nothing about which of them the cause is.
+            subject = next((groups[r] for r in real if r in groups), "")
+        others = [r for r in real if r in groups and groups[r] != subject]
+        if subject and others:
+            real = [r for r in real if r not in others]
+            mine: set[str] = set()
+            for r in real:
+                mine |= _names_of(by_id[r])
+            gone: set[str] = set()
+            for r in others:
+                gone |= _names_of(by_id[r]) - mine
+            detail = _without(detail, gone)
+            if eid and eid not in mine:
+                eid = ""
+            bundled += 1
+        logs = [by_id[r] for r in real if by_id[r]["kind"] == "log"]
+        if (logs and any(r.get("referenced_by_you") is False for r in logs)
+                and not any(r.get("referenced_by_you") for r in logs)
+                and not any(by_id[r]["kind"] == "automation" for r in real)
+                and (_TEMPLATE_WORDS.search(fix)
+                     or _TEMPLATE_WORDS.search(detail))):
+            # Nothing the homeowner wrote refers to what the line is about,
+            # so "edit the template" sends them looking for a template
+            # that is not theirs. The integration is the source.
+            fix = _not_your_template_fix(logs)
+            kept = [s for s in _SENTENCES.split(detail)
+                    if not _TEMPLATE_WORDS.search(s)]
+            detail = " ".join(kept).strip()
+            rewritten += 1
         causes.append({
             "title": title,
-            "detail": re.sub(r"\s+", " ", str(raw.get("detail") or "")).strip()[:MAX_DETAIL],
-            "fix": re.sub(r"\s+", " ", str(raw.get("fix") or "")).strip()[:MAX_FIX],
+            "detail": textclip.clip(detail, MAX_DETAIL),
+            "fix": textclip.clip(fix, MAX_FIX),
             "severity": severity if severity in SEVERITIES else "warning",
             "records": real,
             "anchor": real[0],
-            "entity_id": eid if eid in entities else "",
+            "entity_id": eid,
         })
-    return {"causes": causes, "refused": refused, "invented": invented}
+    return {"causes": causes, "refused": refused, "invented": invented,
+            "bundled": bundled, "rewritten": rewritten}
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +932,8 @@ def rows(causes: list[dict], dig: dict, state: dict,
             else cause["title"]
         anchors[cause["anchor"]] = {"text": text, "at": int(now),
                                     "entity": entity}
-        evidence = [{"entity": rid, "value": _record_label(by_id[rid])[:120],
+        evidence = [{"entity": rid, "value": textclip.clip(
+                         _record_label(by_id[rid]), 120),
                      "when": ""} for rid in cause["records"][:8]]
         out.append({
             "text": text,
@@ -652,5 +978,5 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict,
 
 
 __all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "frame",
-           "integration_of", "keep_keys", "load", "parse_causes", "rows",
-           "save", "subject_of", "worth_a_run"]
+           "integration_of", "keep_keys", "load", "parse_causes",
+           "read_user_text", "rows", "save", "subject_of", "worth_a_run"]
