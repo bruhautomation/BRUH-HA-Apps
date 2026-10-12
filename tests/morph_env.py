@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import importlib
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 from unittest import mock
 
 SERVICE = Path(__file__).resolve().parent.parent / "morph" / "service"
-MODULES = ("paths", "store", "gitrepo", "generator", "brain", "settings",
+FRONTEND = SERVICE.parent / "custom_components" / "morph" / "frontend"
+MODULES = ("paths", "morphcode", "store", "gitrepo", "generator", "brain", "settings",
            "tell", "learning", "devloop", "ha", "morphd")
 
 
@@ -37,12 +39,17 @@ class MorphEnv:
         self.brain_shared = root / "config" / ".brain"
         for d in (self.morph_dir, self.shared, self.data):
             d.mkdir(parents=True)
+        # Morph's own panel modules, as Home Assistant serves them; a copy,
+        # so a test can play an update by changing one.
+        self.shipped = root / "config" / "custom_components" / "morph" / "frontend"
+        shutil.copytree(FRONTEND, self.shipped)
         env = {
             "MORPH_DIR": str(self.morph_dir),
             "MORPH_SHARED": str(self.shared),
             "MORPH_DATA": str(self.data),
             "MORPH_BRAIN_SHARED": str(self.brain_shared),
             "MORPH_BRAIN_UID": str(os.getuid()),
+            "MORPH_SHIPPED": str(self.shipped),
             "GIT_CONFIG_GLOBAL": str(root / "gitconfig"),
             "GIT_CONFIG_NOSYSTEM": "1",
         }

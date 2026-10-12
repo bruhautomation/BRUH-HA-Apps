@@ -39,11 +39,15 @@ DASHBOARD = MORPH_DIR / "dashboard.yaml"
 AGENTS = MORPH_DIR / "AGENTS.md"
 LEARNED = MORPH_DIR / "LEARNED.md"
 CARDS_DIR = MORPH_DIR / "cards"
+# Morph's own panel modules: the copy Home Assistant serves, which run.sh
+# deploys with the integration. brAIn reads them here to change one.
+SHIPPED = _p("MORPH_SHIPPED", "/config/custom_components/morph/frontend")
 
 REQUESTS = SHARED / "requests"
 RESPONSES = SHARED / "responses"
 MIRROR = SHARED / "dashboard.json"
 STATE = SHARED / "state.json"
+CODE_STATE = SHARED / "code.json"
 TELLS = SHARED / "tells"
 # Pictures the panel took of what somebody held, written by the integration
 # (`morph/shot`) and read by brAIn's Read tool — so readable by UID 1000.

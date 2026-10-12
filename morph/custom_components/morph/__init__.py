@@ -16,12 +16,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 
 from . import websocket
+from .static import MorphStaticView
 from .const import (
     CARDS_DIR,
     CARDS_URL,
     DOMAIN,
     ELEMENT,
-    FRONTEND_DIR,
     PANEL_ICON,
     PANEL_TITLE,
     PANEL_URL,
@@ -39,8 +39,10 @@ async def _register_static(hass: HomeAssistant) -> None:
     The panel's modules are served under a VERSIONED path so their relative
     imports carry the version too: a cache that held last release's
     engine.js beside this release's panel is the bug a query string on the
-    entry module alone does not prevent. The dashboard's own card code is
-    served uncached, because brAIn rewrites it while somebody is looking.
+    entry module alone does not prevent. They come through a view rather
+    than a static folder, because a module may be this house's own copy
+    (static.py). The dashboard's own card code is served uncached, because
+    brAIn rewrites it while somebody is looking.
     """
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("static"):
@@ -50,12 +52,11 @@ async def _register_static(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components.http import StaticPathConfig
         await hass.http.async_register_static_paths([
-            StaticPathConfig(f"{STATIC_BASE}/{VERSION}", str(FRONTEND_DIR), True),
             StaticPathConfig(CARDS_URL, cards_dir, False),
         ])
     except ImportError:  # a core before 2024.7
-        hass.http.register_static_path(f"{STATIC_BASE}/{VERSION}", str(FRONTEND_DIR), True)
         hass.http.register_static_path(CARDS_URL, cards_dir, False)
+    hass.http.register_view(MorphStaticView(hass))
     data["static"] = True
 
 
@@ -68,7 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         webcomponent_name=ELEMENT,
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
-        module_url=f"{STATIC_BASE}/{VERSION}/morph-panel.js",
+        # boot.js loads the panel, and Morph's own when a changed copy fails.
+        module_url=f"{STATIC_BASE}/{VERSION}/boot.js",
         embed_iframe=False,
         require_admin=False,
         config={"version": VERSION, "cards_url": CARDS_URL},

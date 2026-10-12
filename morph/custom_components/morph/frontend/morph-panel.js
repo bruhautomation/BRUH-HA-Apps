@@ -403,13 +403,14 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       extra = `<input class="fld" type="text" data-keep="sugno" placeholder="Why not? (optional — it teaches Morph)">`;
       acts = act(`data-act="sug" data-v="no" data-id="${esc(g.id)}"`, "Don't suggest it again", true) + act('data-act="sug-cancel"', 'Cancel');
     } else if (this.admin()) {
-      // Morph's own code, not this dashboard: the yes is "send it as an
-      // issue", and nothing is filed until somebody presses it.
-      const yes = g.kind === 'code' ? act(`data-act="sug" data-v="send" data-id="${esc(g.id)}"`, 'Send as issue', true) : act(`data-act="sug" data-v="do" data-id="${esc(g.id)}"`, 'Do it', true);
-      acts = yes + act(`data-act="sug" data-v="not_now" data-id="${esc(g.id)}"`, 'Not now') + act(`data-act="sug-no" data-id="${esc(g.id)}"`, 'No');
+      // A change to Morph itself is made here like any other; sending it
+      // as an issue without making it is the second word.
+      acts = act(`data-act="sug" data-v="do" data-id="${esc(g.id)}"`, 'Do it', true)
+        + (g.kind === 'code' ? act(`data-act="sug" data-v="send" data-id="${esc(g.id)}"`, 'Send as issue') : act(`data-act="sug" data-v="not_now" data-id="${esc(g.id)}"`, 'Not now'))
+        + act(`data-act="sug-no" data-id="${esc(g.id)}"`, 'No');
     }
     const sub = (g.why ? `<span class="sub">${esc(g.why)}</span>` : '') + (g.last_error ? `<span class="sub" style="color:var(--rose)">Last try: ${esc(g.last_error)}</span>` : '') + extra;
-    return shell(g.kind === 'code' ? 'Morph needs a fix' : 'Morph suggests', 'var(--violet)', g.title, sub, acts);
+    return shell(g.kind === 'code' ? 'A change to Morph itself' : 'Morph suggests', 'var(--violet)', g.title, sub, acts);
   }
 
   topNotesHtml() {
@@ -426,7 +427,21 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
   problemsHtml() {
     const m = (this.data && this.data.mirror) || {};
     const list = (m.problems || []).slice(0, 4);
-    if (!list.length) return '';
+    return this.codeProblemsHtml() + (list.length ? this.yamlProblemsHtml(m, list) : '');
+  }
+
+  // A change to Morph's own code that did not load (boot.js fell back), or
+  // that an update paused. Both say what is running and offer the fix.
+  codeProblemsHtml() {
+    const out = [];
+    const note = (head, body, acts) => `<div class="note" style="margin-bottom:12px;background:${mix('var(--amber)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--amber)', 25)}"><span class="small" style="color:var(--amber);font-weight:700">${esc(head)}</span><span class="sm">${esc(body)}</span>${acts ? `<div class="acts">${acts}</div>` : ''}</div>`;
+    if (window.__morphFallback) out.push(note('A change to Morph itself did not load, so Morph is running its own copy.', window.__morphFallback, '<button type="button" class="wd strong" data-act="page" data-v="settings">See the changes</button>'));
+    const paused = (((this.data && this.data.state) || {}).code || []).filter((r) => r.status === 'paused');
+    paused.slice(0, 3).forEach((r) => out.push(note(`Morph was updated, so your change to its ${r.name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button>`)));
+    return out.join('');
+  }
+
+  yamlProblemsHtml(m, list) {
     const color = m.held ? 'var(--rose)' : 'var(--amber)';
     const head = m.held ? 'dashboard.yaml could not be read, so this is the last version that could.' : 'Some of dashboard.yaml was skipped.';
     return `<div class="note" style="margin-bottom:12px;background:${mix(color, 9)};box-shadow:inset 0 0 0 1px ${mix(color, 25)}"><span class="small" style="color:${color};font-weight:700">${esc(head)}</span>${list.map((p) => `<span class="sm" style="display:block">${esc(p)}</span>`).join('')}</div>`;
@@ -818,7 +833,9 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     const turns = (t.turns || []).map((u) => `<div class="turn"><span class="q">“${esc(u.text)}”</span>${u.say ? `<p class="a">${esc(u.say)}</p>` : ''}${this.pairHtml(u.before, u.after)}</div>`).join('');
     const acts = [];
     if (done) {
-      if (st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="tell-keep">Keep</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
+      // A change to Morph's own code runs once the page reloads.
+      if (st.commit && !st.undone && (st.code || []).length) acts.push('<button type="button" class="wd go" data-act="reload-page">Reload to see it</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
+      else if (st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="tell-keep">Keep</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
       else if (st.undone) acts.push('<span class="sm">Put back.</span>');
       else acts.push('<button type="button" class="wd go" data-act="tell-keep">Done</button>');
       acts.push('<button type="button" class="wd" data-act="tell-more">Tell it more</button>');
@@ -866,7 +883,11 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     if (!issue) return '';
     if (st.issue === 'sent') return '<p class="sm" style="color:var(--teal)">Sent as an issue to brAIn’s development loop.</p>';
     if (st.issue === 'declined') return '';
-    return `<div class="issue rise"><b>This needs a change to Morph itself.</b><span>${esc(issue.title)}</span>${issue.detail ? `<span class="sm">${esc(issue.detail)}</span>` : ''}<span>Would you like to send this as an issue? It goes to brAIn’s development loop and on to your private reports repository, so Morph’s code gets fixed.</span><div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-issue" data-v="send">Send as issue</button><button type="button" class="wd" data-act="tell-issue" data-v="no">No</button></div></div>`;
+    // brAIn changed Morph itself (st.code), or could not and said what
+    // Morph would need. Either way the question is whether Morph should
+    // have it for everybody.
+    const made = (st.code || []).length && !st.undone;
+    return `<div class="issue rise"><b>${made ? 'brAIn changed Morph itself.' : 'This needs a change to Morph itself.'}</b><span>${esc(issue.title)}</span>${issue.detail ? `<span class="sm">${esc(issue.detail)}</span>` : ''}<span>${made ? 'Would you like to open an issue to update Morph’s code, so everybody gets this? The change goes with it.' : 'Would you like to send this as an issue, so Morph’s code gets fixed?'} It goes to brAIn’s development loop and on to your private reports repository.</span><div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-issue" data-v="send">${made ? 'Open an issue' : 'Send as issue'}</button><button type="button" class="wd" data-act="tell-issue" data-v="no">No</button></div></div>`;
   }
 
   phaseWords(st) {
@@ -1438,10 +1459,24 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       case 'tell-send': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); this.sendTell(ta ? ta.value : ''); return; }
       case 'tell-cancel': this.closeTell(); return;
       case 'tell-keep': this.closeTell(); this.load(); return;
+      case 'reload-page': location.reload(); return;
+      case 'code-reset': {
+        const r = await H.callWS({ type: 'morph/request', kind: 'code_reset', payload: { name: v } });
+        if (r.ok) { this.toast(`Morph’s own ${v} is back. Reloading…`, r.commit); setTimeout(() => location.reload(), 900); } else this.toast(r.error);
+        return;
+      }
+      case 'code-redo': {
+        const r = await H.callWS({ type: 'morph/request', kind: 'code_redo', payload: { name: v } });
+        this.toast(r.ok ? 'brAIn is making that change again on the new Morph. It shows in Settings when it is done.' : r.error); this.load(); return;
+      }
       case 'tell-undo': {
         const t = this.s.tell; if (!t || !t.tellId) return;
         const r = await H.callWS({ type: 'morph/request', kind: 'tell_undo', payload: { id: t.tellId } });
-        if (r.ok) { t.state = { ...t.state, undone: true, say: r.follow ? 'The dashboard is back. brAIn is putting back what it changed in Home Assistant.' : 'Put back.' }; this.dash = null; this.load(); }
+        if (r.ok) {
+          t.state = { ...t.state, undone: true, say: r.follow ? 'The dashboard is back. brAIn is putting back what it changed in Home Assistant.' : 'Put back.' }; this.dash = null; this.load();
+          // Morph's own code went back too: it runs once the page reloads.
+          if ((t.state.code || []).length) { this.toast('Put back. Reloading to run Morph’s own code…'); setTimeout(() => location.reload(), 900); }
+        }
         else this.toast(r.error);
         this.schedule(); return;
       }
@@ -1578,6 +1613,16 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     this.schedule();
   }
 
+  // This house's changes to Morph's own code (/config/morph/frontend/,
+  // the add-on's morphcode.py): each one in use or paused by an update,
+  // with the way back to Morph's own.
+  codeHtml(st) {
+    const rows = st.code || [];
+    const head = '<span class="label">Changes to Morph itself</span>';
+    if (!rows.length) return `${head}<p class="sm">None. brAIn can change any part of Morph — its header, its cards, how it lays things out. Ask in Edit, and Morph asks whether to send the change on as an issue.</p>`;
+    return head + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? 'Morph was updated underneath this change, so Morph’s own is running.' : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button></div>`).join('');
+  }
+
   settingsHtml() {
     if (!this.admin()) return '<div class="banner">Only an administrator can change Morph.</div>';
     const st = (this.data && this.data.state) || {}; const s = st.settings || {};
@@ -1606,6 +1651,7 @@ ${sugs.length ? `<span class="label">Waiting for you</span>${sugs.map((g) => thi
 <textarea class="code-ed" data-keep="lessons" style="min-height:120px;white-space:pre-wrap">${esc((L.lessons || []).map((x) => '- ' + x).join('\n'))}</textarea><div><button type="button" class="wd go" data-act="lessons-save">Save lessons</button></div></div>
 <div class="setsec"><h2>Improving Morph itself</h2>
 ${sw('report_code_issues', 'Report Morph’s own problems', 'A card that fails to draw, a layout that overlaps, a request brAIn could not carry out. They go to brAIn’s development loop, which files them in your private reports repository so they are fixed in Morph’s code.')}
+${this.codeHtml(st)}
 <p class="sm">${dl.enabled ? `${dl.waiting || 0} report${dl.waiting === 1 ? '' : 's'} waiting.` : 'Off.'} ${dl.picked_up_at ? `brAIn last picked them up ${esc(ago(new Date(dl.picked_up_at * 1000).toISOString()))}${dl.filed != null ? `, ${dl.filed} filed` : ''}.` : 'brAIn has not picked any up yet — switch on its development loop under brAIn ⚙ → Developer.'}</p></div>
 <div class="setsec"><h2>Appearance</h2><span class="label">Theme</span>${pick('theme', [['auto', 'Follow Home Assistant'], ['dark', 'Dark'], ['medium', 'Medium'], ['light', 'Light']])}
 ${sw('reduce_motion', 'Reduce motion', 'Things move straight to where they belong instead of springing there.')}</div>

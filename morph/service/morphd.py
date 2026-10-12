@@ -34,6 +34,7 @@ import generator  # noqa: E402
 import gitrepo  # noqa: E402
 import ha  # noqa: E402
 import learning  # noqa: E402
+import morphcode  # noqa: E402
 import paths  # noqa: E402
 import settings  # noqa: E402
 import store  # noqa: E402
@@ -143,6 +144,9 @@ def publish_state() -> None:
         # running is visible after its box was closed or the page reloaded.
         "activity": tell.activity(),
         "devloop": devloop.status(),
+        # Morph's own files this house has changed, and whether each is in
+        # use (morphcode.py); code.json is what the integration serves from.
+        "code": morphcode.publish(VERSION),
         "note": STATE.get("generate_note", ""),
     })
 
@@ -204,8 +208,9 @@ async def handle(kind: str, p: dict) -> dict:
         verb = str(p.get("verb") or "")
         sid = str(p.get("id") or "")
         item = next((it for it in learning.all_items() if it.get("id") == sid), None)
-        if verb == "do" and item and item.get("kind") == "code":
-            verb = "send"
+        # A change to Morph's own code is made here like any other (brAIn
+        # changes this house's copy of Morph, and the Tell then asks whether
+        # to send it on); "send" alone files it without making it.
         if verb == "do":
             if not item:
                 return {"ok": False, "error": "That suggestion is gone."}
@@ -237,6 +242,23 @@ async def handle(kind: str, p: dict) -> dict:
         sha = await asyncio.to_thread(gitrepo.commit, "Rebuilt the dashboard from the house", "person")
         await asyncio.to_thread(publish)
         return {"ok": True, "commit": sha}
+    if kind == "code_reset":
+        name = str(p.get("name") or "")
+        await asyncio.to_thread(gitrepo.commit_pending)
+        ok, err = await asyncio.to_thread(morphcode.reset, name)
+        if not ok:
+            return {"ok": False, "error": err}
+        sha = await asyncio.to_thread(gitrepo.commit, f"Put back Morph's own {name}", "person")
+        await asyncio.to_thread(publish_state)
+        return {"ok": True, "commit": sha}
+    if kind == "code_redo":
+        name = str(p.get("name") or "")
+        if not any(r["name"] == name and r["status"] == "paused" for r in morphcode.status()):
+            return {"ok": False, "error": "That change is not paused."}
+        st = tell.start({"kind": "dashboard", "label": name, "path": "Morph's own code"},
+                        morphcode.redo_words(name, VERSION))
+        await asyncio.to_thread(publish_state)
+        return {"ok": "error" not in st, **st}
     if kind == "lessons":
         await asyncio.to_thread(learning.write_lessons, [str(x) for x in (p.get("lessons") or [])])
         await asyncio.to_thread(publish_state)
@@ -298,8 +320,9 @@ async def watch_loop() -> None:
                 text = paths.DASHBOARD.read_text(encoding="utf-8")
             except OSError:
                 pass  # a missing file publishes as an empty dashboard below
-            mods = sorted((f.name, int(f.stat().st_mtime)) for f in paths.CARDS_DIR.glob("*.js")) \
-                if paths.CARDS_DIR.is_dir() else []
+            mods = (sorted((f.name, int(f.stat().st_mtime)) for f in paths.CARDS_DIR.glob("*.js"))
+                    if paths.CARDS_DIR.is_dir() else []) \
+                + [("frontend/" + f.name, int(f.stat().st_mtime)) for f in morphcode.copies()]
             if store.revision(text) != STATE["last_revision"] or mods != STATE.get("modules"):
                 STATE["modules"] = mods
                 await asyncio.to_thread(publish)

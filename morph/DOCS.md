@@ -18,6 +18,7 @@ frontend.
 - [Edit mode](#edit-mode)
 - [Tell brAIn](#tell-brain)
 - [Learning](#learning)
+- [Changing Morph itself](#changing-morph-itself)
 - [When Morph's own code fails](#when-morphs-own-code-fails)
 - [Settings](#settings)
 - [The dashboard file](#the-dashboard-file)
@@ -87,10 +88,12 @@ wrong" mean what is on your screen. If the picture cannot be taken (an
 embedded web page, for instance), the box says so and brAIn is given the
 card's text instead.
 
-**It changes the dashboard.** brAIn acts at once on:
+**It changes Morph.** brAIn acts at once on:
 
 - the dashboard (`/config/morph/dashboard.yaml`),
-- Morph's card code (`/config/morph/cards/`).
+- Morph's card code (`/config/morph/cards/`),
+- Morph itself: its header, its layout, its built-in cards, its styles (see
+  [Changing Morph itself](#changing-morph-itself)).
 
 It changes Home Assistant itself — entity ids, names, areas, automations,
 scripts, helpers — only when you ask for that in words: "change the entity
@@ -111,11 +114,13 @@ that commit exactly (and, if you asked for a change in Home Assistant, asks
 brAIn to put that back too); Tell it more keeps the conversation above,
 takes a new picture of how it looks now, and asks what should be different.
 
-**A problem in Morph itself is a question.** When doing what you asked
-properly needs Morph's own code changed — a built-in card type that is
-wrong or cannot do it — brAIn does what it can and the box asks **Would you
-like to send this as an issue?** Nothing is sent unless you press **Send as
-issue** (see [When Morph's own code fails](#when-morphs-own-code-fails)).
+**Changing Morph itself, then asking.** When what you asked needs Morph's
+own code changed (a switch in the header, a built-in card that cannot do
+it), brAIn changes it here, in your copy of Morph. The box offers **Reload to
+see it** and **Undo**, and then asks **Would you like to open an issue to
+update Morph's code?** so everybody can have it. Nothing is sent unless you
+press **Open an issue** (see
+[When Morph's own code fails](#when-morphs-own-code-fails)).
 
 What still holds whatever you ask: brAIn's `protected_entities`, its action
 gate and its edit snapshots (`brain undo`). What brAIn learns about the
@@ -140,9 +145,10 @@ dashboard. What comes back:
 - **Lessons**, rewritten each pass into `/config/morph/LEARNED.md`. Every Tell
   and every pass reads them. Edit them in **Settings → Learning** or in the
   file.
-- **Morph needs a fix**: a problem the pass thinks needs Morph's own code
-  changed, with **Send as issue**, **Not now** and **No**. Nothing is sent
-  until you press Send.
+- **A change to Morph itself**: something the pass thinks Morph's own code
+  should do differently, with **Do it** (brAIn changes your copy of Morph,
+  then asks whether to open an issue), **Send as issue** (only report it) and
+  **No**. Nothing is sent until you press Send or Open an issue.
 
 A pass that fails (brAIn stopped, signed out, out of time) is tried again on
 the next schedule; it does not count as having read what you did.
@@ -152,13 +158,34 @@ done and declined, and how many of brAIn's changes were kept or undone.
 
 Turn learning off in Settings, or with the `learning` option.
 
+## Changing Morph itself
+
+Nothing about Morph is out of reach. Morph's own panel is a handful of
+modules in `/config/custom_components/morph/frontend/`. To change one, brAIn
+copies it into `/config/morph/frontend/` and edits the copy, and Morph serves
+your copy in place of its own after a page reload.
+
+- **It is one change like any other.** It is in History, and Undo puts
+  Morph's own back.
+- **A copy that does not load is not a blank page.** Morph runs its own copy
+  for that page load and says what went wrong.
+- **An update can pause a copy.** If a Morph update changes one of the files
+  you changed, your change is **paused** and Morph's own runs, because an old
+  copy beside new modules is how a panel breaks. A note says so, with **Make
+  it again** (brAIn redoes the change on the new file) and **Use Morph's
+  own**.
+
+**Settings → Improving Morph itself** lists every change, whether it is in
+use or paused, and **Use Morph's own** for each.
+
 ## When Morph's own code fails
 
 A card that fails to draw, a layout that overlaps at rest, or an answer from
 brAIn that Morph could not read is a fault in Morph, not in your dashboard,
 and is recorded on its own. A request that needs Morph's code changed is
-recorded only when you press **Send as issue** — in the Tell box or on a
-**Morph needs a fix** note. brAIn being slow or signed out is not Morph's
+recorded only when you press **Open an issue** or **Send as issue**, in the
+Tell box or on a note. A change brAIn made to Morph's code goes with the
+issue as a patch. brAIn being slow or signed out is not Morph's
 fault and is not recorded. Morph keeps a ledger of these and publishes it to
 `/config/.morph/devloop/outbox.json`.
 brAIn's development loop (brAIn ⚙ → Developer) reads it as its **Morph**

@@ -48,6 +48,9 @@ def _load() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+DETAIL_MAX = 5200
+
+
 def note_fault(area: str, what: str, detail: str = "", *, source: str = "morph",
                now: float | None = None) -> None:
     now = now or time.time()
@@ -61,7 +64,9 @@ def note_fault(area: str, what: str, detail: str = "", *, source: str = "morph",
                            "days": [], "source": source}
     row["count"] = int(row.get("count") or 0) + 1
     row["last"] = now
-    row["detail"] = str(detail or row.get("detail") or "")[:2000]
+    # Room for the patch a person chose to send (tell.answer_issue); brAIn's
+    # stream reads at most 6000 characters of a row's body.
+    row["detail"] = str(detail or row.get("detail") or "")[:DETAIL_MAX]
     day = time.strftime("%Y-%m-%d", time.localtime(now))
     if day not in row["days"]:
         row["days"] = (row["days"] + [day])[-60:]
@@ -95,15 +100,17 @@ def rows(now: float | None = None) -> list[dict]:
     for fp, r in sorted(_load().items(), key=lambda kv: -float(kv[1].get("last") or 0)):
         if now - float(r.get("last") or 0) > KEEP_S:
             continue
+        detail = (r.get("detail") or "(none)")[:DETAIL_MAX]
+        # A detail that carries its own fenced patch is markdown already; a
+        # second fence around it would print the patch as text.
+        fenced = ["```", detail, "```"] if "```" not in detail else [detail]
         body = "\n".join([
             f"Morph reported this {r['count']} time{'s' if r['count'] != 1 else ''} "
             f"over {len(r.get('days') or [])} day(s).",
             "",
             "Detail:",
             "",
-            "```",
-            (r.get("detail") or "(none)")[:1800],
-            "```",
+            *fenced,
             "",
             "Fix it in the repository's `morph/` add-on (see morph/AGENTS.md for how Morph is built).",
         ])

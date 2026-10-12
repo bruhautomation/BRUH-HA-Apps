@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- **Morph can change itself.** Ask in Edit for a switch in the header, or for a
+  built-in card that does something new, and brAIn changes Morph's own code.
+  It no longer answers that the header is out of reach.
+  - brAIn copies the module from Morph's own panel into
+    `/config/morph/frontend/` and edits the copy, and Morph serves your copy
+    in place of its own. It is one change in History, and Undo puts Morph's
+    own back.
+  - The Tell box then offers **Reload to see it**, and asks **Would you like
+    to open an issue to update Morph's code?** The change goes with the issue
+    as a patch, so everybody can have it.
+  - A copy that does not load is not a blank page: Morph runs its own copy for
+    that page load and says what went wrong.
+  - If an update changes a file you changed, your change is paused (Morph's
+    own runs) until brAIn makes it again on the new file. A note says so, with
+    **Make it again** and **Use Morph's own**.
+  - **Settings → Improving Morph itself** lists every change, in use or
+    paused.
+- A suggestion to change Morph itself now offers **Do it** (brAIn makes the
+  change here) as well as **Send as issue**.
+
 ## 0.3.0
 
 ### Changed

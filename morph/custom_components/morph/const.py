@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 DOMAIN = "morph"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 PANEL_URL = "morph"
 PANEL_TITLE = "Morph"
@@ -30,6 +30,10 @@ USAGE = SHARED / "usage.jsonl"
 ERRORS = SHARED / "errors.jsonl"
 DASHBOARD = MORPH_DIR / "dashboard.yaml"
 CARDS_DIR = MORPH_DIR / "cards"
+# This house's changes to Morph's own panel modules, and the add-on's
+# verdict on which of them are in use (the add-on's morphcode.py).
+CODE_DIR = MORPH_DIR / "frontend"
+CODE_STATE = SHARED / "code.json"
 
 REQUEST_TIMEOUT = 45
 WATCH_SECONDS = 2
