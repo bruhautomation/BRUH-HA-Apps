@@ -118,7 +118,10 @@ const readCards = (page, cut) => page.evaluate((cutSrc) => {
         label: b.textContent.trim(), icon: b.classList.contains('icon'),
         primary: b.classList.contains('btn-primary'),
         h: Math.round(b.getBoundingClientRect().height),
-        w: Math.round(b.getBoundingClientRect().width) })),
+        w: Math.round(b.getBoundingClientRect().width),
+        t: Math.round(b.getBoundingClientRect().top) })),
+      edge: parseFloat(getComputedStyle(c).borderLeftWidth) || 0,
+      edgeColor: getComputedStyle(c).borderLeftColor,
       apply: buttons.some((b) => b.textContent.trim() === 'Apply')
         && !!c.querySelector('.qplan'),
       riskOnFace: /What could go wrong/.test(faceText(c)),
@@ -312,6 +315,53 @@ for (const { width, touch, top, fits } of CASES) {
       for (const b of card.buttons) {
         if (b.h < MIN_TARGET) note(where, `${id} "${b.label}" is ${b.h}px tall`);
       }
+    }
+    // One row of answers on a phone: a problem's row (primary, Check
+    // again, Dismiss, Snooze, Ignore, ⋯) wrapped to two rows at 390, so one
+    // urgent card filled the screen. Check again and Dismiss fold into the
+    // ⋯ there; the primary, Snooze, Ignore and the ⋯ stay.
+    if (width <= 640 && card.buttons.length) {
+      const tops = new Set(card.buttons.map((b) => b.t));
+      if (tops.size > 1) {
+        note(where, `${id}'s answers wrap to ${tops.size} rows: ${presses.map((b) => b.label).join(' · ')}`);
+      }
+    }
+  }
+  // Urgent is set apart from the ordinary problems by more than its chip's
+  // dot: a band down the card's leading edge, in the urgent colour.
+  {
+    const urgent = cards.find((c) => c.id === 'f:1100');
+    const plain = cards.find((c) => c.id === 'f:1101');
+    if (!urgent || urgent.edge < 3) note(where, `the urgent card has no leading band (${urgent?.edge}px)`);
+    else if (plain && (plain.edge >= 3 && plain.edgeColor === urgent.edgeColor)) {
+      note(where, 'an ordinary problem wears the urgent band');
+    }
+  }
+  // At 390 the folded presses are still there, behind the ⋯ — Check
+  // again first — and send what they sent from the row.
+  if (width <= 640) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const dots = page.locator('[data-case-id="f:1101"] .card-actions .btn.icon');
+    if (!(await dots.count())) note(where, 'the freezer card has no ⋯');
+    else {
+      await dots.first().evaluate((b) => b.click());
+      const items = await page.evaluate(() => [...document.querySelectorAll('#chipPop .cardmenuitem b')]
+        .map((b) => b.textContent));
+      if (items[0] !== 'Check again' || items[1] !== 'Dismiss') {
+        note(where, `the folded ⋯ holds ${items.join(' | ')}`);
+      }
+      if (items.length > 3) note(where, `the ⋯ holds ${items.length}`);
+      const n = items.indexOf('Dismiss');
+      if (n >= 0) {
+        await page.evaluate((i) => document.querySelector(
+          `#chipPop .cardmenuitem[data-i="${i}"]`).click(), n);
+        await page.waitForTimeout(150);
+        const sent = await posts(page);
+        if (!sent.some((p) => /api\/finding\/1101$/.test(p.url) && p.method === 'DELETE')) {
+          note(where, `the folded Dismiss sent ${JSON.stringify(sent.map((p) => p.url))}`);
+        }
+      }
+      await page.keyboard.press('Escape');
     }
   }
   const change = cards.find((c) => c.id === 'f:1104');
@@ -689,6 +739,76 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touc
         note(where, `Report to brAIn posted ${JSON.stringify(look)}`);
       }
     }
+  }
+  await context.close();
+}
+
+// Insights under the "N things need you" strip: nothing between the strip
+// and the first thing under it but the section gap. An empty heading row
+// (the pane's title is the segmented control's on a phone, and the search
+// shows past eight reports) and an empty grid each took their own margin,
+// which stacked into a band of nothing under the strip.
+for (const [width, insights] of [[390, []], [390, INSIGHTS], [1190, []]]) {
+  const where = `${width}px insights (${insights.length} cards)`;
+  const { page, context } = await open(width, width < 640, { insights });
+  await page.evaluate(() => switchView('insights'));
+  await page.waitForTimeout(600);
+  const boxes = await page.evaluate(() => [...document.querySelectorAll('#dash > *')]
+    .map((e) => ({ id: e.id || e.className, r: e.getBoundingClientRect() }))
+    .filter((b) => b.r.height > 0)
+    .map((b) => ({ id: b.id, top: Math.round(b.r.top), bottom: Math.round(b.r.bottom) })));
+  if (!boxes.length || boxes[0].id !== 'needsStrip') {
+    note(where, `the strip is not first: ${boxes.map((b) => b.id).join(', ')}`);
+  } else if (boxes[1] && boxes[1].top - boxes[0].bottom > 28) {
+    note(where, `${boxes[1].top - boxes[0].bottom}px of nothing under the strip, above ${boxes[1].id}`);
+  }
+  await context.close();
+}
+
+// Grouped by consequence: a security finding is read with the problems,
+// straight after the urgent ones and above a serious fault that is only
+// the house's, and the registry's housekeeping (an unused helper, a lamp
+// with no room) is folded under ONE closed, counted "Tidy-ups" line. A
+// house had its security findings sitting level with exactly those rows.
+for (const width of [390, 1190]) {
+  const where = `${width}px (consequence)`;
+  const sec = kase({
+    id: 'f:1401', severity: 'info', situation: 'generic', chip: 'problem', group: 'problems',
+    claim: 'Home Assistant banned an address after failed logins',
+    source: 'check:sec.login_bans', source_title: 'Security check',
+    origin: { store: 'findings', key: 1401 },
+    answers: [A('todo', 'Add to To Do', '/api/case/f:1401/do', { primary: true }),
+              A('not_now', 'Snooze', '/api/case/f:1401/not_now'),
+              A('wrong', 'Ignore', '/api/case/f:1401/wrong', { note: true })] });
+  const tidy = (id, claim, src) => kase({
+    id, severity: 'info', chip: 'tidy', group: 'tidy', situation: 'generic', claim,
+    source: src, source_title: 'Registry check', origin: { store: 'findings', key: Number(id.slice(2)) },
+    answers: [A('fix', 'Fix', `/api/finding/${id.slice(2)}/fix`, { primary: true }),
+              A('not_now', 'Snooze', `/api/case/${id}/not_now`),
+              A('wrong', 'Ignore', `/api/case/${id}/wrong`, { note: true })] });
+  const cases = [FEED[1], sec, FEED[0],
+    tidy('f:1402', 'A helper nothing uses', 'check:reg.unused_helper'),
+    tidy('f:1403', 'The porch lamp is in no room', 'check:reg.no_area')];
+  const { page, context } = await open(width, width < 640, {
+    cases, loose: [], proposals: [], intents: [], extras: {}, open: cases.length });
+  await page.waitForTimeout(300);
+  const got = await page.evaluate(() => ({
+    groups: [...document.querySelectorAll('#findList > .qgroup')].map((g) => ({
+      group: g.dataset.group, name: g.querySelector('.qgroupname')?.textContent || '',
+      count: Number(g.querySelector('.qgroupcount')?.textContent || 'NaN'),
+      open: g.querySelector('.qgrouphead')?.getAttribute('aria-expanded') === 'true',
+      cards: g.querySelectorAll('.qcard').length })),
+  }));
+  const t = got.groups.find((g) => g.group === 'tidy');
+  if (!t || t.name !== 'Tidy-ups' || t.count !== 2 || t.open || t.cards) {
+    note(where, `the tidy-ups are not one closed counted line: ${JSON.stringify(t)}`);
+  }
+  if (got.groups[0]?.group !== 'problems') note(where, `the queue opens on ${got.groups[0]?.group}`);
+  await page.evaluate(() => { todayState.showAll = true; renderFindings(); });
+  const order = await page.evaluate(() => [...document.querySelectorAll(
+    '#findList .qgroup[data-group="problems"] .qcard')].map((c) => c.dataset.caseId));
+  if (order.join('|') !== 'f:1100|f:1401|f:1101') {
+    note(where, `problems read ${order.join(', ')}, not urgent, security, then the rest`);
   }
   await context.close();
 }

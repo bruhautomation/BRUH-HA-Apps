@@ -148,16 +148,46 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   await page.evaluate(() => document.body.click());
 
   // Dismiss clears the row and records nothing: a DELETE of the finding.
-  await page.locator('[data-case-id="f:1100"] .card-actions button:text-is("Dismiss")').click();
+  // On a phone (≤640px) Check again and Dismiss ride behind the card's ⋯
+  // so the row is one row (measure-today holds the row); the press and
+  // what it sends are the same either way.
+  const narrow = width <= 640;
+  const pressFolded = async (id, label) => {
+    if (!narrow) {
+      await page.locator(`[data-case-id="${id}"] .card-actions button:text-is("${label}")`).click();
+      return true;
+    }
+    await page.locator(`[data-case-id="${id}"] .card-actions .btn.icon`).first()
+      .evaluate((b) => b.click());
+    const items = await page.evaluate(() => [...document.querySelectorAll(
+      '#chipPop .cardmenuitem b')].map((b) => b.textContent));
+    const i = items.indexOf(label);
+    if (i < 0) { note(where, `${id}'s ⋯ holds no ${label}: ${items.join(' | ')}`); return false; }
+    await page.evaluate((n) => document.querySelector(
+      `#chipPop .cardmenuitem[data-i="${n}"]`).click(), i);
+    return true;
+  };
+  await pressFolded('f:1100', 'Dismiss');
   await page.waitForTimeout(150);
   let gone = await posts(page);
   if (!gone.some((p) => /api\/finding\/1100$/.test(p.url) && p.method === 'DELETE')) {
     note(where, `Dismiss sent ${JSON.stringify(gone)}`);
   }
-  // Check again is on the face of a check's row, not behind the ⋯.
+  // Check again is on the face of a check's row on a desktop, and first
+  // behind the ⋯ on a phone.
   const checkAgain = await page.locator(
     '[data-case-id="f:1101"] .card-actions button:text-is("Check again")').count();
-  if (!checkAgain) note(where, 'the freezer card has no Check again on its face');
+  if (!narrow && !checkAgain) note(where, 'the freezer card has no Check again on its face');
+  if (narrow) {
+    if (checkAgain) note(where, 'the freezer card keeps Check again on a phone\'s row');
+    await page.locator('[data-case-id="f:1101"] .card-actions .btn.icon').first()
+      .evaluate((b) => b.click());
+    const items = await page.evaluate(() => [...document.querySelectorAll(
+      '#chipPop .cardmenuitem b')].map((b) => b.textContent));
+    if (items[0] !== 'Check again') note(where, `the freezer's ⋯ opens on ${items[0]}`);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => document.body.click());
+  }
 
   // Fix opens a box holding the card's own suggestion, by name, which the
   // person may edit; sending it posts that text as the agreed change to the
