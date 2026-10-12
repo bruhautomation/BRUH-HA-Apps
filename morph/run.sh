@@ -56,6 +56,7 @@ deploy_custom_integration() {
     dst_ver=$(jq -r '.version' "${dst}/manifest.json" 2>/dev/null || echo "none")
     if [ "${src_ver}" != "${dst_ver}" ]; then
         bashio::log.info "Deploying the morph integration (${dst_ver} -> ${src_ver})"
+        bashio::log.info "To see Morph in the sidebar: accept Morph under Settings > Devices & services, then restart Home Assistant"
         rm -rf "${dst}"
         cp -a "${src}" "${dst}"
         if [ "${dst_ver}" != "none" ]; then

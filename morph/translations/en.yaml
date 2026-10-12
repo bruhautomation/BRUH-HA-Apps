@@ -3,12 +3,14 @@
 # comments are for whoever edits config.yaml; this is what a person reads.
 configuration:
   enable_ha_integration:
-    name: Show Morph in the sidebar
+    name: Install the Morph integration
     description: >-
-      Deploy the morph integration, which is what adds Morph to Home
-      Assistant's sidebar. After the first start, accept the "Morph" tile
-      under Settings → Devices & services. Turn this off to stop Morph
-      deploying anything; your dashboard in /config/morph is left alone.
+      Morph is a panel inside Home Assistant, not an ingress add-on, so there
+      is no "Show in sidebar" switch on this page. This option installs the
+      morph integration that adds it. After the first start, accept the
+      "Morph" tile under Settings → Devices & services, then restart Home
+      Assistant once; Morph then appears in the sidebar. Turn this off to stop
+      Morph deploying anything; your dashboard in /config/morph is left alone.
   learning:
     name: Learn and suggest improvements
     description: >-

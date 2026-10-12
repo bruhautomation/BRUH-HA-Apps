@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1
+
+### Changed
+
+- **Labelled experimental.** Morph is not finished and not recommended for
+  general use yet: the README, the documentation, the add-on store
+  description and Morph's own Settings page say so, the way BRight does.
+- **Getting Morph into the sidebar is spelled out.** Morph is a panel the
+  `morph` integration registers inside Home Assistant's own frontend, not an
+  ingress add-on, so there is no "Show in sidebar" switch on the add-on's
+  page. The option that looked like one is now called *Install the Morph
+  integration*, and the README, the documentation and the add-on log name
+  the two steps: accept **Morph** under Settings → Devices & services, then
+  restart Home Assistant once.
+
 ## 0.1.0
 
 ### Added
