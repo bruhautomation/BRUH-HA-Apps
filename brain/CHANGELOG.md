@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.22
+
+### Changed
+
+- A question brAIn asks you about something it noticed is written with the day it meant ("on Thursday afternoon"), not "yesterday afternoon", so it still makes sense days later, and the card says when it was asked. (reports #197)
+
+### Fixed
+
+- The overnight check files a problem about one device under that device, so it can be ignored, linked and matched with other checks. (reports #198)
+- The overnight check no longer tells you to edit "the template" behind an integration's own log warning when nothing you wrote refers to that entity; it names the integration instead. (reports #195)
+- The overnight check keeps one problem per finding: evidence about a different device is no longer bundled into a finding about the first one. (reports #203)
+- Finding text is never stored cut off mid-word: every length limit on a finding's title, detail, fix and the overnight check's causes now cuts at a word or sentence boundary with "…". (reports #193)
+- An open finding no longer shows, right beside it, brAIn's own reason for not showing it ("already known, nothing new"), and a reason that names a different device than the row is not shown. (reports #192)
+- The `get_activity` tool returns the rows it counted again, newest first and filtered by cause, instead of counts with an empty list. (reports #199)
+
 ## 2.18.21
 
 ### Changed
