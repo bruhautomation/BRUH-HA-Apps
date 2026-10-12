@@ -136,17 +136,29 @@ async def ws_tell_status(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], data or {"phase": "missing"})
 
 
+# brAIn's ``claude`` user, who reads the picture (the same uid Morph's
+# service hands /config/morph to). Owner-only modes, owned by that user:
+# Core writes as root and root can read and prune anything anyway.
+BRAIN_UID = 1000
+
+
+def _hand_to_brain(path, mode: int) -> None:
+    os.chmod(path, mode)
+    try:
+        os.chown(path, BRAIN_UID, BRAIN_UID)
+    except OSError:
+        pass  # not root (a dev checkout): brAIn cannot open it and works from the card's text, which rides with every Tell
+
+
 def _write_shot(raw: bytes) -> str:
-    """File one PNG under /config/.morph/shots and keep the folder bounded.
-    Readable by everyone on purpose: brAIn reads it as the ``claude`` user
-    (UID 1000), and Core writes as root."""
+    """File one PNG under /config/.morph/shots and keep the folder bounded."""
     SHOTS.mkdir(parents=True, exist_ok=True)
-    os.chmod(SHOTS, 0o755)
+    _hand_to_brain(SHOTS, 0o700)
     shot = uuid.uuid4().hex
     scratch = SHOTS / f".{shot}.tmp"
     with open(scratch, "wb") as f:
         f.write(raw)
-    os.chmod(scratch, 0o644)
+    _hand_to_brain(scratch, 0o600)
     os.replace(scratch, SHOTS / f"{shot}.png")
     old = sorted(SHOTS.glob("*.png"), key=lambda p: p.stat().st_mtime)
     for path in old[:-MAX_SHOTS]:
