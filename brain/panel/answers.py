@@ -549,9 +549,25 @@ def chip(case: dict, urgent: bool = False) -> str:
         return "question"
     if kind == "opportunity":
         return "suggestion"
+    # A report about who can reach the house is never housekeeping, whatever
+    # its severity: two `sec.*` checks file at `info`, and read that way
+    # they sat folded under Tidy-ups beside an unused helper.
+    if is_security(case):
+        return "problem"
     if situation(case) == "tidy" or case.get("severity") == "info":
         return "tidy"
     return "problem"
+
+
+# The producers whose rows are about safety or security: the deterministic
+# safety lane, the tripwire, and every `sec.*` check.
+SECURITY_SOURCES = frozenset({"safety", "security"})
+SECURITY_PREFIX = "check:sec."
+
+
+def is_security(case: dict) -> bool:
+    src = str(case.get("source") or "")
+    return src in SECURITY_SOURCES or src.startswith(SECURITY_PREFIX)
 
 
 # The groups Needs you is read in, top first. What is broken or at risk
@@ -593,8 +609,8 @@ def group(case: dict, urgent: bool = False) -> str:
 
 
 def feed_key(case: dict) -> tuple:
-    """The feed's sort key: group, then urgent, then a change after the
-    faults it ended, then severity worst first. `sorted` is stable, so
+    """The feed's sort key: group, then urgent, then safety and security,
+    then a change after the faults it ended, then severity worst first. `sorted` is stable, so
     cases equal on all four keep the order they were handed in (newest
     first, `cases._sort`)."""
     g = case.get("group") or group(case)
@@ -602,6 +618,7 @@ def feed_key(case: dict) -> tuple:
         "finding_status") == "fixed"
     return (GROUPS.index(g) if g in GROUPS else len(GROUPS),
             0 if case.get("urgent") else 1,
+            0 if is_security(case) else 1,
             1 if is_change else 0,
             SEVERITY_RANK.get(case.get("severity") or "warning", 2))
 
@@ -695,5 +712,5 @@ def request_answers(row: dict) -> list[dict]:
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
            "MAX_MORE", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
-           "SITUATIONS", "answers", "chip", "feed_key", "group", "more",
+           "SITUATIONS", "answers", "chip", "is_security", "feed_key", "group", "more",
            "plan_is_legacy", "plan_refused", "request_answers", "situation"]

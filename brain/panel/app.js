@@ -5924,6 +5924,23 @@ const todayState = {
   briefOpen: false,
 };
 
+// A phone's row of answers is one row: on a problem it was the primary,
+// Check again, Dismiss, Snooze, Ignore and the ⋯, which wrapped to two at
+// 390px and made one urgent card the only thing on screen. Below this width
+// the two secondary presses ride behind the card's ⋯ instead — the primary,
+// Snooze and Ignore (the way to say no) stay on its face. The routes and
+// wire ids do not move; only where the press sits does.
+const ROW_NARROW = window.matchMedia ? window.matchMedia("(max-width: 640px)") : null;
+const FOLDED_VERBS = new Set(["recheck", "dismiss"]);
+function foldsSecondary() {
+  return !!(ROW_NARROW && ROW_NARROW.matches);
+}
+if (ROW_NARROW && ROW_NARROW.addEventListener) {
+  ROW_NARROW.addEventListener("change", () => {
+    if (typeof currentView !== "undefined" && currentView === "findings") renderFindings();
+  });
+}
+
 // How many cards fit before "Show N more": one on a phone, three on a
 // desktop — the design doc's numbers, so the first screen is decisions and
 // not a scroll.
@@ -6209,7 +6226,10 @@ function makeCase(row) {
       actions.appendChild(phaseLine("Applying — this can take a few minutes"));
     }
   }
+  const folded = foldsSecondary()
+    ? answers.filter((a) => FOLDED_VERBS.has(a.verb)) : [];
   answers.forEach((answer) => {
+    if (folded.includes(answer)) return;
     if (gap && answer.verb === "answer") {
       card.appendChild(gapAnswerBox(row.id, answer.route, {
         hint: answer.ask, placeholder: answer.placeholder, done: answer.done }, btns));
@@ -6225,7 +6245,7 @@ function makeCase(row) {
         ? askThenRun(row, answer, btns)
         : runAnswer(row, answer, btns));
   });
-  const menu = caseOverflow(row, btns);
+  const menu = caseOverflow(row, btns, folded);
   if (menu) { btns.push(menu); actions.appendChild(menu); }
   card.appendChild(actions);
   return card;
@@ -6385,8 +6405,10 @@ function reportMenuItem(title, text) {
 
 // The ⋯: at most three of Ask, Check again, Done, Fix, Run — the server's
 // `more`, as words with no glyph in front of them.
-function caseOverflow(row, btns) {
-  const items = (row.more || []).map((item) => [
+function caseOverflow(row, btns, folded = []) {
+  // What a narrow row folded comes first, so Check again and Dismiss are
+  // the ⋯'s first two on a phone; the cap of three still holds.
+  const items = folded.concat(row.more || []).map((item) => [
     "", item.label, item.hint || "", () => runCaseOverflow(row, item, btns),
   ]);
   // A change brAIn made with service calls can have them put back, one
@@ -6547,11 +6569,15 @@ function makeLooseFinding(f) {
     press("Add to To Do", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
       "Added to To Do", btns));
   }
+  const secondary = [];
   if (String(f.source || "").startsWith("check:")) {
-    press("Check again", false, (ev) => recheckFinding(f, btns, ev.currentTarget));
+    secondary.push(["Check again", "Look again: the check runs for this row now.",
+      (ev) => recheckFinding(f, btns, ev && ev.currentTarget)]);
   }
-  press("Dismiss", false, () => looseAction(`api/finding/${f.ts}`, null,
-    "Dismissed", btns, "DELETE"));
+  secondary.push(["Dismiss", "Take the card away. It comes back only if it is seen again.",
+    () => looseAction(`api/finding/${f.ts}`, null, "Dismissed", btns, "DELETE")]);
+  const fold = foldsSecondary();
+  if (!fold) secondary.forEach(([label, , fn]) => press(label, false, fn));
   press("Snooze", false, () => looseAction(`api/finding/${f.ts}/snooze`,
     { for: "week" }, "Snoozed", btns));
   press("Ignore", false, () => openNoteForm(card, actions, (note, formBtns) =>
@@ -6561,6 +6587,11 @@ function makeLooseFinding(f) {
     placeholder: "That sensor always reads on — it's not stuck.",
     send: "Ignore",
   }));
+  if (fold) {
+    const menu = cardMenuButton(secondary.map(([label, hint, fn]) => ["", label, hint, fn]));
+    btns.push(menu);
+    actions.appendChild(menu);
+  }
   card.appendChild(actions);
   return card;
 }
@@ -7012,13 +7043,21 @@ function caseGroup(c) {
   if (chip === "urgent") return "problems";
   if (chip === "question" || c.kind === "question") return "questions";
   if (chip === "suggestion" || c.kind === "opportunity") return "chores";
-  if (chip === "tidy") return "tidy";
+  if (chip === "tidy" && !isSecuritySource(c.source)) return "tidy";
   return "problems";
 }
 
 function todayRank(c) {
-  return [c.urgent ? 0 : 1, c.change ? 1 : 0,
+  return [c.urgent ? 0 : 1, c.security ? 0 : 1, c.change ? 1 : 0,
     SEVERITY_RANK[c.severity] ?? 2];
+}
+
+// Safety and security first after the urgent ones (`answers.is_security`):
+// a report about who can reach the house is read above a fault that is
+// only the house's, whatever its severity.
+function isSecuritySource(src) {
+  const s = String(src || "");
+  return s === "safety" || s === "security" || s.startsWith("check:sec.");
 }
 
 // Every card Today draws, as {id, group, make, unchecked, …}. `unchecked`
@@ -7039,14 +7078,17 @@ function todayCards() {
   const extras = todayState.extras || {};
   const out = [];
   feed.forEach((c) => out.push({ id: c.id, group: caseGroup(c), urgent: !!c.urgent,
+    security: isSecuritySource(c.source),
     change: c.kind === "change" || c.finding_status === "fixed", severity: c.severity,
     unchecked: !!(c.unchecked || c.waiting_look), make: () => makeCase(c) }));
   looseClaims.forEach((h) => out.push({ id: `h:${h.ts}`, group: "questions",
     make: () => makeLooseQuestion(h) }));
   loose.forEach((f) => {
     const t = f.triage || {};
-    out.push({ id: `f:${f.ts}`, group: f.severity === "info" ? "tidy" : "problems",
-      urgent: f.severity === "critical", severity: f.severity,
+    const security = isSecuritySource(f.source);
+    out.push({ id: `f:${f.ts}`,
+      group: f.severity === "info" && !security ? "tidy" : "problems",
+      urgent: f.severity === "critical", severity: f.severity, security,
       unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),
       make: () => makeLooseFinding(f) });
   });
@@ -8204,16 +8246,25 @@ function paintFacts() {
   paintFactActive();
   const more = $("#kKnownMore");
   if (factsView.error) {
+    const pane = host.closest(".kknow");
+    if (pane) pane.classList.remove("kbare");
     host.appendChild(el("div", "kempty", factsView.error));
     if (more) more.classList.add("hidden");
     return;
   }
   const rows = factsView.rows;
   const filtered = factsView.q || factsView.kind || factsView.source || factsView.subject;
+  // Nothing filed at all: no search, filters or Clean up over an empty
+  // list — the teach box and one sentence are the pane.
+  const bare = !rows.length && !filtered && !factsView.all;
+  const pane = host.closest(".kknow");
+  if (pane) pane.classList.toggle("kbare", bare);
   if (!rows.length) {
     host.appendChild(el("div", "kempty", filtered
       ? "No facts match."
-      : "Nothing yet. Tell brAIn something above."));
+      : "Tell brAIn something above — a habit, why a device is set up the "
+        + "way it is, who uses which room. It remembers that, and what it "
+        + "learns watching the house."));
     if (more) more.classList.add("hidden");
     return;
   }
@@ -9130,8 +9181,13 @@ function paintBaselineChart(chart) {
 // intuition for. τ is the time constant — how long the room takes to give up
 // most of its heat — and it is the reciprocal of the loss rate.
 function drillThermal(box, payload) {
-  const rooms = houseRows(payload, ["rooms", "entities", "rows"]);
-  if (!rooms.length) return false;
+  const all = houseRows(payload, ["rooms", "entities", "rows"]);
+  if (!all.length) return false;
+  // A room the nightly pass could not measure carries its reason
+  // (`measured: false`, `why_not_measured`) and is said in words under the
+  // table — a row of dashes says nothing anybody can act on.
+  const rooms = all.filter((r) => r.measured !== false);
+  const left = all.filter((r) => r.measured === false);
   const sorted = rooms.slice().sort((a, b) =>
     (Number(a.tau_h) || 1e9) - (Number(b.tau_h) || 1e9));
   const rows = sorted.map((r) => [
@@ -9143,8 +9199,20 @@ function drillThermal(box, payload) {
   ]);
   const ok = drillTable(box,
     ["Room", "Loss k /h", "τ hours", "Gain", "To warm"], rows);
+  if (left.length) {
+    const sec = el("div", "kunmeasured");
+    sec.appendChild(el("div", "ksubhead", "Not measured"));
+    const list = el("ul", "kunmeasuredlist");
+    left.forEach((r) => {
+      const why = String(r.why_not_measured || "").trim();
+      list.appendChild(el("li", null, `${r.name || r.entity_id || r.id || ""}: `
+        + (why ? why.replace(/\.$/, "") : "no reason recorded")));
+    });
+    sec.appendChild(list);
+    box.appendChild(sec);
+  }
   thermalReference(box, payload);
-  return ok;
+  return ok || left.length > 0;
 }
 
 // Every room above is measured against ONE outdoor thermometer, so which
@@ -15999,8 +16067,14 @@ function renderDeepReview() {
   box.appendChild(run);
 
   if (!d.authenticated) {
-    box.appendChild(el("p", "kbrieftext off",
-      "Connect your Claude account first — ⚙ › Account."));
+    // A press to where the sign-in is, not a path to go and find it.
+    const line = el("p", "kbrieftext off kreviewsignin");
+    line.appendChild(el("span", null, "Connect your Claude account first."));
+    const go = el("button", "btn small", "Sign in");
+    go.type = "button";
+    go.addEventListener("click", () => openSettingsAt("setsecAccount"));
+    line.appendChild(go);
+    box.appendChild(line);
   }
   if (d.last_error) {
     box.appendChild(el("p", "kbrieftext off",

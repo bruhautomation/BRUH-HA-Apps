@@ -5706,6 +5706,10 @@ body.term-classic #termMode .ico-out { display: block; }
 .kreview { max-width: 68ch; }
 .kreviewrun { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .kreviewrun .btn { min-height: 44px; }
+.kreviewsignin { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.kreviewsignin .btn { min-height: 44px; }
+.reportrowhint { margin: var(--sp-1) 0 0; font-size: var(--fs-meta); line-height: var(--lh-meta);
+  color: var(--ink-3); }
 .kreviewcost { margin: 0; color: var(--ink-2); font-size: var(--fs-body); line-height: 1.5; flex: 1 1 220px; }
 .kreviewone { margin-top: 12px; }
 .kreviewlabel {
@@ -6056,6 +6060,14 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   margin: 0; font-size: var(--fs-meta); line-height: var(--lh-meta); color: var(--ink-3);
 }
 
+/* An Urgent card is set apart from the ordinary problems by a band down its
+   leading edge in the urgent colour — beside the word "Urgent" on its chip,
+   never instead of it. */
+.qcard[data-chip="urgent"] {
+  border-left: 4px solid var(--status-urgent);
+  background: color-mix(in srgb, var(--status-urgent) 5%, var(--card-bg));
+}
+
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
 .qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
@@ -6090,6 +6102,14 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qtidyedit input, .qtidyedit select { width: 100%; max-width: 360px; }
 .qtidyerr { margin: 0; font-size: var(--fs-meta); color: var(--serious-ink); }
 .qcard .card-actions .btn.icon { min-width: var(--btn-h); min-height: var(--btn-h); }
+/* On a phone the row is the primary, Snooze, Ignore and the ⋯ (the rest
+   folded behind it, `foldsSecondary`), and it has to be one row at 390px:
+   at the desktop's 16px inset "Add to To Do · Snooze · Ignore · ⋯" came to
+   350px on a 329px card. The height and the 44px touch floor stay. */
+@media (max-width: 640px) {
+  .qcard > .card-actions { gap: 6px; }
+  .qcard > .card-actions > button:not(.icon) { padding-left: 10px; padding-right: 10px; }
+}
 .qcard .findnote { margin-top: 0; }
 
 /* To Do: rows to tick, not cards to weigh. */
@@ -6279,6 +6299,8 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--critical) 25%, transparent); }
 .insighthead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3);
   margin: 0 0 var(--sp-4); }
+/* No reports yet: the grid takes no row of its own. */
+#grid:empty { display: none; }
 .insighthead .panetitle { flex: 1 1 auto; }
 .insighthead .reportsearch { flex: 0 1 320px; width: auto; margin: 0; }
 
@@ -6437,6 +6459,10 @@ button.kfactsubj:hover { color: var(--accent-2);
 @media (max-width: 640px) {
   .seg-view .panehead .panetitle, .seg-view .insighthead .panetitle { display: none; }
   .insighthead { margin-bottom: var(--sp-3); }
+  /* With the title on the section picker and the search not shown, the
+     heading row holds nothing, and its margin stacked under the "N things
+     need you" strip into a band of nothing above the first report. */
+  .seg-view .insighthead:not(:has(> .reportsearch:not([hidden]))) { display: none; }
   .insighthead .reportsearch { flex: 1 1 100%; }
 }
 
@@ -6667,3 +6693,18 @@ button.kfactsubj:hover { color: var(--accent-2);
     padding: 0 var(--sp-3); }
   input[type="range"] { height: 44px; }
 }
+
+/* Knowledge with nothing filed yet: the teach box and one sentence. The
+   search, the filters, the subject rail and Clean up have nothing to act
+   on, and drawn over an empty list they were five presses that do nothing. */
+.kknow.kbare .kfbar, .kknow.kbare .ksubjects, .kknow.kbare #kCleanup,
+.kknow.kbare .panesub, .kknow.kbare .kfmore { display: none; }
+.kknow.kbare .kbrowse { grid-template-columns: minmax(0, 1fr); }
+/* On a phone the title is the section picker's, so the empty header row
+   would only be a band of nothing above the teach box. */
+@media (max-width: 640px) { .seg-view .kknow.kbare .panehead { display: none; } }
+
+/* The heat model's rooms that could not be measured, each with its reason. */
+.kunmeasured { margin-top: var(--sp-3); }
+.kunmeasuredlist { margin: var(--sp-1) 0 0; padding-left: var(--sp-5);
+  font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }

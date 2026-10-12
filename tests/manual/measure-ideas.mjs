@@ -233,6 +233,34 @@ for (const { width, touch } of CASES) {
     if (cut.test(view.row)) note(`${width}px`, `cut prose is back: ${cut}`);
   }
   if (view.button !== 'Run') note(`${width}px`, `the row's button reads "${view.button}"`);
+  // What Run does, in one muted line under the row's name: "Suggested ·
+  // Run" alone said neither what would be suggested nor that it costs a run.
+  const hint = await page.evaluate(() =>
+    document.querySelector('#ideasRow .reportrowhint')?.textContent.trim() || '');
+  if (!/suggests reports this house doesn.t have/i.test(hint)) {
+    note(`${width}px`, `the Suggested row says nothing about Run ("${hint}")`);
+  }
+  // Signed out, Deep review's line is a press that opens Settings ›
+  // Account, not a path to go and find.
+  await page.waitForSelector('#kReview .kreviewrun', { timeout: 5000 }).catch(() => {});
+  const signin = page.locator('#kReview button', { hasText: /sign in/i });
+  if (!(await signin.count())) {
+    note(`${width}px`, `Deep review's signed-out line is not a press: "${
+      await page.evaluate(() => document.getElementById('kReview')?.textContent || '')}"`);
+  } else {
+    if (touch) {
+      const h = await signin.first().evaluate((b) => b.getBoundingClientRect().height);
+      if (h < 44) note(`${width}px`, `Deep review's sign-in press is ${h}px`);
+    }
+    await signin.first().click();
+    await page.waitForTimeout(400);
+    const at = await page.evaluate(() => ({
+      view: currentView,
+      account: !document.getElementById('setsecAccount').hidden }));
+    if (at.view !== 'settings' || !at.account) {
+      note(`${width}px`, `the sign-in press landed on ${JSON.stringify(at)}`);
+    }
+  }
   if (view.docWidth > view.viewport + 1) {
     note(`${width}px`, `page scrolls sideways (${view.docWidth} > ${view.viewport})`);
   }

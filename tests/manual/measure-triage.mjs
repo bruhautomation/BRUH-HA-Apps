@@ -73,7 +73,12 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     if (!/waiting for brAIn's first look/.test(waiting)) {
       note(where, `the queue does not count what no look has judged: "${waiting}"`);
     }
-    if (loose.presses.join('|') !== 'Add to To Do|Check again|Dismiss|Snooze|Ignore') {
+    // On a phone (≤640px) Check again and Dismiss ride behind the ⋯ so the
+    // row is one row; on a desktop they are on its face.
+    const narrow = width <= 640;
+    const wantRow = narrow ? 'Add to To Do|Snooze|Ignore'
+      : 'Add to To Do|Check again|Dismiss|Snooze|Ignore';
+    if (loose.presses.join('|') !== wantRow) {
       note(where, `the unchecked card offers ${loose.presses.join(' · ')}`);
     }
     if (loose.cut.length) note(where, `the unchecked card carries ${loose.cut.join(', ')}`);
@@ -93,7 +98,22 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
   }
 
   // The presses on the unchecked card, each to its own route.
-  await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Dismiss")').click();
+  if (width > 640) {
+    await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Dismiss")').click();
+  } else {
+    await page.locator('[data-case-id="f:2001"] .card-actions .btn.icon').first()
+      .evaluate((b) => b.click());
+    const items = await page.evaluate(() => [...document.querySelectorAll(
+      '#chipPop .cardmenuitem b')].map((b) => b.textContent));
+    if (items.join('|') !== 'Check again|Dismiss') {
+      note(where, `the unchecked card's ⋯ holds ${items.join(' · ')}`);
+    }
+    const i = items.indexOf('Dismiss');
+    if (i >= 0) {
+      await page.evaluate((n) => document.querySelector(
+        `#chipPop .cardmenuitem[data-i="${n}"]`).click(), i);
+    }
+  }
   await page.waitForTimeout(150);
   await page.locator('[data-case-id="f:2001"] .card-actions button:text-is("Snooze")').click();
   await page.waitForTimeout(150);

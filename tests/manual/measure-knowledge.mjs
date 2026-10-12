@@ -200,6 +200,12 @@ const DRILLS = {
       { id: 'sensor.hall_temp', name: 'Hall', area: 'Hall',
         k: 0.19, tau_h: 5.2, gain: 1.1, warmest: 19.9, coolest: 13.4,
         hours_to_warm: 2.8 },
+      // A room the nightly pass considered and could not measure: the
+      // payload carries it with its reason (`measured: false`).
+      { id: 'sensor.attic_temp', name: 'Attic', area: 'Attic',
+        k: null, tau_h: null, gain: null, warmest: null, coolest: null,
+        hours_to_warm: null, measured: false,
+        why_not_measured: 'only three nights of readings so far' },
     ],
   },
   // _closure_rows() — a bare list, and each bucket is the open FRACTION
@@ -637,6 +643,22 @@ for (const width of WIDTHS) {
   if (!/Bedroom/.test(thermalText) || !/12\.3/.test(thermalText)) {
     note(`${width}px`, 'the thermal drill-down does not list the rooms');
   }
+  // A room that could not be measured says why in words, under its own
+  // heading — never a table row of dashes.
+  const unmeasured = await page.evaluate(() => {
+    const d = document.querySelector('.kdrill[data-store="thermal"]');
+    return {
+      inTable: [...(d?.querySelectorAll('.ktable tr') || [])]
+        .some((tr) => /Attic/.test(tr.textContent)),
+      line: [...(d?.querySelectorAll('.kunmeasured li') || [])].map((li) => li.textContent).join(' | '),
+      head: d?.querySelector('.kunmeasured .ksubhead')?.textContent || '',
+    };
+  });
+  if (unmeasured.inTable) note(`${width}px`, 'an unmeasured room is a table row of dashes');
+  if (!/Not measured/.test(unmeasured.head)
+      || !/Attic.*only three nights of readings so far/.test(unmeasured.line)) {
+    note(`${width}px`, `an unmeasured room does not say why: ${JSON.stringify(unmeasured)}`);
+  }
   // Sorted by τ: the fastest-losing room is the one somebody is looking for.
   if (thermalText.indexOf('Hall') > thermalText.indexOf('Bedroom')) {
     note(`${width}px`, 'thermal rooms are not sorted by time constant');
@@ -1045,6 +1067,23 @@ for (const width of WIDTHS) {
   if (!/Tell brAIn/.test(empty)) {
     note(at, `the empty state does not say where facts come from: "${empty}"`);
   }
+  // With nothing to search, filter or clean up, none of the controls for
+  // it are drawn: a search box, three selects, an "All 0" pill row and
+  // Clean up over an empty list were five things to press that do
+  // nothing. The teach box and the sentence are the pane.
+  const bare = await page.evaluate(() => {
+    const shown = (n) => !!n && n.getClientRects().length > 0
+      && getComputedStyle(n).visibility !== 'hidden';
+    return {
+      extra: ['kKnownSearch', 'kSubjectSel', 'kKnownSource', 'kKnownSort', 'kKnownKinds',
+              'kCleanup', 'kSubjectFind'].filter((id) => shown(document.getElementById(id))),
+      teach: shown(document.getElementById('kAddForm')),
+      sentences: document.querySelectorAll('#kKnown .kempty').length,
+    };
+  });
+  if (bare.extra.length) note(at, `an empty store still shows ${bare.extra.join(', ')}`);
+  if (!bare.teach) note(at, 'an empty store hides the teach box');
+  if (bare.sentences !== 1) note(at, `an empty store says ${bare.sentences} sentences`);
 
   // Send teaches it: the sentence reaches the server as typed.
   await page.fill('#kAddInput', 'The garage fridge runs all night on purpose');
