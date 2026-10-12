@@ -663,6 +663,29 @@ def house_reason(reason) -> str:
     return " ".join(kept).strip()
 
 
+_REASON_ENTITY_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w.])")
+
+
+def _names_another_entity(reason, entry: dict) -> bool:
+    """Whether a look's reason names an entity id the row is not about —
+    neither its own entity nor one in its evidence. Such a reason was
+    written about some other row, so it says nothing about this one. Only
+    a token whose domain is one Home Assistant has counts: a file name or a
+    version number is not an entity."""
+    text = str(reason or "")
+    if "." not in text:
+        return False
+    from checks._util import _CORE_DOMAINS  # noqa: PLC0415 — leaf, lazy
+    own = {str(entry.get("entity_id") or "")}
+    for ev in entry.get("evidence") or []:
+        if isinstance(ev, dict):
+            own.add(str(ev.get("entity") or ""))
+    for m in _REASON_ENTITY_RE.finditer(text):
+        if m.group(1) in _CORE_DOMAINS and m.group(0) not in own:
+            return True
+    return False
+
+
 def shown_look(record: dict, entry: dict) -> dict:
     """``record`` (a cleaned triage block) as a surface a person reads
     shows it: an echo blanked (`without_echo`) and the reason cut to what
@@ -671,6 +694,19 @@ def shown_look(record: dict, entry: dict) -> dict:
     record = without_echo(record, entry)
     if not isinstance(record, dict) or not record.get("reason"):
         return record
+    entry = entry if isinstance(entry, dict) else {}
+    # A hold's reason argues the row should not be on the list. On a row
+    # that stays open (a late verdict about a row silence already showed —
+    # `late_verdict_welcome`) it is a sentence telling the reader the card
+    # in front of them should not be there, so it is not shown; the
+    # verdict stays on the record.
+    # A row a PERSON put back is the other case: the hold's reason is what
+    # they overruled, and saying it is the point.
+    if (record.get("verdict") == "held" and entry.get("status") != "held"
+            and not record.get("elevated_by_person")):
+        return {**record, "reason": ""}
+    if _names_another_entity(record["reason"], entry):
+        return {**record, "reason": ""}
     said = house_reason(record["reason"])
     if said == record["reason"]:
         return record
@@ -827,7 +863,7 @@ def _shape(entry: dict) -> dict:
         severity = "warning"
     out = {
         "ts": int(entry.get("ts") or 0),
-        "text": str(entry.get("text") or "")[:MAX_TEXT],
+        "text": textclip.clip(str(entry.get("text") or ""), MAX_TEXT),
         "detail": textclip.clip(str(entry.get("detail") or ""), MAX_DETAIL),
         "fix": textclip.clip(str(entry.get("fix") or ""), MAX_FIX),
         # Whose sentence `fix` is: "" for the rule's own, "triage" for the
@@ -1567,7 +1603,7 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
         ("claim", "detail", "fix")
         if str(row.get("source") or "") in SUBJECT_FOLD_EXCLUDED
         else ("claim", "detail", "fix", "text")))
-    claim = str(row.get("claim") or "").strip()[:MAX_CLAIM]
+    claim = textclip.clip(str(row.get("claim") or "").strip(), MAX_CLAIM)
     if not claim:
         return None
     stamp = int(when if when is not None else time.time())
@@ -2410,7 +2446,7 @@ def merge_settled(entries: list[dict]) -> int:
         kind = entry.get("kind")
         ledger.append({
             "key": key,
-            "text": str(entry.get("text") or "")[:MAX_TEXT],
+            "text": textclip.clip(str(entry.get("text") or ""), MAX_TEXT),
             "kind": kind if kind in ("fixed", "ignored") else "ignored",
             "ts": int(entry.get("ts") or 0) or int(time.time()),
             "note": str(entry.get("note") or "").strip()[:MAX_NOTE],

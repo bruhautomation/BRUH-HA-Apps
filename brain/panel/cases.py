@@ -614,6 +614,9 @@ def _from_hypothesis(row: dict, snoozes: dict[str, int]) -> dict:
                                 int(snoozes.get(case["id"], 0)))
     case["severity"] = "info"
     case["stakes"] = "low"
+    # When the guess was made: its words are about that day, so the card
+    # says how long ago it was asked (`caseMeta` in app.js).
+    case["asked_at"] = int(row.get("ts") or 0)
     return case
 
 

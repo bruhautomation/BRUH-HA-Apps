@@ -63,6 +63,7 @@ from pathlib import Path
 
 import atomic_write
 import facts_store
+import textclip
 
 log = logging.getLogger("brain.corrections")
 
@@ -486,7 +487,7 @@ def offer_row(the_plan: dict, note: str, *, entity_name: str = "",
     claim = (f"You said {entity_name or 'one of these'} is not a problem; "
              f"should the same go for {what.split(' for ', 1)[-1]}"
              + (f" {until}" if until else "") + "?")
-    detail = (f"Your words: “{note.strip()[:MAX_REASON]}”. "
+    detail = (f"Your words: “{textclip.clip(note.strip(), MAX_REASON)}”. "
               "brAIn only stood the rule down for the one device you were "
               "looking at; Yes widens it, No leaves it there.")
     hint = (the_plan.get("reason") or
@@ -507,7 +508,7 @@ def offer_row(the_plan: dict, note: str, *, entity_name: str = "",
     _save_offer(offer, now)
     return {
         "text": text,
-        "claim": claim[:240],
+        "claim": textclip.clip(claim, 240),
         "detail": detail,
         "kind": "question",
         "severity": "info",
