@@ -315,6 +315,8 @@ _NO_TITLE = ("", "Custom")
 def _titled(source: str, title: str) -> str:
     """The title a reader shows for `source`, never the bare "Custom"."""
     title = str(title or "")
+    if title.strip() in _OLD_RESIDENT_TITLES and str(source) == RESIDENT_SOURCE:
+        return RESIDENT_TITLE
     if title.strip() not in _NO_TITLE or not str(source).startswith("custom-"):
         return title
     resolver = SOURCE_TITLE
@@ -653,7 +655,8 @@ def house_reason(reason) -> str:
     said = str(reason or "").strip()
     if not said:
         return ""
-    if said in (triage.UNJUDGED, triage.RUN_FAILED, triage.WAITING):
+    if said in (triage.UNJUDGED, triage.RUN_FAILED, triage.WAITING,
+                *triage.LEGACY_STOCK):
         return ""
     kept = [s for s in _SENTENCE_SPLIT_RE.split(said)
             if s.strip() and not _ROUTING_RE.search(s)]
@@ -1550,7 +1553,11 @@ def add(text: str, **fields) -> tuple[dict | None, bool]:
 # number the design page always wanted is the Resident's own precision.
 # The title is what the tab and the scorecard show instead of the id.
 RESIDENT_SOURCE = "resident"
-RESIDENT_TITLE = "The Resident"
+RESIDENT_TITLE = "brAIn, watching the house"
+# What a Resident row was titled before the title stopped naming an internal
+# part. Stored rows and ledger entries still carry it, and `_titled` reads
+# them as the new one, so a scorecard row does not split in two.
+_OLD_RESIDENT_TITLES = frozenset({"The Resident"})
 
 
 @_mutates
@@ -1685,7 +1692,8 @@ def refine(ts: int, case: dict, run_id: str = "",
         prior = str((entry.get("triage") or {}).get("reason") or "")
         if echoes(prior, entry.get("text"), entry.get("claim"),
                   case.get("claim")) or prior in (
-                      triage.UNJUDGED, triage.RUN_FAILED):
+                      triage.UNJUDGED, triage.RUN_FAILED,
+                      *triage.LEGACY_STOCK):
             prior = ""
         entry["triage"] = _clean_triage({
             "verdict": "elevated",

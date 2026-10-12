@@ -427,16 +427,16 @@ def _why_looks_waited(runs, resident) -> str:
         if isinstance(resident, dict) else ""
     parts = []
     if limited:
-        parts.append(f"The account's usage limit refused {limited} of the "
-                     "Resident's runs in the last day; the rows are judged "
-                     "by the first look after it lifts.")
+        parts.append(f"The account's usage limit refused {limited} of "
+                     "brAIn's checks in the last day; the rows are checked "
+                     "once it lifts.")
     if failed:
         parts.append(f"{failed} of its runs failed.")
     if said:
-        parts.append(f"The Resident last said: {said[:140]}.")
+        parts.append(f"brAIn's checks last said: {said[:140]}.")
     if not parts:
-        parts.append("Each failed look puts its rows back for the next one, "
-                     "so this is looks failing or paused, not a row lost.")
+        parts.append("Each check that fails puts its rows back for the next "
+                     "one, so this is checks failing or paused, not a row lost.")
     return " ".join(parts)
 
 

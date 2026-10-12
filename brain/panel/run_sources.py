@@ -90,7 +90,7 @@ SOURCES: dict[str, dict[str, str]] = {
     # purpose, because a case on the Home feed links straight to the run
     # that made the claim, and "I can read what it looked at" is what makes
     # a claim arguable rather than an assertion.
-    "resident": {"label": "Resident",
+    "resident": {"label": "Watching",
                  "blurb": "watching the house, and looking into what it saw",
                  "store": "engine"},
     # The action gate's model question (`gate.py`): a probe, never a

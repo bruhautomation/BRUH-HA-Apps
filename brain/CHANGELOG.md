@@ -2,12 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 2.18.23
+## 2.18.24
 
 ### Added
 
 - brAIn knows about Morph, the new dashboard add-on it designs. When Morph is installed, the terminal's and the chat's context say where it lives and that its own instructions (`/config/morph/AGENTS.md`) come first, so "change the dashboard" means Morph's.
 - The development loop has a **Morph** stream: problems the Morph dashboard found in its own code (a card that failed to draw, sections that overlapped, a request it could not carry out) are filed in your private reports repository labelled `devloop:morph`, and the cloud routine fixes them in Morph's code. On by default once the loop is on, free, and only while Morph is installed with its *Report Morph's own problems* switch on.
+
+## 2.18.23
+
+### Changed
+
+- brAIn speaks with one voice: insight cards and brAIn's own investigations write about brAIn as "brAIn", never "I", and nothing a person reads names brAIn's internal parts. "The Resident" is now "brAIn, watching the house", and the sentences that said what "the look" did now say what brAIn's check did. (reports #202)
+- Each insight card makes sense on its own: it no longer refers to an earlier card or to a "mystery" it does not explain, and never opens with a bare one-word verdict. (reports #190)
+- An insight card that reports something that could have done harm (a door or freezer left open, a device dropping off, a leak) ends with what brAIn checked about the consequence or one clear thing to do. (reports #191)
 
 ## 2.18.22
 
