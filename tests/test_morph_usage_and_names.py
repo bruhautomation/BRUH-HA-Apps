@@ -15,8 +15,8 @@ import re
 import sys
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 from morph_env import MorphEnv
 
@@ -116,7 +116,7 @@ class TestAUseReachesTheDigest(unittest.TestCase):
 
     def send(self, usage_path, events):
         conn = _Connection()
-        with mock.patch.object(self.ws, "USAGE", usage_path):
+        with unittest.mock.patch.object(self.ws, "USAGE", usage_path):
             asyncio.run(self.ws.ws_usage(_Hass(), conn, {"id": 7, "type": "morph/usage",
                                                          "events": events}))
         return conn.results[-1][1]
