@@ -48,6 +48,7 @@ import time
 from pathlib import Path
 
 import run_sources
+import textclip
 
 # Where the CLI keeps its state. Same env var the add-on exports for every
 # other Claude path, with the CLI's own default behind it.
@@ -837,8 +838,9 @@ def _replay(entry: dict) -> list[dict]:
 
 
 def _clip(text: str) -> str:
-    text = str(text or "")
-    return text if len(text) <= MAX_TEXT else text[:MAX_TEXT] + "\n… (truncated)"
+    """A copy for the SCREEN, cut on a boundary and saying how much is
+    hidden (`textclip.shown`). The transcript on disk is whole."""
+    return textclip.shown(str(text or ""), MAX_TEXT)
 
 
 def _tool_summary(args: dict) -> str:

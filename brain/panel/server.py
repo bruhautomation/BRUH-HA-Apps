@@ -16939,6 +16939,12 @@ FINDING_VERBS = {
                 "noted": "Confirmed by the homeowner: {text}. They added: "
                          "{note}",
                 "source": "homeowner", "label": "accepted", "hint": True},
+    # "Doesn't apply" on a question: it does not fit this house. The card
+    # closes and NOTHING is recorded as an answer — no memory line (an empty
+    # `memory`), no capture label and no scorecard mark (no `label`), no rule
+    # (not `ignored`). The settled key under its own kind is what stops the
+    # same question being filed again.
+    "not_applicable": {"kind": "not_applicable", "memory": ""},
     # Not an ending: puts a legacy row (dismissed before the ledger existed,
     # and still on disk) back on the list.
     "reopen": {"status": "open"},
@@ -21117,6 +21123,19 @@ async def _answer_hypothesis(ts: int, verb: str,
         payload["undo"] = undo_store.record("hypothesis", ts=ts,
                                             fact=fact,
                                             fact_source="confirmed")
+        return payload
+
+    if verb == "not_applicable":
+        # "Doesn't apply": closed with no answer. No memory line, no dead
+        # end (it corrects nothing) and no ask-history entry; the queue
+        # keeps the guess under its own status so neither it nor another
+        # guess about its subject is proposed again (`hypotheses.propose`).
+        settled = await asyncio.to_thread(hypotheses.not_applicable, ts)
+        if not settled:
+            return None
+        payload = await asyncio.to_thread(_findings_payload)
+        payload["undo"] = undo_store.record("hypothesis", ts=ts, fact="",
+                                            fact_source="")
         return payload
 
     def settle() -> dict | None:

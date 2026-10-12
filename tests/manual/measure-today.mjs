@@ -291,6 +291,11 @@ for (const { width, touch, top, fits } of CASES) {
     if (!isQuestion && card.chipWord === 'Question') {
       note(where, `${id} wears "Question" and offers no Yes / No`);
     }
+    // "Sometimes the question it asks is irrelevant": every question card
+    // offers Doesn't apply on its face, beside Yes and No.
+    if (isQuestion && !card.buttons.some((b) => b.label === "Doesn't apply")) {
+      note(where, `${id} is a question with no "Doesn't apply" on its face`);
+    }
     const presses = card.buttons.filter((b) => !b.icon);
     if (presses.filter((b) => b.primary).length > 1) note(where, `${id} has two primaries`);
     for (const b of presses) {
@@ -660,7 +665,7 @@ const GAP = kase({
       ask: 'Your answer goes into memory exactly as you write it.',
       placeholder: 'Behind the boiler, the red lever.' }),
     A('not_now', 'Snooze', '/api/case/f:1300/not_now'),
-    A('wrong', 'Ignore', '/api/case/f:1300/wrong', { note: true })],
+    A('not_applicable', "Doesn't apply", '/api/case/f:1300/not_applicable')],
 });
 const CANT = kase({
   id: 'f:1301', situation: 'hands', origin: { store: 'findings', key: 1301 },

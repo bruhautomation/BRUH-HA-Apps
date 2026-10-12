@@ -185,7 +185,12 @@ MAX_MEMORY_HINT = 300
 # to do something is agreeing it is real), and completing the chore later
 # re-settles the same key as `fixed`, which is an upgrade a shared word
 # could not express.
-SETTLE_KINDS = ("fixed", "ignored", "accepted")
+# `not_applicable` is the fourth and it is no claim at all: a question
+# somebody said does not fit this house ("Doesn't apply"). It suppresses the
+# same text for good (`_suppresses` reads any word it does not recognise as
+# permanent) and labels nothing — the scorecard, the outcome join and History
+# all pass over it, because an irrelevant question is neither right nor wrong.
+SETTLE_KINDS = ("fixed", "ignored", "accepted", "not_applicable")
 
 SEVERITIES = ("info", "warning", "serious", "critical")
 # `triaging` and `held` are `triage.py`'s two words and they bracket
@@ -2318,7 +2323,9 @@ def scorecard() -> list[dict]:
     by: dict[str, dict] = {}
     for e in _load_settled():
         src = str(e.get("source") or "")
-        if not src:
+        if not src or e.get("kind") == "not_applicable":
+            # "Doesn't apply" is no label: a question that did not fit the
+            # house says nothing about whether its producer is right.
             continue
         row = by.setdefault(src, {
             "source": src,

@@ -220,6 +220,10 @@ Ignore
  | Never raise this again
  | Every card
  | 
+Doesn't apply
+ | Question irrelevant; record nothing
+ | Question cards
+ | 
 Done
  | It's handled; close it
  | Cards and list items

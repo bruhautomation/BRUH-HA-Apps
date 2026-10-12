@@ -96,6 +96,7 @@ export const FEED = [
       A('yes', 'Yes', '/api/case/h:1103/do', { primary: true }),
       A('no', 'No', '/api/case/h:1103/wrong', { note: true }),
       A('not_now', 'Snooze', '/api/case/h:1103/not_now', { request: 'snooze' }),
+      A('not_applicable', "Doesn't apply", '/api/case/h:1103/not_applicable'),
     ],
   }),
   kase({
@@ -152,7 +153,11 @@ export const FEED = [
     origin: { store: 'findings', key: 1108 },
     answers: [A('confirm', 'Yes', '/api/finding/1108/confirm', { primary: true }),
               A('wrong', 'No', '/api/finding/1108/wrong', { note: true }),
-              A('not_now', 'Snooze', '/api/case/f:1108/not_now', { request: 'snooze' })],
+              A('not_now', 'Snooze', '/api/case/f:1108/not_now', { request: 'snooze' }),
+              A('not_applicable', "Doesn't apply", '/api/case/f:1108/not_applicable')],
+    // A findings-store question carries Ask behind its ⋯, as the server's
+    // `more` does — so the phone row is Yes · No · Snooze · Doesn't apply · ⋯.
+    more: [ask(1108)],
   }),
   // A serious fault nothing has looked at yet: the stale sweep put it on
   // the list. The server sends no sentence for it (`house_reason`) and says
@@ -377,11 +382,12 @@ window.fetch = async (url, opts) => {
 }
 
 // Every label a button on Today may carry: the design doc's vocabulary,
-// plus Yes and No — the answer to a question rather than a verb.
+// plus Yes and No — the answer to a question rather than a verb — and
+// "Doesn't apply", a question's way of saying it was irrelevant.
 export const VOCAB = new Set(['Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
-  'Delete', 'Yes', 'No', 'Cancel', 'Change']);
+  'Delete', 'Yes', 'No', 'Cancel', 'Change', "Doesn't apply"]);
 
 // What the redesign cut from the face of a card, and must stay cut. Allowed
 // inside Details, nowhere else on Today.

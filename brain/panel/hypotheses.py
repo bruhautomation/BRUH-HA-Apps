@@ -174,7 +174,15 @@ def _locked():
     return atomic_write.locked(HYPOTHESES_FILE)
 
 
-STATUSES = ("open", "confirmed", "rejected", "expired")
+# `not_applicable` is "Doesn't apply": somebody said the question does not
+# fit this house. It is no answer — not a fact, not a dead end — and what it
+# keeps is that the guess is not floated again, nor another one about the
+# same subject for `NOT_APPLICABLE_SUBJECT_DAYS` (`propose`).
+STATUSES = ("open", "confirmed", "rejected", "expired", "not_applicable")
+# How long a subject somebody waved a question away about is left alone.
+# A guess about the same thing a month on is asked over a month more of the
+# house, which is the "something new" that earns asking again.
+NOT_APPLICABLE_SUBJECT_DAYS = 30
 
 
 def _status_of(entry: dict) -> str:
@@ -331,6 +339,8 @@ def propose(text: str, topic: str = "", *, subject: str = "",
         _expire(entries)
         if any(normalize(e.get("text") or "") == key for e in entries):
             return None     # proposed before, in any status — never re-floated
+        if subject and _subject_waved_away(entries, str(subject), time.time()):
+            return None     # "Doesn't apply" about this subject, recently
         now = time.time()
         if sum(1 for e in entries if _status_of(e) == "open"
                and not asleep(e, now)) >= MAX_OPEN:
@@ -345,6 +355,18 @@ def propose(text: str, topic: str = "", *, subject: str = "",
         entries.append(entry)
         _write(entries)
     return entry
+
+
+def _subject_waved_away(entries: list[dict], subject: str, now: float) -> bool:
+    """Whether a question about ``subject`` was closed as "Doesn't apply"
+    within `NOT_APPLICABLE_SUBJECT_DAYS`."""
+    cutoff = now - NOT_APPLICABLE_SUBJECT_DAYS * 86400
+    for e in entries:
+        if (e.get("status") == "not_applicable"
+                and str(e.get("subject") or "") == subject
+                and _num(e.get("settled_at")) >= cutoff):
+            return True
+    return False
 
 
 def find_open(text: str) -> dict | None:
@@ -417,6 +439,16 @@ def reject(ts: int, note: str = "") -> dict | None:
     return _settle(ts, "rejected", note=note)
 
 
+def not_applicable(ts: int) -> dict | None:
+    """Close a guess somebody said does not apply, recording no answer.
+
+    Not a confirmation and not a rejection: nothing goes into memory and
+    nothing into `dead_ends`, because "this question is irrelevant" says
+    nothing about whether the claim was right. The status is what keeps it
+    (and, for a while, its subject) from being proposed again."""
+    return _settle(ts, "not_applicable")
+
+
 def reopen(ts: int) -> dict | None:
     """Put a settled guess back in the queue — the undo half of an answer.
 
@@ -429,7 +461,7 @@ def reopen(ts: int) -> dict | None:
         entries = _read()
         for e in entries:
             if int(e.get("ts") or 0) == ts and e.get("status") in (
-                    "confirmed", "rejected"):
+                    "confirmed", "rejected", "not_applicable"):
                 e["status"] = "open"
                 e.pop("settled_at", None)
                 e.pop("note", None)
