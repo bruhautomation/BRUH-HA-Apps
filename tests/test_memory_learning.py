@@ -2520,3 +2520,63 @@ def test_repeats_collapse_but_corrections_and_forgets_always_reach_the_model(tmp
     assert '"source": "correction"' in facts
     assert "FORGET: The hall sensor" in facts
     assert "not json at all" in facts
+
+
+# ---------------------------------------------------------------------------
+# The daemon backs off after failed passes
+# ---------------------------------------------------------------------------
+
+def _drive_daemon(tmp_path, results, ticks):
+    """Run the consolidator's own `daemon_step` over a scripted series of
+    pass results, lifted by name from the real script.
+
+    `results` is the exit code each pass the daemon actually starts returns;
+    `ticks` the clock at each poll. Returns (clock, started) pairs.
+    """
+    src = CONSOLIDATOR.read_text()
+    funcs = []
+    for name in ("retry_wait", "daemon_step"):
+        match = re.search(rf"^{name}\(\) \{{\n.*?^\}}$", src, re.S | re.M)
+        assert match, f"brain-memory-consolidate.sh no longer defines {name}"
+        funcs.append(match.group(0))
+    tick_list = " ".join(str(t) for t in ticks)
+    harness = f'''
+CHECK_INTERVAL=300; RETRY_CEILING_S=7200; DAILY_INTERVAL=86400
+INBOX_TRIGGER_LINES=20; LOCK_BUSY_RC=75; MEMORY_EDITED_RC=76
+MARKER_FILE="{tmp_path}/marker"; PASS_FAILS=0; PASS_NEXT_TRY=0
+log() {{ :; }}
+count_pending_lines() {{ echo 50; }}
+touch "$MARKER_FILE"
+RESULTS=({" ".join(str(r) for r in results)}); N=0
+with_lock() {{ echo "start $NOW"; local r="${{RESULTS[$N]:-0}}"; N=$((N+1)); return "$r"; }}
+{funcs[0]}
+{funcs[1]}
+for NOW in {tick_list}; do daemon_step "$NOW"; done
+'''
+    out = subprocess.run(["bash", "-c", harness], capture_output=True,
+                         text=True, check=True).stdout
+    return [int(line.split()[1]) for line in out.splitlines()]
+
+
+def test_a_failing_pass_is_not_retried_every_five_minutes(tmp_path):
+    """A full document cost two whole-document runs every five minutes for
+    as long as the cap stayed where it was."""
+    ticks = [i * 300 for i in range(1, 25)]            # two hours of polls
+    started = _drive_daemon(tmp_path, [1] * 24, ticks)
+    # Waits of 5, 10, 20 and 40 minutes between attempts, not 24 attempts.
+    assert started == [300, 900, 2100, 4500]
+
+
+def test_the_wait_is_capped_and_a_success_ends_it(tmp_path):
+    ticks = [i * 300 for i in range(1, 80)]
+    started = _drive_daemon(tmp_path, [1, 1, 1, 0, 1], ticks)
+    gaps = [b - a for a, b in zip(started, started[1:])]
+    assert max(gaps) <= 7200
+    # After the success at the 4th attempt the next pass is not held back.
+    assert gaps[3] == 300
+
+
+def test_lock_contention_and_a_user_edit_do_not_count_as_failures(tmp_path):
+    ticks = [i * 300 for i in range(1, 7)]
+    started = _drive_daemon(tmp_path, [75, 76, 75, 76, 75, 76], ticks)
+    assert started == ticks

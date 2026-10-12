@@ -837,22 +837,62 @@ refresh_context() {
     done
 }
 
+# How long the daemon stays quiet after consecutive failed passes.
+#
+# A pass that fails leaves the inbox pending, so the "more than 20 pending"
+# trigger is still true five minutes later and the daemon asked the same
+# model the same question again — a document that would not fit its cap
+# cost TWO whole-document runs every five minutes (576 a day), a 480s
+# timeout burned a full run per attempt, and a signed-out account was
+# retried all night. A refusal that does not change the next attempt is a
+# loop, so the wait doubles with each consecutive failure up to a ceiling
+# and a success (or a pass that gave way to an edit) ends it. Lock
+# contention is not a failure and does not count.
+RETRY_CEILING_S="${BRAIN_MEMORY_RETRY_CEILING:-7200}"
+
+retry_wait() {
+    local fails="$1" wait="$CHECK_INTERVAL" i=0
+    while [ "$i" -lt "$fails" ] && [ "$wait" -lt "$RETRY_CEILING_S" ]; do
+        wait=$((wait * 2))
+        i=$((i + 1))
+    done
+    [ "$wait" -gt "$RETRY_CEILING_S" ] && wait="$RETRY_CEILING_S"
+    echo "$wait"
+}
+
+# One decision of the daemon: should a pass run now, and if so what came
+# of it. State lives in PASS_FAILS and PASS_NEXT_TRY so a test can drive it.
+PASS_FAILS=0
+PASS_NEXT_TRY=0
+
+daemon_step() {
+    local now="$1" pending last_run age rc=0 wait
+    [ "$now" -ge "$PASS_NEXT_TRY" ] || return 0
+    pending=$(count_pending_lines)
+    last_run=$(stat -c %Y "$MARKER_FILE" 2>/dev/null || echo 0)
+    age=$((now - last_run))
+    if [ "$pending" -gt "$INBOX_TRIGGER_LINES" ] || [ "$age" -ge "$DAILY_INTERVAL" ]; then
+        with_lock consolidate_once || rc=$?
+        case "$rc" in
+            0|"$LOCK_BUSY_RC"|"$MEMORY_EDITED_RC") PASS_FAILS=0; PASS_NEXT_TRY=0 ;;
+            *)
+                PASS_FAILS=$((PASS_FAILS + 1))
+                wait=$(retry_wait "$PASS_FAILS")
+                PASS_NEXT_TRY=$((now + wait))
+                log "pass failed ${PASS_FAILS} time(s) running — next attempt in ${wait}s"
+                ;;
+        esac
+    fi
+    return 0
+}
+
 daemon_loop() {
-    log "daemon started (check every ${CHECK_INTERVAL}s, daily consolidation, early at >${INBOX_TRIGGER_LINES} pending facts)"
+    log "daemon started (check every ${CHECK_INTERVAL}s, daily consolidation, early at >${INBOX_TRIGGER_LINES} pending facts, backing off after failures)"
     # Give startup (auth restore, tool install) time to settle.
     sleep 60
 
     while true; do
-        local pending last_run now age
-        pending=$(count_pending_lines)
-        now=$(date +%s)
-        last_run=$(stat -c %Y "$MARKER_FILE" 2>/dev/null || echo 0)
-        age=$((now - last_run))
-
-        if [ "$pending" -gt "$INBOX_TRIGGER_LINES" ] || [ "$age" -ge "$DAILY_INTERVAL" ]; then
-            with_lock consolidate_once || true
-        fi
-
+        daemon_step "$(date +%s)"
         sleep "$CHECK_INTERVAL"
     done
 }
