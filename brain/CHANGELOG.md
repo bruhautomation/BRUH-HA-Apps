@@ -9,6 +9,19 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - brAIn knows about Morph, the new dashboard add-on it designs. When Morph is installed, the terminal's and the chat's context say where it lives and that its own instructions (`/config/morph/AGENTS.md`) come first, so "change the dashboard" means Morph's.
 - The development loop has a **Morph** stream: problems the Morph dashboard found in its own code (a card that failed to draw, sections that overlapped, a request it could not carry out) are filed in your private reports repository labelled `devloop:morph`, and the cloud routine fixes them in Morph's code. On by default once the loop is on, free, and only while Morph is installed with its *Report Morph's own problems* switch on.
 
+## 2.18.24
+
+### Changed
+
+- Needs you on a phone: a card's answers fit one row. Check again and Dismiss move to the top of the card's ⋯ menu below 640px; the main answer, Snooze and Ignore stay on the card. An Urgent card has a coloured band down its edge as well as the word. (reports #205)
+- Insights on a phone no longer leaves a blank gap under the "things need you" strip; the Suggested row says what Run does; Deep review's sign-in line has a Sign in button that opens Settings › Account. (reports #206)
+- Memory › Knowledge with nothing learned yet shows only the teach box and one sentence about what brAIn remembers, not filters and Clean up over an empty list. (reports #207)
+- The heat model lists rooms it could not measure under "Not measured" with the reason, instead of rows of dashes.
+
+### Fixed
+
+- Security findings filed at the lowest severity were shown as tidy-ups and folded away with unused helpers; a security or safety finding is now always a Problem and sorts straight after urgent ones. (reports #201)
+
 ## 2.18.23
 
 ### Changed
