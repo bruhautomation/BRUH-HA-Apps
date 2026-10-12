@@ -49,7 +49,7 @@ const ROWS = {
   'f:1100': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
   'f:1101': { lead: 'Fix', never: ['Plan', 'Apply'] },
   'f:1102': { lead: 'Apply', never: ['Fix', 'Plan'] },
-  'h:1103': { lead: 'Yes', exact: ['Yes', 'No', 'Snooze'] },
+  'h:1103': { lead: 'Yes', exact: ['Yes', 'No', 'Snooze', "Doesn't apply"] },
   'f:1104': { lead: 'Done', exact: ['Done', 'Undo'] },
   'f:1105': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
   'f:1106': { lead: 'Fix', never: ['Plan', 'Apply'] },
@@ -167,6 +167,18 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       `#chipPop .cardmenuitem[data-i="${n}"]`).click(), i);
     return true;
   };
+  // Doesn't apply on a question posts the case's not_applicable, with no
+  // reason box: the question was irrelevant, and nothing is recorded.
+  for (const id of ['h:1103', 'f:1108']) {
+    const sel = `[data-case-id="${id}"] .card-actions button:text-is("Doesn't apply")`;
+    if (!await page.locator(sel).count()) { note(where, `${id} has no Doesn't apply`); continue; }
+    await page.locator(sel).click();
+    await page.waitForTimeout(150);
+    const sent = await posts(page);
+    if (!sent.some((p) => p.url.endsWith(`api/case/${id}/not_applicable`) && p.method === 'POST')) {
+      note(where, `${id}'s Doesn't apply sent ${JSON.stringify(sent.slice(-2))}`);
+    }
+  }
   await pressFolded('f:1100', 'Dismiss');
   await page.waitForTimeout(150);
   let gone = await posts(page);

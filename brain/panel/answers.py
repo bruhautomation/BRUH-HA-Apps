@@ -310,6 +310,24 @@ def _snooze(case_id: str, question: bool = False) -> dict:
         done="Snoozed")
 
 
+def _not_applicable(case_id: str) -> dict:
+    """**Doesn't apply**: the question is irrelevant, so the card closes
+    and nothing is recorded as an answer — no memory line, nothing on the
+    producer's scorecard — and the same question is not asked again.
+
+    Yes, No and Snooze are three answers to a question that makes sense;
+    this is the one for a question that does not ("sometimes the question
+    it asks is irrelevant"). Snooze is "later", this is "never mind". It
+    carries no `request`: Home Assistant's Repairs and a notification have
+    no such answer, so it is a press on the panel's card only."""
+    return _answer(
+        "not_applicable", "Doesn't apply",
+        "This question doesn't fit this house. The card closes, nothing is "
+        "recorded as an answer, and brAIn won't ask it again.",
+        route=f"/api/case/{case_id}/not_applicable",
+        done="Closed — brAIn won't ask that again")
+
+
 def _todo(case_id: str, primary: bool = False) -> dict:
     return _answer(
         "todo", "Add to To Do",
@@ -446,8 +464,11 @@ def answers(case: dict) -> list[dict]:
         answer["ask"] = ("Your answer goes into memory exactly as you write "
                          "it — never type a code or a password here.")
         answer["placeholder"] = "Behind the boiler, the red lever."
-        return [answer, _snooze(cid),
-                _wrong(cid, hint="This doesn't apply to this house.")]
+        # "Doesn't apply" rather than Ignore: Ignore is a Wrong, and a Wrong
+        # files "Not a problem in this home: House book: where is…" into
+        # memory and a mark against the house book on the scorecard, for a
+        # question that was simply irrelevant.
+        return [answer, _snooze(cid), _not_applicable(cid)]
 
     if sit == "tidy":
         return _problem_row(case, _answer(
@@ -473,6 +494,9 @@ def answers(case: dict) -> list[dict]:
                     request="wrong", note=True, done="Noted"),
             _snooze(cid, question=(case.get("origin") or {}).get("store")
                      == "hypotheses"),
+            # "Sometimes the question it asks is irrelevant": neither Yes,
+            # No nor later — the card closes and nothing is recorded.
+            _not_applicable(cid),
         ]
 
     if sit == "opportunity":

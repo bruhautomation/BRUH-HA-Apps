@@ -6,7 +6,7 @@ A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
 Last retro: 2026-10-07
-Last UX audit: 2026-10-10
+Last UX audit: 2026-10-12
 
 ## Lessons
 
@@ -52,6 +52,11 @@ Last UX audit: 2026-10-10
   row it holds (nine this run, all re-stamps); the house side of that is
   in `brain/panel/devloop/`, a person's file.
 
+- 2026-10-12: Never `pkill -f <pattern>` in the same Bash command as anything else: the pattern matches the shell running the command, which kills itself (exit 144) and whatever it was about to start. Three suite runs were lost that way.
+- 2026-10-12: The full local suite (`-n 4 --dist loadfile`) hung in this container for 30 minutes with no output, while CI ran it in under two minutes and each batch's `tests/affected.py --run` (2–6k tests) passed in 1–2 minutes. When the local full suite stalls, ship on the affected run and let CI be the gate rather than burning the session.
+- 2026-10-12: `test_devloop_screens`' real-browser test failed twice in CI with "Chromium did not start" before any assertion: a cold Chromium start on a loaded runner exceeds the 15 s budget in `screens._launch` (a person's file). The test now warms the browser once, untimed. If it still flakes, the budget itself is a `needs-human` change.
+- 2026-10-12: `sec.*` checks file at `info`, and `answers.chip` read every `info` row as a Tidy-up, so security findings were folded away with unused helpers. A severity is not a category; the chip asks the source too now.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
@@ -62,3 +67,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-09 06:30: ~15 min, 1 issue closed with no code change: #146, the frozen-sensor rule's all-time Wrong count, explained by the battery-voltage cause fixed in 2.18.3. UX audit skipped: already done today on this same main. Slowest step: tracing which Wrongs predate the fix.
 - 2026-10-09 16:00: ~3h, 9 issues closed as fixed (PRs #395, #396 and batch 5: #149, #152, #154, #155, #163, #164, #166, #167, #168); rolling/evidence left open by design. Slowest step: the Opus UI subagents (~22–25 min) and re-running CI over the screens Chromium start-up flake.
 - 2026-10-10 20:30: ~1h, 30 issue closures: 9 fixed (PRs #399, #400, #401), 2 of them filed by the UX audit; 15 re-stamped faults closed as before (10 on the 2.18.15 update, 5 more when 2.18.17 landed mid-run); 2 duplicates, 1 not brAIn, 1 declined, 1 handed to a person (the `get_history` half of #172; its panel half fixed). Slowest step: the Opus writing batch (26 min) and #401's two CI cycles on the screens Chromium start-up failure (passed on re-run; no local repro).
+- 2026-10-12 13:30: ~3h, 43 issue closures: 22 fixed in PRs #405, #406, #408, #410 and the last batch (3 filed by the UX audit, 2 the owner's own requests), 16 re-stamped faults closed as before (11, then 5 more after the 2.18.2x updates), 5 handed to a person (#186 healing.py, #196 the MCP server's error log, #210–#212 in the Morph add-on, which the skill does not let the loop touch). Slowest step: the subagents (19–24 min each) and #406's three CI cycles on the screens Chromium start-up and a missing `except` comment.

@@ -119,7 +119,9 @@ FEED_KINDS = tuple(k for k in KINDS if k != "chore")
 # the Resident's "already said" prompt asks for every store by name.
 FEED_STORES = tuple(s for s in STORES if s != "proposals")
 
-VERBS = ("do", "not_now", "wrong")
+# `not_applicable` is a question's fourth answer, "Doesn't apply": the card
+# closes with nothing recorded as an answer. Only a question takes it.
+VERBS = ("do", "not_now", "wrong", "not_applicable")
 # And the statuses a verb may be given on. A run is changing the house in
 # `acting`, so an ending there would delete the row the fixer is still
 # writing to and settle a question nobody has the answer to yet — which is
@@ -236,6 +238,7 @@ _ENDINGS: dict[tuple[str, str], tuple[str, str]] = {
     ("opportunity", "wrong"): ("proposal", "decline"),
     ("question", "do"): ("hypothesis", "confirm"),
     ("question", "wrong"): ("hypothesis", "reject"),
+    ("question", "not_applicable"): ("hypothesis", "not_applicable"),
     ("chore", "do"): ("todo_done", ""),
     ("chore", "wrong"): ("todo_drop", ""),
 }
@@ -257,6 +260,9 @@ _STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
     # said it would teach (its `memory_hint`), No is a correction.
     ("findings", "question", "do"): ("end_finding", "confirm"),
     ("findings", "question", "wrong"): ("end_finding", "wrong"),
+    # "Doesn't apply": settled under its own kind, which no scorecard
+    # counts, so the same text is not filed again and nothing is learned.
+    ("findings", "question", "not_applicable"): ("end_finding", "not_applicable"),
 }
 
 

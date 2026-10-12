@@ -65,6 +65,7 @@ import conversations
 import journal
 import permission_mode
 import settings_store
+import textclip
 
 # Where the chat runs. /config so the project's settings.local.json (the
 # permission set) and CLAUDE.md (the description of this house) both apply —
@@ -725,8 +726,9 @@ _TOOL_SUMMARY_KEYS = (
 
 
 def _clip(text: str, limit: int) -> str:
-    text = str(text)
-    return text if len(text) <= limit else text[:limit] + "\n… (truncated)"
+    """A copy for the SCREEN, cut on a boundary and saying how much is
+    hidden (`textclip.shown`). The CLI already holds the whole text."""
+    return textclip.shown(str(text), limit)
 
 
 def question_spec(args: dict) -> list[dict] | None:

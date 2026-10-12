@@ -344,6 +344,7 @@ _SETTLED_WORDS = {
     "ignored": "you marked it Not a problem",
     "fixed": "you said you had fixed it",
     "accepted": "it is on your to-do list",
+    "not_applicable": "you said the question does not apply here",
 }
 
 

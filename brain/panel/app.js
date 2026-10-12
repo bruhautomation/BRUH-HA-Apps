@@ -6605,8 +6605,14 @@ function makeLooseQuestion(h) {
   btns.actions = actions;
   const yes = qButton("Yes", true);
   const no = qButton("No", false);
-  btns.push(yes, no);
-  actions.append(yes, no);
+  // "Sometimes the question it asks is irrelevant": closes the card and
+  // records no answer (`answers._not_applicable`, through the case route).
+  const na = qButton("Doesn't apply", false);
+  na.dataset.verb = "not_applicable";
+  btns.push(yes, no, na);
+  actions.append(yes, no, na);
+  na.addEventListener("click", () => looseAction(`api/case/h:${h.ts}/not_applicable`,
+    null, "Closed — brAIn won't ask that again", btns));
   yes.addEventListener("click", () => looseAction(`api/hypothesis/${h.ts}/confirm`,
     null, "Filed into memory", btns));
   no.addEventListener("click", () => openNoteForm(card, actions, (note, formBtns) =>

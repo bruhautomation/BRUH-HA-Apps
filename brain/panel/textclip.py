@@ -61,4 +61,48 @@ def clip(text, limit: int) -> str:
     return head.rstrip(_TRAILING) + ELLIPSIS
 
 
-__all__ = ["ELLIPSIS", "clip"]
+# Below this budget a display copy is one line — a button's label, a chip's
+# summary, an option's description — and a second line saying how much was
+# hidden would be longer than what it describes. Above it the copy is a
+# block (a tool's input, a tool's result, a message), and the line under it
+# is what tells a reader the cut is the screen's and not the model's.
+NOTE_FROM = 400
+# How much of the budget a line break has to keep before it is preferred
+# over a plain word break. A block of JSON cut mid-line reads as broken.
+_LINE_SHARE = 0.5
+
+
+def shown(text, limit: int) -> str:
+    """``text`` shortened for the SCREEN, saying so.
+
+    The chat and the conversation replay draw a copy of what the CLI
+    already has — a tool's input, a tool's result, a message — and nothing
+    shortened here is ever sent back to Claude. "… (truncated)" cut
+    mid-word said none of that, and read as Claude cutting off its own
+    context. So a block is cut on a line break, else on a word, and the
+    line under it says how much is shown and that Claude has the full text;
+    a short one-line budget is ``clip``'s plain ellipsis. Text that fits
+    comes back unchanged.
+    """
+    s = "" if text is None else str(text)
+    if limit <= 0 or len(s) <= limit:
+        return s if limit > 0 else ""
+    if limit < NOTE_FROM:
+        return clip(s, limit)
+    head = s[:limit]
+    nl = head.rfind("\n")
+    if s[limit:limit + 1] == "\n":
+        cut = limit
+    elif nl >= int(limit * _LINE_SHARE):
+        cut = nl
+    elif s[limit:limit + 1].isspace():
+        cut = limit
+    else:
+        sp = max(head.rfind(" "), head.rfind("\t"))
+        cut = sp if sp >= int(limit * _WORD_SHARE) else limit
+    head = head[:cut].rstrip()
+    return (f"{head}\n{ELLIPSIS} display truncated: {len(head):,} of "
+            f"{len(s):,} characters shown here — Claude has the full text.")
+
+
+__all__ = ["ELLIPSIS", "NOTE_FROM", "clip", "shown"]

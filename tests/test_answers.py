@@ -27,7 +27,10 @@ import findings_store  # noqa: E402
 
 from test_cases import StoresCase  # noqa: E402
 
-NO = {"wrong", "no", "decline", "drop", "cancel"}
+# `not_applicable` is a question's "Doesn't apply" — the owner's "a dismiss
+# option, because sometimes the question it asks is irrelevant" — and on a
+# house-book gap question it is the way to say no.
+NO = {"wrong", "no", "decline", "drop", "cancel", "not_applicable"}
 
 # A problem's row after its primary: *Check again* on a check's row,
 # *Dismiss*, then *Snooze · Ignore*.
@@ -172,7 +175,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         vocab = {"Apply", "Fix", "Add to To Do", "Snooze", "Ignore", "Done",
                  "Restore", "Undo", "Ask", "Send", "Recheck", "Check again",
                  "Dismiss", "Run", "Save",
-                 "Share", "Delete", "Yes", "No"}
+                 "Share", "Delete", "Yes", "No", "Doesn't apply"}
         for name, shape in SHAPES.items():
             got = answers.answers(shape)
             for a in got + answers.more(shape, got, [
@@ -241,7 +244,8 @@ class TestTheButtonsThatFit(unittest.TestCase):
     def test_a_question_is_yes_or_no_and_can_be_put_off(self):
         got = answers.answers(SHAPES["question"])
         self.assertEqual([(a["verb"], a["label"]) for a in got],
-                         [("yes", "Yes"), ("no", "No"), ("not_now", "Snooze")])
+                         [("yes", "Yes"), ("no", "No"), ("not_now", "Snooze"),
+                          ("not_applicable", "Doesn't apply")])
         self.assertTrue(got[1]["note"])
         self.assertTrue(got[0]["route"].endswith("/do"))
         self.assertTrue(got[1]["route"].endswith("/wrong"))

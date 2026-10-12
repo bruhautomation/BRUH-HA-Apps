@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.26
+
+### Added
+
+- Every question brAIn asks you now has a **Doesn't apply** answer beside Yes and No (and on house-book questions, beside Send). It closes the question without recording an answer: nothing goes into memory, it does not count for or against the rule on the scorecard, and the same question is not asked again (a guess about the same thing waits a month). (reports #208)
+
+### Changed
+
+- In a conversation, a long tool input or result shortened for the screen is cut at a line or word and says so plainly — "display truncated: 1,240 of 3,000 characters shown here — Claude has the full text" — instead of a bare "… (truncated)". (reports #209)
+
 ## 2.18.25
 
 ### Changed
