@@ -53,7 +53,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "learn_now")
+READ_ONLY_KINDS = ("history", "tell", "learn_now", "tell_issue")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -139,6 +139,9 @@ def publish_state() -> None:
         "learning": {**learning.state(), "scorecard": learning.scorecard(),
                      "lessons": learning.read_lessons()},
         "suggestions": learning.listing(),
+        # What brAIn is doing for Morph right now, so a tell that is still
+        # running is visible after its box was closed or the page reloaded.
+        "activity": tell.activity(),
         "devloop": devloop.status(),
         "note": STATE.get("generate_note", ""),
     })
@@ -178,8 +181,17 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "history":
         return {"ok": True, "log": await asyncio.to_thread(gitrepo.log, int(p.get("limit") or 80))}
     if kind == "tell":
-        st = tell.start(p.get("target") or {}, str(p.get("text") or ""), str(p.get("previous") or ""))
+        # No scope off the wire: a request from the panel is a dashboard
+        # request, and its words decide whether it may reach the house.
+        st = tell.start(p.get("target") or {}, str(p.get("text") or ""), str(p.get("previous") or ""),
+                        shot=str(p.get("shot") or ""), view=p.get("view"))
+        await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
+    if kind == "tell_issue":
+        out = await asyncio.to_thread(tell.answer_issue, str(p.get("id") or ""), str(p.get("verb") or ""))
+        await asyncio.to_thread(devloop.publish, VERSION)
+        await asyncio.to_thread(publish_state)
+        return out
     if kind == "tell_undo":
         out = tell.undo(str(p.get("id") or ""))
         await asyncio.to_thread(publish)
@@ -191,8 +203,10 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "suggestion":
         verb = str(p.get("verb") or "")
         sid = str(p.get("id") or "")
+        item = next((it for it in learning.all_items() if it.get("id") == sid), None)
+        if verb == "do" and item and item.get("kind") == "code":
+            verb = "send"
         if verb == "do":
-            item = next((it for it in learning.all_items() if it.get("id") == sid), None)
             if not item:
                 return {"ok": False, "error": "That suggestion is gone."}
             target = {"kind": "card" if item.get("card") else "section" if item.get("section") else "dashboard",
@@ -205,6 +219,8 @@ async def handle(kind: str, p: dict) -> dict:
             await asyncio.to_thread(publish_state)
             return {"ok": True, "tell": st["id"]}
         out = await asyncio.to_thread(learning.decide, sid, verb, str(p.get("note") or ""))
+        if verb == "send":
+            await asyncio.to_thread(devloop.publish, VERSION)
         await asyncio.to_thread(publish_state)
         return out
     if kind == "learn_now":

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 DOMAIN = "morph"
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 
 PANEL_URL = "morph"
 PANEL_TITLE = "Morph"
@@ -25,6 +25,7 @@ RESPONSE_DIR = SHARED / "responses"
 MIRROR = SHARED / "dashboard.json"
 STATE = SHARED / "state.json"
 TELLS = SHARED / "tells"
+SHOTS = SHARED / "shots"
 USAGE = SHARED / "usage.jsonl"
 ERRORS = SHARED / "errors.jsonl"
 DASHBOARD = MORPH_DIR / "dashboard.yaml"

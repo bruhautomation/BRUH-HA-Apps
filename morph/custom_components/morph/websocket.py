@@ -14,10 +14,14 @@ suggestion, a setting, the learning loop), or brAIn's own published files
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import importlib
 import json
+import os
 import re
 import time
+import uuid
 from collections.abc import Callable
 
 import voluptuous as vol
@@ -33,6 +37,7 @@ from .const import (
     DOMAIN,
     ERRORS,
     MIRROR,
+    SHOTS,
     STATE,
     TELLS,
     USAGE,
@@ -41,11 +46,17 @@ from .const import (
 
 
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
-               "settings", "suggestion", "learn_now", "regenerate", "lessons")
+               "tell_issue", "settings", "suggestion", "learn_now", "regenerate", "lessons")
 BRAIN_FILES = ("findings_state.json", "situation.json", "status.json")
 TELL_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")
 MAX_EVENTS = 50
+# Home Assistant's websocket takes frames up to 4 MB (aiohttp's default),
+# and base64 is a third larger than the bytes, so the panel scales a
+# picture down until it fits under this rather than having the frame cut.
+MAX_SHOT_BYTES = 2_900_000
+MAX_SHOTS = 80
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_ERRORS_PER_HOUR = 120
 
 
@@ -123,6 +134,68 @@ async def ws_tell_status(hass: HomeAssistant, connection, msg) -> None:
         return
     data = await hass.async_add_executor_job(_read_json, TELLS / f"{tid}.json")
     connection.send_result(msg["id"], data or {"phase": "missing"})
+
+
+# brAIn's ``claude`` user, who reads the picture (the same uid Morph's
+# service hands /config/morph to). Owner-only modes, owned by that user:
+# Core writes as root and root can read and prune anything anyway.
+BRAIN_UID = 1000
+
+
+def _hand_to_brain(path, mode: int) -> None:
+    os.chmod(path, mode)
+    try:
+        os.chown(path, BRAIN_UID, BRAIN_UID)
+    except OSError:
+        pass  # not root (a dev checkout): brAIn cannot open it and works from the card's text, which rides with every Tell
+
+
+def _write_shot(raw: bytes) -> str:
+    """File one PNG under /config/.morph/shots and keep the folder bounded."""
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    _hand_to_brain(SHOTS, 0o700)
+    shot = uuid.uuid4().hex
+    scratch = SHOTS / f".{shot}.tmp"
+    with open(scratch, "wb") as f:
+        f.write(raw)
+    _hand_to_brain(scratch, 0o600)
+    os.replace(scratch, SHOTS / f"{shot}.png")
+    old = sorted(SHOTS.glob("*.png"), key=lambda p: p.stat().st_mtime)
+    for path in old[:-MAX_SHOTS]:
+        path.unlink(missing_ok=True)
+    return shot
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "morph/shot",
+    vol.Required("png"): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_shot(hass: HomeAssistant, connection, msg) -> None:
+    """A picture of what somebody held, taken by the panel the moment they
+    held it, so brAIn sees what they see before it reads any YAML. Admin
+    only, like the Tell it belongs to; a PNG and nothing else."""
+    data = msg["png"]
+    if data.startswith("data:"):
+        data = data.split(",", 1)[-1]
+    if len(data) > MAX_SHOT_BYTES * 4 // 3 + 8:
+        connection.send_error(msg["id"], "too_large", "That picture is too large.")
+        return
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        connection.send_error(msg["id"], "invalid", "Not a picture.")
+        return
+    if not raw.startswith(PNG_MAGIC):
+        connection.send_error(msg["id"], "invalid", "Not a PNG.")
+        return
+    try:
+        shot = await hass.async_add_executor_job(_write_shot, raw)
+    except OSError as exc:
+        connection.send_error(msg["id"], "write_failed", f"Could not file the picture: {exc}")
+        return
+    connection.send_result(msg["id"], {"shot": shot, "bytes": len(raw)})
 
 
 def _append(path, rows: list[dict]) -> None:
@@ -265,7 +338,7 @@ def async_register(hass: HomeAssistant) -> None:
     data = hass.data.setdefault(DOMAIN, {})
     if data.get("ws"):
         return
-    for handler in (ws_load, ws_yaml, ws_request, ws_tell_status, ws_usage, ws_report,
+    for handler in (ws_load, ws_yaml, ws_request, ws_tell_status, ws_shot, ws_usage, ws_report,
                     ws_finding, ws_subscribe):
         websocket_api.async_register_command(hass, handler)
     data["ws"] = True

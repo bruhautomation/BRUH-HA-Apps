@@ -17,6 +17,11 @@
  *   * an opened card's top-left is where it was before it opened;
  *   * tap acts (a light toggles), slide sets a level (brightness), and the
  *     garage door and the lock ask for a second tap;
+ *   * Edit: hold a card and a PICTURE of it is taken and sent with the Tell
+ *     (not blank, the card's size), brAIn's own steps show while it works,
+ *     the answer shows before and after, Tell it more photographs it again
+ *     and keeps the first turn, and a request that needs Morph's code is
+ *     ASKED about ("send this as an issue?") rather than filed;
  *   * Edit: hold a card and the Tell brAIn prompt opens INSIDE it, Send
  *     hands it over, and the answer ends with Keep · Undo;
  *   * Settings renders, and nothing on either width scrolls sideways.
@@ -170,11 +175,59 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   if (!inside) fail(name, 'holding a card in Edit did not open Tell brAIn inside it');
   await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('[data-tell] textarea'); ta.value = 'Make this wider and put it first'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
   await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-send"]').click());
-  await settle(p, 3500);
+  // Long enough for the answer AND the after-picture, which waits for the
+  // change to draw before it is taken.
+  await settle(p, 5500);
   const told = await p.evaluate(() => ({ req: window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell'), text: (window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || '' }));
   if (!told.req || told.req.payload.text !== 'Make this wider and put it first' || told.req.payload.target.kind !== 'card') fail(name, `the tell was not handed over as asked: ${JSON.stringify(told.req)}`);
   if (!/Undo/.test(told.text) || !/Keep/.test(told.text)) fail(name, `the finished tell does not offer Keep · Undo: ${told.text.slice(0, 200)}`);
+  // The picture: taken when the card was held, sent with the request, and
+  // of something — a blank or one-colour PNG is a capture that drew nothing.
+  const shot = await p.evaluate(async () => {
+    const sent = window.__ws.filter((m) => m.type === 'morph/shot');
+    const req = window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell');
+    if (!sent.length) return { n: 0 };
+    const img = new Image(); img.src = sent[0].png; await img.decode();
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data; const seen = new Set();
+    for (let i = 0; i < d.length; i += 4 * 97) seen.add(`${d[i] >> 4},${d[i + 1] >> 4},${d[i + 2] >> 4}`);
+    return { n: sent.length, w: img.width, h: img.height, colours: seen.size, id: req && req.payload.shot, view: req && req.payload.view };
+  });
+  if (!shot.n) fail(name, 'holding a card took no picture of it for brAIn');
+  else {
+    if (shot.w < 60 || shot.h < 30) fail(name, `the picture is ${shot.w}×${shot.h}, not the card`);
+    if (shot.colours < 3) fail(name, `the picture is blank (${shot.colours} colours)`);
+    if (!shot.id) fail(name, 'the tell was sent without the picture it took');
+    if (!shot.view || !/Cans/.test(shot.view.text || '')) fail(name, `the card's text did not ride with the picture: ${JSON.stringify(shot.view)}`);
+  }
+  const box = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tell]'); return { text: b ? b.innerText : '', figs: b ? b.querySelectorAll('figure.shot img').length : 0 }; });
+  if (!/Looking at the screenshot/.test(box.text)) fail(name, 'brAIn\'s own steps are not shown while it works');
+  if (!/brAIn saw:/.test(box.text)) fail(name, 'the finished tell does not say what brAIn saw');
+  if (box.figs < 2) fail(name, `the finished tell shows ${box.figs} picture(s), not before and after`);
   atRest(`${name} with a tell open`, await snapshot(p));
+  // Tell it more: a second turn, photographed again, with the first above it.
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-more"]').click());
+  await settle(p, 1200);
+  const more = await p.evaluate(() => ({ shots: window.__ws.filter((m) => m.type === 'morph/shot').length, turn: !!window.__panel.shadowRoot.querySelector('[data-tell] .turn') }));
+  if (more.shots < 2) fail(name, 'Tell it more did not take a new picture of how it looks now');
+  if (!more.turn) fail(name, 'Tell it more lost the earlier turn of the conversation');
+  // A request Morph's code cannot meet is asked about, never filed unasked.
+  await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('[data-tell] textarea'); ta.value = 'Morph cannot do this: show both colours'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-send"]').click());
+  await settle(p, 3500);
+  const ask = await p.evaluate(() => ({ text: (window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || '', btn: !!window.__panel.shadowRoot.querySelector('[data-act="tell-issue"][data-v="send"]'), filed: window.__ws.some((m) => m.kind === 'tell_issue') }));
+  if (!/send this as an issue/i.test(ask.text) || !ask.btn) fail(name, 'a request that needs Morph\'s code changed did not ask to send it as an issue');
+  if (ask.filed) fail(name, 'an issue was filed before anybody said yes');
+  if (ask.btn) {
+    await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-issue"][data-v="send"]').click());
+    await settle(p, 400);
+    const sent = await p.evaluate(() => window.__ws.find((m) => m.kind === 'tell_issue'));
+    if (!sent || sent.payload.verb !== 'send') fail(name, 'Send as issue did not send the answer');
+  }
+  const wide = await p.evaluate(() => { const vw = window.innerWidth; return [...window.__panel.shadowRoot.querySelectorAll('[data-tell] *, .bar > *')].filter((e) => e.getBoundingClientRect().right > vw + 1).slice(0, 5).map((e) => `${e.tagName}.${e.className} ${Math.round(e.getBoundingClientRect().right)}`); });
+  if (wide.length) fail(name, `the tell box or the bar (with its toast) is wider than the screen: ${wide.join(', ')}`);
+  atRest(`${name} with a two-turn tell open`, await snapshot(p));
 
   // Settings.
   await p.evaluate(() => window.__panel.act('page', { dataset: { v: 'settings' } }));

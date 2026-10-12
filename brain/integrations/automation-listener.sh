@@ -64,6 +64,9 @@ SHARED_DIR="/config/.brain"
 TASKS_DIR="$SHARED_DIR/tasks"
 RESULTS_DIR="$SHARED_DIR/task_results"
 LOG_DIR="$SHARED_DIR/logs"
+# One line per tool call a task makes (scripts/brain-task-progress.sh, a hook
+# in headless_settings.json), read by whoever handed the task over.
+PROGRESS_DIR="$SHARED_DIR/task_progress"
 
 # The runaway guard on one task — not a budget, and not an add-on option:
 # the task's own timeout is what bounds it, and a multi-step config edit
@@ -206,6 +209,7 @@ cleanup_stale_files() {
     find "$RESULTS_DIR" -name '*.json' -mmin +120 -delete 2>/dev/null || true
     find "$RESULTS_DIR" -name '*.tmp' -mmin +120 -delete 2>/dev/null || true
     find "$TASKS_DIR" -name '*.work.*' -mmin +120 -delete 2>/dev/null || true
+    find "$PROGRESS_DIR" -name '*.jsonl' -mmin +1440 -delete 2>/dev/null || true
     # Debug logs hold full task prompts: age them out (default 7 days,
     # BRAIN_LOG_RETENTION_DAYS overrides) and keep them owner-only — they
     # live under /config and would otherwise ride into every HA full backup.
@@ -348,6 +352,24 @@ PYTOOLS
 
     printf '%s\n%s\n%s\n%s\n' \
         "--allowedTools" "$allow" "--disallowedTools" "$deny"
+}
+
+# Turn the progress hook on for this task: the file it appends to, made
+# here as root and handed to the claude user the hook runs as, and exported
+# so every claude-run below (the run, a landing, a retry) carries it.
+# process_task runs in its own background subshell, so the export is this
+# task's alone. An id that is not a plain name, or a file that cannot be
+# made, only costs the progress — never the task.
+task_progress_on() {
+    local id="$1" file
+    case "$id" in
+        ''|.*|*[!A-Za-z0-9._-]*) return 0 ;;
+    esac
+    mkdir -p "$PROGRESS_DIR" 2>/dev/null || return 0
+    file="$PROGRESS_DIR/${id}.jsonl"
+    : > "$file" 2>/dev/null || return 0
+    chown 1000:1000 "$file" 2>/dev/null || true
+    export BRAIN_TASK_PROGRESS="$file"
 }
 
 # The one place a task's answer is written. A refusal owes the bridge a
@@ -617,6 +639,7 @@ ${prompt}"
     fi
 
     cleanup_stale_files
+    task_progress_on "$task_id"
 
     # Cheap canonical-config check only — the deep cleanup runs at startup
     # and after detected /api/mcp errors.

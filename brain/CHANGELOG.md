@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.27
+
+### Added
+
+- A task brAIn runs for another add-on now reports what it is doing while it does it: one line per tool call (the file it reads, the entity it checks, the file it edits) in `/config/.brain/task_progress/<task id>.jsonl`, written by a hook that only runs for tasks. Morph 0.2.0 shows these steps in its Tell box, so you can see brAIn working instead of a spinner for several minutes.
+
 ## 2.18.26
 
 ### Added

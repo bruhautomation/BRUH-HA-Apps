@@ -215,7 +215,8 @@ const hass = {
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
-      if (msg.kind === 'tell') { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Reading ' + (p.target.path || ''), tone: '' }, { t: 'Handed to brAIn as task ' + id, tone: '' }], payload: 'MORPH · a change request…\\nAsked: “' + p.text + '”' , text: p.text, at: Date.now() }; return { ok: true, ...tells[id] }; }
+      if (msg.kind === 'tell') { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Reading ' + (p.target.path || ''), tone: '' }, ...(p.shot ? [{ t: 'Took a picture of it for brAIn', tone: '' }] : []), { t: 'Handed to brAIn as task ' + id, tone: '' }], payload: 'MORPH · a change request…\\nAsked: “' + p.text + '”' , text: p.text, at: Date.now(), started: Date.now() / 1000, issueAsk: /Morph cannot/.test(p.text) }; return { ok: true, ...tells[id] }; }
+      if (msg.kind === 'tell_issue') { const s = tells[p.id]; if (s) s.issue = p.verb === 'send' ? 'sent' : 'declined'; return { ok: true }; }
       if (msg.kind === 'tell_undo') return { ok: true, commit: 'undo1' };
       if (msg.kind === 'history') return { ok: true, log: [{ sha: 'abc1', who: 'brain', at: Date.now() / 1000 - 600, message: 'brAIn: Added a Pets section' }, { sha: 'abc0', who: 'person', at: Date.now() / 1000 - 7200, message: 'Moved a section' }] };
       if (msg.kind === 'settings') { F.state.settings = { ...F.state.settings, ...p.patch }; return { ok: true, settings: F.state.settings }; }
@@ -223,8 +224,14 @@ const hass = {
     }
     if (t === 'morph/tell_status') {
       const s = tells[msg.tell]; if (!s) return { phase: 'missing' };
-      if (Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the cans card wider and moved it to the top of the kitchen.'; s.commit = 'c0ffee'; s.reload = false; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Changed dashboard.yaml', tone: 'good' }); }
-      return s;
+      if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Looking at the screenshot', tone: '', brain: true }, { t: 'Reading dashboard.yaml', tone: '', brain: true }); }
+      if (Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the cans card wider and moved it to the top of the kitchen.'; s.saw = 'The Cans card, a narrow strip at the bottom of the Kitchen.'; s.commit = 'c0ffee'; s.reload = false; s.steps.push({ t: 'Editing dashboard.yaml', tone: '', brain: true }, { t: 'Changed dashboard.yaml', tone: 'good' }); if (s.issueAsk) { s.code_issue = { title: 'The light card cannot show two colours at once', detail: 'A split strip in the light card.' }; s.issue = 'asked'; } }
+      return { ...s };
+    }
+    if (t === 'morph/shot') {
+      if (!String(msg.png || '').startsWith('data:image/png;base64,')) throw new Error('Not a PNG.');
+      window.__shots = (window.__shots || []).concat([msg.png]);
+      return { shot: 'f'.repeat(31) + window.__shots.length, bytes: msg.png.length };
     }
     if (t === 'morph/usage' || t === 'morph/report' || t === 'morph/finding') return { ok: true };
     if (t === 'morph/yaml') return { text: 'title: Home\\n' };

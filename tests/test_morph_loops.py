@@ -164,18 +164,24 @@ class TestLearning(unittest.TestCase):
         fake.start()
         self.addCleanup(fake.stop.set)
         out = asyncio.run(env.learning.run_pass(pressed=True))
-        self.assertEqual({"added": 1}, out)
+        self.assertEqual({"added": 2}, out)
         self.assertEqual("read_only", fake.seen[0]["tools"],
                          "a pass suggests; only a press on Do it changes anything")
         items = env.learning.listing()
-        self.assertEqual(["Move Kitchen to the top"], [i["title"] for i in items])
+        self.assertEqual(["Move Kitchen to the top", "The fan card cannot show speed"],
+                         [i["title"] for i in items])
+        self.assertEqual(["dashboard", "code"], [i["kind"] for i in items])
         self.assertEqual(["Kitchen matters most in the evening"], env.learning.read_lessons())
         # The lessons file is the one thing a pass writes, and it is its own commit.
         self.assertEqual("learning", env.gitrepo.log()[0]["who"])
         self.assertNotEqual(before, env.gitrepo.head())
         self.assertEqual(self.dash, env.store.read()[0])
-        rows = env.devloop.rows()
-        self.assertEqual(["The fan card cannot show speed"], [r["what"] for r in rows])
+        # A model's report about Morph's code is a QUESTION: nothing is filed
+        # until somebody presses Send as issue.
+        self.assertEqual([], env.devloop.rows())
+        self.assertTrue(env.learning.decide(items[1]["id"], "send")["ok"])
+        self.assertEqual(["The fan card cannot show speed"], [r["what"] for r in env.devloop.rows()])
+        self.assertEqual([], [i for i in env.learning.listing() if i["kind"] == "code"])
 
     def test_no_is_remembered_and_never_offered_again(self):
         env = self.env

@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- **brAIn looks before it changes anything.** Holding a card, a section or
+  a floor in Edit takes a picture of it on the spot, shown in the Tell box
+  as *What brAIn will see*. brAIn is told to read that picture first, so
+  "this is cut off" means what is on your screen rather than what the YAML
+  says. When a picture cannot be taken the box says why and brAIn gets the
+  card's text instead.
+- **You can see brAIn working.** Its own steps (looking at the picture,
+  reading `dashboard.yaml`, checking an entity, editing a file) appear in
+  the box as it takes them, with how long it has been at it. Closing the
+  box no longer hides the work: a strip at the top of the dashboard says
+  what brAIn is doing, with **Show**. Needs brAIn 2.18.27, which reports
+  those steps.
+- **The Tell box is a conversation.** The answer shows what brAIn saw and
+  the card before and after the change; **Tell it more** keeps the earlier
+  turns above, photographs the card again as it looks now, and continues.
+- **"Would you like to send this as an issue?"** When a request needs
+  Morph's own code changed (a built-in card type that cannot do it), brAIn
+  says so and the box asks. Nothing is filed until somebody presses
+  **Send as issue**.
+
+### Changed
+
+- **A Tell changes the dashboard, not the house.** brAIn edits
+  `/config/morph` and changes Home Assistant itself (entity ids, names,
+  automations, helpers) only when the request asks for that in words. When
+  a request would need a house change nobody asked for, it does the
+  dashboard part and says what would have to change. Facts about the house
+  it learns along the way go to brAIn's memory, not to Morph's lessons.
+- **The learning loop is about the dashboard only.** A pass no longer
+  suggests changes to Home Assistant, and its lessons are rules about the
+  dashboard. A problem it thinks needs Morph's code changed is a **Morph
+  needs a fix** note with **Send as issue**, not a report filed on the
+  model's say-so.
+- **Only Morph's faults are reported as Morph's.** A Tell or learning pass
+  that failed because brAIn was slow, signed out or paused is no longer
+  filed as a fault in Morph's code; an answer Morph could not read still is.
+
+### Fixed
+
+- The learning pass was told to "read AGENTS.md" but runs with no file
+  access; the design rules are now in its prompt.
+- A learning pass that failed recorded the evidence as read, so every later
+  scheduled pass skipped as "nothing new" until the dashboard was used
+  again. Only a pass that answered records it now.
+- On a phone, a message in the top bar while editing pushed **Done** off
+  the screen; the message now takes the date's place.
+
 ## 0.1.1
 
 ### Changed

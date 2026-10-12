@@ -22,6 +22,16 @@ is getting better rather than louder.
 **Loop two — Morph's own code** lives in `devloop.py`: the faults and
 gaps that need a change to Morph itself, not to this house's dashboard,
 go to brAIn's development loop and on to the private reports repository.
+A gap the learning pass notices is a SUGGESTION of kind ``code`` — "Send
+it as an issue?" — never filed on the model's say-so: a report written by
+a model about code it cannot see is a guess until somebody agrees.
+
+**This loop is about the dashboard and only the dashboard.** brAIn learns
+the house on its own (memory, findings, measurements); a Morph pass that
+proposed automations or filed house facts as lessons would be a second,
+weaker copy of that. So a pass suggests dashboard changes, its lessons are
+rules about how this household wants its dashboard to look and behave,
+and a fact about the house it happens to notice is not a lesson.
 
 Three rules:
 
@@ -67,16 +77,18 @@ SCHEMA = {
                 "why": {"type": "string", "description": "One sentence of evidence from the digest."},
                 "change": {"type": "string",
                            "description": "The instruction Morph will hand you if they press Do it."},
-                "kind": {"type": "string", "enum": ["dashboard", "house"]},
+                "kind": {"type": "string", "enum": ["dashboard"]},
                 "section": {"type": "string", "description": "Section id it belongs in, if any."},
                 "card": {"type": "string", "description": "Card id it is about, if any."},
             }}},
         "lessons": {"type": "array", "maxItems": MAX_LESSONS, "items": {"type": "string"},
-                    "description": "The COMPLETE revised list of lessons, not only new ones."},
+                    "description": "The COMPLETE revised list of lessons, not only new ones. "
+                                   "Rules about the dashboard, never facts about the house."},
         "code_reports": {"type": "array", "maxItems": 5, "items": {
             "type": "object", "required": ["what", "detail"],
             "properties": {"what": {"type": "string"}, "detail": {"type": "string"}}},
-            "description": "Problems that need a change to Morph's own code, not to this dashboard."},
+            "description": "Problems that need a change to Morph's own code, not to this "
+                           "dashboard. Morph asks the household whether to send each one."},
     },
 }
 
@@ -168,7 +180,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
         known.add(key)
         item = {"id": f"g{int(time.time() * 1000)}{added}", "key": key, "title": title,
                 "why": str(row.get("why") or "").strip()[:400], "change": change,
-                "kind": row.get("kind") if row.get("kind") in ("dashboard", "house") else "dashboard",
+                "kind": "code" if row.get("kind") == "code" else "dashboard",
                 "status": "open", "created": time.time()}
         if row.get("section") in sections:
             item["section"] = row["section"]
@@ -182,22 +194,50 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
     return added
 
 
+def code_suggestions(reports: list) -> list[dict]:
+    """A pass's ``code_reports`` as suggestions of kind ``code``: the
+    household is asked "send it as an issue?" rather than the model's
+    sentence being filed in their name."""
+    out = []
+    for rep in (reports or [])[:5]:
+        if not isinstance(rep, dict) or not str(rep.get("what") or "").strip():
+            continue
+        what = str(rep["what"]).strip()[:140]
+        out.append({"kind": "code", "title": what[:80],
+                    "why": "This needs a change to Morph itself, not to your dashboard.",
+                    "change": f"{what}\n\n{str(rep.get('detail') or '').strip()[:1100]}"})
+    return out
+
+
 def decide(sid: str, verb: str, note: str = "") -> dict:
-    """Not now / No. Do it is `tell.start` with the suggestion's change, and
-    calls `mark_doing` once it has an id."""
+    """Not now / No / Send. Do it is `tell.start` with the suggestion's
+    change, and calls `mark_doing` once it has an id; on a ``code``
+    suggestion the yes is Send, which files it for Morph's own loop."""
     data = _load()
     item = next((it for it in data["items"] if it.get("id") == sid), None)
     if not item:
         return {"ok": False, "error": "That suggestion is gone."}
     note = str(note or "").strip()[:400]
-    if verb == "not_now":
+    if verb == "send":
+        if item.get("kind") != "code":
+            return {"ok": False, "error": "Only a problem with Morph itself is sent as an issue."}
+        if not settings.load()["report_code_issues"]:
+            return {"ok": False, "error": "“Report Morph’s own problems” is off in Settings, so "
+                                          "nothing reaches brAIn's development loop."}
+        import devloop
+        devloop.note_fault("Learning", item["title"], item["change"], source="learning")
+        item["status"] = "sent"
+        item["decided"] = time.time()
+    elif verb == "not_now":
         item["snoozed_until"] = time.time() + SNOOZE_S
     elif verb == "no":
         item["status"] = "declined"
         item["note"] = note
         item["decided"] = time.time()
         data["declined"][item["key"]] = {"title": item["title"], "note": note, "at": time.time()}
-        if note:
+        # A declined code report says nothing about how they want their
+        # dashboard, so it teaches no lesson; it is only never asked again.
+        if note and item.get("kind") != "code":
             add_lesson(f"Declined “{item['title']}”: {note}", "a suggestion was turned down")
     else:
         return {"ok": False, "error": "Unknown answer."}
@@ -353,14 +393,35 @@ def fingerprint(d: dict) -> str:
     return _key(f"{d['events']}|{len(d['tells'])}|{len(d['suggestions'])}|{len(d['dead'])}")
 
 
+def design_rules() -> list[str]:
+    """AGENTS.md's design rules, handed to the pass as text: a read-only
+    task has no file access (brAIn denies Read for that scope), so telling
+    it to "read AGENTS.md" asked for something it could never do."""
+    try:
+        text = paths.AGENTS.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    start = text.find("## The design rules")
+    if start < 0:
+        return []
+    end = text.find("\n## ", start + 5)
+    body = text[start:end if end > 0 else None].strip()
+    return [body[:3000], ""]
+
+
 def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) -> str:
     import json
     lines = [
-        "MORPH · learning pass. Morph is this house's dashboard (/config/morph; read AGENTS.md).",
-        "You are improving it from how the household actually uses it. You may LOOK at the house",
-        "with your read-only tools; you must NOT change anything — every suggestion waits for a",
-        "person to press Do it, and then it is handed back to you as an ordinary request.",
+        "MORPH · learning pass. Morph is this house's dashboard. You are improving the DASHBOARD —",
+        "its layout, its cards, what is on it and where — from how the household actually uses it.",
+        "Learning about the house itself is brAIn's job elsewhere; do not suggest automations,",
+        "helpers, renames or other changes to Home Assistant here.",
+        "You may LOOK at the house with your read-only Home Assistant tools (this run has no file",
+        "access; everything you need from Morph's files is below). You must NOT change anything —",
+        "every suggestion waits for a person to press Do it, and then it is handed back to you as",
+        "an ordinary request.",
         "",
+        *design_rules(),
         "Usage over the last 30 days (counts only):",
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
         "",
@@ -388,15 +449,17 @@ def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) ->
         "The dashboard as it is now:",
         "```yaml", dash_text[:16000], "```",
         "",
-        f"Answer with at most {MAX_SUGGESTIONS} suggestions, each backed by the evidence above",
-        "(a section used every evening placed below ones nobody opens; a card that has been",
-        "unavailable for weeks; something the household keeps asking brAIn to do by hand that",
-        "could be one tap). Fewer is better than weak; none is a fine answer. `change` is the",
+        f"Answer with at most {MAX_SUGGESTIONS} dashboard suggestions, each backed by the evidence",
+        "above (a section used every evening placed below ones nobody opens; a card that has been",
+        "unavailable for weeks; something the household keeps asking for by hand that could be one",
+        "tap on the dashboard). Fewer is better than weak; none is a fine answer. `change` is the",
         "exact instruction you would want to be handed. Then revise the COMPLETE list of lessons:",
         "keep what still holds, drop what the evidence contradicts, add what the undone changes",
-        "and declined suggestions teach. Lessons are about how THIS household wants its dashboard,",
-        "written as rules. Put a problem that needs Morph's own code changed (not this",
-        "dashboard) in code_reports.",
+        "and declined suggestions teach. Lessons are rules about how THIS household wants its",
+        "dashboard to look and behave; a fact about the house (what a device is, who uses a room)",
+        "is not a lesson and does not belong in the list. Put a problem that needs Morph's own",
+        "code changed (not this dashboard) in code_reports; the household is asked whether to",
+        "send each one, so say plainly what Morph cannot do.",
     ]
     return "\n".join(lines)
 
@@ -437,7 +500,11 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
     data = _load()
     prompt = build_prompt(d, text, read_lessons(), data["declined"])
     tid = brain.new_id("morph-learn")
-    _set_state(running=tid, last_pass=time.time(), fingerprint=fp)
+    # The fingerprint is recorded only by a pass that answered: one written
+    # here would let a pass that failed (brAIn stopped, signed out, slow)
+    # mark the evidence as read, and every later pass would skip it as
+    # "nothing new" until somebody happened to use the dashboard again.
+    _set_state(running=tid, last_pass=time.time())
     try:
         await asyncio.to_thread(brain.submit, tid, prompt, schema=SCHEMA, tools="read_only",
                                 timeout=PASS_TIMEOUT_S, model=settings.load().get("learn_model") or "",
@@ -463,16 +530,19 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
         if err or not isinstance(obj, dict):
             note = rtext[:300] if err else "brAIn's answer could not be read."
             _set_state(running="", last_note=note)
-            devloop.note_fault("Learning", "A learning pass failed", note)
+            # A run that failed (signed out, paused, out of time) is brAIn's
+            # weather; only an answer that came back unreadable is the two
+            # halves' contract failing, which is Morph's to fix.
+            if not err:
+                devloop.note_fault("Learning", "brAIn's answer to a learning pass could not be read",
+                                   rtext[:800])
             return {"error": err or "unreadable"}
-        added = add_suggestions(obj.get("suggestions") or [], dash)
+        rows = [r for r in (obj.get("suggestions") or []) if isinstance(r, dict)]
+        rows = [{**r, "kind": "dashboard"} for r in rows]
+        added = add_suggestions(rows + code_suggestions(obj.get("code_reports")), dash)
         if isinstance(obj.get("lessons"), list) and obj["lessons"]:
             write_lessons(obj["lessons"])
-        for rep in (obj.get("code_reports") or [])[:5]:
-            if isinstance(rep, dict) and rep.get("what"):
-                devloop.note_fault("Learning", str(rep["what"])[:140], str(rep.get("detail") or "")[:1500],
-                                   source="learning")
-        _set_state(running="", last_note=f"Learned from {d['events']} uses; "
+        _set_state(running="", fingerprint=fp, last_note=f"Learned from {d['events']} uses; "
                    f"{added} new suggestion{'s' if added != 1 else ''}.", last_added=added)
         return {"added": added}
     except Exception as exc:  # noqa: BLE001
@@ -493,6 +563,7 @@ def scorecard(now: float | None = None) -> dict:
         "suggested": len(items),
         "done": sum(1 for it in items if it.get("status") == "done"),
         "declined": sum(1 for it in items if it.get("status") == "declined"),
+        "sent": sum(1 for it in items if it.get("status") == "sent"),
         "open": sum(1 for it in items if it.get("status") == "open"),
         "tells": len(tells),
         "tells_kept": len(tells) - undone,

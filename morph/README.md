@@ -28,10 +28,12 @@ already use.
 
 **brAIn designs it with you.** In Edit, hold anything — a card, a section, a
 floor, the whole dashboard — and say what should change: *"add a Pets section
-with Cece's feeder"*, *"make the kitchen lights one strip"*, *"turn the porch
-light off at sunrise"*. brAIn acts at once, on the dashboard, on Morph's card
-code, or on the house behind it, and the change lands in the same place you
-asked with **Keep** and **Undo** beside it.
+with Cece's feeder"*, *"make the kitchen lights one strip"*, *"this name is
+cut off"*. Morph takes a picture of what you held so brAIn sees what you
+see, you watch brAIn's steps as it works, and the change lands in the same
+place you asked — before and after — with **Keep**, **Undo** and **Tell it
+more** beside it. brAIn changes the dashboard; it changes Home Assistant
+itself only when you ask for that in words (*"rename the entity"*).
 
 **Everything is undoable.** The dashboard is a folder, `/config/morph`, and
 its history is git: every change — yours, brAIn's, a lesson Morph learned,
@@ -39,14 +41,16 @@ or an edit you made by hand — is one commit, and **Settings → History** can
 undo or restore any of them.
 
 **It learns, and it asks first.** Morph notices what you open, when, and what
-you change back. A scheduled brAIn pass turns that into suggestions shown in
-place on the dashboard — *Do it*, *Not now*, *No* — and nothing changes until
-you press Do it. Saying No with a reason teaches it; the lessons are a file
+you change back. A scheduled brAIn pass turns that into suggestions about the
+dashboard, shown in place — *Do it*, *Not now*, *No* — and nothing changes
+until you press Do it. Saying No with a reason teaches it; the lessons are a file
 you can read and edit.
 
 **It fixes itself.** When Morph's own code fails — a card that will not draw,
 a layout that overlaps — it hands the fault to brAIn's development loop, which
 files it in your private reports repository so the fix arrives as an update.
+When something you ask for needs Morph's own code changed, it asks whether
+to send that as an issue, and sends nothing until you say yes.
 
 **What brAIn adds.** With brAIn installed, the top of the page is a sentence
 about what the house is doing, you can ask the house a question, *Coming up*

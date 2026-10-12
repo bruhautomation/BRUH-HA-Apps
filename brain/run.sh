@@ -1537,7 +1537,10 @@ setup_claude_settings() {
     # it (what `brain undo` and a fix's undo put back), brain-protect-hook.py
     # refuses a shell service call or a YAML edit that would reach a
     # `protected_entities` entity around the MCP chokepoint, and the Stop
-    # hook teaches memory from the terminal and the chat.
+    # hook teaches memory from the terminal and the chat. The headless file
+    # alone carries brain-task-progress.sh, which writes one line per tool
+    # call while the automation listener has set BRAIN_TASK_PROGRESS (what
+    # Morph shows as "brAIn is on it") and returns at once everywhere else.
     cat > "$claude_settings_dir/settings.local.json" << 'SETTINGS'
 {
   "enableAllProjectMcpServers": true,
@@ -1679,6 +1682,16 @@ SETTINGS
             "type": "command",
             "command": "python3 /opt/scripts/brain-protect-hook.py",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/scripts/brain-task-progress.sh",
+            "timeout": 5
           }
         ]
       }
