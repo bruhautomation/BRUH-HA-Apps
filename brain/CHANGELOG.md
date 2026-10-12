@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.29
+
+### Fixed
+
+- brAIn can change a Morph dashboard again when `protected_entities` is set. A dashboard names most of the house's entities, locks included, so the guard that refuses YAML naming a protected entity refused every rewrite of `/config/morph/dashboard.yaml`. Morph showed brAIn "Editing dashboard.yaml" and the dashboard never changed. A dashboard card acts on nothing until a person presses it, so that one file is no longer checked. Every other YAML file still is, including a file somewhere else that happens to be called `dashboard.yaml`.
+
 ## 2.18.28
 
 ### Fixed

@@ -95,6 +95,35 @@ class TestAYamlEdit(unittest.TestCase):
                 reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
                 self.assertIn("protected_entities", reason)
 
+    def test_morphs_dashboard_shows_entities_and_is_not_refused(self):
+        # A Morph Tell rewrites dashboard.yaml whole, and a dashboard names
+        # the locks too: refusing it was a Tell that never changed anything.
+        payload = {"tool_name": "Write", "tool_input": {
+            "file_path": "/config/morph/dashboard.yaml",
+            "content": "floors:\n- sections:\n  - groups:\n    - cards:\n      - entity: lock.front_door\n"}}
+        code, decision = run_hook(payload)
+        self.assertEqual(code, 0)
+        self.assertIsNone(decision)
+        # Only that file: another YAML beside it is still checked.
+        other = {"tool_name": "Write", "tool_input": {
+            "file_path": "/config/morph/../automations.yaml", "content": "entity_id: lock.front_door\n"}}
+        self.assertTrue(denied(run_hook(other)[1]))
+
+    def test_a_dashboard_yaml_anywhere_else_is_still_checked(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "automations.yaml"
+            real.write_text("")
+            link = Path(tmp) / "dashboard.yaml"
+            link.symlink_to(real)
+            env = dict(os.environ, BRAIN_PROTECTED_ENTITIES="lock.front_door",
+                       BRAIN_MORPH_DASHBOARD=str(Path(tmp) / "morph" / "dashboard.yaml"))
+            payload = {"tool_name": "Write", "tool_input": {
+                "file_path": str(link), "content": "entity_id: lock.front_door\n"}}
+            proc = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
+                                  env=env, capture_output=True, text=True, timeout=30)
+            self.assertTrue(denied(json.loads(proc.stdout)))
+
     def test_what_it_does_not_cover_passes(self):
         payloads = [
             # Another entity in the same domain as an exact entry.

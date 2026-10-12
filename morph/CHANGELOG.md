@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.5.0
+## 0.5.1
+
+### Fixed
+
+- **Asking for a dashboard change outside Edit now changes the dashboard.**
+  The Ask bar sent everything to the house's assistant, which has no way to
+  edit Morph's files and could still answer that it was making the change.
+  Words that ask to add, remove, hide, move, rename or bring back a card,
+  section, the greeting, Coming up or the layout now go to brAIn as a change,
+  exactly as they do in Edit. Every answer to an ordinary question also offers
+  **Change the dashboard instead**.
+- With brAIn 2.18.29, brAIn can rewrite dashboard.yaml when `protected_entities`
+  is set. Before, every rewrite of a dashboard that showed a protected lock
+  was refused.
+
+### Changed
+
+- **Morph's mark shows in the top-right corner of a card while you hover it**
+  (on a computer). Press it to tell brAIn what to change about that card,
+  without Edit. On a phone it is among an opened card's options, as before.
+
 
 ### Added
 

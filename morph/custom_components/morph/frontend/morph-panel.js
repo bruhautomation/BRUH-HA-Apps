@@ -44,6 +44,9 @@ const KIND_WORD = { card: 'card', section: 'section', floor: 'floor', story: 'st
 // still knows what the page already defined.
 const IMPORTED = new Map();
 const REDEFINED = /already been (used|defined)|already defined/i;
+// Words that ask for a change to the DASHBOARD rather than a question for
+// the house: a change verb, then something the page is made of.
+const DASH_CHANGE = /\b(add|remove|delete|hide|show(?! me\b)|move|put|rename|make|change|resize|swap|replace|get rid of|bring back|restore|reorder|group|split|merge|drop|take (?:out|off|away))\b[\s\S]*\b(card|cards|tile|tiles|section|sections|dashboard|greeting|header|story|coming up|timeline|scenes? line|layout|column|columns|widget|chart|graph|morph|this page|the page|screen)\b/i;
 const USAGE_KEEP = 400;
 
 class MorphPanel extends HTMLElement {
@@ -316,7 +319,7 @@ class MorphPanel extends HTMLElement {
 <label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? 'Tell brAIn how to change this dashboard…' : 'Ask or tell the house…'}" aria-label="${edit ? 'Tell brAIn how to change this dashboard' : 'Ask or tell the house'}"></label>
 ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
-${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a.busy ? 'Thinking…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}</div>` : ''}</div>`;
+${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a.busy ? 'Thinking…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}${!a.busy && this.admin() ? `<div class="row"><button type="button" class="wd" data-act="ask-tell" style="font-size:14px;min-height:34px">Change the dashboard instead</button><span class="small">The house’s assistant answers; only this changes Morph.</span></div>` : ''}</div>` : ''}</div>`;
     }
     return `<section aria-label="Now" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${dash.greeting !== false ? `<h1 class="hello">${esc(this.greeting())}</h1>` : ''}${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
   }
@@ -728,7 +731,7 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       faceHtml = T.face(ctx);
       // An opened card carries Morph's mark: one press opens the Tell box for
       // this card, so changing it does not mean going through Edit.
-      const mark = this.admin() && !this.s.edit ? `<div class="tellmark"><button type="button" data-act="tell-card" data-v="${esc(id)}" aria-label="Tell brAIn what to change about ${esc(name)}" title="Tell brAIn what to change">${MARK(20)}</button></div>` : '';
+      const mark = this.admin() && !this.s.edit ? `<div class="tellmark" data-snap-skip="1"><button type="button" data-act="tell-card" data-v="${esc(id)}" aria-label="Tell brAIn what to change about ${esc(name)}" title="Tell brAIn what to change">${MARK(20)}</button></div>` : '';
       if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${mark}${T.more(ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
       if (open && mode === 'tell') moreHtml = `<div class="more">${this.tellBox('card', id)}</div>`;
@@ -747,6 +750,14 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     const hb = holding ? `<span class="holdbar" style="background:${this.s.edit ? 'var(--violet)' : ctx.accent}"></span>` : '';
     let hbEl = mt.querySelector('.holdbar');
     if (hb && !hbEl) mt.insertAdjacentHTML('afterbegin', hb); else if (!hb && hbEl) hbEl.remove();
+    // Morph's mark in the card's top-right corner, shown on hover where
+    // there is a pointer to hover with: one press opens the Tell box for this
+    // card without going through Edit. An opened card carries it among its
+    // options instead (a phone has no hover), so it is not drawn twice.
+    const wantMark = this.admin() && !this.s.edit && !open;
+    let hmEl = mt.querySelector('.hovermark');
+    if (wantMark && !hmEl) mt.insertAdjacentHTML('beforeend', `<button type="button" class="hovermark" data-snap-skip="1" data-act="tell-card" data-v="${esc(id)}" aria-label="Tell brAIn what to change about ${esc(name)}" title="Tell brAIn what to change">${MARK(18)}</button>`);
+    else if (!wantMark && hmEl) hmEl.remove();
     this.setHtml(face, faceHtml);
     this.setHtml(moreEl, moreHtml);
     if (T.host) this.mountLovelace(face, card);
@@ -1517,7 +1528,8 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         const r = await H.callWS({ type: 'morph/request', kind: 'report_withdraw', payload: { fp: v } });
         this.toast(r && r.ok ? 'Taken back.' : (r && r.error) || 'Morph could not take that back.'); this.load(); return;
       }
-      case 'tell-card': this.openTell({ kind: 'card', id: v, from: 'adv' }); return;
+      case 'ask-tell': if (this.s.ask && this.s.ask.q) this.tellDashboard(this.s.ask.q); return;
+      case 'tell-card': this.openTell({ kind: 'card', id: v, from: this.s.view && this.s.view.id === v ? 'adv' : '' }); return;
       case 'tell-keep': this.closeTell(); this.load(); return;
       case 'reload-page': location.reload(); return;
       case 'code-reset': {
@@ -1651,7 +1663,12 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   async ask(q) {
     q = String(q || '').trim(); if (!q) return;
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
-    if (this.s.edit) { this.s.tell = { kind: 'dashboard', path: 'The whole dashboard', label: 'dashboard', sent: false, draft: q, turns: [] }; this.shoot(this.s.tell); this.sendTell(q); return; }
+    // A request to change the DASHBOARD goes to a Tell, which can write
+    // /config/morph, in Edit or not. Sent to the house's conversation agent
+    // it was answered "I'll update the dashboard" by an agent with no way to
+    // touch the file (house report: "it says it's making changes, but none
+    // of them are actually being applied").
+    if (this.s.edit || (this.admin() && DASH_CHANGE.test(q))) { this.tellDashboard(q); return; }
     this.s.ask = { q, busy: true }; this.schedule();
     this.track('ask');
     const agent = Object.values(this.hass.entities || {}).find((e) => e.platform === 'brain' && e.entity_id.startsWith('conversation.'));
@@ -1664,6 +1681,13 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       this.s.ask = { q, answer: ans, show };
     } catch (e) { this.s.ask = { q, answer: 'Could not ask: ' + (e.message || e) }; }
     this.schedule();
+  }
+
+  tellDashboard(q) {
+    this.s.ask = null;
+    this.s.tell = { kind: 'dashboard', path: 'The whole dashboard', label: 'dashboard', sent: false, draft: q, turns: [] };
+    this.shoot(this.s.tell);
+    this.sendTell(q);
   }
 
   // ------------------------------------------------------------ settings

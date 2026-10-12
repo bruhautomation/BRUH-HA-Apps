@@ -81,9 +81,16 @@ Every save is one commit. The toast after a change offers **Undo**.
 In Edit, **hold** anything — a card, a section, a floor, the whole dashboard —
 and say what should change. **Send** hands it over.
 
-You do not need Edit to change one card: open it (tap, or hold) and press
-Morph's mark — the small tile with one round corner — and the same box opens
-in the card. Cancel goes back to the opened card.
+You do not need Edit to change one card. On a computer, hover a card and
+press Morph's mark in its top-right corner (the small tile with one round
+corner); on a phone, open the card and press the mark among its options. The
+same box opens in the card.
+
+You do not need Edit to change the dashboard either. Type the change into the
+Ask bar ("remove the Coming up timeline", "bring back the greeting") and it
+goes to brAIn as a change. The house's assistant answers questions, and
+cannot edit Morph; if an answer was not what you wanted, **Change the dashboard
+instead** sends the same words as a change.
 
 **brAIn looks first.** The moment you hold something, Morph takes a picture
 of it and shows it in the box (**What brAIn will see**). brAIn reads that
