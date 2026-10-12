@@ -1292,6 +1292,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const hist = this.s.hist;
     return `<div class="settings">
 <h1 class="hello" style="font-size:clamp(30px,4vw,44px)">Settings</h1>
+<p class="sm" style="color:var(--amber)">Experimental — Morph is not finished and not recommended for general use yet. Keep your normal dashboards beside it.</p>
 <div class="setsec"><h2>brAIn</h2><p class="sm" style="color:${brain.state === 'ok' ? 'var(--teal)' : 'var(--amber)'}">${esc(brain.sentence || 'Unknown')}</p>
 <p class="sm">In Edit, hold anything and say what should change. brAIn makes the change at once — the dashboard, a card's code, or the automation behind it — and every change has an Undo.</p>
 <span class="label">Model for changes</span>${pick('tell_model', [['', 'brAIn’s default'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']])}

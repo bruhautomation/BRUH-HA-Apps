@@ -1,5 +1,13 @@
 # Morph — documentation
 
+> ## ⚠️ Experimental — not recommended for general use yet
+> **Morph is being built in the open and is not finished.** Expect missing
+> cards, rough edges and changes between updates that move things around
+> without warning. Install it to try it out alongside your normal
+> dashboards, not to replace them. Morph only writes its own folder
+> (`/config/morph`) — every change there is a version you can undo — but a
+> Tell lets brAIn change the house too, so keep an eye on what it does.
+
 Morph is a Home Assistant add-on and integration. The add-on runs a small
 service that owns the dashboard file and its history; the integration
 registers the **Morph** sidebar panel, which runs inside Home Assistant's own
@@ -22,7 +30,14 @@ frontend.
 1. Install **Morph** from this repository and start it.
 2. Home Assistant offers a **Morph** integration under **Settings → Devices &
    services**. Accept it.
-3. Morph appears in the sidebar.
+3. Restart Home Assistant once (**Settings → System → Restart**).
+4. Morph appears in the sidebar.
+
+There is no *Show in sidebar* switch on the add-on's page. That switch exists
+only for ingress add-ons, whose page is an iframe; Morph's page runs inside
+Home Assistant's own frontend instead, which is what gives it the live state,
+your theme and Lovelace's card helpers, so any card you already use can be
+hosted. The integration is what registers the panel.
 
 On the first start Morph builds a dashboard from your house: one section per
 area, grouped by floor (or Home and Outside when you have no floors), and a
@@ -168,7 +183,7 @@ floors:
 
 | Option | Default | What it does |
 |---|---|---|
-| `enable_ha_integration` | on | Deploy the `morph` integration (the sidebar panel). |
+| `enable_ha_integration` | on | Install the `morph` integration, which is what puts Morph in the sidebar. |
 | `learning` | on | The learning loop. Also in Settings. |
 | `report_code_issues` | on | Hand Morph's own faults to brAIn's development loop. Also in Settings. |
 | `log_level` | info | The add-on's own logging. |
@@ -184,8 +199,10 @@ folder is handed to brAIn's `claude` user so brAIn can edit it.
 ## Troubleshooting
 
 **Morph is not in the sidebar.** Accept the Morph integration under
-**Settings → Devices & services**. If the add-on was updated, restart Home
-Assistant once so the new integration loads.
+**Settings → Devices & services**, then restart Home Assistant once. After an
+update, restart Home Assistant again so the new integration loads. If the tile
+never appears, check that *Install the Morph integration* is on in the
+add-on's Configuration tab.
 
 **Tell says nothing is listening.** Switch on brAIn's *Automation
 integration* and restart brAIn.

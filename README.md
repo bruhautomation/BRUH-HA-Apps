@@ -82,6 +82,9 @@ from an automation.
 
 ### [Morph](morph/)
 
+> ⚠️ **Experimental — not recommended for general use yet.** Try it beside your
+> normal dashboards, not instead of them.
+
 **A dashboard that moves, and that you change by saying what you want.**
 Morph lives in the sidebar: rooms are sections, cards open in place while
 everything else makes room, and in Edit you hold anything and tell brAIn what

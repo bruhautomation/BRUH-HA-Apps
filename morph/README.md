@@ -1,5 +1,13 @@
 # Morph
 
+> ## ⚠️ Experimental — not recommended for general use yet
+> **Morph is being built in the open and is not finished.** Expect missing
+> cards, rough edges and changes between updates that move things around
+> without warning. Install it to try it out alongside your normal
+> dashboards, not to replace them. Morph only writes its own folder
+> (`/config/morph`) — every change there is a version you can undo — but a
+> Tell lets brAIn change the house too, so keep an eye on what it does.
+
 A dashboard for Home Assistant that moves to make room for whatever you are
 looking at — and that you change by saying what you want.
 
@@ -51,8 +59,14 @@ learning say plainly that they need it.
 1. Add this repository to the add-on store and install **Morph**.
 2. Start it. Under **Settings → Devices & services**, accept the **Morph**
    tile.
-3. Morph appears in the sidebar, with a first dashboard built from your
+3. Restart Home Assistant once (**Settings → System → Restart**).
+4. Morph appears in the sidebar, with a first dashboard built from your
    floors, areas and devices.
+
+There is no *Show in sidebar* switch on the add-on's page, and that is on
+purpose: Morph is a panel inside Home Assistant's own frontend rather than an
+ingress page, which is what lets it host any Lovelace card and use your
+theme. The integration is what puts it in the sidebar.
 
 For Tell and learning, install **brAIn** and switch on its *Automation
 integration*.
