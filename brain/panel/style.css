@@ -6110,11 +6110,19 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
    with an ellipsis rather than pushing the row onto a second line. The
    height and the 44px touch floor stay. */
 @media (max-width: 640px) {
-  .qcard > .card-actions { gap: 4px; flex-wrap: nowrap; }
+  .qcard > .card-actions { gap: 4px; flex-wrap: nowrap; min-width: 0; }
   .qcard > .card-actions > button:not(.icon) {
     padding-left: 8px; padding-right: 8px; min-width: 0;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .qcard > .card-actions > button.icon { flex: none; }
+}
+/* Narrower than any current phone's portrait width the four do not fit
+   without cutting the main answer's own words, and a wrapped row is the
+   lesser harm there. `min-width: 0` stays: a grid item's automatic minimum
+   is its content, which is what pushed the card past the screen. */
+@media (max-width: 359px) {
+  .qcard > .card-actions { flex-wrap: wrap; }
+  .qcard > .card-actions > button:not(.icon) { overflow: visible; text-overflow: clip; }
 }
 .qcard .findnote { margin-top: 0; }
 
