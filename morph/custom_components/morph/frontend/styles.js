@@ -79,7 +79,7 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .flr{flex:1;height:1px;background:linear-gradient(90deg,var(--line),transparent);align-self:center;margin-top:10px;min-width:20px}
 .facts{font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;font-variant-numeric:tabular-nums}
 .facts .sep{color:var(--quiet)}
-@media (max-width:700px){.flrow{flex-direction:column;align-items:flex-start!important;gap:6px!important}.flh{padding-bottom:14px!important}.flr{display:none}}
+@media (max-width:700px){.flrow{flex-direction:column;align-items:flex-start!important;gap:6px!important}.flh{padding-bottom:14px!important}.flr{display:none}.flrow .facts{white-space:normal;max-width:100%}}
 section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .secbg{position:absolute;inset:0;border-radius:30px;transition:box-shadow .3s ease}
 .sechead{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:16px 12px 6px 22px;min-height:62px}
