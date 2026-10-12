@@ -450,6 +450,18 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     return this.codeProblemsHtml() + (list.length ? this.yamlProblemsHtml(m, list) : '');
   }
 
+  // Which Morph is running. The add-on and Home Assistant's half of Morph
+  // update separately: an add-on update reaches the service and this page
+  // on the next reload, while the integration Home Assistant has loaded
+  // stays the old one until Home Assistant restarts.
+  versionHtml(st) {
+    const addon = String(st.version || '');
+    const ha = String((this._panel && this._panel.config && this._panel.config.version) || '');
+    if (!addon) return '';
+    const stale = ha && ha !== addon && addon !== 'dev';
+    return `<p class="small" style="margin:0">Morph ${esc(addon)}</p>${stale ? `<p class="sm" style="color:var(--amber);margin:0">Home Assistant is still running Morph ${esc(ha)}’s integration. Restart Home Assistant to finish the update.</p>` : ''}`;
+  }
+
   // A change to Morph's own code that did not load (boot.js fell back), or
   // that an update paused. Both say what is running and offer the fix.
   codeProblemsHtml() {
@@ -476,7 +488,16 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
         out.push(note(`brAIn is making your change to Morph’s ${name} again.`, 'Morph’s own keeps running until it is done.', `<button type="button" class="wd go" data-act="activity-open" data-v="${esc(running.id)}">Show</button>`));
         return;
       }
-      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">Make it again</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
+      // The press is remembered in state, not written onto the button: the
+      // panel redraws on every state change in the house, and a button
+      // edited in place was back to "Make it again" before anyone saw it.
+      const r = this.s.redo && this.s.redo.name === name ? this.s.redo : null;
+      if (r && !r.error) {
+        out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span><span class="small" data-since="${r.at}"></span></div>`));
+        return;
+      }
+      const why = r && r.error ? `<p class="sm" style="color:var(--rose);margin:0">brAIn did not start: ${esc(r.error)}</p>` : '';
+      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `${why}<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">${why ? 'Try again' : 'Make it again'}</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
     });
     return out.join('');
   }
@@ -1562,10 +1583,12 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         // The press opens brAIn's box in the note it was made from: steps
         // while it works, then the result with Reload and Undo. A toast in
         // the header and an unchanged note read as nothing happening.
-        el.disabled = true; el.textContent = 'Handing it to brAIn…';
+        if (this.s.redo && this.s.redo.name === v && !this.s.redo.error) return;
+        this.s.redo = { name: v, at: Date.now() / 1000 }; this.schedule();
         let r;
         try { r = await H.callWS({ type: 'morph/request', kind: 'code_redo', payload: { name: v } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
-        if (!r || !r.ok || !r.id) { this.toast((r && r.error) || 'Morph could not hand that to brAIn.'); this.schedule(); this.load(); return; }
+        if (!r || !r.ok || !r.id) { this.s.redo = { name: v, error: (r && r.error) || 'Morph could not hand that to brAIn.' }; this.schedule(); this.load(); return; }
+        this.s.redo = null;
         this.s.tell = { kind: 'code', id: v, label: v, path: `Morph’s own ${v}`, text: `Make my change to ${v} again on the new Morph`, sent: true, tellId: r.id, state: r, turns: [] };
         this.pollTell(true); this.load(); return;
       }
@@ -1748,6 +1771,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     return `<div class="settings">
 <h1 class="hello" style="font-size:clamp(30px,4vw,44px)">Settings</h1>
 <p class="sm" style="color:var(--amber)">Experimental — Morph is not finished and not recommended for general use yet. Keep your normal dashboards beside it.</p>
+${this.versionHtml(st)}
 <div class="setsec"><h2>brAIn</h2><p class="sm" style="color:${brain.state === 'ok' ? 'var(--teal)' : 'var(--amber)'}">${esc(brain.sentence || 'Unknown')}</p>
 <p class="sm">In Edit, hold anything and say what should change. brAIn makes the change at once — the dashboard, a card's code, or the automation behind it — and every change has an Undo.</p>
 <span class="label">Model for changes</span>${pick('tell_model', [['', 'brAIn’s default'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']])}

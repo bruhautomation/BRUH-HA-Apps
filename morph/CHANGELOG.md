@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.3
+
+### Fixed
+
+- **"Make it again" shows it is working from the moment you press it.** 0.5.2
+  wrote "Handing it to brAIn…" onto the button itself. Morph redraws on every
+  state change in the house, so that text was gone at once, and the button
+  read as doing nothing until Morph's service answered. The press is now
+  remembered by the panel: the note shows "Handing it to brAIn…" with a timer
+  until brAIn's box opens. If brAIn cannot start, the note says why and offers
+  **Try again**, instead of a toast that vanished after nine seconds.
+
+### Added
+
+- **Settings says which Morph is running.** When Home Assistant is still
+  running an older Morph integration than the add-on, it says to restart Home
+  Assistant to finish the update.
+
 ## 0.5.2
 
 ### Fixed
