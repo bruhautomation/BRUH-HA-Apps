@@ -44,13 +44,70 @@ def _name(state: dict | None, eid: str) -> str:
     return str(attrs.get("friendly_name") or eid.split(".", 1)[1].replace("_", " ").title())
 
 
+# What may sit between a room's name and the rest of a card's name: spaces,
+# and the separators people type into friendly names ("Kitchen - Bread
+# Stretch", "Kitchen: Kettle", "Kitchen | Lamp"). The panel's shortName
+# (frontend/util.js) strips the same set, so a card the generator left unnamed
+# reads the same on the page.
+SEPARATORS = " \t-\u2013\u2014:|/\u00b7,"
+_SEP_RUN = "[" + re.escape(SEPARATORS) + "]+"
+
+
 def _short(name: str, area: str) -> str:
     """Drop the room's name from the front of a card's name: "Kitchen Cans"
-    in the Kitchen is "Cans"."""
-    if area and name.lower().startswith(area.lower() + " "):
-        rest = name[len(area) + 1:].strip()
-        return rest[:1].upper() + rest[1:] if rest else name
-    return name
+    in the Kitchen is "Cans", and "Kitchen - Bread Stretch" is "Bread
+    Stretch" — the separator goes with the room, or the card reads "- Bread
+    Stretch". The room has to end at a separator: "Kitchenette Lamp" in the
+    Kitchen is somebody else's room."""
+    if not area:
+        return name
+    m = re.match(re.escape(area) + _SEP_RUN, name, re.I)
+    if not m:
+        return name
+    rest = name[m.end():].strip(SEPARATORS)
+    return rest[:1].upper() + rest[1:] if rest else name
+
+
+def _distinct(cards: list[dict], full: dict[str, str]) -> None:
+    """Two cards in one section must not read the same.
+
+    Shortening is per card, so two players called "Kitchen Mini" and
+    "Kitchen mini" (a speaker and its Music Assistant copy) both came out
+    "Mini". Where a shortened name repeats, every card sharing it goes back
+    to its full friendly name, written on the card; where the full names repeat too, the part of
+    the entity id the name does not already say is added ("Mini (mini 2)"),
+    because a page with two identical words on it cannot be told apart."""
+    def shown(card: dict) -> str:
+        return card.get("name") or full[card["entity"]]
+
+    groups: dict[str, list[dict]] = {}
+    for card in cards:
+        groups.setdefault(shown(card).lower(), []).append(card)
+    for same in groups.values():
+        if len(same) < 2:
+            continue
+        for card in same:
+            # Written out, not left blank: the panel shortens an unnamed card
+            # by the same rule, and would put the collision straight back.
+            card["name"] = full[card["entity"]]
+    groups = {}
+    for card in cards:
+        groups.setdefault(shown(card).lower(), []).append(card)
+    for same in groups.values():
+        if len(same) < 2:
+            continue
+        tails = {}
+        for card in same:
+            words = set(re.findall(r"[a-z0-9]+", full[card["entity"]].lower()))
+            object_id = card["entity"].split(".", 1)[1]
+            tails[card["entity"]] = " ".join(w for w in object_id.split("_") if w and w not in words)
+        unique = len(set(tails.values())) == len(tails)
+        for card in same:
+            name, tail = full[card["entity"]], tails[card["entity"]]
+            if not unique:
+                # The ids say nothing apart either: the kind of thing does.
+                tail = " ".join(x for x in (card["entity"].split(".", 1)[0].replace("_", " "), tail) if x)
+            card["name"] = f"{name} ({tail})" if tail else name
 
 
 def _floor_order(floor: dict) -> tuple:
@@ -149,6 +206,9 @@ def build(house: dict) -> dict:
                 buckets["media"].append(card)
             elif domain == "camera":
                 buckets["cameras"].append(card)
+        _distinct([c for key in ("lights", "motion", "switches", "media", "cameras")
+                   for c in buckets[key]],
+                  {e: _name(states.get(e), e) for e in eids})
         groups = []
         if scenes:
             groups.append({"cards": [{"type": "scenes", "entities": scenes[:8]}]})

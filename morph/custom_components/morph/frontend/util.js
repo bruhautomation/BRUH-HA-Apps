@@ -119,15 +119,24 @@ export function friendly(hass, eid, fallback) {
   return (st && st.attributes && st.attributes.friendly_name) || fallback || String(eid || '').split('.').pop().replace(/_/g, ' ');
 }
 
-// "Kitchen Cans" in the Kitchen reads "Cans".
+// What may sit between a room's name and the rest: spaces and the separators
+// people type ("Kitchen - Bread Stretch"). generator.py strips the same set.
+const SEPARATORS = ' \t-\u2013\u2014:|/\u00b7,';
+const isSep = (ch) => SEPARATORS.includes(ch);
+
+// "Kitchen Cans" in the Kitchen reads "Cans", and "Kitchen - Bread Stretch"
+// reads "Bread Stretch": the separator goes with the room. The room has to end
+// at a separator, so "Kitchenette Lamp" stays whole.
 export function shortName(name, room) {
   const n = String(name || '');
   const r = String(room || '');
-  if (r && n.toLowerCase().startsWith(r.toLowerCase() + ' ')) {
-    const rest = n.slice(r.length + 1).trim();
-    return rest ? rest[0].toUpperCase() + rest.slice(1) : n;
-  }
-  return n;
+  if (!r || n.length <= r.length || n.slice(0, r.length).toLowerCase() !== r.toLowerCase() || !isSep(n[r.length])) return n;
+  let i = r.length;
+  while (i < n.length && isSep(n[i])) i += 1;
+  let j = n.length;
+  while (j > i && isSep(n[j - 1])) j -= 1;
+  const rest = n.slice(i, j);
+  return rest ? rest[0].toUpperCase() + rest.slice(1) : n;
 }
 
 export const UNAVAILABLE = ['unavailable', 'unknown'];

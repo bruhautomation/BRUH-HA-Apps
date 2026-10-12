@@ -143,6 +143,28 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await settle(p, 300);
   let calls = await p.evaluate(() => window.__calls);
   if (!calls.some((x) => x.domain === 'light' && x.service === 'toggle')) fail(name, `tapping a light did not toggle it: ${JSON.stringify(calls)}`);
+  // The tap is a use, tied to its card and section — the learning loop's
+  // only evidence. Then the page is taken out and put back the way Home
+  // Assistant does with a hidden panel (the SAME element: boot() does not run
+  // again), a send fails the way a suspended connection fails it, and the use
+  // must still arrive: logged, kept, and sent on the next chance.
+  const queued = await p.evaluate(() => window.__panel.usage.slice());
+  if (!queued.some((u) => u.kind === 'toggle' && u.card === 'c_mudroom' && u.section)) fail(name, `tapping a light logged no use for its card: ${JSON.stringify(queued)}`);
+  const usageSent = () => p.evaluate(() => window.__ws.filter((m) => m.type === 'morph/usage').flatMap((m) => m.events));
+  await p.evaluate(() => { const el = window.__panel; const host = el.parentNode; host.removeChild(el); host.appendChild(el); });
+  await settle(p, 300);
+  if (!(await usageSent()).some((u) => u.card === 'c_mudroom')) fail(name, 'a use was not sent when the panel was taken out of the page');
+  c = await tileCenter(p, 'c_mudroom');
+  await p.mouse.click(c.x, c.y);
+  await settle(p, 200);
+  const before = (await usageSent()).length;
+  await p.evaluate(() => { window.__usageFail = 1; window.dispatchEvent(new Event('pagehide')); });
+  await settle(p, 200);
+  if ((await usageSent()).length !== before) fail(name, 'the failed usage send was recorded as sent');
+  if (!(await p.evaluate(() => window.__panel.usage.some((u) => u.card === 'c_mudroom')))) fail(name, 'a usage send that failed dropped its events instead of keeping them');
+  await p.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await settle(p, 200);
+  if ((await usageSent()).length <= before) fail(name, 'after the panel was put back, uses were not sent again (the flush stopped for good)');
   c = await p.evaluate(() => { const el = window.__panel.shadowRoot.querySelector('[data-tile="c_countertop"]'); el.scrollIntoView({ block: 'center' }); const r = el.getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; });
   await p.evaluate(() => { window.__calls = []; });
   await p.mouse.move(c.l + 10, c.t + 28); await p.mouse.down();

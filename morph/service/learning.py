@@ -340,6 +340,7 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
     now = now or time.time()
     rows = usage(now - WINDOW_S)
     by_card = collections.Counter()
+    by_entity = collections.Counter()
     by_section = collections.Counter()
     when = collections.defaultdict(collections.Counter)
     kinds = collections.Counter()
@@ -348,6 +349,11 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
         card, sec = r.get("card") or "", r.get("section") or ""
         if card:
             by_card[card] += 1
+        elif str(r.get("detail") or "").count(".") == 1:
+            # A press the panel could not tie to a card (a button, a light
+            # group's member, from before it learned to) still names the
+            # entity it acted on: it counts toward the card showing that.
+            by_entity[str(r["detail"])] += 1
         if sec:
             by_section[sec] += 1
             try:
@@ -367,7 +373,8 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
                     ent = c.get("entity") or ""
                     st = (states or {}).get(ent) if ent else None
                     cards.append({"id": c["id"], "section": sec["id"], "type": c["type"],
-                                  "entity": ent, "uses": by_card.get(c["id"], 0),
+                                  "entity": ent,
+                                  "uses": by_card.get(c["id"], 0) + (by_entity.get(ent, 0) if ent else 0),
                                   "unavailable": bool(st and st.get("state") in ("unavailable", "unknown"))})
     out = outcomes(now - WINDOW_S)
     tells = [o for o in out if o.get("kind") == "tell"]
