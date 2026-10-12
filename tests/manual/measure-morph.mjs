@@ -456,6 +456,33 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   }
 }
 
+// A copy an update paused: "Make it again" has to answer where it was
+// pressed. It shipped answering with a line in the header and leaving the
+// note exactly as it was, which read as nothing happening.
+for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(name === 'phone' ? { hasTouch: true } : {}) });
+  await route(ctx, { narrow: name === 'phone' });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await p.evaluate(() => { window.__fixture.state.code = [{ name: 'morph-panel.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.load(); });
+  await settle(p, 900);
+  const notes = () => p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.note')].map((n) => n.textContent.replace(/\s+/g, ' ')).join(' | '));
+  const btn = p.locator('[data-act="code-redo"]');
+  if (!(await btn.count())) { fail(`redo ${name}`, 'no Make it again on a paused copy'); await ctx.close(); continue; }
+  await btn.first().click();
+  await settle(p, 400);
+  const working = await notes();
+  if (!/brAIn is making your change to Morph’s morph-panel\.js again/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
+  if (!(await p.locator('.note [data-tell]').count())) fail(`redo ${name}`, 'brAIn’s box did not open in the note');
+  if (await btn.count()) fail(`redo ${name}`, 'Make it again is still offered while brAIn makes it again');
+  await settle(p, 2600);
+  const done = await notes();
+  if (!/Reload to see it/.test(done) || !/Undo/.test(done)) fail(`redo ${name}`, `the finished redo does not offer Reload and Undo (${done.slice(0, 160)})`);
+  if (/is paused/.test(done)) fail(`redo ${name}`, 'the note still says the change is paused after brAIn made it again');
+  await ctx.close();
+}
+
 await browser.close();
 if (problems.length) {
   console.error(`measure-morph: ${problems.length} problem(s)`);

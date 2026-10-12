@@ -39,6 +39,11 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\.js$")
 # fails, and so the one file that has to keep working.
 FIXED = ("boot.js",)
 BASE_FILE = ".base.json"
+# Morph's own file as it was when each copy was written. An update replaces
+# Morph's own, so without this a paused copy can only be compared with the
+# NEW file, which mixes this house's change with everything the release
+# changed; with it, making the change again is a three-way merge.
+BASE_DIR = ".base"
 
 
 def code_dir() -> Path:
@@ -79,11 +84,38 @@ def record_bases() -> bool:
         if prev and prev.get("own") == own:
             out[p.name] = prev
         else:
-            out[p.name] = {"own": own, "base": _sha(paths.SHIPPED / p.name), "at": int(time.time())}
+            shipped = paths.SHIPPED / p.name
+            out[p.name] = {"own": own, "base": _sha(shipped), "at": int(time.time())}
+            _keep_base(p.name, shipped)
     if out == bases:
         return False
     paths.write_json(code_dir() / BASE_FILE, out, indent=1)
     return True
+
+
+def _keep_base(name: str, shipped: Path) -> None:
+    """Keep Morph's own ``name`` beside the copy written against it (or
+    drop a stale one when Morph ships no such file)."""
+    kept = code_dir() / BASE_DIR / name
+    try:
+        if shipped.is_file():
+            if _sha(kept) != _sha(shipped):
+                kept.parent.mkdir(exist_ok=True)
+                paths.write_text(kept, shipped.read_text(encoding="utf-8"))
+        else:
+            kept.unlink(missing_ok=True)
+    except OSError:
+        pass  # the record still says which version it was; the redo prompt says the original is missing
+
+
+def kept_base(name: str) -> Path | None:
+    """Morph's own file this copy was written against, when it was kept
+    and is the one the record names."""
+    rec = _bases().get(name)
+    kept = code_dir() / BASE_DIR / name
+    if isinstance(rec, dict) and kept.is_file() and _sha(kept) == rec.get("base"):
+        return kept
+    return None
 
 
 def status() -> list[dict]:
@@ -126,13 +158,35 @@ def reset(name: str) -> tuple[bool, str]:
     if not p.exists():
         return False, "There is no change to that file."
     p.unlink()
+    (code_dir() / BASE_DIR / name).unlink(missing_ok=True)
     record_bases()
     return True, ""
 
 
-def redo_words(name: str, version: str) -> str:
-    """What brAIn is asked when an update paused a copy."""
-    return (f"Morph was updated to {version}, and its own {name} changed underneath your change to it, "
-            f"so your change is paused. Your version is /config/morph/frontend/{name}; Morph's new copy is "
-            f"{paths.SHIPPED / name}. Make the same change again on top of Morph's new copy and save it as "
-            f"/config/morph/frontend/{name}.")
+def redo_words(name: str, version: str, history: list[str] | None = None) -> str:
+    """What brAIn is asked when an update paused a copy. The first sentence
+    is what a person reads where the request is listed."""
+    mine = f"/config/morph/frontend/{name}"
+    base = kept_base(name)
+    lines = [f"Make my change to Morph's {name} again on the new Morph ({version}).",
+             f"Morph was updated, its own {name} changed underneath this house's change to it, so the change "
+             f"is paused and Morph's own is running.",
+             f"- This house's version: {mine}",
+             f"- Morph's new {name}: {paths.SHIPPED / name}"]
+    if base:
+        lines += [f"- Morph's {name} as it was when the change was made: {base}",
+                  f"The change is the difference between that file and {mine}. Apply that difference to Morph's "
+                  f"new {name} (a three-way merge: keep everything the update changed) and save the result as "
+                  f"{mine}."]
+    else:
+        lines += [f"Morph's {name} from before the update was not kept, so {mine} differs from the new file both "
+                  f"by this house's change and by everything the update changed. Work out what the house's "
+                  f"change was (the commits below say what it was for), then start from Morph's new {name}, "
+                  f"make only that change, and save the result as {mine}. Never copy the old file over the new "
+                  f"one: that would undo the update."]
+    said = [m for m in (history or []) if m][:6]
+    if said:
+        lines.append(f"Commits that changed {mine}, newest first:")
+        lines += [f"- {m}" for m in said]
+    lines.append("If the change is no longer needed (the update already does it), say so and leave the file alone.")
+    return "\n".join(lines)

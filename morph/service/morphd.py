@@ -43,6 +43,7 @@ import tell  # noqa: E402
 log = logging.getLogger("morph")
 
 VERSION = os.environ.get("ADDON_VERSION", "dev")
+REDO_PATH = "Morph's own code"
 REQUEST_POLL_S = 0.25
 WATCH_S = 2.0
 TICK_S = 60.0
@@ -269,10 +270,16 @@ async def handle(kind: str, p: dict) -> dict:
         return {"ok": True, "commit": sha}
     if kind == "code_redo":
         name = str(p.get("name") or "")
+        # A second press while brAIn is still at it shows the same request
+        # rather than starting another one on the same file.
+        for a in tell.activity():
+            if a.get("path") == REDO_PATH and a.get("label") == name:
+                return {"ok": True, "already": True, **(tell.read_state(a["id"]) or {"id": a["id"]})}
         if not any(r["name"] == name and r["status"] == "paused" for r in morphcode.status()):
             return {"ok": False, "error": "That change is not paused."}
-        st = tell.start({"kind": "dashboard", "label": name, "path": "Morph's own code"},
-                        morphcode.redo_words(name, VERSION))
+        history = [c["message"] for c in await asyncio.to_thread(gitrepo.log, 12, f"frontend/{name}")]
+        st = tell.start({"kind": "code", "id": name, "label": name, "path": REDO_PATH},
+                        morphcode.redo_words(name, VERSION, history))
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
     if kind == "lessons":

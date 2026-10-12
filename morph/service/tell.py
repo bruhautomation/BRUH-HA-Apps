@@ -86,6 +86,13 @@ RESULT_SCHEMA = {
                                   "DASHBOARD to look or behave. Never a fact about the house."},
         "saw": {"type": "string",
                 "description": "One sentence: what in the screenshot this request is about."},
+        "facts": {"type": "array", "maxItems": 6,
+                  "items": {"type": "object", "required": ["fact"],
+                            "properties": {"fact": {"type": "string"},
+                                           "subject": {"type": "string"}}},
+                  "description": "Durable facts about the HOUSE this request taught you (what a device "
+                                 "is, where it is, which sensor measures what), each with its entity id "
+                                 "or `area:<id>` as subject. Morph queues them for brAIn's memory."},
         "code_issue": {
             "type": "object", "required": ["title", "detail"],
             "properties": {
@@ -105,6 +112,7 @@ RESULT_SCHEMA = {
 KIND_WORDS = {
     "card": "card", "section": "section", "floor": "floor heading", "story": "story line",
     "upcoming": "Coming up timeline", "scenes": "house-wide scenes line", "dashboard": "whole dashboard",
+    "code": "Morph's own code",
 }
 
 _RUNNING: dict[str, asyncio.Task] = {}
@@ -205,8 +213,10 @@ def progress(tid: str, seen: int) -> tuple[list[str], int]:
 def target_yaml(target: dict) -> str:
     """The current YAML of what was held, so brAIn edits what is there
     rather than what it imagines."""
-    dash, _, text = store.read()
     kind, tid = target.get("kind"), target.get("id")
+    if kind == "code":
+        return ""  # a change to Morph's own module: the request names the files to read
+    dash, _, text = store.read()
     import yaml
     for fl in dash.get("floors") or []:
         if kind == "floor" and fl.get("id") == tid:
@@ -387,7 +397,8 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         for p in previous[-4:]:
             lines.append(f"- asked “{p.get('text')}” → you answered: {p.get('say')}")
         lines.append("")
-    lines += ["Current YAML of the target:", "```yaml", current.strip()[:12000], "```", ""]
+    if current.strip():
+        lines += ["Current YAML of the target:", "```yaml", current.strip()[:12000], "```", ""]
     learned = lessons()
     if learned.strip():
         lines += ["What this household has taught Morph (follow it unless the request says otherwise):",
@@ -421,9 +432,10 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         "- Keep dashboard.yaml valid YAML in Morph's schema (AGENTS.md); an unknown card type is",
         "  passed to Lovelace as-is, so a Lovelace card's YAML is always a valid card.",
         "- Prefer the smallest change that does what was asked.",
-        "- What you learn about the HOUSE (what a device is, where it is, who uses it) is brAIn's",
-        "  memory: record it with remember_fact. LEARNED.md and `lesson` are only for how this",
-        "  household wants its DASHBOARD to look and behave.",
+        "- What you learn about the HOUSE (what a device is, where it is, which sensor measures what)",
+        "  is brAIn's memory: put it in `facts` and Morph queues it. Do not call remember_fact here:",
+        "  this run is not a conversation, and brAIn's action gate refuses it. LEARNED.md and",
+        "  `lesson` are only for how this household wants its DASHBOARD to look and behave.",
         "- Nothing about Morph is out of reach. If the request is about Morph's OWN panel — its",
         "  header, the gear, the layout, a built-in card type, its styles — change it: copy the module",
         f"  from Morph's own copy in {paths.SHIPPED}/ (read-only; do not edit it there) to",
@@ -595,7 +607,7 @@ async def _run(state: dict) -> None:
         state["saw"] = str((data or {}).get("saw") or "")[:400]
         issue = (data or {}).get("code_issue")
         code_files = [f.split("/", 1)[1] for f in (await asyncio.to_thread(gitrepo.changed_files, commit) if commit else [])
-                      if f.startswith("frontend/") and f.endswith(".js")]
+                      if f.startswith("frontend/") and f.endswith(".js") and f.count("/") == 1]
         if code_files:
             # Morph changed itself: the page has to reload to run the new
             # code, and the person is asked whether Morph should have it for
@@ -612,6 +624,9 @@ async def _run(state: dict) -> None:
             state["issue"] = "asked"
         state["phase"], state["say"] = phase, say
         state["reload"] = bool(commit) or bool((data or {}).get("reload"))
+        filed = await asyncio.to_thread(queue_facts, (data or {}).get("facts"), tid)
+        if filed:
+            _step(state, f"Queued {filed} fact{'' if filed == 1 else 's'} about the house for brAIn's memory", "good")
         lesson = str((data or {}).get("lesson") or "").strip()
         if lesson:
             await asyncio.to_thread(learning.add_lesson, lesson, f"told: “{state['text']}”")
@@ -637,6 +652,50 @@ async def _run(state: dict) -> None:
         _RUNNING.pop(tid, None)
 
 
+MAX_FACTS = 6
+FACT_CHARS = 400
+SUBJECT_RE = re.compile(r"^(?:[a-z_]+\.[a-z0-9_]+|area:[a-z0-9_]+|house)$")
+
+
+def queue_facts(facts, tid: str) -> int:
+    """File what a Tell learned about the house in brAIn's memory inbox,
+    the way remember_fact does (one JSONL file, one line per fact). A Tell
+    is a task run, where brAIn's action gate refuses remember_fact because
+    nobody asked to remember anything, so the facts ride in the answer and
+    the consolidator still decides what is worth keeping. Nothing is
+    written when brAIn's memory folder is not there."""
+    if not isinstance(facts, list) or not facts:
+        return 0
+    memory = paths.BRAIN_SHARED / "memory"
+    if not memory.is_dir():
+        return 0
+    now = int(time.time())
+    rows = []
+    for f in facts[:MAX_FACTS]:
+        if not isinstance(f, dict):
+            continue
+        text = " ".join(str(f.get("fact") or "").split())[:FACT_CHARS]
+        if not text:
+            continue
+        row = {"ts": now, "source": "morph", "fact": text, "confidence": "high", "run_id": tid}
+        subject = str(f.get("subject") or "").strip().lower()
+        if SUBJECT_RE.match(subject):
+            row["subject"] = subject
+        rows.append(row)
+    if not rows:
+        return 0
+    inbox = memory / "inbox"
+    try:
+        inbox.mkdir(exist_ok=True)
+        path = inbox / f"{now}-morph-{tid[-10:]}.jsonl"
+        paths.write_text(path, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+        paths.hand_to_brain(path)
+    except OSError as exc:
+        log.warning("could not queue %d fact(s) for brAIn: %s", len(rows), exc)
+        return 0
+    return len(rows)
+
+
 def _morph_file(line: str) -> bool:
     """Whether one of brAIn's "changed" lines is a file in /config/morph
     rather than something in Home Assistant. "dashboard.yaml" alone used to
@@ -660,6 +719,8 @@ def outcome(state: dict, summary: str, commit: str, back: dict) -> tuple[str, st
         state["unchanged"] = True
         if state.get("scope") == "house":
             return "done", summary or "brAIn answered without changing anything."
+        if (state.get("target") or {}).get("kind") == "code":
+            return "done", "brAIn changed nothing in Morph's code." + said
         return "done", "Nothing on the dashboard changed." + said
     if morph_files == ["dashboard.yaml"] and not back["shows"]:
         state["unchanged"] = True
@@ -730,7 +791,9 @@ def answer_issue(tid: str, verb: str) -> dict:
     if state.get("code") and state.get("commit"):
         # The change this house made to Morph's own code, as a patch, so it
         # can be made part of Morph for everybody.
-        patch = gitrepo.diff(state["commit"], "frontend/", limit=3600)
+        # Not the kept originals under frontend/.base/: they are Morph's own
+        # file, and a whole module in the patch buries the change.
+        patch = gitrepo.diff(state["commit"], "frontend/", limit=3600, exclude="frontend/.base/")
         if patch.strip():
             detail += ("\n\nThe change, made in /config/morph/frontend/ (a copy of Morph's own "
                        "custom_components/morph/frontend/):\n```diff\n" + patch + "\n```")

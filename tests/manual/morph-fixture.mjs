@@ -20,7 +20,7 @@ import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.2';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -216,6 +216,8 @@ const hass = {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
       if (msg.kind === 'tell') { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Reading ' + (p.target.path || ''), tone: '' }, ...(p.shot ? [{ t: 'Took a picture of it for brAIn', tone: '' }] : []), { t: 'Handed to brAIn as task ' + id, tone: '' }], payload: 'MORPH · a change request…\\nAsked: “' + p.text + '”' , text: p.text, at: Date.now(), started: Date.now() / 1000, issueAsk: /Morph cannot/.test(p.text) }; return { ok: true, ...tells[id] }; }
+      // Make it again: a tell about Morph's own module, answered the way morphd.handle does.
+      if (msg.kind === 'code_redo') { const run = Object.values(tells).find((x) => x.redo === p.name && x.phase !== 'done'); if (run) return { ok: true, already: true, ...run }; const id = 'morph-t' + (++seq); tells[id] = { id, redo: p.name, phase: 'waiting', steps: [{ t: 'Reading Morph’s own code', tone: '' }, { t: 'Handed to brAIn as task ' + id, tone: '' }], text: 'Make my change to Morph’s ' + p.name + ' again on the new Morph (' + F.state.version + ').', at: Date.now(), started: Date.now() / 1000 }; F.state.activity = [{ id, kind: 'code', target: p.name, label: p.name, path: 'Morph’s own code', text: tells[id].text, phase: 'waiting', started: Date.now() / 1000 }]; return { ok: true, ...tells[id] }; }
       if (msg.kind === 'tell_issue') { const s = tells[p.id]; if (s) s.issue = p.verb === 'send' ? 'sent' : 'declined'; return { ok: true }; }
       if (msg.kind === 'tell_undo') return { ok: true, commit: 'undo1' };
       if (msg.kind === 'report') { if (!String(p.text || '').trim()) return { ok: false, error: 'Say what should be fixed.' }; F.state.devloop = { ...F.state.devloop, mine: [{ fp: 'fp' + (++seq), what: p.text, ui: !!p.ui, at: Date.now() / 1000, picked: false }].concat(F.state.devloop.mine || []) }; return { ok: true }; }
@@ -226,6 +228,7 @@ const hass = {
     if (t === 'morph/tell_status') {
       const s = tells[msg.tell]; if (!s) return { phase: 'missing' };
       if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Looking at the screenshot', tone: '', brain: true }, { t: 'Reading dashboard.yaml', tone: '', brain: true }); }
+      if (s.redo && Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the header change again on top of the new morph-panel.js.'; s.commit = 'c0de'; s.code = [s.redo]; s.reload = true; s.steps.push({ t: 'Changed Morph’s own ' + s.redo, tone: 'good' }); s.code_issue = { title: 'A header change', detail: 'brAIn changed Morph’s own ' + s.redo + '.' }; s.issue = 'asked'; F.state.code = []; F.state.activity = []; }
       if (Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the cans card wider and moved it to the top of the kitchen.'; s.saw = 'The Cans card, a narrow strip at the bottom of the Kitchen.'; s.commit = 'c0ffee'; s.reload = false; s.shows = ['Changed the card “Cans” in Kitchen.']; s.steps.push({ t: 'Editing dashboard.yaml', tone: '', brain: true }, { t: 'Changed dashboard.yaml', tone: 'good' }); if (s.issueAsk) { s.code_issue = { title: 'The light card cannot show two colours at once', detail: 'A split strip in the light card.' }; s.issue = 'asked'; } }
       return { ...s };
     }
