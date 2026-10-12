@@ -4140,29 +4140,200 @@ def get_weather_forecast(entity_id, forecast_type="daily"):
 # Line count alone doesn't bound the payload — tracebacks with huge single
 # lines (template errors embedding full configs) still need a byte cap.
 MAX_ERROR_LOG_BYTES = 50_000
+# What a caller is handed is at most this many lines AFTER folding, so a
+# message repeated once a minute takes one line however often it repeats
+# and cannot push every other line out of the window.
+MAX_ERROR_LOG_LINES = 100
+
+# Colour codes the journal keeps from Core's coloured console handler.
+_ANSI_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
+_LOG_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2}:\d{2})(?:[.,]\d+)?)\s+")
+_LOG_HEAD_RE = re.compile(
+    r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL|FATAL)\s+"
+    r"(?:\([^)]*\)\s+)?(?:\[([^\]]+)\]\s*)?(.*)$")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+_LEVEL_RANK = {name: i for i, name in enumerate(LOG_LEVELS)}
+_LEVEL_RANK["FATAL"] = _LEVEL_RANK["CRITICAL"]
+_LEVEL_RANK["WARN"] = _LEVEL_RANK["WARNING"]
 
 
-def get_error_log():
-    """Get the Home Assistant error log.
+def _log_entries(text):
+    """Split a log into entries: a headed line plus the traceback under it.
+
+    A line is a continuation of the entry before it only when it looks like
+    one (indented, a `Traceback` line, or the exception line that closes a
+    traceback), so an unheaded line from another source (s6, the add-on's
+    own banner) stays a line of its own rather than being swallowed."""
+    entries = []
+    current = None
+    in_traceback = False
+    for raw in text.splitlines():
+        line = _ANSI_RE.sub("", raw).rstrip()
+        if not line.strip():
+            continue
+        ts_match = _LOG_TS_RE.match(line)
+        if ts_match:
+            rest = line[ts_match.end():]
+            head = _LOG_HEAD_RE.match(rest)
+            current = {
+                "ts": ts_match.group(1), "clock": ts_match.group(2),
+                "level": head.group(1) if head else "",
+                "logger": (head.group(2) or "") if head else "",
+                "message": head.group(3) if head else rest,
+                "first": line, "more": [],
+            }
+            entries.append(current)
+            in_traceback = False
+            continue
+        if current is not None:
+            if line[:1].isspace() or line.startswith("Traceback"):
+                current["more"].append(line)
+                in_traceback = in_traceback or line.startswith("Traceback")
+                continue
+            if in_traceback:
+                current["more"].append(line)
+                in_traceback = False
+                continue
+        current = {"ts": "", "clock": "", "level": "", "logger": "",
+                   "message": line, "first": line, "more": []}
+        entries.append(current)
+        in_traceback = False
+    return entries
+
+
+def _fold_log(entries):
+    """One row per distinct entry, in order of its LAST occurrence.
+
+    Two entries are the same when they say the same thing at the same level
+    from the same logger with the same traceback — the timestamp and the
+    thread name are what differ between repeats, so neither is in the key."""
+    rows = {}
+    for entry in entries:
+        if entry["level"]:
+            key = (entry["level"], entry["logger"], entry["message"],
+                   tuple(entry["more"]))
+        else:
+            key = ("", "", entry["first"], tuple(entry["more"]))
+        row = rows.pop(key, None)
+        if row is None:
+            row = dict(entry, count=0, first_clock=entry["clock"])
+        row["count"] += 1
+        row["last_clock"] = entry["clock"]
+        row["first"] = entry["first"]
+        rows[key] = row  # re-inserted: dict order is last-occurrence order
+    return list(rows.values())
+
+
+def _render_log_row(row):
+    lines = [row["first"]] + row["more"]
+    if row["count"] > 1:
+        span = ""
+        if row["first_clock"] and row["last_clock"]:
+            span = f", first {row['first_clock']}, last {row['last_clock']}"
+        lines[0] = f"{lines[0]}  [repeated {row['count']} times{span}]"
+    return lines
+
+
+def _format_error_log(text, level=None, match=None):
+    """Turn a raw log into what a model can read: no colour codes, a repeat
+    folded into one line with its count and its first and last time, the
+    filters applied, and the cap spent on DISTINCT lines — applied after
+    folding, so a flood of one message cannot hide every other line."""
+    entries = _log_entries(text)
+    if level:
+        floor = _LEVEL_RANK[level]
+        entries = [e for e in entries
+                   if e["level"] and _LEVEL_RANK.get(e["level"], -1) >= floor]
+    if match:
+        needle = match.lower()
+        entries = [e for e in entries
+                   if needle in e["logger"].lower()
+                   or needle in e["message"].lower()]
+    rows = _fold_log(entries)
+    folded = sum(r["count"] - 1 for r in rows)
+
+    def pick(budget_lines):
+        chosen, used_lines, used_bytes = [], 0, 0
+        for row in reversed(rows):
+            lines = _render_log_row(row)
+            if not chosen and len(lines) > budget_lines:
+                lines = lines[:budget_lines]  # one traceback past the cap
+            size = sum(len(x) + 1 for x in lines)
+            if chosen and (used_lines + len(lines) > budget_lines
+                           or used_bytes + size > MAX_ERROR_LOG_BYTES):
+                break
+            chosen.append(lines)
+            used_lines += len(lines)
+            used_bytes += size
+        chosen.reverse()
+        return chosen
+
+    def notes_for(chosen):
+        notes = []
+        if folded:
+            notes.append(f"{folded} repeated line(s) folded")
+        omitted = len(rows) - len(chosen)
+        if omitted:
+            notes.append(f"{omitted} older distinct "
+                         f"entr{'y' if omitted == 1 else 'ies'} not shown")
+        return notes
+
+    chosen = pick(MAX_ERROR_LOG_LINES)
+    notes = notes_for(chosen)
+    if notes:  # the note takes a line of the budget, never one past it
+        chosen = pick(MAX_ERROR_LOG_LINES - 1)
+        notes = notes_for(chosen)
+    out = [line for lines in chosen for line in lines]
+    if not out:
+        wanted = []
+        if level:
+            wanted.append(f"at {level} or above")
+        if match:
+            wanted.append(f"matching '{match}'")
+        return ("No log lines " + " ".join(wanted) + "."
+                if wanted else "The log is empty.")
+    if notes:
+        out.insert(0, "(" + "; ".join(notes) + ")")
+    return "\n".join(out)[-MAX_ERROR_LOG_BYTES:]
+
+
+def get_error_log(level=None, match=None):
+    """Get the Home Assistant error log, cleaned up for reading.
 
     Uses the Supervisor /core/logs endpoint which reads from the systemd
     journal.  This works reliably on HA 2025.11+ where the traditional
     home-assistant.log file was removed on supervised installations.
     Falls back to the legacy /api/error_log REST endpoint for
     non-supervised setups.
+
+    The journal keeps Core's colour codes, and a warning repeated once a
+    minute filled the whole window of raw lines; `_format_error_log` strips
+    the codes, folds repeats with a count and their first and last time,
+    filters by minimum `level` and by a `match` on the logger or message,
+    and caps what is left. The result is still a text string.
     """
+    if level is not None:
+        level = str(level).strip().upper()
+        if level == "":
+            level = None
+        elif level not in _LEVEL_RANK:
+            return {"error": f"Unknown level '{level}'. Use one of: "
+                             + ", ".join(LOG_LEVELS) + "."}
+    if match is not None:
+        match = str(match).strip() or None
+
     # Primary: Supervisor journal logs (works on HAOS / Supervised)
     result = ha_api_request("/core/logs", accept="text/plain")
     if isinstance(result, str) and result.strip():
-        lines = result.strip().split("\n")
-        return "\n".join(lines[-100:])[-MAX_ERROR_LOG_BYTES:]
+        return _format_error_log(result, level, match)
 
     # Fallback: legacy HA Core REST endpoint (works if log file exists)
     if isinstance(result, dict) and "error" in result:
         result = ha_api_request("/api/error_log")
         if isinstance(result, str) and result.strip():
-            lines = result.strip().split("\n")
-            return "\n".join(lines[-100:])[-MAX_ERROR_LOG_BYTES:]
+            return _format_error_log(result, level, match)
 
     if isinstance(result, dict) and "error" in result:
         return {
@@ -6677,10 +6848,20 @@ TOOLS = [
     },
     {
         "name": "get_error_log",
-        "description": "Get the last 100 lines of Home Assistant logs from the Supervisor journal. Useful for diagnosing integration issues, failed automations, and system errors.",
+        "description": "Get the newest Home Assistant log lines from the Supervisor journal, colour codes stripped and repeats folded into one line with a count and their first and last time, so a message repeated every minute cannot hide the rest. Useful for diagnosing integration issues, failed automations, and system errors. Narrow it with level and match.",
         "inputSchema": {
             "type": "object",
-            "properties": {}
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                    "description": "Only lines at this level or above (e.g. ERROR shows ERROR and CRITICAL). Lines with no level are left out when this is set."
+                },
+                "match": {
+                    "type": "string",
+                    "description": "Only lines whose logger or message contains this text, case-insensitive (e.g. 'zwave_js' or 'homeassistant.components.mqtt')."
+                }
+            }
         }
     },
     {

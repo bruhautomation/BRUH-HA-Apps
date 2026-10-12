@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import reports
+from textclip import clip
 
 from . import STREAMS
 
@@ -97,8 +98,11 @@ def morph(outbox: Path) -> list[dict] | None:
         where, what = str(row.get("where") or ""), str(row.get("what") or "")
         if not where.startswith("Morph") or not what:
             continue
-        item = {"where": where[:80], "what": what[:200],
-                "detail": str(row.get("detail") or "")[:600],
+        # Morph caps `what` at 160 itself, so this cut keeps a row Morph
+        # wrote byte-for-byte (its fingerprint with it) and only ever
+        # shortens one written some other way — on a word.
+        item = {"where": where[:80], "what": clip(what, 200),
+                "detail": clip(str(row.get("detail") or ""), 600),
                 "body": str(row.get("body") or "")[:6000]}
         if isinstance(row.get("impact"), dict):
             item["impact"] = row["impact"]
@@ -124,7 +128,7 @@ def wrongs(score_rows: list[dict], settled: list[dict]) -> list[dict]:
     for e in settled or []:
         if e.get("kind") == "ignored" and e.get("note"):
             reasons.setdefault(str(e.get("source") or ""), []).append(
-                str(e["note"])[:200])
+                clip(" ".join(str(e["note"]).split()), 200))
     out = []
     for r in score_rows or []:
         wrong, total = int(r.get("wrong") or 0), int(r.get("total") or 0)
@@ -167,12 +171,21 @@ MAX_UNMET = 10
 UNMET_MIN_CONVERSATIONS = 2
 
 
-def capability(text: str, match: re.Match) -> str:
-    """The sentence brAIn said it could not do something in, from the
-    refusal on — "Sorry," and whatever led up to it are not the capability."""
+CAPABILITY_CHARS = 200
+
+
+def _capability_full(text: str, match: re.Match) -> str:
     rest = text[match.start():]
     end = _SENTENCE_END_RE.search(rest)
-    return " ".join((rest[:end.start()] if end else rest).split())[:200]
+    return " ".join((rest[:end.start()] if end else rest).split())
+
+
+def capability(text: str, match: re.Match) -> str:
+    """The sentence brAIn said it could not do something in, from the
+    refusal on — "Sorry," and whatever led up to it are not the capability.
+    It becomes an issue's title, so a long one is cut on a word, never in
+    the middle of one."""
+    return clip(_capability_full(text, match), CAPABILITY_CHARS)
 
 
 def capability_key(sentence: str) -> str:
@@ -223,7 +236,10 @@ def unmet(transcript_dir: Path, now: float | None = None) -> list[dict]:
                     continue
                 asked = False
                 sentence = capability(text, m)
-                key = capability_key(sentence)
+                # The key is read off the sentence as it was always cut,
+                # so a verdict stored against it still finds it.
+                key = capability_key(
+                    _capability_full(text, m)[:CAPABILITY_CHARS])
                 if not key:
                     continue
                 when = ev.get("ts") if isinstance(ev.get("ts"), (int, float)) \
@@ -325,8 +341,12 @@ MAX_ROWS = 6
 # What a Claude stream is shown of what it has already filed. Its own
 # budget, so a long fault list can never cut the one block that stops a
 # rewording being filed as a new issue.
+# A line is a report's place and its sentence, the sentence cut on a word:
+# a cut-off one is a report the run cannot recognise as the same thing in
+# other words, which is the one thing this block is for.
 MAX_REPORTED = 60
-REPORTED_CHARS = 6000
+REPORTED_WHAT_CHARS = 400
+REPORTED_CHARS = 12000
 
 
 def reported_block(listing: list[dict]) -> str:
@@ -344,13 +364,19 @@ def reported_block(listing: list[dict]) -> str:
             and not STREAMS.get(str(r.get("stream")), {}).get("rolling")
             and r.get("what")]
     rows.sort(key=lambda r: -float(r.get("last_seen") or 0))
-    lines = []
+    lines, used = [], 0
     for r in rows[:MAX_REPORTED]:
         note = " (the homeowner said never to report this)" \
             if r.get("state") == "discarded" else ""
-        lines.append(f"- {str(r.get('where') or '')[:120]}: "
-                     f"{str(r.get('what') or '')[:200]}{note}")
-    return "\n".join(lines)[:REPORTED_CHARS]
+        where = clip(" ".join(str(r.get("where") or "").split()), 120)
+        what = clip(" ".join(str(r.get("what") or "").split()),
+                    REPORTED_WHAT_CHARS)
+        line = f"- {where}: {what}{note}"
+        if used + len(line) + 1 > REPORTED_CHARS:
+            break  # whole lines only: the newest are kept, never half of one
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
 
 
 def analyst_prompt(stream: str, context: str, topic: str = "",
@@ -466,8 +492,8 @@ def design_context(insights: list, findings: list) -> str:
     for ins in (insights or [])[:24]:
         if not isinstance(ins, dict):
             continue
-        title = " ".join(str(ins.get("title") or "").split())[:140]
-        summary = " ".join(str(ins.get("summary") or "").split())[:400]
+        title = clip(" ".join(str(ins.get("title") or "").split()), 140)
+        summary = clip(" ".join(str(ins.get("summary") or "").split()), 400)
         if title or summary:
             parts.append(f"- {title} — {summary}")
     parts += ["", "FINDINGS AS WORDED (text | detail | what to do | what a look said):"]
@@ -475,9 +501,9 @@ def design_context(insights: list, findings: list) -> str:
         if not isinstance(f, dict):
             continue
         tri = f.get("triage") if isinstance(f.get("triage"), dict) else {}
-        bits = [" ".join(str(f.get(k) or "").split())[:300]
+        bits = [clip(" ".join(str(f.get(k) or "").split()), 300)
                 for k in ("text", "detail", "fix")]
-        bits.append(" ".join(str(tri.get("reason") or "").split())[:200])
+        bits.append(clip(" ".join(str(tri.get("reason") or "").split()), 200))
         parts.append("- " + " | ".join(bits))
     return "\n".join(parts)[:DESIGN_CHARS]
 
