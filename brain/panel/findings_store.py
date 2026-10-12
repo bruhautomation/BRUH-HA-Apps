@@ -2699,10 +2699,14 @@ def refresh_details(objs: list[dict]) -> int:
                 or cur.get("severity") != entry["severity"]):
             rose = _severity_rank(entry["severity"]) > _severity_rank(
                 cur.get("severity"))
+            moved = (str(cur.get("source") or "").startswith("check:")
+                     and names_moved(cur.get("detail"), entry["detail"]))
             cur["detail"] = entry["detail"]
             cur["severity"] = entry["severity"]
             if rose and cur.get("status") == "held":
                 _send_to_look(cur)
+            elif moved:
+                _verdict_outdated(cur)
             changed += 1
         # A check's own sentence about what to do follows the check, so a
         # reworded rule reaches the rows it already filed. Only while the
@@ -2717,6 +2721,61 @@ def refresh_details(objs: list[dict]) -> int:
     if changed:
         _write(items)
     return changed
+
+
+# What a row whose look no longer applies says until the next look does.
+LOOK_OUTDATED = ("What this reports has changed since brAIn last looked at "
+                 "it, so it is shown as it is now until brAIn looks again.")
+
+_MONTHS_DAYS = re.compile(
+    r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|"
+    r"february|march|april|june|july|august|september|october|november|"
+    r"december|mon|tue|wed|thu|fri|sat|sun|monday|tuesday|wednesday|"
+    r"thursday|friday|saturday|sunday|today|yesterday|tomorrow)\b")
+
+
+def _named_words(detail) -> set[str]:
+    """The words a check's detail is made of, with what moves every pass —
+    numbers, dates, a plural that follows a count — taken out."""
+    text = _MONTHS_DAYS.sub(" ", str(detail or "").lower())
+    words = re.findall(r"[^\W\d_]+", text)
+    return {w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words}
+
+
+def names_moved(old, new) -> bool:
+    """Whether a check's re-report names different things, not merely a
+    different count or time.
+
+    `sys.entry_failed` is ONE row naming every integration that failed to
+    load; a fourth joining the list is new evidence, while "since 3 Sep"
+    becoming "since 4 Sep" is the same report. A check's detail is written
+    by code, so its words are stable and only what it names moves them.
+    """
+    return _named_words(old) != _named_words(new)
+
+
+def _verdict_outdated(entry: dict, now: float | None = None) -> None:
+    """A look's verdict about what a row USED to say no longer stands.
+
+    A held row goes back to `triaging`, `_absorb`'s rule. A row already on
+    screen keeps its place — a row on the list never vanishes into a run —
+    and its verdict is replaced by "nothing has looked at this as it is",
+    which is the record the next look is offered (`unjudged_open`) and may
+    answer (`late_verdict_welcome`). Never a row a person put back: a
+    person overruling a verdict is not overruled back.
+    """
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if not record or record.get("elevated_by_person"):
+        return
+    stamp = int(now if now is not None else time.time())
+    status = entry.get("status")
+    if status == "held":
+        _send_to_look(entry, stamp)
+    elif status == "open" and record.get("verdict") != "untriaged":
+        entry["triage"] = _clean_triage({
+            "verdict": "untriaged", "reason": LOOK_OUTDATED, "at": stamp,
+            "v": record.get("v")})
+        entry["triaging_since"] = stamp
 
 
 def _severity_rank(severity) -> int:

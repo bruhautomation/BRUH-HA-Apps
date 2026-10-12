@@ -164,24 +164,36 @@ def _chore_kind(eid: str, st: dict) -> str:
 def select(states: dict) -> dict:
     """The power sensors to read tonight, and what the cap left out.
 
-    `{"ids": [...], "eligible": n, "cut": [...]}`. A washer, dryer or
-    dishwasher by name is ranked first; the rest are sorted by id, for
-    `baselines.candidates`' reason — an arbitrary set that changed
-    nightly would give half the house a profile that keeps appearing and
-    disappearing.
+    `{"ids": [...], "eligible": n, "cut": [...], "offline": [...]}`. A
+    washer, dryer or dishwasher by name is ranked first; the rest are
+    sorted by id, for `baselines.candidates`' reason — an arbitrary set
+    that changed nightly would give half the house a profile that keeps
+    appearing and disappearing.
+
+    A sensor that is unavailable right now is left out — unless it is
+    named as one of the chore machines. Its meter being offline tonight
+    does not empty the recorder of the ten days before, and dropping it
+    is how a house with a washer and a dryer read as one with neither;
+    `offline` names those, so the store can say so.
     """
     out = []
+    offline = []
     for eid, st in (states or {}).items():
         if not isinstance(st, dict):
             continue
         if not is_power(eid, st.get("attributes") or {}):
             continue
+        chore = bool(_chore_kind(eid, st))
         if st.get("state") in ("unavailable", "unknown", None):
-            continue
-        out.append((0 if _chore_kind(eid, st) else 1, eid))
+            if not chore:
+                continue
+            offline.append(eid)
+        out.append((0 if chore else 1, eid))
     ranked = [eid for _rank, eid in sorted(out)]
     return {"ids": ranked[:MAX_ENTITIES], "eligible": len(ranked),
-            "cut": sorted(ranked[MAX_ENTITIES:])}
+            "cut": sorted(ranked[MAX_ENTITIES:]),
+            "offline": sorted(e for e in offline
+                              if e in ranked[:MAX_ENTITIES])}
 
 
 def candidates(states: dict) -> list[str]:
@@ -407,17 +419,18 @@ def progress(payload: dict | None = None, path: str | None = None,
     built = int(payload.get("built_at") or 0) or None
     asked = int(payload.get("asked") or 0)
     cut = int(payload.get("cut_count") or 0)
+    offline = [e for e in (payload.get("offline") or []) if isinstance(e, str)]
     chores = 0
     try:
         from checks import chores as chore_check  # noqa: PLC0415
-        chores = len([e for e in entities.values()
+        chores = len([eid for eid, e in entities.items()
                       if isinstance(e, dict)
-                      and chore_check.kind_of(e.get("name") or "")])
+                      and chore_check.kind_of(f"{e.get('name') or ''} {eid}")])
     except Exception as exc:  # noqa: BLE001 — the narrower count is a detail
         log.debug("could not count chore machines: %s", exc)
     common = {"unit": "machines", "need": 1, "have": len(entities),
               "detail": {"profiled": len(entities), "chore_capable": chores,
-                         "cut": cut},
+                         "cut": cut, "offline": len(offline)},
               "updated_at": built, "per_unit_s": baselines.PROGRESS_UNIT_S,
               "now": now}
 
@@ -453,10 +466,20 @@ def progress(payload: dict | None = None, path: str | None = None,
     if entities:
         said = (f"{house.plural(len(entities), 'machine')} measured of "
                 f"{asked} power sensors")
-        said += (f" · {chores} of them a washer, dryer or dishwasher"
-                 if chores else
-                 " · none of them named as a washer, dryer or dishwasher, so "
-                 "no chore is raised")
+        dark = len(offline)
+        dark_said = (f"{dark} washer, dryer or dishwasher "
+                     f"{'meter is' if dark == 1 else 'meters are'} offline "
+                     "right now")
+        if chores:
+            said += f" · {chores} of them a washer, dryer or dishwasher"
+            if dark:
+                said += f" ({dark_said})"
+        elif dark:
+            said += (f" · {dark_said}, so no chore is raised until "
+                     f"{'it reports' if dark == 1 else 'they report'} again")
+        else:
+            said += (" · none of them named as a washer, dryer or "
+                     "dishwasher, so no chore is raised")
         return house.progress(state=house.READY, summary=said + beyond + ".",
                               **common)
     return house.progress(
@@ -526,6 +549,7 @@ async def build(session, states: dict, now: float | None = None,
     ids = chosen["ids"]
     payload: dict = {"built_at": int(now), "days": HISTORY_DAYS,
                      "asked": len(ids), "eligible": chosen["eligible"],
+                     "offline": chosen["offline"],
                      "cut_count": len(chosen["cut"]),
                      "cut": chosen["cut"][:CUT_SAMPLE], "entities": {}}
     if chosen["cut"]:
@@ -543,10 +567,21 @@ async def build(session, states: dict, now: float | None = None,
             "appliances", load(path),
             f"the recorder did not answer for any of the {len(ids)} power "
             "sensors asked about")
-    for eid, points in series.items():
-        shape = profile(points, now)
+    offline = set(chosen["offline"])
+    before = (load(path).get("entities") or {}) if offline else {}
+    for eid in ids:
+        shape = profile(series.get(eid) or [], now)
+        if not shape and eid in offline and isinstance(before.get(eid), dict):
+            # Its meter is offline and the recorder no longer holds enough
+            # of it: the machine is the same machine, so the shape an
+            # earlier pass measured stands.
+            shape = dict(before[eid])
         if not shape:
             continue
+        if eid in offline:
+            shape["offline"] = True
+        else:
+            shape.pop("offline", None)
         name = ((states.get(eid) or {}).get("attributes") or {}).get(
             "friendly_name")
         if name:

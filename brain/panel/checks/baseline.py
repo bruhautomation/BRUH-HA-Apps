@@ -25,7 +25,7 @@ import re
 import numfmt
 
 from . import devices
-from ._util import House, domain_of, join_names, parse_ts
+from ._util import House, domain_of, join_names, num, parse_ts
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -426,27 +426,39 @@ NAMED_ACTOR_DOMAINS = frozenset({"switch", "sensor", "binary_sensor",
 RELATED_MAX = 2
 
 
-def related_nearby(house: House, eid: str, st: dict) -> tuple[list, list]:
-    """(machines that can move this reading, sensors measuring the same)
-    in the same area as `eid`, by friendly name, stable order.
+# A sensor named for one of those machines is a READING of the machine,
+# not the machine: a "Dehumidifier power" sensor says when it ran, and is
+# named as that — never told it was "running or off" itself. Only these
+# classes say anything about when a machine ran; a "Fan temperature"
+# sensor says nothing about the fan.
+MACHINE_READING_CLASSES = frozenset({"power", "energy", "current", "running",
+                                     "power_factor", ""})
+
+
+def related_nearby(house: House, eid: str, st: dict
+                   ) -> tuple[list, list, list]:
+    """(machines that can move this reading, sensors measuring the same,
+    readings that say when one of those machines ran) in the same area as
+    `eid`, by friendly name, stable order.
 
     Read off the registries the pass already has, so the fix names what is
     there rather than guessing; an entity with no area has no neighbours.
     """
     area = house.area_id_of(eid)
     if not area:
-        return [], []
+        return [], [], []
     attrs = st.get("attributes") or {}
     klass = str(attrs.get("device_class") or "")
     domains, words = RELATED_ACTORS.get(klass, (set(), set()))
     own_device = (house.registry.get(eid) or {}).get("device_id")
-    actors, peers = [], []
+    actors, peers, traces = [], [], []
     for other in sorted(house.states):
         if other == eid or house.area_id_of(other) != area:
             continue
         if not house.enabled(other):
             continue
         other_st = house.states.get(other) or {}
+        other_attrs = other_st.get("attributes") or {}
         dom = domain_of(other)
         name = house.name(other)
         if dom in domains:
@@ -455,39 +467,97 @@ def related_nearby(house: House, eid: str, st: dict) -> tuple[list, list]:
         if dom in NAMED_ACTOR_DOMAINS and words:
             found = set(re.split(r"[^a-z0-9]+", f"{name} {other}".lower()))
             if found & words:
+                if dom in ("sensor", "binary_sensor"):
+                    if (str(other_attrs.get("device_class") or "")
+                            in MACHINE_READING_CLASSES
+                            and other_attrs.get("device_class") != klass):
+                        traces.append(name)
+                    continue
                 actors.append(name)
                 continue
-        other_attrs = other_st.get("attributes") or {}
         if (dom == "sensor" and klass
                 and other_attrs.get("device_class") == klass
                 and (house.registry.get(other) or {}).get("device_id")
                 != own_device):
             peers.append(name)
     return (list(dict.fromkeys(actors))[:RELATED_MAX],
-            list(dict.fromkeys(peers))[:RELATED_MAX])
+            list(dict.fromkeys(peers))[:RELATED_MAX],
+            list(dict.fromkeys(traces))[:RELATED_MAX])
 
 
 GENERIC_FIX = ("Look at what it is measuring. If this is normal for a "
                "reason brAIn cannot see — a guest, a heatwave, a new "
                "appliance — press Ignore and say why, and it will stop "
                "reporting it.")
+IGNORE_TAIL = ("If this is normal here, press Ignore and say why, and it "
+               "will stop reporting it.")
+
+
+def _fmt(value: float) -> str:
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
+def outdoor_reading(house: House, klass: str) -> str:
+    """What the snapshot already says it is outside, for a reading of the
+    room's air, or "". Pure over the snapshot: the thermal model's outdoor
+    reference for a temperature, and a weather entity's own attribute for
+    a temperature or a humidity. Nothing is fetched."""
+    if klass == "temperature":
+        ref = str((house.snap.get("thermal") or {}).get("outdoor") or "")
+        st = house.states.get(ref) or {}
+        value = num(st.get("state"))
+        if ref and value is not None:
+            unit = str((st.get("attributes") or {}).get(
+                "unit_of_measurement") or "")
+            return f"{house.name(ref)} reads {_fmt(value)}{unit}"
+    key = {"temperature": "temperature", "humidity": "humidity"}.get(klass)
+    if not key:
+        return ""
+    for weid in sorted(house.states):
+        if not weid.startswith("weather."):
+            continue
+        wattrs = (house.states.get(weid) or {}).get("attributes") or {}
+        value = num(wattrs.get(key))
+        if value is None:
+            continue
+        unit = ("%" if key == "humidity"
+                else str(wattrs.get("temperature_unit") or ""))
+        return (f"the weather for {house.name(weid)} has it at "
+                f"{_fmt(value)}{unit} outside")
+    return ""
 
 
 def unusual_fix(house: House, eid: str, st: dict) -> str:
-    """The fix for one unusual reading, naming what is nearby when there is."""
-    actors, peers = related_nearby(house, eid, st)
+    """The fix for one unusual reading, naming what is nearby when there is.
+
+    A reading is measured, never run: the machines in the room that drive
+    it are named as what to look at, a sensor that says when one of them
+    ran is named as that, and the outdoor reading is offered beside them
+    when the snapshot has one.
+    """
+    actors, peers, traces = related_nearby(house, eid, st)
     room = house.area_of(eid)
     where = f" in the {room}" if room else ""
+    klass = str((st.get("attributes") or {}).get("device_class") or "")
+    outside = outdoor_reading(house, klass)
+    outside_said = f" Compare it with outside: {outside}." if outside else ""
     if actors:
-        return (f"Check {join_names(actors)}{where}: whether it was running, "
-                "off, or set differently from usual is the likeliest reason. "
-                "If this is normal here, press Ignore and say why, and it "
-                "will stop reporting it.")
+        one = len(actors) == 1
+        said = (f"Look at what drives it{where}: {join_names(actors)}. A "
+                f"change in when {'it' if one else 'they'} ran or how "
+                f"{'it was' if one else 'they were'} set is the likeliest "
+                "reason.")
+        if traces:
+            said += (f" {join_names(traces)} "
+                     f"{'shows' if len(traces) == 1 else 'show'} when it ran.")
+        return f"{said}{outside_said} {IGNORE_TAIL}"
     if peers:
         return (f"Compare it with {join_names(peers)}{where}: if that moved "
                 "too, something in the room changed; if not, the sensor "
-                "itself may be at fault. If this is normal here, press "
-                "Ignore and say why.")
+                f"itself may be at fault.{outside_said} If this is normal "
+                "here, press Ignore and say why.")
+    if outside:
+        return f"{GENERIC_FIX}{outside_said}"
     return GENERIC_FIX
 
 
