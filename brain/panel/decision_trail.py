@@ -77,8 +77,8 @@ KINDS = {
                     "only",
     "quiet_hold": "held for quiet hours",
     "gate_hold": "brAIn was not allowed to spend a run on it then",
-    "look_ignore": "the first look let it go",
-    "look_watch": "the first look decided to watch it",
+    "look_ignore": "brAIn looked and let it go",
+    "look_watch": "brAIn looked and decided to watch it",
     "held": "looked at, and held back from the list",
 }
 

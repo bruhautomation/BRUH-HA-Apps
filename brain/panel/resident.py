@@ -121,8 +121,8 @@ MAX_TURNS = 4
 # per call site is a chance for one of them to stop saying nothing looked.
 SKIPPED = ("Nothing came back about this one, so it is being watched "
            "rather than dropped.")
-UNREADABLE = ("The look's answer could not be read, so everything in the "
-              "batch is being watched.")
+UNREADABLE = ("brAIn's answer about this could not be read, so everything "
+              "in the batch is being watched.")
 FORCED = "This cannot be ignored: {why}."
 
 # What a model's verdict may never be `ignore` about, and the floor each
@@ -752,6 +752,8 @@ Rules that matter more than anything about style:
   the homeowner. If the answer is already on their list, make no claim.
 - One claim per run. If you found two things, claim the one that matters
   and say the other in "detail".
+- Write about brAIn as "brAIn", never "I", and never name its
+  internal parts (the Resident, the first look, an investigation).
 - Never refer to brAIn's own bookkeeping in anything the homeowner reads:
   no "signal 7", "row 3", "finding #12", case ids or timestamps used as
   ids. Name the device and the time instead.

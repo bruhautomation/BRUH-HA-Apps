@@ -1,0 +1,101 @@
+#include <tunables/global>
+
+# AppArmor profile for the Morph add-on.
+#
+# What this profile is for
+# ------------------------
+# Morph owns files: the dashboard in /config/morph (a git repository, so it
+# runs `git`), the shared folder the integration talks through, and brAIn's
+# task folder. It needs no device, no host network and no published port —
+# its health server binds 127.0.0.1. Everything else is the standard shape:
+# deny the host-escape primitives and allow the add-on's own work.
+
+profile morph flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+
+  # Kernel tunables. Nothing in this add-on tunes the host kernel.
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  # Kernel module loading and raw device memory.
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  # Firmware and boot.
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # The Docker socket. This add-on talks to the Supervisor over its HTTP API
+  # with SUPERVISOR_TOKEN; a writable docker.sock is root on the host by
+  # another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # run.sh hands /config/morph to the files it writes and chowns what it
+  # creates; nothing here needs raw devices or raw sockets.
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  # No mounting, ever.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # Filesystem: /config (the dashboard repository, the integration deploy,
+  # the shared folder, brAIn's task folder), /data (settings, the learning
+  # store), and the container's own tree.
+  file,
+
+  # Signals: run.sh's cleanup trap stops the service on SIGTERM.
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+
+  ptrace (trace,read) peer=morph,
+
+  # Networking: the Supervisor and Core APIs, and the loopback health server. No inbound port is
+  # published; `network netlink raw` is interface and device enumeration, not
+  # `network raw` — raw sockets stay denied via the net_raw capability above.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  # Anything the add-on execs runs under this same profile rather than
+  # escaping to the unconfined host profile.
+  /** ix,
+}

@@ -37,10 +37,18 @@
     "tests/test_protected_entities.py",
     "tests/test_action_gate.py",
     "tests/test_addon_hardening.py",
-    "tests/test_devloop.py"
+    "tests/test_devloop.py",
+    "morph/apparmor.txt",
+    "morph/run.sh",
+    "morph/Dockerfile",
+    "morph/service/tell.py",
+    "morph/service/brain.py",
+    "morph/custom_components/morph/websocket.py"
   ],
   "version_only_files": [
     "brain/config.yaml",
-    "brain/custom_components/brain/manifest.json"
+    "brain/custom_components/brain/manifest.json",
+    "morph/config.yaml",
+    "morph/custom_components/morph/manifest.json"
   ]
 }

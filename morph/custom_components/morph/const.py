@@ -1,0 +1,34 @@
+"""Constants shared by the integration's modules."""
+from __future__ import annotations
+
+from pathlib import Path
+
+DOMAIN = "morph"
+VERSION = "0.1.0"
+
+PANEL_URL = "morph"
+PANEL_TITLE = "Morph"
+PANEL_ICON = "mdi:view-dashboard-variant"
+ELEMENT = "morph-panel"
+
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+STATIC_BASE = "/morph_static"
+CARDS_URL = "/morph_cards"
+
+CONFIG = Path("/config")
+MORPH_DIR = CONFIG / "morph"
+SHARED = CONFIG / ".morph"
+BRAIN_SHARED = CONFIG / ".brain"
+
+REQUEST_DIR = SHARED / "requests"
+RESPONSE_DIR = SHARED / "responses"
+MIRROR = SHARED / "dashboard.json"
+STATE = SHARED / "state.json"
+TELLS = SHARED / "tells"
+USAGE = SHARED / "usage.jsonl"
+ERRORS = SHARED / "errors.jsonl"
+DASHBOARD = MORPH_DIR / "dashboard.yaml"
+CARDS_DIR = MORPH_DIR / "cards"
+
+REQUEST_TIMEOUT = 45
+WATCH_SECONDS = 2

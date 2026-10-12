@@ -886,7 +886,7 @@ class TestTheSchedule(DevloopCase):
         self.switch_on()
         devloop.save_settings({"streams": {"faults": True, "gaps": True,
                                            "unmet": False, "scorecard": False,
-                                           "wrongs": False},
+                                           "wrongs": False, "morph": False},
                                "schedule": {"faults": 1, "gaps": 24}})
         t = time.time()
         due = upstream.due_streams(t)

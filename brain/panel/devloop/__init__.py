@@ -113,6 +113,14 @@ STREAMS: dict[str, dict] = {
         "label": "Screens: pictures of brAIn's own panel, redacted, with the layout faults measured",
         "cost": "free", "clears": False, "rolling": True,
         "default_on": False, "default_hours": 168},
+    # Morph — the dashboard add-on brAIn designs — keeps a ledger of its own
+    # faults (a card that failed to draw, sections that overlapped, a request
+    # it could not carry out) and publishes them for this stream to file. It
+    # carries no second token, queue or cap: Morph's reports ride this loop's.
+    "morph": {
+        "label": "Morph: problems the Morph dashboard found in its own code",
+        "cost": "free", "clears": True, "rolling": False,
+        "default_on": True, "default_hours": 1},
     "look": {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
@@ -133,7 +141,7 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 # open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
-                   "screens": 168, "look": 0}
+                   "screens": 168, "morph": 1, "look": 0}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
 
 DEFAULTS = {

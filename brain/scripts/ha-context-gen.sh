@@ -287,6 +287,26 @@ PYEOF
     # makes the correct update target obvious without a discovery
     # round-trip. Best-effort: emits a visible marker on failure.
     local dashboard_list
+    # Morph is the dashboard add-on brAIn designs. When it is installed, a
+    # request to change "the dashboard" usually means Morph's, and its own
+    # instructions are a file in its folder — so they are named here rather
+    # than copied, and stay current with whatever Morph release is installed.
+    local morph_section=""
+    if [ -f /config/morph/AGENTS.md ]; then
+        morph_section="
+## Morph — the house's dashboard
+
+Morph is installed: a dashboard in the sidebar that you design and change. It
+lives in \`/config/morph/\` (\`dashboard.yaml\`, custom card code in
+\`cards/\`). **Read \`/config/morph/AGENTS.md\` before changing it** and follow
+\`/config/morph/LEARNED.md\`, which is what this household has taught it. When
+somebody asks to change \"the dashboard\" and does not name a Lovelace one,
+they mean Morph. Edit the files directly and **never commit in that folder
+yourself** — Morph records each change as it lands, so the person's Undo
+reverts exactly it.
+"
+    fi
+
     dashboard_list=$(python3 - 2>/dev/null <<'PYEOF'
 import sys
 sys.path.insert(0, "/opt/ha-mcp-server")
@@ -432,7 +452,7 @@ Dashboard rules:
 - **Never verify via \`.storage\`**: HA's delayed saves make
   \`/config/.storage\` stale for ~10s after a write. Verify a dashboard edit
   with \`get_dashboard\`, never by reading \`.storage\` content or mtimes.
-
+${morph_section}
 ${memory_section}
 
 ## Available Directories

@@ -120,6 +120,25 @@ const APPS = [
 			['brands/custom_integrations/bruh_print/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'Morph',
+		tile: 'morph/morph-tile-dark.svg',
+		logo: 'morph/morph-logo-ondark.svg',
+		squares: [
+			['morph/icon.png', 256],
+			['morph/custom_components/morph/brand/icon.png', 256],
+			['morph/custom_components/morph/brand/icon@2x.png', 512],
+			['brands/custom_integrations/morph/icon.png', 256],
+			['brands/custom_integrations/morph/icon@2x.png', 512],
+		],
+		lockups: [
+			['morph/logo.png', 512, 384],
+			['morph/custom_components/morph/brand/logo.png', 341, 256],
+			['morph/custom_components/morph/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/morph/logo.png', 341, 256],
+			['brands/custom_integrations/morph/logo@2x.png', 682, 512],
+		],
+	},
 ];
 
 const browser = await chromium.launch(
