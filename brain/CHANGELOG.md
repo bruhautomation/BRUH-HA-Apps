@@ -2,12 +2,26 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 2.18.21
+## 2.18.22
 
 ### Added
 
 - brAIn knows about Morph, the new dashboard add-on it designs. When Morph is installed, the terminal's and the chat's context say where it lives and that its own instructions (`/config/morph/AGENTS.md`) come first, so "change the dashboard" means Morph's.
 - The development loop has a **Morph** stream: problems the Morph dashboard found in its own code (a card that failed to draw, sections that overlapped, a request it could not carry out) are filed in your private reports repository labelled `devloop:morph`, and the cloud routine fixes them in Morph's code. On by default once the loop is on, free, and only while Morph is installed with its *Report Morph's own problems* switch on.
+
+## 2.18.21
+
+### Changed
+
+- The house rhythm finds a wake and settle time when most days agree and a few do not: the usual days are found where they cluster and the odd ones are left out, and such an answer says it is low confidence. A house whose mornings are genuinely scattered still gets none, and the bar for "every day agrees" is tighter than before. (reports #189)
+- An unusual humidity or temperature reading no longer tells you to check whether the sensor "was running, off, or set differently". The advice names what in the same room drives the reading and the outdoor reading brAIn has. (reports #200)
+- The heat model says why each room it did not measure was left out (too few night hours, a reading outside the room band, a fit with no leverage, and so on), and asking about such a room answers with that reason instead of "no measured room by that name". (reports #185)
+
+### Fixed
+
+- An automation that failed once and has since run cleanly no longer keeps a card saying it "failed the last time it ran": runs are ordered by when they finished, a later run clears the card, and one failure among clean runs is a warning rather than serious. (reports #188)
+- A washer, dryer or dishwasher whose power meter is offline is no longer dropped as if it were not there: it keeps the profile measured before, and the appliance summary says how many machine meters are offline instead of "none of them named as a washer, dryer or dishwasher". (reports #187)
+- A finding that is re-reported naming different things (a new integration joining "did not finish setting up") is looked at again instead of keeping a verdict about the old list. (reports #194)
 
 ## 2.18.20
 

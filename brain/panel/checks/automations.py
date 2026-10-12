@@ -19,7 +19,7 @@ import os
 import re
 
 from ._util import (DAY, House, age_days, evidence_for, join_names, listify,
-                    walk, when)
+                    parse_ts, walk, when)
 
 log = logging.getLogger("brain.checks.automations")
 
@@ -337,7 +337,7 @@ def _traces_for(snap: dict, key: str) -> list[dict]:
     rows = [_short(r) for r in rows if isinstance(r, dict)]
     rows = [r for r in rows if not r.get("not_triggered")
             and r.get("state") != "running"]
-    rows.sort(key=_trace_start)
+    rows.sort(key=_trace_start_ts)
     return rows
 
 
@@ -345,36 +345,79 @@ def _trace_start(trace: dict) -> str:
     return str((trace.get("timestamp") or {}).get("start") or "")
 
 
+def _trace_start_ts(trace: dict) -> float:
+    """When a run started, as a TIME. Sorting the ISO strings orders two
+    offsets wrongly and an unparseable stamp first, which is a run read
+    as older than it is."""
+    return parse_ts(_trace_start(trace)) or 0.0
+
+
+def _trace_end_ts(trace: dict) -> float:
+    """When a run finished (its start when Core recorded no finish)."""
+    stamp = (trace.get("timestamp") or {}).get("finish")
+    return parse_ts(stamp) or _trace_start_ts(trace)
+
+
+def _errored(trace: dict) -> bool:
+    return (str(trace.get("script_execution") or "") == "error"
+            or bool(trace.get("error")))
+
+
+# A run's own `last_triggered` lands a moment after it starts and before it
+# finishes; one later than the errored run's finish by more than this is a
+# later run, whatever the trace window still holds.
+LATER_RUN_SLACK_S = 1.0
+
+
 def _label_of(item: dict) -> str:
     return f"{item['kind']} '{item['alias']}'"
 
 
 def trace_error(snap: dict, now: float) -> list[dict]:
+    """An automation or script whose most recent FINISHED run failed.
+
+    "The last time it ran" has to be true when the card says it: runs are
+    ordered by when they finished, compared as times, and a run the trace
+    window does not hold still moved the automation's `last_triggered` — so
+    an error followed by a run whose actions went ahead is history, and the
+    row stops being reported (which is what lets `clear_resolved` take it
+    away). One failure among clean runs is a blip worth a line, not a
+    serious card; it is `serious` only when it keeps happening.
+    """
     house = House(snap)
     out = []
     for item in _traced(house):
         rows = _traces_for(snap, item["key"])
         if not rows:
             continue
+        rows = sorted(rows, key=_trace_end_ts)
         last = rows[-1]
-        execution = str(last.get("script_execution") or "")
-        error = last.get("error")
-        if execution != "error" and not error:
+        if not _errored(last):
+            continue
+        attrs = (house.states.get(item["entity_id"]) or {}).get("attributes") or {}
+        later = parse_ts(attrs.get("last_triggered"))
+        if later is not None and later > _trace_end_ts(last) + LATER_RUN_SLACK_S:
             continue
         if not house.should_report(item["entity_id"], "auto.trace_error"):
             continue
-        # Only the *latest* run counts: an error three runs ago that has
-        # since run clean is history, not a finding.
+        error = last.get("error")
+        failed = sum(1 for r in rows if _errored(r))
         step = str(last.get("last_step") or "")
+        tally = (f" {failed} of its last {len(rows)} runs ended in an error."
+                 if len(rows) > 1 else "")
         out.append({
             "text": f"{_label_of(item)} failed the last time it ran",
             "detail": (f"On {when(_trace_start(last))}"
                        + (f", at step {step}" if step else "")
-                       + (f": {str(error)[:300]}" if error else
-                          ": the run ended in an error.")),
+                       + (f": {str(error)[:300].rstrip('.')}." if error else
+                          ": the run ended in an error.")
+                       + tally),
             "fix": "Open the automation's trace in Home Assistant and fix "
                    "the failing step.",
-            "severity": "serious",
+            # A single failure among clean runs is most often something
+            # transient (a device that did not answer once).
+            "severity": ("warning" if failed == 1 and len(rows) > 1
+                         else "serious"),
             "fixable": True,
             "entity_id": item["entity_id"],
         })
