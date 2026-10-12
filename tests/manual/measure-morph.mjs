@@ -161,7 +161,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
   await settle(p, 1200);
   atRest(`${name} in Edit`, await snapshot(p));
-  c = await tileCenter(p, 'c_kitchen_cans');
+  // Read the position after Edit's own layout has settled, not before.
   await settle(p, 300);
   c = await tileCenter(p, 'c_kitchen_cans');
   await p.mouse.move(c.x, c.y); await p.mouse.down(); await p.waitForTimeout(700); await p.mouse.up();
