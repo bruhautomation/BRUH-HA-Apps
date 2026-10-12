@@ -2,14 +2,7 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## 2.18.24
-
-### Added
-
-- brAIn knows about Morph, the new dashboard add-on it designs. When Morph is installed, the terminal's and the chat's context say where it lives and that its own instructions (`/config/morph/AGENTS.md`) come first, so "change the dashboard" means Morph's.
-- The development loop has a **Morph** stream: problems the Morph dashboard found in its own code (a card that failed to draw, sections that overlapped, a request it could not carry out) are filed in your private reports repository labelled `devloop:morph`, and the cloud routine fixes them in Morph's code. On by default once the loop is on, free, and only while Morph is installed with its *Report Morph's own problems* switch on.
-
-## 2.18.24
+## 2.18.25
 
 ### Changed
 
@@ -21,6 +14,13 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - Security findings filed at the lowest severity were shown as tidy-ups and folded away with unused helpers; a security or safety finding is now always a Problem and sorts straight after urgent ones. (reports #201)
+
+## 2.18.24
+
+### Added
+
+- brAIn knows about Morph, the new dashboard add-on it designs. When Morph is installed, the terminal's and the chat's context say where it lives and that its own instructions (`/config/morph/AGENTS.md`) come first, so "change the dashboard" means Morph's.
+- The development loop has a **Morph** stream: problems the Morph dashboard found in its own code (a card that failed to draw, sections that overlapped, a request it could not carry out) are filed in your private reports repository labelled `devloop:morph`, and the cloud routine fixes them in Morph's code. On by default once the loop is on, free, and only while Morph is installed with its *Report Morph's own problems* switch on.
 
 ## 2.18.23
 
