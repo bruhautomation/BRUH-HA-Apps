@@ -103,14 +103,14 @@ def prune_usage(max_age_s: int = 60 * 86400) -> None:
         paths.write_text(paths.USAGE, "".join(
             __import__("json").dumps(r, ensure_ascii=False) + "\n" for r in rows))
     except OSError:
-        pass
+        pass  # pruning is housekeeping; the log is read with a time window either way
 
 
 def record_outcome(row: dict) -> None:
     try:
         paths.append_jsonl(paths.OUTCOMES, row)
     except OSError:
-        pass
+        pass  # an outcome is evidence for learning, never worth failing the action it records
 
 
 def outcomes(since: float = 0.0) -> list[dict]:
@@ -313,7 +313,7 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
             try:
                 when[sec][_bucket(int(r.get("hour") or 0))] += 1
             except (TypeError, ValueError):
-                pass
+                pass  # a row with no readable hour still counts as a use, just not by time of day
         kinds[r.get("kind") or "?"] += 1
         days.add(time.strftime("%Y-%m-%d", time.localtime(float(r.get("ts") or 0))))
     cards, order = [], []

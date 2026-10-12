@@ -281,7 +281,7 @@ async def watch_loop() -> None:
             try:
                 text = paths.DASHBOARD.read_text(encoding="utf-8")
             except OSError:
-                pass
+                pass  # a missing file publishes as an empty dashboard below
             mods = sorted((f.name, int(f.stat().st_mtime)) for f in paths.CARDS_DIR.glob("*.js")) \
                 if paths.CARDS_DIR.is_dir() else []
             if store.revision(text) != STATE["last_revision"] or mods != STATE.get("modules"):

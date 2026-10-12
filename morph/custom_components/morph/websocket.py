@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import logging
 import re
 import time
 from collections.abc import Callable
@@ -40,7 +39,6 @@ from .const import (
     WATCH_SECONDS,
 )
 
-_LOGGER = logging.getLogger(__name__)
 
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
                "settings", "suggestion", "learn_now", "regenerate", "lessons")
@@ -239,7 +237,7 @@ def _mtimes() -> dict:
         try:
             stamp = max(stamp, (BRAIN_SHARED / name).stat().st_mtime)
         except OSError:
-            pass
+            pass  # brAIn not installed: nothing to watch in that file
     out["brain"] = stamp
     return out
 

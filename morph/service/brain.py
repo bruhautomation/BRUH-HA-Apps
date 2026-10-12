@@ -93,7 +93,7 @@ def result(task_id: str) -> dict | None:
     try:
         path.unlink()
     except OSError:
-        pass
+        pass  # the listener may have tidied it already; the answer is in hand
     paths.write_json(paths.SHARED / "brain_seen.json", {"at": time.time()})
     return data
 

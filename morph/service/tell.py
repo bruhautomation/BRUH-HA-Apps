@@ -312,7 +312,7 @@ def prune(max_age_s: int = 7 * 86400) -> None:
             if now - p.stat().st_mtime > max_age_s:
                 p.unlink()
     except OSError:
-        pass
+        pass  # an old tell file another prune already removed; nothing to tidy
 
 
 def json_payload(state: dict) -> str:

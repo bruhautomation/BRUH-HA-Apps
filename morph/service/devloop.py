@@ -85,7 +85,7 @@ def ingest_errors() -> int:
         try:
             paths.write_text(paths.ERRORS, "")
         except OSError:
-            pass
+            pass  # the rows are in the ledger; a second fold of them only re-counts
     return len(rows)
 
 

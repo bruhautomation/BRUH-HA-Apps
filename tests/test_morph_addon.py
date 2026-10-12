@@ -54,7 +54,7 @@ class TestTheRequestVocabulary(unittest.TestCase):
         self.assertEqual(set(), sent - handled,
                          "a kind the panel can send and the service answers with 'unknown'")
         read_only = set(_tuple(MORPH / "service" / "morphd.py", "READ_ONLY_KINDS"))
-        self.assertTrue(read_only <= sent)
+        self.assertLessEqual(read_only, sent)
 
     def test_usage_kinds_agree(self):
         """The panel's usage log is filtered by the integration and read by

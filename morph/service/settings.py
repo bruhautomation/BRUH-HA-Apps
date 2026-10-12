@@ -57,11 +57,11 @@ def clean(s: dict) -> dict:
     try:
         out["learning_hours"] = max(6, min(24 * 14, int(s.get("learning_hours") or 24)))
     except (TypeError, ValueError):
-        pass
+        pass  # an unreadable interval keeps the default
     try:
         out["hold_ms"] = max(300, min(1500, int(s.get("hold_ms") or 540)))
     except (TypeError, ValueError):
-        pass
+        pass  # an unreadable hold time keeps the default
     out["theme"] = s.get("theme") if s.get("theme") in THEMES else "auto"
     for key in ("tell_model", "learn_model"):
         out[key] = s.get(key) if s.get(key) in MODELS else ""

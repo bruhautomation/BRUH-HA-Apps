@@ -69,6 +69,13 @@ def write_json(path: Path, data, *, indent: int | None = None) -> None:
                                 sort_keys=indent is not None))
 
 
+def _default_mode() -> int:
+    """The mode an ordinary ``open(..., "w")`` would create, read per call."""
+    mask = os.umask(0)
+    os.umask(mask)
+    return 0o666 & ~mask
+
+
 def write_text(path: Path, text: str) -> None:
     """Atomic against a reader AND a second writer: a unique scratch name in
     the target's own folder, then a rename. A name derived from the target
@@ -82,11 +89,14 @@ def write_text(path: Path, text: str) -> None:
             os.fsync(f.fileno())
         try:
             st = os.stat(path)
+            # codeql[py/overly-permissive-file] — this puts back the mode the file already had; tightening it would change who can read an existing file.
             os.chmod(tmp, st.st_mode & 0o7777)
             if os.geteuid() == 0:
                 os.chown(tmp, st.st_uid, st.st_gid)
         except FileNotFoundError:
-            os.chmod(tmp, 0o644)
+            # A new file gets what an ordinary open(..., "w") would have made
+            # (mkstemp's 0600 would hide it from brAIn's claude user).
+            os.chmod(tmp, _default_mode())
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -130,4 +140,4 @@ def hand_to_brain(path: Path) -> None:
     try:
         os.chown(path, BRAIN_UID, BRAIN_UID)
     except OSError:
-        pass
+        pass  # ownership is a convenience; brAIn's edit hook hands a file back anyway

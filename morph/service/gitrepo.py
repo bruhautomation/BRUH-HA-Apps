@@ -118,7 +118,7 @@ def _give_back() -> None:
                 if not os.path.islink(full):
                     os.chown(full, paths.BRAIN_UID, paths.BRAIN_UID)
             except OSError:
-                pass
+                pass  # ownership is a convenience; brAIn's edit hook hands a file back anyway
 
 
 def revert(sha: str, message: str = "") -> tuple[bool, str]:

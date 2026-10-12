@@ -9,7 +9,6 @@ dashboard goes to the add-on, which owns /config/morph and its git history.
 """
 from __future__ import annotations
 
-import logging
 
 from homeassistant.components import frontend, panel_custom
 from homeassistant.config_entries import ConfigEntry
@@ -30,7 +29,6 @@ from .const import (
     VERSION,
 )
 
-_LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 

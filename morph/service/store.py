@@ -144,7 +144,7 @@ def _card(raw, problems: list[str], where: str) -> dict | None:
         try:
             card["span"] = max(1, min(4, int(raw["span"])))
         except (TypeError, ValueError):
-            pass
+            pass  # a span that is not a number leaves the card its natural size
     if isinstance(raw.get("color"), str) and raw["color"] in COLORS:
         card["color"] = raw["color"]
     if isinstance(raw.get("options"), dict):
@@ -199,7 +199,7 @@ def normalize(raw) -> tuple[dict, list[str]]:
             try:
                 sec["width"] = max(1, min(4, int(sraw.get("width") or 2)))
             except (TypeError, ValueError):
-                pass
+                pass  # a width that is not a number keeps the default of 2
             if sraw.get("area"):
                 sec["area"] = str(sraw["area"])[:64]
             if sraw.get("hidden"):
@@ -255,7 +255,7 @@ def publish(head: str = "") -> dict:
             if re.fullmatch(r"[A-Za-z0-9_.-]{1,80}\.js", f.name):
                 modules.append({"name": f.name, "v": int(f.stat().st_mtime)})
     except OSError:
-        pass
+        pass  # no cards folder yet is no custom cards, not an error
     held = False
     if problems and problems[0].startswith(UNREADABLE):
         # A file that does not parse is somebody mid-edit, not a request
