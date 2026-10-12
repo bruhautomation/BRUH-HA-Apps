@@ -52,6 +52,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import textclip
 
 FILE = Path(os.environ.get("BRAIN_INTERVENTIONS_FILE",
                            "/data/interventions.jsonl"))
@@ -389,7 +390,7 @@ def came_back_text(row: dict, day: int | None, detail: str) -> str:
 
 def maintenance_row(row: dict, days: int, times: int) -> dict:
     """The finding a repeat regression becomes: a period, not a third fix."""
-    text = (f"“{str(row.get('finding_text') or 'This problem')[:160]}” keeps "
+    text = (f"“{textclip.clip(str(row.get('finding_text') or 'This problem'), 160)}” keeps "
             "coming back after it is fixed")
     return {
         "text": text,
