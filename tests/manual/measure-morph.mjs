@@ -79,6 +79,20 @@ function atRest(where, s) {
 
 async function settle(p, ms) { await p.waitForTimeout(ms || 900); }
 
+// "At rest" is when nothing is moving any more, not a fixed time: entering
+// Edit springs every section, and a slow machine is still springing at
+// 1.2s. Wait (up to 4s more) for two snapshots 150ms apart that agree.
+async function still(p) {
+  let prev = await snapshot(p);
+  for (let i = 0; i < 26; i++) {
+    await p.waitForTimeout(150);
+    const cur = await snapshot(p);
+    if (JSON.stringify(cur.secs) === JSON.stringify(prev.secs)) return cur;
+    prev = cur;
+  }
+  return prev;
+}
+
 async function tileCenter(p, id) {
   return p.evaluate((id) => {
     const el = window.__panel.shadowRoot.querySelector(`[data-tile="${id}"]`);
@@ -240,7 +254,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   // Edit: hold a card, Tell brAIn opens inside it, Send, Keep · Undo.
   await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
   await settle(p, 1200);
-  atRest(`${name} in Edit`, await snapshot(p));
+  atRest(`${name} in Edit`, await still(p));
   // Read the position after Edit's own layout has settled, not before.
   await settle(p, 300);
   c = await tileCenter(p, 'c_kitchen_cans');
