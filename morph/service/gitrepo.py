@@ -202,6 +202,15 @@ def diff(sha: str, prefix: str = "", limit: int = 12000) -> str:
     return out if len(out) <= limit else out[:limit] + f"\n… (cut: {len(out) - limit} more characters)\n"
 
 
+def file_at(sha: str, path: str) -> str | None:
+    """A file's text as it was at ``sha``; None when it did not exist then
+    (or there is no such commit), which is a different answer from empty."""
+    if not sha:
+        return None
+    r = _git("show", f"{sha}:{path}", check=False)
+    return r.stdout if r.returncode == 0 else None
+
+
 def is_reverted(sha: str) -> bool:
     """Whether a later commit undid this one — the signal the learning loop
     reads as "a person did not keep this"."""

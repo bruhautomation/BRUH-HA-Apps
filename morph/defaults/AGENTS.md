@@ -23,13 +23,15 @@ every change the moment you finish. The commit message says what the change
 was for. That commit is what the person's **Undo** reverts. If you commit
 yourself, Undo will revert the wrong thing.
 
-Morph reloads the dashboard live whenever `dashboard.yaml` or a card file
-changes. You do not need to reload anything.
+Morph reloads the dashboard live whenever `dashboard.yaml` changes. A changed
+card file runs once the page reloads (a page can only define a card once), and
+Morph offers the reload.
 
 ## dashboard.yaml
 
 ```yaml
 title: Home
+greeting: true       # "Good evening." at the top of the page
 story: true          # brAIn's one-paragraph summary of right now, at the top
 ask: true            # "Ask or tell the house…"
 coming_up: true      # the timeline: timers, sun, calendars, what usually happens
@@ -145,7 +147,9 @@ class MorphPets extends HTMLElement {
   render() { /* draw into this (or a shadow root) — no external libraries, no network */ }
   getCardSize() { return 2; }
 }
-customElements.define("morph-pets", MorphPets);
+// Guarded: a card file that changes is loaded again, and a page can only
+// define a name once (the new version runs after the page reloads).
+if (!customElements.get("morph-pets")) customElements.define("morph-pets", MorphPets);
 ```
 
 Then use it in `dashboard.yaml` as `type: custom:morph-pets`. Rules for card code:

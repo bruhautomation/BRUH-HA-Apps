@@ -218,12 +218,36 @@ class TestPanelBranding(unittest.TestCase):
         back to a bare roof lives."""
         ligature = "M159.55,176c0-23.95"
         for svg in sorted((BASE_DIR / "branding").glob("*/*.svg")):
+            if svg.parent.name == "morph" and svg.stem.split("-")[1] in ("square", "tile"):
+                continue  # Morph's own mark, held below
             self.assertIn(ligature, svg.read_text(),
                           f"{svg.name} is the gable without the BR ligature")
         for panel in ("brain", "bruh-minecraft-server", "bright"):
             favicon = BASE_DIR / panel / "panel" / "favicon.svg"
             self.assertIn(ligature, favicon.read_text(),
                           f"{panel}'s favicon is the gable without the BR ligature")
+
+    def test_morph_squares_are_its_own_mark_and_no_roof(self):
+        """Morph's squares and tiles are its own symbol — a tile with three
+        square corners and one rounded into a circle's arc, a dot at that
+        circle's centre — which says which add-on it is on its own, so they
+        carry no BR ligature. They may not carry any roof either: the rule
+        above exists so a bare family mark never stands for one add-on, and
+        Morph's exception is its mark, not a gable. The wide lockups keep
+        the ligature, with the mark standing where the roof would."""
+        arc = "V256A160,160 0 0 1 256,416"
+        roofs = (self.SMOOTH_GABLE, self.BLOCKY_GABLE, self.BEAMED_GABLE, "M200,170L308,38")
+        for svg in sorted((BASE_DIR / "branding" / "morph").glob("*.svg")):
+            body = svg.read_text()
+            self.assertIn('id="morph-mark"', body, f"{svg.name} lost Morph's mark")
+            self.assertIn(arc, body, f"{svg.name}'s mark lost its rounded corner")
+            for roof in roofs:
+                self.assertNotIn(roof, body, f"{svg.name} is wearing a roof")
+            if "-logo-" in svg.name:
+                self.assertIn("M159.55,176c0-23.95", body, f"{svg.name} lost the BR ligature")
+        util = (BASE_DIR / "morph" / "custom_components" / "morph" / "frontend" / "util.js").read_text()
+        self.assertIn("V12A8 8 0 0 1 12 20", util,
+                      "the panel's light mark is not the same drawing as the brand's")
 
     def test_both_apps_have_a_full_brand_set(self):
         """Twelve files each, same names, so render.mjs and anything else that

@@ -25,7 +25,7 @@ import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, domainOf, UNAVAILABLE, fmt, climateDoing } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing } from './util.js';
 
 const HOLD_MS = 540;
 const TELL_SUGS = {
@@ -39,6 +39,11 @@ const TELL_SUGS = {
 };
 const KIND_WORD = { card: 'card', section: 'section', floor: 'floor', story: 'story', upcoming: 'Coming up', scenes: 'scenes', dashboard: 'dashboard' };
 // Uses waiting to be sent when the connection is down; past this the oldest go.
+// The card files this page has imported, by name, and the version each was
+// imported at. Module-level, so a panel element rebuilt by Home Assistant
+// still knows what the page already defined.
+const IMPORTED = new Map();
+const REDEFINED = /already been (used|defined)|already defined/i;
 const USAGE_KEEP = 400;
 
 class MorphPanel extends HTMLElement {
@@ -162,7 +167,19 @@ class MorphPanel extends HTMLElement {
       const key = m.name + '@' + m.v;
       if (this.loadedModules.has(key)) return;
       this.loadedModules.add(key);
-      import(`${base}/${encodeURIComponent(m.name)}?v=${m.v}`).then(() => this.schedule()).catch((e) => this.report('card', `Card code ${m.name} failed to load: ${e.message || e}`, String(e && e.stack || ''), 'custom'));
+      const before = IMPORTED.get(m.name);
+      IMPORTED.set(m.name, m.v);
+      import(`${base}/${encodeURIComponent(m.name)}?v=${m.v}`).then(() => this.schedule()).catch((e) => {
+        // A custom element cannot be defined twice on one page. When a card's
+        // file changes, its new version runs and its define() throws — that
+        // is the browser keeping the old one until the page reloads, not a
+        // fault in the card, so it is said and offered rather than reported.
+        if (before != null && before !== m.v && REDEFINED.test(String((e && e.message) || e))) {
+          this.toast(`${m.name} changed. Reload the page to see the new version.`, null, 'reload');
+          return;
+        }
+        this.report('card', `Card code ${m.name} failed to load: ${e.message || e}`, String(e && e.stack || ''), 'custom');
+      });
     });
   }
 
@@ -232,12 +249,12 @@ class MorphPanel extends HTMLElement {
     else if (this.s.edit) right = `<button type="button" class="go" data-act="yaml-toggle" style="margin-left:10px;padding:0 4px;font-size:13px;color:var(--muted)">${this.s.yaml ? 'Hide YAML' : 'YAML'}</button><button type="button" class="go" data-act="edit" style="margin-left:6px;padding:0 4px;font-size:14px;color:var(--teal)">Done</button>`;
     else if (admin) right = `<button type="button" class="go" data-act="edit" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:0 4px;font-size:13px;color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edit</button>`;
     const gear = admin && this.s.page !== 'settings' ? `<button type="button" class="go" data-act="page" data-v="settings" aria-label="Morph settings" style="margin-left:6px;padding:0 4px;color:var(--muted)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>` : '';
-    const toast = this.s.toast ? `<span class="rise bartoast">${esc(this.s.toast.text)}${this.s.toast.sha ? ` <button type="button" class="wd go" data-act="undo-commit" data-v="${esc(this.s.toast.sha)}" style="min-height:24px">Undo</button>` : ''}</span>` : '';
+    const toast = this.s.toast ? `<span class="rise bartoast">${esc(this.s.toast.text)}${this.s.toast.sha ? ` <button type="button" class="wd go" data-act="undo-commit" data-v="${esc(this.s.toast.sha)}" style="min-height:24px">Undo</button>` : ''}${this.s.toast.action === 'reload' ? ` <button type="button" class="wd go" data-act="reload-page" style="min-height:24px">Reload</button>` : ''}</span>` : '';
     const yaml = this.s.edit && this.s.yaml != null ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px"><span class="label">Raw configuration · /config/morph/dashboard.yaml</span><textarea class="code-ed" data-keep="yaml" spellcheck="false" aria-label="dashboard.yaml">${esc(this.s.yaml)}</textarea><div class="row"><button type="button" class="wd go" data-act="yaml-save">Save YAML</button><span class="small">Saved as one commit; Undo puts it back.</span></div></div>` : '';
     // On a phone a toast takes the date's place: the bar is one row and
     // Edit's own buttons must stay on it.
     const dateHtml = this.s.toast && this._narrow ? '' : `<span class="date">${esc(date)}</span>`;
-    return `<div class="bar">${menu}<span class="brand">MORPH</span>${toast}<span class="flex1"></span>${dateHtml}${right}${gear}</div>${yaml}`;
+    return `<div class="bar">${menu}<span class="brand">${MARK(16)}MORPH</span>${toast}<span class="flex1"></span>${dateHtml}${right}${gear}</div>${yaml}`;
   }
 
   // ---------------------------------------------------------------- the top
@@ -301,7 +318,7 @@ ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
 ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a.busy ? 'Thinking…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}</div>` : ''}</div>`;
     }
-    return `<section aria-label="Now" style="display:flex;flex-direction:column;gap:14px;max-width:980px"><h1 class="hello">${esc(this.greeting())}</h1>${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
+    return `<section aria-label="Now" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${dash.greeting !== false ? `<h1 class="hello">${esc(this.greeting())}</h1>` : ''}${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
   }
 
   upcomingHtml() {
@@ -709,7 +726,10 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       const slide = !this.s.edit && T.slide ? T.slide(ctx) : null;
       ctx.hint = this.s.edit ? (open ? '' : 'tap to edit · hold to tell brAIn') : (open || T.noOpen) ? '' : slide ? 'slide · tap · hold for more' : T.tap(ctx) ? 'tap · hold for more' : 'tap for more';
       faceHtml = T.face(ctx);
-      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${T.more(ctx)}</div>`;
+      // An opened card carries Morph's mark: one press opens the Tell box for
+      // this card, so changing it does not mean going through Edit.
+      const mark = this.admin() && !this.s.edit ? `<div class="tellmark"><button type="button" data-act="tell-card" data-v="${esc(id)}" aria-label="Tell brAIn what to change about ${esc(name)}" title="Tell brAIn what to change">${MARK(20)}</button></div>` : '';
+      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${mark}${T.more(ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
       if (open && mode === 'tell') moreHtml = `<div class="more">${this.tellBox('card', id)}</div>`;
     } catch (e) {
@@ -809,9 +829,9 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     } catch (e) { this.toast('Morph could not save that: ' + (e.message || e)); }
   }
 
-  toast(text, sha) {
+  toast(text, sha, action) {
     clearTimeout(this._toastT);
-    this.s.toast = { text, sha };
+    this.s.toast = { text, sha, action };
     this._toastT = setTimeout(() => { this.s.toast = null; this.schedule(); }, 9000);
     this.schedule();
   }
@@ -835,7 +855,9 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     if (done) {
       // A change to Morph's own code runs once the page reloads.
       if (st.commit && !st.undone && (st.code || []).length) acts.push('<button type="button" class="wd go" data-act="reload-page">Reload to see it</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
-      else if (st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="tell-keep">Keep</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
+      else if (st.cards && st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="reload-page">Reload to see it</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
+      else if (st.commit && !st.undone && !st.unchanged) acts.push('<button type="button" class="wd go" data-act="tell-keep">Keep</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
+      else if (st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="tell-keep">Close</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
       else if (st.undone) acts.push('<span class="sm">Put back.</span>');
       else acts.push('<button type="button" class="wd go" data-act="tell-keep">Done</button>');
       acts.push('<button type="button" class="wd" data-act="tell-more">Tell it more</button>');
@@ -861,8 +883,19 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}${turns}
 <span style="font-size:14px">“${esc(t.text)}”</span>${picture}
 <div class="steps">${steps || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div>${working}
-${done ? `<p class="rise" style="font-size:14px;line-height:1.5">${esc(st.say || '')}</p>${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
+${done ? `<p class="rise" style="font-size:14px;line-height:1.5${st.unchanged || st.phase === 'failed' ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>${this.showsHtml(st)}${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
 ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`;
+  }
+
+  // What Morph read back off the dashboard once brAIn finished — the
+  // difference on screen, worked out from the file, not from brAIn's words —
+  // and whether this screen has caught up with it.
+  showsHtml(st) {
+    const shows = st.shows || [];
+    const stale = st.revision && this.data && this.data.mirror && this.data.mirror.revision !== st.revision;
+    const list = shows.length ? `<div class="sm" style="display:flex;flex-direction:column;gap:2px"><span class="label">On the dashboard now</span>${shows.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : '';
+    const refresh = stale ? `<p class="sm" style="color:var(--amber)">This screen has not caught up with the change yet. <button type="button" class="wd go" data-act="tell-refresh" style="min-height:28px">Refresh</button></p>` : '';
+    return list + refresh;
   }
 
   shotHtml(shot, caption) {
@@ -1040,8 +1073,10 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
           if (st.phase === 'done' && was !== 'done') {
             // The same thing, photographed again once the change has drawn:
             // before and after side by side, and the next turn starts here.
+            // Always read the dashboard again: what the person is told and
+            // what their screen shows must be the same file.
             const after = () => setTimeout(() => this.afterShot(t), 1200);
-            if (st.reload) this.load().then(after); else after();
+            this.load().then(after);
           }
         }
       } catch (e) { /* the next tick asks again */ }
@@ -1062,7 +1097,11 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   closeTell() {
     const t = this.s.tell; if (!t) return;
     this.s.tell = null;
-    if (t.kind === 'card' && this.s.view && this.s.view.id === t.id) this.closeView();
+    // A Tell opened from Morph's mark in an opened card goes back to that
+    // card; one opened by holding it in Edit closes it.
+    if (t.kind === 'card' && this.s.view && this.s.view.id === t.id) {
+      if (t.from === 'adv' && !this.s.edit) this.openView(t.id, 'adv'); else this.closeView();
+    }
     this.schedule();
   }
 
@@ -1113,7 +1152,13 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     root.addEventListener('contextmenu', (e) => { if (e.target.closest && e.target.closest('.mtile, [data-hold], .sechead, .flh')) e.preventDefault(); });
     root.addEventListener('click', (e) => this.onClick(e));
     root.addEventListener('change', (e) => this.onChange(e));
-    root.addEventListener('input', (e) => { const t = e.target; if (t.dataset && t.dataset.tellkey && this.s.tell) this.s.tell.draft = t.value; });
+    root.addEventListener('input', (e) => {
+      const t = e.target;
+      if (t.dataset && t.dataset.tellkey && this.s.tell) this.s.tell.draft = t.value;
+      // The report box keeps its words through Settings' own re-renders.
+      if (t.dataset && t.dataset.keep === 'report') this.s.report = { ...(this.s.report || {}), text: t.value };
+      if (t.dataset && t.dataset.keep === 'report-ui') this.s.report = { ...(this.s.report || {}), ui: t.checked };
+    });
     root.addEventListener('keydown', (e) => {
       const t = e.target;
       if (e.key === 'Escape') { if (this.s.tell) this.closeTell(); else if (this.s.view) this.closeView(); return; }
@@ -1458,6 +1503,21 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       case 'tell-sug': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); if (ta) { ta.value = v; this.s.tell.draft = v; ta.focus(); } return; }
       case 'tell-send': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); this.sendTell(ta ? ta.value : ''); return; }
       case 'tell-cancel': this.closeTell(); return;
+      case 'tell-refresh': this.dash = null; this.load(); return;
+      case 'report-send': {
+        const ta = this.shadowRoot.querySelector('textarea[data-keep="report"]');
+        const ui = this.shadowRoot.querySelector('input[data-keep="report-ui"]');
+        const text = ta ? ta.value.trim() : '';
+        if (!text) { this.toast('Say what should be fixed.'); return; }
+        const r = await H.callWS({ type: 'morph/request', kind: 'report', payload: { text, ui: !!(ui && ui.checked) } });
+        if (r && r.ok) { this.s.report = null; if (ta) ta.value = ''; if (ui) ui.checked = false; this.toast('Sent to brAIn’s development loop.'); this.load(); } else this.toast((r && r.error) || 'Morph could not send that.');
+        return;
+      }
+      case 'report-withdraw': {
+        const r = await H.callWS({ type: 'morph/request', kind: 'report_withdraw', payload: { fp: v } });
+        this.toast(r && r.ok ? 'Taken back.' : (r && r.error) || 'Morph could not take that back.'); this.load(); return;
+      }
+      case 'tell-card': this.openTell({ kind: 'card', id: v, from: 'adv' }); return;
       case 'tell-keep': this.closeTell(); this.load(); return;
       case 'reload-page': location.reload(); return;
       case 'code-reset': {
@@ -1651,6 +1711,7 @@ ${sugs.length ? `<span class="label">Waiting for you</span>${sugs.map((g) => thi
 <textarea class="code-ed" data-keep="lessons" style="min-height:120px;white-space:pre-wrap">${esc((L.lessons || []).map((x) => '- ' + x).join('\n'))}</textarea><div><button type="button" class="wd go" data-act="lessons-save">Save lessons</button></div></div>
 <div class="setsec"><h2>Improving Morph itself</h2>
 ${sw('report_code_issues', 'Report Morph’s own problems', 'A card that fails to draw, a layout that overlaps, a request brAIn could not carry out. They go to brAIn’s development loop, which files them in your private reports repository so they are fixed in Morph’s code.')}
+${this.reportHtml(dl)}
 ${this.codeHtml(st)}
 <p class="sm">${dl.enabled ? `${dl.waiting || 0} report${dl.waiting === 1 ? '' : 's'} waiting.` : 'Off.'} ${dl.picked_up_at ? `brAIn last picked them up ${esc(ago(new Date(dl.picked_up_at * 1000).toISOString()))}${dl.filed != null ? `, ${dl.filed} filed` : ''}.` : 'brAIn has not picked any up yet — switch on its development loop under brAIn ⚙ → Developer.'}</p></div>
 <div class="setsec"><h2>Appearance</h2><span class="label">Theme</span>${pick('theme', [['auto', 'Follow Home Assistant'], ['dark', 'Dark'], ['medium', 'Medium'], ['light', 'Light']])}
@@ -1660,6 +1721,18 @@ ${hist == null ? '<p class="sm">Reading…</p>' : hist.length ? hist.map((h) => 
 <div class="setsec"><h2>Dashboard</h2><p class="sm">The dashboard lives in /config/morph/dashboard.yaml. Edit it in Edit → YAML, by hand, or by telling brAIn.</p>
 <div><button type="button" class="wd bad" data-act="regenerate">Rebuild from the house</button></div><p class="small">Builds a fresh dashboard from your floors and rooms. Your current one stays in History.</p></div>
 </div>`;
+  }
+
+  // brAIn's "What do you want to fix?" box, for Morph: somebody's own words,
+  // sent as they are to brAIn's development loop, which files them in the
+  // private reports repository for the cloud routine to fix Morph's code.
+  reportHtml(dl) {
+    const mine = dl.mine || [];
+    const sent = mine.length ? `<div style="display:flex;flex-direction:column;gap:4px">${mine.map((r) => `<div class="hrow"><span class="lx" style="min-width:0"><span>${esc(r.what)}</span><span class="small">${r.ui ? 'How it looks · ' : ''}${esc(ago(new Date(r.at * 1000).toISOString()))} · ${r.picked ? 'brAIn has it' : 'waiting for brAIn to pick it up'}</span></span>${r.picked ? '' : `<button type="button" class="wd" data-act="report-withdraw" data-v="${esc(r.fp)}">Take back</button>`}</div>`).join('')}</div>` : '';
+    return `<span class="label">What do you want to fix in Morph?</span>
+<textarea class="code-ed" data-keep="report" style="min-height:90px;white-space:pre-wrap;font-family:inherit" placeholder="The Coming up line overlaps the scenes on my phone…" aria-label="What do you want to fix in Morph?">${esc((this.s.report || {}).text || '')}</textarea>
+<label class="row" style="gap:8px;font-size:14px;cursor:pointer"><input type="checkbox" data-keep="report-ui"${(this.s.report || {}).ui ? ' checked' : ''}>It is about how Morph looks</label>
+<div class="row" style="gap:0 18px;flex-wrap:wrap"><button type="button" class="wd go" data-act="report-send">Send</button><span class="sm">Your words go as they are to brAIn’s development loop, which files them as an issue in your private reports repository so Morph’s code gets fixed.</span></div>${sent}`;
   }
 
   // ---------------------------------------------------------- learning io

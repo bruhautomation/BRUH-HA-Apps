@@ -261,6 +261,9 @@ export class Engine {
       if (best && best.w !== wmap[openSec.id]) { wmap[openSec.id] = best.w; measure(wmap); M.sections.forEach((s) => { flows[s.id] = flow(s, wmap[s.id]); }); }
       pl = place(best ? best.c : null, best ? best.w : null, (s) => flows[s.id].h);
     } else pl = place(null, null, (s) => flows[s.id].h);
+    // A spring whose element has left the page is forgotten here, whether or
+    // not it was moving: a resting one would otherwise keep its old place.
+    Object.keys(this.it).forEach((k) => { if (k !== 'board' && !this.it[k].el.isConnected) delete this.it[k]; });
     const H = pl.reduce((a, p) => Math.max(a, p.y + p.h), 0);
     const key = [openId, this.openMode, N, Math.round(W)].join('|'); const changed = key !== this.key; this.key = key;
 
@@ -398,8 +401,15 @@ export class Engine {
   // The §5 acceptance test, run on the live page after things settle:
   // no two sections overlap, and no section overlaps a floor heading.
   // A failure is reported to the panel, which hands it to the devloop.
+  //
+  // Only sections that are in the model AND on the page are compared. A
+  // spring outlives its element while it is at rest (run() drops only LIVE
+  // springs whose element has gone), so leaving Edit left each "Add
+  // section" ghost's spring behind where the ghost used to stand, and the
+  // room that moved into that space was reported as overlapping nothing.
   overlaps() {
-    const secs = Object.keys(this.it).filter((k) => k.startsWith('s:')).map((k) => this.it[k]);
+    const ids = new Set(((this.model && this.model.sections) || []).map((s) => 's:' + s.id));
+    const secs = Object.keys(this.it).filter((k) => k.startsWith('s:') && ids.has(k) && this.it[k].el.isConnected).map((k) => this.it[k]);
     const out = [];
     for (let i = 0; i < secs.length; i++) {
       for (let j = i + 1; j < secs.length; j++) {

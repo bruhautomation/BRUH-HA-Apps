@@ -74,6 +74,73 @@ def note_fault(area: str, what: str, detail: str = "", *, source: str = "morph",
     paths.write_json(_file(), data)
 
 
+REQUEST_MAX = 4000
+
+
+def note_request(words: str, ui: bool = False, context: str = "", *,
+                 now: float | None = None) -> dict:
+    """What somebody typed into Settings → "What do you want to fix in
+    Morph?" — brAIn's own "What do you want to fix?" box, for Morph.
+
+    A person who lives with Morph has already found the problem, so the
+    words go as they are: quoted, never rewritten, under ``where`` "Morph ·
+    Looks" when it is about how Morph looks (the cloud routine opens the
+    pane) and "Morph · From you" otherwise. The title is the first sentence
+    of what was said. It rides the same ledger and outbox as Morph's own
+    faults, so it reaches brAIn's development loop by the one route there
+    is — and nothing leaves this box while ``report_code_issues`` is off."""
+    words = " ".join(str(words or "").split())[:REQUEST_MAX]
+    if len(words) < 4:
+        return {"ok": False, "error": "Say what should be fixed."}
+    if not settings.load()["report_code_issues"]:
+        return {"ok": False, "error": "“Report Morph’s own problems” is off above, so nothing would "
+                                      "reach brAIn’s development loop. Turn it on and press Send again."}
+    first = re.split(r"(?<=[.!?])\s", words, maxsplit=1)[0]
+    what = first if len(first) <= 140 else first[:139].rsplit(" ", 1)[0] + "…"
+    area = "Looks" if ui else "From you"
+    detail = "\n".join([
+        "The owner typed this into Morph's Settings → What do you want to fix in Morph?",
+        "",
+        *(f"> {line}" for line in words.splitlines() or [words]),
+        "",
+        "It is about how Morph LOOKS: open the pane it names, on the fixture and in the house's "
+        "own screens, before and after the fix." if ui else
+        "Find what is behind these words in Morph's code, and fix that.",
+        *(["", "Context:", context[:1000]] if context else []),
+    ])
+    note_fault(area, what, detail, source="person", now=now)
+    return {"ok": True, "fp": _fp(f"Morph · {area}"[:80], what)}
+
+
+def mine(now: float | None = None) -> list[dict]:
+    """What somebody sent from Settings and is still in the ledger, newest
+    first, with whether brAIn has picked the outbox up since."""
+    now = now or time.time()
+    ack = paths.read_json(paths.DEVLOOP_ACK, {}) or {}
+    picked = float(ack.get("at") or 0)
+    out = []
+    for fp, r in sorted(_load().items(), key=lambda kv: -float(kv[1].get("last") or 0)):
+        if r.get("source") != "person" or r.get("where") not in ("Morph · Looks", "Morph · From you"):
+            continue
+        if now - float(r.get("last") or 0) > KEEP_S:
+            continue
+        out.append({"fp": fp, "what": r.get("what"), "ui": r.get("where") == "Morph · Looks",
+                    "at": r.get("last"), "picked": picked > float(r.get("last") or 0)})
+    return out[:20]
+
+
+def withdraw(fp: str) -> dict:
+    """Take back something sent from Settings before brAIn files it. Only a
+    person's own report: a fault Morph noted is not theirs to drop."""
+    data = _load()
+    row = data.get(str(fp or ""))
+    if not row or row.get("source") != "person":
+        return {"ok": False, "error": "There is nothing to take back."}
+    del data[fp]
+    paths.write_json(_file(), data)
+    return {"ok": True}
+
+
 def ingest_errors() -> int:
     """Fold what the panel reported (``errors.jsonl``, appended by the
     integration) into the ledger, then empty the file."""
@@ -101,6 +168,16 @@ def rows(now: float | None = None) -> list[dict]:
         if now - float(r.get("last") or 0) > KEEP_S:
             continue
         detail = (r.get("detail") or "(none)")[:DETAIL_MAX]
+        if r.get("source") == "person" and r.get("where") in ("Morph · Looks", "Morph · From you"):
+            # Somebody's own words: quoted as they are, not dressed as a
+            # count of something Morph noticed.
+            out.append({"where": r["where"], "what": r["what"], "detail": detail[:400],
+                        "body": detail + "\n\nFix it in the repository's `morph/` add-on "
+                                         "(see morph/AGENTS.md for how Morph is built).",
+                        "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
+            if len(out) >= MAX_ROWS:
+                break
+            continue
         # A detail that carries its own fenced patch is markdown already; a
         # second fence around it would print the patch as text.
         fenced = ["```", detail, "```"] if "```" not in detail else [detail]
@@ -134,5 +211,6 @@ def status() -> dict:
     outbox = paths.read_json(paths.DEVLOOP_OUTBOX, {}) or {}
     return {"enabled": settings.load()["report_code_issues"],
             "waiting": len(outbox.get("rows") or []),
+            "mine": mine(),
             "picked_up_at": ack.get("at"), "filed": ack.get("filed"),
             "brain_loop_on": ack.get("loop_on")}

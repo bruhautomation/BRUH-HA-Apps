@@ -19,7 +19,11 @@ export const CSS = `
 .disp{font-family:'Bricolage Grotesque','Manrope',sans-serif}
 .wrap{max-width:1440px;margin:0 auto;padding:22px clamp(14px,3vw,44px) 120px;display:flex;flex-direction:column;gap:30px}
 .bar{display:flex;align-items:center;gap:10px;min-height:44px}
-.brand{font-weight:700;font-size:12px;letter-spacing:.24em}
+.brand{font-weight:700;font-size:12px;letter-spacing:.24em;display:inline-flex;align-items:center;gap:8px}
+.brand svg{color:var(--violet);letter-spacing:0}
+.tellmark{display:flex;justify-content:flex-end;margin:-2px -6px -10px 0}
+.tellmark button{background:none;border:0;margin:0;padding:0;width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;cursor:pointer;color:var(--quiet);transition:color .25s ease,background .25s ease}
+.tellmark button:hover,.tellmark button:focus-visible{color:var(--violet);background:color-mix(in srgb,var(--violet) 10%,transparent)}
 .menu{background:none;border:0;padding:0 4px;margin:0;min-height:44px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center}
 .date{font-size:13px;color:var(--quiet);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bartoast{font-size:13px;color:var(--muted);margin-left:12px;min-width:0;flex:0 1 auto}

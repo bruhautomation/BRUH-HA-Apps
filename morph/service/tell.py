@@ -109,6 +109,10 @@ KIND_WORDS = {
 
 _RUNNING: dict[str, asyncio.Task] = {}
 
+# Set by morphd to its own publish, which writes the mirror and returns it:
+# a finished Tell republishes at once (tell.py cannot import morphd).
+ON_PUBLISH = None
+
 
 def _state_path(tid: str):
     return paths.TELLS / f"{tid}.json"
@@ -242,6 +246,98 @@ def lessons() -> str:
     return text[-LESSONS_CHARS:]
 
 
+# ------------------------------------------------------------- read back
+
+FLAG_WORDS = {"greeting": "the greeting", "story": "the story line", "ask": "the Ask box",
+              "coming_up": "Coming up"}
+MAX_SHOWS = 8
+
+
+def _cards(dash: dict) -> dict:
+    """Every card by id: (its words, the section it is in, the card)."""
+    out = {}
+    for fl in dash.get("floors") or []:
+        for sec in fl.get("sections") or []:
+            for g in sec.get("groups") or []:
+                for c in g.get("cards") or []:
+                    words = (c.get("name") or c.get("entity") or c.get("text")
+                             or ", ".join((c.get("entities") or [])[:2]) or c.get("type") or "a card")
+                    out[c.get("id")] = (str(words)[:60], sec.get("title") or "", c)
+    return out
+
+
+def _sections(dash: dict) -> dict:
+    return {s.get("id"): s for fl in dash.get("floors") or [] for s in fl.get("sections") or []}
+
+
+def describe_change(old: dict, new: dict) -> list[str]:
+    """What is different on the dashboard, in the words a person reads it
+    in. Computed from the two documents, never from what brAIn said it did:
+    a Tell that reports a change the file does not carry is the failure this
+    exists to catch."""
+    out: list[str] = []
+    for flag, words in FLAG_WORDS.items():
+        a, b = old.get(flag, True) is not False, new.get(flag, True) is not False
+        if a != b:
+            out.append(f"{words[0].upper() + words[1:]} is {'back' if b else 'hidden'}.")
+    if (old.get("title") or "") != (new.get("title") or ""):
+        out.append(f"The title is now “{new.get('title')}”.")
+    if list(old.get("scenes") or []) != list(new.get("scenes") or []):
+        out.append(f"The scenes line now has {len(new.get('scenes') or [])} scene(s).")
+    if (old.get("theme") or "") != (new.get("theme") or ""):
+        out.append(f"The theme is now {new.get('theme') or 'automatic'}.")
+    os_, ns = _sections(old), _sections(new)
+    for sid, sec in ns.items():
+        if sid not in os_:
+            out.append(f"New section “{sec.get('title')}”.")
+        else:
+            was = os_[sid]
+            if was.get("title") != sec.get("title"):
+                out.append(f"“{was.get('title')}” is now called “{sec.get('title')}”.")
+            if bool(was.get("hidden")) != bool(sec.get("hidden")):
+                out.append(f"“{sec.get('title')}” is {'hidden' if sec.get('hidden') else 'shown again'}.")
+            if (was.get("width") or 2) != (sec.get("width") or 2):
+                out.append(f"“{sec.get('title')}” is {'wider' if (sec.get('width') or 2) > (was.get('width') or 2) else 'narrower'}.")
+    for sid, sec in os_.items():
+        if sid not in ns:
+            out.append(f"Removed the section “{sec.get('title')}”.")
+    oc, nc = _cards(old), _cards(new)
+    for cid, (words, sec, card) in nc.items():
+        if cid not in oc:
+            out.append(f"New card “{words}” in {sec}.")
+        elif oc[cid][2] != card:
+            out.append(f"Changed the card “{words}” in {sec}.")
+    for cid, (words, sec, _) in oc.items():
+        if cid not in nc:
+            out.append(f"Removed the card “{words}” from {oc[cid][1]}.")
+    if len(out) > MAX_SHOWS:
+        out = out[:MAX_SHOWS - 1] + [f"…and {len(out) - MAX_SHOWS + 1} more changes."]
+    return out
+
+
+def read_back(base: str, commit: str) -> dict:
+    """Read the dashboard back after a Tell and say what is true NOW.
+
+    ``files`` is what the commit touched; ``unreadable`` is the parser's
+    sentence when dashboard.yaml no longer reads (Morph goes on showing the
+    last version that did, so nothing the change meant is on screen);
+    ``dropped`` is what Morph could not use out of a file that does read;
+    ``shows`` is the difference a person would see."""
+    files = gitrepo.changed_files(commit) if commit else []
+    out = {"files": files, "shows": [], "dropped": [], "unreadable": ""}
+    if "dashboard.yaml" not in files:
+        return out
+    new, problems, _ = store.read()
+    if problems and problems[0].startswith(store.UNREADABLE):
+        out["unreadable"] = problems[0][:300]
+        return out
+    before = gitrepo.file_at(base, "dashboard.yaml") if base else None
+    old, old_problems = store.load_text(before) if before is not None else (store.empty(), [])
+    out["dropped"] = [p[:200] for p in problems if p not in old_problems][:6]
+    out["shows"] = describe_change(old, new)
+    return out
+
+
 def build_prompt(target: dict, words: str, current: str, previous: list[dict] | None = None,
                  *, shot=None, view: dict | None = None, scope: str = "ui") -> str:
     kind = target.get("kind") or "dashboard"
@@ -337,6 +433,12 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         "  so check your JavaScript. Never say you cannot change Morph's code: you can.",
         "- When you changed Morph's own code, fill code_issue saying what you changed and why, so",
         "  Morph can offer to send it to Morph's developers. Do not file anything yourself.",
+        "",
+        "- A change is made by WRITING the files: describing it in your answer changes nothing. When",
+        "  you finish, Morph reads /config/morph back and tells the person exactly what is different",
+        "  on their dashboard, so a summary that claims a change the files do not carry is shown",
+        "  to be wrong. A Morph dashboard is /config/morph/dashboard.yaml — never a Lovelace",
+        "  dashboard. If the request needs something dashboard.yaml cannot express, say so.",
         "",
         "Answer with the JSON object the schema describes: summary (what you did, for the person),",
         "saw, changed, reload (true if the dashboard changed), needs_person only if something is",
@@ -457,16 +559,38 @@ async def _run(state: dict) -> None:
             files = await asyncio.to_thread(gitrepo.changed_files, commit)
             _step(state, "Changed " + ", ".join(files[:6]), "good")
         changed = [str(x)[:200] for x in ((data or {}).get("changed") or [])][:20]
-        house = [c for c in changed if "morph" not in c.lower()]
+        house = [c for c in changed if not _morph_file(c)]
         if house:
             state["house"] = house
             _step(state, "In Home Assistant: " + "; ".join(house[:4]), "good")
-        if error and state.get("phase") != "failed":
-            state["phase"] = "failed"
-            state["say"] = summary or f"brAIn could not finish this ({error})."
-        elif state.get("phase") != "failed":
-            state["phase"] = "done"
-            state["say"] = summary or ("Done." if commit else "brAIn answered without changing anything.")
+        # Read the dashboard back, and publish it now rather than on the
+        # watcher's next pass, so what the person is told and what their
+        # screen shows are the same file (house report: "it says it's
+        # making changes, but none of them are applied").
+        back = await asyncio.to_thread(read_back, base, commit)
+        if ON_PUBLISH:
+            mirror = await asyncio.to_thread(ON_PUBLISH)
+            if isinstance(mirror, dict) and mirror.get("revision"):
+                state["revision"] = mirror["revision"]
+        state["shows"] = back["shows"]
+        if back["dropped"]:
+            state["dropped"] = back["dropped"]
+        if any(f.startswith("cards/") for f in back["files"]):
+            state["cards"] = True
+        # The phase is decided now and written only with the final save: a
+        # state file reading "done" is the panel's signal that everything
+        # after this (the lesson, the outcome) has landed too.
+        phase, say = state.get("phase"), state.get("say")
+        if error and phase != "failed":
+            phase, say = "failed", summary or f"brAIn could not finish this ({error})."
+        elif phase != "failed":
+            phase, say = outcome(state, summary, commit, back)
+        if state.get("unchanged") or back["unreadable"]:
+            _step(state, "Read the dashboard back: " + ("it does not read" if back["unreadable"]
+                                                          else "nothing on it changed"), "bad")
+        elif back["shows"]:
+            _step(state, "Read the dashboard back: " + str(len(back["shows"])) + " change"
+                  + ("" if len(back["shows"]) == 1 else "s") + " on screen", "good")
         state["needs_person"] = str((data or {}).get("needs_person") or "")[:600]
         state["saw"] = str((data or {}).get("saw") or "")[:400]
         issue = (data or {}).get("code_issue")
@@ -486,6 +610,7 @@ async def _run(state: dict) -> None:
                                    "detail": "brAIn changed Morph's own " + ", ".join(code_files) + " for this."}
         if state.get("code_issue"):
             state["issue"] = "asked"
+        state["phase"], state["say"] = phase, say
         state["reload"] = bool(commit) or bool((data or {}).get("reload"))
         lesson = str((data or {}).get("lesson") or "").strip()
         if lesson:
@@ -510,6 +635,39 @@ async def _run(state: dict) -> None:
         _save(state)
     finally:
         _RUNNING.pop(tid, None)
+
+
+def _morph_file(line: str) -> bool:
+    """Whether one of brAIn's "changed" lines is a file in /config/morph
+    rather than something in Home Assistant. "dashboard.yaml" alone used to
+    count as a house change, so Undo sent brAIn to put back a house change
+    nobody had made."""
+    low = line.lower().strip()
+    return ("morph" in low or low.startswith(("dashboard.yaml", "cards/", "frontend/", "learned.md"))
+            or low in ("dashboard", "the dashboard"))
+
+
+def outcome(state: dict, summary: str, commit: str, back: dict) -> tuple[str, str]:
+    """The phase and the sentence a finished Tell ends on, decided from
+    what the files say rather than from what brAIn said it did. The
+    sentence is never "done" over a dashboard that did not change."""
+    said = f" brAIn said: “{summary}”" if summary else ""
+    if back["unreadable"]:
+        return "failed", ("Not applied: " + back["unreadable"] + ". Morph is still showing the "
+                          "dashboard as it was. Undo puts the file back, or tell brAIn to fix it.")
+    morph_files = [f for f in back["files"] if f != "LEARNED.md"]
+    if not morph_files and not state.get("house"):
+        state["unchanged"] = True
+        if state.get("scope") == "house":
+            return "done", summary or "brAIn answered without changing anything."
+        return "done", "Nothing on the dashboard changed." + said
+    if morph_files == ["dashboard.yaml"] and not back["shows"]:
+        state["unchanged"] = True
+        return "done", "brAIn rewrote dashboard.yaml, but nothing on the dashboard is different." + said
+    text = summary or "Done."
+    if back["dropped"]:
+        text += " Morph could not use part of it: " + "; ".join(back["dropped"][:3]) + "."
+    return "done", text
 
 
 def _follow(state: dict, seen: int) -> int:

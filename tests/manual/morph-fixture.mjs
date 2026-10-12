@@ -20,7 +20,7 @@ import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -211,13 +211,14 @@ const hass = {
   async callWS(msg) {
     window.__ws.push(msg);
     const t = msg.type;
-    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000 };
+    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000 };
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
       if (msg.kind === 'tell') { const id = 'morph-t' + (++seq); tells[id] = { id, phase: 'waiting', steps: [{ t: 'Reading ' + (p.target.path || ''), tone: '' }, ...(p.shot ? [{ t: 'Took a picture of it for brAIn', tone: '' }] : []), { t: 'Handed to brAIn as task ' + id, tone: '' }], payload: 'MORPH · a change request…\\nAsked: “' + p.text + '”' , text: p.text, at: Date.now(), started: Date.now() / 1000, issueAsk: /Morph cannot/.test(p.text) }; return { ok: true, ...tells[id] }; }
       if (msg.kind === 'tell_issue') { const s = tells[p.id]; if (s) s.issue = p.verb === 'send' ? 'sent' : 'declined'; return { ok: true }; }
       if (msg.kind === 'tell_undo') return { ok: true, commit: 'undo1' };
+      if (msg.kind === 'report') { if (!String(p.text || '').trim()) return { ok: false, error: 'Say what should be fixed.' }; F.state.devloop = { ...F.state.devloop, mine: [{ fp: 'fp' + (++seq), what: p.text, ui: !!p.ui, at: Date.now() / 1000, picked: false }].concat(F.state.devloop.mine || []) }; return { ok: true }; }
       if (msg.kind === 'history') return { ok: true, log: [{ sha: 'abc1', who: 'brain', at: Date.now() / 1000 - 600, message: 'brAIn: Added a Pets section' }, { sha: 'abc0', who: 'person', at: Date.now() / 1000 - 7200, message: 'Moved a section' }] };
       if (msg.kind === 'settings') { F.state.settings = { ...F.state.settings, ...p.patch }; return { ok: true, settings: F.state.settings }; }
       return { ok: true };
@@ -225,7 +226,7 @@ const hass = {
     if (t === 'morph/tell_status') {
       const s = tells[msg.tell]; if (!s) return { phase: 'missing' };
       if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Looking at the screenshot', tone: '', brain: true }, { t: 'Reading dashboard.yaml', tone: '', brain: true }); }
-      if (Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the cans card wider and moved it to the top of the kitchen.'; s.saw = 'The Cans card, a narrow strip at the bottom of the Kitchen.'; s.commit = 'c0ffee'; s.reload = false; s.steps.push({ t: 'Editing dashboard.yaml', tone: '', brain: true }, { t: 'Changed dashboard.yaml', tone: 'good' }); if (s.issueAsk) { s.code_issue = { title: 'The light card cannot show two colours at once', detail: 'A split strip in the light card.' }; s.issue = 'asked'; } }
+      if (Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the cans card wider and moved it to the top of the kitchen.'; s.saw = 'The Cans card, a narrow strip at the bottom of the Kitchen.'; s.commit = 'c0ffee'; s.reload = false; s.shows = ['Changed the card “Cans” in Kitchen.']; s.steps.push({ t: 'Editing dashboard.yaml', tone: '', brain: true }, { t: 'Changed dashboard.yaml', tone: 'good' }); if (s.issueAsk) { s.code_issue = { title: 'The light card cannot show two colours at once', detail: 'A split strip in the light card.' }; s.issue = 'asked'; } }
       return { ...s };
     }
     if (t === 'morph/shot') {
@@ -284,6 +285,12 @@ export async function route(context, opts) {
       const own = (opts && opts.overrides) || {};
       if (!m[1].startsWith('shipped/') && own[m[1]] != null) return r.fulfill({ contentType: 'text/javascript', body: own[m[1]] });
       try { return r.fulfill({ contentType: 'text/javascript', body: readFileSync(path.join(FRONTEND, path.basename(m[1])), 'utf8') }); } catch (e) { return r.fulfill({ status: 404 }); }
+    }
+    // A house's own card code, written the way AGENTS.md's example was
+    // before it guarded define(): loading a newer version throws.
+    if (url.pathname.startsWith('/morph_cards/')) {
+      const name = path.basename(url.pathname, '.js');
+      return r.fulfill({ contentType: 'text/javascript', body: `class C extends HTMLElement { setConfig() {} set hass(h) {} }\ncustomElements.define(${JSON.stringify(name)}, C);\n` });
     }
     if (url.pathname.startsWith('/api/camera_proxy/')) {
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#2a3340"/><circle cx="160" cy="95" r="34" fill="#46566a"/></svg>`;

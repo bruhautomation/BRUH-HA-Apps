@@ -81,6 +81,10 @@ Every save is one commit. The toast after a change offers **Undo**.
 In Edit, **hold** anything — a card, a section, a floor, the whole dashboard —
 and say what should change. **Send** hands it over.
 
+You do not need Edit to change one card: open it (tap, or hold) and press
+Morph's mark — the small tile with one round corner — and the same box opens
+in the card. Cancel goes back to the opened card.
+
 **brAIn looks first.** The moment you hold something, Morph takes a picture
 of it and shows it in the box (**What brAIn will see**). brAIn reads that
 picture before anything else, so "this is cut off" or "the colours are
@@ -109,7 +113,15 @@ and **Show** opens it again.
 
 **It is a conversation.** When brAIn answers, Morph commits the dashboard
 half as one change and shows what brAIn did, what it saw, and the card
-**before and after**. **Keep**, **Undo** and **Tell it more**: Undo reverts
+**before and after**.
+
+**Morph checks the result.** It reads the dashboard back and lists what is
+different on screen under **On the dashboard now**, worked out from the file,
+not from what brAIn said. If nothing changed it says *Nothing on the
+dashboard changed* and quotes brAIn. If brAIn left `dashboard.yaml` unreadable
+it says *Not applied* (Morph keeps showing the last version that read) and
+**Undo** puts the file back. If your screen has not caught up, **Refresh**
+loads it. **Keep**, **Undo** and **Tell it more**: Undo reverts
 that commit exactly (and, if you asked for a change in Home Assistant, asks
 brAIn to put that back too); Tell it more keeps the conversation above,
 takes a new picture of how it looks now, and asks what should be different.
@@ -192,6 +204,11 @@ brAIn's development loop (brAIn ⚙ → Developer) reads it as its **Morph**
 stream and files each fault once in your private reports repository, where
 the cloud routine fixes it in Morph's code and the fix arrives as an update.
 
+**Report something yourself.** Settings → Improving Morph itself → *What do
+you want to fix in Morph?* takes your own words. Tick *It is about how Morph
+looks* when it is, and **Send**. They go as they are, by the same route, and
+are listed with **Take back** until brAIn picks them up.
+
 Nothing leaves your house unless brAIn's development loop is on. Turn
 reporting off in Settings or with `report_code_issues`.
 
@@ -203,7 +220,7 @@ The gear in Morph's top bar opens its Settings page.
 |---|---|
 | **brAIn** | Whether brAIn is reachable, the model Tell uses, how long a hold takes. |
 | **Learning** | On or off, how often, which model, **Learn now**, the scorecard, suggestions waiting, the lessons. |
-| **Improving Morph itself** | Report Morph's own problems on or off, and when brAIn last picked them up. |
+| **Improving Morph itself** | Report Morph's own problems on or off, **What do you want to fix in Morph?**, the changes this house made to Morph's code, and when brAIn last picked reports up. |
 | **Appearance** | Theme (auto, dark, medium, light) and reduced motion. |
 | **History** | Every change with who made it, and **Undo** or **Restore** for each. |
 | **Dashboard** | **Rebuild from the house** (itself a commit you can undo). |
