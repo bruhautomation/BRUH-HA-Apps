@@ -230,6 +230,7 @@ class TestATellMayChangeMorphItself(unittest.TestCase):
         self.assertIn("+", body)
         self.assertIn("Back to the house", body)
         self.assertNotIn("```\n```diff", body, "the patch is not wrapped in a second fence")
+        self.assertNotIn(".base/", body, "Morph's own original is not part of the change")
 
     def test_a_code_suggestions_do_it_makes_the_change(self):
         sugs = self.env.learning.code_suggestions([{"what": "The header has no theme switch", "detail": "Add one"}])
@@ -260,3 +261,105 @@ class TestBothHalvesAgree(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_GIT, "git is not installed")
+class TestMakingAPausedChangeAgain(unittest.TestCase):
+    """"Make it again" (house report: "I click make it again and nothing
+    happens"): the request has to give brAIn what it needs for a real
+    redo, and a second press must not start a second one."""
+
+    def setUp(self):
+        self.env = MorphEnv().__enter__()
+        self.addCleanup(self.env.__exit__, None, None, None)
+        self.env.brain_on()
+        fast(self.env)
+        dash, _ = self.env.store.normalize(DOC)
+        self.env.store.write(dash)
+        self.env.gitrepo.commit("First", "morph")
+        self.code = self.env.morph_dir / "frontend"
+        self.code.mkdir()
+        self.before = (self.env.shipped / "styles.js").read_text()
+        (self.code / "styles.js").write_text(self.before + "/* a theme switch */\n")
+        self.env.gitrepo.commit("brAIn: Put a light/dark switch in the header", "brain")
+        (self.env.shipped / "styles.js").write_text(self.before + "/* next release */\n")
+
+    def test_morphs_own_file_the_change_was_written_against_is_kept(self):
+        kept = self.env.morphcode.kept_base("styles.js")
+        self.assertIsNotNone(kept)
+        self.assertEqual(self.before, kept.read_text(), "the ORIGINAL, not the new release")
+        self.assertIn("frontend/.base/styles.js",
+                      self.env.gitrepo.changed_files(self.env.gitrepo.head()),
+                      "committed with the copy, so Undo takes both")
+        self.assertEqual({"styles.js": "paused"},
+                         {r["name"]: r["status"] for r in self.env.morphcode.status()},
+                         "the kept original is not itself a copy")
+
+    def test_the_request_is_a_three_way_merge_with_the_history(self):
+        history = [c["message"] for c in self.env.gitrepo.log(12, "frontend/styles.js")]
+        words = self.env.morphcode.redo_words("styles.js", "0.5.2", history)
+        self.assertTrue(words.startswith("Make my change to Morph's styles.js again on the new Morph (0.5.2)."))
+        self.assertIn(str(self.env.morphcode.kept_base("styles.js")), words)
+        self.assertIn(str(self.env.shipped / "styles.js"), words)
+        self.assertIn("three-way merge", words)
+        self.assertIn("brAIn: Put a light/dark switch in the header", words)
+        self.assertNotIn("First", words, "only commits that touched the file")
+
+    def test_without_a_kept_original_brain_is_told_not_to_copy_the_old_file_over(self):
+        (self.code / ".base" / "styles.js").unlink()
+        self.assertIsNone(self.env.morphcode.kept_base("styles.js"))
+        words = self.env.morphcode.redo_words("styles.js", "0.5.2", [])
+        self.assertIn("was not kept", words)
+        self.assertIn("Never copy the old file over the new one", words)
+
+    def test_putting_morphs_own_back_drops_the_kept_original(self):
+        ok, _ = self.env.morphcode.reset("styles.js")
+        self.assertTrue(ok)
+        self.assertFalse((self.code / ".base" / "styles.js").exists())
+
+    def test_a_second_press_shows_the_running_redo(self):
+        morphd = importlib.import_module("morphd")
+
+        async def go():
+            first = await morphd.handle("code_redo", {"name": "styles.js"})
+            second = await morphd.handle("code_redo", {"name": "styles.js"})
+            for t in list(self.env.tell._RUNNING.values()):
+                t.cancel()
+            return first, second
+        first, second = asyncio.run(go())
+        self.assertTrue(first["ok"], first)
+        self.assertEqual("code", first["target"]["kind"])
+        self.assertEqual(first["id"], second["id"], "one redo per file")
+        self.assertTrue(second.get("already"))
+
+    def test_a_tell_hands_what_it_learned_about_the_house_to_brains_memory(self):
+        """A Tell is a task run; brAIn's action gate refuses remember_fact
+        there (house report: "A system gate blocked the save"). The facts
+        ride in the answer and Morph queues them in brAIn's inbox."""
+        (self.env.brain_shared / "memory").mkdir(parents=True)
+        fake = FakeBrain(self.env, lambda task: {"data": {
+            "summary": "Added an Upstairs HVAC card", "changed": ["cards/morph-hvac-flow.js"], "reload": True,
+            "facts": [{"fact": "Govee 1 measures the upstairs HVAC return air.", "subject": "sensor.govee_1_temperature"},
+                      {"fact": "  ", "subject": "house"},
+                      {"fact": "Govee 2 measures supply air.", "subject": "not a subject; rm -rf"}]}})
+        fake.start()
+        self.addCleanup(fake.stop.set)
+
+        async def go():
+            return await finish(self.env, self.env.tell.start({"kind": "dashboard"}, "Add an HVAC card"))
+        st = asyncio.run(go())
+        self.assertNotIn("remember_fact. LEARNED", fake.seen[0]["prompt"])
+        self.assertIn("put it in `facts`", fake.seen[0]["prompt"])
+        files = list((self.env.brain_shared / "memory" / "inbox").glob("*.jsonl"))
+        self.assertEqual(1, len(files))
+        rows = [json.loads(x) for x in files[0].read_text().splitlines()]
+        self.assertEqual(["Govee 1 measures the upstairs HVAC return air.", "Govee 2 measures supply air."],
+                         [r["fact"] for r in rows])
+        self.assertEqual({"morph"}, {r["source"] for r in rows})
+        self.assertEqual("sensor.govee_1_temperature", rows[0]["subject"])
+        self.assertNotIn("subject", rows[1], "a subject that is not one is dropped, the fact kept")
+        self.assertTrue(any("Queued 2 facts" in x["t"] for x in st["steps"]))
+
+    def test_no_brain_memory_folder_means_nothing_is_written(self):
+        self.assertEqual(0, self.env.tell.queue_facts([{"fact": "x"}], "morph-abc"))
+        self.assertFalse((self.env.brain_shared / "memory").exists())

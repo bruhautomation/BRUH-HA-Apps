@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.2
+
+### Fixed
+
+- **"Make it again" on a paused change now shows brAIn at work.** The press
+  started brAIn, but the only sign was a line in the header, the note stayed
+  exactly as it was, and the result was never shown. It now opens brAIn's box
+  inside the note, with the steps as brAIn takes them, then the result with
+  **Reload to see it** and **Undo**. The note stays until you close the box,
+  and a second press shows the same request instead of starting another.
+- **A change made again is a real merge.** Morph now keeps its own file as it
+  was when your change was made (`/config/morph/frontend/.base/`, committed with
+  the change). brAIn is given all three versions: that original, your copy and
+  the new release. It also gets the commits that describe the change. A change
+  made before 0.5.2 has no kept original, so brAIn is told to start from the new
+  file and never copy the old one over it.
+- **What a request teaches brAIn about the house is saved again.** brAIn's
+  action gate refuses `remember_fact` in a request from Morph, because that is
+  a task run and nobody asked to remember anything. Facts now come back in the
+  answer and Morph queues them in brAIn's memory inbox, where the consolidator
+  decides what to keep. The request's steps say how many were queued.
+
 ## 0.5.1
 
 ### Fixed

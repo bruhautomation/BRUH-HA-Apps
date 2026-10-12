@@ -454,10 +454,30 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
   // that an update paused. Both say what is running and offer the fix.
   codeProblemsHtml() {
     const out = [];
-    const note = (head, body, acts) => `<div class="note" style="margin-bottom:12px;background:${mix('var(--amber)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--amber)', 25)}"><span class="small" style="color:var(--amber);font-weight:700">${esc(head)}</span><span class="sm">${esc(body)}</span>${acts ? `<div class="acts">${acts}</div>` : ''}</div>`;
+    const note = (head, body, acts) => `<div class="note" style="margin-bottom:12px;background:${mix('var(--amber)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--amber)', 25)}"><span class="small" style="color:var(--amber);font-weight:700">${esc(head)}</span>${body ? `<span class="sm">${esc(body)}</span>` : ''}${acts ? `<div class="acts">${acts}</div>` : ''}</div>`;
     if (window.__morphFallback) out.push(note('A change to Morph itself did not load, so Morph is running its own copy.', window.__morphFallback, '<button type="button" class="wd strong" data-act="page" data-v="settings">See the changes</button>'));
-    const paused = (((this.data && this.data.state) || {}).code || []).filter((r) => r.status === 'paused');
-    paused.slice(0, 3).forEach((r) => out.push(note(`Morph was updated, so your change to its ${r.name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button>`)));
+    const st = (this.data && this.data.state) || {};
+    const names = (st.code || []).filter((r) => r.status === 'paused').map((r) => r.name).slice(0, 3);
+    // "Make it again" opens brAIn's box HERE, and the note stays until the
+    // box is closed: once brAIn has written the copy it is no longer paused,
+    // and a note that vanished with the box in it took the result with it.
+    const t = this.s.tell;
+    const mine = t && t.kind === 'code' ? t.id : '';
+    if (mine && !names.includes(mine)) names.push(mine);
+    names.forEach((name) => {
+      if (name === mine) {
+        const ph = (t.state || {}).phase;
+        const head = ph === 'done' ? `Your change to Morph’s ${name}` : ph === 'failed' ? `Your change to Morph’s ${name} is still paused.` : `brAIn is making your change to Morph’s ${name} again.`;
+        out.push(note(head, ph === 'done' || ph === 'failed' ? '' : 'Morph’s own keeps running until it is done. You can leave this page; it carries on.', this.tellBox('code', name)));
+        return;
+      }
+      const running = (st.activity || []).find((a) => a.kind === 'code' && a.target === name && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase));
+      if (running) {
+        out.push(note(`brAIn is making your change to Morph’s ${name} again.`, 'Morph’s own keeps running until it is done.', `<button type="button" class="wd go" data-act="activity-open" data-v="${esc(running.id)}">Show</button>`));
+        return;
+      }
+      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">Make it again</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
+    });
     return out.join('');
   }
 
@@ -992,6 +1012,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     if (scope.kind === 'section') return R.querySelector(`[data-sec="${CSS.escape(scope.id || '')}"]`);
     if (scope.kind === 'floor') { const fi = ((this.dash && this.dash.floors) || []).findIndex((f) => f.id === scope.id); return fi >= 0 ? R.querySelector(`[data-floor="${fi}"]`) : null; }
     if (['story', 'upcoming', 'scenes'].includes(scope.kind)) return R.querySelector(`[data-hold="${scope.kind}"]`);
+    if (scope.kind === 'code') return null; // Morph's own module: nothing on the page is it
     return R.querySelector('[data-board]');
   }
 
@@ -1538,8 +1559,15 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         return;
       }
       case 'code-redo': {
-        const r = await H.callWS({ type: 'morph/request', kind: 'code_redo', payload: { name: v } });
-        this.toast(r.ok ? 'brAIn is making that change again on the new Morph. It shows in Settings when it is done.' : r.error); this.load(); return;
+        // The press opens brAIn's box in the note it was made from: steps
+        // while it works, then the result with Reload and Undo. A toast in
+        // the header and an unchanged note read as nothing happening.
+        el.disabled = true; el.textContent = 'Handing it to brAIn…';
+        let r;
+        try { r = await H.callWS({ type: 'morph/request', kind: 'code_redo', payload: { name: v } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+        if (!r || !r.ok || !r.id) { this.toast((r && r.error) || 'Morph could not hand that to brAIn.'); this.schedule(); this.load(); return; }
+        this.s.tell = { kind: 'code', id: v, label: v, path: `Morph’s own ${v}`, text: `Make my change to ${v} again on the new Morph`, sent: true, tellId: r.id, state: r, turns: [] };
+        this.pollTell(true); this.load(); return;
       }
       case 'tell-undo': {
         const t = this.s.tell; if (!t || !t.tellId) return;
@@ -1556,7 +1584,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         const t = this.s.tell;
         const turns = [...(t.turns || []), { text: t.text, say: (t.state && t.state.say) || '', before: t.shot && t.shot.url, after: t.after }];
         this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: '', sent: false, draft: '', previous: t.tellId, turns };
-        this.shoot(this.s.tell); // brAIn sees how it looks NOW
+        if (t.kind !== 'code') this.shoot(this.s.tell); // brAIn sees how it looks NOW
         this.schedule(); return;
       }
       case 'tell-issue': {
@@ -1570,7 +1598,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       case 'activity-open': {
         const a = (((this.data && this.data.state) || {}).activity || []).find((x) => x.id === v); if (!a) return;
         const st = this.tellStatus[v] || { phase: a.phase, steps: [], started: a.started };
-        this.s.tell = { kind: a.kind || 'dashboard', id: a.target || '', label: a.label, path: a.path, text: a.text, sent: true, tellId: a.id, state: st, turns: [] };
+        this.s.tell = { kind: a.kind || 'dashboard', id: a.target || '', label: a.label, path: a.path, text: a.kind === 'code' ? String(a.text || '').split('\n')[0] : a.text, sent: true, tellId: a.id, state: st, turns: [] };
         if (a.kind === 'card' && a.target && this.findCard(a.target)) this.openView(a.target, 'tell');
         this.pollTell(true); this.schedule(); return;
       }

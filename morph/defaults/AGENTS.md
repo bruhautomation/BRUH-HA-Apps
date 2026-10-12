@@ -196,9 +196,11 @@ bends in your `summary`.
   entity", "make an automation that…"). When doing it properly would need a
   house change nobody asked for, do the dashboard part and say in
   `needs_person` what would have to change, so they can ask.
-- What you learn about the house (what a device is, where it is, who uses it)
-  is brAIn's memory: record it with `remember_fact`. `LEARNED.md` and `lesson`
-  are only for how this household wants its dashboard.
+- What you learn about the house (what a device is, where it is, which sensor
+  measures what) is brAIn's memory: in a Tell, put it in the answer's `facts`
+  and Morph queues it (brAIn's action gate refuses `remember_fact` in a Tell,
+  which is a task run, not a conversation). `LEARNED.md` and `lesson` are only
+  for how this household wants its dashboard.
 - When a request needs **Morph's own code** changed — a built-in card type that
   is wrong or cannot do it, the layout, the panel, the header — change it as
   *Morph's own code* above, and fill `code_issue`. Morph asks the person

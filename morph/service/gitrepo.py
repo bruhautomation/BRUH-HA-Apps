@@ -174,9 +174,12 @@ def _restore_locked(sha: str) -> tuple[bool, str]:
     return True, new
 
 
-def log(limit: int = 60) -> list[dict]:
-    r = _git("log", f"-{max(1, min(500, limit))}", "--abbrev=12",
-             "--format=%h%x1f%an%x1f%at%x1f%s", check=False)
+def log(limit: int = 60, path: str = "") -> list[dict]:
+    """The newest commits (only those touching ``path`` when given)."""
+    args = ["log", f"-{max(1, min(500, limit))}", "--abbrev=12", "--format=%h%x1f%an%x1f%at%x1f%s"]
+    if path:
+        args += ["--", path]
+    r = _git(*args, check=False)
     out = []
     for line in r.stdout.splitlines():
         parts = line.split("\x1f")
@@ -192,12 +195,15 @@ def changed_files(sha: str) -> list[str]:
     return [x for x in r.stdout.splitlines() if x.strip()]
 
 
-def diff(sha: str, prefix: str = "", limit: int = 12000) -> str:
+def diff(sha: str, prefix: str = "", limit: int = 12000, exclude: str = "") -> str:
     """What one commit changed, as a patch (under ``prefix`` only when
-    given), cut at ``limit`` characters with a line saying so."""
+    given, and never under ``exclude``), cut at ``limit`` characters with a
+    line saying so."""
     args = ["show", "--format=", "--no-color", sha]
-    if prefix:
-        args += ["--", prefix]
+    if prefix or exclude:
+        args += ["--", prefix or "."]
+        if exclude:
+            args.append(f":(exclude){exclude}")
     out = _git(*args, check=False).stdout
     return out if len(out) <= limit else out[:limit] + f"\n… (cut: {len(out) - limit} more characters)\n"
 
