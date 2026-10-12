@@ -30,6 +30,9 @@ MORPH_DIR = _p("MORPH_DIR", "/config/morph")
 SHARED = _p("MORPH_SHARED", "/config/.morph")
 DATA = _p("MORPH_DATA", "/data")
 BRAIN_SHARED = _p("MORPH_BRAIN_SHARED", "/config/.brain")
+# What a brAIn task is doing while it does it: one line per tool call,
+# written by brAIn's brain-task-progress.sh hook (spelled the same there).
+BRAIN_PROGRESS = BRAIN_SHARED / "task_progress"
 DEFAULTS = _p("MORPH_DEFAULTS", str(Path(__file__).resolve().parent.parent / "defaults"))
 
 DASHBOARD = MORPH_DIR / "dashboard.yaml"
@@ -42,6 +45,9 @@ RESPONSES = SHARED / "responses"
 MIRROR = SHARED / "dashboard.json"
 STATE = SHARED / "state.json"
 TELLS = SHARED / "tells"
+# Pictures the panel took of what somebody held, written by the integration
+# (`morph/shot`) and read by brAIn's Read tool — so readable by UID 1000.
+SHOTS = SHARED / "shots"
 USAGE = SHARED / "usage.jsonl"
 ERRORS = SHARED / "errors.jsonl"
 DEVLOOP_OUTBOX = SHARED / "devloop" / "outbox.json"

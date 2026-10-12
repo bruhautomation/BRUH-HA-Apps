@@ -12,11 +12,19 @@
 // the situation sentence). `morph/subscribe` says which of those moved, so a
 // change brAIn makes appears without a reload. Writes are `morph/request`,
 // which the add-on turns into a git commit — so every change has an Undo.
+//
+// A Tell starts with a PICTURE: the moment something is held, snap.js draws
+// it and `morph/shot` files the PNG where brAIn reads it first, so "this"
+// means what is on the screen. The box is a conversation (each turn keeps
+// its question, its answer and its before/after pictures), it shows what
+// brAIn is doing while it does it, and when brAIn says the request needs
+// Morph's own code changed it asks whether to send that as an issue.
 
 import { Engine } from './engine.js';
 import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
+import * as snap from './snap.js';
 import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, domainOf, UNAVAILABLE, fmt } from './util.js';
 
 const HOLD_MS = 540;
@@ -72,6 +80,7 @@ class MorphPanel extends HTMLElement {
   disconnectedCallback() {
     if (this._unsub) { this._unsub.then((u) => u && u()).catch(() => {}); this._unsub = null; }
     clearInterval(this._tick);
+    clearInterval(this._since);
     this.flushUsage();
   }
 
@@ -97,6 +106,7 @@ class MorphPanel extends HTMLElement {
     this.load();
     this._unsub = this.hass.connection.subscribeMessage(() => this.load(), { type: 'morph/subscribe' }).catch(() => null);
     this._tick = setInterval(() => { this.schedule(); this.flushUsage(); this.pollTell(); }, 10000);
+    this._since = setInterval(() => this.tickSince(), 1000);
     try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { this.engine.invalidate(); this.engine.layout(false, true); }); } catch (e) { /* no font API */ }
   }
 
@@ -144,7 +154,7 @@ class MorphPanel extends HTMLElement {
     this.rootEl.className = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}`;
     this.engine.forceReduce = !!set.reduce_motion;
     this.region('bar', this.barHtml());
-    this.region('lede', this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell brAIn what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '');
+    this.region('lede', (this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell brAIn what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
     if (this.s.page === 'settings') {
       ['top', 'upcoming', 'scenes', 'notes'].forEach((r) => this.region(r, ''));
       this.$('[data-region="board"]').hidden = true;
@@ -162,6 +172,7 @@ class MorphPanel extends HTMLElement {
     this.region('scenes', (dash.scenes || []).length ? this.scenesHtml(dash) : '');
     this.region('notes', this.topNotesHtml());
     this.renderBoard(dash);
+    this.tickSince();
   }
 
   region(name, html) {
@@ -192,9 +203,12 @@ class MorphPanel extends HTMLElement {
     else if (this.s.edit) right = `<button type="button" class="go" data-act="yaml-toggle" style="margin-left:10px;padding:0 4px;font-size:13px;color:var(--muted)">${this.s.yaml ? 'Hide YAML' : 'YAML'}</button><button type="button" class="go" data-act="edit" style="margin-left:6px;padding:0 4px;font-size:14px;color:var(--teal)">Done</button>`;
     else if (admin) right = `<button type="button" class="go" data-act="edit" style="display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:0 4px;font-size:13px;color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edit</button>`;
     const gear = admin && this.s.page !== 'settings' ? `<button type="button" class="go" data-act="page" data-v="settings" aria-label="Morph settings" style="margin-left:6px;padding:0 4px;color:var(--muted)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>` : '';
-    const toast = this.s.toast ? `<span class="rise" style="font-size:13px;color:var(--muted);margin-left:12px">${esc(this.s.toast.text)}${this.s.toast.sha ? ` <button type="button" class="wd go" data-act="undo-commit" data-v="${esc(this.s.toast.sha)}" style="min-height:24px">Undo</button>` : ''}</span>` : '';
+    const toast = this.s.toast ? `<span class="rise bartoast">${esc(this.s.toast.text)}${this.s.toast.sha ? ` <button type="button" class="wd go" data-act="undo-commit" data-v="${esc(this.s.toast.sha)}" style="min-height:24px">Undo</button>` : ''}</span>` : '';
     const yaml = this.s.edit && this.s.yaml != null ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px"><span class="label">Raw configuration · /config/morph/dashboard.yaml</span><textarea class="code-ed" data-keep="yaml" spellcheck="false" aria-label="dashboard.yaml">${esc(this.s.yaml)}</textarea><div class="row"><button type="button" class="wd go" data-act="yaml-save">Save YAML</button><span class="small">Saved as one commit; Undo puts it back.</span></div></div>` : '';
-    return `<div class="bar">${menu}<span class="brand">MORPH</span>${toast}<span class="flex1"></span><span class="date">${esc(date)}</span>${right}${gear}</div>${yaml}`;
+    // On a phone a toast takes the date's place: the bar is one row and
+    // Edit's own buttons must stay on it.
+    const dateHtml = this.s.toast && this._narrow ? '' : `<span class="date">${esc(date)}</span>`;
+    return `<div class="bar">${menu}<span class="brand">MORPH</span>${toast}<span class="flex1"></span>${dateHtml}${right}${gear}</div>${yaml}`;
   }
 
   // ---------------------------------------------------------------- the top
@@ -349,10 +363,15 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       acts = `<span class="sm">${esc((tellState && (tellState.say || (tellState.steps || []).slice(-1).map((x) => x.t)[0])) || 'brAIn is on it…')}</span>`;
     } else if (this.s.sugNo === g.id) {
       acts = `<input class="fld" type="text" data-keep="sugno" placeholder="Why not? (optional — it teaches Morph)"><div class="acts"><button type="button" class="wd strong" data-act="sug" data-v="no" data-id="${esc(g.id)}">Don't suggest it again</button><button type="button" class="wd" data-act="sug-cancel">Cancel</button></div>`;
+    } else if (g.kind === 'code') {
+      // Morph's own code, not this dashboard: the yes is "send it as an
+      // issue", and nothing is filed until somebody presses it.
+      acts = this.admin() ? `<div class="acts"><button type="button" class="wd go" data-act="sug" data-v="send" data-id="${esc(g.id)}">Send as issue</button><button type="button" class="wd" data-act="sug" data-v="not_now" data-id="${esc(g.id)}">Not now</button><button type="button" class="wd" data-act="sug-no" data-id="${esc(g.id)}">No</button></div>` : '';
     } else {
       acts = this.admin() ? `<div class="acts"><button type="button" class="wd go" data-act="sug" data-v="do" data-id="${esc(g.id)}">Do it</button><button type="button" class="wd" data-act="sug" data-v="not_now" data-id="${esc(g.id)}">Not now</button><button type="button" class="wd" data-act="sug-no" data-id="${esc(g.id)}">No</button></div>` : '';
     }
-    return `<div class="note rise" style="background:${mix('var(--violet)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--violet)', 25)}"><div class="row">${SPARK}<span class="small" style="color:var(--violet);font-weight:700">Morph suggests</span></div><p>${esc(g.title)}</p>${g.why ? `<span class="sm">${esc(g.why)}</span>` : ''}${g.last_error ? `<span class="sm" style="color:var(--rose)">Last try: ${esc(g.last_error)}</span>` : ''}${acts}</div>`;
+    const head = g.kind === 'code' ? 'Morph needs a fix' : 'Morph suggests';
+    return `<div class="note rise" style="background:${mix('var(--violet)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--violet)', 25)}"><div class="row">${SPARK}<span class="small" style="color:var(--violet);font-weight:700">${head}</span></div><p>${esc(g.title)}</p>${g.why ? `<span class="sm">${esc(g.why)}</span>` : ''}${g.last_error ? `<span class="sm" style="color:var(--rose)">Last try: ${esc(g.last_error)}</span>` : ''}${acts}</div>`;
   }
 
   topNotesHtml() {
@@ -699,14 +718,16 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
 
   // ------------------------------------------------------------ tell brAIn
 
-  // The prompt that opens IN PLACE of what was held (§7).
+  // The prompt that opens IN PLACE of what was held (§7). It is a
+  // conversation: earlier turns stay above, the picture brAIn is given is
+  // shown, and while brAIn works its own steps arrive here as it takes them.
   tellBox(kind, id) {
     const t = this.s.tell;
     if (!t || t.kind !== kind || (id && t.id !== id)) return '';
     const st = t.state || {};
     const composing = !t.sent;
-    const steps = (st.steps || []).map((x) => `<div class="step rise"><i style="background:${x.tone === 'bad' ? 'var(--rose)' : x.tone === 'good' ? 'var(--teal)' : 'var(--violet)'}"></i><span>${esc(x.t)}</span></div>`).join('');
     const done = ['done', 'failed'].includes(st.phase);
+    const turns = (t.turns || []).map((u) => `<div class="turn"><span class="q">“${esc(u.text)}”</span>${u.say ? `<p class="a">${esc(u.say)}</p>` : ''}${this.pairHtml(u.before, u.after)}</div>`).join('');
     const acts = [];
     if (done) {
       if (st.commit && !st.undone) acts.push('<button type="button" class="wd go" data-act="tell-keep">Keep</button>', '<button type="button" class="wd strong" data-act="tell-undo">Undo</button>');
@@ -715,12 +736,89 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
       acts.push('<button type="button" class="wd" data-act="tell-more">Tell it more</button>');
     }
     const sugs = (TELL_SUGS[kind] || []).map((s) => `<button type="button" class="wd" data-act="tell-sug" data-v="${esc(s)}" style="font-size:13px;min-height:34px">${esc(s)}</button>`).join('');
-    return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">
-<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell brAIn</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>
-${composing ? `<textarea class="tellin" rows="3" data-keep="tell" data-tellkey="${esc(kind + ':' + (id || ''))}" aria-label="What should change" placeholder="${esc(kind === 'dashboard' ? 'Add a Pets section with the feeder and water bowl…' : 'Say what should change…')}"></textarea>
-<div class="row" style="flex-wrap:wrap;gap:0 16px">${sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px;min-height:36px">Cancel</button><button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;min-height:36px;color:var(--violet)">Send</button></div>` : `<span style="font-size:14px">“${esc(t.text)}”</span><div class="steps">${steps || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div>
-${done ? `<p class="rise" style="font-size:14px;line-height:1.5">${esc(st.say || '')}</p>${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
-${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}`}</div>`;
+    const head = `<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell brAIn</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>`;
+    const scope = composing ? `<span class="small">Changes this dashboard. Say so if Home Assistant itself should change (“rename the entity”).</span>` : '';
+    if (composing) {
+      return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${this.shotHtml(t.shot, t.turns && t.turns.length ? 'How it looks now — brAIn sees this' : 'What brAIn will see')}
+<textarea class="tellin" rows="3" data-keep="tell" data-tellkey="${esc(kind + ':' + (id || ''))}" aria-label="What should change" placeholder="${esc(kind === 'dashboard' ? 'Add a Pets section with the feeder and water bowl…' : t.turns && t.turns.length ? 'What should it do differently?' : 'Say what should change…')}"></textarea>${scope}
+<div class="row" style="flex-wrap:wrap;gap:0 16px">${t.turns && t.turns.length ? '' : sugs}<span class="flex1"></span><button type="button" class="wd" data-act="tell-cancel" style="font-size:14px;min-height:36px">${t.turns && t.turns.length ? 'Close' : 'Cancel'}</button><button type="button" class="wd" data-act="tell-send" style="font-size:14px;font-weight:700;min-height:36px;color:var(--violet)">Send</button></div></div>`;
+    }
+    const all = st.steps || [];
+    const SHOW = 7;
+    const line = (x, i, arr) => `<div class="step${arr && i === arr.length - 1 ? ' rise' : ''}${x.brain ? ' bstep' : ''}"><i style="background:${x.tone === 'bad' ? 'var(--rose)' : x.tone === 'good' ? 'var(--teal)' : 'var(--violet)'}"></i><span>${esc(x.t)}</span></div>`;
+    const earlier = all.length > SHOW ? all.slice(0, all.length - SHOW) : [];
+    const folded = earlier.length + (st.folded || 0);
+    const steps = (folded ? `<details class="earlier"><summary>${folded} earlier step${folded === 1 ? '' : 's'}</summary>${earlier.map((x) => line(x)).join('')}</details>` : '') + all.slice(-SHOW).map(line).join('');
+    const working = !done ? `<div class="working"><span class="pulse"></span><span>${esc(this.phaseWords(st))}</span><span class="small" data-since="${Number(st.started) || ''}"></span></div>` : '';
+    const picture = t.shot && t.shot.url ? this.pairHtml(t.shot.url, t.after) : t.shot && t.shot.status === 'failed' ? `<span class="small">No picture this time (${esc(t.shot.error || 'it could not be drawn')}); brAIn was given the card’s text instead.</span>` : '';
+    // No `rise` here: this box is rebuilt each time brAIn takes a step, and
+    // replaying the blur-in on every rebuild made it flicker as it worked.
+    return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}${turns}
+<span style="font-size:14px">“${esc(t.text)}”</span>${picture}
+<div class="steps">${steps || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div>${working}
+${done ? `<p class="rise" style="font-size:14px;line-height:1.5">${esc(st.say || '')}</p>${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
+${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`;
+  }
+
+  shotHtml(shot, caption) {
+    if (!shot) return '';
+    if (shot.url) return `<figure class="shot${this.s.tell && this.s.tell.zoom ? ' zoom' : ''}" data-act="shot-zoom"><img src="${shot.url}" alt="${esc(caption)}"><figcaption>${esc(caption)}${shot.status === 'uploading' ? ' · sending…' : ''}</figcaption></figure>`;
+    if (shot.status === 'failed') return `<span class="small">No picture this time (${esc(shot.error || 'it could not be drawn')}); brAIn gets the card’s text instead.</span>`;
+    return '<span class="small">Taking a picture of it for brAIn…</span>';
+  }
+
+  pairHtml(before, after) {
+    if (!before && !after) return '';
+    const fig = (src, cap) => src ? `<figure class="shot${this.s.tell && this.s.tell.zoom ? ' zoom' : ''}" data-act="shot-zoom"><img src="${src}" alt="${cap}"><figcaption>${cap}</figcaption></figure>` : '';
+    return `<div class="shots">${fig(before, after ? 'Before' : 'What brAIn saw')}${fig(after, 'After')}</div>`;
+  }
+
+  issueHtml(st) {
+    const issue = st.code_issue;
+    if (!issue) return '';
+    if (st.issue === 'sent') return '<p class="sm" style="color:var(--teal)">Sent as an issue to brAIn’s development loop.</p>';
+    if (st.issue === 'declined') return '';
+    return `<div class="issue rise"><b>This needs a change to Morph itself.</b><span>${esc(issue.title)}</span>${issue.detail ? `<span class="sm">${esc(issue.detail)}</span>` : ''}<span>Would you like to send this as an issue? It goes to brAIn’s development loop and on to your private reports repository, so Morph’s code gets fixed.</span><div class="row" style="flex-wrap:wrap;gap:0 18px"><button type="button" class="wd go" data-act="tell-issue" data-v="send">Send as issue</button><button type="button" class="wd" data-act="tell-issue" data-v="no">No</button></div></div>`;
+  }
+
+  phaseWords(st) {
+    if (st.phase === 'sending') return 'Handing it to brAIn';
+    if (st.phase === 'waiting') return 'Waiting for brAIn to pick it up';
+    return 'brAIn is working on it';
+  }
+
+  elapsed(started) {
+    if (!started) return '';
+    const s = Math.max(0, Math.round(Date.now() / 1000 - started));
+    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+  }
+
+  // How long brAIn has been at it, written into the spans that ask for it
+  // rather than into the HTML: a box whose markup changed every second
+  // would be rebuilt every second.
+  tickSince() {
+    if (!this.shadowRoot) return;
+    this.shadowRoot.querySelectorAll('[data-since]').forEach((el) => {
+      const txt = this.elapsed(Number(el.dataset.since));
+      if (el.textContent !== txt) el.textContent = txt;
+    });
+  }
+
+  // What brAIn is doing for Morph right now. A tell keeps running when its
+  // box is closed or the page is reloaded, and this is how that stays seen.
+  activityHtml() {
+    if (!this.admin() || this.s.page !== 'home') return '';
+    const st = (this.data && this.data.state) || {};
+    const t = this.s.tell;
+    const rows = (st.activity || []).filter((a) => !(t && t.tellId === a.id)).map((a) => {
+      const live = this.tellStatus[a.id] || {};
+      if (['done', 'failed'].includes(live.phase)) return '';
+      const step = ((live.steps || []).slice(-1)[0] || {}).t || a.step || '';
+      return `<div class="activity"><span class="pulse"></span><span class="lx"><b>brAIn is working on “${esc(a.text)}”</b><span>${esc([a.path, step].filter(Boolean).join(' · '))} · <span data-since="${Number(a.started) || ''}"></span></span></span><button type="button" class="wd" data-act="activity-open" data-v="${esc(a.id)}">Show</button></div>`;
+    }).join('');
+    const L = st.learning || {};
+    const learn = L.running ? '<div class="activity"><span class="pulse"></span><span class="lx"><b>Morph is learning from how this dashboard is used</b><span>brAIn is reading the last month of use; suggestions appear where they belong.</span></span></div>' : '';
+    return rows + learn;
   }
 
   restoreTellText(el) {
@@ -728,10 +826,54 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     if (ta && this.s.tell && this.s.tell.draft) ta.value = this.s.tell.draft;
   }
 
+  // Where a held thing is on the page, for its picture.
+  targetEl(scope) {
+    const R = this.shadowRoot;
+    if (scope.kind === 'card') {
+      // An OPEN card is its face: the opened part below it is the editor
+      // or the Tell box, and a picture of that is a card in a large hole.
+      const tile = R.querySelector(`[data-tile="${CSS.escape(scope.id || '')}"]`);
+      const more = tile && tile.querySelector('[data-more]');
+      return more && more.childElementCount ? (tile.querySelector('[data-face]') || tile) : tile;
+    }
+    if (scope.kind === 'section') return R.querySelector(`[data-sec="${CSS.escape(scope.id || '')}"]`);
+    if (scope.kind === 'floor') { const fi = ((this.dash && this.dash.floors) || []).findIndex((f) => f.id === scope.id); return fi >= 0 ? R.querySelector(`[data-floor="${fi}"]`) : null; }
+    if (['story', 'upcoming', 'scenes'].includes(scope.kind)) return R.querySelector(`[data-hold="${scope.kind}"]`);
+    return R.querySelector('[data-board]');
+  }
+
+  // Photograph what was held. Must run BEFORE the panel re-renders: the
+  // clone is taken now and drawn later, so the picture is the card as it
+  // was, not the editor that is about to open over it.
+  shoot(t) {
+    const el = this.targetEl(t);
+    if (!el) { t.shot = { status: 'failed', error: 'Morph could not find it on the page', view: {}, png: '' }; return; }
+    let bg = '';
+    try { bg = getComputedStyle(this.rootEl).backgroundColor; } catch (e) { /* no background to lay it on */ }
+    const job = snap.prepare(el, { background: bg, fontsUrl: FONTS_URL });
+    const shot = { status: 'taking', view: job.view, png: '', error: '', id: '' };
+    t.shot = shot;
+    shot.ready = (async () => {
+      const r = await job.render();
+      shot.notes = r.notes || [];
+      if (!r.png) { shot.status = 'failed'; shot.error = r.error; this.schedule(); return; }
+      shot.url = snap.blobUrl(r.png);
+      shot.status = 'uploading'; this.schedule();
+      try {
+        const res = await this.hass.callWS({ type: 'morph/shot', png: r.png });
+        shot.id = res.shot; shot.status = 'ready';
+      } catch (e) {
+        shot.status = 'failed'; shot.error = `it could not be sent (${(e && e.message) || e})`;
+      }
+      this.schedule();
+    })();
+  }
+
   openTell(scope) {
     if (!this.admin()) return;
     const path = this.pathOf(scope);
-    this.s.tell = { ...scope, path, text: '', sent: false, draft: '' };
+    this.s.tell = { ...scope, path, text: '', sent: false, draft: '', turns: [] };
+    this.shoot(this.s.tell);
     if (scope.kind === 'card') this.openView(scope.id, 'tell');
     else if (this.s.view) this.closeView();
     this.s.hold = null;
@@ -758,8 +900,14 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     t.text = text; t.sent = true; t.state = { phase: 'sending', steps: [] };
     this.track('tell', t.kind === 'card' ? t.id : null, t.kind === 'section' ? t.id : null);
     this.schedule();
+    const shot = t.shot;
+    if (shot && shot.ready && shot.status !== 'ready' && shot.status !== 'failed') {
+      t.state = { phase: 'sending', steps: [{ t: 'Finishing the picture of it', tone: '' }] }; this.schedule();
+      await Promise.race([shot.ready, new Promise((r) => setTimeout(r, 6000))]);
+    }
+    const view = shot ? { ...(shot.view || {}), error: shot.status === 'ready' ? '' : (shot.error || 'the picture was not ready in time') } : { error: 'no picture was taken' };
     try {
-      const r = await this.hass.callWS({ type: 'morph/request', kind: 'tell', payload: { target: { kind: t.kind, id: t.id || '', label: t.label || '', path: t.path || '', entity: t.entity || '' }, text, previous: t.previous || '' } });
+      const r = await this.hass.callWS({ type: 'morph/request', kind: 'tell', payload: { target: { kind: t.kind, id: t.id || '', label: t.label || '', path: t.path || '', entity: t.entity || '' }, text, previous: t.previous || '', shot: (shot && shot.status === 'ready' && shot.id) || '', view } });
       if (!r || !r.ok) { t.state = { phase: 'failed', say: (r && r.error) || 'Morph could not hand this to brAIn.', steps: [] }; this.schedule(); return; }
       t.tellId = r.id;
       this.pollTell(true);
@@ -772,15 +920,34 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const ids = [];
     if (t && t.tellId && !['done', 'failed'].includes(t.state && t.state.phase)) ids.push(t.tellId);
     ((this.data && this.data.state && this.data.state.suggestions) || []).forEach((g) => { if (g.status === 'doing' && g.tell) ids.push(g.tell); });
+    ((this.data && this.data.state && this.data.state.activity) || []).forEach((a) => { if (!ids.includes(a.id) && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase)) ids.push(a.id); });
     for (const id of ids) {
       try {
         const st = await this.hass.callWS({ type: 'morph/tell_status', tell: id });
         this.tellStatus[id] = st;
-        if (t && t.tellId === id) { t.state = st; if (st.phase === 'done' && st.reload) this.load(); }
+        if (t && t.tellId === id) {
+          const was = t.state && t.state.phase;
+          t.state = st;
+          if (st.phase === 'done' && was !== 'done') {
+            // The same thing, photographed again once the change has drawn:
+            // before and after side by side, and the next turn starts here.
+            const after = () => setTimeout(() => this.afterShot(t), 1200);
+            if (st.reload) this.load().then(after); else after();
+          }
+        }
       } catch (e) { /* the next tick asks again */ }
     }
     this.schedule();
     if (soon && t && t.tellId && !['done', 'failed'].includes(t.state && t.state.phase)) { clearTimeout(this._tellT); this._tellT = setTimeout(() => this.pollTell(true), 1200); }
+  }
+
+  afterShot(t) {
+    if (this.s.tell !== t) return;
+    const el = this.targetEl(t);
+    if (!el) return;
+    snap.prepare(el, { background: getComputedStyle(this.rootEl).backgroundColor, fontsUrl: FONTS_URL }).render().then((r) => {
+      if (r.png && this.s.tell === t) { t.after = snap.blobUrl(r.png); this.schedule(); }
+    });
   }
 
   closeTell() {
@@ -1153,7 +1320,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         const note = v === 'no' ? ((this.shadowRoot.querySelector('input[data-keep="sugno"]') || {}).value || '') : '';
         const r = await H.callWS({ type: 'morph/request', kind: 'suggestion', payload: { id: el.dataset.id, verb: v, note } });
         this.s.sugNo = null;
-        this.toast(r.ok ? (v === 'do' ? 'Handed to brAIn.' : v === 'no' ? 'Morph will not suggest that again.' : 'Later, then.') : r.error);
+        this.toast(r.ok ? (v === 'do' ? 'Handed to brAIn.' : v === 'send' ? 'Sent as an issue.' : v === 'no' ? 'Morph will not suggest that again.' : 'Later, then.') : r.error);
         this.load(); return;
       }
       // tell
@@ -1168,7 +1335,28 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         else this.toast(r.error);
         this.schedule(); return;
       }
-      case 'tell-more': { const t = this.s.tell; this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: '', sent: false, draft: '', previous: t.tellId }; this.schedule(); return; }
+      case 'tell-more': {
+        const t = this.s.tell;
+        const turns = [...(t.turns || []), { text: t.text, say: (t.state && t.state.say) || '', before: t.shot && t.shot.url, after: t.after }];
+        this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: '', sent: false, draft: '', previous: t.tellId, turns };
+        this.shoot(this.s.tell); // brAIn sees how it looks NOW
+        this.schedule(); return;
+      }
+      case 'tell-issue': {
+        const t = this.s.tell; if (!t || !t.tellId) return;
+        const r = await H.callWS({ type: 'morph/request', kind: 'tell_issue', payload: { id: t.tellId, verb: v } });
+        if (r.ok) { t.state = { ...t.state, issue: v === 'send' ? 'sent' : 'declined' }; if (v === 'send') this.toast('Sent as an issue.'); }
+        else this.toast(r.error);
+        this.schedule(); return;
+      }
+      case 'shot-zoom': { if (this.s.tell) { this.s.tell.zoom = !this.s.tell.zoom; this.schedule(); } return; }
+      case 'activity-open': {
+        const a = (((this.data && this.data.state) || {}).activity || []).find((x) => x.id === v); if (!a) return;
+        const st = this.tellStatus[v] || { phase: a.phase, steps: [], started: a.started };
+        this.s.tell = { kind: a.kind || 'dashboard', id: a.target || '', label: a.label, path: a.path, text: a.text, sent: true, tellId: a.id, state: st, turns: [] };
+        if (a.kind === 'card' && a.target && this.findCard(a.target)) this.openView(a.target, 'tell');
+        this.pollTell(true); this.schedule(); return;
+      }
       case 'close': this.closeView(); return;
       // editing
       case 'sec-edit': this.s.secEdit = this.s.secEdit === v ? null : v; this.schedule(); return;
@@ -1258,7 +1446,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   async ask(q) {
     q = String(q || '').trim(); if (!q) return;
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
-    if (this.s.edit) { this.s.tell = { kind: 'dashboard', path: 'The whole dashboard', label: 'dashboard', sent: false, draft: q }; this.sendTell(q); return; }
+    if (this.s.edit) { this.s.tell = { kind: 'dashboard', path: 'The whole dashboard', label: 'dashboard', sent: false, draft: q, turns: [] }; this.shoot(this.s.tell); this.sendTell(q); return; }
     this.s.ask = { q, busy: true }; this.schedule();
     this.track('ask');
     const agent = Object.values(this.hass.entities || {}).find((e) => e.platform === 'brain' && e.entity_id.startsWith('conversation.'));

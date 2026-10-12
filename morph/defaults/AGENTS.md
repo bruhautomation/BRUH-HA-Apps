@@ -150,13 +150,27 @@ bends in your `summary`.
 
 - Make the smallest change that does what was asked. Moving a card is moving one
   item between lists, not rewriting the file.
+- **Look first.** A request from the editor comes with a screenshot of what
+  was held (`/config/.morph/shots/<id>.png`), taken the moment it was held.
+  Read it before anything else: "this" means what is on the screen, and the
+  YAML only says what is configured. Say what you saw in `saw`.
 - Check entity ids against the house with your tools before you add them. A card
   for an entity that does not exist draws as "unavailable".
 - Put a new section on the floor where it belongs, near related sections.
-- If the change needs something in Home Assistant (an automation, a helper, a
-  script), make it, then add the card that uses it. That is allowed and
-  expected.
+- **The dashboard, not the house.** A request from Morph changes this folder.
+  Change Home Assistant itself (entity ids, names, areas, automations, scripts,
+  helpers) only when the request asks for that in so many words ("rename the
+  entity", "make an automation that…"). When doing it properly would need a
+  house change nobody asked for, do the dashboard part and say in
+  `needs_person` what would have to change, so they can ask.
+- What you learn about the house (what a device is, where it is, who uses it)
+  is brAIn's memory: record it with `remember_fact`. `LEARNED.md` and `lesson`
+  are only for how this household wants its dashboard.
+- When a request needs **Morph's own code** changed — a built-in card type that
+  is wrong or cannot do it, the layout, the panel — and not this folder, fill
+  `code_issue` and do the best you can meanwhile. Morph asks the person whether
+  to send it as an issue; never file one yourself.
 - `protected_entities` still applies. If a request needs one, say so in
   `needs_person`.
-- Read `LEARNED.md` and follow it. If the request teaches a lasting preference,
-  return it as `lesson`.
+- Read `LEARNED.md` and follow it. If the request teaches a lasting preference
+  about the dashboard, return it as `lesson`.

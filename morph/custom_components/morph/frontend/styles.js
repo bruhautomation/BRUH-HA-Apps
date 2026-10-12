@@ -21,7 +21,9 @@ export const CSS = `
 .bar{display:flex;align-items:center;gap:10px;min-height:44px}
 .brand{font-weight:700;font-size:12px;letter-spacing:.24em}
 .menu{background:none;border:0;padding:0 4px;margin:0;min-height:44px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center}
-.date{font-size:13px;color:var(--quiet)}
+.date{font-size:13px;color:var(--quiet);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bartoast{font-size:13px;color:var(--muted);margin-left:12px;min-width:0;flex:0 1 auto}
+.bar>.go,.bar>.menu,.bar>.brand{flex-shrink:0}
 .lede{font-size:13px;color:var(--muted);margin-top:-18px}
 .lede b{color:var(--text);font-weight:600}
 h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;font-size:clamp(36px,5vw,58px);letter-spacing:-.035em;line-height:1}
@@ -171,6 +173,26 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .steps{display:flex;flex-direction:column;gap:4px}
 .step{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
 .step i{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.bstep{font-size:12.5px}
+.bstep i{width:5px;height:5px;opacity:.7}
+.earlier summary{cursor:pointer;min-height:28px;line-height:28px;font-size:12px;color:var(--quiet)}
+.earlier .step{padding-left:2px}
+.working{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);min-height:24px}
+.pulse{width:8px;height:8px;border-radius:50%;flex-shrink:0;background:var(--violet);animation:breathe 1.6s ease-in-out infinite}
+.turn{display:flex;flex-direction:column;gap:4px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.turn .q{font-size:14px}
+.turn .a{font-size:13px;line-height:1.45;color:var(--muted)}
+.shots{display:flex;flex-wrap:wrap;gap:10px}
+.shot{margin:0;display:flex;flex-direction:column;gap:4px;max-width:min(260px,100%);cursor:zoom-in}
+.shot img{display:block;max-width:100%;max-height:170px;object-fit:contain;object-position:left top;border-radius:10px;box-shadow:inset 0 0 0 1px var(--line),0 0 0 1px var(--line);background:var(--sunk)}
+.shot figcaption{font-size:11.5px;color:var(--quiet)}
+.shot.zoom{max-width:100%;cursor:zoom-out}
+.shot.zoom img{max-height:none}
+.issue{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:12px;font-size:14px;line-height:1.45;background:color-mix(in oklab,var(--amber) 9%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--amber) 30%,transparent)}
+.activity{display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:10px;border-radius:14px;background:color-mix(in oklab,var(--violet) 8%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 25%,transparent)}
+.activity .lx{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
+.activity .lx b{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.activity .lx span{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .payload summary{cursor:pointer;min-height:28px;line-height:28px;font-size:12px;color:var(--quiet)}
 .payload pre{font-family:ui-monospace,monospace;margin-top:6px;max-height:240px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;color:var(--muted);background:var(--sunk);border-radius:10px;padding:10px 12px}
 .edit{display:flex;flex-direction:column;gap:12px;padding:10px 14px 14px}
@@ -212,5 +234,5 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(2px)}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .reduce *,.reduce *::before{animation:none!important;transition:none!important}
-@media (prefers-reduced-motion:reduce){.rise,.holdbar,.nowdot,.w,.spin,.breathe,.bob{animation:none}.mtile{transition:none}}
+@media (prefers-reduced-motion:reduce){.rise,.holdbar,.nowdot,.w,.spin,.breathe,.bob,.pulse{animation:none}.mtile{transition:none}}
 `;

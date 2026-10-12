@@ -5,8 +5,8 @@
 > cards, rough edges and changes between updates that move things around
 > without warning. Install it to try it out alongside your normal
 > dashboards, not to replace them. Morph only writes its own folder
-> (`/config/morph`) — every change there is a version you can undo — but a
-> Tell lets brAIn change the house too, so keep an eye on what it does.
+> (`/config/morph`) — every change there is a version you can undo — and a
+> Tell changes Home Assistant itself only when you ask for that in words.
 
 Morph is a Home Assistant add-on and integration. The add-on runs a small
 service that owns the dashboard file and its history; the integration
@@ -78,22 +78,48 @@ Every save is one commit. The toast after a change offers **Undo**.
 ## Tell brAIn
 
 In Edit, **hold** anything — a card, a section, a floor, the whole dashboard —
-and say what should change. The box shows what brAIn will receive
-(**What brAIn receives**) and **Send** hands it over.
+and say what should change. **Send** hands it over.
 
-brAIn **acts at once**. It may change:
+**brAIn looks first.** The moment you hold something, Morph takes a picture
+of it and shows it in the box (**What brAIn will see**). brAIn reads that
+picture before anything else, so "this is cut off" or "the colours are
+wrong" mean what is on your screen. If the picture cannot be taken (an
+embedded web page, for instance), the box says so and brAIn is given the
+card's text instead.
+
+**It changes the dashboard.** brAIn acts at once on:
 
 - the dashboard (`/config/morph/dashboard.yaml`),
-- Morph's card code (`/config/morph/cards/`),
-- the house behind it: automations, scripts, helpers and scenes.
+- Morph's card code (`/config/morph/cards/`).
 
-The steps appear in place as it works. When it answers, Morph commits the
-dashboard half as one change and shows **Keep**, **Undo** and **Tell it
-more**. Undo reverts that commit exactly, and if brAIn changed anything in
-the house, asks brAIn to put that back too.
+It changes Home Assistant itself — entity ids, names, areas, automations,
+scripts, helpers — only when you ask for that in words: "change the entity
+ID", "rename the device", "make an automation that…". When a request would
+need a house change you did not ask for, brAIn does the dashboard part and
+says what would have to change under **Left for you**, so you can ask.
+
+**You can see it working.** brAIn's own steps appear in the box as it takes
+them (looking at the picture, reading `dashboard.yaml`, checking an entity,
+editing a file) with how long it has been at it. Close the box and the work
+carries on; a strip at the top of the dashboard says what brAIn is doing,
+and **Show** opens it again.
+
+**It is a conversation.** When brAIn answers, Morph commits the dashboard
+half as one change and shows what brAIn did, what it saw, and the card
+**before and after**. **Keep**, **Undo** and **Tell it more**: Undo reverts
+that commit exactly (and, if you asked for a change in Home Assistant, asks
+brAIn to put that back too); Tell it more keeps the conversation above,
+takes a new picture of how it looks now, and asks what should be different.
+
+**A problem in Morph itself is a question.** When doing what you asked
+properly needs Morph's own code changed — a built-in card type that is
+wrong or cannot do it — brAIn does what it can and the box asks **Would you
+like to send this as an issue?** Nothing is sent unless you press **Send as
+issue** (see [When Morph's own code fails](#when-morphs-own-code-fails)).
 
 What still holds whatever you ask: brAIn's `protected_entities`, its action
-gate and its edit snapshots (`brain undo`).
+gate and its edit snapshots (`brain undo`). What brAIn learns about the
+house along the way goes into brAIn's own memory, not Morph's lessons.
 
 ## Learning
 
@@ -101,8 +127,11 @@ Morph keeps a log of what you use: what you open, toggle and slide, when, and
 what you ask brAIn for. It never leaves your house.
 
 On a schedule (daily by default), Morph asks brAIn — **read-only**, so the
-pass can look at the house but change nothing — how the dashboard could be
-better for how it is actually used. What comes back:
+pass can look at the house but change nothing — how the **dashboard** could
+be better for how it is actually used. This loop is about the dashboard
+only: learning the house is brAIn's own job, so a pass suggests no
+automations or renames and its lessons are rules about how you want your
+dashboard. What comes back:
 
 - **Suggestions**, shown in place on the dashboard with **Do it**, **Not
   now** and **No**. Do it hands the suggestion to brAIn as an ordinary Tell.
@@ -111,6 +140,12 @@ better for how it is actually used. What comes back:
 - **Lessons**, rewritten each pass into `/config/morph/LEARNED.md`. Every Tell
   and every pass reads them. Edit them in **Settings → Learning** or in the
   file.
+- **Morph needs a fix**: a problem the pass thinks needs Morph's own code
+  changed, with **Send as issue**, **Not now** and **No**. Nothing is sent
+  until you press Send.
+
+A pass that fails (brAIn stopped, signed out, out of time) is tried again on
+the next schedule; it does not count as having read what you did.
 
 **Settings → Learning** shows the scorecard: how many suggestions were made,
 done and declined, and how many of brAIn's changes were kept or undone.
@@ -119,9 +154,13 @@ Turn learning off in Settings, or with the `learning` option.
 
 ## When Morph's own code fails
 
-A card that fails to draw, a layout that overlaps at rest, or a request Morph
-could not carry out is a fault in Morph, not in your dashboard. Morph keeps a
-ledger of them and publishes it to `/config/.morph/devloop/outbox.json`.
+A card that fails to draw, a layout that overlaps at rest, or an answer from
+brAIn that Morph could not read is a fault in Morph, not in your dashboard,
+and is recorded on its own. A request that needs Morph's code changed is
+recorded only when you press **Send as issue** — in the Tell box or on a
+**Morph needs a fix** note. brAIn being slow or signed out is not Morph's
+fault and is not recorded. Morph keeps a ledger of these and publishes it to
+`/config/.morph/devloop/outbox.json`.
 brAIn's development loop (brAIn ⚙ → Developer) reads it as its **Morph**
 stream and files each fault once in your private reports repository, where
 the cloud routine fixes it in Morph's code and the fix arrives as an update.
