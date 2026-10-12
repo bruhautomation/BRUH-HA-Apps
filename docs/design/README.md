@@ -9,6 +9,7 @@ than reconstructed from it.
 | --- | --- |
 | [brain-checks-and-self-tests.html](brain-checks-and-self-tests.html) | Deterministic house checks (findings that cost nothing), the in-situ self-test, and the feedback loop: run journal, diagnostics bundle, producer scorecard, corpus and replay. |
 | [brain-capability-map.html](brain-capability-map.html) | About a hundred capabilities in sixteen themes that would make brAIn proactive rather than a reporter, with the platform enablers most of them stand on and a ranked top twelve. |
+| [morph-ui.md](morph-ui.md) + [morph-ui.html](morph-ui.html) | MORPH UI, a proposed sidebar dashboard: the interaction rules, the layout engine, history per domain, and what brAIn unlocks — the story, predictions, notes in place, Ask, and **Tell brAIn** (hold anything in Edit to change it, through brAIn's task folder). The HTML is the working prototype on BRUH house's real structure. Proposed; nothing shipped. |
 | [brain-ai-first.md](brain-ai-first.md) | The AI-first analysis and plan (grounded in 1.61.0): what brAIn is today by the numbers, the capability gaps, fifteen concrete bugs, the Resident agent and Cases architecture, model discipline (Haiku looks, Sonnet thinks, Opus acts, Fable is a press), what to remove, and a five-phase roadmap with acceptance tests. |
 
 **The pages are the design as intended; the tables below are what shipped.**
