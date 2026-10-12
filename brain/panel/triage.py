@@ -100,8 +100,13 @@ UNJUDGED = ("Nothing finished looking at this one, so it is on the list as "
             "it was filed.")
 WAITING = ("brAIn has not looked at this one yet, so it is shown as it was "
            "filed rather than left waiting out of sight.")
-RUN_FAILED = ("The look at this one did not finish, so it is on the list "
-              "as it was filed.")
+RUN_FAILED = ("brAIn's check of this one did not finish, so it is on the "
+              "list as it was filed.")
+# What RUN_FAILED used to say. Rows written then still carry it, and
+# every reader that recognises a stock sentence has to recognise this one
+# too, or an old row shows its silence as a conclusion.
+LEGACY_STOCK = ("The look at this one did not finish, so it is on the list "
+                "as it was filed.",)
 
 
 def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
@@ -181,6 +186,7 @@ MAX_PER_DAY = 200
 HOT_LOOKS_PER_DAY = 150
 
 __all__ = [
-    "HOT_LOOKS_PER_DAY", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED", "SHOW_AFTER_S", "STALE_S",
+    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
+    "SHOW_AFTER_S", "STALE_S",
     "UNJUDGED", "VERDICTS", "WAITING", "gate", "waiting_too_long",
 ]
