@@ -251,6 +251,51 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   calls = await p.evaluate(() => window.__calls);
   if (!calls.some((x) => x.service === 'open_cover')) fail(name, 'a second tap did not open the garage door');
 
+  // On a screen with a pointer, a closed card shows Morph's mark in its
+  // top-right corner while it is hovered; pressing it opens the Tell box.
+  if (!narrow) {
+    c = await tileCenter(p, 'c_kitchen_cans');
+    await p.mouse.move(c.x, c.y); await settle(p, 400);
+    const hm = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark'); if (!b) return null; const r = b.getBoundingClientRect(); const t = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"]').getBoundingClientRect(); return { op: parseFloat(getComputedStyle(b).opacity), right: t.right - r.right, top: r.top - t.top }; });
+    if (!hm) fail(name, 'a closed card has no Morph mark to show on hover');
+    else {
+      if (hm.op < 0.5) fail(name, `Morph's mark does not show on hover (opacity ${hm.op})`);
+      if (hm.right > 16 || hm.top > 16) fail(name, `Morph's mark is not in the card's top-right corner (${hm.right}px from the right, ${hm.top}px from the top)`);
+      await p.mouse.move(c.x + 400, c.y + 400); await settle(p, 400);
+      const gone = await p.evaluate(() => parseFloat(getComputedStyle(window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark')).opacity));
+      if (gone > 0.1) fail(name, `Morph's mark stays on a card that is not hovered (opacity ${gone})`);
+      await p.mouse.move(c.x, c.y); await settle(p, 400);
+      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark').click());
+      await settle(p, 900);
+      const box = await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-tell] textarea'));
+      if (!box) fail(name, 'the hover mark did not open the Tell box in the card');
+      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-cancel"]').click());
+      await settle(p, 700);
+      const after = await p.evaluate(() => window.__panel.s.view);
+      if (after) fail(name, 'cancelling a Tell opened from a closed card left the card open');
+    }
+  }
+
+  // A dashboard change typed into the Ask bar outside Edit is a Tell, not a
+  // question for the house's assistant (which cannot touch dashboard.yaml).
+  {
+    await p.evaluate(() => { window.__ws.length = 0; const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = 'Remove the Coming up timeline card'; window.__panel.act('ask', i); });
+    await settle(p, 900);
+    const sent = await p.evaluate(() => ({ tell: window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell'), conv: window.__ws.some((m) => m.type === 'conversation/process') }));
+    if (!sent.tell || sent.tell.payload.target.kind !== 'dashboard') fail(name, 'a dashboard change in the Ask bar was not handed to brAIn as a Tell');
+    if (sent.conv) fail(name, 'a dashboard change in the Ask bar went to the house\'s assistant');
+    await settle(p, 2200);
+    await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="tell-keep"]'); if (b) b.click(); else window.__panel.closeTell(); });
+    await settle(p, 600);
+    await p.evaluate(() => { window.__ws.length = 0; const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = 'Why is it warm upstairs?'; window.__panel.act('ask', i); });
+    await settle(p, 900);
+    const q = await p.evaluate(() => ({ conv: window.__ws.some((m) => m.type === 'conversation/process'), tell: window.__ws.some((m) => m.kind === 'tell'), offer: !!window.__panel.shadowRoot.querySelector('[data-act="ask-tell"]') }));
+    if (!q.conv || q.tell) fail(name, 'a question went somewhere other than the house\'s assistant');
+    if (!q.offer) fail(name, 'an answer does not offer "Change the dashboard instead"');
+    await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.ask = null; window.__panel.schedule(); });
+    await settle(p, 400);
+  }
+
   // Outside Edit, an opened card carries Morph's mark; pressing it opens
   // the Tell box for that card without going through Edit.
   {

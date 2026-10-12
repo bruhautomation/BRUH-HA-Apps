@@ -21,6 +21,8 @@ export const CSS = `
 .bar{display:flex;align-items:center;gap:10px;min-height:44px}
 .brand{font-weight:700;font-size:12px;letter-spacing:.24em;display:inline-flex;align-items:center;gap:8px}
 .brand svg{color:var(--violet);letter-spacing:0}
+.hovermark{position:absolute;top:6px;right:6px;z-index:4;width:32px;height:32px;padding:0;margin:0;border:0;border-radius:10px;background:color-mix(in srgb,var(--surface) 70%,transparent);color:var(--quiet);display:none;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .2s ease,color .2s ease}
+@media (hover:hover) and (pointer:fine){.mtile .hovermark{display:inline-flex}.mtile:hover .hovermark,.hovermark:focus-visible{opacity:.85}.hovermark:hover{opacity:1;color:var(--violet)}}
 .tellmark{display:flex;justify-content:flex-end;margin:-2px -6px -10px 0}
 .tellmark button{background:none;border:0;margin:0;padding:0;width:40px;height:40px;display:inline-flex;align-items:center;justify-content:center;border-radius:12px;cursor:pointer;color:var(--quiet);transition:color .25s ease,background .25s ease}
 .tellmark button:hover,.tellmark button:focus-visible{color:var(--violet);background:color-mix(in srgb,var(--violet) 10%,transparent)}

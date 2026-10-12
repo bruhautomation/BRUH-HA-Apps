@@ -20,7 +20,7 @@ import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.5.0';
+export const VERSION = '0.5.1';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();

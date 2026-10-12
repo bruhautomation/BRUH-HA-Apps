@@ -122,6 +122,7 @@ function cloneTree(node, parentCs, state, isRoot) {
   const tag = node.tagName.toUpperCase();
   if (SKIP.has(tag)) return null;
   if (node.hasAttribute && node.hasAttribute('data-tell')) return null; // the editor, not the card
+  if (node.hasAttribute && node.hasAttribute('data-snap-skip')) return null; // Morph's own controls on it
   if (++state.n > MAX_NODES || performance.now() > state.deadline) { state.cut = true; return null; }
   const cs = getComputedStyle(node);
   if (cs.display === 'none') return null;
@@ -195,7 +196,7 @@ function visible(node, out, depth, seen = { n: 0 }) {
   if (depth > 60 || out.length > 400 || ++seen.n > 4000) return;
   if (node.nodeType === 3) { const t = node.textContent.replace(/\s+/g, ' ').trim(); if (t) out.push(t); return; }
   if (node.nodeType !== 1 || SKIP.has(node.tagName.toUpperCase())) return;
-  if (node.hasAttribute('data-tell')) return;
+  if (node.hasAttribute('data-tell') || node.hasAttribute('data-snap-skip')) return;
   const cs = getComputedStyle(node);
   if (cs.display === 'none' || cs.visibility === 'hidden') return;
   if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') { if (node.value) out.push(node.value); return; }

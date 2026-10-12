@@ -92,6 +92,23 @@ def named_protected(text: str, pats: list[str]) -> list[str]:
     return found
 
 
+def is_morph_dashboard(path: str) -> bool:
+    """Morph's dashboard file, which SHOWS entities and acts on none.
+
+    A dashboard names nearly every entity in a house, the locks among them,
+    so refusing any YAML that names a protected one refused every whole-file
+    rewrite brAIn made of it: a Tell from Morph read "Editing dashboard.yaml"
+    and the dashboard never changed (house report). A card on it does
+    nothing until a person presses it, which is the person acting. Compared
+    on real paths, so a link named dashboard.yaml that leads to
+    automations.yaml is still checked."""
+    target = os.environ.get("BRAIN_MORPH_DASHBOARD", "/config/morph/dashboard.yaml")
+    try:
+        return os.path.realpath(path) == os.path.realpath(target)
+    except (OSError, ValueError):
+        return False
+
+
 def is_shell_call(command: str) -> bool:
     return any(rx.search(command or "") for rx in SHELL_CALL_RES)
 
@@ -130,6 +147,8 @@ def decide(payload: dict, pats: list[str]) -> str | None:
     if tool in ("Write", "Edit", "MultiEdit"):
         path = str(tool_input.get("file_path") or "")
         if not path.lower().endswith(YAML_SUFFIXES):
+            return None
+        if is_morph_dashboard(path):
             return None
         hits = named_protected(edited_text(tool, tool_input), pats)
         if hits:
