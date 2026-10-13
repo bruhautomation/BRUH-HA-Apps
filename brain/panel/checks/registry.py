@@ -266,6 +266,53 @@ def _entry_domains(snap: dict) -> dict[str, str]:
             if isinstance(e, dict) and e.get("entry_id")}
 
 
+def _name_key(name) -> str:
+    """A device name as the Devices page shows it, case folded."""
+    return without_mac(str(name or "")).strip().casefold()
+
+
+def _connections(dev: dict) -> set[tuple[str, str]]:
+    """The device's (kind, value) connections, values case folded.
+
+    A MAC reaches the registry in either case depending on the
+    integration, and a re-created entry for the same box carries the
+    same address.
+    """
+    out: set[tuple[str, str]] = set()
+    for pair in dev.get("connections") or ():
+        try:
+            kind, value = pair
+        except (TypeError, ValueError):
+            continue
+        if kind and value:
+            out.add((str(kind).casefold(), str(value).casefold()))
+    return out
+
+
+def _twin_with_readings(house: House, dev: dict,
+                        has_entities: set[str]) -> str:
+    """The name of ANOTHER entry for this same device that has entities.
+
+    An integration re-creates a device after a reconfigure or a firmware
+    change and can leave the old entry behind with nothing on it, under
+    the same name — so on the Devices page the leftover and the working
+    entry look alike, and "delete it" reads as deleting the meter. Same
+    name (case folded, MAC taken out) or a shared connection (a MAC) is
+    the same box. Empty when there is no such entry.
+    """
+    names = {_name_key(dev.get("name")), _name_key(dev.get("name_by_user"))}
+    names.discard("")
+    conns = _connections(dev)
+    for other_id, other in house.devices.items():
+        if other is dev or other_id not in has_entities:
+            continue
+        other_names = {_name_key(other.get("name")),
+                       _name_key(other.get("name_by_user"))}
+        if (names & other_names) or (conns & _connections(other)):
+            return without_mac(house.device_name(other)) or "another entry"
+    return ""
+
+
 def orphan_device(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     if not house.devices:
@@ -281,6 +328,7 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
     parents = {str(d.get("via_device_id")) for d in house.devices.values()
                if d.get("via_device_id")}
     orphans = []
+    twins: list[tuple[str, str]] = []
     for dev_id, dev in house.devices.items():
         if dev_id in has_entities or dev_id in parents:
             continue
@@ -289,6 +337,10 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
         if _integrations_of(dev, entry_domains) & NO_ENTITIES_BY_DESIGN:
             continue
         orphans.append(house.device_name(dev))
+        other = _twin_with_readings(house, dev, has_entities)
+        if other:
+            twins.append((without_mac(house.device_name(dev)) or "One of them",
+                          other))
     if not orphans:
         return []
     # Named the way the Devices page lists them, less the MAC address an
@@ -304,15 +356,32 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
     else:
         listed = (f"{bare} named only by a hardware address" if bare > 1
                   else "One, named only by a hardware address")
+    detail = (listed + ". They are usually what is left after an "
+              "integration was reconfigured or a device was replaced.")
+    fix = ("Remove them in Settings > Devices & services > Devices: "
+           "open each one and choose Delete from its menu. A device "
+           "with no Delete there is still claimed by its integration — "
+           "reconfigure or remove that integration instead.")
+    if twins:
+        said = []
+        for empty, other in sorted(set(twins)):
+            if _name_key(empty) == _name_key(other):
+                said.append(f" {empty} is listed twice: the empty one is a "
+                            "leftover second entry for that device, and the "
+                            "other entry of the same name has its readings.")
+            else:
+                said.append(f" {empty} is a leftover second entry for "
+                            f"{other}, which has the readings.")
+        detail += "".join(said[:4])
+        if len(said) > 4:
+            detail += f" {len(said) - 4} more are second entries the same way."
+        fix += (" For a device listed twice, delete the entry with no "
+                "entities; deleting it leaves the readings on the other "
+                "entry alone.")
     return [{
         "text": "Some devices are left in the registry with no entities",
-        "detail": listed
-                  + ". They are usually what is left after an integration "
-                    "was reconfigured or a device was replaced.",
-        "fix": "Remove them in Settings > Devices & services > Devices: "
-               "open each one and choose Delete from its menu. A device "
-               "with no Delete there is still claimed by its integration — "
-               "reconfigure or remove that integration instead.",
+        "detail": detail,
+        "fix": fix,
         "severity": "info",
         "fixable": True,
         "entity_id": "",

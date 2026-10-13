@@ -20,6 +20,7 @@ already reports.
 """
 from __future__ import annotations
 
+import math
 import re
 
 import numfmt
@@ -593,6 +594,51 @@ def usual_range(found: dict, unit: str) -> str:
     return f"between {lo_text} and {hi_text}"
 
 
+def recent_level(baseline: dict, found: dict, unit: str | None) -> str:
+    """Why a reading outside its band is in line with its own last week.
+
+    The band is this hour of the week over four weeks, so at a season
+    turn it is mostly the old season — a room at 70 °F was reported
+    against a usual 88–105 °F after ten days at 68–74. The nightly build
+    stores how far the last week sat from those same hourly medians
+    (`baselines.recent_shift`); a reading within the check's own bar of
+    that shifted middle, measured in the larger of the band's and the
+    week's spread, is the house's new level rather than a fault. Empty
+    when there is no figure (an older store), the figure cannot be read,
+    or the reading is outside both — which is still reported.
+    """
+    recent = baseline.get("recent")
+    if not isinstance(recent, dict):
+        return ""
+    try:
+        offset = float(recent.get("offset"))
+        spread = float(recent.get("spread") or 0.0)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(offset) or not math.isfinite(spread):
+        return ""
+    value = float(found["value"])
+    centre = float(found["median"])
+    # A week that sat where the band sits explains nothing the band does not.
+    if abs(offset) < min_move(unit):
+        return ""
+    shifted = centre + offset
+    width = max(abs(spread), float(found.get("spread") or 0.0))
+    bar = (UNUSUAL_SPREADS if found.get("source") == "hour"
+           else UNUSUAL_SPREADS_OVERALL)
+    off = abs(value - shifted)
+    if off >= min_move(unit) and (width <= 0 or off / width >= bar):
+        return ""
+    days = recent.get("days")
+    days = (f"{round(days)}" if isinstance(days, (int, float))
+            and not isinstance(days, bool) and math.isfinite(days) and days >= 1
+            else "few")
+    return (f"{numfmt.quantity(value, unit or '')} is outside the usual range "
+            "for this hour of the week, but in line with where the last "
+            f"{days} days have been at this hour — the "
+            "season or the weather moving the range, not the device")
+
+
 def unusual(snap: dict, now: float) -> list[dict]:
     """Readings well outside what this house normally does at this hour."""
     import baselines  # noqa: PLC0415 — the package stays importable without it
@@ -650,6 +696,12 @@ def unusual(snap: dict, now: float) -> list[dict]:
                               f"{machine}, which was running — that is the "
                               "dehumidifier doing its job")
                 continue
+        # A band that is mostly last month's weather: the reading sits
+        # where the last week has been sitting against this same hour.
+        shift = recent_level(baseline, found, measured_in)
+        if shift:
+            house.gave_up("base.unusual", [{"entity_id": eid}], shift)
+            continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
     # When the seasons change, or the weather dries the house, a lot of
