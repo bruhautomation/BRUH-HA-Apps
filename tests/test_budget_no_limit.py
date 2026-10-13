@@ -23,8 +23,8 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 PANEL_DIR = Path(__file__).resolve().parent.parent / "brain" / "panel"
 sys.path.insert(0, str(PANEL_DIR))
@@ -178,7 +178,7 @@ class TestTheResidentGate(Stores):
         os.environ["BRAIN_INSIGHTS_USAGE_FILE"] = usage_store.USAGE_FILE
         import server
         self.server = importlib.reload(server)
-        patcher = mock.patch.object(self.server.engine, "get_auth",
+        patcher = unittest.mock.patch.object(self.server.engine, "get_auth",
                                     return_value={"type": "oauth_token", "value": "x"})
         patcher.start()
         self.addCleanup(patcher.stop)
