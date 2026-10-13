@@ -494,6 +494,24 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   if (!(await p.evaluate((v) => window.__panel.shadowRoot.textContent.includes('Morph ' + v), VERSION))) fail(`redo ${name}`, 'Settings does not say which Morph is running');
   await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="home"]'); b && b.click(); });
   await settle(p, 700);
+  // An update that rewrote the code the change was in: brAIn asks rather
+  // than guessing, the change stays paused, and the answer is the next request.
+  await p.evaluate(() => { window.__redoConflict = true; window.__redoDelay = 0; window.__fixture.state.code = [{ name: 'morph-panel.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
+  await settle(p, 700);
+  await p.locator('[data-act="code-redo"]').first().click();
+  await settle(p, 2600);
+  const asked = await notes();
+  if (!/brAIn needs you to choose how to bring your change/.test(asked)) fail(`redo ${name}`, `a merge brAIn would not guess at does not ask (${asked.slice(0, 200)})`);
+  if (!/It stays paused/.test(asked)) fail(`redo ${name}`, 'the question does not say the change stays paused');
+  if ((await p.locator('.note [data-act="tell-answer"]').count()) !== 3) fail(`redo ${name}`, 'the ways to resolve it are not buttons in the note');
+  await p.locator('.note [data-act="tell-answer"][data-v="1"]').click();
+  await settle(p, 400);
+  const answered = await p.evaluate(() => window.__ws.filter((m) => m.kind === 'tell_answer').pop());
+  if (!answered || answered.payload.choice !== 1) fail(`redo ${name}`, 'the pressed answer was not sent');
+  await settle(p, 2600);
+  const after = await notes();
+  if (!/Put the theme switch inside the new gear menu/.test(after)) fail(`redo ${name}`, `the answer did not become the next request in the note (${after.slice(0, 200)})`);
+  await p.evaluate(() => { window.__redoConflict = false; });
   // A press brAIn could not take says why, in the note, and can be tried again.
   await p.evaluate(() => { window.__redoDelay = 0; window.__redoError = 'brAIn is installed but its Automation integration is off.'; window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
   await settle(p, 700);
