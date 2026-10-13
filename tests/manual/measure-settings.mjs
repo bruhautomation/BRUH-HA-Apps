@@ -28,6 +28,11 @@
 //     asking" — are each visible after ONE press from opening ⚙, with no
 //     disclosure opened; and no form control anywhere in ⚙ lives inside a
 //     <details> (there is no "Advanced" or "Developer" fold left).
+//   * the usage budget's slider ends in a labelled "No limit: run until
+//     Anthropic rate-limits" past 100%; at a percentage the line under it
+//     says automatic insights stop there, with No limit it says they keep
+//     running (and, while Anthropic has rate-limited, until when), and each
+//     choice saves the right setting.
 //   * Diagnostics opens on "Run all tests", whose result reads "N of M
 //     passed · K skipped" with one row per stage: Passed / Failed / Skipped
 //     in words, the reason, and the time it ran — a skipped stage is never
@@ -203,13 +208,16 @@ window.fetch = async (url, opts) => {
     if ('dangerously_skip_permissions' in sent) {
       window.__skipPerms = sent.dangerously_skip_permissions === true;
     }
+    if ('budget_no_limit' in sent) window.__noLimit = sent.budget_no_limit === true;
+    if ('budget_percent' in sent) window.__budgetPct = sent.budget_percent;
     return answer({
       ...(window.__permSessions !== undefined
         ? { permission_sessions: window.__permSessions } : {}),
       settings: {
         auto_enabled: true, capture: false, terminal_ui: 'chat',
         chat_max_sessions: 3, gather_mode: 'search', refresh_mode: 'changed',
-        plan: 'pro', budget_percent: 25, refresh_hours: 12, history_days: 7,
+        plan: 'pro', budget_percent: window.__budgetPct || 25,
+        budget_no_limit: window.__noLimit === true, refresh_hours: 12, history_days: 7,
         timeout_minutes: 8, history_keep_runs: 20, history_keep_days: 30,
         model: 'claude-sonnet-4-5', onboarded: true,
         dangerously_skip_permissions: window.__skipPerms === true,
@@ -222,7 +230,9 @@ window.fetch = async (url, opts) => {
       models: [{ id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5',
                  group: 'Recommended', hint: 'the everyday one' }],
       usage: { source: 'account', used_percent: 18, week_percent: 9,
-               window_tokens: 42000, plan_label: 'Pro',
+               window_tokens: 42000, plan_label: 'Pro', budget_percent: window.__budgetPct || 25,
+               no_limit: window.__noLimit === true, blocked: false,
+               rate_limited_until: window.__rateLimitedUntil || null,
                resets_at: ${NOW} + 7200, week_resets_at: ${NOW} + 200000 },
       options_synced: true, model_label: 'Claude Sonnet 4.5',
     });
@@ -595,6 +605,75 @@ for (const width of WIDTHS) {
       note(where, `reaching ${w.what} failed: ${String(e.message).split('\n')[0]}`);
     }
   }
+  // ---- the budget: a labelled "No limit" past 100%, and what each means ---
+  try {
+    await showSection(page, 'usage');
+    const budget = () => page.evaluate(() => {
+      const n = document.querySelector('#setBudgetNote');
+      const own = window.__hintSentences().find((h) => h.text
+        === n.textContent.replace(/\s+/g, ' ').trim());
+      return {
+        label: document.querySelector('label[for="setBudget"]').textContent.replace(/\s+/g, ' ').trim(),
+        note: n.textContent.replace(/\s+/g, ' ').trim(),
+        noteShown: n.offsetParent !== null,
+        sentences: own ? own.sentences : -1,
+        scale: (document.querySelector('#setModal .budgetscale') || {}).textContent || '',
+        max: Number(document.querySelector('#setBudget').max),
+        valuetext: document.querySelector('#setBudget').getAttribute('aria-valuetext') || '',
+        markHidden: document.querySelector('#usageMark').classList.contains('hidden'),
+        put: (window.__puts || []).slice(-1)[0] || null,
+      };
+    });
+    const slide = (v) => page.evaluate((val) => {
+      const r = document.querySelector('#setBudget');
+      r.value = String(val);
+      r.dispatchEvent(new Event('input', { bubbles: true }));
+      r.dispatchEvent(new Event('change', { bubbles: true }));
+    }, v);
+    let b = await budget();
+    if (!/up to 25% of each 5-hour session/.test(b.label)) note(where, `the budget reads "${b.label}"`);
+    if (!/stop at 25%/.test(b.note) || !b.noteShown) note(where, `the budget does not say automatic insights stop at 25%: "${b.note}"`);
+    if (!/No limit/.test(b.scale) || b.max <= 100) note(where, 'the budget slider offers no "No limit" past 100%');
+    if (b.sentences > 2) note(where, `the budget line runs to ${b.sentences} sentences`);
+
+    await slide(b.max);
+    await page.waitForFunction(() => /No limit/.test(
+      document.querySelector('#setBudgetVal').textContent), null, { timeout: 4000 });
+    await page.waitForTimeout(200);
+    b = await budget();
+    if (!b.put || b.put.budget_no_limit !== true || 'budget_percent' in b.put) {
+      note(where, `choosing No limit saved ${JSON.stringify(b.put)}`);
+    }
+    if (!/No limit: run until Anthropic rate-limits/.test(b.label)) note(where, `No limit is labelled "${b.label}"`);
+    if (!/No limit/.test(b.valuetext)) note(where, `the slider announces "${b.valuetext}"`);
+    if (!/keep running/.test(b.note) || !/rate-limits/.test(b.note)) note(where, `No limit does not say it keeps running: "${b.note}"`);
+    if (!b.markHidden) note(where, 'a budget mark is still drawn with No limit chosen');
+    if (b.sentences > 2) note(where, `the No limit line runs to ${b.sentences} sentences`);
+
+    await page.evaluate(async () => {
+      window.__rateLimitedUntil = Math.floor(Date.now() / 1000) + 3600;
+      renderSettingsForm(await api('api/settings'));
+    });
+    b = await budget();
+    if (!/Paused/.test(b.note) || !/until \d/.test(b.note)) note(where, `a rate-limit pause is not said with its end: "${b.note}"`);
+    await page.evaluate(() => { window.__rateLimitedUntil = null; });
+
+    await slide(100);
+    await page.waitForFunction(() => /up to 100%/.test(
+      document.querySelector('#setBudgetVal').textContent), null, { timeout: 4000 });
+    await page.waitForTimeout(200);
+    b = await budget();
+    if (!b.put || b.put.budget_percent !== 100 || b.put.budget_no_limit !== false) {
+      note(where, `going back to 100% saved ${JSON.stringify(b.put)}`);
+    }
+    if (!/stop at 100%/.test(b.note)) note(where, `100% does not say automatic insights stop there: "${b.note}"`);
+    if (b.markHidden) note(where, 'the budget mark stayed hidden after a percentage was chosen');
+    await slide(25);
+    await page.waitForTimeout(200);
+  } catch (e) {
+    note(where, `driving the budget failed: ${String(e.message).split('\n')[0]}`);
+  }
+
   // ---- the version in the header: a link to this release's changelog ------
   try {
     await page.waitForFunction(() => /2\.18\.5/.test(
