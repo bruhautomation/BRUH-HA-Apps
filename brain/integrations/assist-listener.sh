@@ -873,7 +873,7 @@ USER: ${stamped_text}"
         bashio::log.error "Empty response for [$req_id] after ${duration}s (exit=$exit_code)"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
         if [ "$exit_code" -ge 124 ] 2>/dev/null && [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
-            response="Claude timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the brAIn add-on."
+            response="Sorry, that timed out: it ran past its ${claude_limit}-second time limit and I stopped. Some of it may have happened partly, so check before asking again."
             bashio::log.error "Claude process timed out (exit=$exit_code, limit=${claude_limit}s)"
             fail_code="timeout"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then

@@ -1613,9 +1613,9 @@ class Pool:
             if time.time() >= deadline:
                 error = "timeout"
                 response = (
-                    f"Claude timed out after {int(duration)}s. This may be "
-                    "caused by a broken MCP server connection. Try restarting "
-                    "the brAIn add-on."
+                    f"Sorry, that timed out: it ran past its {int(limit)}-second "
+                    "time limit and I stopped. Some of it may have happened "
+                    "partly, so check before asking again."
                 )
             else:
                 error = "empty"
