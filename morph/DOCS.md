@@ -48,6 +48,21 @@ from **Settings → Dashboard**.
 Tell and learning need **brAIn** with its *Automation integration* switched
 on (brAIn's Configuration tab). Morph checks that and says so in Settings.
 
+### Updating, and when to reload
+
+A page left open does not change by itself when Morph's code does. When the
+code on screen is no longer what Home Assistant would serve, a bar at the top
+of the dashboard says so, with **Reload**. That happens after an update, or
+when brAIn changes your copy of Morph's code. When the add-on has been
+updated but Home Assistant is still running the older Morph integration, the
+bar asks you to restart Home Assistant instead, because a reload alone would
+not finish the update. Nothing else needs a reload: changes to the dashboard
+itself appear on their own.
+
+Morph's code is cached by your browser under a name for exactly that
+version, so opening Morph again downloads nothing. While it opens, you see
+the outline of the dashboard rather than a blank page.
+
 ## Using the dashboard
 
 | Gesture | Does |

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.6
+
+### Changed
+
+- **Morph paints at once while it opens.** Home Assistant used to show a
+  blank page until every one of Morph's modules had downloaded. Now the
+  dashboard's outline appears immediately, in Morph's own colours, and the
+  dashboard replaces it as soon as it has loaded.
+- **Opening Morph again is fast.** Morph's code is now cached by the browser
+  under a name for exactly that version of the code, so later visits download
+  nothing. Every module also starts downloading at once rather than one
+  level of imports at a time. A change to Morph's code (an update, or brAIn
+  changing your copy) gets a new name, so a stale file is never served.
+
+### Added
+
+- **Morph says when a reload is needed.** A bar at the top of the dashboard
+  appears when what is on screen is no longer what Home Assistant would
+  serve. It reads *Morph's code has changed since this page opened* or
+  *Morph x.y.z is ready*, with a **Reload** button. When the add-on is newer
+  than the integration Home Assistant has loaded, it asks you to restart
+  Home Assistant, because a reload alone would not finish the update.
+
 ## 0.5.5
 
 ### Changed

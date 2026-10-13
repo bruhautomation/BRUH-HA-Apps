@@ -429,6 +429,56 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await ctx.close();
 }
 
+// Opening Morph (house report: "super slow, leaves you on a white screen
+// while it's loading", and "not clear if it needs to be reloaded"). The
+// shell paints the dashboard's outline before any module has arrived, the
+// modules load under s/<stamp>/ (static.py caches those for good), and a
+// page whose code has moved on says which of a reload or a restart it needs.
+{
+  const requests = [];
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+  await route(ctx, { narrow: false, moduleDelay: 1500, requests });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForTimeout(300);
+  const early = await p.evaluate(() => {
+    const shell = document.querySelector('morph-boot');
+    const o = shell && shell.shadowRoot.querySelector('.outline');
+    return { shell: !!shell, outline: !!o, bg: o ? getComputedStyle(o).backgroundColor : '', text: o ? o.textContent : '', panel: !!(shell && shell.shadowRoot.querySelector('morph-panel')) };
+  });
+  if (!early.shell) fail('opening', 'the shell was not in the page while the panel loaded (Home Assistant waits on the module before creating it)');
+  if (!early.outline) fail('opening', 'nothing was painted while the panel loaded');
+  if (early.bg && /255, 255, 255/.test(early.bg)) fail('opening', `the outline is white (${early.bg})`);
+  if (early.panel) fail('opening', 'the panel was already in place, so this did not measure the wait');
+  await settle(p, 4000);
+  const late = await p.evaluate(() => {
+    const shell = document.querySelector('morph-boot');
+    return { outline: !!shell.shadowRoot.querySelector('.outline'), drew: !!(window.__panel && window.__panel.shadowRoot.querySelector('[data-sec]')) };
+  });
+  if (!late.drew) fail('opening', 'the panel did not draw after loading');
+  if (late.outline) fail('opening', 'the outline stayed over the dashboard after it loaded');
+  const mods = requests.filter((r) => /\.js$/.test(r) && !r.endsWith('/boot.js'));
+  const unstamped = mods.filter((r) => !/\/s\/[0-9a-f]{12}\//.test(r) && !r.includes('/shipped/'));
+  if (!mods.length) fail('opening', 'no module requests were seen');
+  if (unstamped.length) fail('opening', `modules loaded outside s/<stamp>/ (not cacheable): ${unstamped.join(', ')}`);
+
+  const banner = async (setup) => {
+    await p.evaluate(setup);
+    await p.evaluate(() => window.__panel.load());
+    await settle(p, 400);
+    return p.evaluate(() => { const u = window.__panel.shadowRoot.querySelector('.update'); return u ? u.innerText : ''; });
+  };
+  let b = await banner(() => {});
+  if (b) fail('opening', `a reload was offered with nothing changed: ${b}`);
+  b = await banner(() => { window.__code = '0123456789ab'; });
+  if (!/changed since this page opened/.test(b) || !/Reload/.test(b)) fail('opening', `moved code did not offer a reload: "${b}"`);
+  b = await banner(() => { window.__code = ''; window.__integration = '9.9.9'; });
+  if (!/Morph 9\.9\.9 is ready/.test(b)) fail('opening', `a newer integration did not offer a reload: "${b}"`);
+  b = await banner(() => { window.__integration = ''; window.__fixture.state.version = '9.9.9'; });
+  if (!/Restart Home Assistant/.test(b)) fail('opening', `a newer add-on did not ask for a restart: "${b}"`);
+  await ctx.close();
+}
+
 // Morph's own code, changed by the house: a copy is served in place of
 // Morph's own, and a copy that fails to load falls back to Morph's own with
 // a sentence saying so (boot.js, static.py).
