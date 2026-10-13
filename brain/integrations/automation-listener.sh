@@ -808,7 +808,7 @@ ${prompt}"
         bashio::log.error "Empty result for task [$task_id] after ${duration}s"
         bashio::log.error "Stderr: ${stderr_output:0:500}"
         if [ "$duration" -ge "$((claude_limit - 5))" ] 2>/dev/null; then
-            result="Claude task timed out after ${duration}s. This may be caused by a broken MCP server connection. Try restarting the brAIn add-on."
+            result="The task timed out: it ran past its time limit of ${claude_limit}s and was stopped after ${duration}s. Anything it had started may have happened only partly, so check before asking again. A long task can need more time: give it a larger timeout."
             bashio::log.error "Claude process timed out (limit=${claude_limit}s)"
             fail_code="timeout"
         elif echo "$stderr_output" | grep -qi "not logged in\|please log in\|authentication"; then
