@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from typing import Any, Callable
 
 from . import palettes
@@ -560,6 +561,50 @@ def catalog_payload() -> list[dict]:
              "params": [{"name": pname, **prule}
                         for pname, prule in spec["params"].items()]}
             for name, spec in CATALOG.items()]
+
+
+def _param_text(pname: str, rule: dict) -> str:
+    return (f"{pname} ({rule['kind']}"
+            + (f" {rule['min']}..{rule['max']}" if "min" in rule else "")
+            + (f" one of {'|'.join(rule['options'])}" if "options" in rule else "")
+            + f", default {rule['default']})")
+
+
+def catalog_text(detail: Any = None) -> str:
+    """The vocabulary as plain text, for a prompt or a file.
+
+    `detail` is the set of types written out in full — blurb, every
+    parameter with its range and default. Every other type gets one line:
+    its name, its channel and its parameter names. None means everything
+    in full, which is what a show written from nothing needs; a revision
+    or a one-effect request mostly needs the names of the rest, and the
+    full entry only for the types it is actually working with.
+
+    Generated from CATALOG rather than kept as a copy, because a copy is
+    a second answer that drifts the first time an effect gains a
+    parameter.
+    """
+    full = None if detail is None else set(detail)
+    lines = []
+    for name, spec in CATALOG.items():
+        if full is None or name in full:
+            params = ", ".join(_param_text(p, r)
+                               for p, r in spec["params"].items())
+            lines.append(f"  {name} [{spec['channel']}] — {spec['blurb']}\n"
+                         f"      {params}")
+        else:
+            lines.append(f"  {name} [{spec['channel']}]: "
+                         + ", ".join(spec["params"]))
+    return "\n".join(lines)
+
+
+_WORD_RE = re.compile(r"[a-z_]+")
+
+
+def types_in(text: str) -> set[str]:
+    """The catalog's type names that appear, as words, in a sentence."""
+    words = set(_WORD_RE.findall(str(text or "").lower()))
+    return {name for name in CATALOG if name in words}
 
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,13 @@ POLL_INTERVAL = 0.5
 MIRROR_INTERVAL = 5
 
 KNOWN_KINDS = ("party_mode", "start_party", "start_show", "stop_show",
-               "list_parties", "get_status")
+               "list_parties", "get_status", "import_show")
+
+# How long the panel may take over a request. An import compiles a whole
+# show, which on a small machine is longer than starting or stopping one;
+# the integration waits a little longer than this for the same reason.
+PANEL_TIMEOUT_S = 10
+SLOW_KINDS = {"import_show": 90}
 
 
 def _log(msg: str) -> None:
@@ -59,7 +65,8 @@ def _write_response(req_id: str, payload: dict[str, Any]) -> None:
     tmp.replace(dst)
 
 
-def _panel_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _panel_post(path: str, payload: dict[str, Any],
+                timeout: float = PANEL_TIMEOUT_S) -> dict[str, Any]:
     body = json.dumps(payload).encode()
     request = urllib.request.Request(
         f"{PANEL_URL}{path}",
@@ -67,7 +74,7 @@ def _panel_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode() or "{}")
 
 
@@ -80,7 +87,10 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
 
     def _forward() -> dict[str, Any]:
         try:
-            return _panel_post(f"/api/show/{kind}", payload)
+            path = f"/api/show/{kind}"
+            slow = SLOW_KINDS.get(kind)
+            return (_panel_post(path, payload, timeout=slow) if slow
+                    else _panel_post(path, payload))
         except urllib.error.HTTPError as exc:
             # The panel's body carries the sentence; the status carries a
             # number. Reporting the number is how "no analyzed tracks in
@@ -107,6 +117,22 @@ async def handle(request: dict[str, Any]) -> dict[str, Any]:
     return await asyncio.to_thread(_forward)
 
 
+async def _serve(req_id: str, request: dict[str, Any]) -> None:
+    response = await handle(request)
+    try:
+        _write_response(req_id, response)
+    except OSError as exc:
+        _log(f"could not answer {request.get('kind')}: {exc}")
+        return
+    _log(f"handled {request.get('kind')} -> ok={response.get('ok')}")
+
+
+# Requests in flight, held so the loop cannot collect a task it only
+# scheduled. Each request is served on its own: an import compiling a show
+# must not make a stop_show pressed meanwhile wait for it.
+_IN_FLIGHT: set = set()
+
+
 async def request_loop() -> None:
     REQ_DIR.mkdir(parents=True, exist_ok=True)
     RES_DIR.mkdir(parents=True, exist_ok=True)
@@ -122,9 +148,9 @@ async def request_loop() -> None:
                 req_id = str(request.get("id", ""))
                 if not req_id:
                     continue
-                response = await handle(request)
-                _write_response(req_id, response)
-                _log(f"handled {request.get('kind')} -> ok={response.get('ok')}")
+                task = asyncio.create_task(_serve(req_id, request))
+                _IN_FLIGHT.add(task)
+                task.add_done_callback(_IN_FLIGHT.discard)
         except OSError as exc:
             _log(f"request loop error: {exc}")
         await asyncio.sleep(POLL_INTERVAL)

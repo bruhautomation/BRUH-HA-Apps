@@ -105,3 +105,30 @@ get_status:
   description: >-
     What BRight is doing now, the saved sets by name, and the tracks with a
     show ready to run. Returns response data; changes nothing.
+  fields:
+    parties_only:
+      name: Saved sets only
+      description: >-
+        Answer with what is playing and the saved sets (each with its speaker
+        and how many songs it names), without scanning the music library for
+        tracks. Much cheaper when all you need is a set's name.
+      selector:
+        boolean: {}
+
+import_show:
+  name: Import an edited show
+  description: >-
+    Make an edited show file in /config/.bright/shows the show BRight plays for
+    that track. Editing the file alone changes nothing; this reads it back,
+    checks it and compiles it, and keeps the previous show as a version. A file
+    that is not valid JSON, or a script that will not compile, is refused with
+    the reason.
+  fields:
+    track:
+      name: Show file
+      description: >-
+        The file's name in /config/.bright/shows (for example
+        my-song-1a2b3c4d.json), or the track's hash.
+      required: true
+      selector:
+        text: {}

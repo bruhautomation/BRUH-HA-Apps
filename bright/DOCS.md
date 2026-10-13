@@ -423,7 +423,8 @@ keep.
 
 Every compile also writes the script to
 `/config/.bright/shows/<track>-<hash>.json`, where the Home Assistant file
-editor can open it. Edit it there and press **Reload from file**. The mirror
+editor can open it. Edit it there and press **Reload from file** (or call
+`bright.import_show`). The mirror
 is a copy, not the record — editing it changes nothing until you import it,
 which is deliberate: a half-typed JSON file being picked up by a party at
 11pm is not a feature. Broken JSON is reported with the parser's own
@@ -796,6 +797,30 @@ Stops the show and puts the room back.
 
 With no `scene`, every light goes back to the state it was in beforehand —
 unless the running party named one, which is then used.
+
+### `bright.get_status`
+
+What is playing, the saved sets and the tracks with a show ready, as response
+data. Changes nothing.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `parties_only` | no | `true` answers with what is playing and the saved sets (each with its speaker and how many songs it names) and skips scanning the music library, which is most of what the full answer costs |
+
+### `bright.import_show`
+
+Makes an edited file in `/config/.bright/shows/` the show BRight plays for
+that track — the same as **Reload from file** in the panel. The previous show
+is kept as a version.
+
+| Field | Required | Meaning |
+|---|---|---|
+| `track` | yes | The file's name in `/config/.bright/shows/`, or the track's hash |
+
+A file that is not valid JSON is refused with the line it broke on, and a
+script that will not compile is refused with the reason; the show that was
+playing stays. A `README.md` and an `EFFECTS.md` (every effect type and its
+parameters) sit beside the show files for whoever edits them.
 
 A service that cannot do what you asked **fails with the reason** — "no
 analyzed tracks in /media/music — run the Library tab first" appears in the

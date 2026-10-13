@@ -552,6 +552,111 @@ def find_mirror(hash_hex: str) -> Path | None:
     return matches[0] if matches else None
 
 
+GUIDE_NAME = "README.md"
+CATALOG_NAME = "EFFECTS.md"
+
+# What the folder of mirrored shows is, for whoever opens it — a person in
+# the file editor, or brAIn asked to change a show. The files carry no
+# comments (they are JSON), so without this a careful edit to one is an
+# edit that silently does nothing, and nobody is told why.
+_GUIDE = """\
+# BRight show scripts
+
+Each `<track>-<hash>.json` here is a COPY of one track's light show script,
+written every time the show is compiled. The show BRight plays lives in the
+add-on's own storage; editing a file here changes nothing until it is
+imported.
+
+To make an edit take effect, import it:
+
+- the panel's Shows tab: open the show's script, then "Reload from file"
+  (which is `POST /api/show/<hash>/script/import`);
+- or the Home Assistant action `bright.import_show` with `track` set to the
+  file name (or the track's hash).
+
+An import goes through the same checks as every show: a file that is not
+valid JSON is refused with the line it broke on, and a script that will not
+compile (an unknown effect type, a light flooded past its message budget) is
+refused with the reason. The show that was playing is kept either way.
+
+The script is version 2: `scenes` (in time order, covering the track, each
+with `start`, `end`, `mood`, `palette` of [hue, saturation] pairs,
+`brightness` 0-1 and `effects`) and `moments` (`t` in seconds and one
+`effect`). Every effect type and its parameters are in `EFFECTS.md` beside
+this file. Every import is kept as a new version, so the previous show is
+one press away in the panel.
+"""
+
+
+def _write_if_changed(path: Path, text: str) -> None:
+    """Write a derived file only when it would change, so a compile that
+    publishes the same guide does not touch the file somebody has open."""
+    try:
+        if path.read_text() == text:
+            return
+    except OSError:
+        pass
+    atomic_write.write_text(path, text)
+
+
+def _catalog_document() -> str:
+    # Imported here rather than at module scope: the director imports this
+    # module, and the effect catalog is what the file describes.
+    from director import effects as fx
+
+    return ("# BRight effects\n\n"
+            "Every effect type a show script may use, with its parameters, "
+            "their ranges and defaults. Generated from the add-on's own "
+            "catalog each time a show is published.\n\n"
+            "Effects run BY THE BULB (one at a time per light — a second "
+            "on the same light cancels the first): "
+            + ", ".join(sorted(fx.BULB_ROUTINES)) + ".\n\n```\n"
+            + fx.catalog_text() + "\n```\n")
+
+
+def publish_guide() -> None:
+    """The README and the effect catalog beside the mirrored shows."""
+    _write_if_changed(SHARED_SHOWS / GUIDE_NAME, _GUIDE)
+    try:
+        catalog = _catalog_document()
+    except ImportError:
+        return
+    _write_if_changed(SHARED_SHOWS / CATALOG_NAME, catalog)
+
+
+def resolve_track(name: str) -> str:
+    """The track hash a mirrored file name (or a hash) refers to.
+
+    `track` is what a person or brAIn types: the file name as it appears in
+    /config/.bright/shows (with or without `.json` and a folder in front),
+    the eight-character hash it ends in, or the full hash. Raises
+    ValueError with a sentence naming what was asked for.
+    """
+    text = str(name or "").strip()
+    if is_track_hash(text):
+        return text
+    stem = Path(text).name
+    if stem.endswith(".json"):
+        stem = stem[:-5]
+    short = stem.rsplit("-", 1)[-1].lower()
+    if not re.fullmatch(r"[0-9a-f]{8,40}", short):
+        raise ValueError(
+            f"{text!r} is not a show file name or a track hash — use a file "
+            f"name from /config/.bright/shows, such as "
+            f"'my-song-1a2b3c4d.json'")
+    try:
+        found = sorted(p.name for p in SHOWS_DIR.glob(f"{short}*")
+                       if p.is_dir() and is_track_hash(p.name))
+    except OSError:
+        found = []
+    if not found:
+        raise ValueError(f"no track's show matches {text!r}")
+    if len(found) > 1:
+        raise ValueError(f"{text!r} matches more than one track — use the "
+                         f"full file name or hash")
+    return found[0]
+
+
 def publish_script(hash_hex: str, script: dict, title: str = "") -> Path | None:
     """Mirror the script to the shared volume. Never fatal.
 
@@ -565,6 +670,7 @@ def publish_script(hash_hex: str, script: dict, title: str = "") -> Path | None:
     target = SHARED_SHOWS / mirror_name(hash_hex, title)
     try:
         SHARED_SHOWS.mkdir(parents=True, exist_ok=True)
+        publish_guide()
         # A retitled track would otherwise leave its old file behind, and
         # two files for one show is two answers to "which one do I edit".
         for stale in SHARED_SHOWS.glob(f"*-{hash_hex[:8]}.json"):

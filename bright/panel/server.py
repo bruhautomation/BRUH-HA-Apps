@@ -1201,15 +1201,32 @@ async def h_status_for_bridge(request: web.Request) -> web.Response:
     needs: a track's path is what `start_show` takes, its name is what a
     person says, and whether a show exists is the difference between it
     starting now and it being compiled first.
+
+    `parties_only` skips the library: a scan hashes every new file under
+    every music folder, which is the expensive half of this answer and
+    none of what "start the Friday party" needs. It answers with what is
+    playing and the saved sets, each with its speaker and how many songs
+    it names (0 for a set that plays a folder).
     """
+    body = await _json_body(request)
+    state = dict(_conductor().state or {})
+    playing = {k: state.get(k) for k in
+               ("status", "active", "lights_busy", "title", "party",
+                "media_player") if k in state}
+    if body.get("parties_only") is True:
+        return web.json_response({
+            "ok": True, "state": playing,
+            "parties": [{"name": p.get("name"),
+                         "media_player": p.get("media_player"),
+                         "songs": len(p.get("tracks") or []),
+                         "folder": p.get("folder")}
+                        for p in parties_store.load()],
+        })
     folders = _music_folders()
     tracks = await asyncio.to_thread(library.scan_all, folders)
-    state = dict(_conductor().state or {})
     return web.json_response({
         "ok": True,
-        "state": {k: state.get(k) for k in
-                  ("status", "active", "lights_busy", "title", "party", "media_player")
-                  if k in state},
+        "state": playing,
         "parties": [p["name"] for p in parties_store.load()],
         "tracks": [{"name": t.get("name"), "file": t.get("file"),
                     "analyzed": bool(t.get("analyzed")), "has_show": bool(t.get("show"))}
@@ -1512,6 +1529,10 @@ def _compile_script(hash_hex: str, script: dict, *, wrote: str = "edit",
     analysis = library.load_analysis(hash_hex)
     if analysis is None:
         raise ValueError("track not analyzed — run the Library tab first")
+    # Saved effects are resolved before validating, because the validator
+    # reads an effect by its type and a `use` has none until it is
+    # expanded; compile_and_save expanding again finds nothing left to do.
+    script = effect_presets.expand_script(script)
     problems = choreographer.validate_script(script)
     if problems:
         raise ValueError("this script will not run: " + "; ".join(problems[:6]))
@@ -1555,28 +1576,69 @@ async def h_show_script_save(request: web.Request) -> web.Response:
     return web.json_response({**payload, "stats": show["stats"]})
 
 
-async def h_show_script_import(request: web.Request) -> web.Response:
-    """Read the hand-edited file back off the shared volume and compile it."""
-    hash_hex = request.match_info["hash"]
+async def _import_mirror(hash_hex: str) -> tuple[int, dict]:
+    """Read the hand-edited file for a track back and compile it.
+
+    (status, body): the compiled show, or the refusal in the panel's own
+    words — the JSON parser's line for a broken file, the validator's or
+    the compiler's reason for a script that will not run."""
     try:
         script = await asyncio.to_thread(library.read_mirrored_script, hash_hex)
     except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return 400, {"error": str(exc)}
     if script is None:
-        return web.json_response(
-            {"error": "there is no file to read yet — compile the show once "
-                      "and it appears in /config/.bright/shows/"}, status=404)
+        return 404, {"error": "there is no file to read yet — compile the "
+                              "show once and it appears in "
+                              "/config/.bright/shows/"}
     try:
         show = await asyncio.to_thread(
             _compile_script, hash_hex, script, wrote="import",
             note="read back from the file on the shared volume")
     except CompileError as exc:
-        return web.json_response({"error": str(exc)}, status=422)
+        return 422, {"error": str(exc)}
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    return 200, {"show": show}
+
+
+async def h_show_script_import(request: web.Request) -> web.Response:
+    """Read the hand-edited file back off the shared volume and compile it."""
+    hash_hex = request.match_info["hash"]
+    status, body = await _import_mirror(hash_hex)
+    if status != 200:
+        return web.json_response(body, status=status)
+    _, payload = await asyncio.to_thread(_script_payload, hash_hex)
+    return web.json_response({**payload, "stats": body["show"]["stats"],
+                              "imported": True})
+
+
+async def h_import_show_for_bridge(request: web.Request) -> web.Response:
+    """`bright.import_show`: the edited mirror file becomes the live show.
+
+    `track` is the file name in /config/.bright/shows or the track's hash,
+    because the file name is what brAIn has in front of it after editing
+    one. The answer is the show's size and where it came from rather than
+    the script itself, which is the file the caller already has."""
+    body = await _json_body(request)
+    try:
+        hash_hex = await asyncio.to_thread(
+            library.resolve_track, str(body.get("track", "") or ""))
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    status, payload = await asyncio.to_thread(_script_payload, hash_hex)
-    return web.json_response({**payload, "stats": show["stats"],
-                              "imported": True})
+    status, result = await _import_mirror(hash_hex)
+    if status != 200:
+        return web.json_response(result, status=status)
+    show = result["show"]
+    mirror = library.find_mirror(hash_hex)
+    return web.json_response({
+        "ok": True, "imported": True, "track_hash": hash_hex,
+        "title": _version_title(hash_hex) or hash_hex[:8],
+        "file": mirror.name if mirror else None,
+        "version_id": show.get("version_id"),
+        "cues": (show.get("stats") or {}).get("cues"),
+        "peak_per_device_hz": (show.get("stats") or {}).get(
+            "peak_per_device_hz"),
+    })
 
 
 async def h_show_revise(request: web.Request) -> web.Response:
@@ -3062,6 +3124,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/show/start_party", h_show_party)
     app.router.add_post("/api/show/list_parties", h_party_list_for_bridge)
     app.router.add_post("/api/show/get_status", h_status_for_bridge)
+    app.router.add_post("/api/show/import_show", h_import_show_for_bridge)
     app.router.add_get("/api/show/state", h_show_state)
     app.router.add_get("/api/show/{hash}/versions", h_show_versions)
     app.router.add_post("/api/show/{hash}/versions/{id}/activate",

@@ -154,11 +154,16 @@ def revise_show(hash_hex: str, devices: dict[str, dict], source: int,
         raise ValueError("no show for this track yet — compile one first, "
                          "then there is something to give notes on") from None
 
+    # The brief the show was written to rides into the revision and on
+    # into this revision's own report, so the next note is still answered
+    # against the evening the host asked for rather than a default one.
+    vibe = (load_report(hash_hex) or {}).get("vibe") or None
     report: dict = {"asked": "revise", "used": "claude", "available": True,
                     "fell_back": False, "reason": None, "seconds": None,
-                    "feedback": feedback[:600]}
+                    "feedback": feedback[:600], "vibe": vibe}
     started = time.monotonic()
-    revised = reviser(current, feedback, analysis, fixtures)
+    revised = (reviser(current, feedback, analysis, fixtures, vibe=vibe)
+               if vibe else reviser(current, feedback, analysis, fixtures))
     problems = choreographer.validate_script(revised)
     if problems:
         raise ValueError("the revised script did not validate: "

@@ -9,9 +9,12 @@ choreography back. No brAIn, no Claude tier — the algorithmic floor
 answers, exactly as `director_mode: auto` promises.
 
 Everything returned is validated by choreographer.validate_script before
-the compiler ever sees it. The model writes a SCRIPT — scenes, motifs,
+the compiler ever sees it. The model writes a SCRIPT — scenes, effects,
 moments — never packets and never device commands: taste is delegated,
-the wire budget is not.
+the wire budget is not. The answer's shape is also sent as a JSON schema
+(`script_schema`), which brAIn hands the CLI so the answer arrives
+already checked; the text parsing below is the path for an install that
+cannot pass a schema on.
 """
 from __future__ import annotations
 
@@ -58,194 +61,175 @@ def available() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# The digest prompt
+# The answer's shape, as a schema
 # ---------------------------------------------------------------------------
-_SCHEMA_CONTRACT = """\
-Answer with ONE JSON object and nothing else — no prose, no code fences.
+# brAIn's listener hands a task's `schema` to the CLI as `--json-schema`,
+# and the CLI then checks the answer before it is written back — a reply
+# that does not fit is retried inside the run rather than arriving here as
+# prose to be parsed. The schemas are built from the catalog and the
+# validator's own vocabularies, so they cannot name a type or an order the
+# compiler does not have.
+#
+# They are deliberately no stricter than they need to be: parameter VALUES
+# are clamped and unknown parameters dropped by `clean_params`, which is the
+# defined contract for hand-typed files too, so `params` is checked for
+# shape and not for ranges. What the schema catches is the failure the
+# validator would otherwise turn into a fallback — a missing field, a type
+# that does not exist, a palette that is not pairs, a brightness outside
+# 0..1. It describes the version 2 answer only; stored version 1 shows
+# never meet it.
+_PALETTE_SCHEMA = {
+    "type": "array", "minItems": 1,
+    "items": {"type": "array", "minItems": 2, "maxItems": 2,
+              "items": {"type": "number"}},
+}
+_SELECT_SCHEMA = {
+    "type": "object",
+    "properties": {key: {"type": "array", "items": {"type": "string"}}
+                   for key in ("ids", "roles", "zones", "exclude")},
+    "additionalProperties": False,
+}
 
-{
-  "version": 2,
-  "scenes": [
-    {
-      "start": <seconds>, "end": <seconds>,   // cover the track, in order
-      "mood": "<one word>",
-      "palette": [[<hue 0-360>, <saturation 0-1>], ...],  // 2-4 pairs
-      "brightness": <0-1>,                    // the scene's base level
-      "effects": [ <effect>, ... ]            // what MOVES in this scene
+
+def _effect_fields() -> dict:
+    from . import effects as fx
+
+    return {
+        "type": {"type": "string", "enum": list(fx.CATALOG)},
+        "name": {"type": "string"},
+        "select": _SELECT_SCHEMA,
+        "order": {"type": "string", "enum": list(fx.ORDERS)},
+        "align": {"type": "string", "enum": list(fx.ALIGNMENTS)},
+        "params": {"type": "object",
+                   "additionalProperties": {
+                       "type": ["number", "boolean", "string"]}},
+        "respect_roles": {"type": "boolean"},
+        "start": {"type": "number"},
+        "end": {"type": "number"},
+        "palette": _PALETTE_SCHEMA,
     }
-  ],
-  "moments": [
-    {"t": <seconds>, "effect": <effect>}      // one hit, at one instant
-  ]
-}
-
-An <effect> is:
-
-{
-  "type": "<one of the types below>",
-  "name": "<short label, shown on every cue it makes>",
-  "select": {"roles": [...], "ids": [...], "zones": [...]},  // WHO it drives
-  "order": "x" | "-x" | "y" | "-y" | "center_out" | "edges_in" | "snake"
-           | "zone" | "random",               // the path it travels
-  "params": { ... }                           // see each type
-}
-
-`select` decides which lights the effect owns; every light it does not
-name is left exactly as the scene put it. An empty `select` means all of
-them. Only use roles the fixture list below actually has.
-
-FOUR THINGS THE SHAPE ABOVE DOES NOT SHOW, and every one of them is a
-tool you will want:
-
-1. **An effect can carry its own `"start"` and `"end"`** (seconds), and
-   then it runs only for that stretch of its scene instead of all of it.
-   This is how you write "strobe for the last four bars", "the sweep
-   arrives halfway through", "hold, then move". A scene is a container,
-   not a straitjacket — without this every scene is one texture from end
-   to end, which is the single most common way a show reads as flat.
-2. **`"base": false` on a scene** stops it washing every light at its
-   start, so the room stays exactly as the previous scene left it and
-   your effects layer over that. Use it when a section should evolve out
-   of the one before rather than cut.
-3. **`"respect_roles": false` on an effect** lets it drive a fixture its
-   role would normally protect — a candle in a strobe. It is the
-   override for when you mean it. Leaving it out is right nearly always.
-4. **A scene's `brightness` is the ground everything moves against**, and
-   effects are read relative to it. A scene at 0.9 with a pulse on top
-   has nowhere to go; a scene at 0.45 does.
-
-THE ONE HARD LIMIT: a LIFX bulb accepts about 20 messages a second and
-BRight refuses to compile a show that exceeds 18 at any single bulb. Only
-STEPPING effects spend messages (chase, sparkle, theater, melody, level,
-colour_cycle, rainbow, fade, build) — one per light per step. The bulb
-routines cost ONE message each however long they run. So: a chase at
-`step_beats: 0.125` across three lights at 128bpm is about 21/s at one
-bulb and the whole show is REFUSED — not that effect, the show. Keep
-`step_beats` at 0.25 or slower unless the selection is wide, and do not
-stack three stepping effects on the same light.
-
-TYPES and their params:
-%(catalog)s
-
-Types and parameter names are EXACTLY as listed. Out-of-range numbers are
-clamped rather than rejected, and any parameter you leave out takes its
-default — write the two or three that matter and skip the rest.
-
-ONE RULE ABOUT LAYERING, and it is physics rather than taste. These
-effects are run BY THE BULB: %(routines)s. A bulb runs exactly one of them at a
-time, so two overlapping on the SAME light is not a layered effect — the
-later one cancels the earlier, and from across the room that reads as an
-effect that mysteriously does nothing. Give them different lights, or
-different windows. Everything else layers freely, and layering a bulb
-routine with those is exactly right: a pulse on the lamps under a chase
-across them is two different things happening at once.
-
-`colour_drift` and `saturate` are the two that move COLOUR while leaving
-the brightness alone, which nothing else here can do. They are what a
-quiet section wants — the room changing without anything flickering —
-and they are the only motion a candle can join.
-
-The `//` notes above are ANNOTATION, explaining the shape to you. JSON has
-no comments: your answer must be strict JSON — no `//`, no `/* */`, no
-trailing comma before a `}` or `]`, and no `<angle brackets>`, which mark
-where a value goes rather than being one.
-
-ONE SCENE, WRITTEN WELL — not a template to copy, an example of the
-density and the thinking. This is a verse in a room with two lamps, a
-strip and candles:
-
-{
-  "start": 48.0, "end": 76.0, "mood": "simmer", "base": false,
-  "palette": [[268, 0.75], [212, 0.6], [318, 0.5]],
-  "brightness": 0.42,
-  "effects": [
-    {"type": "harmony", "name": "chords on the candles",
-     "select": {"roles": ["candle"]},
-     "params": {"brightness": 0.4, "fade_ms": 1800}},
-    {"type": "melody", "name": "the tune, on the lamps",
-     "select": {"roles": ["lamp"]},
-     "params": {"hue_spread": 0.55, "voices": 1}},
-    {"type": "level", "name": "strip breathes with the kick",
-     "select": {"roles": ["strip"]},
-     "params": {"band": "low", "floor": 0.15, "ceiling": 0.7,
-                "gamma": 1.4}},
-    {"type": "build", "name": "lift into the chorus",
-     "start": 68.0, "end": 76.0,
-     "select": {"roles": ["lamp", "strip"]},
-     "params": {"from_brightness": 0.35, "to_brightness": 0.9,
-                "curve": "exp"}}
-  ]
-}
-
-Read what that scene is doing. `base: false` — it grows out of the
-section before it. Four effects and each one owns DIFFERENT lights, so
-nothing is fighting: harmony has the candles, the tune has the lamps, the
-kick has the strip. The build is windowed to the last eight seconds, so
-the verse is one thing and then becomes another. Nothing steps faster
-than the music. And every choice is about this room — it names the roles
-that exist in it.
-
-WHAT MAKES A SHOW BAD, so you can avoid it deliberately:
-- One texture per section, end to end, changing only at the boundaries.
-- Every effect selecting every light, so the room only ever does one
-  thing and effects overwrite each other.
-- Chases everywhere. A chase is one idea; four chases is one idea four
-  times.
-- The peaks doing everything and the verses doing nothing. Most of a
-  song is not its chorus.
-- Colour chosen at random rather than from the scene's palette."""
 
 
-def _catalog_lines() -> str:
-    """The effect vocabulary, generated from the catalog itself.
+def effect_schema(*, extra: dict | None = None, root: bool = False) -> dict:
+    """One effect: a `type`, or a saved effect's `use`.
 
-    Written out rather than summarised because the model has to answer in
-    this language exactly, and a hand-maintained copy of the parameter
-    list is a second answer that drifts the first time an effect gains a
-    parameter."""
-    from . import effects as fx
-
-    lines = []
-    for name, spec in fx.CATALOG.items():
-        params = ", ".join(
-            f"{pname} ({rule['kind']}"
-            + (f" {rule['min']}..{rule['max']}" if "min" in rule else "")
-            + (f" one of {'|'.join(rule['options'])}" if "options" in rule else "")
-            + f", default {rule['default']})"
-            for pname, rule in spec["params"].items())
-        lines.append(f"  {name} [{spec['channel']}] — {spec['blurb']}\n"
-                     f"      {params}")
-    return "\n".join(lines)
+    As the ROOT of an answer (one effect from a sentence) it is a plain
+    object that needs a `type`: a structured answer's root is kept to the
+    simplest shape a validator accepts, and an effect asked for in words
+    is a new one rather than a saved one, so nothing is lost. Inside a
+    script either key will do."""
+    fields = {**_effect_fields(), "use": {"type": "string", "minLength": 1},
+              **(extra or {})}
+    schema = {"type": "object", "properties": fields,
+              "additionalProperties": False}
+    if root:
+        schema["required"] = ["type"]
+    else:
+        schema["anyOf"] = [{"required": ["type"]}, {"required": ["use"]}]
+    return schema
 
 
+def script_schema() -> dict:
+    """A version 2 show script, exactly as `validate_script` reads one."""
+    effect = effect_schema()
+    scene = {
+        "type": "object",
+        "properties": {
+            "start": {"type": "number"},
+            "end": {"type": "number"},
+            "mood": {"type": "string"},
+            "kind": {"type": "string"},
+            "palette": _PALETTE_SCHEMA,
+            "brightness": {"type": "number", "minimum": 0, "maximum": 1},
+            "base": {"type": "boolean"},
+            "effects": {"type": "array", "items": effect},
+        },
+        "required": ["start", "end", "palette", "brightness"],
+        "additionalProperties": False,
+    }
+    moment = {
+        "type": "object",
+        "properties": {"t": {"type": "number"}, "effect": effect,
+                       "snap": {"type": "string", "enum": ["beat"]}},
+        "required": ["t", "effect"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "version": {"type": "integer", "enum": [2]},
+            "scenes": {"type": "array", "minItems": 1, "items": scene},
+            "moments": {"type": "array", "items": moment},
+        },
+        "required": ["version", "scenes"],
+        "additionalProperties": False,
+    }
 
-def _routine_names() -> str:
-    """The bulb-side effects, named from the set the compiler enforces.
 
-    Written out by hand once, and it drifted the moment two more effects
-    joined the class — the brief went on listing seven while the compiler
-    warned about nine, so a model following the brief exactly could
-    still write a show whose kick silently cancelled its snare. There is
-    one list, and this is it.
-    """
-    from . import effects as fx
-
-    return ", ".join(f"`{name}`" for name in sorted(fx.BULB_ROUTINES))
+def invent_schema() -> dict:
+    """The invent answer: a list of effects, each with its `why`."""
+    idea = effect_schema(extra={"why": {"type": "string"}})
+    return {"type": "object",
+            "properties": {"effects": {"type": "array", "minItems": 1,
+                                       "items": idea}},
+            "required": ["effects"], "additionalProperties": False}
 
 
-def schema_contract() -> str:
-    """The contract, with the parts that are generated filled in."""
-    return _SCHEMA_CONTRACT % {"catalog": _catalog_lines(),
-                               "routines": _routine_names()}
-
-_DIRECTION = """\
+# ---------------------------------------------------------------------------
+# The brief
+# ---------------------------------------------------------------------------
+_ROLE = """\
 You are the lighting director for a home light show. Design the show for
 the track below: professional, musical, restrained where the song is and
-unleashed where it earns it.
+unleashed where it earns it."""
 
+MAX_VIBE_CHARS = 200
+
+
+def _vibe_lines(vibe: str | None) -> list[str]:
+    """The host's own brief for this show, placed straight after the role.
+
+    First because it is the one instruction that is about THIS show, and
+    a sentence read after six pages of house principles reads as a
+    footnote to them. It says what it outranks, because "keep it calm"
+    and a default energy curve that lifts every `peak` disagree, and a
+    model left to pick will pick the one it was told more about."""
+    vibe = (vibe or "").strip()
+    if not vibe:
+        return []
+    return [
+        "",
+        f"THIS SHOW'S BRIEF, from the host: {vibe[:MAX_VIBE_CHARS]}",
+        "It outranks the default energy curve and the house principles "
+        "below wherever they disagree: if it says keep it calm, the peaks "
+        "stay calm too.",
+    ]
+
+
+_SECTION_LEGEND = """\
+HOW THE SONG IS LABELLED. The analysis names each section by its energy,
+not by its part in the song: `intro`, `quiet`, `mid`, `peak`, `outro`.
+Each carries an `energy` from 0 to 1 — the section's average loudness
+against this track's own loudest moment, so 0.9 is near the top of THIS
+song rather than loud in general. Read them as: `peak` is chorus, hook
+and drop territory; `quiet` and `mid` are the verses and breakdowns;
+`intro` and `outro` are the two ends. Where this brief says chorus it
+means a `peak`, and verse means `quiet` or `mid`."""
+
+# Said to a first draft only: a revision keeps what the notes are not
+# about, and a target for how much to write invites it to re-plan the lot.
+_DENSITY = """\
+HOW MUCH TO WRITE — a guide, not a rule anything enforces:
+- about one scene per section (merge two short ones or split a long one
+  where the music wants it);
+- 2 to 4 effects per scene, one per layer;
+- 4 to 8 moments across the whole track — the drops, the biggest
+  accents, a lyric line that deserves it."""
+
+_DIRECTION = """\
 The difference between a show that is SYNCHRONIZED and a show that is
 MUSICAL is what it answers. A synchronized show marks the structure —
-brighter in the chorus, a hit on the drop, a chase while the energy is
+brighter in a `peak`, a hit on the drop, a chase while the energy is
 high — and it is what you get by reading only the section map. It looks
 correct and it is boring by the second chorus, because the song does a
 hundred things in between and the lights do none of them.
@@ -279,7 +263,7 @@ is measured and listed below:
 
 So: scenes and drops are the skeleton, and the chords, melody and phrases
 are what happens inside them. A verse with a `harmony` ground, the tune on
-the lamps and a soft pulse underneath is worth more than any number of
+the lamps and a soft `hit` underneath is worth more than any number of
 chases.
 
 BUILD THE SHOW OUT OF FOUR LAYERS, ON DIFFERENT LIGHTS
@@ -301,21 +285,20 @@ rather than busy is that they are SEPARATE:
   a grid knows nothing about.
 - **voice** — the melody, tracking real pitch (`melody`). This is the
   layer that makes a room feel like it is playing along. PUT IT IN THE
-  CHORUS TOO. A chorus is the part of a song people know the tune of,
-  and a room that stops following it exactly there stops playing along
-  where it matters most — it works in a chorus because it owns its own
-  lights, not because the chorus is quiet.
+  CHORUS TOO — the `peak` sections. A chorus is the part of a song people
+  know the tune of, and a room that stops following it exactly there
+  stops playing along where it matters most — it works in a `peak`
+  because it owns its own lights, not because the `peak` is quiet.
 
 Two rules follow, and both are hard:
 
-1. **One fixture, one rhythmic layer.** A LIFX bulb runs ONE waveform at
-   a time, so two of the bulb-side effects on one light is the second
-   cancelling the first. If the room has fewer kinds of light than you
+1. **One fixture, one rhythmic layer** — the layering rule in the answer
+   format below is why. If the room has fewer kinds of light than you
    have layers, SPLIT a role by naming ids: the left two lamps are the
    kick, the right two are the snare. That is what a designer does with
    six lamps and four ideas, and it is far better than one effect across
    every bulb.
-2. **A layer arriving is itself an event.** A chorus does not land
+2. **A layer arriving is itself an event.** A `peak` does not land
    because it is brighter than the verse. It lands because something NEW
    starts happening on lights that were doing something else a moment
    ago — the strip joins the kick, the lamps stop washing and start
@@ -323,12 +306,10 @@ Two rules follow, and both are hard:
 
 Principles:
 - The section map and drops are measured from the audio — trust them.
-  Scenes should follow the section boundaries (merge or split a little
-  where the music narrative wants it).
 - Build tension INTO a drop (dim, tighten) so the hit lands.
 - Candles are ambience: warm, low, never flashing. Lamps and downlights
   carry the beat. Strips carry motion (sweeps). Party lights and lasers
-  are aux switches — save them for peaks and drops or they mean nothing.
+  are aux switches — save them for `peak`s and drops or they mean nothing.
 - THE ROOM section below is the real floor plan, placed by hand. Every
   light has an id, a name, a role, a zone and an x/y position, and the
   travel orders are worked out for you at the bottom of it. Design for
@@ -348,14 +329,211 @@ Principles:
   there. A show made only of swells is what "just a bunch of fading
   lights" means — reach for the second group for anything rhythmic and
   keep the swells for the ground.
-- Effects can own different parts of the room at once. A chase across the
-  lamps while the strip holds a wash is one scene with two effects and
-  two selections, and it reads far better than one effect over everything.
 - Pick palettes that fit the song's feel, and CHANGE them meaningfully
-  between sections — a chorus should look different from its verse.
-- If synced lyrics are given, choose up to 4 lyric_moment features at the
-  lines that deserve a visual answer (the title line, the hook, a turn).
-- Less is more: one intentional motif per scene beats three busy ones."""
+  between sections — a `peak` should look different from the `quiet` or
+  `mid` before it.
+- If synced lyrics are given, put up to 4 of your moments on the lines
+  that deserve a visual answer (the title line, the hook, a turn): the
+  moment's `t` is the line's time.
+- One idea per layer: each layer doing one thing clearly beats one layer
+  doing three."""
+
+# The shape of one effect, said once and used by every contract: a show's
+# effects, a moment's effect, one effect from a sentence and an invented
+# one are the same object, and two descriptions of it are two shapes.
+_EFFECT_SHAPE = """\
+An effect is an object with:
+- "type" — one of the types below, exactly as written.
+- "name" — a short label. It is what the host sees on every cue the
+  effect makes, in the cue list and the editor, so name what it is FOR
+  ("kick on the left lamps"), not which type it is.
+- "select" — which lights it drives: {"ids": [...], "roles": [...],
+  "zones": [...], "exclude": [...]}, every list optional. Every light it
+  does not select is left exactly as it was; an empty select means all of
+  them. Only use ids, roles and zones the room below actually has.
+- "order" — the path it travels through its lights, one of:
+  %(orders)s (`listed` is the order of select.ids).
+- "params" — see each type.
+- Optional: "start" and "end" in seconds, "respect_roles", "palette"
+  (its own [hue, saturation] pairs instead of the scene's), "align" (what
+  its timing lines up with — %(aligns)s; beat if left out).
+A saved effect from the library is reused with {"use": "<its name>"} in
+place of a type, plus any of the fields above to override."""
+
+
+def _effect_shape() -> str:
+    from . import effects as fx
+
+    return _EFFECT_SHAPE % {
+        "orders": ", ".join(fx.ORDERS),
+        "aligns": ", ".join(fx.ALIGNMENTS)}
+
+
+_SCHEMA_CONTRACT = """\
+THE ANSWER: one JSON object and nothing else — no prose, no code fences.
+It is checked against a schema before BRight reads it.
+
+- "version": 2
+- "scenes": a list in time order that covers the whole track, from 0 to
+  its duration, with no gaps and no overlaps — each scene starts where
+  the one before it ends. A scene has "start" and "end" (seconds),
+  "mood" (one word), "palette" (2 to 4 [hue, saturation] pairs, hue
+  0-360 and saturation 0-1), "brightness" (0 to 1, the scene's base
+  level) and "effects" (what MOVES in this scene).
+- "moments": a list of moments, one hit at one instant each. A moment
+  has "t" (seconds) and "effect" (an effect). Add "snap": "beat" to a
+  moment and the compiler lands it exactly on the nearest analysed beat,
+  so a time rounded off the hit list cannot smear the hit.
+
+%(effect_shape)s
+
+FOUR THINGS WORTH KNOWING ABOUT THAT SHAPE, and every one of them is a
+tool you will want:
+
+1. **An effect can carry its own "start" and "end"**, and then it runs
+   only for that stretch of its scene instead of all of it. This is how
+   you write "strobe for the last four bars", "the sweep arrives halfway
+   through", "hold, then move". A scene is a container, not a
+   straitjacket — without this every scene is one texture from end to
+   end, which is the single most common way a show reads as flat.
+2. **`"base": false` on a scene** stops it washing every light at its
+   start, so the room stays exactly as the previous scene left it and
+   your effects layer over that. Use it when a section should evolve out
+   of the one before rather than cut.
+3. **`"respect_roles": false` on an effect** lets it drive a fixture its
+   role would normally protect — a candle in a strobe. It is the
+   override for when you mean it. Leaving it out is right nearly always.
+4. **A scene's `brightness` is the ground everything moves against**, and
+   effects are read relative to it. A scene at 0.9 with a pulse on top
+   has nowhere to go; a scene at 0.45 does.
+
+THE ONE HARD LIMIT: a LIFX bulb accepts about 20 messages a second and
+BRight refuses to compile a show that exceeds %(rate)d at any single bulb.
+Only STEPPING effects spend messages (chase, sparkle, theater, melody,
+level, colour_cycle, rainbow, fade, build) — one per light per step. The
+bulb routines below cost ONE message each however long they run. So: a
+chase at `step_beats: 0.125` across three lights at 128bpm is about 21/s
+at one bulb and the whole show is REFUSED — not that effect, the show.
+Keep `step_beats` at 0.25 or slower unless the selection is wide, and do
+not stack three stepping effects on the same light.
+
+ONE RULE ABOUT LAYERING, and it is physics rather than taste. These
+effects are run BY THE BULB: %(routines)s. A bulb runs exactly one of them at a
+time, so two overlapping on the SAME light is not a layered effect — the
+later one cancels the earlier, and from across the room that reads as an
+effect that mysteriously does nothing. Give them different lights, or
+different windows. Everything else layers freely, and layering a bulb
+routine with those is exactly right: a pulse on the lamps under a chase
+across them is two different things happening at once.
+
+TYPES and their params:
+%(catalog)s
+
+Types and parameter names are EXACTLY as listed. Out-of-range numbers are
+clamped rather than rejected, and any parameter you leave out takes its
+default — write the two or three that matter and skip the rest.
+
+`colour_drift` and `saturate` are the two that move COLOUR while leaving
+the brightness alone, which nothing else here can do. They are what a
+quiet section wants — the room changing without anything flickering —
+and they are the only motion a candle can join.
+
+ONE SCENE, WRITTEN WELL — not a template to copy, an example of the
+density and the thinking. This is a verse in a room with two lamps, a
+strip and candles:
+
+{
+  "start": 48.0, "end": 76.0, "mood": "simmer", "base": false,
+  "palette": [[268, 0.75], [212, 0.6], [318, 0.5]],
+  "brightness": 0.42,
+  "effects": [
+    {"type": "harmony", "name": "chords on the candles",
+     "select": {"roles": ["candle"]},
+     "params": {"brightness": 0.4, "fade_ms": 1800}},
+    {"type": "melody", "name": "the tune, on the lamps",
+     "select": {"roles": ["lamp"]},
+     "params": {"hue_spread": 0.55, "voices": 1}},
+    {"type": "level", "name": "strip breathes with the kick",
+     "select": {"roles": ["strip"]},
+     "params": {"band": "low", "floor": 0.15, "ceiling": 0.7,
+                "gamma": 1.4}},
+    {"type": "build", "name": "lift into the chorus",
+     "start": 68.0, "end": 76.0,
+     "select": {"roles": ["lamp", "strip"]},
+     "params": {"from_brightness": 0.35, "to_brightness": 0.9,
+                "curve": "exp"}}
+  ]
+}
+
+Read what that scene is doing. `base: false` — it grows out of the
+section before it. Four effects, one per layer, and each one owns
+DIFFERENT lights, so nothing is fighting: harmony has the candles, the
+tune has the lamps, the kick has the strip. The build is windowed to the
+last eight seconds, so the verse is one thing and then becomes another.
+Nothing steps faster than the music. And every choice is about this room
+— it names the roles that exist in it.
+
+WHAT MAKES A SHOW BAD, so you can avoid it deliberately:
+- One texture per section, end to end, changing only at the boundaries.
+- Every effect selecting every light, so the room only ever does one
+  thing and effects overwrite each other.
+- Chases everywhere. A chase is one idea; four chases is one idea four
+  times.
+- The `peak`s doing everything and the verses doing nothing. Most of a
+  song is not its chorus.
+- Colour chosen at random rather than from the scene's palette."""
+
+
+def _catalog_lines(detail=None) -> str:
+    """The effect vocabulary: every type in full, or `detail` in full and
+    the rest on one line each (`effects.catalog_text`)."""
+    from . import effects as fx
+
+    return fx.catalog_text(detail)
+
+
+def _routine_names() -> str:
+    """The bulb-side effects, named from the set the compiler enforces.
+
+    Written out by hand once, and it drifted the moment two more effects
+    joined the class — the brief went on listing seven while the compiler
+    warned about nine, so a model following the brief exactly could
+    still write a show whose kick silently cancelled its snare. There is
+    one list, and this is it.
+    """
+    from . import effects as fx
+
+    return ", ".join(f"`{name}`" for name in sorted(fx.BULB_ROUTINES))
+
+
+def schema_contract(detail=None) -> str:
+    """The contract, with the parts that are generated filled in.
+
+    `detail` narrows the catalog: None writes every type in full (a show
+    from nothing), a set writes those in full and names the rest."""
+    from . import compiler
+
+    return _SCHEMA_CONTRACT % {"catalog": _catalog_lines(detail),
+                               "routines": _routine_names(),
+                               "rate": int(compiler.MAX_RATE_HZ),
+                               "effect_shape": _effect_shape()}
+
+
+def _types_used(script: dict) -> set[str]:
+    """Every effect type a script uses, scenes and moments alike."""
+    used: set[str] = set()
+    for scene in (script or {}).get("scenes") or []:
+        for effect in (scene or {}).get("effects") or []:
+            if isinstance(effect, dict) and effect.get("type"):
+                used.add(str(effect["type"]))
+    for moment in (script or {}).get("moments") or []:
+        if not isinstance(moment, dict):
+            continue
+        effect = moment.get("effect") if isinstance(moment.get("effect"), dict) \
+            else moment
+        if effect.get("type"):
+            used.add(str(effect["type"]))
+    return used
 
 
 def _digest_facts(analysis: dict) -> str:
@@ -369,7 +547,8 @@ def _digest_facts(analysis: dict) -> str:
         f"duration={library.duration_of(analysis):.0f}s "
         f"brightness_hint={analysis.get('brightness')} (0=dark/warm 1=bright)",
         "",
-        "SECTIONS (start-end kind energy):",
+        "SECTIONS (start-end kind energy; energy is 0-1 against this "
+        "track's loudest moment):",
     ]
     for section in analysis.get("sections") or []:
         lines.append(f"  {section['start']:.0f}-{section['end']:.0f}s "
@@ -391,11 +570,8 @@ def _digest_facts(analysis: dict) -> str:
         lines.append("  " + ", ".join(
             f"{h['t']:.2f}s ({h['strength']:.2f})" for h in hits))
         lines.append(
-            '  Put a moment\'s "t" on one of these and add "snap": "beat" '
-            "beside it — the compiler then lands it exactly on the "
-            "analyzed beat, so a slightly rounded time cannot smear the "
-            "hit. Choose a FEW: one intentional accent beats three busy "
-            "ones.")
+            '  Put a moment\'s "t" on one of these, with "snap": "beat". '
+            "Choose a FEW: one intentional accent beats three busy ones.")
     lines.extend(_musical_lines(analysis))
     return "\n".join(lines)
 
@@ -473,31 +649,27 @@ def _musical_lines(analysis: dict) -> list[str]:
     return lines
 
 
+def _lyrics_lines(analysis: dict) -> list[str]:
+    """Synced lyrics, capped — shared by a first draft and a revision,
+    because a note like "make the hook land" is about a line of them."""
+    lyrics = analysis.get("lyrics") or {}
+    if not (lyrics.get("synced") and lyrics.get("lines")):
+        return []
+    lines = ["", "SYNCED LYRICS ([seconds] line):"]
+    for entry in lyrics["lines"][:MAX_LYRIC_LINES]:
+        lines.append(f"  [{entry['t']}] {entry['text']}")
+    if len(lyrics["lines"]) > MAX_LYRIC_LINES:
+        lines.append(f"  … {len(lyrics['lines']) - MAX_LYRIC_LINES} more lines")
+    return lines
+
+
 def _digest(analysis: dict, fixtures: list[dict],
             vibe: str | None = None) -> str:
-    lines = [
-        _DIRECTION,
-        "",
-        schema_contract(),
-        "",
-    ]
-    if vibe:
-        lines += [f"THE HOST ASKED FOR THIS VIBE: {vibe[:120]}", ""]
-    lines.append(_digest_facts(analysis))
-    lines.append("")
-    lines.append(room.describe(fixtures))
-
-    lines.append("")
-    lines.append(effect_presets.describe())
-
-    lyrics = analysis.get("lyrics") or {}
-    if lyrics.get("synced") and lyrics.get("lines"):
-        lines.append("")
-        lines.append("SYNCED LYRICS ([seconds] line):")
-        for entry in lyrics["lines"][:MAX_LYRIC_LINES]:
-            lines.append(f"  [{entry['t']}] {entry['text']}")
-        if len(lyrics["lines"]) > MAX_LYRIC_LINES:
-            lines.append(f"  … {len(lyrics['lines']) - MAX_LYRIC_LINES} more lines")
+    lines = [_ROLE, *_vibe_lines(vibe), "", _SECTION_LEGEND, "", _DENSITY,
+             "", _DIRECTION,
+             "", schema_contract(), "", _digest_facts(analysis), "",
+             room.describe(fixtures), "", effect_presets.describe()]
+    lines.extend(_lyrics_lines(analysis))
     return "\n".join(lines)
 
 
@@ -513,8 +685,16 @@ CLAIM_GRACE_S = 30
 
 def _run_task(prompt: str, timeout_s: float,
               sleep=time.sleep, clock=time.monotonic) -> str:
+    """One brAIn task, answered in words. See `_await_task`."""
+    return _await_task(prompt, timeout_s, sleep=sleep, clock=clock)["result"]
+
+
+def _await_task(prompt: str, timeout_s: float, schema: dict | None = None,
+                sleep=time.sleep, clock=time.monotonic) -> dict:
     """One brAIn automation task: write the request, poll for the answer.
-    Blocking — build_show already runs in a worker thread.
+    Blocking — build_show already runs in a worker thread. Returns the
+    result file of a completed task: `result` (the text) and, for a task
+    that carried a `schema` the CLI could hold the answer to, `data`.
 
     Two failures live here and they are NOT the same, which is the whole
     reason this function watches the task file as well as the result
@@ -545,6 +725,8 @@ def _run_task(prompt: str, timeout_s: float,
         # script from a brief needs none of it.
         "tools": "read_only",
     }
+    if schema:
+        task["schema"] = schema
     model = _director_model()
     if model:
         task["model"] = model
@@ -568,8 +750,9 @@ def _run_task(prompt: str, timeout_s: float,
                 continue
             result_path.unlink(missing_ok=True)
             text = payload.get("result") or ""
-            if payload.get("status") == "completed" and text:
-                return text
+            if payload.get("status") == "completed" and (
+                    text or isinstance(payload.get("data"), dict)):
+                return {**payload, "result": text}
             raise RuntimeError(
                 f"brAIn task ended {payload.get('status')!r}: {text[:200]}")
         if not claimed:
@@ -593,18 +776,31 @@ def _run_task(prompt: str, timeout_s: float,
         f"— its own log says why (Settings → Add-ons → brAIn → Log).")
 
 
+def _answer(prompt: str, timeout_s: float, schema: dict) -> dict:
+    """The answer as an object: the one the CLI validated against `schema`
+    when there is one, the JSON found in the text otherwise.
+
+    The text path is not dead code. A brAIn too old to pass `schema` on,
+    or a CLI too old for `--json-schema`, answers with text and no `data`
+    — and those are exactly the installs that would otherwise send every
+    show to the algorithmic floor."""
+    payload = _await_task(prompt, timeout_s, schema=schema)
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    return _extract_json(payload.get("result") or "")
+
+
 def _decomment(text: str) -> str:
     """JSON with the things models write into JSON taken back out.
 
-    Two of them, and both are here because the schema contract above
-    *demonstrates* the first: every field in that example carries a `//`
-    note explaining it, so a model imitating the shape it was shown emits
-    them too. That is a comment in a format that has none, and
-    `json.loads` stops at it with `Expecting ',' delimiter` — the failure
-    that sent two real shows to the algorithmic floor before anyone knew
-    why. The prompt says not to now; this is what happens when it does
-    anyway. Trailing commas are the same class: legal in every language
-    the model has read more of than JSON.
+    Two of them. A `//` note after a value is a comment in a format that
+    has none, and `json.loads` stops at it with `Expecting ',' delimiter`
+    — the failure that sent two real shows to the algorithmic floor before
+    anyone knew why. A model with a schema to answer against never writes
+    one; this is the path for a brAIn or a CLI that cannot pass a schema
+    on, where the answer is text. Trailing commas are the same class:
+    legal in every language the model has read more of than JSON.
 
     The scan tracks string literals, because both of these are only
     punctuation when they are *outside* one — `"pop // rock"` is a mood
@@ -699,6 +895,25 @@ def digest(analysis: dict, fixtures: list[dict],
     return _digest(analysis, fixtures, vibe)
 
 
+
+
+def _stamped(script: dict, analysis: dict, version) -> dict:
+    """A director's script made ready for the validator.
+
+    Saved effects named with `use` are expanded HERE, before
+    `validate_script` sees them: the validator reads an effect by its
+    `type`, so a `{"use": ...}` reaching it is "unknown effect type" and
+    the whole show falls back — which is what every show that took up the
+    brief's invitation to reuse the library used to do. An unknown name
+    is a ValueError naming what the library does hold, which is a reason
+    the panel can show."""
+    script = effect_presets.expand_script(script)
+    script["tier"] = "claude"
+    script["track_hash"] = analysis.get("hash")
+    script.setdefault("version", version)
+    return script
+
+
 def write_script(analysis: dict, fixtures: list[dict],
                  timeout_s: float = TASK_TIMEOUT_S,
                  vibe: str | None = None) -> dict:
@@ -707,12 +922,9 @@ def write_script(analysis: dict, fixtures: list[dict],
     if not available():
         raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
                            "— the Claude director needs it")
-    answer = _run_task(_digest(analysis, fixtures, vibe), timeout_s)
-    script = _extract_json(answer)
-    script["tier"] = "claude"
-    script["track_hash"] = analysis.get("hash")
-    script.setdefault("version", 1)
-    return script
+    script = _answer(_digest(analysis, fixtures, vibe), timeout_s,
+                     script_schema())
+    return _stamped(script, analysis, 1)
 
 # ---------------------------------------------------------------------------
 # A show, revised to a sentence
@@ -725,25 +937,46 @@ def write_script(analysis: dict, fixtures: list[dict],
 MAX_FEEDBACK_CHARS = 600
 
 _REVISE_DIRECTION = """\
-You are the lighting director for a home light show. You already wrote the
-script below, the host watched it run, and they have notes. Revise the
-script to LAND their notes.
+You already wrote the script below, and the host has notes on it. Revise
+the script to LAND their notes.
 
 - Change what the notes are about, decisively — a revision nobody can see
   is worse than none. If they say the drop was weak, make the drop hit.
 - Keep everything the notes are NOT about. The rest of the show is what
-  they liked well enough not to mention; a rewrite from scratch throws
-  that away.
+  they did not ask to change; a rewrite from scratch throws that away.
 - The notes are in the host's own words. Read them for intent: "too much
   flashing" is about strobes and pulses wherever they are, not one scene.
 - Answer with the COMPLETE revised script in the same JSON shape — scenes
-  covering the track, moments, all of it — not a fragment or a diff."""
+  covering the track, moments, all of it — not a fragment or a diff.
+
+The catalog below writes out in full only the effect types this script
+already uses; the rest are named with their parameters, and every one of
+them is yours to use."""
+
+
+def _revise_prompt(script: dict, feedback: str, analysis: dict,
+                   fixtures: list[dict], vibe: str | None = None) -> str:
+    current = {k: v for k, v in script.items()
+               if k not in ("tier", "track_hash")}
+    lines = [_ROLE, *_vibe_lines(vibe), "", _REVISE_DIRECTION, "",
+             _SECTION_LEGEND, "", schema_contract(_types_used(current)), "",
+             _digest_facts(analysis), "", room.describe(fixtures), "",
+             effect_presets.describe()]
+    lines.extend(_lyrics_lines(analysis))
+    lines += ["", "THE CURRENT SCRIPT:", json.dumps(current, indent=1), "",
+              "THE HOST'S NOTES:", feedback[:MAX_FEEDBACK_CHARS]]
+    return "\n".join(lines)
 
 
 def revise_script(script: dict, feedback: str, analysis: dict,
                   fixtures: list[dict],
-                  timeout_s: float = TASK_TIMEOUT_S) -> dict:
+                  timeout_s: float = TASK_TIMEOUT_S,
+                  vibe: str | None = None) -> dict:
     """The host's notes, applied by the director who wrote the show.
+
+    `vibe` is the brief the show was written to, when there was one: a
+    revision that forgets it answers the note and undoes the evening the
+    host asked for in the first place.
 
     Raises on any failure — the caller keeps the current script, because a
     revision that failed must never cost the show that was running last
@@ -754,31 +987,9 @@ def revise_script(script: dict, feedback: str, analysis: dict,
     if not available():
         raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
                            "— revising a show with Claude needs it")
-    current = {k: v for k, v in script.items()
-               if k not in ("tier", "track_hash")}
-    prompt = "\n".join([
-        _REVISE_DIRECTION,
-        "",
-        schema_contract(),
-        "",
-        _digest_facts(analysis),
-        "",
-        room.describe(fixtures),
-        "",
-        effect_presets.describe(),
-        "",
-        "THE CURRENT SCRIPT (the one they watched):",
-        json.dumps(current, indent=1),
-        "",
-        "THE HOST'S NOTES:",
-        feedback[:MAX_FEEDBACK_CHARS],
-    ])
-    answer = _run_task(prompt, timeout_s)
-    revised = _extract_json(answer)
-    revised["tier"] = "claude"
-    revised["track_hash"] = analysis.get("hash")
-    revised.setdefault("version", script.get("version", 2))
-    return revised
+    revised = _answer(_revise_prompt(script, feedback, analysis, fixtures,
+                                     vibe), timeout_s, script_schema())
+    return _stamped(revised, analysis, script.get("version", 2))
 
 
 # ---------------------------------------------------------------------------
@@ -793,22 +1004,14 @@ EFFECT_TIMEOUT_S = 180
 
 _EFFECT_CONTRACT = """\
 Answer with ONE JSON object and nothing else — no prose, no code fences.
-It is a single effect:
+It is a single effect, checked against a schema before BRight reads it.
 
-{
-  "type": "<one of the types below>",
-  "name": "<short label; it rides on every cue the effect makes>",
-  "select": {"roles": [...], "ids": [...], "zones": [...], "exclude": [...]},
-  "order": "x" | "-x" | "y" | "-y" | "center_out" | "edges_in" | "snake"
-           | "zone" | "listed" | "random",
-  "params": { ... }
-}
+%(effect_shape)s
 
-`select` names the lights this effect owns, and **every light it does not
-name is left untouched** — that is the whole point of an effect, so select
-the few that carry the idea rather than everything. An empty `select` means
-all of them. Select by role for an idea about a kind of light, by id for an
-idea about particular ones, by zone for an idea about an area.
+Select the few lights that carry the idea rather than everything — that
+is the whole point of an effect. Select by role for an idea about a kind
+of light, by id for an idea about particular ones, by zone for an idea
+about an area.
 
 Timing is in BEATS, not seconds: this will be dropped into a song and the
 tempo is not yours to choose.
@@ -820,6 +1023,12 @@ Types and parameter names are EXACTLY as listed. Out-of-range numbers are
 clamped rather than rejected, and anything you leave out takes its default
 — write the two or three parameters that carry the idea and skip the rest."""
 
+
+def _effect_contract(detail=None) -> str:
+    return _EFFECT_CONTRACT % {"effect_shape": _effect_shape(),
+                               "catalog": _catalog_lines(detail)}
+
+
 _EFFECT_DIRECTION = """\
 You are a lighting designer. Someone has described one effect they want for
 the room below. Write it.
@@ -829,14 +1038,18 @@ the room below. Write it.
 - One idea, done well. If the description implies two things happening at
   once, pick the one that carries it — a second effect can be added beside
   this one.
-- Restraint reads as intent. Most of a room usually stays still."""
+- Restraint reads as intent. Most of a room usually stays still.
+- The catalog writes out in full only the types the description names; the
+  rest are listed with their parameters and are just as available."""
 
 
 def _effect_prompt(description: str, fixtures: list[dict]) -> str:
+    from . import effects as fx
+
     return "\n".join([
         _EFFECT_DIRECTION,
         "",
-        _EFFECT_CONTRACT % {"catalog": _catalog_lines()},
+        _effect_contract(fx.types_in(description)),
         "",
         room.describe(fixtures),
         "",
@@ -863,10 +1076,10 @@ def write_effect(description: str, fixtures: list[dict],
     if not available():
         raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
                            "— writing an effect from a description needs it")
-    answer = _run_task(_effect_prompt(description, fixtures), timeout_s)
-    raw = _extract_json(answer)
+    raw = _answer(_effect_prompt(description, fixtures), timeout_s,
+                  effect_schema(root=True))
     try:
-        effect = fx.clean_effect(raw)
+        effect = fx.clean_effect(effect_presets.expand_effect(raw))
     except fx.EffectError as exc:
         raise ValueError(f"Claude wrote an effect BRight cannot use: {exc}") \
             from None
@@ -880,30 +1093,23 @@ def write_effect(description: str, fixtures: list[dict],
 MAX_IDEAS = 6
 
 _INVENT_CONTRACT = """\
-Answer with ONE JSON object and nothing else — no prose, no code fences:
-
-{"effects": [ {<effect>, "why": "<one sentence>"}, ... ]}
-
-Each <effect> is exactly the object described above, plus a `why`: one
-sentence, about THIS room, saying what the idea is and where it happens.
-"the two window lamps answer each other across the bay" is a why. "a nice
-chase effect" is not — it would be true of any room, and a reason that
-would be true anywhere is not a reason for here."""
+The answer is {"effects": [...]}: a list of effects, each exactly the
+object described above plus a "why" — one sentence, about THIS room,
+saying what the idea is and where it happens. "the two window lamps
+answer each other across the bay" is a why. "a nice chase effect" is not
+— it would be true of any room, and a reason that would be true anywhere
+is not a reason for here."""
 
 _INVENT_DIRECTION = """\
 You are a lighting designer looking at somebody's actual room. Propose
-%(count)d effects worth having in it.
+%(count)s worth having in it.
 
 Nobody has asked for anything specific, so the room is the brief:
 
 - Read the map. Where the lights ARE is the material — two lamps facing
   each other across a sofa, a strip along one wall, candles in a corner
   that should stay calm. An idea that ignores the positions could have
-  been written without ever seeing this room, and it will look like it.
-- Make them DIFFERENT from each other. Six variations on a chase is one
-  idea with six sets of parameters. Vary what moves, how much of the room
-  is involved, and how loud it is — at least one should be quiet enough
-  for a verse and at least one big enough for a drop.
+  been written without ever seeing this room, and it will look like it.%(variety)s
 - Most of the room usually stays still. An effect that names three lights
   and leaves the rest alone is generally better than one that takes
   everything, and it can be layered with another.
@@ -911,6 +1117,31 @@ Nobody has asked for anything specific, so the room is the brief:
   strobe; a laser is a moment, not a texture.
 - Timing is in BEATS. These will be dropped into songs you have not
   heard."""
+
+# Only said when there is more than one idea to vary: asked for one, "at
+# least one quiet and at least one big" is two effects, and a model
+# obeying both halves writes a lukewarm one or ignores the count.
+_INVENT_VARIETY = """
+- Make them DIFFERENT from each other. Six variations on a chase is one
+  idea with six sets of parameters. Vary what moves, how much of the room
+  is involved, and how loud it is — at least one should be quiet enough
+  for a verse and at least one big enough for a drop."""
+
+
+def _invent_prompt(fixtures: list[dict], count: int) -> str:
+    return "\n".join([
+        _INVENT_DIRECTION % {
+            "count": "one effect" if count == 1 else f"{count} effects",
+            "variety": _INVENT_VARIETY if count >= 2 else ""},
+        "",
+        _effect_contract(),
+        "",
+        _INVENT_CONTRACT,
+        "",
+        room.describe(fixtures),
+        "",
+        effect_presets.describe(),
+    ])
 
 
 def invent_effects(fixtures: list[dict], count: int = 4,
@@ -942,19 +1173,7 @@ def invent_effects(fixtures: list[dict], count: int = 4,
         raise RuntimeError("brAIn is not installed (no /config/.brain/tasks) "
                            "— inventing effects needs it")
     count = max(1, min(MAX_IDEAS, int(count)))
-    prompt = "\n".join([
-        _INVENT_DIRECTION % {"count": count},
-        "",
-        _EFFECT_CONTRACT % {"catalog": _catalog_lines()},
-        "",
-        _INVENT_CONTRACT,
-        "",
-        room.describe(fixtures),
-        "",
-        effect_presets.describe(),
-    ])
-    answer = _run_task(prompt, timeout_s)
-    raw = _extract_json(answer)
+    raw = _answer(_invent_prompt(fixtures, count), timeout_s, invent_schema())
     ideas = raw.get("effects")
     if not isinstance(ideas, list) or not ideas:
         raise ValueError("Claude answered with no effects")
@@ -970,9 +1189,9 @@ def invent_effects(fixtures: list[dict], count: int = 4,
         # later trip over.
         why = str(item.get("why", "") or "").strip()[:200]
         try:
-            effect = fx.clean_effect({k: v for k, v in item.items()
-                                      if k != "why"})
-        except fx.EffectError:
+            effect = fx.clean_effect(effect_presets.expand_effect(
+                {k: v for k, v in item.items() if k != "why"}))
+        except (fx.EffectError, effect_presets.UnknownPreset):
             continue
         effect["why"] = why
         kept.append(effect)

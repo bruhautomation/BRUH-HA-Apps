@@ -174,6 +174,14 @@ def _expand_one(item: dict) -> dict:
     return effect
 
 
+def expand_effect(item):
+    """One effect, with a `use` resolved into the effect it names; anything
+    that is not a `use` comes back as it was."""
+    if isinstance(item, dict) and item.get("use"):
+        return _expand_one(item)
+    return item
+
+
 def expand_script(script: dict) -> dict:
     """Resolve every `use` in a script into the effect it names.
 
