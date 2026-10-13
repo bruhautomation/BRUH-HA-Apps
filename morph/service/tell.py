@@ -69,53 +69,88 @@ MAX_WORDS = 4000
 LESSONS_CHARS = 4000
 MAX_STEPS = 60
 VIEW_CHARS = 1500
+TARGET_CHARS = 12000
+HISTORY_TURNS = 6
 SHOT_ID = re.compile(r"^[a-f0-9]{32}$")
 SCOPES = ("ui", "house")
+# Where a Tell came from. It decides the line that says so in the prompt,
+# whether there can be a picture, and what counts as the person's words.
+ORIGINS = ("panel", "suggestion", "question", "undo", "redo")
 
+# The schema is the one place each answer field's rule is written: the
+# prompt names the fields and AGENTS.md points here. ``reload`` is not
+# required because Morph derives it (a commit reloads); ``changed`` was
+# split in two because one list mixing files and Home Assistant changes
+# left Undo guessing which lines were the house's.
 RESULT_SCHEMA = {
     "type": "object",
-    "required": ["summary", "changed", "reload"],
+    "additionalProperties": False,
+    "required": ["summary", "files", "home_assistant"],
     "properties": {
-        "summary": {"type": "string", "description": "One or two sentences a person reads: what you did."},
-        "changed": {"type": "array", "items": {"type": "string"},
-                    "description": "Each file or Home Assistant thing you changed, one per line."},
-        "reload": {"type": "boolean", "description": "True when the dashboard should reload."},
+        "summary": {"type": "string",
+                    "description": "One or two sentences a person reads: what you did. When the change bends "
+                                   "one of AGENTS.md's design rules, say which."},
+        "files": {"type": "array", "items": {"type": "string"},
+                  "description": "Each file under /config/morph you changed, as a path in that folder "
+                                 "(dashboard.yaml, cards/x.js, frontend/y.js). Empty when none."},
+        "home_assistant": {"type": "array", "items": {"type": "string"},
+                           "description": "Each change you made in Home Assistant itself (an automation, "
+                                          "a helper, an entity, a scene), one per line, so Undo can hand "
+                                          "the list back to you. Empty when none."},
+        "reload": {"type": "boolean",
+                   "description": "Optional: true to make the page reload even though nothing under "
+                                  "/config/morph changed. Morph reloads after any change of its own."},
         "needs_person": {"type": "string",
                          "description": "Only when something is left that a person has to do by hand."},
         "lesson": {"type": "string",
-                   "description": "Optional: one durable lesson about how this household wants its "
-                                  "DASHBOARD to look or behave. Never a fact about the house."},
+                   "description": "Optional: one durable rule about how this household wants its "
+                                  "DASHBOARD to look or behave, only when the request taught one. Never a "
+                                  "fact about the house."},
         "saw": {"type": "string",
-                "description": "One sentence: what in the screenshot this request is about."},
+                "description": "Only when the request came with a screenshot: one sentence saying what in "
+                               "it the request is about."},
         "facts": {"type": "array", "maxItems": 6,
-                  "items": {"type": "object", "required": ["fact"],
-                            "properties": {"fact": {"type": "string"},
-                                           "subject": {"type": "string"}}},
+                  "items": {"type": "object", "additionalProperties": False, "required": ["fact"],
+                            "properties": {
+                                "fact": {"type": "string"},
+                                "subject": {"type": "string",
+                                            "description": "The entity id, `area:<id>`, `person:<id>` "
+                                                           "or `house` the fact is about."},
+                                "confidence": {"type": "string", "enum": ["high", "medium"],
+                                               "description": "high only when you read it off Home "
+                                                              "Assistant or the person said it."}}},
                   "description": "Durable facts about the HOUSE this request taught you (what a device "
-                                 "is, where it is, which sensor measures what), each with its entity id "
-                                 "or `area:<id>` as subject. Morph queues them for brAIn's memory."},
+                                 "is, where it is, which sensor measures what). Morph queues them for "
+                                 "brAIn's memory, whose consolidator decides what to keep."},
         "question": {
-            "type": "object", "required": ["text", "options"],
+            "type": "object", "additionalProperties": False, "required": ["text", "options"],
             "properties": {
                 "text": {"type": "string", "description": "The question, in one sentence a person reads."},
                 "options": {"type": "array", "minItems": 2, "maxItems": 3,
-                            "items": {"type": "object", "required": ["label", "request"],
+                            "items": {"type": "object", "additionalProperties": False,
+                                      "required": ["label", "request"],
                                       "properties": {
                                           "label": {"type": "string",
                                                     "description": "The button, under 60 characters."},
                                           "request": {"type": "string",
                                                       "description": "What Morph sends you as the next "
                                                                      "request when this is pressed, in the "
-                                                                     "person's voice."},
+                                                                     "person's voice, whole: it is sent on "
+                                                                     "its own."},
                                           "home_assistant": {"type": "boolean",
                                                              "description": "True when this answer changes "
                                                                             "Home Assistant itself."}}}},
             },
-            "description": "A choice that belongs to the person, asked as buttons. Use it rather than "
-                           "needs_person whenever the person only has to pick.",
+            "description": "A choice that belongs to the person, asked as buttons (AGENTS.md, “When to "
+                           "ask instead of act”). Use it rather than needs_person whenever the person "
+                           "only has to pick.",
         },
+        "waiting": {"type": "array", "items": {"type": "string"},
+                    "description": "Only when making paused changes to Morph's own code again: the file "
+                                   "names still waiting on the person's answer to `question`. Morph keeps "
+                                   "exactly those paused."},
         "code_issue": {
-            "type": "object", "required": ["title", "detail"],
+            "type": "object", "additionalProperties": False, "required": ["title", "detail"],
             "properties": {
                 "title": {"type": "string",
                           "description": "Under 90 characters: what Morph itself should do differently."},
@@ -125,16 +160,54 @@ RESULT_SCHEMA = {
             },
             "description": "Whenever you changed Morph's OWN code (a file in /config/morph/frontend/), "
                            "or doing this properly needs it and you could not. Morph asks the person "
-                           "whether to send it to Morph's developers as an issue.",
+                           "whether to send it to Morph's developers as an issue; never file one yourself.",
         },
     },
 }
 
+# What was held, named with its article so a sentence can use it whole
+# ("the story line", never "the story line “story”" or "the Morph's own
+# code"). A label is added only where it names one of several things.
 KIND_WORDS = {
-    "card": "card", "section": "section", "floor": "floor heading", "story": "story line",
-    "upcoming": "Coming up timeline", "scenes": "house-wide scenes line", "dashboard": "whole dashboard",
+    "card": "the card", "section": "the section", "floor": "the floor heading",
+    "story": "the story line", "upcoming": "the Coming up timeline",
+    "scenes": "the house-wide scenes line", "dashboard": "the whole dashboard",
     "code": "Morph's own code",
 }
+LABELLED = ("card", "section", "floor", "code")
+
+# Where the thing a Tell is about actually lives. The story and Coming up
+# are drawn by Morph's own code from the house's state; dashboard.yaml only
+# switches them, so sending brAIn to dashboard.yaml for "the story is
+# wrong" sent it to the one file that could not fix it.
+WHERE_LIVES = {
+    "card": "This card is in /config/morph/dashboard.yaml; its part of the file is below.",
+    "section": "This section is in /config/morph/dashboard.yaml; its part of the file is below.",
+    "floor": "This floor is in /config/morph/dashboard.yaml; its part of the file is below.",
+    "scenes": "The scenes line is `scenes:` at the top of /config/morph/dashboard.yaml (below).",
+    "story": ("The story line is drawn by Morph's own code (morph-panel.js, storyFacts) from the "
+              "house's state, led by brAIn's situation sentence when brAIn has one. dashboard.yaml only "
+              "switches it on or off (`story:`, below): what it says is changed in Morph's code or in "
+              "brAIn, not in that file."),
+    "upcoming": ("Coming up is drawn by Morph's own code (upcoming.js gathers its events, morph-panel.js "
+                 "places it). dashboard.yaml only switches it on or off (`coming_up:`, below): what it "
+                 "shows is changed in Morph's code, not in that file."),
+    "dashboard": "The dashboard is /config/morph/dashboard.yaml; the file is below.",
+    "code": ("This is Morph's own code: this house's copy in /config/morph/frontend/, against Morph's "
+             "own in {shipped}/ (read-only)."),
+}
+
+
+def what_of(target: dict) -> str:
+    """The thing a Tell is about, as words a sentence can carry."""
+    kind = target.get("kind") or "dashboard"
+    words = KIND_WORDS.get(kind, f"the {kind}")
+    label = str(target.get("label") or "").strip()[:120]
+    if kind == "code" and label:
+        return f"Morph's own {label}"
+    if kind in LABELLED and label:
+        return f"{words} “{label}”"
+    return words
 
 _RUNNING: dict[str, asyncio.Task] = {}
 
@@ -231,30 +304,66 @@ def progress(tid: str, seen: int) -> tuple[list[str], int]:
     return [x for x in lines if x], len(rows)
 
 
+clip_lines = store.clip_lines
+
+
 def target_yaml(target: dict) -> str:
     """The current YAML of what was held, so brAIn edits what is there
-    rather than what it imagines."""
+    rather than what it imagines. A part of the file is Morph's normalized
+    form of it (ids and defaults filled in); the whole dashboard is the
+    file's own text. Either way it is cut on a line with a marker."""
     kind, tid = target.get("kind"), target.get("id")
     if kind == "code":
         return ""  # a change to Morph's own module: the request names the files to read
     dash, _, text = store.read()
     import yaml
+    rest = "Read /config/morph/dashboard.yaml for the rest."
+
+    def dump(obj) -> str:
+        return clip_lines(yaml.safe_dump(obj, sort_keys=False, allow_unicode=True), TARGET_CHARS, rest)
     for fl in dash.get("floors") or []:
         if kind == "floor" and fl.get("id") == tid:
-            return yaml.safe_dump(fl, sort_keys=False, allow_unicode=True)
+            return dump(fl)
         for sec in fl.get("sections") or []:
             if kind == "section" and sec.get("id") == tid:
-                return yaml.safe_dump(sec, sort_keys=False, allow_unicode=True)
+                return dump(sec)
             for g in sec.get("groups") or []:
                 for c in g.get("cards") or []:
                     if kind == "card" and c.get("id") == tid:
-                        return yaml.safe_dump(c, sort_keys=False, allow_unicode=True)
+                        return dump(c)
     if kind == "scenes":
-        return yaml.safe_dump({"scenes": dash.get("scenes") or []}, sort_keys=False)
-    if kind in ("story", "upcoming"):
-        return yaml.safe_dump({kind if kind == "story" else "coming_up":
-                               dash.get("story" if kind == "story" else "coming_up")})
-    return text[:20000]
+        return dump({"scenes": dash.get("scenes") or []})
+    if kind == "story":
+        return dump({"story": dash.get("story", True)})
+    if kind == "upcoming":
+        return dump({"coming_up": dash.get("coming_up", True)})
+    return clip_lines(text, TARGET_CHARS, rest)
+
+
+def target_for(kind: str, tid: str) -> dict:
+    """A target named the way the panel names a held thing: the card or
+    section's own words and its path. A suggestion's Do it used to send
+    the suggestion's TITLE as the card's name ("the card 'Move the hallway
+    above…'"), which is a card that does not exist."""
+    dash, _, _ = store.read()
+    if kind == "card":
+        for fl in dash.get("floors") or []:
+            for sec in fl.get("sections") or []:
+                for g in sec.get("groups") or []:
+                    for c in g.get("cards") or []:
+                        if c.get("id") == tid:
+                            words = _cards({"floors": [{"sections": [sec]}]})[tid][0]
+                            ent = c.get("entity") or ""
+                            return {"kind": "card", "id": tid, "label": words, "entity": ent,
+                                    "path": f"{fl.get('title')} › {sec.get('title')} › {words}"
+                                            + (f" · {ent}" if ent else "")}
+    if kind == "section":
+        for fl in dash.get("floors") or []:
+            for sec in fl.get("sections") or []:
+                if sec.get("id") == tid:
+                    return {"kind": "section", "id": tid, "label": sec.get("title") or "",
+                            "path": f"{fl.get('title')} › {sec.get('title')}"}
+    return {"kind": "dashboard", "path": "The whole dashboard"}
 
 
 def card_type(card_id: str) -> str:
@@ -270,11 +379,22 @@ def card_type(card_id: str) -> str:
 
 
 def lessons() -> str:
-    try:
-        text = paths.LEARNED.read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    return text[-LESSONS_CHARS:]
+    """The household's rules, each marked with who wrote it, newest kept
+    when they do not all fit — and the cut said, rather than sliced
+    mid-word off the front of the file."""
+    rows = learning.read_lessons(tagged=True)
+    kept, size = [], 0
+    for ln in reversed(rows):
+        if size + len(ln) + 3 > LESSONS_CHARS:
+            break
+        kept.append(f"- {ln}")
+        size += len(ln) + 3
+    kept.reverse()
+    cut = len(rows) - len(kept)
+    if cut:
+        kept.insert(0, f"(… {cut} older line{'' if cut == 1 else 's'} cut; Read /config/morph/LEARNED.md "
+                       "for them.)")
+    return "\n".join(kept)
 
 
 # ------------------------------------------------------------- read back
@@ -369,152 +489,204 @@ def read_back(base: str, commit: str) -> dict:
     return out
 
 
+ORIGIN_LINES = {
+    "panel": "",
+    "suggestion": ("Origin: this came from a suggestion Morph made (“{note}”), and the person pressed Do it. "
+                   "The words above are Morph's instruction, not theirs."),
+    "question": "Origin: this is the answer the person pressed to your question “{note}”.",
+    "undo": ("Origin: this is Undo. The person took back a change a Tell made; Morph has already put "
+             "/config/morph back, and these words are Morph's."),
+    "redo": ("Origin: Morph is asking, not a person. An update paused a change this house made to "
+             "Morph's own code, and somebody pressed Make it again."),
+}
+
+
+def _history_lines(previous: list[dict], earlier: int) -> list[str]:
+    """The conversation so far, each turn as what was ASKED, what brAIn
+    SAID, and what Morph SAW when it read the files back — never Morph's
+    own sentence passed off as brAIn's answer."""
+    if not previous:
+        return []
+    out = ["EARLIER IN THIS CONVERSATION (oldest at the top):"]
+    if earlier:
+        out.append(f"({earlier} earlier turn{'' if earlier == 1 else 's'} not shown.)")
+    for p in previous:
+        said = p.get("summary")
+        line = f"- asked “{p.get('text')}”"
+        if said:
+            line += f" → you said: “{said}”"
+        shows = p.get("shows")
+        if isinstance(shows, list) and shows:
+            line += " → Morph read back: " + " ".join(str(x) for x in shows[:4])
+        elif "shows" in p:
+            line += " → Morph read back: nothing on the dashboard changed."
+        elif not said and p.get("say"):
+            line += f" → Morph said: {p.get('say')}"  # a turn from before the two were kept apart
+        out.append(line)
+    return out + [""]
+
+
 def build_prompt(target: dict, words: str, current: str, previous: list[dict] | None = None,
-                 *, shot=None, view: dict | None = None, scope: str = "ui") -> str:
+                 *, shot=None, view: dict | None = None, scope: str = "ui", origin: str = "panel",
+                 note: str = "", earlier: int = 0) -> str:
+    """The prompt a Tell hands brAIn, built around ONE procedure: look at
+    what was held, read the request, find where the thing lives, keep to the
+    scope, follow the household's rules, change the files, answer. Each rule
+    is said once; the details live in AGENTS.md, which brAIn reads as it
+    needs, so a rule changed there is not contradicted here."""
     kind = target.get("kind") or "dashboard"
-    label = str(target.get("label") or "")[:120]
+    origin = origin if origin in ORIGINS else "panel"
     path = str(target.get("path") or "")[:240]
     entity = str(target.get("entity") or "")[:120]
-    what = f"the {KIND_WORDS.get(kind, kind)}" + (f" “{label}”" if label else "")
-    lines = [
-        "MORPH · a change request from the dashboard editor.",
-        "",
-        "Morph is this house's dashboard. It lives in /config/morph: dashboard.yaml is the",
-        "dashboard, cards/ holds custom card code, frontend/ holds this house's changes to Morph's",
-        "own code, AGENTS.md is how it works (READ IT FIRST), and LEARNED.md is what this",
-        "household has taught Morph about how it wants things.",
-        "",
-        f"Target: {what}",
-    ]
-    if path:
-        lines.append(f"Where: {path}")
-    if entity:
-        lines.append(f"Entity: {entity}")
-    lines += ["", f"Asked: “{words}”", ""]
+    what = what_of(target)
     view = view or {}
+    lines = ["MORPH · a change request for this house's dashboard (Morph, in /config/morph).", ""]
+
+    # 1. What to look at first — the one "first" in the prompt.
     if shot:
         lines += [
-            "WHAT THEY ARE LOOKING AT — do this before anything else:",
-            f"Read {shot} with your Read tool. It is a screenshot Morph took of {what} at the",
-            "moment they asked" + (", AFTER your last change in this conversation" if previous else "")
-            + ". It is what they mean by “this”; the YAML below says what is configured, not",
-            "what it looks like. Fix what the picture shows is wrong, and say in `saw` what in the",
-            "picture the request is about.",
+            f"LOOK FIRST: Read {shot} with your Read tool. It is a picture Morph took of {what} the moment",
+            "the person asked" + (", after your last change in this conversation" if previous else "")
+            + ". It is what they mean by “this”: identify in the picture what the request is about, and",
+            "change only that. Say in `saw` what it is.",
         ]
         if view.get("text"):
-            lines.append(f"The same {KIND_WORDS.get(kind, kind)} as text: {view['text']}")
+            lines.append(f"The same thing as text: {view['text']}")
         lines.append("")
-    elif not view:
-        lines += ["This request did not come from something held on screen (a suggestion, or an",
-                  "Undo), so there is no picture of it.", ""]
-    else:
+    elif view:
         why = view.get("error") or "the panel could not draw it"
         lines += [f"Morph could not take a picture of {what} this time ({why}).",
                   "What the panel showed, as text"
                   + (f" ({view['w']}×{view['h']} px)" if view.get("w") and view.get("h") else "")
                   + f": {view.get('text') or '(nothing readable)'}", ""]
-    if previous:
-        lines.append("Earlier in this same conversation about this target:")
-        for p in previous[-4:]:
-            lines.append(f"- asked “{p.get('text')}” → you answered: {p.get('say')}")
+
+    # 2. The request.
+    lines += ["THE REQUEST", f"Asked: “{words}”", f"Target: {what}"]
+    if path:
+        lines.append(f"Where: {path}")
+    if entity:
+        lines.append(f"Entity: {entity}")
+    said = ORIGIN_LINES[origin].format(note=str(note or "")[:200])
+    if said:
+        lines.append(said)
+    elif not shot and not view:
+        lines.append("There is no picture: nothing on screen was held for this request.")
+    lines.append("")
+    lines += _history_lines(previous or [], earlier)
+
+    # 3. Where the thing lives — not for Undo's follow-up, which is about
+    # Home Assistant and must not be handed the dashboard to "fix".
+    if origin != "undo":
+        lines.append("WHERE THIS LIVES")
+        lines.append(WHERE_LIVES.get(kind, WHERE_LIVES["dashboard"]).format(shipped=paths.SHIPPED))
+        if current.strip():
+            form = ("the file as it is" if kind == "dashboard" else
+                    "Morph's normalized form of it (ids and defaults filled in); edit the real file, "
+                    "keeping its own layout")
+            lines += [f"This is {form}:", "```yaml", current.strip(), "```"]
         lines.append("")
-    if current.strip():
-        lines += ["Current YAML of the target:", "```yaml", current.strip()[:12000], "```", ""]
-    learned = lessons()
-    if learned.strip():
-        lines += ["What this household has taught Morph (follow it unless the request says otherwise):",
-                  learned.strip(), ""]
-    lines += ["Do it now — the person pressed Send and is watching. Do not ask for confirmation and",
-              "do not only describe the change.", ""]
+
+    # 4. Scope.
     if scope == "house":
         lines += [
-            "Scope: this request is about Home Assistant itself, as well as the dashboard. You may",
-            "change automations, scripts, scenes, helpers and entities as it asks.",
+            "Scope: this request is about Home Assistant itself, as well as the dashboard. You may change",
+            "automations, scripts, scenes, helpers and entities as it asks. protected_entities still holds.",
+            "",
         ]
     else:
         lines += [
-            "Scope: MORPH ONLY — the dashboard and Morph itself. Change /config/morph/dashboard.yaml,",
-            "/config/morph/cards/*.js (Morph loads every one itself; a card uses one as custom:<name>) and, when",
-            "the request is about Morph's own panel, /config/morph/frontend/ (below). Look at Home Assistant with your",
-            "read tools as much as you need to get the dashboard right, but do NOT change Home",
-            "Assistant itself — entity ids, names, areas, automations, scripts, scenes, helpers,",
-            "integrations — unless the request asks for that change in Home Assistant in so many",
-            "words (“change the entity ID”, “rename the device”, “make an automation that…”).",
-            "If doing this properly would need a Home Assistant change they did not ask for, do the",
-            "dashboard part and say in needs_person exactly what would have to change in Home",
-            "Assistant, so they can ask for it.",
+            "Scope: MORPH ONLY — the dashboard and Morph itself. Look at Home Assistant with your read tools",
+            "as much as you need, but do NOT change Home Assistant itself — entity ids, names, areas,",
+            "automations, scripts, scenes, helpers, integrations — unless the request asks for that change",
+            "in so many words (“change the entity ID”, “rename the device”, “make an automation that…”).",
+            "If doing it properly needs a Home Assistant change they did not ask for, do the dashboard part",
+            "and say in needs_person what would have to change. Showing a protected entity on the",
+            "dashboard is fine; acting on one is not.",
+            "",
         ]
+
+    # 5. The household's rules.
+    learned = lessons()
+    if learned.strip():
+        lines += ["HOUSEHOLD RULES (/config/morph/LEARNED.md; follow them unless the request says otherwise.",
+                  "A line marked (you) is one the household wrote itself):", learned.strip(), ""]
+
+    # 6. How.
     lines += [
+        "HOW",
+        "- Make the change now, by writing the files: the person pressed Send and is watching, and",
+        "  describing a change in your answer changes nothing. A Morph dashboard is",
+        "  /config/morph/dashboard.yaml, never a Lovelace dashboard.",
+        "- Make the smallest change that does what was asked.",
+        "- Never run git in /config/morph: Morph commits your change as one commit when you answer, and",
+        "  that commit is what Undo reverts.",
+        "- Morph then reads /config/morph back and tells the person what is different on screen, so a",
+        "  summary that claims more than the files carry is shown to be wrong.",
+        "- Nothing about Morph is out of reach. If dashboard.yaml cannot express it, change Morph's own",
+        f"  code: copy the module from {paths.SHIPPED}/ to /config/morph/frontend/ and edit the copy.",
+        "  Never say you cannot change Morph's code.",
+        "- Use `question` only for a choice that is the person's to make (AGENTS.md, “When to ask",
+        "  instead of act”); otherwise act.",
+        "- Everything else — the schema, the card types, custom cards, Morph's own code, checking your",
+        "  change — is in /config/morph/AGENTS.md. Read the sections you need.",
         "",
-        "Rules that still hold:",
-        "- Never run git in /config/morph: Morph commits your change the moment you answer, and that",
-        "  commit is what the person's Undo reverts.",
-        "- protected_entities still applies; if the request needs one, say so in needs_person.",
-        "- Keep dashboard.yaml valid YAML in Morph's schema (AGENTS.md); an unknown card type is",
-        "  passed to Lovelace as-is, so a Lovelace card's YAML is always a valid card.",
-        "- Prefer the smallest change that does what was asked.",
-        "- What you learn about the HOUSE (what a device is, where it is, which sensor measures what)",
-        "  is brAIn's memory: put it in `facts` and Morph queues it. Do not call remember_fact here:",
-        "  this run is not a conversation, and brAIn's action gate refuses it. LEARNED.md and",
-        "  `lesson` are only for how this household wants its DASHBOARD to look and behave.",
-        "- Nothing about Morph is out of reach. If the request is about Morph's OWN panel — its",
-        "  header, the gear, the layout, a built-in card type, its styles — change it: copy the module",
-        f"  from Morph's own copy in {paths.SHIPPED}/ (read-only; do not edit it there) to",
-        "  /config/morph/frontend/<the same name> and edit the copy. Morph serves your copy in place",
-        "  of its own after a page reload. Copy only the files you change, keep each module's",
-        "  exports, and never replace boot.js. A copy that fails to load is replaced by Morph's own,",
-        "  so check your JavaScript. Never say you cannot change Morph's code: you can.",
-        "- When you changed Morph's own code, fill code_issue saying what you changed and why, so",
-        "  Morph can offer to send it to Morph's developers. Do not file anything yourself.",
-        "- A number a card WORKS OUT from other sensors (a difference, a sum, a rate, an efficiency, a",
-        "  cost) has no history: Home Assistant records entities, so a value calculated in the card has",
-        "  no chart, no long-term statistics and nothing an automation can use. When you build one and",
-        "  no entity already holds it, think whether the person would want its history (a trend over",
-        "  days, a comparison with last week). If they might, build the card with the calculation in it",
-        "  now and fill `question`: one option keeps it calculated in the card only, the other makes a",
-        "  Home Assistant template sensor for it (name it) so it is recorded, with home_assistant true.",
-        "  Never make that sensor unless the request asked for it; the answer comes back as the next",
-        "  request. Use `question` likewise for any other choice that is the person's to make.",
-        "",
-        "- A change is made by WRITING the files: describing it in your answer changes nothing. When",
-        "  you finish, Morph reads /config/morph back and tells the person exactly what is different",
-        "  on their dashboard, so a summary that claims a change the files do not carry is shown",
-        "  to be wrong. A Morph dashboard is /config/morph/dashboard.yaml — never a Lovelace",
-        "  dashboard. If the request needs something dashboard.yaml cannot express, say so.",
-        "",
-        "Answer with the JSON object the schema describes: summary (what you did, for the person),",
-        "saw, changed, reload (true if the dashboard changed), needs_person only if something is",
-        "left for a person, lesson only if the request taught a durable preference about this",
-        "dashboard, and code_issue whenever you changed Morph's own code (as described above).",
+        "ANSWER with the JSON object the schema describes (each field's description says when):",
+        "summary, files, home_assistant, and when they apply saw, needs_person, question, lesson,",
+        "code_issue and facts. What you learned about the HOUSE goes to brAIn's memory:",
+        "put it in `facts`, because remember_fact is refused in a task run like this one.",
     ]
     return "\n".join(lines)
 
 
 def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
-          view: dict | None = None, scope: str = "ui") -> dict:
+          view: dict | None = None, scope: str = "ui", origin: str = "panel", note: str = "",
+          person_words: str | None = None) -> dict:
     """Begin a tell. Returns its state; the work continues in a task.
 
     ``scope`` is never read off the wire: a request from the panel is a
     dashboard request whatever its target says. "house" is passed by Undo's
     follow-up (which puts back a house change a Tell made) and by an answer
-    to brAIn's question whose button said it changes Home Assistant."""
-    words = str(words or "").strip()[:MAX_WORDS]
+    to brAIn's question whose button said it changes Home Assistant.
+
+    ``person_words`` rides beside the prompt to brAIn, which judges an
+    action against what the PERSON asked rather than against everything
+    Morph wrote around it: the words as typed, the suggestion text a person
+    approved, the option they pressed, or the sentence Morph wrote for
+    Undo. A redo nobody typed carries none."""
+    # A person types at most MAX_WORDS; what Morph writes (a merge of every
+    # paused copy) names files and paths and is allowed more room.
+    words = str(words or "").strip()[:MAX_WORDS if origin == "panel" else MAX_WORDS * 5]
     if not words:
         return {"error": "Say what should change."}
     if not brain.available():
         return {"error": brain.status()["sentence"]}
+    origin = origin if origin in ORIGINS else "panel"
     target = {k: str(v)[:240] for k, v in (target or {}).items()
               if k in ("kind", "id", "label", "path", "entity")}
     previous: list[dict] = []
+    earlier = 0
     prev = read_state(previous_id) if previous_id else None
     if prev:
-        previous = list(prev.get("history") or []) + [{"text": prev.get("text"), "say": prev.get("say")}]
+        turn = {"text": prev.get("text"), "summary": prev.get("summary") or ""}
+        if "shows" in prev:
+            turn["shows"] = list(prev.get("shows") or [])[:4]
+        if not turn["summary"] and prev.get("say"):
+            turn["say"] = prev.get("say")
+        previous = list(prev.get("history") or []) + [turn]
+        earlier = int(prev.get("earlier") or 0) + max(0, len(previous) - HISTORY_TURNS)
     tid = brain.new_id("morph")
     state = {"id": tid, "text": words, "target": target, "phase": "sending", "steps": [],
-             "started": time.time(), "history": previous[-6:],
-             "scope": scope if scope in SCOPES else "ui", "view": clean_view(view)}
+             "started": time.time(), "history": previous[-HISTORY_TURNS:], "earlier": earlier,
+             "scope": scope if scope in SCOPES else "ui", "view": clean_view(view),
+             "origin": origin, "note": str(note or "")[:300],
+             "person_words": person_words if person_words is not None
+             else "" if origin == "redo" else words}
+    if target.get("kind") == "code" and target.get("id") == morphcode.MERGE_ALL:
+        # Merge all: the copies paused NOW are this merge's, so the answer
+        # to a question about one of them continues with what is left.
+        state["merge"] = morphcode.paused()
     picture = shot_path(shot)
-    if picture:
+    if picture and origin != "undo":
         state["shot"] = shot
     _save(state)
     _RUNNING[tid] = asyncio.get_running_loop().create_task(_run(state))
@@ -544,11 +716,12 @@ async def _run(state: dict) -> None:
         await asyncio.to_thread(gitrepo.commit_pending)
         base = await asyncio.to_thread(gitrepo.head)
         target = state["target"]
-        where = target.get("path") or " ".join(
-            x for x in (KIND_WORDS.get(target.get("kind"), "the dashboard"),
-                        f"“{target['label']}”" if target.get("label") else "") if x)
+        origin = state.get("origin") or "panel"
+        where = target.get("path") or what_of(target)
         _step(state, f"Reading {where}")
-        current = await asyncio.to_thread(target_yaml, target)
+        # Undo's follow-up is about Home Assistant; handing it the dashboard
+        # invites it to "fix" a file Morph has just put back.
+        current = "" if origin == "undo" else await asyncio.to_thread(target_yaml, target)
         if target.get("kind") == "card":
             state["card_type"] = await asyncio.to_thread(card_type, target.get("id") or "")
         picture = shot_path(state.get("shot") or "")
@@ -559,11 +732,14 @@ async def _run(state: dict) -> None:
                   + (f" ({state['view']['error']})" if (state.get("view") or {}).get("error") else ""),
                   "bad")
         prompt = build_prompt(target, state["text"], current, state.get("history"),
-                              shot=picture, view=state.get("view"), scope=state.get("scope", "ui"))
+                              shot=picture, view=state.get("view"), scope=state.get("scope", "ui"),
+                              origin=origin, note=state.get("note") or "",
+                              earlier=int(state.get("earlier") or 0))
         state["payload"] = prompt
         model = settings.load().get("tell_model") or ""
         await asyncio.to_thread(brain.submit, tid, prompt, schema=RESULT_SCHEMA,
-                                tools="full", timeout=TIMEOUT_S, model=model)
+                                tools="full", timeout=TIMEOUT_S, model=model,
+                                person_words=state.get("person_words", state["text"]))
         state["phase"] = "waiting"
         _step(state, f"Handed to brAIn as task {tid}")
         deadline = time.time() + brain.CLAIM_GRACE_S
@@ -594,17 +770,30 @@ async def _run(state: dict) -> None:
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
         summary = str((data or {}).get("summary") or text or "").strip()[:1200]
         asked = clean_question((data or {}).get("question"))
-        if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed" \
-                and not asked:
+        if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed":
             # brAIn was asked to make this house's change work on the Morph
-            # installed now and answered: whether it edited the copy or
-            # judged it already fits, the copy is in use again. Recorded
-            # before the commit so Undo takes the record with the copy. An
-            # answer that is a QUESTION (the update rewrote the code the
-            # change was in, and brAIn would not guess) leaves it paused
-            # until the person picks.
-            if await asyncio.to_thread(morphcode.accept, target.get("id") or ""):
-                _step(state, "Recorded the change as made for this Morph", "good")
+            # installed now and answered: whether it edited a copy or judged
+            # it already fits, that copy is in use again. Recorded before
+            # the commit so Undo takes the records with the copies — one
+            # commit for a whole Merge all. A file still WAITING on the
+            # person's answer to `question` (the update rewrote the code the
+            # change was in, and brAIn would not guess) stays paused until
+            # they pick; a question with no `waiting` list leaves every file
+            # paused, because nothing about which one it was is guessed.
+            names = state.get("merge") or [target.get("id") or ""]
+            waiting = (data or {}).get("waiting")
+            if asked and not isinstance(waiting, list):
+                accept = []
+            else:
+                held = {str(w).strip() for w in (waiting or []) if isinstance(w, str)}
+                accept = [n for n in names if n not in held]
+            done = [n for n in accept if await asyncio.to_thread(morphcode.accept, n)]
+            if done:
+                state["merged"] = done
+                _step(state, "Recorded " + (f"{done[0]} as made" if len(done) == 1
+                                            else f"{len(done)} changes as made") + " for this Morph", "good")
+            if state.get("merge") and len(done) < len(names):
+                state["still_paused"] = [n for n in names if n not in done]
         commit = await asyncio.to_thread(
             gitrepo.commit,
             f"brAIn: {summary or state['text']}"[:200] + f"\n\nAsked: “{state['text']}”\nTask: {tid}",
@@ -613,8 +802,8 @@ async def _run(state: dict) -> None:
             state["commit"] = commit
             files = await asyncio.to_thread(gitrepo.changed_files, commit)
             _step(state, "Changed " + ", ".join(files[:6]), "good")
-        changed = [str(x)[:200] for x in ((data or {}).get("changed") or [])][:20]
-        house = [c for c in changed if not _morph_file(c)]
+        state["summary"] = summary
+        house = house_changes(data)
         if house:
             state["house"] = house
             _step(state, "In Home Assistant: " + "; ".join(house[:4]), "good")
@@ -659,7 +848,13 @@ async def _run(state: dict) -> None:
             # everybody — whether or not brAIn remembered to say so.
             state["code"] = code_files
             _step(state, "Changed Morph's own " + ", ".join(code_files[:4]), "good")
-        if isinstance(issue, dict) and str(issue.get("title") or "").strip():
+        if target.get("kind") == "code":
+            # Making a paused change again (or answering its merge question)
+            # re-makes a change this house already has; it was offered as an
+            # issue when it was first made, and asking again would file it
+            # twice.
+            pass
+        elif isinstance(issue, dict) and str(issue.get("title") or "").strip():
             state["code_issue"] = {"title": str(issue["title"]).strip()[:140],
                                    "detail": str(issue.get("detail") or "").strip()[:1500]}
         elif code_files:
@@ -674,8 +869,9 @@ async def _run(state: dict) -> None:
             state["facts_filed"] = filed
             _step(state, f"Queued {filed} fact{'' if filed == 1 else 's'} about the house for brAIn's memory", "good")
         lesson = str((data or {}).get("lesson") or "").strip()
-        if lesson:
-            await asyncio.to_thread(learning.add_lesson, lesson, f"told: “{state['text']}”")
+        # A lesson from a run that failed taught nothing anybody saw work.
+        if lesson and state["phase"] != "failed":
+            await asyncio.to_thread(learning.add_lesson, lesson, "tell")
         await asyncio.to_thread(learning.record_outcome, {
             "kind": "tell", "id": tid, "text": state["text"], "target": target.get("kind"),
             "commit": commit, "base": base, "phase": state["phase"], "error": error,
@@ -741,8 +937,20 @@ def answer_question(tid: str, choice) -> dict:
     if not 0 <= i < len(opts):
         return {"error": "That is not one of the answers."}
     opt = opts[i]
-    st = start(state.get("target") or {}, opt["request"], tid,
-               scope="house" if opt.get("home_assistant") else "ui")
+    target = state.get("target") or {}
+    words = opt["request"]
+    if target.get("kind") == "code" and target.get("id") == morphcode.MERGE_ALL:
+        # The answer settles one conflict; the same merge carries on with
+        # every copy still paused, so one press of Merge all ends with
+        # nothing left to press but the conflicts themselves.
+        rest = morphcode.paused()
+        if rest:
+            words += ("\n\nThen carry on with the rest of this merge.\n"
+                      + morphcode.redo_all_words(rest, os.environ.get("ADDON_VERSION", "dev")))
+    st = start(target, words, tid,
+               scope="house" if opt.get("home_assistant") else "ui",
+               origin="question", note=state["question"].get("text") or "",
+               person_words=opt["request"])
     if "error" not in st:
         state["answered"] = i
         _save(state)
@@ -751,7 +959,10 @@ def answer_question(tid: str, choice) -> dict:
 
 MAX_FACTS = 6
 FACT_CHARS = 400
-SUBJECT_RE = re.compile(r"^(?:[a-z_]+\.[a-z0-9_]+|area:[a-z0-9_]+|house)$")
+# brAIn's facts store keeps `person:` subjects (facts_store.KEPT_PREFIXES),
+# so a fact about who uses a room is filed under that person.
+SUBJECT_RE = re.compile(r"^(?:[a-z_]+\.[a-z0-9_]+|area:[a-z0-9_]+|person:[a-z0-9_]+|house)$")
+CONFIDENCES = ("high", "medium")
 
 
 def queue_facts(facts, tid: str) -> int:
@@ -774,7 +985,11 @@ def queue_facts(facts, tid: str) -> int:
         text = " ".join(str(f.get("fact") or "").split())[:FACT_CHARS]
         if not text:
             continue
-        row = {"ts": now, "source": "morph", "fact": text, "confidence": "high", "run_id": tid}
+        # The model says how sure it is; one that does not say is not
+        # promoted to "high" on Morph's word.
+        conf = str(f.get("confidence") or "").strip().lower()
+        row = {"ts": now, "source": "morph", "fact": text,
+               "confidence": conf if conf in CONFIDENCES else "medium", "run_id": tid}
         subject = str(f.get("subject") or "").strip().lower()
         if SUBJECT_RE.match(subject):
             row["subject"] = subject
@@ -794,13 +1009,25 @@ def queue_facts(facts, tid: str) -> int:
 
 
 def _morph_file(line: str) -> bool:
-    """Whether one of brAIn's "changed" lines is a file in /config/morph
-    rather than something in Home Assistant. "dashboard.yaml" alone used to
-    count as a house change, so Undo sent brAIn to put back a house change
-    nobody had made."""
+    """Whether one of an older answer's "changed" lines is a file in
+    /config/morph rather than something in Home Assistant. Only a fallback
+    now: an answer in today's schema says which is which itself."""
     low = line.lower().strip()
     return ("morph" in low or low.startswith(("dashboard.yaml", "cards/", "frontend/", "learned.md"))
             or low in ("dashboard", "the dashboard"))
+
+
+def house_changes(data) -> list[str]:
+    """What a Tell changed in Home Assistant itself — the list Undo hands
+    back to brAIn. Read from ``home_assistant`` when the answer has it;
+    an answer with only the old mixed ``changed`` list is sorted by
+    `_morph_file`, which guesses from the words."""
+    data = data if isinstance(data, dict) else {}
+    if isinstance(data.get("home_assistant"), list):
+        rows = data["home_assistant"]
+    else:
+        rows = [c for c in (data.get("changed") or []) if isinstance(c, str) and not _morph_file(c)]
+    return [str(x).strip()[:200] for x in rows if str(x).strip()][:20]
 
 
 def outcome(state: dict, summary: str, commit: str, back: dict) -> tuple[str, str]:
@@ -877,7 +1104,7 @@ def answer_issue(tid: str, verb: str) -> dict:
         "Somebody asked for this in Morph's editor and chose to send it as an issue.",
         "",
         f"Asked: {state.get('text')}",
-        f"About: the {KIND_WORDS.get(target.get('kind'), target.get('kind') or 'dashboard')}"
+        f"About: {what_of(target)}"
         + (f" (card type {state['card_type']})" if state.get("card_type") else ""),
         f"What brAIn saw: {state['saw']}" if state.get("saw") else "",
         f"What brAIn did meanwhile: {state.get('say') or ''}",
@@ -920,12 +1147,13 @@ def undo(tid: str) -> dict:
         state["undone"] = detail
         out["commit"] = detail
     if state.get("house") and not state.get("house_undo"):
-        follow = start({"kind": "dashboard", "label": "Undo"},
+        follow = start({"kind": "dashboard", "path": "Putting back Home Assistant changes"},
                        "Put back the Home Assistant changes you made for Morph task "
                        f"{tid} (asked: “{state.get('text')}”). You changed: "
                        + "; ".join(state["house"]) + ". Use brain undo for files you edited; "
                        "reverse anything else (a helper, an entity) directly. Do not touch "
-                       "/config/morph — Morph has already put the dashboard back.", scope="house")
+                       "/config/morph — Morph has already put the dashboard back.", scope="house",
+                       origin="undo")
         if follow.get("id"):
             state["house_undo"] = follow["id"]
             out["follow"] = follow["id"]
@@ -948,4 +1176,5 @@ def prune(max_age_s: int = 7 * 86400) -> None:
 
 def json_payload(state: dict) -> str:
     return json.dumps({"id": state.get("id"), "prompt": state.get("payload", ""),
+                       "person_words": state.get("person_words", state.get("text", "")),
                        "tools": "full", "schema": RESULT_SCHEMA}, indent=2)

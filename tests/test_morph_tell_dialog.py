@@ -68,7 +68,7 @@ class TestATellIsAConversation(unittest.TestCase):
         prompt = fake.seen[0]["prompt"]
         path = str(self.env.paths.SHOTS / f"{SHOT}.png")
         self.assertIn(f"Read {path}", prompt)
-        self.assertLess(prompt.index(path), prompt.index("Current YAML of the target"),
+        self.assertLess(prompt.index(path), prompt.index("WHERE THIS LIVES"),
                         "the picture comes before the YAML")
         self.assertIn("Countertop · On", prompt)
         self.assertEqual("The name is cut off", st["saw"])

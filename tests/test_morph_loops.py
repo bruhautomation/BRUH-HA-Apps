@@ -159,7 +159,8 @@ class TestLearning(unittest.TestCase):
             return {"data": {
                 "suggestions": [{"title": "Move Kitchen to the top", "why": "Used every evening",
                                  "change": "Move the Kitchen section first", "kind": "dashboard"}],
-                "lessons": ["Kitchen matters most in the evening"],
+                "lessons": [{"text": "Kitchen matters most in the evening",
+                             "evidence": ["Kitchen opened 40 evenings", "Kitchen moved up twice by hand"]}],
                 "code_reports": [{"what": "The fan card cannot show speed", "detail": "x"}]}}
 
         fake = FakeBrain(env, work)
@@ -193,7 +194,10 @@ class TestLearning(unittest.TestCase):
         self.assertTrue(env.learning.decide(sid, "no", "We watch it at night")["ok"])
         self.assertEqual([], env.learning.listing())
         self.assertEqual(0, env.learning.add_suggestions([row], self.dash))
-        self.assertIn("We watch it at night", " ".join(env.learning.read_lessons()))
+        # The reason is evidence for the next pass, not a rule written now.
+        self.assertNotIn("We watch it at night", " ".join(env.learning.read_lessons()))
+        d = env.learning.digest(self.dash)
+        self.assertIn("We watch it at night", env.learning.build_prompt(d, "", [], {}, []))
 
     def test_not_now_comes_back_later(self):
         env = self.env

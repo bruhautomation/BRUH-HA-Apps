@@ -26,7 +26,7 @@ import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
 import * as upc from './upcoming.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, isDashChange, ASK_CONTEXT } from './util.js';
 
 const HOLD_MS = 540;
 const TELL_SUGS = {
@@ -45,9 +45,6 @@ const KIND_WORD = { card: 'card', section: 'section', floor: 'floor', story: 'st
 // still knows what the page already defined.
 const IMPORTED = new Map();
 const REDEFINED = /already been (used|defined)|already defined/i;
-// Words that ask for a change to the DASHBOARD rather than a question for
-// the house: a change verb, then something the page is made of.
-const DASH_CHANGE = /\b(add|remove|delete|hide|show(?! me\b)|move|put|rename|make|change|resize|swap|replace|get rid of|bring back|restore|reorder|group|split|merge|drop|take (?:out|off|away))\b[\s\S]*\b(card|cards|tile|tiles|section|sections|dashboard|greeting|header|story|coming up|timeline|scenes? line|layout|column|columns|widget|chart|graph|morph|this page|the page|screen)\b/i;
 const USAGE_KEEP = 400;
 
 // Why a change to Morph's own code is paused (the add-on's morphcode.py):
@@ -55,7 +52,7 @@ const USAGE_KEEP = 400;
 // builds on did.
 function pausedWhy(r) {
   if (r && r.why === 'others' && (r.moved || []).length) return `Morph was updated and its ${r.moved.slice(0, 3).join(', ')}${r.moved.length > 3 ? ' and more' : ''} changed, which this change builds on. Morph’s own ${r.name} is running until brAIn checks the change still fits.`;
-  return 'Morph’s own is running until the change is made again on the new version.';
+  return 'Morph’s own version is running until you update your change.';
 }
 
 class MorphPanel extends HTMLElement {
@@ -69,6 +66,9 @@ class MorphPanel extends HTMLElement {
     };
     this.data = null;
     this.dash = null;
+    // "Not now" on paused changes, keyed on which files are paused: a later
+    // update that pauses something else asks again.
+    try { this.notNow = localStorage.getItem('morph.notnow') || ''; } catch (e) { this.notNow = ''; }
     this.llCards = new Map();
     this.loadedModules = new Set();
     this.usage = [];
@@ -588,38 +588,65 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     const note = (head, body, acts) => `<div class="note" style="margin-bottom:12px;background:${mix('var(--amber)', 9)};box-shadow:inset 0 0 0 1px ${mix('var(--amber)', 25)}"><span class="small" style="color:var(--amber);font-weight:700">${esc(head)}</span>${body ? `<span class="sm">${esc(body)}</span>` : ''}${acts ? `<div class="acts">${acts}</div>` : ''}</div>`;
     if (window.__morphFallback) out.push(note('A change to Morph itself did not load, so Morph is running its own copy.', window.__morphFallback, '<button type="button" class="wd strong" data-act="page" data-v="settings">See the changes</button>'));
     const st = (this.data && this.data.state) || {};
-    const names = (st.code || []).filter((r) => r.status === 'paused').map((r) => r.name).slice(0, 3);
+    const paused = (st.code || []).filter((r) => r.status === 'paused').map((r) => r.name);
     const why = (name) => pausedWhy((st.code || []).find((r) => r.name === name));
-    // "Make it again" opens brAIn's box HERE, and the note stays until the
-    // box is closed: once brAIn has written the copy it is no longer paused,
-    // and a note that vanished with the box in it took the result with it.
+    // The two choices an update leaves, in two words and one line: Update
+    // merges this house's changes into the new version (every paused copy
+    // in one press), Not now keeps Morph's own running and the copies
+    // paused for later. Owner: the old wording about telling Morph to keep
+    // things did not say what either press did.
+    const choice = (act, v, key) => `<button type="button" class="wd go" data-act="${act}" data-v="${esc(v)}">Update</button><button type="button" class="wd" data-act="code-not-now" data-v="${esc(key)}">Not now</button><span class="small">Update merges your changes into the new version. Not now keeps Morph’s own version running; your changes stay paused and you can update them later in Settings.</span>`;
+    // brAIn's box opens HERE, and the note stays until the box is closed:
+    // once brAIn has written the copy it is no longer paused, and a note
+    // that vanished with the box in it took the result with it.
     const t = this.s.tell;
     const mine = t && t.kind === 'code' ? t.id : '';
+    const phaseOf = () => (t.state || {}).phase;
+    if (mine === 'all') {
+      const ph = phaseOf();
+      const asks = ph === 'done' && t.state.question && t.state.answered == null;
+      const head = asks ? 'brAIn needs you to choose how to bring one of your changes onto the new version.' : ph === 'done' ? 'Your changes to Morph' : ph === 'failed' ? 'Your changes to Morph are still paused.' : 'brAIn is updating your changes to Morph.';
+      out.push(note(head, asks ? 'The update rewrote the part that change was in. It stays paused, and Morph’s own keeps running, until you pick; the rest of the update carries on after.' : ph === 'done' || ph === 'failed' ? '' : 'Morph’s own keeps running until it is done. You can leave this page; it carries on.', this.tellBox('code', 'all')));
+      return out.join('');
+    }
+    const all = (st.activity || []).find((a) => a.kind === 'code' && a.target === 'all' && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase));
+    if (all) {
+      out.push(note('brAIn is updating your changes to Morph.', 'Morph’s own keeps running until it is done.', `<button type="button" class="wd go" data-act="activity-open" data-v="${esc(all.id)}">Show</button>`));
+      return out.join('');
+    }
+    const names = paused.slice(0, 6);
     if (mine && !names.includes(mine)) names.push(mine);
+    const rest = [];
     names.forEach((name) => {
       if (name === mine) {
-        const ph = (t.state || {}).phase;
+        const ph = phaseOf();
         const asks = ph === 'done' && t.state.question && t.state.answered == null;
-        const head = asks ? `brAIn needs you to choose how to bring your change to Morph’s ${name} onto the new version.` : ph === 'done' ? `Your change to Morph’s ${name}` : ph === 'failed' ? `Your change to Morph’s ${name} is still paused.` : `brAIn is making your change to Morph’s ${name} again.`;
+        const head = asks ? `brAIn needs you to choose how to bring your change to Morph’s ${name} onto the new version.` : ph === 'done' ? `Your change to Morph’s ${name}` : ph === 'failed' ? `Your change to Morph’s ${name} is still paused.` : `brAIn is updating your change to Morph’s ${name}.`;
         out.push(note(head, asks ? 'The update rewrote the part your change was in. It stays paused, and Morph’s own keeps running, until you pick.' : ph === 'done' || ph === 'failed' ? '' : 'Morph’s own keeps running until it is done. You can leave this page; it carries on.', this.tellBox('code', name)));
         return;
       }
       const running = (st.activity || []).find((a) => a.kind === 'code' && a.target === name && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase));
       if (running) {
-        out.push(note(`brAIn is making your change to Morph’s ${name} again.`, 'Morph’s own keeps running until it is done.', `<button type="button" class="wd go" data-act="activity-open" data-v="${esc(running.id)}">Show</button>`));
+        out.push(note(`brAIn is updating your change to Morph’s ${name}.`, 'Morph’s own keeps running until it is done.', `<button type="button" class="wd go" data-act="activity-open" data-v="${esc(running.id)}">Show</button>`));
         return;
       }
-      // The press is remembered in state, not written onto the button: the
-      // panel redraws on every state change in the house, and a button
-      // edited in place was back to "Make it again" before anyone saw it.
-      const r = this.s.redo && this.s.redo.name === name ? this.s.redo : null;
-      if (r && !r.error) {
-        out.push(note(`Morph was updated, so your change to its ${name} is paused.`, why(name), `<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span><span class="small" data-since="${r.at}"></span></div>`));
-        return;
-      }
-      const failed = r && r.error ? `<p class="sm" style="color:var(--rose);margin:0">brAIn did not start: ${esc(r.error)}</p>` : '';
-      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, why(name), `${failed}<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">${failed ? 'Try again' : 'Make it again'}</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
+      rest.push(name);
     });
+    if (!rest.length) return out.join('');
+    // The press is remembered in state, not written onto the button: the
+    // panel redraws on every state change in the house, and a button
+    // edited in place was back to Update before anyone saw it.
+    const key = rest.join(',');
+    const r = this.s.redo && this.s.redo.name === (rest.length > 1 ? 'all' : rest[0]) ? this.s.redo : null;
+    const head = rest.length > 1 ? `Morph was updated, so ${rest.length} of your changes to it are paused: ${rest.join(', ')}.` : `Morph was updated, so your change to its ${rest[0]} is paused.`;
+    const body = rest.length > 1 ? 'Morph’s own versions are running until they are updated.' : why(rest[0]);
+    if (r && !r.error) {
+      out.push(note(head, body, `<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span><span class="small" data-since="${r.at}"></span></div>`));
+      return out.join('');
+    }
+    if (!r && this.notNow === key) return out.join('');
+    const failed = r && r.error ? `<p class="sm" style="color:var(--rose);margin:0">brAIn did not start: ${esc(r.error)}</p>` : '';
+    out.push(note(head, body, failed + choice(rest.length > 1 ? 'code-merge-all' : 'code-redo', rest.length > 1 ? 'all' : rest[0], key)));
     return out.join('');
   }
 
@@ -1778,8 +1805,25 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         try { r = await H.callWS({ type: 'morph/request', kind: 'code_redo', payload: { name: v } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
         if (!r || !r.ok || !r.id) { this.s.redo = { name: v, error: (r && r.error) || 'Morph could not hand that to brAIn.' }; this.schedule(); this.load(); return; }
         this.s.redo = null;
-        this.s.tell = { kind: 'code', id: v, label: v, path: `Morph’s own ${v}`, text: `Make my change to ${v} again on the new Morph`, sent: true, tellId: r.id, state: r, turns: [] };
+        this.s.tell = { kind: 'code', id: v, label: v, path: `Morph’s own ${v}`, text: `Update my change to ${v} for the new Morph`, sent: true, tellId: r.id, state: r, turns: [] };
         this.pollTell(true); this.load(); return;
+      }
+      case 'code-merge-all': {
+        // Update with several copies paused: ONE Tell and one commit for
+        // every one of them, conflicts asked as questions in the same box.
+        if (this.s.redo && this.s.redo.name === 'all' && !this.s.redo.error) return;
+        this.s.redo = { name: 'all', at: Date.now() / 1000 }; this.schedule();
+        let r;
+        try { r = await H.callWS({ type: 'morph/request', kind: 'code_merge_all', payload: {} }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+        if (!r || !r.ok || !r.id) { this.s.redo = { name: 'all', error: (r && r.error) || 'Morph could not hand that to brAIn.' }; this.schedule(); this.load(); return; }
+        this.s.redo = null;
+        this.s.tell = { kind: 'code', id: 'all', label: 'paused copies', path: 'Morph’s own code', text: 'Update all my changes for the new Morph', sent: true, tellId: r.id, state: r, turns: [] };
+        this.pollTell(true); this.load(); return;
+      }
+      case 'code-not-now': {
+        this.notNow = v; this.s.redo = null;
+        try { localStorage.setItem('morph.notnow', v); } catch (e) { /* storage refused: hidden until the page reloads */ }
+        this.schedule(); return;
       }
       case 'tell-undo': {
         const t = this.s.tell; if (!t || !t.tellId) return;
@@ -1922,12 +1966,21 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     // it was answered "I'll update the dashboard" by an agent with no way to
     // touch the file (house report: "it says it's making changes, but none
     // of them are actually being applied").
-    if (this.s.edit || (this.admin() && DASH_CHANGE.test(q))) { this.tellDashboard(q); return; }
+    if (this.s.edit || (this.admin() && isDashChange(q))) { this.tellDashboard(q); return; }
     this.s.ask = { q, busy: true }; this.schedule();
     this.track('ask');
     const agent = Object.values(this.hass.entities || {}).find((e) => e.platform === 'brain' && e.entity_id.startsWith('conversation.'));
     try {
-      const r = await this.hass.callWS({ type: 'conversation/process', text: q, agent_id: agent ? agent.entity_id : undefined, conversation_id: this._conv || undefined });
+      // The agent is told, in one sentence beside the words, that it cannot
+      // change the dashboard. A Home Assistant whose conversation/process
+      // does not take extra_system_prompt refuses the key, so the question
+      // is asked again without it rather than not at all.
+      const msg = { type: 'conversation/process', text: q, agent_id: agent ? agent.entity_id : undefined, conversation_id: this._conv || undefined };
+      let r;
+      try { r = await this.hass.callWS({ ...msg, extra_system_prompt: ASK_CONTEXT }); } catch (e) {
+        if (!/extra|invalid|not allowed/i.test(String((e && (e.message || e.code)) || e))) throw e;
+        r = await this.hass.callWS(msg);
+      }
       this._conv = r.conversation_id;
       const ans = (r.response && r.response.speech && r.response.speech.plain && r.response.speech.plain.speech) || 'No answer.';
       const show = [];
@@ -1958,7 +2011,11 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const rows = st.code || [];
     const head = '<span class="label">Changes to Morph itself</span>';
     if (!rows.length) return `${head}<p class="sm">None. brAIn can change any part of Morph — its header, its cards, how it lays things out. Ask in Edit, and Morph asks whether to send the change on as an issue.</p>`;
-    return head + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button></div>`).join('');
+    // Several paused: one Update for all of them (one Tell, one commit),
+    // as well as each file's own.
+    const paused = rows.filter((r) => r.status === 'paused');
+    const all = paused.length > 1 ? `<div class="row" style="gap:12px;flex-wrap:wrap"><button type="button" class="wd go" data-act="code-merge-all" data-v="all">Update all ${paused.length}</button><span class="small">Merges every paused change into the new version, in one change you can undo.</span></div>` : '';
+    return head + all + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Update</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join('');
   }
 
   settingsHtml() {

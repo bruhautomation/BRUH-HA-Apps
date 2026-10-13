@@ -648,7 +648,7 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   await settle(p, 900);
   const notes = () => p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.note')].map((n) => n.textContent.replace(/\s+/g, ' ')).join(' | '));
   const btn = p.locator('[data-act="code-redo"]');
-  if (!(await btn.count())) { fail(`redo ${name}`, 'no Make it again on a paused copy'); await ctx.close(); continue; }
+  if (!(await btn.count())) { fail(`redo ${name}`, 'no Update on a paused copy'); await ctx.close(); continue; }
   // The service answers slowly while the house keeps changing (each change
   // redraws the panel): the note has to say it is working the whole time.
   await p.evaluate(() => { window.__redoDelay = 2500; window.__busy = setInterval(() => window.__push && window.__push(), 200); });
@@ -660,7 +660,7 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   await settle(p, 2200);
   await p.evaluate(() => clearInterval(window.__busy));
   const working = await notes();
-  if (!/brAIn is making your change to Morph’s morph-panel\.js again/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
+  if (!/brAIn is updating your change to Morph’s morph-panel\.js/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
   if (!(await p.locator('.note [data-tell]').count())) fail(`redo ${name}`, 'brAIn’s box did not open in the note');
   if (await btn.count()) fail(`redo ${name}`, 'Make it again is still offered while brAIn makes it again');
   await settle(p, 2600);
@@ -698,6 +698,30 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   const refused = await notes();
   if (!/brAIn did not start: brAIn is installed but its Automation integration is off/.test(refused)) fail(`redo ${name}`, `a refusal is not said in the note (${refused.slice(0, 160)})`);
   if (!(await p.locator('[data-act="code-redo"]').count())) fail(`redo ${name}`, 'a refused press cannot be tried again');
+  // Several copies paused: ONE note with Update and Not now, and Update is
+  // one press for all of them (owner: one press, not one per file, and two
+  // plain words).
+  await p.evaluate(() => { window.__redoError = ''; window.__redoDelay = 0; window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }, { name: 'cards.js', status: 'paused', kind: 'changed', at: 1 }]; window.__fixture.state.activity = []; window.__panel.s.tell = null; window.__panel.s.redo = null; window.__panel.load(); });
+  await settle(p, 700);
+  const two = await notes();
+  if (!/2 of your changes to it are paused/.test(two)) fail(`merge all ${name}`, `two paused copies are not one note (${two.slice(0, 160)})`);
+  const labels = await p.evaluate(() => { const n = [...window.__panel.shadowRoot.querySelectorAll('.note')].find((x) => /are paused/.test(x.textContent)); return n ? [...n.querySelectorAll('.acts button')].map((b) => b.textContent.trim()) : []; });
+  if (JSON.stringify(labels) !== JSON.stringify(['Update', 'Not now'])) fail(`merge all ${name}`, `the choices are not Update and Not now (${labels.join(', ')})`);
+  if (/keep it|Tell Morph/i.test(two)) fail(`merge all ${name}`, 'the note still talks about keeping or telling Morph');
+  if (await p.locator('.note [data-act="code-redo"]').count()) fail(`merge all ${name}`, 'two paused copies still offer one press per file');
+  await p.locator('.note [data-act="code-merge-all"]').click();
+  await settle(p, 900);
+  const sent = await p.evaluate(() => window.__ws.filter((m) => m.kind === 'code_merge_all').length);
+  if (sent !== 1) fail(`merge all ${name}`, `Update sent ${sent} merge requests, not one`);
+  if (!/brAIn is updating your changes to Morph/.test(await notes())) fail(`merge all ${name}`, 'the note does not say brAIn is updating them');
+  await settle(p, 2600);
+  // Not now hides the note and leaves everything paused.
+  await p.evaluate(() => { window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }, { name: 'cards.js', status: 'paused', kind: 'changed', at: 1 }]; window.__fixture.state.activity = []; window.__panel.s.tell = null; window.__panel.s.redo = null; window.__panel.load(); });
+  await settle(p, 700);
+  await p.locator('.note [data-act="code-not-now"]').click();
+  await settle(p, 500);
+  if (/are paused/.test(await notes())) fail(`merge all ${name}`, 'Not now did not put the note away');
+  await p.evaluate(() => { try { localStorage.removeItem('morph.notnow'); } catch (e) { /* none */ } window.__panel.notNow = ''; });
   await ctx.close();
 }
 

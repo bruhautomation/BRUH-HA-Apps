@@ -1,42 +1,59 @@
 # Morph — how this dashboard works (for brAIn)
 
 This folder is **Morph**, the house's dashboard (Morph {{VERSION}}). Morph is in
-Home Assistant's sidebar. You (brAIn) design it with the household: you change
-it when somebody holds something in Edit and tells you what to change, when you
-are asked in a chat, and when a suggestion you made is approved.
+Home Assistant's sidebar. You (brAIn) design it with the household: when
+somebody holds something in Edit and tells you what to change (a **Tell**), when
+you are asked in a chat or the terminal, and when a suggestion Morph made is
+approved.
 
-Read this file before you change anything here. Morph rewrites it when it is
-updated, so do not edit it. Your notes belong in `LEARNED.md`.
+Morph rewrites this page when it is updated, so do not edit it: your notes
+would be lost. What this household wants belongs in `LEARNED.md`.
+
+The first part of this page is how Morph works, whatever face you are reached
+through. The last part, **Answering a Tell**, is reference for the answer a
+Tell asks for.
+
+# How Morph works
 
 ## The files
 
 | File | What it is | Who writes it |
 |---|---|---|
 | `dashboard.yaml` | The whole dashboard | Edit mode, you, a person with a text editor |
-| `cards/*.js` | Custom card code: one Lovelace custom card per file | You |
+| `cards/*.js` | This house's custom card code: one Lovelace custom card per file | You |
 | `frontend/*.js` | This house's changes to Morph's own panel (below) | You |
-| `LEARNED.md` | What this household has taught Morph, as rules | Morph's learning loop, you, the household |
+| `frontend/.base/` | Morph's own files as they were when each change was made | Morph |
+| `LEARNED.md` | What this household has taught Morph, as rules | The household, a Tell, the learning pass |
 | `AGENTS.md` | This page | Morph |
 
-**Never run `git` here.** This folder is a git repository, and Morph commits
-every change the moment you finish. The commit message says what the change
-was for. That commit is what the person's **Undo** reverts. If you commit
-yourself, Undo will revert the wrong thing.
+**Never run `git` here.** This folder is a git repository and Morph commits
+every change itself: a Tell's change is one commit made the moment you answer,
+and a change made in a chat or by hand is committed as *Edited outside Morph*.
+That commit is what the person's **Undo** reverts; a commit of your own would
+make Undo revert the wrong thing.
 
 Morph reloads the dashboard live whenever `dashboard.yaml` changes. A changed
 card file runs once the page reloads (a page can only define a card once), and
 Morph offers the reload.
+
+### LEARNED.md
+
+Each line ends with who wrote it: `(you)` the household, `(tell)` you during a
+Tell, `(learned)` Morph's learning pass. A line with no mark is the household's.
+Follow these lines unless a request says otherwise. Never reword or drop a
+`(you)` line: it is somebody's own rule, and Morph puts it back if a pass leaves
+it out.
 
 ## dashboard.yaml
 
 ```yaml
 title: Home
 greeting: true       # "Good evening." at the top of the page
-story: true          # brAIn's one-paragraph summary of right now, at the top
+story: true          # the story line: what is going on right now, at the top
 ask: true            # "Ask or tell the house…"
-coming_up: true      # the timeline: timers, sun, calendars, what usually happens
+coming_up: true      # the Coming up strip: timers, sun, calendars, what usually happens
 theme: auto          # auto | dark | light | medium (optional)
-scenes: [scene.morning, scene.evening]   # house-wide scenes, as words
+scenes: [scene.morning, scene.evening]   # house-wide scenes, shown as words
 floors:
   - id: f_first_floor
     title: First floor
@@ -46,6 +63,7 @@ floors:
         area: kitchen        # optional: the HA area, so brAIn's notes land here
         color: sand          # amber sand sky violet teal lime rose peach indigo
         width: 3             # preferred columns, 1–4 (the layout may use one more or less)
+        hidden: false        # true hides the section outside Edit (Edit shows it faded)
         groups:
           - cards:
               - id: c_kitchen_scenes
@@ -62,13 +80,38 @@ floors:
             note: optional short note beside the label
             cards:
               - id: c_party_chips
-                type: custom:mushroom-chips-card   # ANY Lovelace card, passed through as-is
+                type: custom:mushroom-chips-card   # ANY Lovelace card, written directly
                 chips: [...]
+      - id: s_porch
+        title: Porch
+        cards:               # shorthand: a section with one unlabelled group
+          - entity: light.porch
 ```
+
+Two more shorthands: a file with `sections:` and no `floors:` is one floor named
+after the title, and a section may give `cards:` instead of `groups:`.
 
 **Keep every existing `id`.** Notes, usage counts and Undo are keyed on ids, so
 renaming one makes the card look new. A new card or section may leave `id` out
-and Morph will assign one.
+and Morph assigns one.
+
+Optional keys on any card: `name`, `icon` (mdi:…), `span` (1–4 columns),
+`color`, `unit` (kept for a card that reads it; built-in cards show the entity's
+own unit), and `options` (a free mapping for card code to read; no built-in
+type reads it).
+
+**Any Lovelace card works.** A `type` that is not in the table below is a
+Lovelace card: write its own YAML directly (`type: tile`, `type: custom:x`),
+and Morph wraps it as `type: lovelace` with the config under `card:` and
+draws it with Home Assistant's own card helpers, untouched. Writing that
+wrapper yourself is the same thing:
+
+```yaml
+- id: c_energy
+  type: lovelace
+  card:
+    type: energy-distribution
+```
 
 ### Card types Morph draws itself
 
@@ -95,45 +138,64 @@ and Morph will assign one.
 | `scenes` | `entities` | the scenes as words · apply |
 | `entity` | `entity` | the plain state of anything else |
 | `note` | `text` | a short line of text |
+| `lovelace` | `card` (a Lovelace card's config) | whatever that card draws |
 
-Optional keys on any card: `name`, `icon` (mdi:…), `span` (1–4 columns), `color`,
-and `options` (a free mapping a card type may read).
+A card type that a copy of `cards.js` adds (below) is used the same way while
+that copy is in use.
 
-Anything whose `type` is not in the table is a **Lovelace card**. It is
-rendered by Home Assistant's own card helpers, untouched. A Lovelace card's
-YAML is therefore always valid here, including any custom card the house has
-installed.
+## What dashboard.yaml does not hold
+
+- **The story line** is drawn by Morph's own code (`morph-panel.js`,
+  `storyFacts`) from the house's state, led by brAIn's situation sentence when
+  there is one. `story:` only switches it on or off.
+- **Coming up** is drawn by Morph's own code (`upcoming.js` gathers the events,
+  `morph-panel.js` places the strip). `coming_up:` only switches it.
+- **How anything looks or moves** — the header, the layout, a built-in card's
+  face — is Morph's own code.
+
+A change to any of these is a change to Morph's own code.
 
 ## Morph's own code (`frontend/*.js`)
 
-Nothing about Morph is out of reach — not the dashboard and not Morph itself:
-its header and gear, the Edit bar, the layout engine, a built-in card type, its
-styles. Never tell somebody you cannot change Morph's code. You can.
+Nothing about Morph is out of reach — not the dashboard and not Morph itself.
+Never tell somebody you cannot change Morph's code. You can.
 
-Morph's own panel modules are in `/config/custom_components/morph/frontend/`
-(`morph-panel.js` the page, `cards.js` the built-in cards, `styles.js` the
-styles, `engine.js` the layout, `history.js` the charts, `util.js` the icons
-and helpers). That copy is Morph's: read it, never edit it there (an update
-replaces it). To change one:
+Morph's own panel modules are in `/config/custom_components/morph/frontend/`:
+
+| Module | What it is |
+|---|---|
+| `boot.js` | The loader: paints the page's outline, loads the panel, and falls back to Morph's own panel when a copy fails |
+| `morph-panel.js` | The page: header, story, Ask, Edit, Tell, Settings |
+| `cards.js` | The built-in card types (`TYPES`) |
+| `engine.js` | The layout engine: springs, masonry, opening in place |
+| `history.js` | History and charts |
+| `upcoming.js` | The Coming up strip |
+| `snap.js` | The picture a Tell takes of what was held |
+| `styles.js` | The styles |
+| `util.js` | Icons and small helpers |
+
+That copy is Morph's: read it, never edit it there (an update replaces it). To
+change one:
 
 1. Copy it to `/config/morph/frontend/` under the same name, and edit the copy.
    A new module of your own can go there too, imported by a copy.
 2. Morph serves your copy in place of its own. The page has to reload to run
    it; Morph offers the reload.
-3. Copy only the files you change, keep every export the other modules import,
-   and never replace `boot.js`. If a copy fails to load, Morph runs its own
-   for that page load and says so, so check your JavaScript.
-4. A card type your copy of `cards.js` adds to `TYPES` (in the `TYPES` object,
-   or as `TYPES.name = …`) can be used in `dashboard.yaml` like a built-in one
-   while that copy is in use. While it is paused, Morph treats it as a
-   Lovelace card, which cannot draw it.
-5. Fill `code_issue` saying what you changed and why. Morph asks the person
-   whether to open an issue so Morph's code gets the change for everybody.
+3. Copy only the files you change, and keep every export the other modules
+   import: they import by name, and a missing export stops the panel loading.
+4. Never replace `boot.js`. It is the loader, and it is what runs Morph's own
+   panel when your copy fails to load — so a broken copy never blanks the page.
+   Check your JavaScript anyway: a copy that fails is a page running without
+   your change.
+5. A card type your copy of `cards.js` adds to `TYPES` can be used in
+   `dashboard.yaml` like a built-in one while that copy is in use. While it is
+   paused, Morph treats it as a Lovelace card, which cannot draw it.
 
-It is one commit like any other, so Undo puts Morph's own back. When Morph is
-updated and its own copy of a file you changed moves, your change is
-**paused** (Morph's own runs) until somebody asks you to make it again on the
-new file.
+When Morph is updated and its own copy of a file you changed moves (or another
+module your copy builds on moves), your change is **paused**: Morph's own runs
+until somebody asks you to make it again on the new file. Morph keeps its file
+as it was when the change was made in `frontend/.base/<name>`, so making it
+again is a three-way merge. **Merge all** hands you every paused copy at once.
 
 ## Custom card code (`cards/*.js`)
 
@@ -156,60 +218,127 @@ class MorphPets extends HTMLElement {
 if (!customElements.get("morph-pets")) customElements.define("morph-pets", MorphPets);
 ```
 
-Then use it in `dashboard.yaml` as `type: custom:morph-pets`. Rules for card code:
+Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 
-- No imports from the network and no frameworks. Plain DOM only.
-- Use Morph's colours through CSS variables: `--bg --surface --sunk --line --text
+- **`hass` is set on every state change in the whole house**, many times a
+  second in a busy one. Re-render only when something the card shows has
+  changed (compare the states you read), or the card costs the page its
+  frame rate.
+- **Plain DOM only.** No imports from the network and no frameworks: the page
+  must work offline, and a CDN that is down is a card that is blank.
+- **Morph's look, through its variables**: `--bg --surface --sunk --line --text
   --muted --quiet --amber --sand --sky --violet --teal --lime --rose --peach
-  --indigo`. Fonts: `'Bricolage Grotesque'` for big numbers, `'Manrope'` for text.
-- Act through `this._hass.callService(domain, service, data)`.
-- The card must render with no data at all; `hass` may arrive late.
+  --indigo`. They change with the theme (dark, light, medium), so never hard-code
+  a colour. Fonts: `'Bricolage Grotesque'` for big numbers, `'Manrope'` for
+  text.
+- **Size**: the card fills the width its tile gives it (`span` sets the
+  columns) and is as tall as its content; `getCardSize()` is a hint in rows of
+  about 50 px. Never set a fixed width.
+- **Nothing floats.** No popups, dialogs or overlays (design rule 1): open
+  things in place, inside the card.
+- **Act** through `this._hass.callService(domain, service, data)`.
+- **Render with no data at all**: `hass` may arrive late, and an entity may be
+  unavailable.
+- **A broken card is this house's to fix**, by a Tell or in a chat, not a bug
+  in Morph: Morph offers the fix as a suggestion on the dashboard rather than
+  sending it to Morph's developers.
 
 ## The design rules (these are the acceptance criteria)
 
 1. **Nothing floats over anything.** No popups, sheets or overlays. Things open
-   in place, and the page moves around them.
+   in place, and the rest of the page moves around them.
 2. **One grammar.** Tap does the main thing. Slide sets a level. Hold opens the
-   card in place, with its options and its history.
-3. **No chrome.** No Done buttons, tabs, chevrons or drag handles in normal use.
+   card in place, with its options and its history. In Edit, tap edits and hold
+   talks to brAIn.
+3. **No chrome.** No Done buttons, tabs, chevrons, instruction rows or drag
+   handles in normal use.
 4. **One control, one place.** Never repeat a control in a second card.
-5. **Scenes sit above lights**, as words.
+5. **Scenes sit above lights**, as words, in every room.
 6. **Quiet by default.** A group gets a label only when it needs one. Fans and
    blinds sit after a room's lights in a group labelled **Comfort**.
 7. **Tiles don't waste space.** Things of one kind go together, and a row only
    holds things of the same height.
-8. **History belongs to its device**, in the device's colour.
+8. **Opened things stay where they are.** An opened card keeps its row and
+   column, grows right (or left, at the end of a row) and down, and its
+   neighbours step to the nearest free place.
+9. **Make room first, then grow.** Neighbours move before the card expands;
+   sections never jump sideways and never overlap.
+10. **Tap outside folds it back**, all the way to the compact face.
+11. **History belongs to its device**, in the device's colour, starting with
+    its icon and name.
 
 When a request conflicts with a rule, do what was asked and say which rule it
-bends in your `summary`.
+bends.
 
-## How to make a change well
+## Making a change well
 
-- Make the smallest change that does what was asked. Moving a card is moving one
-  item between lists, not rewriting the file.
-- **Look first.** A request from the editor comes with a screenshot of what
-  was held (`/config/.morph/shots/<id>.png`), taken the moment it was held.
-  Read it before anything else: "this" means what is on the screen, and the
-  YAML only says what is configured. Say what you saw in `saw`.
-- Check entity ids against the house with your tools before you add them. A card
-  for an entity that does not exist draws as "unavailable".
+- **Look first.** A request from the editor comes with a picture of what was
+  held, taken the moment it was held: "this" means what is on the screen, and
+  the YAML only says what is configured.
+- Make the smallest change that does what was asked. Moving a card is moving
+  one item between lists, not rewriting the file.
 - Put a new section on the floor where it belongs, near related sections.
 - **The dashboard, not the house.** A request from Morph changes this folder.
-  Change Home Assistant itself (entity ids, names, areas, automations, scripts,
-  helpers) only when the request asks for that in so many words ("rename the
-  entity", "make an automation that…"). When doing it properly would need a
-  house change nobody asked for, do the dashboard part and say in
-  `needs_person` what would have to change, so they can ask.
+  Change Home Assistant itself (entity ids, names, areas, automations,
+  scripts, helpers) only when the request asks for that in so many words
+  ("rename the entity", "make an automation that…"), because the person asked
+  for a dashboard change and a house change is a different decision. When
+  doing it properly needs a house change nobody asked for, do the dashboard
+  part and say what would have to change.
+- `protected_entities` still applies to acting on an entity. Showing one on
+  the dashboard is fine.
 - What you learn about the house (what a device is, where it is, which sensor
-  measures what) is brAIn's memory: in a Tell, put it in the answer's `facts`
-  and Morph queues it (brAIn's action gate refuses `remember_fact` in a Tell,
-  which is a task run, not a conversation). `LEARNED.md` and `lesson` are only
-  for how this household wants its dashboard.
-- When a request needs **Morph's own code** changed — a built-in card type that
-  is wrong or cannot do it, the layout, the panel, the header — change it as
-  *Morph's own code* above, and fill `code_issue`. Morph asks the person
-  whether to open an issue; never file one yourself.
-- `protected_entities` still applies. If a request needs one, say so in
-  `needs_person`.
-- Read `LEARNED.md` and follow it. If the request teaches a lasting preference
-  about the dashboard, return it as `lesson`.
+  measures what) is brAIn's memory, not `LEARNED.md`. In a chat, remember it
+  as you always do; a Tell carries it in its answer.
+
+## Checking your change
+
+- **The YAML parses.** A file that does not read is not applied: Morph keeps
+  showing the last version that did and says why.
+- **Every entity exists.** Check ids against the house with your tools; a card
+  for an entity that does not exist draws as "unavailable".
+- **Morph reads it back.** After a Tell, Morph compares the file with how it
+  was and tells the person what is different on screen. A change that is not
+  in the file is shown not to have happened.
+- **Code loads.** A copy in `frontend/` or a card in `cards/` that throws is
+  reported; read it once more before you answer.
+
+## When to ask instead of act
+
+Act on what was asked. Ask only when what is left is a choice that is the
+person's, never yours to guess:
+
+- **A number a card works out from other sensors** (a difference, a sum, a
+  rate, an efficiency, a cost) has no history: Home Assistant records
+  entities, so a value calculated in the card has no chart, no long-term
+  statistics and nothing an automation can use. When you build one and no
+  entity already holds it, and the person might want its history, build the
+  card with the calculation in it and ask whether to make a Home Assistant
+  template sensor for it (naming it). Never make that sensor unasked.
+- **A merge with more than one reasonable answer** (an update rewrote the code
+  a change was in): ask, one option per way, plus one that uses Morph's own.
+- **Something only the household knows**: which of two rooms a device is in,
+  whether a card nobody uses should go.
+
+Never ask for confirmation of what was asked, and never ask about a detail you
+can read off the house.
+
+# Answering a Tell (reference)
+
+A Tell is a task: the prompt says what was held and asked, and the answer is a
+JSON object whose schema travels with the task. The schema's own descriptions
+say when each field is filled; in short:
+
+| Field | What it is |
+|---|---|
+| `summary` | What you did, for the person |
+| `files` | Each file under /config/morph you changed |
+| `home_assistant` | Each change made in Home Assistant itself; Undo hands it back to you |
+| `saw` | With a picture only: what in it the request is about |
+| `needs_person` | What is left for a person to do by hand |
+| `question` | A choice that is the person's, as two or three buttons |
+| `lesson` | A lasting rule about this household's dashboard |
+| `facts` | What you learned about the house, for brAIn's memory |
+| `code_issue` | What you changed in Morph's own code, for Morph's developers |
+
+Morph asks the person whether to send a `code_issue`; never file one yourself.
