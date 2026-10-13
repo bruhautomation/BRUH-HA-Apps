@@ -14,14 +14,11 @@
   draw.
 """
 import json
-import shutil
 import subprocess
 import textwrap
 import unittest
 
 from morph_env import FRONTEND, MorphEnv
-
-HAS_NODE = shutil.which("node") is not None
 
 
 def run_node(body: str):
@@ -33,7 +30,6 @@ def run_node(body: str):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-@unittest.skipUnless(HAS_NODE, "node is not installed")
 class TestAReadingsCardSurvivesAFailedThermostatHistory(unittest.TestCase):
 
     def test_an_error_answer_draws_the_chart_without_a_band(self):
@@ -61,7 +57,6 @@ class TestAReadingsCardSurvivesAFailedThermostatHistory(unittest.TestCase):
         self.assertEqual({"chart": True, "band": False}, got)
 
 
-@unittest.skipUnless(HAS_NODE, "node is not installed")
 class TestACardFileIsFetchedTwiceBeforeItIsAFault(unittest.TestCase):
 
     def run_retry(self, errors):
@@ -104,7 +99,6 @@ class TestACardFileIsFetchedTwiceBeforeItIsAFault(unittest.TestCase):
         self.assertNotIn(" import(`", body)
 
 
-@unittest.skipUnless(HAS_NODE, "node is not installed")
 class TestASectionTitleCarriesTheMark(unittest.TestCase):
 
     def head(self, admin, edit):
