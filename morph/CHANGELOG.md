@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.8
+
+### Added
+
+- **Morph's mark on a section's title.** Outside Edit, an admin can press the mark beside a room's title to tell brAIn about that section; a second press closes the box. (reports #236)
+
+### Fixed
+
+- A readings card no longer breaks when a thermostat's history cannot be read; it draws without the target band. (reports #217)
+- Custom card code that fails to download once is fetched again before it is reported as a fault. (reports #239, #241)
+- A card type added by the house's own copy of `cards.js` is drawn by that copy instead of showing "Configuration error". (reports #240)
+
 ## 0.5.7
 
 ### Changed
