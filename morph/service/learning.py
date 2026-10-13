@@ -610,15 +610,15 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
 
 def rejected_change(base: str, commit: str) -> list[str]:
     """What an undone Tell changed on the dashboard, in a person's words."""
+    import dashdiff
     import gitrepo
-    import tell
     try:
         new_text = gitrepo.file_at(commit, "dashboard.yaml")
         if new_text is None:
             return []
         old_text = gitrepo.file_at(base, "dashboard.yaml") if base else None
         old = store.load_text(old_text)[0] if old_text is not None else store.empty()
-        return tell.describe_change(old, store.load_text(new_text)[0])[:4]
+        return dashdiff.describe_change(old, store.load_text(new_text)[0])[:4]
     except Exception:  # noqa: BLE001 — evidence is best-effort; a pass runs without it
         return []
 

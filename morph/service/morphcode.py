@@ -344,13 +344,13 @@ def redo_all_words(names: list[str], version: str, histories: dict | None = None
         lines += ["", f"## {name}", head, *part]
     lines += [
         "",
-        "Merge every file that merges cleanly, and save it. For a file where the update rewrote the same code "
-        "this house's change was in, so that there is more than one reasonable way to bring the two together, "
-        "do not guess and do not write that file. Answer with `question` about ONE such conflict (the first): "
-        "say in one sentence what the update did to that part, with one option per way to resolve it and one "
-        "that uses Morph's own, each option's request saying the whole change to make for that file, file "
-        "paths included, because it is sent to you on its own. List in `waiting` every file still undecided, "
-        "that one included. Morph puts every file you merged back in use, keeps the waiting ones paused, and "
+        "Merge every file that merges cleanly, and save it. For a file where the update rewrote the same code " +
+        "this house's change was in, so that there is more than one reasonable way to bring the two together, " +
+        "do not guess and do not write that file. Answer with `question` about ONE such conflict (the first): " +
+        "say in one sentence what the update did to that part, with one option per way to resolve it and one " +
+        "that uses Morph's own, each option's request saying the whole change to make for that file, file " +
+        "paths included, because it is sent to you on its own. List in `waiting` every file still undecided, " +
+        "that one included. Morph puts every file you merged back in use, keeps the waiting ones paused, and " +
         "the person's answer continues this merge with what is left.",
     ]
     return "\n".join(lines)
