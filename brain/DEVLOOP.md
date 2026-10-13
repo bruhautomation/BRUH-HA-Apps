@@ -23,7 +23,7 @@ schedule and its own **Run** button:
 | **Wrongs** | A check you have marked Wrong at least 3 times and at least half the time, with the reasons you typed | yes, daily | nothing |
 | **Unmet requests** | Things brAIn told you in the chat it could not do, once the same one has come up in two or more conversations | no | nothing |
 | **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
-| **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run | no | one run |
+| **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run that reads the fault list, the scorecard and the reasons you typed when you marked a finding Wrong | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
 | **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
 | **Screens** | Pictures of brAIn's own panel, taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per release, rewritten in place, with the pictures attached | no, weekly | nothing |
@@ -85,13 +85,21 @@ For each finding brAIn:
    **Impact** section: how often it was seen and over how many days, how
    many rows or runs it touched where brAIn knows, and what you did about it
    (marked Wrong, confirmed). When the day's cap holds reports back, the most
-   impactful are sent first.
+   impactful are sent first. An issue a Claude run wrote (Gaps, Ideas,
+   Design review, *What do you want to fix?*) also says what "fixed" looks
+   like (**Done when**) and the run's own estimate of how much it touches.
+   A run whose answer could not be read files nothing, and is counted
+   against its stream in the loop's status (`unreadable` in
+   `/api/devloop`) rather than passing for a run that found nothing.
 5. **Listens to the answer.** Whoever works through your reports closes each
    issue with a label: fixed, declined, not brAIn's, or a duplicate. Once an
    hour brAIn reads those back, using the same issue listing it already
    reads, and shows the tally beside each stream. A Gaps, Ideas, *What do you want to fix?* or
    Unmet report closed as declined, not brAIn's or a duplicate is never filed
-   again, even reworded. If 6 of a stream's last 8 closed reports were noise
+   again, even reworded. The first line of the comment it was closed with
+   is kept beside the verdict, and the next Gaps, Ideas and Design review
+   run is shown what was closed and why, so it learns from the reason and
+   not only from the title. If 6 of a stream's last 8 closed reports were noise
    like that, the stream runs half as often (but at least once a
    fortnight), and ⚙ says so with an **Undo**. A fix
    is never counted as noise, and a fixed fault that comes back is still
