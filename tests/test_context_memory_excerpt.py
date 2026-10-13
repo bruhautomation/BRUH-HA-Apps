@@ -180,10 +180,12 @@ class TestTheBudget(unittest.TestCase):
         self.addCleanup(lambda: self.tmp.unlink(missing_ok=True))
         self.tmp.write_text(a_real_shaped_document(400), encoding="utf-8")
 
-    def test_the_default_is_sixteen_kilobytes(self):
+    def test_the_default_is_eight_kilobytes(self):
+        # The chat's hook hands each message the facts about its subject,
+        # so the file carries the standing overview, not the document.
         raw = run_excerpt(self.tmp)
-        self.assertLessEqual(len(raw), 16_384)
-        self.assertGreater(len(raw), 8_192, "the default is no longer 4 KB")
+        self.assertLessEqual(len(raw), 8_192)
+        self.assertGreater(len(raw), 4_096, "the default is no longer 4 KB")
 
     def test_the_environment_raises_it(self):
         raw = run_excerpt(self.tmp, env={"BRAIN_CONTEXT_MEMORY_BYTES": "32768"})

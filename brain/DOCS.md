@@ -1187,8 +1187,10 @@ simply because you prefer it.
 - **Native Home Assistant access** through the same MCP server the rest of brAIn uses.
 - **`/config/CLAUDE.md` written for you** at startup, describing your actual
   installation — including a map of your areas and their entities — so a fresh
-  session already knows your house, and telling Claude to create automations with
-  `brain.intent` rather than by editing `automations.yaml` by hand.
+  session already knows your house. It tells Claude to do what you ask
+  directly — write the automation, then check and reload it — and to offer
+  brAIn's replay (`brain.intent`) for a new standing rule when the evidence
+  would help.
 - **The chat knows the house before you tell it.** Each chat starts with a short
   brief (open cases, health, when the house usually wakes and settles), and every
   message you send brings in the facts brAIn has about what you mentioned, each
@@ -3682,7 +3684,8 @@ the Ask tab itself), because it changes nothing about how the add-on runs.
 > without asking. The excerpt is cut **between lines**, never mid-fact, and
 > every `## ` section keeps at least its heading and its first line before any
 > section gets a second one, so a long Preferences section can no longer push
-> Device notes out of the file entirely. It takes 16 KB by default;
+> Device notes out of the file entirely. It takes 8 KB by default (the chat
+> adds the facts about each message as you send it);
 > `BRAIN_CONTEXT_MEMORY_BYTES` (an environment variable, not an option — set
 > it in the add-on's own environment) raises or lowers that. An insight card
 > is handed the whole document instead, up to `memory_max_kb`.
