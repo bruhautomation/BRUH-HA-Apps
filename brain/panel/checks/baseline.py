@@ -486,12 +486,10 @@ def related_nearby(house: House, eid: str, st: dict
             list(dict.fromkeys(traces))[:RELATED_MAX])
 
 
-GENERIC_FIX = ("Look at what it is measuring. If this is normal for a "
-               "reason brAIn cannot see — a guest, a heatwave, a new "
-               "appliance — press Ignore and say why, and it will stop "
-               "reporting it.")
-IGNORE_TAIL = ("If this is normal here, press Ignore and say why, and it "
-               "will stop reporting it.")
+# One action. The card already carries Ignore, and a fix that also told
+# somebody to press it was two errands in one sentence.
+GENERIC_FIX = ("Look at what it is measuring for a change brAIn cannot see "
+               "— a guest, a heatwave, a new appliance.")
 
 
 def _fmt(value: float) -> str:
@@ -551,12 +549,11 @@ def unusual_fix(house: House, eid: str, st: dict) -> str:
         if traces:
             said += (f" {join_names(traces)} "
                      f"{'shows' if len(traces) == 1 else 'show'} when it ran.")
-        return f"{said}{outside_said} {IGNORE_TAIL}"
+        return f"{said}{outside_said}"
     if peers:
         return (f"Compare it with {join_names(peers)}{where}: if that moved "
                 "too, something in the room changed; if not, the sensor "
-                f"itself may be at fault.{outside_said} If this is normal "
-                "here, press Ignore and say why.")
+                f"itself may be at fault.{outside_said}")
     if outside:
         return f"{GENERIC_FIX}{outside_said}"
     return GENERIC_FIX

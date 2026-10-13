@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.33
+
+### Changed
+
+- An insight card's summary now opens with one plain verdict: it is fine, it needs action, or here is the one thing to do. The number that shows it comes next, read against this house's own normal. (reports #230)
+- Once brAIn has looked at a house check's finding and concluded, the card shows that conclusion instead of the rule's generic "go and check it" sentence, and a suggested fix is one action in one sentence. (reports #231)
+- A card that covers a device with an open finding takes that finding's conclusion as its own, or says in one clause why what it read disagrees. (reports #233)
+
+### Fixed
+
+- Template code (`{{ … }}`, `{% … %}`) no longer appears in a finding's detail or fix; a quoted time is kept, anything else reads "a template". A failed integration is named by its title, and a helper by what it is, rather than by an integration's code name. (reports #232)
+
 ## 2.18.32
 
 ### Changed

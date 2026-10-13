@@ -408,7 +408,8 @@ CARD_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
-        "summary": {"type": "string"},
+        "summary": {"type": "string",
+                    "description": "Opens with one plain verdict: fine, needs action, or the one thing to do."},
         "highlights": {
             "type": "array",
             "items": {
@@ -468,17 +469,17 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary is one or two short sentences that add the single most important conclusion the numbers alone don't say.
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary opens with ONE plain verdict — it is fine, it needs action, or here is the one thing to do — then the number that shows it.
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the ONE thing worth knowing, with its number",
+{"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the verdict first, then its number",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
  "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
-highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Never pad with filler — fewer sharp highlights beat more dull ones. Escape the HTML correctly as a JSON string.
+highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Escape the HTML correctly as a JSON string.
 tags: what the card is ABOUT, not the category it was asked for. Reuse plain common words.
 hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap. Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document.
 learned: durable NEW discoveries about this home (a pattern, a quirk, how something behaves), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot.
@@ -497,11 +498,11 @@ DESIGN SYSTEM: brAIn prepends a stylesheet to your document, so use its variable
 ANALYSIS RULES:
 - RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time; delete any that doesn't. No hedging, no methodology, no restating a highlight. Depth goes into WHICH data points you surface, never into word count.
 - Be specific to this home: real friendly names, real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
-- Find the STORY — a trend, an outlier, a pattern, a risk — then compress it to its data points.
+- Read every number against this house's own normal (its usual, last week, its baseline) and say which side it is on; never leave a figure for the reader to judge.
 - REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain. Use the "device_context" section (entities sharing a device with a presence tracker) as those clues.
 - BUILD ON what you know: KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth — use them, never rediscover or contradict them without new evidence, never re-ask.
 - GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeat of the same headline is a failed run.
-- Each card stands alone: never refer to an earlier card or run ("the last card", "Thursday's card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal."). With nothing new, say what holds now, with its numbers.
+- Each card stands alone: never refer to an earlier card or run ("the last card", "Thursday's card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.") — say what the figures mean. With nothing new, say what holds now, with its numbers.
 - Anything that could have done harm (a door, fridge or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have (the freezer's temperature over that window), or one clear thing for the owner to do.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
 - If the data for the requested angle is thin, visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow.

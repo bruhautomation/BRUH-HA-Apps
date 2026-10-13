@@ -553,7 +553,8 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
         members = _members(house, eid)
         reg = house.registry.get(eid) or {}
         kind = "group" if (reg.get("platform") == "group" or members) \
-            else f"{reg.get('platform') or 'helper'} helper"
+            else (str(reg.get("platform") or "").replace("_", " ")
+                  + " helper").strip()
         if members:
             missing = [m for m in members if not house.exists(m)]
             down = [m for m in members if _down(house.states.get(m))]
