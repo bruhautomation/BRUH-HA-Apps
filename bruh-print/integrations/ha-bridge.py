@@ -99,20 +99,28 @@ def summarise_state(state: dict) -> dict:
     """
     printer = state.get("printer") or {}
     stocks = state.get("stocks") or []
+    loaded = {s.get("id") for s in stocks if isinstance(s, dict) and s.get("loaded")}
     return {
         "ok": True,
         "printer": printer.get("name") or printer.get("model") or "",
         "printer_error": state.get("printer_error") or "",
+        # `remaining` is the panel's count down from what was loaded — an
+        # estimate: nothing on a LabelWriter reports a real level.
         "rolls": [{"side": r.get("side"), "stock": r.get("stock"),
                    "remaining": r.get("remaining")}
                   for r in state.get("rolls") or [] if isinstance(r, dict)],
         "loaded_stocks": [{"id": s.get("id"), "name": s.get("name"),
                            "side": s.get("loaded_side")}
                           for s in stocks if isinstance(s, dict) and s.get("loaded")],
+        # What a text label with no stock named prints on.
+        "text_prints_on": state.get("quick_stock") or "",
+        # A template whose stock is not in the printer is refused; saying so
+        # here saves the caller the refusal.
         "templates": [{"name": t.get("name"),
                        "fields": [f.get("key") for f in t.get("fields") or []
                                   if isinstance(f, dict)],
-                       "stock": t.get("stock")}
+                       "stock": t.get("stock"),
+                       "stock_loaded": t.get("stock") in loaded}
                       for t in state.get("templates") or [] if isinstance(t, dict)],
         "recent": [{"id": h.get("id"), "title": h.get("title") or "",
                     "stock": h.get("stock"), "at": h.get("at")}

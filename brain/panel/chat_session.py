@@ -575,12 +575,14 @@ _OPTIONAL_FLAGS = (
 #   shell shapes, so a command that reaches a protected entity some other
 #   way (a heredoc into automations.yaml, a URL built in pieces) now runs
 #   unasked; and a change made by a shell command reaches no undo journal.
-# * **A discussion is spawned with ``--permission-mode default``** whatever
-#   the switch says, so it never inherits bypass from anywhere. What the
-#   switch changes there is its RULES (`_discuss_rules`): on, everything is
-#   pre-approved except changing Home Assistant (`DISCUSS_HA_ASK`), so
-#   working out a plan never asks and the change itself still waits for an
-#   approval card or the plan's Apply; off, every acting tool asks.
+# * **A discussion follows the switch like the rest of the chat.** It used
+#   to spawn with ``--permission-mode default`` and ask before every change
+#   to Home Assistant even with the switch on, and its prompt said "do not
+#   try to make a change here" — so a person who asked the conversation to
+#   repoint three templates was told to press a Plan button instead. The
+#   owner's rule is that the chat does what it is asked: switch on, a
+#   discussion runs in bypass with nothing asked (`_discuss_rules`); switch
+#   off, every acting tool is an approval card, exactly as before.
 #
 # A change reaches an idle conversation on its next message through the
 # respawn `send` already does (`_spawned_mode`, the `_spawned_model` rule);
@@ -1280,11 +1282,11 @@ class ChatSession:
 
     def _discuss_rules(self) -> dict:
         """A discussion's permission rules. Switch off: ask before every
-        acting tool. Switch on: run anything, ask before changing Home
-        Assistant (`DISCUSS_HA_ASK`)."""
+        acting tool, so a change is an approval card the person presses.
+        Switch on: nothing asks — a discussion is the chat, and the owner's
+        rule is that the chat does what it is asked."""
         if self.skip_permissions:
-            return {"allow": list(DISCUSS_FREE_RUN),
-                    "ask": list(DISCUSS_HA_ASK)}
+            return {"allow": list(DISCUSS_FREE_RUN)}
         return {"ask": list(DISCUSS_ASK)}
 
     def _permission_mode(self) -> str:
@@ -1294,10 +1296,10 @@ class ChatSession:
         the switch decides, and off is no flag at all — the CLI's own
         default, which is what every release before this sent.
         """
-        if self.finding_ts:
-            return permission_mode.CHAT_DISCUSS
         if self.skip_permissions:
             return permission_mode.CHAT_BYPASS
+        if self.finding_ts:
+            return permission_mode.CHAT_DISCUSS
         return ""
 
     def _mode_arg(self) -> str:
@@ -1374,14 +1376,13 @@ class ChatSession:
         settings = self._settings_arg()
         if settings:
             argv += ["--settings", settings]
-        elif self.finding_ts:
+        elif self.finding_ts and not self.skip_permissions:
             # A discussion whose CLI refused `--settings` cannot ASK before
-            # it acts, so it may not act: the same tools are forbidden
-            # outright. Failing closed costs a discussion its changes,
-            # which the `plan` resolution makes anyway; failing open would
-            # be the read-only promise kept by a sentence again.
-            argv += ["--disallowedTools", ",".join(
-                DISCUSS_HA_ASK if self.skip_permissions else DISCUSS_ASK)]
+            # it acts, so with the switch off it may not act: the same tools
+            # are forbidden outright. Failing closed costs a discussion its
+            # changes, which the `plan` resolution makes anyway; failing
+            # open would be the ask kept by a sentence.
+            argv += ["--disallowedTools", ",".join(DISCUSS_ASK)]
         if self.model:
             # Kept on the argv even when resuming: a resumed session
             # otherwise continues on the model it remembers, which is the

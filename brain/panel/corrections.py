@@ -63,6 +63,7 @@ from pathlib import Path
 
 import atomic_write
 import facts_store
+import prompt_kit
 import textclip
 
 log = logging.getLogger("brain.corrections")
@@ -115,47 +116,64 @@ _MONTHS = ("January", "February", "March", "April", "May", "June", "July",
 # The second look
 # ---------------------------------------------------------------------------
 
-SYSTEM = """You read one correction a homeowner gave about a report from \
-their smart home, and you say two things about it: how WIDE it is meant to \
-be and how LONG it should last. You do not decide anything else, you do not \
-name entities, and you do not write the rule — the report already says what \
-it was about.
-
-SCOPE — pick exactly one:
-- "entity_check": only this rule, only this device. The default, and the \
-right answer whenever the sentence is about this one thing.
-- "entity": every rule about this device ("ignore that sensor", "it's a \
-dummy, don't tell me anything about it").
-- "check_area": this rule for every device in the same room ("none of the \
-garage plugs matter").
-- "check": this rule for every device in the house ("I never care about \
-this").
-Never pick a wider scope than the sentence plainly says. When unsure, \
-"entity_check".
-
-LIFETIME — pick exactly one:
-- "permanent": no end is mentioned or implied.
-- "date": a specific day it should start reporting again; give it as \
-until_date YYYY-MM-DD (the day reporting RESUMES).
-- "month": "until October", "till next spring month" — until_month 1-12, \
-the month reporting resumes.
-- "season": "it's like that every winter", "only in summer" — season is \
-the season the condition belongs to; reporting resumes when it ends.
-
-reason: the standing truth the correction implies, in one plain sentence \
-about the house (not about the report), or "" when there is none.
-
-Answer only with the JSON object."""
+# Model-facing, not person-facing: code reads the scope and lifetime, and
+# the sentence the homeowner sees is composed by `confirmation`, never by
+# this run. `reason` is filed as a fact, which is why the privacy half is
+# kept as a rule here rather than dropped. The homeowner's words are the
+# outside text, so the fence stays.
+SYSTEM = prompt_kit.assemble(
+    "You read one correction a homeowner gave about a report from their "
+    "smart home, and say two things about it: how WIDE it is meant to be "
+    "and how LONG it should last. You do not name entities and you do not "
+    "write the rule — the report already says what it was about.",
+    inputs=(
+        "You are given today's date, the report, the rule that raised it, "
+        "the device and its room, and the homeowner's words."),
+    tools="",
+    good=(
+        "The narrowest scope the words plainly say, and a lifetime only "
+        "where they name an end."),
+    example="""\
+- "It's a dummy sensor, ignore it" → entity, permanent, reason "This
+  sensor is a dummy and reports nothing real."
+- "That reading is normal for this freezer" → entity_check, permanent,
+  reason "This freezer normally reads like that."
+- "It's always like that in winter" → entity_check, season winter,
+  reason "This reads low every winter." (a season, not permanent: it
+  reports again when winter ends)
+- "The pump is off for repair until 3 March" → entity_check, date,
+  until_date the next 3 March, reason "" (one repair is not a standing
+  truth).""",
+    rules="""\
+- Scope, widest last: entity_check (this rule, this device — the
+  default), entity (every rule about this device), check_area (this rule,
+  every device in the room), check (this rule, the whole house). Never
+  wider than the sentence plainly says; unsure is entity_check.
+- Lifetime: permanent (no end mentioned or implied), date (the day
+  reporting resumes), month (the month reporting resumes), season (the
+  season the condition belongs to; reporting resumes when it ends).
+- reason is the standing truth about the HOUSE the correction implies,
+  under 20 words, never about a person and never about the report — or
+  "" when there is none.""",
+    person_facing=False,
+)
 
 SCHEMA = {
     "type": "object",
     "properties": {
         "scope": {"type": "string", "enum": list(SCOPES)},
         "lifetime": {"type": "string", "enum": list(LIFETIMES)},
-        "until_date": {"type": "string"},
-        "until_month": {"type": "integer", "minimum": 0, "maximum": 12},
-        "season": {"type": "string", "enum": ["", *SEASONS]},
-        "reason": {"type": "string"},
+        "until_date": {"type": "string", "description":
+                       "For lifetime date: YYYY-MM-DD, the day reporting "
+                       "resumes."},
+        "until_month": {"type": "integer", "minimum": 0, "maximum": 12,
+                        "description": "For lifetime month: 1-12, the "
+                                       "month reporting resumes."},
+        "season": {"type": "string", "enum": ["", *SEASONS],
+                   "description": "For lifetime season: the season the "
+                                  "condition belongs to."},
+        "reason": {"type": "string", "description":
+                   "The house's standing truth, under 20 words, or \"\"."},
     },
     "required": ["scope", "lifetime"],
     "additionalProperties": False,

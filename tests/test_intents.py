@@ -488,12 +488,18 @@ class TestThePrompt(IntentCase):
         self.assertIn(SENTENCE, self.intents.prompt(SENTENCE, None))
 
     def test_the_contract_names_the_four_replayable_kinds(self):
+        # One prompt drafts both kinds of sentence: `authoring.SYSTEM`. The
+        # one-off's own copy had no caller and is gone, so a second answer
+        # to "what may a trigger be" cannot drift from the first.
+        import authoring
         import shadow
 
+        self.assertFalse(hasattr(self.intents, "SYSTEM"))
+        self.assertNotIn("SYSTEM", self.intents.__all__)
         for kind in shadow.REPLAYABLE:
-            self.assertIn(kind, self.intents.SYSTEM)
+            self.assertIn(f"`{kind}`", authoring.SYSTEM)
         # And tells the model not to write the thing code writes.
-        self.assertIn("switches the automation off", self.intents.SYSTEM)
+        self.assertIn("switches the automation off", authoring.SYSTEM)
 
 
 class TestNothingHereCallsTheHouse(unittest.TestCase):

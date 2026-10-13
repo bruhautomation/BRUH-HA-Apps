@@ -62,11 +62,19 @@ def new_id(prefix: str = "morph") -> str:
 
 def submit(task_id: str, prompt: str, *, schema: dict | None = None, tools: str = "full",
            timeout: int = 900, model: str = "", scheduled: bool = False,
-           memory: bool = False) -> None:
+           memory: bool = False, person_words: str | None = None) -> None:
     """Hand brAIn one task. Written to a scratch name and renamed, because
-    the listener globs ``*.json`` and must never read half a file."""
+    the listener globs ``*.json`` and must never read half a file.
+
+    ``person_words`` is what a person actually asked, apart from the prompt
+    Morph wrote around it: brAIn's action gate judges a change against a
+    person's words, and Morph's own instructions are not those. A Tell
+    always carries the key (empty when nobody typed anything); a learning
+    pass, which changes nothing, carries none."""
     task = {"id": task_id, "prompt": prompt, "ts": int(time.time()), "timeout": int(timeout),
             "source": "morph", "tools": tools}
+    if person_words is not None:
+        task["person_words"] = str(person_words)
     if schema:
         task["schema"] = schema
     if model:

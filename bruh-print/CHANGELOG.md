@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.2
+
+### Added
+
+- `get_status` says which stock a text label with none named prints on, and whether each template's stock is loaded.
+
+### Fixed
+
+- Printing text with no label stock named uses the stock in the printer when only one is loaded, instead of the add-on's default stock, which was refused whenever that roll was not loaded. The default still wins when it is loaded.
+- A label refused because its stock is not loaded names the stock ids that are, so brAIn can print on one of them.
+- The print services no longer show a "Roll" field the services stopped taking.
+
 ## 0.14.1
 
 No change to printing. The two places that put a file's own permissions back

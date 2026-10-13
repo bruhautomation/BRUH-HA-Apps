@@ -39,6 +39,7 @@ Stdlib only.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 
@@ -101,10 +102,12 @@ def preamble(context) -> str:
 
     speaker = _line(context.get("speaker"), NAME_MAX)
     pid = person_id(context)
-    if speaker and pid:
+    if speaker and pid and learning_on():
         lines.append(
             f"The speaker is {speaker} (person.{pid}). A preference they "
             f"state is theirs: remember it with remember_fact person=\"{pid}\".")
+    elif speaker and pid:
+        lines.append(f"The speaker is {speaker} (person.{pid}).")
     elif speaker:
         lines.append(f"The speaker is {speaker}.")
 
@@ -142,16 +145,150 @@ def preamble(context) -> str:
             "person said:\n- " + "\n- ".join(lines) + ")\n")
 
 
+# ---------------------------------------------------------------------------
+# The voice system prompt — one copy, for both voice paths
+# ---------------------------------------------------------------------------
+#
+# The worker pool and the classic listener each carried a hand copy of this
+# text and the two had drifted (one had the remember_fact line, one did
+# not; the memory block was cut on a line in one and mid-character in the
+# other). Both build it here now: the pool imports `system_prompt`, the
+# classic listener runs `brain_voice_context.py system-prompt < spec.json`.
+#
+# Identity, tone and verbosity come from exactly ONE source — the agent's
+# personality when one is set (with explicit precedence), the default style
+# otherwise; the operational block is identity-free either way. Two "You
+# are X" statements is what waters a personality down.
+
+PERSONALITY_FRAME = (
+    "PERSONALITY — this defines who you are, how you speak, and how verbose "
+    "you are. It takes precedence over any tone or style implied by the "
+    "instructions below:\n{custom}")
+
+DEFAULT_STYLE = (
+    "You are a helpful, efficient Home Assistant voice assistant. Answer in "
+    "1-2 short sentences unless the user explicitly asks for detail.")
+
+# What a voice turn is for, in the order a turn needs it. It used to open
+# "FULL authorization to control all devices — never ask for permission or
+# confirmation", directly above a capability block saying what this agent
+# may NOT reach and a protected list that refuses; a refusal then read as a
+# failure to work around rather than the household's answer. It also listed
+# sixteen tool names the tools already describe, and left out the ones a
+# voice turn most often has to go and find.
+OPERATIONAL = """You run this home's Home Assistant by voice. Your replies are spoken aloud: say the result in a short sentence a person can hear — no lists, no markdown, no entity ids.
+Act on ordinary requests straight away and confirm in a few words; you do not need to ask before turning things on or off, setting a level or running a scene. For anything that deletes, disables or removes something, say what you are doing as you do it.
+When a tool refuses, that is the household's own setting (something they protected, or have not exposed to voice): say so in one sentence and do not try another way.
+The past ("how cold did it get last night", "when did the garage open"): get_history for the last few days, get_statistics for longer. The future ("weather tomorrow"): get_weather_forecast — a weather entity's state is only the weather now.
+{remember}Labels, the Minecraft server and the light show have their own tools: print_label, minecraft_*, bright_show. A camera answers only if the household has allowed brAIn to look at it; if it refuses, say so and do not try another camera."""
+
+# The one line that depends on the add-on's `learning` switch: with it off,
+# nothing a voice turn hears is filed, and a prompt asking for it would be
+# asking the model for a call the household switched off.
+REMEMBER_LINE = (
+    'When the person states a lasting preference, a correction or a nickname '
+    '("actually…", "we call X…", "always/never…"), call remember_fact in the '
+    'same turn so it sticks.\n')
+
+
+def learning_on() -> bool:
+    """The add-on's `learning` switch, as run.sh exports it."""
+    return os.environ.get("BRAIN_ASSIST_LEARNING", "true").lower() != "false"
+
+
+TIMEZONE_LINE = (
+    "The user's timezone is {tz}. Every user message starts with the "
+    "current local time — answer times in that local timezone, never UTC.")
+
+# The flag file both area-map writers leave beside the cache when the map
+# was cut to fit (`AREA_MAP_CUT_FILE`). A map that said "current and
+# complete" over a list missing rooms told the model not to search for the
+# room it could not see. A file and not a marker line, because the
+# exposure filter drops every line that is not `Area: ids`.
+AREA_MAP_CUT_NAME = "area_map.cut"
+
+MAP_BLOCK = """
+
+Known areas and their controllable entity_ids ({completeness}):
+{area_map}
+
+Act on these entity_ids DIRECTLY with your control_* tools in your FIRST response — never call get_areas or get_all_states to verify an entity that is already listed.
+For weather questions, call get_entity_state on a Weather entity above.
+For anything not listed above, search with get_all_states (domain and name_filter arguments)."""
+
+NO_MAP_BLOCK = """
+For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to resolve the room to entity_ids first.
+If unsure of an entity_id, call get_all_states with a domain filter first."""
+
+MEMORY_BLOCK = "\n\nKnown about this household (learned):\n{memory}"
+
+
+def cut_on_line(text: str, limit: int) -> str:
+    """At most `limit` bytes of `text`, ending on a whole line.
+
+    A byte cut ends on half a fact — or half a UTF-8 character — and reads
+    as a fact it is not.
+    """
+    data = (text or "").encode("utf-8")
+    if len(data) <= limit:
+        return text or ""
+    cut = data[:limit].decode("utf-8", errors="ignore")
+    return cut.rsplit("\n", 1)[0] if "\n" in cut else ""
+
+
+def system_prompt(custom: str = "", tz: str = "", area_map: str = "",
+                  memory: str = "", capabilities: str = "",
+                  partial: bool = False, learning: bool | None = None) -> str:
+    """The whole voice system prompt, from its parts. Pure but for the
+    `learning` default, which reads the add-on's switch."""
+    custom = (custom or "").strip()
+    learning = learning_on() if learning is None else learning
+    operational = OPERATIONAL.replace("{remember}", REMEMBER_LINE if learning else "")
+    prompt = (PERSONALITY_FRAME.format(custom=custom) + "\n\n" + operational
+              if custom else DEFAULT_STYLE + "\n" + operational)
+    if tz:
+        prompt += "\n" + TIMEZONE_LINE.format(tz=tz)
+    area_map = (area_map or "").rstrip()
+    if area_map:
+        prompt += MAP_BLOCK.format(
+            area_map=area_map,
+            completeness=("cut to fit — some rooms are not listed, so search "
+                          "for one you cannot see" if partial else "complete"))
+    else:
+        prompt += NO_MAP_BLOCK
+    if (memory or "").strip():
+        prompt += MEMORY_BLOCK.format(memory=memory.rstrip())
+    return prompt + (capabilities or "")
+
+
 def _cli(argv: list[str]) -> int:
     """`preamble`: read a context object (or a whole request) on stdin and
-    print the block. Prints nothing for anything it cannot read."""
-    if not argv or argv[0] != "preamble":
-        print("usage: brain_voice_context.py preamble < context.json",
+    print the block. Prints nothing for anything it cannot read.
+
+    `system-prompt`: read {custom, tz, area_map, memory, capabilities,
+    partial} on
+    stdin and print the voice system prompt — the classic listener's door
+    to the text the pool imports.
+    """
+    verb = argv[0] if argv else ""
+    if verb not in ("preamble", "system-prompt"):
+        print("usage: brain_voice_context.py preamble|system-prompt < input.json",
               file=sys.stderr)
         return 2
     try:
         data = json.loads(sys.stdin.read() or "{}")
     except ValueError:
+        return 0 if verb == "preamble" else 1
+    if verb == "system-prompt":
+        if not isinstance(data, dict):
+            return 1
+        fields = {k: str(data.get(k) or "") for k in (
+            "custom", "tz", "area_map", "memory", "capabilities")}
+        cap = data.get("memory_max")
+        if isinstance(cap, int) and cap > 0:
+            fields["memory"] = cut_on_line(fields["memory"], cap)
+        sys.stdout.write(system_prompt(partial=data.get("partial") is True,
+                                       **fields))
         return 0
     if isinstance(data, dict) and isinstance(data.get("context"), dict):
         data = data["context"]

@@ -67,6 +67,10 @@ GATED_MCP = frozenset({
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
 })
+# A gated tool's actions that only read: asking which add-ons exist or
+# searching Modrinth changes nothing, and a gate in front of a search is a
+# model call per question.
+READ_ONLY_ACTIONS = {"minecraft_addons": frozenset({"list", "search"})}
 CONTRACT_BUILTINS = frozenset({"Bash", "Write", "Edit", "MultiEdit",
                                "NotebookEdit"})
 TAIL_BYTES = 256 * 1024
@@ -102,6 +106,26 @@ def gated(tool: str, under_contract: bool) -> bool:
     if tool.startswith(MCP_PREFIX):
         return tool[len(MCP_PREFIX):] in GATED_MCP
     return under_contract and tool in CONTRACT_BUILTINS
+
+
+def reads_only(tool: str, tool_input) -> bool:
+    name = tool[len(MCP_PREFIX):] if tool.startswith(MCP_PREFIX) else ""
+    actions = READ_ONLY_ACTIONS.get(name)
+    if not actions or not isinstance(tool_input, dict):
+        return False
+    return str(tool_input.get("action") or "").strip().lower() in actions
+
+
+def task_words() -> list[str]:
+    """What the person asked a task for, carried beside its prompt.
+
+    A caller that wraps a request in its own prompt (Morph's Tell) hands
+    the automation listener the person's words separately, and it exports
+    them here, so the gate judges the change by what was asked rather than
+    by the instructions the caller wrapped round it.
+    """
+    text = os.environ.get("BRAIN_PERSON_WORDS", "").strip()
+    return [text[:MAX_WORD_CHARS]] if text else []
 
 
 def _texts(content) -> list[str]:
@@ -186,6 +210,8 @@ def main(stdin=None) -> int:
     agreed = contract()
     if not gated(tool, agreed is not None):
         return 0
+    if reads_only(tool, payload.get("tool_input")):
+        return 0
     if voice_level() and chan == "voice":
         return 0
     try:
@@ -195,7 +221,8 @@ def main(stdin=None) -> int:
                 payload.get("tool_input"), dict) else {},
             "channel": chan,
             "session_id": str(payload.get("session_id") or "")[:64],
-            "words": person_words(str(payload.get("transcript_path") or "")),
+            "words": task_words() or person_words(
+                str(payload.get("transcript_path") or "")),
             "contract": agreed,
             "intervention": os.environ.get("BRAIN_INTERVENTION_ID", "")[:64],
             "exposed_only": os.environ.get("BRAIN_EXPOSED_ONLY", "") == "1",

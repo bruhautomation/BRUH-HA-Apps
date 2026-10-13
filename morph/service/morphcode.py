@@ -262,15 +262,16 @@ def reset(name: str) -> tuple[bool, str]:
     return True, ""
 
 
-def redo_words(name: str, version: str, history: list[str] | None = None) -> str:
-    """What brAIn is asked when an update paused a copy. The first sentence
-    is what a person reads where the request is listed."""
+def _redo_part(name: str, version: str, history: list[str] | None, row: dict) -> tuple[str, list[str]]:
+    """(the request's first sentence, what brAIn needs about one paused
+    copy): which files to read, and whether this is a three-way merge or a
+    check against modules that moved. Shared by the per-file press and by
+    Merge all, so the two cannot describe one copy differently."""
     mine = f"/config/morph/frontend/{name}"
-    row = next((r for r in status() if r["name"] == name), {})
     if row.get("why") == "others":
         moved = row.get("moved") or []
-        lines = [f"Make my change to Morph's {name} work on the new Morph ({version}).",
-                 f"Morph was updated. Its own {name} did not change, but {', '.join(moved)} did, and this house's "
+        head = f"Make my change to Morph's {name} work on the new Morph ({version})."
+        lines = [f"Morph was updated. Its own {name} did not change, but {', '.join(moved)} did, and this house's "
                  f"{mine} uses Morph's other modules, so the change is paused and Morph's own is running.",
                  f"- This house's version: {mine}",
                  f"- Morph's new modules: {paths.SHIPPED}/"]
@@ -281,8 +282,8 @@ def redo_words(name: str, version: str, history: list[str] | None = None) -> str
                      f"is and say so: Morph uses it again once you answer.")
     else:
         base = kept_base(name)
-        lines = [f"Make my change to Morph's {name} again on the new Morph ({version}).",
-                 f"Morph was updated, its own {name} changed underneath this house's change to it, so the change "
+        head = f"Make my change to Morph's {name} again on the new Morph ({version})."
+        lines = [f"Morph was updated, its own {name} changed underneath this house's change to it, so the change "
                  f"is paused and Morph's own is running.",
                  f"- This house's version: {mine}",
                  f"- Morph's new {name}: {paths.SHIPPED / name}"]
@@ -303,10 +304,53 @@ def redo_words(name: str, version: str, history: list[str] | None = None) -> str
         lines += [f"- {m}" for m in said]
     lines.append(f"If the change is no longer needed (the update already does it), delete {mine} and say so: "
                  f"Morph then runs its own.")
+    return head, lines
+
+
+def redo_words(name: str, version: str, history: list[str] | None = None) -> str:
+    """What brAIn is asked when an update paused a copy. The first sentence
+    is what a person reads where the request is listed."""
+    mine = f"/config/morph/frontend/{name}"
+    row = next((r for r in status() if r["name"] == name), {})
+    head, lines = _redo_part(name, version, history, row)
     lines.append(f"If the update rewrote the same code this house's change was in, so that there is more than one "
                  f"reasonable way to bring the two together, do not guess and do not write {mine}: answer with "
                  f"`question`, saying in one sentence what the update did to that part, with one option per way "
                  f"to resolve it and one that uses Morph's own. Each option's request must say the whole change "
                  f"to make, file paths included (the files above), because it is sent to you on its own. The "
                  f"change stays paused until one is pressed.")
+    return "\n".join([head] + lines)
+
+
+MERGE_ALL = "all"
+
+
+def paused() -> list[str]:
+    return [r["name"] for r in status() if r["status"] == "paused"]
+
+
+def redo_all_words(names: list[str], version: str, histories: dict | None = None) -> str:
+    """One request for EVERY paused copy, so an update that paused three
+    files is one press and one commit rather than three of each. Each file
+    gets the same description the per-file press gives it; the conflicts
+    are asked one at a time through `question`, and `waiting` names what is
+    still undecided so Morph keeps exactly those paused."""
+    rows = {r["name"]: r for r in status()}
+    lines = [f"Merge all of this house's paused changes to Morph's own code onto the new Morph ({version}): "
+             + ", ".join(names) + ".",
+             "Morph was updated underneath every one of them. Bring each change across, one file at a time:"]
+    for name in names:
+        head, part = _redo_part(name, version, (histories or {}).get(name), rows.get(name, {}))
+        lines += ["", f"## {name}", head, *part]
+    lines += [
+        "",
+        "Merge every file that merges cleanly, and save it. For a file where the update rewrote the same code " +
+        "this house's change was in, so that there is more than one reasonable way to bring the two together, " +
+        "do not guess and do not write that file. Answer with `question` about ONE such conflict (the first): " +
+        "say in one sentence what the update did to that part, with one option per way to resolve it and one " +
+        "that uses Morph's own, each option's request saying the whole change to make for that file, file " +
+        "paths included, because it is sent to you on its own. List in `waiting` every file still undecided, " +
+        "that one included. Morph puts every file you merged back in use, keeps the waiting ones paused, and " +
+        "the person's answer continues this merge with what is left.",
+    ]
     return "\n".join(lines)

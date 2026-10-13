@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.5.10
+
+### Added
+
+- **Update merges every paused change in one press.** When an update pauses several of your changes to Morph's own code, one note offers **Update** (merge your changes into the new version: one request to brAIn and one change you can undo) or **Not now** (keep Morph's own version running; your changes stay paused for later). Where the update rewrote the code a change was in, brAIn asks how to bring them together and merges everything else; only that file stays paused until you pick, and your answer carries the merge on. Settings has **Update all** beside each file's own **Update**, and **Remove my change** in place of "Use Morph's own".
+- Every request Morph hands brAIn carries the words the person actually asked (`person_words`), so brAIn can judge a change against those rather than against Morph's whole prompt.
+- A card file of your own in `cards/` that will not load is offered back as a suggestion, **Fix the card code …**, instead of being reported as a fault in Morph's code.
+
+### Changed
+
+- **A Tell's request to brAIn follows one procedure**: the picture first, then the request, where the thing lives (the story and Coming up are drawn by Morph's code, not by `dashboard.yaml`), the scope, the household's rules, how to make the change and what to answer. Each rule is said once; the details live in `AGENTS.md`.
+- **`AGENTS.md` is complete**: the whole schema (`hidden`, `unit`, `options`, the `lovelace` wrapper and the shorthands), every module of Morph's own code, all eleven design rules, what custom card code has to do, how to check a change and when to ask instead of act. It is split into how Morph works and the Tell answer as reference.
+- **`LEARNED.md` says who wrote each line**: `(you)`, `(tell)` or `(learned)`; a line with no mark is yours. A learning pass can no longer drop or reword a line you wrote, adds a new lesson only with two pieces of evidence or a reason you typed, and is shown what an undone change had changed. A reason given for No is evidence for the next pass rather than a lesson written at once, and the list's limit drops the oldest line Morph wrote, never yours.
+- The learning pass is shown Morph's card types, and long lists in it are cut by whole items with a count rather than mid-word.
+- A suggestion's Do it names the section or card it is about, and says it came from a suggestion; Undo's follow-up, a question's answer and a redo each say where they came from.
+- brAIn's answer lists the files it changed apart from the changes in Home Assistant, and Undo hands back only the second list. A fact brAIn files says how sure it is, and may be about a person.
+- The Ask bar tells the house's assistant that it cannot change the dashboard, and a command such as "turn on the card table lamp" is no longer taken for a dashboard change.
+- A report sent from **What do you want to fix in Morph?** about how Morph looks is marked as one, and a code suggestion sent as an issue carries the evidence for it.
+
+### Fixed
+
+- The part of the dashboard shown to brAIn is cut on a whole line with a note of how much is left, where it used to stop mid-line with nothing said.
+- Earlier turns of a conversation showed Morph's own closing sentence as what brAIn had answered; they now show what brAIn said and what Morph read back, apart, and say how many older turns are left out.
+- A learning pass that had seen 30 changes or answers stopped noticing new ones; it now runs when there is anything new.
+- A lesson from a Tell that failed is no longer written down.
+- Making a paused change again no longer asks to send it as an issue a second time.
+
+- brAIn is no longer told that custom cards must be registered in `dashboard.yaml`: Morph loads every file in `cards/` itself.
+- A problem Morph sends to brAIn's development loop points at files that exist.
+
 ## 0.5.9
 
 ### Changed

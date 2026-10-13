@@ -2,8 +2,9 @@
 
 Registers:
 * a sensor platform polling /config/.bright/state.json (show status)
-* bright.party_mode / bright.start_show / bright.stop_show, forwarded to the
-  add-on via the file-based bridge
+* bright.party_mode / bright.start_party / bright.start_show /
+  bright.stop_show / bright.get_status / bright.import_show, forwarded to
+  the add-on via the file-based bridge
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ from homeassistant.helpers import config_validation as cv
 from .bridge import send_request
 from .const import (
     DOMAIN,
+    IMPORT_TIMEOUT_S,
+    SERVICE_IMPORT_SHOW,
     SERVICE_PARTY_MODE,
     SERVICE_START_PARTY,
     SERVICE_START_SHOW,
@@ -99,7 +102,16 @@ STOP_SHOW_SCHEMA = vol.Schema(
 )
 
 
-async def _forward(kind: str, data: dict) -> dict:
+# `parties_only` skips the library scan, which is most of what this answer
+# costs, for a caller that only wants to name a saved set.
+STATUS_SCHEMA = vol.Schema({vol.Optional("parties_only"): cv.boolean})
+
+# `track` is a file name in /config/.bright/shows (what brAIn has in front
+# of it after editing one) or a track hash.
+IMPORT_SHOW_SCHEMA = vol.Schema({vol.Required("track"): cv.string})
+
+
+async def _forward(kind: str, data: dict, timeout: float | None = None) -> dict:
     """Send one request to the add-on and make its answer the caller's.
 
     The three services used to `await send_request(...)` and drop what came
@@ -112,7 +124,8 @@ async def _forward(kind: str, data: dict) -> dict:
     the automation trace and in the UI's red toast.
     """
     try:
-        response = await send_request(kind, data)
+        response = (await send_request(kind, data, timeout=timeout)
+                    if timeout else await send_request(kind, data))
     except TimeoutError as exc:
         raise HomeAssistantError(
             f"BRight did not answer in time — is the add-on running? ({exc})"
@@ -129,41 +142,58 @@ async def _forward(kind: str, data: dict) -> dict:
     return response if isinstance(response, dict) else {}
 
 
+def _answer(response: dict) -> dict:
+    """The add-on's answer as response data, without the transport's flag."""
+    return {k: v for k, v in response.items() if k != "ok"}
+
+
 def _register_services(hass: HomeAssistant) -> None:
-    async def handle_party_mode(call: ServiceCall) -> None:
-        await _forward(SERVICE_PARTY_MODE, dict(call.data))
+    # The four actions answer with what the add-on said. They used to return
+    # None and register no response support, and brAIn calls every add-on
+    # service with return_response=True so it can repeat the answer — which
+    # Core refuses outright for a service that returns nothing, before the
+    # add-on is ever asked. OPTIONAL keeps a plain automation call working.
+    async def handle_party_mode(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_PARTY_MODE, dict(call.data)))
 
-    async def handle_start_show(call: ServiceCall) -> None:
-        await _forward(SERVICE_START_SHOW, dict(call.data))
+    async def handle_start_show(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_START_SHOW, dict(call.data)))
 
-    async def handle_start_party(call: ServiceCall) -> None:
-        await _forward(SERVICE_START_PARTY, dict(call.data))
+    async def handle_start_party(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_START_PARTY, dict(call.data)))
 
-    async def handle_stop_show(call: ServiceCall) -> None:
-        await _forward(SERVICE_STOP_SHOW, dict(call.data))
+    async def handle_stop_show(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_STOP_SHOW, dict(call.data)))
 
-    hass.services.async_register(
-        DOMAIN, SERVICE_PARTY_MODE, handle_party_mode, schema=PARTY_MODE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_START_PARTY, handle_start_party,
-        schema=START_PARTY_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_START_SHOW, handle_start_show, schema=START_SHOW_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_STOP_SHOW, handle_stop_show, schema=STOP_SHOW_SCHEMA
-    )
+    for name, handler, schema in (
+            (SERVICE_PARTY_MODE, handle_party_mode, PARTY_MODE_SCHEMA),
+            (SERVICE_START_PARTY, handle_start_party, START_PARTY_SCHEMA),
+            (SERVICE_START_SHOW, handle_start_show, START_SHOW_SCHEMA),
+            (SERVICE_STOP_SHOW, handle_stop_show, STOP_SHOW_SCHEMA)):
+        hass.services.async_register(
+            DOMAIN, name, handler, schema=schema,
+            supports_response=SupportsResponse.OPTIONAL)
 
-    async def handle_status(_: ServiceCall) -> dict:
+    async def handle_status(call: ServiceCall) -> dict:
         # What is playing, which saved sets exist and which tracks have a
         # show — so a caller (brAIn, asked for "the Friday party") names a
         # set or a track that is really there.
-        result = await _forward(SERVICE_STATUS, {})
-        return {k: v for k, v in result.items() if k != "ok"}
+        return _answer(await _forward(SERVICE_STATUS, dict(call.data)))
 
     hass.services.async_register(
-        DOMAIN, SERVICE_STATUS, handle_status, schema=vol.Schema({}),
+        DOMAIN, SERVICE_STATUS, handle_status, schema=STATUS_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_import_show(call: ServiceCall) -> dict:
+        # The edited mirror file becomes the live show — the step that
+        # makes an edit brAIn made to /config/.bright/shows take effect.
+        # A refusal (broken JSON with its line, a script that will not
+        # compile) is the panel's own sentence, raised.
+        return _answer(await _forward(SERVICE_IMPORT_SHOW, dict(call.data),
+                                      timeout=IMPORT_TIMEOUT_S))
+
+    hass.services.async_register(
+        DOMAIN, SERVICE_IMPORT_SHOW, handle_import_show,
+        schema=IMPORT_SHOW_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
     )

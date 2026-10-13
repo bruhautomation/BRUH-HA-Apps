@@ -9,10 +9,12 @@ the outbox brAIn's development loop reads.
 """
 import asyncio
 import json
+import re
 import shutil
 import threading
 import time
 import unittest
+from pathlib import Path
 
 from morph_env import MorphEnv
 
@@ -157,7 +159,8 @@ class TestLearning(unittest.TestCase):
             return {"data": {
                 "suggestions": [{"title": "Move Kitchen to the top", "why": "Used every evening",
                                  "change": "Move the Kitchen section first", "kind": "dashboard"}],
-                "lessons": ["Kitchen matters most in the evening"],
+                "lessons": [{"text": "Kitchen matters most in the evening",
+                             "evidence": ["Kitchen opened 40 evenings", "Kitchen moved up twice by hand"]}],
                 "code_reports": [{"what": "The fan card cannot show speed", "detail": "x"}]}}
 
         fake = FakeBrain(env, work)
@@ -191,7 +194,10 @@ class TestLearning(unittest.TestCase):
         self.assertTrue(env.learning.decide(sid, "no", "We watch it at night")["ok"])
         self.assertEqual([], env.learning.listing())
         self.assertEqual(0, env.learning.add_suggestions([row], self.dash))
-        self.assertIn("We watch it at night", " ".join(env.learning.read_lessons()))
+        # The reason is evidence for the next pass, not a rule written now.
+        self.assertNotIn("We watch it at night", " ".join(env.learning.read_lessons()))
+        d = env.learning.digest(self.dash)
+        self.assertIn("We watch it at night", env.learning.build_prompt(d, "", [], {}, []))
 
     def test_not_now_comes_back_later(self):
         env = self.env
@@ -278,6 +284,22 @@ class TestDevloopOutbox(unittest.TestCase):
             self.assertEqual(3, row["impact"]["times"])
             env.settings.update({"report_code_issues": False})
             self.assertEqual([], env.devloop.publish("0.1.0")["rows"])
+
+    def test_every_issue_points_at_files_that_exist(self):
+        # The body sent the developer to `morph/AGENTS.md`, which is not in
+        # the repository; every path it names now has to be.
+        repo = Path(__file__).resolve().parent.parent
+        with MorphEnv() as env:
+            env.devloop.note_fault("Cards", "A fan card failed to draw", "trace")
+            env.devloop.note_request("The header is too tall", ui=True)
+            rows = env.devloop.rows()
+        self.assertEqual(2, len(rows))
+        for row in rows:
+            named = re.findall(r"(?:morph|docs|tests)/[\w./-]+\.(?:md|mjs)", row["body"])
+            self.assertIn("morph/defaults/AGENTS.md", named)
+            for path in named:
+                self.assertTrue((repo / path).is_file(), path)
+            self.assertNotIn("see morph/AGENTS.md", row["body"])
 
     def test_panel_errors_are_folded_in_and_the_file_emptied(self):
         with MorphEnv() as env:

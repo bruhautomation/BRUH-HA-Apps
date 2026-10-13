@@ -64,6 +64,26 @@ def empty() -> dict:
 UNREADABLE = "dashboard.yaml could not be read"
 
 
+def clip_lines(text: str, limit: int, rest: str) -> str:
+    """``text`` cut to whole lines within ``limit``, ending in a line that
+    says how much was cut and where the rest is. A cut nobody marks reads
+    as the end of the file, and a model then edits a dashboard it has only
+    seen the top of. One helper, because a Tell and a learning pass both
+    show brAIn part of dashboard.yaml."""
+    text = (text or "").rstrip("\n")
+    if len(text) <= limit:
+        return text
+    lines = text.split("\n")
+    kept, size = [], 0
+    for ln in lines:
+        if size + len(ln) + 1 > limit:
+            break
+        kept.append(ln)
+        size += len(ln) + 1
+    cut = len(lines) - len(kept)
+    return "\n".join(kept + [f"# … {cut} more line{'' if cut == 1 else 's'} cut; {rest}"])
+
+
 def load_text(text: str) -> tuple[dict, list[str]]:
     """Parse and normalise. Never raises: an unreadable file comes back as
     an empty dashboard and the parser's own sentence."""

@@ -143,7 +143,9 @@ def publish_state() -> None:
         "settings": s,
         "brain": brain.status(),
         "learning": {**learning.state(), "scorecard": learning.scorecard(),
-                     "lessons": learning.read_lessons()},
+                     # Marked with who wrote each, so the Settings editor
+                     # saves a line back with the source it had.
+                     "lessons": learning.read_lessons(tagged=True)},
         "suggestions": learning.listing(),
         # What brAIn is doing for Morph right now, so a tell that is still
         # running is visible after its box was closed or the page reloaded.
@@ -235,10 +237,13 @@ async def handle(kind: str, p: dict) -> dict:
         if verb == "do":
             if not item:
                 return {"ok": False, "error": "That suggestion is gone."}
-            target = {"kind": "card" if item.get("card") else "section" if item.get("section") else "dashboard",
-                      "id": item.get("card") or item.get("section") or "",
-                      "label": item["title"], "path": "A suggestion Morph made"}
-            st = tell.start(target, item["change"])
+            # The target is the card or section the suggestion is about, named
+            # as the panel names it; the suggestion's title rides as the
+            # origin, not as the name of a card that does not exist.
+            target = await asyncio.to_thread(
+                tell.target_for, "card" if item.get("card") else "section" if item.get("section") else "dashboard",
+                item.get("card") or item.get("section") or "")
+            st = tell.start(target, item["change"], origin="suggestion", note=item["title"])
             if "error" in st:
                 return {"ok": False, "error": st["error"]}
             await asyncio.to_thread(learning.mark_doing, sid, st["id"])
@@ -283,7 +288,25 @@ async def handle(kind: str, p: dict) -> dict:
             return {"ok": False, "error": "That change is not paused."}
         history = [c["message"] for c in await asyncio.to_thread(gitrepo.log, 12, f"frontend/{name}")]
         st = tell.start({"kind": "code", "id": name, "label": name, "path": REDO_PATH},
-                        morphcode.redo_words(name, VERSION, history))
+                        morphcode.redo_words(name, VERSION, history), origin="redo")
+        await asyncio.to_thread(publish_state)
+        return {"ok": "error" not in st, **st}
+    if kind == "code_merge_all":
+        # Update: every copy an update paused, in ONE Tell and one commit,
+        # rather than one press (and one commit) per file. Conflicts come
+        # back as questions; the rest is put back in use.
+        for a in tell.activity():
+            if a.get("kind") == "code" and a.get("target") == morphcode.MERGE_ALL:
+                return {"ok": True, "already": True, **(tell.read_state(a["id"]) or {"id": a["id"]})}
+        names = morphcode.paused()
+        if not names:
+            return {"ok": False, "error": "Nothing is paused."}
+        histories = {}
+        for name in names:
+            histories[name] = [c["message"] for c in await asyncio.to_thread(gitrepo.log, 12, f"frontend/{name}")]
+        st = tell.start({"kind": "code", "id": morphcode.MERGE_ALL, "label": "paused copies", "path": REDO_PATH},
+                        morphcode.redo_all_words(names, VERSION, histories), origin="redo",
+                        person_words="Merge all paused copies")
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
     if kind == "lessons":

@@ -2,6 +2,44 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.34
+
+### Added
+
+- `bright_show` can import an edited BRight show file (`action: import`), which is what makes an edit to a file in `/config/.bright/shows` the show that plays. Not on the voice level.
+- BRUH Print's status tells brAIn which stock a text label prints on and whether each template's stock is loaded.
+
+### Changed
+
+- The chat and the terminal do what they are asked: they edit the automation, script, scene or dashboard directly and say what changed, where they used to route every automation through brAIn's replay. The replay (`brain.intent`) is still offered for a new standing rule when seeing how it would have behaved helps. The generated `/config/CLAUDE.md` opens with how to work in this house, says the same, names the BRUH Minecraft, Print and BRight tools, and takes an 8 KB memory excerpt (the chat already brings in the facts about each message).
+- With *Let brAIn act without asking* on, a discussion about a card acts like the chat: it makes the change you ask for instead of pointing you at a plan. With the switch off it still asks before changing Home Assistant.
+- A voice turn is one prompt in one place (`brain_voice_context.py`), runs with no setting sources or MCP servers but brAIn's own, files what it learns with `remember_fact` during the turn (the second reflection pass after it is gone), and loads the tools a voice turn acts with up front.
+- The action gate judges a change Morph asked for by the person's own words, which Morph now sends beside its prompt, and no longer asks about searching or listing Minecraft add-ons.
+- The Gaps and Ideas streams of *Help develop brAIn* are asked with a rewritten prompt that says what a good report is, with examples, and the Design review is told why it must not file anything already reported again.
+- Every issue a Claude run files (Gaps, Ideas, Design review, *What do you want to fix?*) says what "fixed" looks like and the run's estimate of how much it touches; the run's answer must have both.
+- The next Gaps, Ideas and Design review run is shown the reports the developer closed as declined, not brAIn's problem or a duplicate, with the first line of why. The Gaps run also gets the reasons you typed when you marked a finding Wrong.
+- brAIn's first look at new signals carries three short worked examples (ignore, watch, investigate), each with a reason that answers what the row claims, and no longer shows the model its internal priority score.
+- An investigation is told how to set aside or rewrite a card only when it is looking at one, with an example of each; the open cards it is shown name the device each is about; a camera offer comes before how to answer; and a second opinion is told plainly that making no claim is a valid answer.
+- Twenty-eight of brAIn's prompts are assembled from one shared kit: every one a person reads carries the same rules on names, local time, invented numbers and privacy, every one that reads house, calendar or typed text treats it as data, and each has a worked example of a good answer. Prompts that answer through a schema no longer write their JSON shape out a second time; the guidance for each field lives in the schema.
+- A phone reply speaks of brAIn in the third person, opens with what it just read, fences what was typed so a reply cannot pose as instructions, and runs as the lighter `explain` job.
+- The Timeline's "what this adds up to" paragraph is written from the episodes alone, without Home Assistant tools it was never told about.
+- Ideas and onboarding share one definition of a card worth having; the unused one-off automation prompt is gone.
+- Tool descriptions: `call_service` is shorter, `get_baseline` points at `what_is_normal`, history and statistics point at each other, `reload_config` lists its targets, and `minecraft_teleport` says to recall (or ask once and remember) which Minecraft name is "me". `offer_resolutions` is listed only in the chat, where its buttons appear.
+
+### Security
+
+- A Minecraft server's replies, Modrinth's add-on descriptions and a music file's own tags reach a run marked as text from outside, so an instruction inside one is read as data.
+
+### Fixed
+
+- A *Help develop brAIn* run whose answer could not be read used to look like a run that found nothing. It is logged and counted per stream in the loop's status.
+- Times on an insight card are the house's own clock. Home Assistant sends history in UTC and the card's data cut the time zone off, so every time on a card was off by your UTC offset and every "today" was a UTC day. brAIn's history and statistics tools now answer in local time too.
+- `brain ask` runs with the read-only tools insight cards use. It went through the settings that pre-approve shell commands and file edits, so a question could change the house.
+- The memory a study session or `brain ask` is handed is cut at the end of a line, never mid-fact.
+- Other Home Assistant assistants are told brAIn's measurement tools by the names they are registered under (`brain_what_is_normal`, `brain_explain_change`, `brain_recall`).
+- The `call_service` tool no longer says shell commands and YAML edits around a protected entity "are not checked"; they are refused too.
+- Asking for a Minecraft player while the server is down now says the server is down, rather than that the player is offline.
+
 ## 2.18.33
 
 ### Changed

@@ -196,9 +196,16 @@ dashboard. What comes back:
   now** and **No**. Do it hands the suggestion to brAIn as an ordinary Tell.
   Not now hides it for a week. No (with a reason, if you like) means it is
   never suggested again.
-- **Lessons**, rewritten each pass into `/config/morph/LEARNED.md`. Every Tell
-  and every pass reads them. Edit them in **Settings → Learning** or in the
-  file.
+- **Lessons**, revised each pass in `/config/morph/LEARNED.md`. Every Tell
+  and every pass reads them. Each line ends with who wrote it: **(you)**,
+  **(tell)** (brAIn during a Tell) or **(learned)** (a pass). A line you
+  write — or any line with no mark — is never reworded or dropped by Morph.
+  A pass adds a lesson only with two pieces of evidence or a reason you
+  typed; a reason you give for No is read as evidence, not written down as a
+  rule. Edit them in **Settings → Learning** or in the file.
+- **A broken card of your own**: when a file in `cards/` will not load,
+  Morph offers **Fix the card code …** as a suggestion, since that code is
+  this house's and a Tell fixes it.
 - **A change to Morph itself**: something the pass thinks Morph's own code
   should do differently, with **Do it** (brAIn changes your copy of Morph,
   then asks whether to open an issue), **Send as issue** (only report it) and
@@ -226,16 +233,19 @@ your copy in place of its own after a page reload.
 - **An update can pause a copy.** If a Morph update changes one of the files
   you changed, or another of Morph's modules your copy builds on, your change
   is **paused** and Morph's own runs, because an old copy beside new modules
-  is how a panel breaks. A note says so and names what changed, with **Make
-  it again** (brAIn redoes the change on the new file, or checks it still
-  fits the modules that moved) and **Use Morph's own**. If the update
-  rewrote the same code your change was in, brAIn does not guess: it asks
-  how to bring them together, with a button for each way and one for Morph's
-  own, and your change stays paused until you pick. Your dashboard and
-  your own cards (`cards/`) are never touched by an update.
+  is how a panel breaks. One note says so and names what changed, with two
+  choices: **Update** merges your changes into the new version — every
+  paused file in one press and one change you can undo — and **Not now**
+  keeps Morph's own version running, with your changes paused until you
+  update them later. Where the update rewrote the same code a change was
+  in, brAIn does not guess: it asks how to bring them together, with a
+  button for each way and one for Morph's own, merges everything else, and
+  only that file stays paused until you pick. Your dashboard and your own
+  cards (`cards/`) are never touched by an update.
 
 **Settings → Improving Morph itself** lists every change, whether it is in
-use or paused, and **Use Morph's own** for each.
+use or paused, with **Update** for a paused one (and **Update all** when
+there are several) and **Remove my change** to go back to Morph's own.
 
 ## When Morph's own code fails
 

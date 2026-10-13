@@ -403,13 +403,28 @@ class _TabHarness(unittest.TestCase):
         self.server._activity = activity
         self.server._house_now = house_now
         self.runs = []
+        self.analyst_runs = []
 
-        def run_analyst(prompt, system, *a, **k):
+        # The paragraph is a TOOL-LESS run: the episodes in the prompt are
+        # the whole input. A run handed the reading tools went looking for
+        # the rows the tab leaves out, so the analyst stub records anything
+        # that reaches it and the tests below assert nothing does.
+        def run_claude(prompt, system, *a, **k):
+            if system != episodes.SUMMARY_SYSTEM:
+                # The sign-in check is the other tool-less run a route
+                # can start; it is not the paragraph.
+                return {"ok": True, "text": "OK", "error": "", "meta": {}}
             self.runs.append(prompt)
             return {"ok": True, "error": "",
                     "text": "A quiet evening. The television ran for three "
                             "hours and the back door was opened once.",
                     "meta": {"session_id": "sess-1"}}
+
+        def run_analyst(prompt, system, *a, **k):
+            self.analyst_runs.append(prompt)
+            return {"ok": False, "error": "the analyst was asked",
+                    "text": "", "meta": {}}
+        engine.run_claude = run_claude
         engine.run_analyst = run_analyst
         self.server._ACTIVITY_SUMMARIES.clear()
 
@@ -495,6 +510,8 @@ class TestTheTab(_TabHarness):
         self.assertFalse(one["cached"])
         self.assertTrue(two["cached"])
         self.assertEqual(len(self.runs), 1, "a second press must not spend")
+        self.assertEqual(self.analyst_runs, [],
+                         "the paragraph is written from the episodes alone")
 
     def test_asking_costs_nothing_when_nothing_happened(self):
         self.rows = [act(i, "sensor.temp", str(i)) for i in range(5)]
@@ -507,7 +524,7 @@ class TestTheTab(_TabHarness):
 
     def test_a_reply_too_short_to_be_an_answer_is_not_one(self):
         import engine
-        engine.run_analyst = lambda *a, **k: {
+        engine.run_claude = lambda *a, **k: {
             "ok": True, "error": "", "text": "Quiet.", "meta": {}}
 
         async def body(client):

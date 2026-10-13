@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import prompt_kit
 import textclip
 
 STORE = Path(os.environ.get("BRAIN_DEEP_REVIEW_FILE", "/data/deep-review.json"))
@@ -53,49 +54,62 @@ JOB = "deep_review"
 FIRST_GUESS_TOKENS = 150_000
 KINDS = ("problem", "opportunity", "question", "working")
 
-SYSTEM = """You are reviewing a whole home, once, because its owner asked.
-
-You have read-only Home Assistant tools and a long budget. Use them: look at
-how the house is actually set up and actually behaves — the automations,
-the devices that drop out, the rooms, the energy, the habits brAIn has
-measured — and say what it adds up to.
-
-You are told what brAIn already knows and has already raised. Do not repeat
-any of it. Your value is what nothing else in brAIn has said: a pattern
-across rooms, a cause behind several symptoms, something set up in a way
-that will bite later, something that is working well and should be kept.
-
-Rules:
-- Up to six observations, each one specific to THIS house: name the rooms
-  and devices by their friendly names, say what you saw, say why it matters.
-- `kind` is one of: problem, opportunity, question, working.
-- `entities` lists the entity ids you actually looked at for it.
-- `one_thing` is the single change that would matter most this month.
-- `summary` is two or three plain sentences a person reads first.
-- Never say anything about the people who live here — their health, their
-  whereabouts, who is home, their sleep. The house only.
-- No markdown in any field.
-
-Answer with JSON only, in exactly the shape the schema asks for."""
+# Person-facing: every field is read on the review's own page. A schema
+# run (SCHEMA below carries the per-field guidance), so nothing here
+# restates its shape.
+SYSTEM = prompt_kit.assemble(
+    "You review a whole home, once, because its owner pressed for it, and "
+    "say what it adds up to.",
+    inputs=(
+        "You are given what brAIn already knows and has already raised, "
+        "what it has measured, and its last weekly report."),
+    tools=(
+        "You have Home Assistant's reading tools and a long budget. Use "
+        "them: look at how the house is actually set up and behaves — the "
+        "automations, the devices that drop out, the rooms, the energy, the "
+        "habits brAIn has measured. Anything you assert, you have read."),
+    good=(
+        "Says what nothing else in brAIn has said: a pattern across rooms, "
+        "a cause behind several symptoms, something set up in a way that "
+        "will bite later, or something working well that should be kept. "
+        "Nothing it was told it already knows."),
+    example=(
+        "kind problem, title \"Three upstairs sensors share one weak "
+        "router\", detail \"The landing, bathroom and spare-room motion "
+        "sensors all route through the Landing Lamp plug, which the "
+        "bedtime automation switches off; all three drop out most nights "
+        "after 23:00.\""),
+    rules="""\
+- Up to six observations, each specific to THIS house: say what you saw
+  and why it matters.
+- `entities` lists only the entity ids you actually looked at for it.
+- No markdown in any field.""",
+)
 
 SCHEMA = {
     "type": "object",
     "properties": {
-        "summary": {"type": "string"},
+        "summary": {"type": "string", "description":
+                    "Two or three plain sentences a person reads first."},
         "observations": {
             "type": "array",
+            "description": "Up to six, each specific to this house.",
             "items": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "detail": {"type": "string"},
+                    "detail": {"type": "string", "description":
+                               "What you saw and why it matters."},
                     "kind": {"type": "string", "enum": list(KINDS)},
-                    "entities": {"type": "array", "items": {"type": "string"}},
+                    "entities": {"type": "array", "items": {"type": "string"},
+                                 "description": "Entity ids you actually "
+                                                "looked at for it."},
                 },
                 "required": ["title", "detail", "kind"],
             },
         },
-        "one_thing": {"type": "string"},
+        "one_thing": {"type": "string", "description":
+                      "The single change that would matter most this month."},
     },
     "required": ["summary", "observations", "one_thing"],
 }

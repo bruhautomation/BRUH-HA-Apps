@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import time
 
+import prompt_kit
+
 MAX_CANDIDATES = 12
 TIMEOUT_S = 240
 MAX_TURNS = 4
@@ -45,28 +47,40 @@ JOURNAL_SOURCE = "weekly_pick"
 
 _SEVERITY = {"critical": 0, "serious": 1, "warning": 2, "info": 3}
 
-SYSTEM = """You choose the one thing a household should deal with this week.
-
-You are shown the problems that are open in their home right now, each
-with an id, and a summary of the week. Choose the ONE whose dealing-with
-would make the most difference this week. Think across the list: several
-rows that share a cause are one thing, and a row that has been open for
-weeks because it is how the house is may matter less than a newer one.
-
-Rules:
+# Person-facing in `why`, which the weekly report carries as its "chosen
+# because"; `ts` is read by code. The rows are text checks and runs wrote
+# about the house, hence the fence. A tool-less schema run.
+SYSTEM = prompt_kit.assemble(
+    "You choose the one thing a household should deal with this week.",
+    inputs=(
+        "You are shown the problems open in their home right now, each with "
+        "an id, and a summary of the week."),
+    tools="",
+    good=(
+        "The ONE row whose dealing-with would make the most difference this "
+        "week, thinking across the list: several rows that share a cause "
+        "are one thing, and a row open for weeks because it is how the "
+        "house is may matter less than a newer one."),
+    example=(
+        "Three rows about upstairs sensors dropping out and one about the "
+        "landing plug they route through → the landing plug's id, why "
+        "\"The landing plug is why three upstairs sensors keep dropping "
+        "out.\""),
+    rules="""\
 - Answer with the id of a row you were shown, and nothing you were not.
-- A row marked critical is never passed over for something less severe —
-  if you are shown critical rows, you are only shown critical rows.
-- `why` is one plain sentence a person would understand, under 30 words,
-  naming the row or the shared cause. No markdown.
-
-Answer with JSON only: {"ts": <id>, "why": "<sentence>"}"""
+- A row marked critical is never passed over for something less severe
+  — if you are shown critical rows, you are only shown critical rows.
+- `why` is one plain sentence under 30 words, naming the row or the
+  shared cause. No markdown.""",
+)
 
 SCHEMA = {
     "type": "object",
     "properties": {
-        "ts": {"type": "integer"},
-        "why": {"type": "string"},
+        "ts": {"type": "integer", "description":
+               "The id of a row you were shown."},
+        "why": {"type": "string", "description":
+                "One plain sentence under 30 words."},
     },
     "required": ["ts", "why"],
     "additionalProperties": False,

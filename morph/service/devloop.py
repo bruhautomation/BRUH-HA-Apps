@@ -141,12 +141,36 @@ def withdraw(fp: str) -> dict:
     return {"ok": True}
 
 
+_CARD_LOAD = re.compile(r"^Card code (\S+?) failed to load: (.*)$", re.S)
+
+
+def house_card(row: dict) -> bool:
+    """Route a failed load of THIS HOUSE's card code back to the house.
+
+    A file in /config/morph/cards is code brAIn wrote for this house in a
+    Tell, so a broken one is fixed by another Tell here, not by Morph's
+    developers: filing it as a fault in Morph's code sent them a bug they
+    cannot see and cannot fix. It becomes a suggestion whose Do it asks
+    brAIn to fix the file. Answers whether the row was the house's."""
+    if str(row.get("kind") or "") != "card" or str(row.get("card_type") or "") != "custom":
+        return False
+    m = _CARD_LOAD.match(str(row.get("message") or "").strip())
+    if not m or not (paths.CARDS_DIR / m.group(1)).is_file():
+        return False
+    import learning  # here, not at the top: learning reaches devloop lazily too
+    learning.house_card_broken(m.group(1), m.group(2), now=float(row.get("ts") or 0) or None)
+    return True
+
+
 def ingest_errors() -> int:
     """Fold what the panel reported (``errors.jsonl``, appended by the
     integration) into the ledger, then empty the file."""
     rows = paths.read_jsonl(paths.ERRORS, limit=2000)
     for r in rows:
         kind = str(r.get("kind") or "panel")
+        if house_card(r):
+            continue
+
         area = {"card": "Cards", "layout": "Layout", "panel": "Panel",
                 "history": "History"}.get(kind, "Panel")
         what = str(r.get("message") or "").strip()
@@ -161,6 +185,16 @@ def ingest_errors() -> int:
     return len(rows)
 
 
+# Where the developer who picks the issue up starts. It named
+# `morph/AGENTS.md`, which does not exist in the repository: the AGENTS.md
+# Morph ships is the guide brAIn reads on a house, under `defaults/`.
+FIX_WHERE = ("Fix it in the repository's `morph/` add-on. How Morph is built: "
+             "CLAUDE.md's \"Morph specifics\" and docs/design/morph-ui.md; what "
+             "brAIn is told on a house: morph/defaults/AGENTS.md. Check a change "
+             "with tests/manual/measure-morph.mjs (the fake house is "
+             "tests/manual/morph-fixture.mjs).")
+
+
 def rows(now: float | None = None) -> list[dict]:
     now = now or time.time()
     out = []
@@ -171,10 +205,16 @@ def rows(now: float | None = None) -> list[dict]:
         if r.get("source") == "person" and r.get("where") in ("Morph · Looks", "Morph · From you"):
             # Somebody's own words: quoted as they are, not dressed as a
             # count of something Morph noticed.
-            out.append({"where": r["where"], "what": r["what"], "detail": detail[:400],
-                        "body": detail + "\n\nFix it in the repository's `morph/` add-on "
-                                         "(see morph/AGENTS.md for how Morph is built).",
-                        "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
+            row = {"where": r["where"], "what": r["what"], "detail": detail[:400],
+                   "body": detail + "\n\n" + FIX_WHERE,
+                   "impact": {"times": r["count"], "days": len(r.get("days") or [])}}
+            if r["where"] == "Morph · Looks":
+                # brAIn's look stream marks a report about how something
+                # looks with `ux`, which is what files it as devloop:ux and
+                # sends the cloud routine to the pane; a ticked box here is
+                # the same claim and has to travel the same way.
+                row["ux"] = True
+            out.append(row)
             if len(out) >= MAX_ROWS:
                 break
             continue
@@ -189,7 +229,7 @@ def rows(now: float | None = None) -> list[dict]:
             "",
             *fenced,
             "",
-            "Fix it in the repository's `morph/` add-on (see morph/AGENTS.md for how Morph is built).",
+            FIX_WHERE,
         ])
         out.append({"where": r["where"], "what": r["what"], "detail": r.get("detail", "")[:400],
                     "body": body, "impact": {"times": r["count"], "days": len(r.get("days") or [])}})

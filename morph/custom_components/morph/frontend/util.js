@@ -186,3 +186,31 @@ export function importWithRetry(url, opts) {
     return new Promise((r) => setTimeout(r, delay)).then(() => load(again));
   });
 }
+
+// ------------------------------------------------------------- the Ask bar
+
+// Words that ask for a change to the DASHBOARD rather than a question or a
+// command for the house: a change verb, then something the page is made
+// of. Two narrowings, because the house's own devices share the page's
+// nouns: a noun used as the name of a thing ("the card table lamp", "the
+// chart room light") is not the page; and a device command ("turn on…",
+// "dim…", "open…") is the house's unless it names the page outright.
+const CHANGE_VERB = /\b(add|remove|delete|hide|show(?! me\b)|move|put|rename|make|change|resize|swap|replace|get rid of|bring back|restore|reorder|group|split|merge|drop|take (?:out|off|away))\b/i;
+const PAGE_NOUN = /\b(card|cards|tile|tiles|section|sections|dashboard|greeting|header|story|coming up|timeline|scenes? line|layout|column|columns|widget|chart|graph|morph|this page|the page|screen)\b(?!\s+(?:table|tables|room|rooms|reader|readers|game|games|lamp|lamps|light|lights|shelf|desk|player|printer)\b)/i;
+const DEVICE_COMMAND = /^\s*(?:please\s+)?(?:turn\s+(?:on|off|up|down)|switch\s+(?:on|off)|dim|brighten|open|close|lock|unlock|start|stop|play|pause|set|run|arm|disarm)\b/i;
+const PAGE_ITSELF = /\b(dashboard|morph|this page|the page|layout)\b/i;
+
+export function isDashChange(q) {
+  q = String(q || '');
+  const verb = CHANGE_VERB.exec(q);
+  if (!verb) return false;
+  if (!PAGE_NOUN.test(q.slice(verb.index))) return false;
+  if (DEVICE_COMMAND.test(q) && !PAGE_ITSELF.test(q)) return false;
+  return true;
+}
+
+// The one sentence of context the house's conversation agent is given with
+// an Ask: it cannot write Morph's files, so it must never say it changed
+// the dashboard (house report: "it says it's making changes, but none of
+// them are applied").
+export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the house’s dashboard. You cannot change the dashboard: if the person asks for a change to it, say that dashboard changes are made with Morph’s Tell (hold the thing in Edit, or press “Change the dashboard instead”) and do not claim to have changed it.';

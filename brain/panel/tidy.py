@@ -52,6 +52,7 @@ import time
 from typing import Any
 
 import atomic_write
+import prompt_kit
 
 STORE = os.environ.get("BRAIN_TIDY_FILE", "/data/tidy.json")
 
@@ -171,31 +172,37 @@ def digest(snap: dict) -> dict:
             "style": style}
 
 
-SYSTEM = """You tidy a Home Assistant house's names, rooms and voice aliases.
-
-You are given the entities and devices that need it, the house's rooms, and
-examples of names the household already uses. Propose changes a person will
-review one row at a time. Nothing you write is applied without their tick.
-
-Rules:
-- Match the house's OWN naming style (look at the examples): its word
-  order, its room-first or thing-first habit, its capitalisation.
+# Person-facing: every row is reviewed by somebody, one at a time, and the
+# values become the names a household says out loud. The names it reads
+# were typed by people and integrations, hence the fence. A tool-less
+# schema run; SCHEMA's descriptions carry what each field holds.
+SYSTEM = prompt_kit.assemble(
+    "You tidy a Home Assistant house's names, rooms and voice aliases. "
+    "Nothing you write is applied without somebody ticking it.",
+    inputs=(
+        "You are given the entities and devices that need it, the house's "
+        "rooms, and examples of names the household already uses."),
+    tools="",
+    good=(
+        "Rows in the house's OWN naming style — its word order, its "
+        "room-first or thing-first habit, its capitalisation — short enough "
+        "to say out loud."),
+    example=(
+        "Household names like \"Kitchen Ceiling\" and \"Lounge Lamp\"; a "
+        "device \"TS0601 a4c138f2\" in the kitchen → kind name, target "
+        "device, value \"Kitchen Blind\", why \"a blind motor in the "
+        "kitchen; matches room-first names\"."),
+    rules="""\
 - A name never contains a serial number, MAC, IEEE address or hex id.
-- `name` rows rename an entity (target "entity") or a device (target
-  "device"). Keep names short: what somebody would call it out loud.
-- `area` rows put a device (target "device") or an entity (target
-  "entity") into one of the listed rooms. The value is the room's id
-  exactly as listed. Never invent a room; if none fits, propose nothing.
-- `alias` rows add a short spoken phrase for an entity (target "entity"),
-  such as "big light" or "telly", that Assist should also understand.
-  Only aliases a person would plausibly say; at most two per entity.
+- name rows rename an entity or a device; area rows put a device or an
+  entity into one of the listed rooms, by the room's id exactly as
+  listed — never invent a room; if none fits, propose nothing; alias rows
+  add a short spoken phrase for an entity ("big light", "telly") that
+  Assist should also understand — only what a person would plausibly
+  say, at most two per entity.
 - Only use ids exactly as given. Never propose for anything not listed.
-- `why` is one short clause saying what you went on.
-- Propose nothing rather than a guess. An empty list is a fine answer.
-
-Answer with JSON only: {"rows": [{"kind": "name"|"area"|"alias",
-"target": "entity"|"device", "id": "...", "value": "...", "why": "..."}]}
-"""
+- Propose nothing rather than a guess. An empty list is a fine answer.""",
+)
 
 SCHEMA = {
     "type": "object",
@@ -207,9 +214,12 @@ SCHEMA = {
                 "properties": {
                     "kind": {"type": "string", "enum": list(KINDS)},
                     "target": {"type": "string", "enum": list(TARGETS)},
-                    "id": {"type": "string"},
-                    "value": {"type": "string"},
-                    "why": {"type": "string"},
+                    "id": {"type": "string", "description":
+                           "The entity or device id, exactly as given."},
+                    "value": {"type": "string", "description":
+                              "The new name, the room's id, or the alias."},
+                    "why": {"type": "string", "description":
+                            "One short clause saying what you went on."},
                 },
                 "required": ["kind", "target", "id", "value"],
             },

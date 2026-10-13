@@ -57,6 +57,8 @@ from __future__ import annotations
 
 import time
 
+import prompt_kit
+
 KINDS = ("card_question", "one_off", "standing_rule", "automation_edit",
          "case_ending", "defer", "remember", "study", "explain", "scenes",
          "chat")
@@ -105,42 +107,55 @@ STATE: dict = {"day": "", "runs": 0, "fallbacks": 0, "last_error": "",
                "last": 0.0, "routed": {}}
 
 
-SYSTEM = """You read one message a homeowner typed to their smart home's \
-assistant, brAIn, and say what they want done with it. You do not answer \
-it and you do not act on it: you route it.
-
+# Model-facing: code reads every route and decides what each one does; the
+# person never sees this run's words. Their message is the outside text,
+# so it is fenced. A tool-less schema run — the shape is SCHEMA's.
+SYSTEM = prompt_kit.assemble(
+    "You read one message a homeowner typed to their smart home's "
+    "assistant, brAIn, and say what they want done with it. You do not "
+    "answer it and you do not act on it: you route it.",
+    inputs=(
+        "You are given where they typed it, the report they are looking at "
+        "when there is one, and the message."),
+    tools="",
+    good=(
+        "A route for each thing the message holds — usually one, sometimes "
+        "two or three — with `text` the part it is about, in their words. "
+        "Never a device, a report or a room the message does not mention."),
+    example=(
+        "Under a battery report: \"it's mains powered, there is no battery\" "
+        "→ case_ending, ending wrong, note \"It is mains powered, there is "
+        "no battery\". \"Why did the porch light come on at 3am? And remind "
+        "me tomorrow\" → explain (subject \"porch light\") and defer "
+        "(hours 24)."),
+    rules="""\
 Routes (use only these words):
-- card_question: a question about the house to answer with data ("how much \
-power did the heating use this week?").
-- one_off: something that should happen ONCE when a condition is met ("when \
-the guests leave, turn the porch light off").
-- standing_rule: something that should happen EVERY time ("turn the hall \
-light on whenever the front door opens after dark").
-- automation_edit: change an automation that already exists ("make the \
-landing light stay on longer").
-- case_ending: about the report they are looking at — ending is one of \
-"wrong" (the report is mistaken or does not apply here — the device has \
-no battery, it is mains powered, that reading is normal in this house — \
-with their reason as note), "done" (they repaired, replaced or changed \
-something, so the problem it reported is over), "todo" (they will do it \
-later), "not_now" (dismiss for now). Why a report does not apply is the \
-note of a "wrong", never a "done".
+- card_question: a question about the house to answer with data ("how
+  much power did the heating use this week?").
+- one_off: something that should happen ONCE when a condition is met
+  ("when the guests leave, turn the porch light off").
+- standing_rule: something that should happen EVERY time ("turn the hall
+  light on whenever the front door opens after dark").
+- automation_edit: change an automation that already exists ("make the
+  landing light stay on longer").
+- case_ending: about the report they are looking at. ending is "wrong"
+  (the report is mistaken or does not apply here — no battery, mains
+  powered, that reading is normal in this house — with their reason as
+  note), "done" (they repaired, replaced or changed something, so the
+  problem is over), "todo" (they will do it later) or "not_now" (dismiss
+  for now). Why a report does not apply is the note of a "wrong", never a
+  "done".
 - defer: remind them about that report later; hours if they said when.
-- remember: a fact about the house to keep ("the garage freezer is \
-switched off in winter").
+- remember: a fact about the house to keep ("the garage freezer is
+  switched off in winter").
 - study: go and learn about something in depth ("figure out the boiler").
-- explain: WHY something happened, why it did not happen, or why brAIn \
-did not tell them ("why did the porch light come on at 3am?", "why didn't \
-you tell me the garage was open?"). subject is the device they mean, as \
-they named it.
+- explain: WHY something happened, why it did not happen, or why brAIn
+  did not tell them ("why didn't you tell me the garage was open?");
+  subject is the device they mean, as they named it.
 - scenes: design lighting moods for a room; subject is the room.
-- chat: anything else — a conversation.
-
-text is the part of the message the route is about, in their words. A \
-message may hold two or three things; give a route for each. Never invent \
-a device, a report or a room that the message does not mention.
-
-Answer only with the JSON object."""
+- chat: anything else — a conversation.""",
+    person_facing=False,
+)
 
 SCHEMA = {
     "type": "object",
@@ -153,11 +168,18 @@ SCHEMA = {
                 "type": "object",
                 "properties": {
                     "kind": {"type": "string", "enum": list(KINDS)},
-                    "text": {"type": "string"},
-                    "ending": {"type": "string", "enum": ["", *ENDINGS]},
-                    "note": {"type": "string"},
-                    "hours": {"type": "number", "minimum": 0},
-                    "subject": {"type": "string"},
+                    "text": {"type": "string", "description":
+                             "The part of the message this route is "
+                             "about, in their words."},
+                    "ending": {"type": "string", "enum": ["", *ENDINGS],
+                               "description": "Only for case_ending."},
+                    "note": {"type": "string", "description":
+                             "A wrong's reason, in their words."},
+                    "hours": {"type": "number", "minimum": 0,
+                              "description": "Only for defer, when they "
+                                             "said when."},
+                    "subject": {"type": "string", "description":
+                                "explain: the device; scenes: the room."},
                 },
                 "required": ["kind"],
                 "additionalProperties": False,
@@ -299,41 +321,59 @@ def parse(data, surface: str, words: str) -> list[dict] | None:
 
 EXPLAIN_KINDS = ("why_happened", "why_not_happened", "why_not_told")
 
-EXPLAIN_SYSTEM = """You answer one WHY question a homeowner asked about \
-their smart home, as brAIn, the assistant that watches it. There are three \
-kinds and you say which: why something happened (an automation, a person, \
-a device); why something did NOT happen (an automation that did not run, a \
-condition that stopped it); why brAIn did NOT tell them about something.
-
-You have Home Assistant's reading tools, including explain_decision (what \
-brAIn decided not to say, and why), get_automation_config, \
-get_automation_trace, search_related, explain_change and get_logbook. \
-Look before you answer. You cannot change anything.
-
-Rules:
-- Cite what you read: every claim names the trace, logbook row or decision \
-row it came from, in cited.
-- "brAIn has no record of seeing it" and "brAIn saw it and decided not to \
-say" are different answers. A decision row is the second; no row at all \
-is the first — say so in those words, and never guess a reason for a \
-silence nothing recorded.
-- Write for a person: plain words and the names they use, under 120 words, \
-no markdown.
-- offer is one change brAIn could make about it next, phrased as \
-something they could ask for ("Raise these again for the garage freezer"), \
-or "" when none fits.
-
-Answer only with the JSON object."""
+# Person-facing: `answer` and `offer` are read by the person who asked. A
+# schema run with reading tools; EXPLAIN_SCHEMA holds the shape.
+EXPLAIN_SYSTEM = prompt_kit.assemble(
+    "You answer one WHY question a homeowner asked about their smart home. "
+    "There are three kinds and you say which: why something happened (an "
+    "automation, a person, a device); why something did NOT happen (an "
+    "automation that did not run, a condition that stopped it); why brAIn "
+    "did NOT tell them about something.",
+    inputs=(
+        "You are given their question, the device they mean, the report "
+        "they asked it about, and what brAIn's decision trail holds about "
+        "it."),
+    tools=(
+        "You have Home Assistant's reading tools, including "
+        "explain_decision (what brAIn decided not to say, and why), "
+        "get_automation_config, get_automation_trace, search_related, "
+        "explain_change and get_logbook. Look before you answer; you can "
+        "change nothing."),
+    good=(
+        "Answers the question in its first sentence, from something read, "
+        "and names in `cited` the trace, logbook row or decision row each "
+        "claim came from."),
+    example=(
+        "\"Why did the porch light come on at 3am?\" → kind happened; "
+        "answer \"The Porch motion automation turned it on at 03:02 when "
+        "the porch camera saw motion; its trace shows the trigger and no "
+        "condition stopped it.\"; offer \"Only turn the porch light on for "
+        "motion before midnight\"."),
+    rules="""\
+- "brAIn has no record of seeing it" and "brAIn saw it and decided not to
+  say" are different answers. A decision row is the second; no row at
+  all is the first — say so in those words, and never guess a reason for
+  a silence nothing recorded.
+- Under 120 words, no markdown.
+- offer is one change brAIn could make about it next, phrased as
+  something they could ask for ("Raise these again for the garage
+  freezer"), or "" when none fits.""",
+)
 
 EXPLAIN_SCHEMA = {
     "type": "object",
     "properties": {
         "kind": {"type": "string", "enum": list(EXPLAIN_KINDS)},
-        "answer": {"type": "string"},
+        "answer": {"type": "string", "description":
+                   "Under 120 words, no markdown, for the person who asked."},
         "cited": {"type": "array", "maxItems": 8,
-                  "items": {"type": "string"}},
-        "offer": {"type": "string"},
-        "no_record": {"type": "boolean"},
+                  "items": {"type": "string"},
+                  "description": "The trace, logbook row or decision row "
+                                 "each claim came from."},
+        "offer": {"type": "string", "description":
+                  "One change brAIn could make next, or \"\"."},
+        "no_record": {"type": "boolean", "description":
+                      "true when nothing recorded the silence asked about."},
     },
     "required": ["kind", "answer"],
     "additionalProperties": False,

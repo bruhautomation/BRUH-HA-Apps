@@ -174,6 +174,11 @@ class TestTheLLMAPI(IntegrationCase):
         self.assertEqual(sorted(tools), ["brain_explain_change", "brain_recall",
                                          "brain_what_is_normal"])
         self.assertIn("only read", instance.api_prompt)
+        # The prompt names each tool by the name it is registered under: it
+        # said `what_is_normal` while the tool was `brain_what_is_normal`,
+        # so every other agent was told about tools it could not find.
+        for name in tools:
+            self.assertIn(name, instance.api_prompt)
         unregister()
         self.assertNotIn(self.pkg.llm_api.API_ID, self.hass.llm_apis)
 

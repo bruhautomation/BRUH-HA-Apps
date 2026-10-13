@@ -30,6 +30,7 @@ class _FakeBrain(threading.Thread):
         self.results = results_dir
         self.answer = answer
         self.seen_prompt = None
+        self.seen_task = None
 
     def run(self):
         deadline = time.monotonic() + 5
@@ -38,6 +39,7 @@ class _FakeBrain(threading.Thread):
                 task = json.loads(task_file.read_text())
                 task_file.unlink()
                 self.seen_prompt = task["prompt"]
+                self.seen_task = task
                 self.results.mkdir(parents=True, exist_ok=True)
                 body = (self.answer(task) if callable(self.answer)
                         else self.answer)
@@ -93,6 +95,9 @@ class TestRoundTrip(ClaudeDirectorCase):
         self.assertIn("living", brain.seen_prompt)
         self.assertIn('order:"x"', brain.seen_prompt)
         self.assertIn("no prose", brain.seen_prompt)
+        # A task with no `tools` runs with brAIn's full grant: Bash, file
+        # edits, every acting tool. A show script needs none of them.
+        self.assertEqual("read_only", brain.seen_task["tools"])
 
     def test_a_failed_task_raises(self):
         brain = _FakeBrain(claude_director.TASKS_DIR,
@@ -284,14 +289,13 @@ class TestTheAnswerIsParsedAsModelsActuallyWriteIt(unittest.TestCase):
             claude_director._extract_json(
                 'Sure! Here is the show:\n```json\n{"a": 1}\n```\nEnjoy.'))
 
-    def test_the_contract_says_not_to_write_comments(self):
-        """The root cause, guarded: the example is annotated, so the
-        instruction that the annotation is not part of the answer has to
-        travel with it."""
+    def test_the_contract_shows_no_annotated_json_to_imitate(self):
+        """The root cause, removed rather than warned about: the shape is
+        described in prose and enforced by a schema, so there is no
+        `//`-annotated example left for a model to copy back."""
         contract = claude_director.schema_contract()
-        self.assertIn("//", contract, "the example is still annotated")
-        self.assertIn("strict JSON", contract)
-        self.assertIn("trailing comma", contract)
+        self.assertNotIn("//", contract)
+        self.assertNotIn("<seconds>", contract)
 
 
 class TestInventingEffectsFromTheRoom(ClaudeDirectorCase):

@@ -42,6 +42,7 @@ import os
 import time
 
 import energy
+import prompt_kit
 
 # Read sitting down rather than off a lock screen, so longer than the
 # brief — but a "report" people scroll is a report people archive.
@@ -71,26 +72,43 @@ WEEK_S = 7 * 86400
 # panel still send this week's without ever sending two.
 MIN_GAP_S = 6 * 86400
 
-SYSTEM = """You write one short weekly message about somebody's home.
-
-You are given the week's own numbers, already gathered. Say them the way
-a person who lives there would, in under 150 words, in plain sentences
-and at most three short paragraphs. No greeting, no sign-off, no
-markdown, no bullet points, no headings — this is delivered as a
-notification and read by everyone in the house.
-
-Rules that matter more than style:
-- Say only what the numbers support. Never invent one, and never round a
-  number into a different claim ("about double" for 40% more).
-- Cover the energy, what was found and answered, and what was learned —
-  briefly. Then end with the one thing to do, which has already been
-  chosen for you: write about that one and no other.
+# Person-facing free text, read by everyone in the house as a
+# notification. The shared rules (no invented numbers, names, local time,
+# privacy) are prompt_kit's; what is left is this report's own shape. It
+# runs with reading tools, capped in words here because a report that goes
+# looking turns into next week's news.
+SYSTEM = prompt_kit.assemble(
+    "You write one short weekly message about one home, delivered as a "
+    "notification and read by everyone in the house.",
+    inputs=(
+        "You are given the week's own numbers, already gathered: the "
+        "energy, the problems found and answered, what was learned, and "
+        "the one thing to do this week, already chosen."),
+    tools=(
+        "You have Home Assistant's reading tools. Use at most a few calls, "
+        "to make one thing specific — the cause of an energy change, the "
+        "one thing to do — never to find new material: anything you go "
+        "and discover is next week's."),
+    good=(
+        "Under 150 words, at most three short paragraphs, in this order: "
+        "the energy with ONE cause; what was found and answered, with one "
+        "example; one thing that was learned; then the chosen thing with "
+        "what to do about it. Write about the chosen one and no other."),
+    example=(
+        "\"The house used 182 kWh, 14% more than last week, most of it the "
+        "heat pump on the three cold nights. Five problems were answered, "
+        "including the garage freezer drifting warm, which was real. brAIn "
+        "learned that the back bedroom radiator is off on purpose. This "
+        "week: replace the front door lock's battery, now at 8%.\""),
+    rules="""\
+- Never round a number into a different claim ("about double" for 40%
+  more).
 - A section that was unavailable is not a zero. Leave it out entirely
   rather than reporting nothing as good news.
-- You have read-only tools. Use them to make one thing specific, not to
-  find new material — anything you go and discover is next week's.
-- No praise, no reassurance, no "a great week for the house".
-"""
+- No greeting, no sign-off, no markdown, no bullet points, no headings,
+  no praise and no reassurance ("a great week for the house").""",
+    output="Answer with the message and nothing else.",
+)
 
 
 # ---------------------------------------------------------------------------

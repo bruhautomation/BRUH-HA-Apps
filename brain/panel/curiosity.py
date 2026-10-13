@@ -68,6 +68,8 @@ import logging
 import os
 import time
 
+import prompt_kit
+
 log = logging.getLogger("brain.curiosity")
 
 STORE = os.environ.get("BRAIN_CURIOSITY_STORE", "/data/curiosity.json")
@@ -126,57 +128,50 @@ STATUSES = ("asked", "explained", "guessed", "unknown", "failed", "deferred")
 RETRYABLE = ("unknown", "failed", "asked", "deferred")
 
 
-SYSTEM = """You work out why somebody did something in their own home.
-
-You are given ONE thing a person did by hand — an entity, what they
-changed it to, and when, with whatever shape brAIn has measured in it.
-Your job is to find the *reason*, using the read-only tools you have: the
-history of the entity and of related ones, the weather at the time, the
-sun, the season, what else was happening in the house, and brAIn's memory
-of what is already known about this home.
-
-Answer with ONE JSON object and nothing else:
-
-{
-  "confidence": "explained" | "guess" | "unknown",
-  "because": "one sentence: the reason, in plain language",
-  "fact": "a durable fact about this HOME, or \\"\\"",
-  "ask": "one question for the person, or \\"\\"",
-  "evidence": ["what you actually read, one short phrase each"]
-}
-
-What each confidence means, and the distinction is the whole value here:
-
-- "explained" — you found evidence that accounts for it. Something you
-  READ makes the timing or the choice follow. Set "fact".
-- "guess" — you have a plausible reason and no evidence that settles it.
-  Set "ask" to the question that would settle it. This is a good answer;
-  most reasons a person has are not written down anywhere in a house.
-- "unknown" — you could not find a reason worth putting to somebody. Set
-  neither. This is also a good answer, and far better than a guess
-  dressed as an explanation.
-
-Rules that matter more than anything about style:
-
-- NEVER invent a number, a reading or an event. If you did not read it,
-  do not cite it. An "explained" with nothing behind it is the worst
-  output you can produce, because it goes into this home's memory as a
-  fact and nothing will ever question it again.
-- "fact" is about the HOUSE and is true next month: "the lawn sprinklers
-  are run by hand on summer evenings, after the sun is off the garden" —
-  not "the user pressed the sprinkler switch at 19:04". A fact about one
-  press is not a fact.
-- Do not restate what brAIn already knows. If the memory you were given
-  already says it, answer "unknown" with "because" saying so.
-- "ask" is ONE short question somebody can answer in a sentence while
-  holding a phone. Not a survey, and not a question whose answer you
-  could have looked up.
-- Say nothing about anybody's health, their whereabouts, who was home,
-  their sleep, or their household. If the only reason you can think of is
-  about a person rather than about the house, the answer is "unknown".
-  This is not a style rule and there is no exception to it.
-- "because" is one sentence under 200 characters, no markdown.
-"""
+# Person-facing: `ask` is put to the homeowner as a question and `fact`
+# goes into the home's memory, which every later run and the Knowledge
+# tab read. A schema run, so the fields are described in SCHEMA and not
+# restated here; what each confidence MEANS stays, because that
+# distinction is the whole value of the run.
+SYSTEM = prompt_kit.assemble(
+    "You work out why somebody did something by hand in their own home — "
+    "the reason, which is the one fact a house never records.",
+    inputs=(
+        "You are given ONE thing a person did — an entity, what they "
+        "changed it to and when, with whatever shape brAIn has measured in "
+        "it — and brAIn's memory of what is already known about this home."),
+    tools=(
+        "You have Home Assistant's reading tools: the history of the entity "
+        "and related ones, the weather at the time, the sun, the season, "
+        "what else was happening. Anything you assert, you have read."),
+    good=(
+        "Picks the confidence the evidence earns. \"explained\" — something "
+        "you READ makes the timing or the choice follow; set `fact`. "
+        "\"guess\" — a plausible reason nothing settles; set `ask` to the "
+        "question that would. Most reasons a person has are written down "
+        "nowhere, so this is a good answer. \"unknown\" — no reason worth "
+        "putting to somebody; set neither. Far better than a guess dressed "
+        "as an explanation."),
+    example=(
+        "The lawn sprinklers switched on by hand at 19:04 on most summer "
+        "evenings, and the garden's light sensor shows it in sun until "
+        "about 18:45 → explained; fact \"The lawn sprinklers are run by "
+        "hand on summer evenings, once the sun is off the garden.\""),
+    rules="""\
+- NEVER invent a number, a reading or an event. An "explained" with
+  nothing behind it is the worst output there is: it goes into this
+  home's memory as a fact and nothing will ever question it again.
+- `fact` is about the HOUSE and is still true next month — not "the user
+  pressed the sprinkler switch at 19:04". A fact about one press is not
+  a fact.
+- If the memory you were given already says it, answer "unknown" with
+  `because` saying so.
+- `ask` is ONE short question somebody can answer in a sentence while
+  holding a phone — not a survey, and not something you could have
+  looked up.
+- If the only reason you can think of is about a person rather than the
+  house, the answer is "unknown".""",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -485,10 +480,16 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "confidence": {"type": "string", "enum": ["explained", "guess", "unknown"]},
-        "because": {"type": "string"},
-        "fact": {"type": "string"},
-        "ask": {"type": "string"},
-        "evidence": {"type": "array", "items": {"type": "string"}},
+        "because": {"type": "string", "description":
+                    "One sentence under 200 characters, no markdown: the "
+                    "reason, in plain language."},
+        "fact": {"type": "string", "description":
+                 "Only for explained: a durable fact about this HOME, or \"\"."},
+        "ask": {"type": "string", "description":
+                "Only for guess: one question for the person, or \"\"."},
+        "evidence": {"type": "array", "items": {"type": "string"},
+                     "description": "What you actually read, one short "
+                                    "phrase each."},
     },
     "required": ["confidence", "because"],
     "additionalProperties": False,

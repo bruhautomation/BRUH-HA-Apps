@@ -486,13 +486,15 @@ class TestMCPProtocol(unittest.TestCase):
         self.assertIn("serverInfo", response["result"])
 
     def test_tools_list(self):
-        """Test tools/list returns all tools."""
-        response = self._simulate_request({
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "tools/list",
-            "params": {}
-        })
+        """Test tools/list returns all tools (as the chat is offered them:
+        offer_resolutions is listed there alone)."""
+        with patch.dict(os.environ, {"BRAIN_CHANNEL": "chat"}):
+            response = self._simulate_request({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list",
+                "params": {}
+            })
 
         self.assertIsNotNone(response)
         tools = response["result"]["tools"]

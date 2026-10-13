@@ -23,6 +23,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -736,3 +737,33 @@ class TestTheSettingsWireTheHook(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhatTheHookSendsAndSkips(unittest.TestCase):
+    """A search is not an action, and a task's prompt is not the person."""
+
+    def setUp(self):
+        self.hook = load_hook()
+
+    def test_a_search_of_the_add_on_browser_is_not_sent(self):
+        tool = self.hook.MCP_PREFIX + "minecraft_addons"
+        self.assertTrue(self.hook.reads_only(tool, {"action": "search"}))
+        self.assertTrue(self.hook.reads_only(tool, {"action": "List"}))
+        self.assertFalse(self.hook.reads_only(tool, {"action": "install"}))
+        self.assertFalse(self.hook.reads_only(tool, None))
+        self.assertFalse(self.hook.reads_only(self.hook.MCP_PREFIX + "call_service",
+                                              {"action": "search"}))
+
+    def test_a_task_carries_the_persons_words_apart_from_its_prompt(self):
+        with patch.dict(os.environ, {"BRAIN_PERSON_WORDS": "  make the porch light warmer "}):
+            self.assertEqual(self.hook.task_words(), ["make the porch light warmer"])
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BRAIN_PERSON_WORDS", None)
+            self.assertEqual(self.hook.task_words(), [])
+
+    def test_the_listener_exports_them_from_the_task(self):
+        text = (Path(__file__).resolve().parent.parent / "brain" / "integrations"
+                / "automation-listener.sh").read_text(encoding="utf-8")
+        self.assertIn(".person_words", text)
+        self.assertIn('export BRAIN_PERSON_WORDS="${task_words:0:1200}"', text)
+        self.assertIn("unset BRAIN_PERSON_WORDS", text)

@@ -954,7 +954,7 @@ class TestChatTerminalPanel(unittest.TestCase):
         # prompt says so, and tests/test_discuss_safety.py drives the argv
         # that makes it true (a sentence alone was the whole guard once).
         server = (PANEL / "server.py").read_text()
-        self.assertIn("asks me first", server)
+        self.assertIn("make the change here", server)
 
     def test_remind_me_later_is_not_a_decision(self):
         """Dismissing is permanent and is fed back into every future
@@ -1802,6 +1802,31 @@ class TestTurnBudgets(unittest.TestCase):
         _, argvs, _ = self._drive("brain-ask.sh", ["how many lights are on"],
                                   BRAIN_ASK_MAX_TURNS="7")
         self.assertEqual(self._after(argvs[0], "--max-turns"), "7")
+
+    def test_an_ask_runs_with_the_analysts_tools_and_nothing_more(self):
+        """A question reads the house. It went through claude-run's headless
+        settings, which pre-approve Bash, Write and Edit, so a question
+        could change the house; it now carries the analyst's lists, read
+        out of engine.py, on the first run and on a landing."""
+        sys.path.insert(0, str(PANEL))
+        import engine
+        proc, argvs, _ = self._drive(
+            "brain-ask.sh", ["why is the garage cold"],
+            FAKE_MODE="max_turns_then_land", BRAIN_ASK_MAX_TURNS="5")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for argv in argvs:
+            self.assertEqual(self._after(argv, "--allowedTools"),
+                             ",".join(engine.ANALYST_TOOLS))
+            denied = self._after(argv, "--disallowedTools").split(",")
+            for tool in ("Bash", "Write", "Edit"):
+                self.assertIn(tool, denied)
+
+    def test_an_ask_that_cannot_be_scoped_is_refused(self):
+        proc, argvs, _ = self._drive("brain-ask.sh", ["how many lights are on"],
+                                     BRAIN_PANEL_DIR="/nonexistent")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(argvs, [])
+        self.assertIn("refusing", proc.stderr)
 
     # -- a tripped cap lands ---------------------------------------------
 

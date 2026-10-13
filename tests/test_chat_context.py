@@ -286,7 +286,9 @@ class TestTheAppendedPrompt(unittest.TestCase):
                      "get_findings", "get_health", "simulate_automation"):
             self.assertIn(tool, text)
         self.assertIn('service "intent"', text)
-        self.assertIn("Do not edit automations.yaml by hand", text)
+        # The person asked for it to be done: the chat makes the change.
+        self.assertIn("Make the change directly", text)
+        self.assertNotIn("Do not edit automations.yaml by hand", text)
 
     def test_the_house_lines_are_labelled_as_a_snapshot(self):
         server = importlib.import_module("server")
@@ -365,11 +367,12 @@ class TestTheContextFile(unittest.TestCase):
                      "house_rhythm", "door_habits", "habits", "recall",
                      "get_findings", "get_health", "simulate_automation"):
             self.assertIn(f"\\`{tool}\\`", self.source, tool)
-        self.assertIn("\\`brain.intent\\`", self.source)
+        self.assertIn("service \\`intent\\`", self.source)
         self.assertIn("${area_map}", self.source)
-        # The unconditional instruction to edit-then-reload is gone.
-        self.assertNotIn("Always run \\`ha reload automations\\` after editing",
-                         self.source)
+        # The household chose a terminal and chat that make the change:
+        # the file says to write it, and no longer routes every rule away.
+        self.assertIn("Do what is asked, directly", self.source)
+        self.assertNotIn("Automations go through brAIn, not through", self.source)
 
     def test_the_script_still_parses(self):
         out = subprocess.run(["bash", "-n", str(CONTEXT_GEN)],

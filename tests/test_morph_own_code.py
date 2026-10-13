@@ -562,8 +562,12 @@ class TestBrainAsksWhenTheChoiceIsTheirs(unittest.TestCase):
             second = await finish(self.env, out)
             return first, wrong, out, again, second
         first, wrong, out, again, second = asyncio.run(go())
-        self.assertIn("fill `question`", self.fake.seen[0]["prompt"])
-        self.assertIn("has no history", self.fake.seen[0]["prompt"])
+        # The calculated-sensor rule lives in AGENTS.md's "when to ask"
+        # list; the prompt points there rather than carrying a second copy.
+        self.assertIn("When to ask", self.fake.seen[0]["prompt"])
+        self.assertNotIn("has no history", self.fake.seen[0]["prompt"])
+        agents = (self.env.paths.DEFAULTS / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("has no history", agents)
         self.assertEqual(2, len(first["question"]["options"]), "an option with no label is not a button")
         self.assertFalse(wrong["ok"])
         self.assertTrue(out["ok"], out)

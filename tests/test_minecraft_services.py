@@ -175,6 +175,41 @@ class TestTheAnswerReachesTheCaller(Base):
         self.assertEqual(self.handlers["get_status"][1], "only")
         self.assertEqual(self.handlers["rcon_command"][1], "optional")
 
+    def test_status_keeps_what_tells_down_from_empty(self):
+        self.answer = {"ok": True, "reachable": False, "note": "RCON refused",
+                       "online": 0, "max": 0, "players": [], "state": {}, "stats": {}}
+        got = self.call("get_status")
+        self.assertIs(got["reachable"], False)
+        self.assertEqual(got["note"], "RCON refused")
+
+    def test_restart_and_stop_answer(self):
+        self.answer = {"ok": True}
+        for name in ("restart_server", "stop_server"):
+            got = self.call(name)
+            self.assertTrue(got["done"], name)
+            self.assertEqual(self.handlers[name][1], "optional")
+
+    def test_a_server_that_says_no_is_a_refusal(self):
+        # RCON answers every command with text and no status, so a refusal
+        # used to come back as a success carrying the refusal as its reply.
+        for reply in ("Unknown item 'minecraft:chilli'",
+                      "No player was found",
+                      "\u00a7cUnknown or incomplete command, see below for error",
+                      "Expected whitespace to end one argument<--[HERE]",
+                      "Incorrect argument for command"):
+            self.answer = {"ok": True, "reply": reply}
+            with self.assertRaises(HAError) as ctx:
+                self.call("give", player="Steve", item="minecraft:chilli")
+            self.assertIn("refused", str(ctx.exception))
+
+    def test_a_reply_that_informs_is_still_an_answer(self):
+        for reply in ("Gave 1 [Diamond] to Steve",
+                      "Nothing changed. The player is already an operator",
+                      "Set the time to 1000", ""):
+            self.answer = {"ok": True, "reply": reply}
+            self.assertEqual(self.call("give", player="Steve", item="diamond"),
+                             {"reply": reply})
+
     def test_pardon_is_a_player_action(self):
         self.call("pardon_player", player="Steve")
         self.assertEqual(self.sent, [("player_action", {"name": "Steve", "action": "pardon"})])

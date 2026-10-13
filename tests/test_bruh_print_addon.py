@@ -222,13 +222,19 @@ class TestIntegration(unittest.TestCase):
                         "loaded_side": "left"},
                        {"id": "s2", "name": "Unused", "loaded": False}],
             "templates": [{"name": "Freezer bag", "stock": "s1",
-                           "fields": [{"key": "contents"}, {"key": "date"}]}],
+                           "fields": [{"key": "contents"}, {"key": "date"}]},
+                          {"name": "Jar", "stock": "s2", "fields": []}],
+            "quick_stock": "s1",
             "fonts": ["a"] * 50, "catalog": {"big": True},
             "history": [{"id": "h1", "title": "Chili", "stock": "s1", "at": 1}],
         })
         self.assertEqual(got["loaded_stocks"], [{"id": "s1", "name": "Freezer labels",
                                                   "side": "left"}])
         self.assertEqual(got["templates"][0]["fields"], ["contents", "date"])
+        # What a plain text label prints on, and which templates would be
+        # refused for a stock that is not in the printer.
+        self.assertEqual(got["text_prints_on"], "s1")
+        self.assertEqual([t["stock_loaded"] for t in got["templates"]], [True, False])
         self.assertEqual(got["recent"][0]["title"], "Chili")
         self.assertNotIn("fonts", got)
         self.assertNotIn("catalog", got)

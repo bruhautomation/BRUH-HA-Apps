@@ -26,8 +26,7 @@
       "description": "Type a word or a line and BRUH Print fits it to the label as large as it will go.",
       "fields": {
         "text": {"name": "Text", "description": "What the label should say."},
-        "stock": {"name": "Label stock", "description": "Which label to fit it to."},
-        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
+        "stock": {"name": "Label stock", "description": "Which label to fit it to, by stock id. Left out, it is the stock in the printer when only one is loaded."},
         "copies": {"name": "Copies", "description": "How many to print."},
         "font": {"name": "Font", "description": "Which font family to set it in."},
         "rotate": {"name": "Rotation", "description": "Which way the text runs on the label."},
@@ -40,7 +39,6 @@
       "fields": {
         "template": {"name": "Template", "description": "Its name, as shown on the panel's Templates tab."},
         "fields": {"name": "Fields", "description": "The values to put in, keyed by field name."},
-        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
         "copies": {"name": "Copies", "description": "How many to print."}
       }
     },
@@ -49,7 +47,6 @@
       "description": "Print a complete label document, the same JSON the panel's designer produces.",
       "fields": {
         "label": {"name": "Label", "description": "The label document."},
-        "side": {"name": "Roll", "description": "Which roll of a Twin Turbo to print on."},
         "copies": {"name": "Copies", "description": "How many to print."}
       }
     },
@@ -58,8 +55,7 @@
       "description": "Reprint something from the history, exactly as it came out.",
       "fields": {
         "entry": {"name": "History entry", "description": "Leave empty for the most recent."},
-        "copies": {"name": "Copies", "description": "How many to print."},
-        "side": {"name": "Roll", "description": "Which roll to print it on."}
+        "copies": {"name": "Copies", "description": "How many to print."}
       }
     },
     "set_roll": {
@@ -75,8 +71,7 @@
       "name": "Print a check label",
       "description": "Print a frame around everything this roll can print on. If it reaches every edge, the roll is lined up.",
       "fields": {
-        "stock": {"name": "Label stock", "description": "Which stock to check."},
-        "side": {"name": "Roll", "description": "Which roll to print it on."}
+        "stock": {"name": "Label stock", "description": "Which stock to check."}
       }
     },
     "get_status": {

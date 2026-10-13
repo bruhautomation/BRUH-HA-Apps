@@ -480,70 +480,14 @@ def test_the_response_file_carries_the_failure_beside_the_sentence(tmp_path, mon
 # ---------------------------------------------------------------------------
 
 
-def _inbox(tmp_path: Path) -> list[dict]:
-    out = []
-    inbox = tmp_path / "memory" / "inbox"
-    for path in sorted(inbox.glob("*.jsonl")) if inbox.is_dir() else []:
-        out += [json.loads(line) for line in path.read_text().splitlines()
-                if line.strip()]
-    return out
-
-
-def test_a_fact_the_model_says_is_the_speakers_is_filed_under_them(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch, FAKE_ONESHOT_TEXT="\n".join([
-        json.dumps({"fact": "Prefers the bedroom at 19 degrees",
-                    "confidence": "high", "about": "speaker"}),
-        json.dumps({"fact": "The office lamp is called the beacon",
-                    "confidence": "high", "about": "house"}),
-    ]))
-    mod.reflect_on_transcript([("keep my bedroom at 19", "Done.")], person="ben")
-    facts = _inbox(tmp_path)
-    assert [f.get("subject") for f in facts] == ["person:ben", None]
-    assert facts[0]["person"] == "ben"
-    assert "person" not in facts[1]
-    # Never the literal the voice path used to be read as.
-    assert all(f.get("subject") != "person:me" for f in facts)
-
-
-def test_with_no_known_speaker_nothing_is_owned(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch, FAKE_ONESHOT_TEXT=json.dumps(
-        {"fact": "Prefers the bedroom at 19 degrees", "about": "speaker"}))
-    mod.reflect_on_transcript([("keep my bedroom at 19", "Done.")])
-    facts = _inbox(tmp_path)
-    assert len(facts) == 1 and "subject" not in facts[0]
-
-
-def test_two_voices_in_one_conversation_belong_to_nobody(tmp_path, monkeypatch):
+def test_a_spoken_turn_tells_the_worker_whose_preference_it_is(tmp_path, monkeypatch):
+    """A preference is filed by remember_fact during the turn, so the block
+    the pool puts in front of the person's words names the speaker and how
+    to file theirs — there is no second, after-the-conversation pass to work
+    it out from a transcript. Off when learning is switched off."""
     mod = load_pool_module(tmp_path, monkeypatch)
-    seen: list = []
-    done = threading.Event()
-
-    def fake_reflect(transcript, **kw):
-        seen.append(kw)
-        done.set()
-    mod.reflect_on_transcript = fake_reflect
-    worth = [("actually, we call the office lamp the beacon", "Noted.")]
-
-    for people, expect in (({"ben"}, {"person": "ben"}),
-                           ({"ben", "ana"}, {}),
-                           ({"ben", None}, {}),
-                           ({None}, {})):
-        done.clear()
-        seen.clear()
-        worker = types.SimpleNamespace(transcript=list(worth), people=people)
-        mod.maybe_reflect(worker)
-        assert done.wait(5)
-        assert seen == [expect], people
-
-
-def test_a_spoken_turn_carries_the_speaker_to_the_worker(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch)
-    record_journal(mod)
-    pool = mod.Pool()
-    try:
-        drop_spare(pool)
-        pool.process_full(request("keep my bedroom at 19", context={
-            "person": "person.ben", "speaker": "Ben"}))
-        assert pool.workers["convA"].people == {"ben"}
-    finally:
-        shutdown(pool)
+    block = mod.context_preamble({"person": "person.ben", "speaker": "Ben"})
+    assert 'remember_fact person="ben"' in block
+    monkeypatch.setenv("BRAIN_ASSIST_LEARNING", "false")
+    block = mod.context_preamble({"person": "person.ben", "speaker": "Ben"})
+    assert "Ben" in block and "remember_fact" not in block

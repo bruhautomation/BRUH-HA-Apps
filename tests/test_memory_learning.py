@@ -1714,7 +1714,7 @@ def test_memory_spliced_into_system_prompt(tmp_path, monkeypatch):
     assert "Known about this household (learned):" in prompt
     assert "'the beacon' = light.office_lamp" in prompt
     # Memory rides after the tool/area instructions, near the end
-    assert prompt.index("Known about this household") > prompt.index("MCP tools")
+    assert prompt.index("Known about this household") > prompt.index("spoken aloud")
 
 
 def test_memory_injection_env_gate(tmp_path, monkeypatch):
@@ -1731,138 +1731,36 @@ def test_memory_injection_env_gate(tmp_path, monkeypatch):
 
 
 def test_operational_prompt_mentions_remember_fact(tmp_path, monkeypatch):
+    """A voice turn files what it is taught DURING the turn, with
+    remember_fact — and is not asked to when learning is switched off."""
     mod = load_pool_module(tmp_path, monkeypatch)
-    assert "remember_fact" in mod.OPERATIONAL_PROMPT
+    assert "remember_fact" in mod.build_system_prompt("")
+    off = load_pool_module(tmp_path / "off", monkeypatch, BRAIN_ASSIST_LEARNING="false")
+    assert "remember_fact" not in off.build_system_prompt("")
 
 
-def test_transcript_recording_is_bounded(tmp_path, monkeypatch):
+def test_there_is_no_second_after_the_conversation_pass(tmp_path, monkeypatch):
+    """Facts were filed twice: once by remember_fact in the turn, and again
+    by a reflection run over the transcript when the worker was retired —
+    a separate Claude process, in /config, with the terminal's context.
+    Retiring a worker now starts nothing."""
     mod = load_pool_module(tmp_path, monkeypatch)
+    for name in ("reflect_on_transcript", "maybe_reflect", "_record_exchange",
+                 "REFLECTION_PROMPT"):
+        assert not hasattr(mod, name), name
+    spawned = []
+    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: spawned.append(a))
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: spawned.append(a))
 
     class FakeWorker:
-        transcript: list = []
+        def kill(self):
+            pass
 
-    worker = FakeWorker()
-    worker.transcript = []
-    for i in range(20):
-        mod._record_exchange(worker, f"user {i} " + "x" * 700, "resp " + "y" * 700)
-    assert len(worker.transcript) <= mod.TRANSCRIPT_MAX_EXCHANGES
-    assert sum(len(u) + len(a) for u, a in worker.transcript) <= mod.TRANSCRIPT_MAX_BYTES
-    # Newest exchanges are the ones kept
-    assert worker.transcript[-1][0].startswith("user 19")
-
-
-def test_transcript_worth_reflecting_heuristic(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch)
-    assert not mod._transcript_worth_reflecting([])
-    assert not mod._transcript_worth_reflecting([("turn on the lights", "done")])
-    assert mod._transcript_worth_reflecting(
-        [("hi", "hello"), ("turn on lights", "done")]
-    )
-    assert mod._transcript_worth_reflecting(
-        [("actually we call that lamp the beacon", "noted")]
-    )
-    assert mod._transcript_worth_reflecting(
-        [("never lock the side door automatically", "ok")]
-    )
-
-
-def test_reflection_writes_contract_facts(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch)
-    fake = tmp_path / "fake_reflect_claude.sh"
-    fake.write_text(
-        "#!/bin/bash\ncat > /dev/null\n"
-        'echo \'{"fact": "Beacon = light.office_lamp", "confidence": "high"}\'\n'
-        'echo \'not json at all\'\n'
-        'echo \'{"fact": "", "confidence": "high"}\'\n'
-        'echo \'{"fact": "Movie nights dim to 20%", "confidence": "certain"}\'\n'
-    )
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fake))
-
-    mod.reflect_on_transcript([
-        ("actually we call the office lamp the beacon", "Noted!"),
-    ])
-    lines = inbox_lines(tmp_path / "memory")
-    assert len(lines) == 2
-    first = assert_contract_line(lines[0], expect_source="assist")
-    assert first["fact"] == "Beacon = light.office_lamp"
-    assert first["confidence"] == "high"
-    second = assert_contract_line(lines[1])
-    assert second["confidence"] == "medium"  # invalid value coerced
-
-
-def test_reflection_none_and_failure_write_nothing(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch)
-
-    fake = tmp_path / "fake_none_claude.sh"
-    fake.write_text("#!/bin/bash\ncat > /dev/null\necho NONE\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fake))
-    mod.reflect_on_transcript([("hi", "hello"), ("bye", "bye")])
-    assert inbox_lines(tmp_path / "memory") == []
-
-    # Non-zero exit (e.g. not authenticated) is swallowed, nothing stored
-    fail = tmp_path / "fail_claude.sh"
-    fail.write_text("#!/bin/bash\nexit 1\n")
-    fail.chmod(fail.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("BRAIN_CLAUDE_BIN", str(fail))
-    mod.reflect_on_transcript([("hi", "hello"), ("bye", "bye")])
-    assert inbox_lines(tmp_path / "memory") == []
-
-
-def test_maybe_reflect_respects_learning_gate(tmp_path, monkeypatch):
-    mod = load_pool_module(tmp_path, monkeypatch, BRAIN_ASSIST_LEARNING="false")
-    called = []
-    monkeypatch.setattr(
-        mod.threading, "Thread",
-        lambda *a, **k: called.append(k) or _NeverStartThread(),
-    )
-
-    class FakeWorker:
-        pass
-
-    worker = FakeWorker()
-    worker.transcript = [("hi", "hello"), ("actually call it the den", "ok")]
-    mod.maybe_reflect(worker)
-    assert called == []
-
-
-class _NeverStartThread:
-    def start(self):
-        pass
-
-
-def test_drop_worker_triggers_reflection(tmp_path, monkeypatch):
-    """A reaped/dropped worker with a meaningful transcript is reflected."""
-    mod = load_pool_module(tmp_path, monkeypatch)
-    reflected: list = []
-    monkeypatch.setattr(
-        mod, "reflect_on_transcript", lambda transcript: reflected.append(transcript)
-    )
-    pool = mod.Pool()
-    try:
-        req = {
-            "id": uuid.uuid4().hex,
-            "conversation_id": "convR",
-            "text": "actually, we call the office lamp the beacon",
-            "type": "conversation",
-            "ts": time.time(),
-            "timeout": 120,
-            "conversation_history": [],
-        }
-        pool.handle(req)
-        worker = pool.workers["convR"]
-        assert worker.transcript, "successful exchange must be recorded"
-        pool._drop_worker("convR", worker)
-        deadline = time.time() + 5
-        while not reflected and time.time() < deadline:
-            time.sleep(0.05)
-        assert reflected and "beacon" in reflected[0][0][0]
-    finally:
-        for w in list(pool.workers.values()):
-            w.kill()
-        if pool.spare is not None:
-            pool.spare.kill()
+    pool = mod.Pool.__new__(mod.Pool)
+    pool.lock = mod.threading.Lock()
+    pool.workers = {"c1": FakeWorker()}
+    pool._drop_worker("c1", pool.workers["c1"])
+    assert spawned == []
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """The GitHub calls the loop makes, and nothing else.
 
-urllib rather than a client library: five requests do not earn a
+urllib rather than a client library: a handful of requests do not earn a
 dependency, and the base URL is an environment variable so the tests can
 point it at a real local HTTP server — a fake that accepts whatever it is
 handed proves only that it matches the code that mocked it.
@@ -156,6 +156,20 @@ def get_issue(token: str, repo: str, number: int) -> tuple[dict | None, str]:
     if status != 200 or not isinstance(out, dict):
         return None, _message(status, out)
     return out, ""
+
+
+def last_comment(token: str, repo: str, number: int) -> tuple[str | None, str]:
+    """The newest comment on an issue, which on an issue the cloud closed is
+    the comment saying why (the skill closes nothing without one). ``("",
+    "")`` for an issue with no comments, ``(None, why)`` when GitHub would
+    not answer. Comments come back oldest first; a hundred is more than any
+    reports issue carries, and past it the closing one is simply missed."""
+    status, body = _call(token, "GET", f"/repos/{repo}/issues/{int(number)}"
+                         "/comments?per_page=100")
+    if status != 200 or not isinstance(body, list):
+        return None, _message(status, body)
+    rows = [r for r in body if isinstance(r, dict)]
+    return (str(rows[-1].get("body") or "") if rows else ""), ""
 
 
 def comment(token: str, repo: str, number: int, text: str,

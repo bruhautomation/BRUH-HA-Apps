@@ -5,6 +5,31 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.2
+
+### Added
+
+- **`bright.import_show`** — makes an edited show file in `/config/.bright/shows` the show that plays, the same as **Reload from file** in the panel. `track` is the file name or the track's hash; broken JSON is refused with the line it broke on and a script that will not compile with the reason, and the previous show is kept as a version. This is how an edit brAIn makes to a show file takes effect.
+- A `README.md` beside the mirrored show files saying what they are, that editing one changes nothing until it is imported, and how to import it — and an `EFFECTS.md` listing every effect type with its parameters. Both are rewritten only when they change.
+- **`parties_only`** on `bright.get_status`: what is playing and the saved sets, each with its speaker and how many songs it names, without scanning the music library for tracks.
+
+### Changed
+
+- The show director's answer is checked against a JSON schema (sent with the request, so the CLI validates it before it comes back). An install that cannot pass a schema on still works: the answer is read from the text as before.
+- What the director is told: the host's vibe now comes first and says it outranks the default shape of a show; the section names the analysis uses (`intro`, `quiet`, `mid`, `peak`, `outro`) are explained, with what `energy` measures; how many scenes, effects and moments to aim for; that scenes cover the track with no gaps, and that an effect's name is what the host sees on every cue. The parts that contradicted each other are gone, the shape of an effect is described once for every kind of request, and the message budget and the one-routine-per-bulb rule are each stated once.
+- A revision is told the show's vibe and the lyrics, and carries only the effect types the show uses in full (the rest by name), which makes it a shorter request. Asking for one effect from a sentence does the same for the types the sentence names.
+- Inventing a single effect no longer asks for one quiet idea and one big one.
+- The add-on's bridge serves each request from Home Assistant on its own, so a long import does not hold up a stop.
+
+### Fixed
+
+- A saved effect named with `use` in a director's show or in an edited show file is expanded before the show is checked. It was checked first, read as an unknown effect type, and the show fell back to the automatic director (or the edit was refused).
+- Starting a party, a track's show or party mode, and stopping a show, from brAIn now works. brAIn asks every add-on service for its answer, and these four were registered without one, so Home Assistant refused the call before BRight was asked. They now answer with what BRight said; an automation calling them is unaffected.
+
+### Security
+
+- The show director's requests to brAIn ask for read-only tools. With no scope named they ran with brAIn's full grant (shell commands, file edits and every Home Assistant action), which writing a show needs none of.
+
 ## 0.23.1
 
 Security fixes from a code-scanning pass. Nothing you see changes.

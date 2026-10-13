@@ -48,13 +48,15 @@ api_get() {
 #     every section beats a long one from the first, which is the failure
 #     above.
 #
-# The budget is in BYTES: `BRAIN_CONTEXT_MEMORY_BYTES`, default 16 KB. An
-# insight card is handed up to 34 KB of memory (`ha_data.MEMORY_CHARS`);
-# this file is read at the top of every terminal and chat session, so it
-# takes a smaller share by default and the variable is the way up.
+# The budget is in BYTES: `BRAIN_CONTEXT_MEMORY_BYTES`, default 8 KB. This
+# file is read at the top of every terminal and chat session, and the
+# chat's own hook hands it the facts about what each message is about
+# (`facts_store.retrieval_block`) — so this is the standing overview, not
+# the whole document, and `recall` or `brain memory list` is the way to
+# the rest. The variable is the way up.
 memory_excerpt() {
     local file="$1"
-    local budget="${2:-${BRAIN_CONTEXT_MEMORY_BYTES:-16384}}"
+    local budget="${2:-${BRAIN_CONTEXT_MEMORY_BYTES:-8192}}"
 
     [ -s "$file" ] || return 0
     case "$budget" in
@@ -315,7 +317,7 @@ try:
     result = list_dashboards()
     if not isinstance(result, dict) or "error" in result:
         raise RuntimeError(result)
-    rows = ["  - url_path: (omit) — the default dashboard (auto-generated "
+    rows = ["  - url_path: default — the default dashboard (auto-generated "
             "until first saved; saving takes manual control of it)"]
     for d in result.get("dashboards", []):
         rows.append("  - url_path: {} — {} (mode: {})".format(
@@ -395,6 +397,26 @@ the only thing there is. If a task needs one of these, stop and say so.
 > It provides Claude Code with context about your Home Assistant installation.
 > Last updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 
+## How to work here
+
+You are brAIn, working in this home's Home Assistant. The person at this
+terminal or chat lives here; when they ask for something they want it done.
+
+- **Do what is asked, directly.** Edit the automation, script, scene or
+  dashboard file, or call the service, then say in a sentence what changed.
+  Before Claude edits a file it is snapshotted, and \`brain undo\` puts it back.
+- **After editing YAML**, run \`ha check\`, then \`ha reload automations\` (or
+  scripts, scenes…), and read the result back with the MCP tools — a reload
+  that returned is not the automation working.
+- **Ask brAIn's measurements before guessing** (the MCP section below):
+  what is normal for a sensor here, how a room heats, what a machine is doing.
+- **A refusal is the household's decision** — a protected entity, a house
+  rule, an approval card declined. Say so; never route around it.
+- **Never read or modify \`/config/secrets.yaml\` or \`/config/.storage\`.**
+  Use the \`brain.*\` services for registry changes (below).
+- If a file is not writable, run \`brain own <path>\`; never ask the person
+  for sudo or chown.
+
 ## User Notes
 
 <!-- bruh:user-notes:start -->
@@ -442,9 +464,9 @@ ${dashboard_list}
 
 Dashboard rules:
 - **Always pass \`url_path\`** (from \`list_dashboards\` or the inventory
-  above) when reading or updating a dashboard. Only omit it when you truly
-  mean the default dashboard, and confirm with the user first — saving to a
-  never-saved default takes manual control of it permanently.
+  above) when reading or updating a dashboard; the default dashboard is the
+  literal \`"default"\`. Confirm before saving to a never-saved default —
+  that takes manual control of it permanently (\`take_control: true\`).
 - **Never use raw Lovelace transport**: do not call \`lovelace/config\`,
   \`lovelace/config/save\`, or \`lovelace/config/delete\` over WebSocket or
   REST. Use \`get_dashboard\` (MCP) to read and \`brain.update_dashboard\`
@@ -480,7 +502,7 @@ The Home Assistant configuration lives in \`/config/\`. Key files:
 - \`/config/automations.yaml\` - Automations
 - \`/config/scripts.yaml\` - Scripts
 - \`/config/scenes.yaml\` - Scenes
-- \`/config/secrets.yaml\` - Secrets (DO NOT read or modify)
+- \`/config/secrets.yaml\` - Secrets (never read or modify)
 - \`/config/customize.yaml\` - Entity customizations
 
 ## CLI Tools
@@ -548,16 +570,25 @@ a sentence rather than inventing a number.
 - \`simulate_automation\` - replay an automation over the recorder's history: how often it
   would have fired, and whether that agreed with what people actually did
 
-**Automations go through brAIn, not through automations.yaml.** To add a
-rule, call the \`brain.intent\` service (\`call_service\` with domain
-\`brain\`, service \`intent\`, data \`{"sentence": "..."}\`) with the rule
-in one plain sentence. brAIn drafts it, replays it over the recorder,
-grades it against what people did, checks the protected list, and offers it
-on the Proposals tab with that evidence — a one-off arms once and switches
-itself off; a standing rule can be tried for a week first. Run
-\`simulate_automation\` first if the person wants to see the numbers before
-asking. Edit \`automations.yaml\` by hand only when the person asks for that
-specifically, and then \`ha check\` it and \`ha reload automations\` after.
+**Automations.** When the person asks for one, write it. Run
+\`simulate_automation\` on the config first when it helps to know how often
+it would have fired. For a new standing rule you may also offer brAIn's
+replay: \`call_service\` domain \`brain\`, service \`intent\`, data
+\`{"sentence": "..."}\` drafts it, replays and grades it against what the
+household did, and puts it in front of them as a card to accept or try for
+a week — offer that when the evidence helps, not instead of doing what was
+asked.
+
+**The other BRUH add-ons, when installed, are driven through their own tools**
+(each answers with the add-on's own sentence; repeat it):
+- BRUH Minecraft — \`minecraft_status\`, \`minecraft_player\`,
+  \`minecraft_teleport\`, \`minecraft_server\`, \`minecraft_addons\`. Match a
+  spoken name against who is online; when "me" is not a name you know,
+  \`recall\` the person's Minecraft name, or ask once and \`remember_fact\` it.
+- BRUH Print — \`label_printer_status\` (what stock is loaded) then
+  \`print_label\`; print on a loaded stock.
+- BRight — \`bright_status\` for the parties and speakers that exist, then
+  \`bright_show\`.
 
 ## Registry Management — BRUH Power Tools
 
@@ -569,7 +600,9 @@ modified by hand.**
 
 Workflow: look up ids with the \`get_registry\` MCP tool, then call the
 service with \`call_service\` (domain \`brain\`). Services marked (R)
-return response data — pass \`return_response: true\` for those.
+return response data — pass \`return_response: true\` for those. Each
+service's own fields are in Developer tools › Actions; the list below is
+what exists.
 
 - Areas: \`create_area\` (R), \`delete_area\`, \`rename_area\`, \`set_area_aliases\`,
   \`add_device_to_area\`, \`remove_device_from_area\`, \`add_entity_to_area\`, \`remove_entity_from_area\`
@@ -627,13 +660,8 @@ return response data — pass \`return_response: true\` for those.
 - Repairs: \`create_repair_issue\` (R), \`remove_repair_issue\` — surface issues that
   need the user's attention in Settings > System > Repairs
 
-Examples:
-- Rename an entity: \`call_service\` domain=\`brain\` service=\`rename_entity\`
-  data=\`{"entity_id": ["light.shelly_abc"], "name": "Kitchen Ceiling"}\`
-- Create an area and capture its id: service=\`create_area\`
-  data=\`{"name": "Guest Room", "floor_id": "upstairs"}\` with \`return_response: true\`
-- Check for dead registry entries: service=\`delete_orphaned_entities\`
-  data=\`{}\` with \`return_response: true\` (only deletes with \`{"dry_run": false}\`)
+Example: rename an entity — \`call_service\` domain=\`brain\`
+service=\`rename_entity\` data=\`{"entity_id": ["light.shelly_abc"], "name": "Kitchen Ceiling"}\`.
 
 Cautions: \`delete_area\`/\`delete_floor\`/\`delete_label\` unassign, they don't
 delete members. All destructive services accept \`dry_run: true\` (with
@@ -648,12 +676,9 @@ safe-mode restart use core \`homeassistant.restart\` with \`safe_mode: true\`.
 ${protected_section}
 ## Important Notes
 
-- **Propose automations with \`brain.intent\`** rather than writing them into automations.yaml — it replays, grades and checks them first
-- **If you do edit automations.yaml or scripts.yaml by hand**, run \`ha check\` and then \`ha reload automations\` / \`ha reload scripts\`
-- **Never modify secrets.yaml directly**
 - **Edits are snapshotted before Claude makes them** — \`brain undo\` reviews and reverts them
-- **If a file under /config (or /addon_configs, /share, /media) is not writable, run \`brain own <path>\`** — Home Assistant saves automations.yaml, scripts.yaml and scenes.yaml as root, and the edit and shell hooks usually hand them back before you notice. Never ask the person to run sudo or chown
-- **Test templates** using the \`render_template\` MCP tool before using them in automations
+- **Files under /config (or /addon_configs, /share, /media) not writable?** Run \`brain own <path>\` — Home Assistant saves automations.yaml, scripts.yaml and scenes.yaml as root, and the edit and shell hooks usually hand them back before you notice. Never ask the person to run sudo or chown
+- **Test templates** with the \`render_template\` MCP tool before using them in automations
 CLAUDEMD
 
     bashio::log.info "Context file generated: $OUTPUT_FILE"
