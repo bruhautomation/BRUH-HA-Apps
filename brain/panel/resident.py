@@ -62,6 +62,7 @@ from pathlib import Path
 
 import atomic_write
 import model_plan
+import prompt_kit
 import textclip
 
 # ---------------------------------------------------------------------------
@@ -284,6 +285,20 @@ tell somebody.
 smoke, a freeze, a door left open at night, a device whose failure has
 consequences today.
 
+FOR EXAMPLE — three calls on one evening. The reasons are the part to copy:
+each answers what the row CLAIMS, from what the row and the home say.
+
+  [check] sensor.cellar_humidity — reads 71% for 9 days, "frozen"
+    ignore: "The cellar dehumidifier holds it at 71% and memory says so; a
+    flat reading there is the machine working, not a stuck sensor."
+  [state] binary_sensor.back_door x2 — opened at 02:10 and 02:40
+    watch: "Two night openings with nothing else odd today; if it happens
+    again tomorrow night it is worth a look."
+  [check] sensor.chest_freezer_temp — reads -2 °C while the freezer plug
+    drew its usual power all day
+    investigate: "The two readings disagree, and the freezer's history
+    would say which one is wrong."
+
 Rules:
 
 - """ + CLAIM_RULE + """
@@ -292,8 +307,7 @@ Rules:
   has already flagged as urgent. If one of those is in front of you and
   you think it is nothing, the answer is "watch" or "investigate" and your
   reason says why you think it is nothing.
-- Say nothing about anybody's health, their whereabouts, who was home,
-  their sleep or their household. If the only thing that makes a signal
+- """ + prompt_kit.PRIVACY + """ If the only thing that makes a signal
   interesting is a person rather than the house, ignore it.
 - "why" is one plain sentence naming what made you decide. It is read by
   the person who maintains this and it is the only record of your
@@ -309,9 +323,9 @@ Rules:
   about it, judge its failure by what stops with it — never write "no
   known load" or "nothing depends on it" about an entity the prompt says
   something depends on.
-- Judge each signal on what you were given. You have no tools here and
-  nothing to look up: if you need to look something up, that is what
-  "investigate" means.
+- Judge each signal on what you were given. You cannot look anything up
+  here: if you need to, that is what "investigate" means.
+- """ + prompt_kit.DATA_FENCE + """
 
 Reply with JSON and nothing else:
 
@@ -334,7 +348,9 @@ def _render_signal(signal: dict) -> str:
     bits = [f"[{signal.get('kind') or 'signal'}] {signal.get('subject') or ''}"]
     if signal.get("text"):
         bits.append(f"— {signal['text']}")
-    for name in ("salience", "repeats", "seen_at", "source"):
+    # Never the salience: it orders and never decides, and a score on the
+    # row reads to a model as a verdict already reached (`prompt_rows`).
+    for name in ("repeats", "seen_at", "source"):
         if signal.get(name) not in (None, "", 0):
             bits.append(f"{name}={signal[name]}")
     evidence = signal.get("evidence")
@@ -461,7 +477,9 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
     cases = _rows(open_cases_rows)
     if cases:
         parts.append("ALREADY IN FRONT OF THE HOMEOWNER — a signal that is "
-                     "one of these again is worth nothing:")
+                     "one of these again is worth nothing (the id after a "
+                     "row is the device it is about; a different device "
+                     "saying something similar is not the same row):")
         parts += [f"- {row}" for row in cases]
         parts.append("")
     parts += _examples_block(examples)
@@ -744,27 +762,17 @@ Answer with ONE JSON object and nothing else. What it means:
 - "escalate" — true only if you are genuinely unsure AND being wrong would
   matter. It asks for a stronger model to look again; it is not a way to
   say something is important.
-- "dismiss" — only when you were sent a ROW (below): true if, having
-  looked, it is not worth anybody's attention — the problem has already
-  cleared, it was a moment that passed (a device that dropped off and came
-  back, a reading during a restart), it is normal for what this thing is,
-  or brAIn already knows it. Settling these yourself is most of the job:
-  every row you dismiss with a good reason is one the person never has to
-  read.
-  Leave "claim" empty and say why in "detail". The row is then held back
-  with your reason on it, where the homeowner can still see it and put it
-  back. If the row IS worth attention, write the claim, detail and fix as
-  they should read now: they REPLACE the row's own wording, so write them
-  for this house, not for the rule that filed it.
+- "dismiss" — leave it false unless you were sent a row brAIn filed;
+  what it means then is said below, when it applies.
 
 Rules that matter more than anything about style:
 
 - NEVER invent a number, a reading or an event. Cite only what you read.
 - """ + CLAIM_RULE + """
-- Say nothing about anybody's health, their whereabouts, who was home,
-  their sleep or their household. If the only account you can give is
-  about a person rather than about the house, make no claim. This is not
-  a style rule and there is no exception to it.
+- """ + prompt_kit.PRIVACY + """ If the only account you can give is
+  about a person rather than about the house, make no claim.
+- """ + prompt_kit.HONEST_EMPTY + """
+- """ + prompt_kit.DATA_FENCE + """
 - Do not restate what brAIn already knows or what is already in front of
   the homeowner. If the answer is already on their list, make no claim.
 - One claim per run. If you found two things, claim the one that matters
@@ -778,6 +786,67 @@ Rules that matter more than anything about style:
   it is USED BY and what brAIn knows about it: a plug that runs the
   crawl-space fan is the crawl-space fan."""
 
+# The part that applies only when the run was sent a ROW brAIn filed
+# (`refines=`): rewriting it in place, or holding it back. It used to sit
+# in the base contract as a bullet among the field meanings, so every run
+# — a fresh signal with nothing to dismiss included — was told about an
+# ending it could not reach, and the run that could reach it read its
+# instructions in the middle of thirty others. Split out, it is said once,
+# to the run it is for, with one worked example of each ending: an example
+# is what a model copies, and the two failures in the field (a dismissal
+# that contradicted its own row, a "fix" that was the rule's generic
+# sentence again) are exactly what the examples show the other way round.
+REFINE_SYSTEM = """WHEN YOU WERE SENT A ROW BRAIN FILED
+
+The prompt then hands you a row that is already on the homeowner's list,
+in a rule's generic words. It is the subject of this run: you either
+rewrite it or dismiss it, and you never file beside it.
+
+- Dismiss it ("dismiss": true, "claim" empty, the reason in "detail") when,
+  having looked, it is not worth anybody's attention: the problem has
+  already cleared, it was a moment that passed (a device that dropped off
+  and came back, a reading during a restart), it is normal for what this
+  thing is, or brAIn already knows it. Settling these yourself is most of
+  the job: every row you dismiss with a good reason is one the person
+  never has to read. The row is held back with your reason on it, where
+  the homeowner can still see it and put it back.
+- """ + DISMISS_RULE + """
+- Otherwise rewrite it: "claim", "detail" and "fix" REPLACE the row's own
+  wording, so write them for this house, not for the rule that filed it —
+  the device by its friendly name, the hub or integration it reports
+  through, the time in local time, and the one thing to do.
+
+A GOOD DISMISSAL — the row said "Hall motion sensor has been unavailable":
+  "claim": "", "dismiss": true,
+  "detail": "The hall motion sensor dropped off at 03:12 while the Zigbee
+  hub restarted and has reported normally since 03:52, so nothing is
+  needed."
+
+A GOOD REWRITE — the row said "Sensor has not changed in 3 days":
+  "claim": "The garage freezer thermometer stopped reporting on Tuesday",
+  "detail": "It has read -18 °C since 14:10 on Tuesday, when its battery
+  read 4%. The freezer's plug still draws its usual power, so the freezer
+  is fine and the thermometer is not.",
+  "fix": "Replace the coin-cell battery in the garage freezer thermometer;
+  the Zigbee hub in the hall it reports through is online."
+"""
+
+
+def investigate_system(refining=None) -> str:
+    """The investigation's system prompt: the base, plus the refine half
+    when the run was sent a row brAIn filed. One function, so the run, the
+    escalation and the tests ask for the same text.
+
+    ``refining`` is the row (or a bool). A row is read with the predicate
+    `investigate_prompt` uses to show it — a row with no text is not put in
+    front of the run, so the run must not be told how to end one either.
+    """
+    if isinstance(refining, dict):
+        refining = bool(refining.get("text"))
+    if refining:
+        return INVESTIGATE_SYSTEM + "\n\n" + REFINE_SYSTEM
+    return INVESTIGATE_SYSTEM
+
 
 def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        house_block: str = "", open_cases_rows=None, *,
@@ -785,7 +854,8 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        refining: dict | None = None,
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
-                       situation_line: str = "", used_by=None) -> str:
+                       situation_line: str = "", used_by=None,
+                       camera_line: str = "") -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -806,6 +876,10 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     second opinion. ``examples`` are past calls like this one with what
     the household did about them, and the calibration sentence when
     there is one — `first_look_prompt`'s block, the same words.
+    ``camera_line`` is `camera_policy.prompt_line` when the run may look at
+    a camera. It goes ABOVE the sign-off: it was appended after "reply with
+    the JSON contract and nothing else", so the last thing a run read
+    before answering was a tool it might use, not how to answer.
     """
     parts = ["Look into this, and decide whether it is worth telling the "
              + "homeowner.\n"]
@@ -837,12 +911,23 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
         parts.append(DISMISS_RULE)
         parts.append("")
     if isinstance(prior_case, dict) and prior_case.get("claim"):
+        # A second opinion that is not told it may say "no" gives the one
+        # answer an escalation exists for only by accident: the run it
+        # replaces was unsure, and a stronger model told to "confirm or
+        # correct" reads a claim as owed. The caller honours an empty claim
+        # (nothing is filed), so the prompt says so in as many words.
         parts.append("A FIRST INVESTIGATION CONCLUDED THIS, AND WAS UNSURE — "
-                     "confirm it, correct it, or make no claim:")
+                     "you are the second opinion. Confirm it, correct it, "
+                     "or make no claim:")
         parts.append(f"- claim: {prior_case.get('claim')}")
         parts.append(f"- confidence: {prior_case.get('confidence')}")
         if prior_case.get("detail"):
             parts.append(f"- detail: {str(prior_case['detail'])[:400]}")
+        parts.append("An EMPTY claim is a valid answer here, and the right "
+                     "one when, having looked, you do not think it is true "
+                     "or worth telling anybody: nothing is filed and the "
+                     "first conclusion is dropped. Never keep its claim "
+                     "only because it was handed to you.")
         parts.append("")
     if memory_excerpt.strip():
         parts.append("WHAT BRAIN KNOWS ABOUT THIS HOME:\n"
@@ -858,10 +943,14 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
     cases = _rows(open_cases_rows)
     if cases:
         parts.append("ALREADY IN FRONT OF THE HOMEOWNER — do not claim any "
-                     "of these again:")
+                     "of these again (the id after a row is the device it "
+                     "is about; a claim about the same device saying the "
+                     "same thing is one of these):")
         parts += [f"- {row}" for row in cases]
         parts.append("")
     parts += _examples_block(examples)
+    if camera_line.strip():
+        parts.append(camera_line.strip() + "\n")
     parts.append("Reply with the JSON contract and nothing else.")
     return "\n".join(parts)
 
@@ -1334,7 +1423,7 @@ __all__ = [
     "SONNET_PER_DAY", "TIMEOUT_S", "UNREADABLE", "VERDICTS", "WATCH_FILE",
     "WATCH_RETRY_REPEATS", "WATCH_TTL_S", "Ledger", "expire",
     "first_look_prompt", "investigate_prompt", "never_ignore",
-    "CLAIM_RULE", "DISMISS_RULE",
+    "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
 ]

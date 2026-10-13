@@ -1129,9 +1129,12 @@ def prompt_rows(signals: list[dict], now: float | None = None, *,
     for i, sig in enumerate(signals or [], 1):
         if not isinstance(sig, dict):
             continue
+        # No salience on the row. It ORDERS the batch and never decides
+        # (this module's rule), and a model handed "s=0.73" reads it as a
+        # judgement already made — the one thing the look exists to make.
+        # The order the rows arrive in still carries it.
         head = (f"{i}. " if numbered else "") + (
-            f"[{sig.get('kind')}] {sig.get('subject') or '?'}"
-            f" s={float(sig.get('salience') or 0.0):.2f}")
+            f"[{sig.get('kind')}] {sig.get('subject') or '?'}")
         if sig.get("hot"):
             head += " HOT"
         if sig.get("safety"):
