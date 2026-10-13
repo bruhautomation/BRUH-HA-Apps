@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.30
+
+### Changed
+
+- A failed run in ⚙ › Diagnostics and in a problem report now says what happened in plain words and whether to do anything. A voice request that ended "partial" reads as one that started changing something and broke off, so the device may or may not have changed; a crash or error quotes Claude's own last line where there is one. (reports #234, #226)
+- A task that runs past its time limit now says so, names the limit and says what it started may be only partly done. It no longer blames a broken MCP connection or tells you to restart the add-on. The same applies to a voice request that times out. (reports #238)
+- The scorecard row for brAIn's own reports (the house watcher and the safety lane) no longer calls them a rule or suggests "Ignore all like this", which those cards never offer. It says they cannot be muted and that a reason given with Ignore teaches brAIn. (reports #237)
+- The Timeline no longer opens on a sentence about how it reads the logbook. (reports #245)
+
+### Fixed
+
+- A refused one-off automation or scene design is no longer reported as a problem: both are already shown where you asked for them, with the reason. When brAIn will not suggest a change to an automation you keep undoing, the row now names each automation and why. (reports #235)
+- The diagnostics now list which background processes this configuration expects, so a reader no longer takes the classic voice listener being off on a fast-mode install for voice being down. (reports #228)
+
 ## 2.18.29
 
 ### Fixed
