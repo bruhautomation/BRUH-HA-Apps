@@ -6445,6 +6445,20 @@ def _rate_limited_now(now: float | None = None) -> float:
     return until if until > now else 0.0
 
 
+def _usage_for_panel(settings: dict) -> dict:
+    """`budget_state` plus when the rate-limit pause lifts, for the panel.
+
+    The pause lives in this process and the budget in `usage_store`, and
+    the usage popover and ⚙ have to say both: with "No limit" chosen the
+    pause is the only thing that stops automatic work, so a screen that
+    could not say when it ends would leave brAIn looking stuck.
+    """
+    usage = usage_store.budget_state(settings)
+    until = _rate_limited_now()
+    usage["rate_limited_until"] = int(until) if until else None
+    return usage
+
+
 def _book_shell_usage(row: dict) -> None:
     """A shell run's tokens, into the ledger the budget estimate and the
     usage popover's breakdown read — the same `record_run` every panel run
@@ -6613,14 +6627,16 @@ async def _scheduler() -> None:
             continue
         budget = usage_store.budget_state(settings)
         if budget["blocked"]:
+            # With "No limit" chosen only the account's own 100% blocks.
+            cap = 100 if budget.get("no_limit") else budget["budget_percent"]
             _set_gate("budget",
                       f"session usage {budget['used_percent']:.0f}% ≥ "
-                      f"budget {budget['budget_percent']}%")
+                      + ("Claude's own limit" if budget.get("no_limit")
+                         else f"budget {cap}%"))
             if not budget_logged:
                 log.info(
                     "auto-refresh paused: session usage %.0f%% ≥ budget %d%% (%s)",
-                    budget["used_percent"], budget["budget_percent"],
-                    budget["source"])
+                    budget["used_percent"], cap, budget["source"])
                 budget_logged = True
             continue
         budget_logged = False
@@ -7259,7 +7275,7 @@ def _status_payload() -> tuple[dict | None, dict]:
     cats = all_categories()
     insights = {c["id"]: _generated_at(c["id"]) for c in cats}
     settings = settings_store.load()
-    usage = usage_store.budget_state(settings)
+    usage = _usage_for_panel(settings)
     counts = _counts()
     return auth, {
         "settings": settings,
@@ -10700,6 +10716,15 @@ def _resident_gate(settings: dict) -> str:
     try:
         if usage_store.budget_state(settings)["blocked"]:
             return "the session usage budget is spent"
+        # "No limit: run until Anthropic rate-limits" takes the budget away,
+        # so the rate-limit pause is what holds the looks in that mode. A
+        # percentage install is gated exactly as it always was.
+        if settings.get("budget_no_limit") is True:
+            until = _rate_limited_now()
+            if until:
+                return ("Anthropic's rate-limit was reached; automatic runs "
+                        "resume at " + time.strftime(
+                            "%H:%M", time.localtime(until)))
     except Exception as exc:  # noqa: BLE001 — a budget that cannot be read
         # must not stop the cheap tier: `budget_state` already falls back
         # to an estimate, and a look is the half the plan spends freely.
@@ -15512,7 +15537,8 @@ def _diagnostics_payload() -> dict:
         },
         "options": safe_options,
         "settings": {k: settings.get(k) for k in (
-            "auto_enabled", "plan", "budget_percent", "gather_mode",
+            "auto_enabled", "plan", "budget_percent", "budget_no_limit",
+            "gather_mode",
             "terminal_ui", "onboarded", "chat_model")},
         "auth": {
             "state": AUTH_CHECK.get("state"),
@@ -21373,7 +21399,7 @@ def _settings_payload(settings: dict) -> dict:
     return {
         "settings": {**settings, **options},
         "model_label": chat_session.pretty_model(options["model"]),
-        "usage": usage_store.budget_state(settings),
+        "usage": _usage_for_panel(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
         "models": engine.MODEL_CHOICES,

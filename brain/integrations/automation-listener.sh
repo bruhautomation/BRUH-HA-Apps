@@ -444,7 +444,13 @@ try:
     budget = usage_store.budget_state(settings)
 except Exception:
     raise SystemExit(0)
-if budget.get("blocked"):
+if budget.get("blocked") and budget.get("no_limit"):
+    print("budget")
+    print("Your Claude account's session is at {:.0f}%, so this scheduled "
+          "run was skipped until the window resets. Running it by hand "
+          "(brain.run_insight) always runs.".format(
+              float(budget.get("used_percent") or 0)))
+elif budget.get("blocked"):
     print("budget")
     print("The session's usage ({:.0f}%) has reached the budget brAIn keeps "
           "for automatic runs ({}%), so this scheduled run was skipped until "

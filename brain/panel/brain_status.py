@@ -115,7 +115,11 @@ def derive(*, signed_in: bool, auth_state: str = "", auth_checked_at: float = 0,
         if budget.get("blocked"):
             back = float(budget.get("resets_at") or 0)
             back = back if back > now else 0
-            text = "Paused: usage budget reached"
+            # In "No limit" mode the only thing that blocks is the account's
+            # own figure saying the session is spent: Claude's limit, not a
+            # budget anybody set.
+            text = ("Paused: Claude limit reached" if budget.get("no_limit")
+                    else "Paused: usage budget reached")
             if back:
                 text += f", back at {clock(back)}"
             return done("paused", text, back_at=back or None)

@@ -11,6 +11,11 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     real account utilization isn't available.
   budget_percent  — how much of each 5-hour session window Insights may
                     consume before auto-refresh pauses (5-100).
+  budget_no_limit — True is the slider's position past 100%: "No limit, run
+                    until Anthropic rate-limits". Its own boolean rather than
+                    a percentage, so no value an older install stored can
+                    mean it, and `budget_percent` is kept for when it is
+                    switched off again. Off by default.
   terminal_ui     — which face the Terminal tab wears: "chat" (Claude Code
                     rendered as messages) or "classic" (ttyd + tmux, the
                     character grid). Both drive the same CLI with the same
@@ -174,6 +179,7 @@ DEFAULTS = {
     "morning_brief": None,
     "plan": "pro",
     "budget_percent": 25,
+    "budget_no_limit": False,
     "terminal_ui": "chat",
     "refresh_hours": None,
     "history_days": None,
@@ -333,6 +339,8 @@ def load() -> dict:
     pct = data.get("budget_percent")
     if isinstance(pct, int) and not isinstance(pct, bool) and 5 <= pct <= 100:
         out["budget_percent"] = pct
+    if isinstance(data.get("budget_no_limit"), bool):
+        out["budget_no_limit"] = data["budget_no_limit"]
     for name, (lo, hi) in OPTION_RANGES.items():
         val = data.get(name)
         if isinstance(val, int) and not isinstance(val, bool) and lo <= val <= hi:
@@ -533,6 +541,10 @@ def save(fields: dict) -> dict:
             if not isinstance(value, int) or isinstance(value, bool) \
                     or not 5 <= value <= 100:
                 raise ValueError("budget_percent must be an integer 5-100")
+            clean[key] = value
+        elif key == "budget_no_limit":
+            if not isinstance(value, bool):
+                raise ValueError("budget_no_limit must be a boolean")
             clean[key] = value
         elif key == "chat_max_sessions":
             lo, hi = CHAT_SESSIONS_RANGE

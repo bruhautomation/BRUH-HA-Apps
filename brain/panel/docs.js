@@ -549,7 +549,10 @@ To keep it from eating the plan you also use for your own work:
   instead of a figure that would look like money and isn't.
 - A **budget** (Settings) caps how much of the session window automatic work may
   spend. Past it, scheduled cards pause and say so in the bar; anything you ask for by
-  hand still runs.
+  hand still runs. The slider's last position is **No limit: run until Anthropic
+  rate-limits**: brAIn's own estimate then stops nothing, and automatic work pauses
+  only when Anthropic refuses a run (or your account's session reads 100%), until the
+  reset time the pill and Settings show.
 - Usage is also exposed as Home Assistant sensors, so you can chart it or alert on it.
   **They refresh when something has actually run**: the figure only moves when a run
   spends tokens, so brAIn asks your account right after each Claude run it makes —

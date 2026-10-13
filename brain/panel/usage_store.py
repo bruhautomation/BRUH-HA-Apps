@@ -474,6 +474,9 @@ def budget_state(settings: dict, now: float | None = None) -> dict:
     shows it next to the session rather than making you go looking.
     """
     budget_pct = int(settings.get("budget_percent") or DEFAULT_BUDGET)
+    # "No limit: run until Anthropic rate-limits." Only a literal True: the
+    # one direction a malformed value may fall is the cap that was there.
+    no_limit = settings.get("budget_no_limit") is True
     plan = settings.get("plan") if settings.get("plan") in PLAN_SESSION_TOKENS else "pro"
     now = time.time() if now is None else now
     cutoff = now - SESSION_HOURS * 3600
@@ -498,7 +501,13 @@ def budget_state(settings: dict, now: float | None = None) -> dict:
     return {
         "used_percent": round(used_pct, 1),
         "budget_percent": budget_pct,
-        "blocked": used_pct >= budget_pct,
+        # With no limit, brAIn's own estimate stops nothing: only the
+        # account's own figure saying the session is spent does, and the
+        # rate-limit pause (server.RATE_LIMIT_STATE) covers the case where
+        # that figure is unavailable and Anthropic refuses a run.
+        "blocked": (source == "account" and used_pct >= 100) if no_limit
+                   else used_pct >= budget_pct,
+        "no_limit": no_limit,
         "source": source,
         "window_tokens": spent,
         "resets_at": resets_at,
