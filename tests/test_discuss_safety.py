@@ -223,51 +223,41 @@ class TestADiscussionAsksBeforeItActs(ChatCase):
         self.assertEqual(clean({"finding_ts": 9})["finding_ts"], 9)
 
 
-class TestWithTheSwitchOnADiscussionAsksOnlyBeforeChangingHomeAssistant(ChatCase):
-    """"Let brAIn act without asking" is on: working out a plan may run
-    anything it needs, and changing Home Assistant still waits for the
-    person — an approval card or the plan's Apply."""
+class TestWithTheSwitchOnADiscussionActsLikeTheChat(ChatCase):
+    """"Let brAIn act without asking" is on: a discussion is the chat, and
+    the owner's rule is that the chat does what it is asked. A discussion
+    used to ask before every change to Home Assistant even with the switch
+    on, and was told not to try — so a person asking it to repoint three
+    templates was sent to a Plan button instead."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.reg.skip_permissions = True
 
-    async def test_reads_and_the_shell_are_pre_approved(self):
+    async def test_nothing_asks_and_the_mode_is_the_chats(self):
         await self.reg.new(finding_ts=1234)
         argv = (await self.spawns(1))[-1]
         rules = settings_of(argv)["permissions"]
         mcp = self.engine.MCP
         for tool in ("Bash", "Read", "Grep", "WebFetch", mcp.rstrip("_")):
             self.assertIn(tool, rules["allow"], tool)
-        self.assertNotIn("Bash", rules["ask"])
+        self.assertNotIn("ask", rules)
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "bypassPermissions")
 
-    async def test_changing_home_assistant_still_asks(self):
+    async def test_the_platform_deny_list_still_holds(self):
         await self.reg.new(finding_ts=1234)
         argv = (await self.spawns(1))[-1]
-        ask = settings_of(argv)["permissions"]["ask"]
-        mcp = self.engine.MCP
-        for tool in (f"{mcp}call_service", f"{mcp}control_lock",
-                     f"{mcp}control_light", f"{mcp}run_script",
-                     f"{mcp}reload_config", "Write", "Edit", "MultiEdit"):
-            self.assertIn(tool, ask, tool)
-        # Never bypass: the ask rules are what hold, and a bypass mode is a
-        # mode in which a CLI may skip them.
-        self.assertEqual(argv[argv.index("--permission-mode") + 1], "default")
+        denied = argv[argv.index("--disallowedTools") + 1].split(",")
+        for tool in self.engine.PLATFORM_DENIED:
+            self.assertIn(tool, denied)
 
-    async def test_every_acting_tool_but_the_shell_is_in_the_ask_list(self):
-        for tool in self.chat_session.DISCUSS_ASK:
-            if tool == "Bash":
-                continue
-            self.assertIn(tool, self.chat_session.DISCUSS_HA_ASK, tool)
-
-    async def test_a_cli_that_refuses_settings_forbids_only_the_changes(self):
+    async def test_a_cli_that_refuses_settings_forbids_nothing_extra(self):
         os.environ["FAKE_CHAT_REFUSE"] = "--settings"
         await self.reg.new(finding_ts=55)
         retry = (await self.spawns(2))[1]
-        denied = retry[retry.index("--disallowedTools") + 1].split(",")
-        self.assertEqual(sorted(denied),
-                         sorted(self.chat_session.DISCUSS_HA_ASK))
-        self.assertNotIn("Bash", denied)
+        if "--disallowedTools" in retry:
+            denied = retry[retry.index("--disallowedTools") + 1].split(",")
+            self.assertNotIn(f"{self.engine.MCP}call_service", denied)
 
     async def test_flipping_the_switch_respawns_into_the_new_rules(self):
         self.reg.skip_permissions = False
@@ -278,10 +268,15 @@ class TestWithTheSwitchOnADiscussionAsksOnlyBeforeChangingHomeAssistant(ChatCase
         self.assertIn("Bash", settings_of((await self.spawns(1))[-1])
                       ["permissions"]["ask"])
         session.skip_permissions = True
-        await session.send("go on then")
+        await session.send("go on then, change it")
         argv = (await self.spawns(2))[-1]
         self.assertIn("--resume", argv)
-        self.assertIn("Bash", settings_of(argv)["permissions"]["allow"])
+        self.assertNotIn("ask", settings_of(argv)["permissions"])
+
+    def test_the_conversation_is_told_to_make_the_change(self):
+        import server
+        self.assertNotIn("do not try to make a change", server.DISCUSS_OFFER)
+        self.assertIn("make the change here", server.DISCUSS_OFFER)
 
 
 class TestTheChatIsPrimed(ChatCase):
@@ -414,7 +409,7 @@ class TestTheDiscussPromptCarriesTheInvestigation(unittest.TestCase):
         self.assertIn("Start from what was already read", prompt)
         # And the conversation is told how a change it agrees becomes one.
         self.assertIn("`plan` option", prompt)
-        self.assertIn("asks me first", prompt)
+        self.assertIn("make the change here", prompt)
 
     def test_a_run_that_cannot_be_read_is_a_shorter_prompt_not_a_refusal(self):
         row = findings_store.get(self._case()["ts"])

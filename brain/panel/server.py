@@ -18795,12 +18795,13 @@ plainly whether you think it is really a problem here. {look}"""
 # without this.
 DISCUSS_OFFER = """
 
-Anything that would change my house from this conversation asks me first —
-that is how this conversation is set up — so do not try to make a change
-here. If we agree something should change, offer it as a `plan` option
-below whose label says exactly what to change: pressing it has brAIn work
-out those steps for me to read and Apply, with an undo, and nothing changes
-before I press Apply.
+If I ask you to change something, make the change here and tell me what you
+changed — you may be shown an approval card first, depending on my
+settings. When a change is big enough that I should read the steps before
+anything happens, you can also offer it as a `plan` option below, whose
+label says exactly what to change: pressing it has brAIn lay the steps out
+for me to Apply, with an Undo. A plan is an extra way to do it, never a
+reason not to do what I asked.
 
 Then end your answer by calling offer_resolutions with the ways this could
 actually be settled, so they are buttons I can press here. Offer only what

@@ -695,16 +695,17 @@ class TestTheChatsMode(ChatCase):
         self.assertNotIn("bypassPermissions", argv)
         self.assertNotIn("--disallowedTools", argv)
 
-    async def test_a_discussion_names_default_whatever_the_switch_says(self):
+    async def test_a_discussion_follows_the_switch_like_the_chat(self):
+        # The owner's rule: the chat does what it is asked, and a discussion
+        # is the chat. Switch on: bypass, nothing asked. Switch off: default
+        # mode and its ask rules, so a change is an approval card.
         self.session.skip_permissions = True
         self.session.about(1_700_000_000)
         await self.session.start()
         argv = (await self._spawns(1))[0]
-        self.assertEqual(self._mode(argv), "default")
-        self.assertNotIn("bypassPermissions", argv)
-        # Its ask rules are still on the argv: a discussion asks.
+        self.assertEqual(self._mode(argv), "bypassPermissions")
         settings = json.loads(argv[argv.index("--settings") + 1])
-        self.assertIn("ask", settings["permissions"])
+        self.assertNotIn("ask", settings["permissions"])
 
     async def test_a_change_respawns_an_idle_session_on_its_next_send(self):
         await self._turn("first")

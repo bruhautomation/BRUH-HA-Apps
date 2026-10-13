@@ -954,7 +954,7 @@ class TestChatTerminalPanel(unittest.TestCase):
         # prompt says so, and tests/test_discuss_safety.py drives the argv
         # that makes it true (a sentence alone was the whole guard once).
         server = (PANEL / "server.py").read_text()
-        self.assertIn("asks me first", server)
+        self.assertIn("make the change here", server)
 
     def test_remind_me_later_is_not_a_decision(self):
         """Dismissing is permanent and is fed back into every future
