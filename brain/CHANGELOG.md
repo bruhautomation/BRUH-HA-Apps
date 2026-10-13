@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.31
+
+### Added
+
+- The usage budget in ⚙ › Model & usage has a step past 100%: **No limit: run until Anthropic rate-limits**. With it chosen, brAIn's own usage estimate no longer stops automatic insights; they keep running until Anthropic itself refuses a run, then pause until the reset and say when they will be back (on the setting, in the usage popover and on the status line). Switching it off brings back the percentage you had. (reports #223)
+
+### Changed
+
+- Under the budget slider, a line now says what happens at the limit: automatic insights stop at that share of the session until it resets, and asking by hand always runs. (reports #223)
+
 ## 2.18.30
 
 ### Changed
