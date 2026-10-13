@@ -39,6 +39,7 @@ import time
 
 import atomic_write
 import facts_store
+import prompt_kit
 
 STORE = os.environ.get("BRAIN_MEMORY_CLEANUP_FILE", "/data/memory-cleanup.json")
 
@@ -128,39 +129,41 @@ def digest(document: str, facts: list[dict]) -> dict:
     return {"doc": lines, "facts": rows}
 
 
-SYSTEM = """You review what brAIn has remembered about one home and find the lines that should go.
-
-You are given the lines of the memory document (ids doc:N) and the facts
-brAIn has stored (ids fact:...). You have Home Assistant's reading tools:
-states, the registries, history, the logbook. Use them to CHECK a line
-before you call it wrong — a device that no longer exists, an entity id
-that is not in the registry, a room it is not in, a schedule the
-automations do not have.
-
-Propose a line for removal only when it is one of these:
-- "wrong" — it says something about this house that is not true, and you
-  checked (say what you read).
-- "useless" — true but worth nothing to any future run: a one-off event, a
-  transient state ("the lamp was on at 9pm"), trivia, something any house
-  would say.
-- "error" — garbled, truncated, a test or diagnostic marker, a note about
-  brAIn's own bookkeeping rather than the house, a line that is plainly a
-  mistake in the writing.
-- "duplicate" — the same fact as another line. Name the line you keep in
-  "why" and remove the weaker copy, never both.
-- "stale" — true once and replaced since (an old device, a moved schedule).
-
-Rules:
+# Person-facing: every `why` is a row somebody ticks or leaves. A schema
+# run with reading tools; SCHEMA holds the shape. The memory lines are
+# text other runs and people wrote, so they are fenced like any other.
+SYSTEM = prompt_kit.assemble(
+    "You review what brAIn has remembered about one home and find the "
+    "lines that should go. Nothing is removed until a person ticks it.",
+    inputs=(
+        "You are given the lines of the memory document (ids doc:N) and the "
+        "facts brAIn has stored (ids fact:...)."),
+    tools=(
+        "You have Home Assistant's reading tools: states, the registries, "
+        "history, the logbook. CHECK a line before you call it wrong — a "
+        "device that no longer exists, an entity id not in the registry, a "
+        "room it is not in, a schedule the automations do not have."),
+    good=(
+        "Proposes a line only when it is one of these, with a `why` a "
+        "person can check. wrong — untrue of this house, and you checked "
+        "(say what you read). useless — true but worth nothing to any "
+        "future run: a one-off event, a transient state, trivia, something "
+        "any house would say. error — garbled, truncated, a test or "
+        "diagnostic marker, a note about brAIn's own bookkeeping. "
+        "duplicate — the same fact as another line; name the one you keep "
+        "and remove the weaker copy, never both. stale — true once and "
+        "replaced since (an old device, a moved schedule)."),
+    example=(
+        "doc:12 \"The lounge lamp was on at 21:00 on Tuesday\" → useless, "
+        "why \"One evening's state, not a fact about the house.\""),
+    rules="""\
 - When in doubt, keep it. A removal nobody can check is worse than a line
   that stays.
 - Never propose a line about safety equipment (smoke, CO, leak, gas
   sensors, shutoff valves, alarms) as useless.
 - Only use ids exactly as given. Never invent one.
-- "why" is one short sentence a person can check.
-- An empty list is a fine answer.
-
-Answer with JSON only: {"remove": [{"id": "doc:12", "reason": "wrong", "why": "..."}]}
-"""
+- An empty list is a fine answer.""",
+)
 
 SCHEMA = {
     "type": "object",
@@ -170,9 +173,11 @@ SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string"},
+                    "id": {"type": "string", "description":
+                           "doc:N or fact:..., exactly as given."},
                     "reason": {"type": "string", "enum": list(REASONS)},
-                    "why": {"type": "string"},
+                    "why": {"type": "string", "description":
+                            "One short sentence a person can check."},
                 },
                 "required": ["id", "reason", "why"],
             },

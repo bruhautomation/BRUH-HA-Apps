@@ -41,6 +41,8 @@ import json
 import os
 import re
 
+import prompt_kit
+
 from ._util import (House, counted_names, domain_of, join_names, load_yaml_file,
                     parse_ts)
 
@@ -429,24 +431,40 @@ def review_digest(snap: dict, now: float) -> dict:
 # The weekly review — one sentence over the digest, checked before it stands
 # ---------------------------------------------------------------------------
 
-REVIEW_SYSTEM = """You review who and what can reach one Home Assistant house.
-
-You are given a digest: how many people can log in and which are
-administrators, what is exposed to which voice assistant, which add-ons run
-with extra privileges, this add-on's own posture, recent login bans, and the
-open security findings. Anything marked "unread" could not be read: say so
-rather than treating it as nothing.
-
-Write ONE plain sentence (two at most, under 60 words) a homeowner reads
-once a week: the thing most worth their attention, or that nothing changed
-and nothing needs doing. No greeting, no markdown, no lists. Never invent a
-user, an add-on or a number that is not in the digest.
-
-Answer with JSON only: {"sentence": "..."}
-"""
+# Person-facing (a homeowner reads the sentence once a week) and it reads
+# user and add-on names other people chose, so it carries the fence. A
+# tool-less schema run: `tools=""`, because a schema run answers THROUGH a
+# tool and "no tools" would be untrue of it.
+REVIEW_SYSTEM = prompt_kit.assemble(
+    "You review who and what can reach one Home Assistant house, and write "
+    "the one sentence about it a homeowner reads once a week.",
+    inputs=(
+        "You are given a digest: how many people can log in and which are "
+        "administrators, what is exposed to which voice assistant, which "
+        "add-ons run with extra privileges, this add-on's own posture, "
+        "recent login bans, and the open security findings. Anything "
+        "marked \"unread\" could not be read."),
+    tools="",
+    good=(
+        "One plain sentence (two at most, under 60 words): the thing most "
+        "worth their attention, or that nothing changed and nothing needs "
+        "doing."),
+    example=(
+        "\"Two of the four people who can log in are administrators, and "
+        "the front door lock is exposed to Google Assistant — consider "
+        "un-exposing it.\""),
+    rules="""\
+- Something marked "unread" is said to be unread, never treated as
+  nothing — "I could not look" and "there is nothing" are different.
+- Never name a user or an add-on that is not in the digest.
+- No greeting, no markdown, no lists.""",
+)
 
 REVIEW_SCHEMA = {"type": "object",
-                 "properties": {"sentence": {"type": "string"}},
+                 "properties": {"sentence": {
+                     "type": "string",
+                     "description": "One plain sentence, two at most, under "
+                                    "60 words."}},
                  "required": ["sentence"]}
 REVIEW_MAX = 400
 REVIEW_MIN = 20

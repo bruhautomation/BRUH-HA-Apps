@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import prompt_kit
 
 FILE = Path(os.environ.get("BRAIN_HOUSE_RULES_FILE", "/data/house_rules.json"))
 MAX_RULES = 10
@@ -56,36 +57,60 @@ _TIME = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 RULE_SCHEMA = {
     "type": "object",
     "properties": {
-        "understood": {"type": "boolean"},
-        "domains": {"type": "array", "items": {"type": "string"}},
-        "entities": {"type": "array", "items": {"type": "string"}},
-        "areas": {"type": "array", "items": {"type": "string"}},
-        "services": {"type": "array", "items": {"type": "string"}},
-        "after": {"type": "string"},
-        "before": {"type": "string"},
-        "ceiling_key": {"type": "string"},
+        "understood": {"type": "boolean", "description":
+                       "false if the rule cannot be expressed this way."},
+        "domains": {"type": "array", "items": {"type": "string"},
+                    "description": "Home Assistant domains it is about "
+                    "(light, climate, cover, lock, switch, media_player, "
+                    "fan, ...)."},
+        "entities": {"type": "array", "items": {"type": "string"},
+                     "description": "Entity ids, only if the rule names "
+                                    "one exactly."},
+        "areas": {"type": "array", "items": {"type": "string"},
+                  "description": "Room names the rule mentions, lower "
+                  "case, as a person says them (\"garage\", \"kids room\")."},
+        "services": {"type": "array", "items": {"type": "string"},
+                     "description": "Service names when the rule is about "
+                     "one action (\"open_cover\", \"set_temperature\"); "
+                     "empty for \"don't touch\"."},
+        "after": {"type": "string", "description":
+                  "24-hour HH:MM the rule starts applying."},
+        "before": {"type": "string", "description":
+                   "24-hour HH:MM it stops applying; \"after 22:00\" "
+                   "alone runs to \"06:00\"."},
+        "ceiling_key": {"type": "string", "description":
+                        "The value the rule caps (\"temperature\")."},
         "ceiling": {"type": "number"},
-        "verdict": {"type": "string", "enum": list(VERDICTS)},
-        "why": {"type": "string"},
+        "verdict": {"type": "string", "enum": list(VERDICTS),
+                    "description": "deny for never / don't; ask for "
+                                   "check with me / ask first."},
+        "why": {"type": "string", "description":
+                "One short sentence restating the rule."},
     },
     "required": ["understood", "verdict"],
     "additionalProperties": False,
 }
 
-COMPILE_SYSTEM = """You turn one household rule, written in plain words, into a matcher a smart-home gate checks every action against. You are shown the rule and nothing else.
-
-Fill in only what the rule says:
-- "domains": Home Assistant domains it is about (light, climate, cover, lock, switch, media_player, fan, …).
-- "entities": entity ids, only if the rule names one exactly.
-- "areas": room names the rule mentions, lower case, as a person says them ("garage", "kids room").
-- "services": service names if the rule is about one action ("open_cover", "turn_on", "set_temperature"); leave empty for "don't touch".
-- "after" / "before": a time window in 24-hour HH:MM when the rule applies ("after 22:00" → after "22:00", before "06:00" unless it says otherwise).
-- "ceiling_key" / "ceiling": a value the rule caps ("never above 23" → ceiling_key "temperature", ceiling 23).
-- "verdict": "deny" when the rule says never / don't; "ask" when it says check with me / ask first.
-- "understood": false if the rule cannot be expressed this way. Never guess.
-- "why": one short sentence restating the rule.
-
-Reply with ONE JSON object and nothing else."""
+# Model-facing: the matcher is read by the gate's code and validated by
+# `clean_compiled`; only `why` is ever shown, as a restatement of the
+# person's own rule. The rule text is somebody's words, so it is fenced.
+# A tool-less schema run — the per-field guidance is in RULE_SCHEMA.
+COMPILE_SYSTEM = prompt_kit.assemble(
+    "You turn one household rule, written in plain words, into a matcher "
+    "a smart-home gate checks every action against.",
+    inputs="You are shown the rule and nothing else.",
+    tools="",
+    good=(
+        "Fills in only what the rule says and leaves every other field "
+        "empty; a rule that cannot be expressed this way is "
+        "understood false. Never guess."),
+    example=(
+        "\"Never turn the heating above 23 after 22:00\" → domains "
+        "[climate], services [set_temperature], after \"22:00\", before "
+        "\"06:00\", ceiling_key \"temperature\", ceiling 23, verdict deny, "
+        "understood true, why \"No heating above 23 at night.\""),
+    person_facing=False,
+)
 
 
 def digest(rules: list[str]) -> str:

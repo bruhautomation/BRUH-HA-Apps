@@ -80,6 +80,8 @@ smart plug was never anybody.
 """
 from __future__ import annotations
 
+import prompt_kit
+
 # Domains whose changes are READINGS. A house publishes tens of thousands
 # of these a day and none of them is an event: dropping them is the single
 # biggest thing that turns a logbook into a list of what happened. They are
@@ -782,26 +784,38 @@ SUMMARY_MAX_WORDS = 90
 # floor, for its reason.
 SUMMARY_MIN_CHARS = 60
 
-SUMMARY_SYSTEM = """You are describing what happened in somebody's home.
-
-You are given episodes already grouped from the logbook — what each thing
-did, when, for how long, and what caused it. Say what the window ADDS UP
-TO, in at most %(words)d words, one paragraph, no greeting, no markdown, no
-bullet list.
-
-Write about the house, never about the person. Nothing about health,
-sleep, who was in, or what anybody was doing — "the house was empty from
-09:10" is about the house; "they were at work" is not, and there is no
-exception to this.
-
-Say what is notable and say nothing when there is nothing: a quiet day is
-"a quiet day" and not a list of the lights that came on. Prefer the thing
-somebody could not have got by looking — a run that was longer than the
-rest, something that happened while the house was empty, an automation a
-person undid — over an inventory of what is on the screen already.
-
-Do not invent a cause. If an episode says nothing moved it, it says
-nothing moved it.""" % {"words": SUMMARY_MAX_WORDS}
+# Person-facing free text, and tool-less: the episodes ARE the input, and
+# a run handed reading tools it was never told about went looking for the
+# rows the tab deliberately leaves out. Written with `.replace` rather than
+# `%` because the shared blocks are prose and prose may hold a percent sign.
+SUMMARY_SYSTEM = prompt_kit.assemble(
+    "You say what a window of time in one home ADDS UP TO, in one "
+    "paragraph somebody reads above the timeline they are looking at.",
+    inputs=(
+        "You are given episodes already grouped from the logbook — what "
+        "each thing did, when, for how long and what caused it — and when "
+        "nobody was home."),
+    tools="none",
+    good=(
+        "Prefers what somebody could not have got by looking — a run longer "
+        "than the rest, something that happened while the house was empty, "
+        "an automation a person undid — over an inventory of what is on "
+        "the screen already. A quiet day is \"a quiet day\", not a list of "
+        "the lights that came on."),
+    example=(
+        "\"A quiet evening. The lounge TV ran from 19:10 to 22:30, and the "
+        "back door was opened once while nobody was home, at 17:20. The "
+        "hall light's automation turned it off at 21:00 and somebody "
+        "turned it back on a minute later.\""),
+    rules="""\
+- At most {{WORDS}} words, one paragraph, no greeting, no markdown, no
+  bullet list.
+- Write about the house, never about the person: "the house was empty
+  from 09:10" is about the house; "they were at work" is not.
+- Do not invent a cause. If an episode says nothing moved it, it says
+  nothing moved it.""",
+    output="Answer with the paragraph and nothing else.",
+).replace("{{WORDS}}", str(SUMMARY_MAX_WORDS))
 
 
 def summary_prompt(payload: dict, tz_name: str = "") -> str:

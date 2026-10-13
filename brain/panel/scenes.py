@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import re
 
+import prompt_kit
 import routines
 from checks._util import House
 
@@ -103,14 +104,27 @@ ID_PREFIX = "brain_scene_"
 # a model is better at than a table. A failure leaves the plain names.
 NAME_TIMEOUT_S = 90
 NAME_MAX_TURNS = 2
-SYSTEM = """You name four lighting scenes for one room in a house.
-
-You are given the room and the four moods in order: morning, day, evening,
-night. Answer with FOUR lines and nothing else — one name per line, in
-that order, each under 24 characters, each a name a person would use out
-loud about their own home. No numbering, no quotes, no explanation.
-
-They are shown beside the room's name, so do not repeat it."""
+# Person-facing free text (the names are said out loud and shown on the
+# card), tool-less, and `read_names` takes four lines or none — so the
+# shape is the output line rather than a schema.
+SYSTEM = prompt_kit.assemble(
+    "You name four lighting scenes for one room in a house.",
+    inputs=(
+        "You are given the room and the four moods in order: morning, day, "
+        "evening, night."),
+    tools="none",
+    good=(
+        "Four names a person would use out loud about their own home, one "
+        "per mood, each under 24 characters."),
+    example="For the living room: Wake up / Daylight / Wind down / Night light",
+    rules="""\
+- They are shown beside the room's name, so do not repeat it.
+- Four DIFFERENT names: Home Assistant makes each scene's id from its
+  name, so two the same are one scene with two definitions.""",
+    output=(
+        "Answer with FOUR lines and nothing else — one name per line, in the "
+        "moods' order. No numbering, no quotes, no explanation."),
+)
 
 
 def _slug(text: str) -> str:

@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import re
 
+import prompt_kit
 from checks._util import House
 
 # Every class this file knows how to write, in the order they are offered.
@@ -99,20 +100,35 @@ DESCRIBE_TIMEOUT_S = 90
 DESCRIBE_MAX_TURNS = 2
 DESCRIBE_MAX_CHARS = 600
 
-SYSTEM = """You explain one emergency automation to the person who lives
-in the house it was written for.
-
-You are given exactly what it does: what sets it off, and every entity it
-acts on. Say it back in ONE short paragraph of plain sentences — what
-happens, in the order it happens, and nothing else.
-
-Rules that matter more than style:
+# Person-facing free text, tool-less: the paragraph on the card somebody
+# reads before deciding whether this automation goes into their house.
+# `tidy_description` falls back to the deterministic sentence under 60
+# characters and cuts at DESCRIBE_MAX_CHARS, so the 60–400 asked for here
+# sits inside both.
+SYSTEM = prompt_kit.assemble(
+    "You explain one emergency automation to the person who lives in the "
+    "house it was written for. They are about to decide whether to have it.",
+    inputs=(
+        "You are given exactly what it does: what sets it off, every entity "
+        "it acts on in order, and what was deliberately left out."),
+    tools="none",
+    good=(
+        "One paragraph of plain sentences, 60 to 400 characters, in this "
+        "order: what sets it off, then what it does in the order it does "
+        "it, then what was deliberately left out and why."),
+    example=(
+        "\"If the hall or kitchen smoke alarm goes off, this turns on every "
+        "light in the house, switches off the heating and the bathroom fan, "
+        "and sends a notification naming the room. It does not touch the front door "
+        "lock, which is on your protected list.\""),
+    rules="""\
 - Say only what the list says. Never add an action, a device or a
   safeguard that is not in it.
 - No greeting, no sign-off, no markdown, no bullet points, no headings.
-- Do not reassure anybody and do not tell them what to do about it.
-- Do not say whether this is a good idea. They are about to decide that.
-"""
+- Do not reassure anybody, do not tell them what to do about it, and do
+  not say whether this is a good idea.""",
+    output="Answer with the paragraph and nothing else.",
+)
 
 
 def _tokens(text: str) -> set[str]:
