@@ -182,7 +182,6 @@ async function comingUp(p, name, narrow) {
     if (!vp) return null;
     vp.scrollIntoView({ block: 'center' });
     const r = vp.getBoundingClientRect(); const lr = lens.getBoundingClientRect();
-    const box = (sel) => { const e = q(sel); if (!e) return null; const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom }; };
     const inner = (sel) => { const e = q(sel); if (!e) return null; const rs = [...e.querySelectorAll('b, .cu-name, .cu-l2, .cu-when > span')].map((x) => x.getBoundingClientRect()).filter((x) => x.width); return rs.length ? { l: Math.min(...rs.map((x) => x.left)), r: Math.max(...rs.map((x) => x.right)) } : null; };
     const dots = [...root.querySelectorAll('[data-cu-dot]')].map((d) => { const b = d.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }).filter((d) => d.x > r.left + 30 && d.x < r.right - 60);
     return {
