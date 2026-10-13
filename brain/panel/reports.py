@@ -61,6 +61,7 @@ import atomic_write
 import health as health_rules
 import journal
 import plain_words
+import rule_record
 
 log = logging.getLogger("brain.reports")
 
@@ -963,6 +964,22 @@ def _faults(diag) -> list[dict]:
                     "When you press Ignore on one, say why in the box: the "
                     "reason reaches brAIn's memory as a correction and its "
                     "next looks read it")
+            elif rule_record.qualifies(row):
+                # brAIn quiets this one by itself (`rule_record`): its
+                # first look is told the record and sets the rule's rows
+                # aside unless one carries fresh evidence. A mute is still
+                # the person's, and the row says how.
+                detail = ("this rule is often wrong about this house; brAIn "
+                          "now holds its rows back unless one carries fresh "
+                          "evidence, and muting it stays your choice")
+                ask = ("brAIn has asked on Needs you whether to stop raising "
+                       "these; answer it there to stop it altogether"
+                       if source in offered else
+                       "To stop it altogether, Ignore one of its cards with "
+                       "“Ignore all like this” ticked")
+                sentence = _sentence(
+                    f"{record}, so brAIn now holds this rule's cards back "
+                    "unless one carries fresh, specific evidence", ask)
             elif source in offered:
                 sentence = _sentence(
                     f"{record}. brAIn has asked on Needs you whether to "

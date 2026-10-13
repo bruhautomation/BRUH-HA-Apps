@@ -216,6 +216,7 @@ import reports
 import resident
 import rhythm
 import routines
+import rule_record
 import run_queue
 import run_sources
 import scenes
@@ -10936,6 +10937,7 @@ async def _resident_look(now: float, settings: dict, thinking: str,
         used_by=_used_by_rows(outcomes.scope_subjects(batch)),
         examples=await asyncio.to_thread(_outcome_examples, batch, now),
         situation_line=await asyncio.to_thread(_situation_line, now),
+        rule_records=await asyncio.to_thread(_rule_records, batch),
         inputs=look_inputs)
     TRIAGE_STATE["runs"] = _triage_runs_today(now) + 1
     RESIDENT_STATE["last_look_at"] = now
@@ -13731,6 +13733,23 @@ async def _situation_loop() -> None:
             SITUATION_STATE["last_error"] = str(exc)[:200]
             log.debug("situation loop: %s", exc)
         await asyncio.sleep(situation.REFRESH_S)
+
+
+def _rule_records(batch: list[dict]) -> list[str]:
+    """`rule_record.lines` for a first look's batch, off the scorecard.
+
+    A rule the household marks wrong most of the time is read to the look
+    beside the signals it filed, so its rows are set aside without fresh
+    evidence. Never a mute and never a floor: `never_ignore` is handed in,
+    and `parse_first_look` applies it after the reply as always. A
+    scorecard that cannot be read tells the look nothing.
+    """
+    try:
+        board = findings_store.scorecard()
+    except Exception as exc:  # noqa: BLE001 — context, never a reason to fail
+        log.debug("the scorecard could not be read for a look: %s", exc)
+        return []
+    return rule_record.lines(batch, board, floor=resident.never_ignore)
 
 
 def _situation_line(now: float) -> str:

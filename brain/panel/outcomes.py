@@ -1300,7 +1300,8 @@ def replay_prompt(entry: dict) -> str:
         watch_notes=inputs.get("watch_notes") or [],
         examples=inputs.get("examples") or [],
         situation_line=str(inputs.get("situation_line") or ""),
-        used_by=inputs.get("used_by") or [])
+        used_by=inputs.get("used_by") or [],
+        rule_records=inputs.get("rule_records") or [])
 
 
 def replay_look(entry: dict, ask) -> dict:
