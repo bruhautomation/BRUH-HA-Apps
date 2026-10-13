@@ -57,6 +57,7 @@ import brain
 import devloop
 import gitrepo
 import learning
+import morphcode
 import paths
 import settings
 import store
@@ -93,6 +94,26 @@ RESULT_SCHEMA = {
                   "description": "Durable facts about the HOUSE this request taught you (what a device "
                                  "is, where it is, which sensor measures what), each with its entity id "
                                  "or `area:<id>` as subject. Morph queues them for brAIn's memory."},
+        "question": {
+            "type": "object", "required": ["text", "options"],
+            "properties": {
+                "text": {"type": "string", "description": "The question, in one sentence a person reads."},
+                "options": {"type": "array", "minItems": 2, "maxItems": 3,
+                            "items": {"type": "object", "required": ["label", "request"],
+                                      "properties": {
+                                          "label": {"type": "string",
+                                                    "description": "The button, under 60 characters."},
+                                          "request": {"type": "string",
+                                                      "description": "What Morph sends you as the next "
+                                                                     "request when this is pressed, in the "
+                                                                     "person's voice."},
+                                          "home_assistant": {"type": "boolean",
+                                                             "description": "True when this answer changes "
+                                                                            "Home Assistant itself."}}}},
+            },
+            "description": "A choice that belongs to the person, asked as buttons. Use it rather than "
+                           "needs_person whenever the person only has to pick.",
+        },
         "code_issue": {
             "type": "object", "required": ["title", "detail"],
             "properties": {
@@ -445,6 +466,15 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         "  so check your JavaScript. Never say you cannot change Morph's code: you can.",
         "- When you changed Morph's own code, fill code_issue saying what you changed and why, so",
         "  Morph can offer to send it to Morph's developers. Do not file anything yourself.",
+        "- A number a card WORKS OUT from other sensors (a difference, a sum, a rate, an efficiency, a",
+        "  cost) has no history: Home Assistant records entities, so a value calculated in the card has",
+        "  no chart, no long-term statistics and nothing an automation can use. When you build one and",
+        "  no entity already holds it, think whether the person would want its history (a trend over",
+        "  days, a comparison with last week). If they might, build the card with the calculation in it",
+        "  now and fill `question`: one option keeps it calculated in the card only, the other makes a",
+        "  Home Assistant template sensor for it (name it) so it is recorded, with home_assistant true.",
+        "  Never make that sensor unless the request asked for it; the answer comes back as the next",
+        "  request. Use `question` likewise for any other choice that is the person's to make.",
         "",
         "- A change is made by WRITING the files: describing it in your answer changes nothing. When",
         "  you finish, Morph reads /config/morph back and tells the person exactly what is different",
@@ -465,8 +495,9 @@ def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
     """Begin a tell. Returns its state; the work continues in a task.
 
     ``scope`` is never read off the wire: a request from the panel is a
-    dashboard request whatever its target says, and only Undo's follow-up
-    (which puts back a house change a Tell made) passes "house"."""
+    dashboard request whatever its target says. "house" is passed by Undo's
+    follow-up (which puts back a house change a Tell made) and by an answer
+    to brAIn's question whose button said it changes Home Assistant."""
     words = str(words or "").strip()[:MAX_WORDS]
     if not words:
         return {"error": "Say what should change."}
@@ -562,6 +593,13 @@ async def _run(state: dict) -> None:
         await asyncio.to_thread(_follow, state, seen)
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
         summary = str((data or {}).get("summary") or text or "").strip()[:1200]
+        if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed":
+            # brAIn was asked to make this house's change work on the Morph
+            # installed now and answered: whether it edited the copy or
+            # judged it already fits, the copy is in use again. Recorded
+            # before the commit so Undo takes the record with the copy.
+            if await asyncio.to_thread(morphcode.accept, target.get("id") or ""):
+                _step(state, "Recorded the change as made for this Morph", "good")
         commit = await asyncio.to_thread(
             gitrepo.commit,
             f"brAIn: {summary or state['text']}"[:200] + f"\n\nAsked: “{state['text']}”\nTask: {tid}",
@@ -604,6 +642,9 @@ async def _run(state: dict) -> None:
             _step(state, "Read the dashboard back: " + str(len(back["shows"])) + " change"
                   + ("" if len(back["shows"]) == 1 else "s") + " on screen", "good")
         state["needs_person"] = str((data or {}).get("needs_person") or "")[:600]
+        question = clean_question((data or {}).get("question"))
+        if question:
+            state["question"] = question
         state["saw"] = str((data or {}).get("saw") or "")[:400]
         issue = (data or {}).get("code_issue")
         code_files = [f.split("/", 1)[1] for f in (await asyncio.to_thread(gitrepo.changed_files, commit) if commit else [])
@@ -626,6 +667,7 @@ async def _run(state: dict) -> None:
         state["reload"] = bool(commit) or bool((data or {}).get("reload"))
         filed = await asyncio.to_thread(queue_facts, (data or {}).get("facts"), tid)
         if filed:
+            state["facts_filed"] = filed
             _step(state, f"Queued {filed} fact{'' if filed == 1 else 's'} about the house for brAIn's memory", "good")
         lesson = str((data or {}).get("lesson") or "").strip()
         if lesson:
@@ -650,6 +692,57 @@ async def _run(state: dict) -> None:
         _save(state)
     finally:
         _RUNNING.pop(tid, None)
+
+
+QUESTION_CHARS = 300
+LABEL_CHARS = 60
+REQUEST_CHARS = 1200
+
+
+def clean_question(q) -> dict | None:
+    """brAIn's question as the panel may show it: two or three buttons,
+    each carrying the request it sends. Anything that is not that shape is
+    no question."""
+    if not isinstance(q, dict):
+        return None
+    text = str(q.get("text") or "").strip()[:QUESTION_CHARS]
+    opts = []
+    for o in q.get("options") or []:
+        if not isinstance(o, dict):
+            continue
+        label = str(o.get("label") or "").strip()[:LABEL_CHARS]
+        request = str(o.get("request") or "").strip()[:REQUEST_CHARS]
+        if label and request:
+            opts.append({"label": label, "request": request, "home_assistant": o.get("home_assistant") is True})
+    if not text or not 2 <= len(opts) <= 3:
+        return None
+    return {"text": text, "options": opts}
+
+
+def answer_question(tid: str, choice) -> dict:
+    """The person pressed one of the answers brAIn offered. The next tell
+    is started from the option STORED with the tell, never from words off
+    the wire, and it may change Home Assistant only when that option said
+    so on the button the person pressed."""
+    state = read_state(tid)
+    if not state or not state.get("question"):
+        return {"error": "That question is gone."}
+    if state.get("answered") is not None:
+        return {"error": "That question was already answered."}
+    opts = state["question"]["options"]
+    try:
+        i = int(choice)
+    except (TypeError, ValueError):
+        return {"error": "That is not one of the answers."}
+    if not 0 <= i < len(opts):
+        return {"error": "That is not one of the answers."}
+    opt = opts[i]
+    st = start(state.get("target") or {}, opt["request"], tid,
+               scope="house" if opt.get("home_assistant") else "ui")
+    if "error" not in st:
+        state["answered"] = i
+        _save(state)
+    return st
 
 
 MAX_FACTS = 6

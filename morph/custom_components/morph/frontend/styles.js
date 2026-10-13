@@ -236,6 +236,12 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .shot figcaption{font-size:11.5px;color:var(--quiet)}
 .shot.zoom{max-width:100%;cursor:zoom-out}
 .shot.zoom img{max-height:none}
+.whatlist{display:flex;flex-direction:column;gap:6px;padding:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;line-height:1.4}
+.what{display:grid;grid-template-columns:112px minmax(0,1fr);gap:10px;align-items:baseline}
+.what .wk{color:var(--muted);font-weight:600}
+.what .wv{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+.issue.askq{background:color-mix(in oklab,var(--violet) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 28%,transparent)}
+.moreinfo{display:flex;flex-wrap:wrap;gap:0 18px;margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
 .issue{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:12px;font-size:14px;line-height:1.45;background:color-mix(in oklab,var(--amber) 9%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--amber) 30%,transparent)}
 .activity{display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:10px;border-radius:14px;background:color-mix(in oklab,var(--violet) 8%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 25%,transparent)}
 .activity .lx{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}
