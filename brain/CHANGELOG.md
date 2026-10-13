@@ -18,6 +18,8 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - The Gaps and Ideas streams of *Help develop brAIn* are asked with a rewritten prompt that says what a good report is, with examples, and the Design review is told why it must not file anything already reported again.
 - Every issue a Claude run files (Gaps, Ideas, Design review, *What do you want to fix?*) says what "fixed" looks like and the run's estimate of how much it touches; the run's answer must have both.
 - The next Gaps, Ideas and Design review run is shown the reports the developer closed as declined, not brAIn's problem or a duplicate, with the first line of why. The Gaps run also gets the reasons you typed when you marked a finding Wrong.
+- brAIn's first look at new signals carries three short worked examples (ignore, watch, investigate), each with a reason that answers what the row claims, and no longer shows the model its internal priority score.
+- An investigation is told how to set aside or rewrite a card only when it is looking at one, with an example of each; the open cards it is shown name the device each is about; a camera offer comes before how to answer; and a second opinion is told plainly that making no claim is a valid answer.
 - Tool descriptions: `call_service` is shorter, `get_baseline` points at `what_is_normal`, history and statistics point at each other, `reload_config` lists its targets, and `minecraft_teleport` says to recall (or ask once and remember) which Minecraft name is "me". `offer_resolutions` is listed only in the chat, where its buttons appear.
 
 ### Security
