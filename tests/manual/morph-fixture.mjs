@@ -78,6 +78,13 @@ export function house() {
   ['scene.kitchen_bright', 'scene.kitchen_dim', 'scene.kitchen_off', 'scene.living_room_movie', 'scene.living_room_dim', 'scene.morning', 'scene.evening', 'scene.interior_off'].forEach((e, i) => put([e, { entity_id: e, state: i === 1 || i === 6 ? ago(30) : ago(60 * 30), attributes: { friendly_name: e.split('.')[1].replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) } }]));
   put(['sun.sun', { entity_id: 'sun.sun', state: 'below_horizon', attributes: { next_rising: new Date(Date.now() + 9 * 3600000).toISOString(), next_setting: new Date(Date.now() + 2 * 3600000).toISOString() } }]);
   put(['timer.laundry', { entity_id: 'timer.laundry', state: 'active', attributes: { friendly_name: 'Washer', finishes_at: new Date(Date.now() + 31 * 60000).toISOString() } }]);
+  // Coming up's other kinds: a calendar event with a length, a timer that
+  // knows its duration (a running bar), and an automation that ran at this
+  // time yesterday (a dashed "usually").
+  const local = (ms) => { const d = new Date(ms); const p2 = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}:00`; };
+  put(['calendar.family', { entity_id: 'calendar.family', state: 'off', attributes: { friendly_name: 'Family', message: 'School drop-off', start_time: local(Date.now() + 5 * 3600000), end_time: local(Date.now() + 5.5 * 3600000), all_day: false } }]);
+  put(['timer.print', { entity_id: 'timer.print', state: 'active', attributes: { friendly_name: '3D print — console insert v4 (PETG, 0.2 mm)', duration: '3:00:00', finishes_at: new Date(Date.now() + 95 * 60000).toISOString() } }]);
+  put(['automation.porch', { entity_id: 'automation.porch', state: 'on', attributes: { friendly_name: 'Porch lights on', last_triggered: new Date(Date.now() - 21 * 3600000).toISOString() } }]);
   return S;
 }
 

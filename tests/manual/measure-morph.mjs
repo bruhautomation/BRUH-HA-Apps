@@ -26,6 +26,11 @@
  *     hands it over, and the answer ends with Keep · Undo;
  *   * Settings renders, and nothing on either width scrolls sideways.
  *
+ *   * Coming up is one short strip: dragging it moves the timeline behind
+ *     a fixed reading point and the readout says what is at the point, a
+ *     tap on a dot goes there, a swipe settles on an event, Now comes back,
+ *     and the arrow keys step from event to event;
+ *
  * Exits non-zero with every failure listed.
  */
 import { chromium } from 'playwright';
@@ -135,7 +140,7 @@ async function design(p, name, narrow) {
       const rest = tiles.filter((t) => !t.getAttribute('data-tile').startsWith('n:')).map(r);
       return notes.every((n) => rest.every((x) => n.top >= x.bottom - 1));
     });
-    const upc = r(q('.upc .utrack')), upcBox = r(q('.upc'));
+    const upc = r(q('.cu .cu-vp')), upcBox = r(q('[data-region="upcoming"]'));
     const sugs = q('.sugs');
     const ov = q('[data-tile="c_temps"]') || [...root.querySelectorAll('.ov')][0];
     return {
@@ -166,6 +171,100 @@ async function design(p, name, narrow) {
   if (!d.ovAxis.includes('Now')) fail(where, 'the overlay chart has no time axis');
 }
 
+// Coming up: a reading point that stays still and a timeline you drag
+// behind it. Small vertically, and everything it says comes from moving it.
+async function comingUp(p, name, narrow) {
+  const where = `${name} coming up`;
+  const read = () => p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const q = (s) => root.querySelector(s);
+    const vp = q('[data-upc-vp]'); const tr = q('[data-cu-track]'); const lens = q('[data-cu-lens]');
+    if (!vp) return null;
+    vp.scrollIntoView({ block: 'center' });
+    const r = vp.getBoundingClientRect(); const lr = lens.getBoundingClientRect();
+    const inner = (sel) => { const e = q(sel); if (!e) return null; const rs = [...e.querySelectorAll('b, .cu-name, .cu-l2, .cu-when > span')].map((x) => x.getBoundingClientRect()).filter((x) => x.width); return rs.length ? { l: Math.min(...rs.map((x) => x.left)), r: Math.max(...rs.map((x) => x.right)) } : null; };
+    const dots = [...root.querySelectorAll('[data-cu-dot]')].map((d) => { const b = d.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }).filter((d) => d.x > r.left + 30 && d.x < r.right - 60);
+    return {
+      h: r.height, l: r.left, w: r.width, y: r.top + r.height / 2, lensX: lr.left + lr.width / 2, lensY: lr.top + lr.height / 2,
+      tf: tr.style.transform, hit: lens.classList.contains('hit'),
+      name: (q('[data-cu-what] .cu-name') || {}).textContent || '', when: (q('[data-cu-when]') || {}).textContent || '',
+      at: window.__panel.s.upcAt, back: !q('.cu-back').hidden, dots,
+      whenBox: inner('[data-cu-when]'), whatBox: inner('[data-cu-what]'), vpBox: { l: r.left, r: r.right },
+      frozen: window.__panel.upcFrozen(),
+    };
+  });
+  let s = await read();
+  if (!s) { fail(where, 'there is no Coming up strip'); return; }
+  if (s.h > (narrow ? 92 : 80)) fail(where, `the strip is ${s.h.toFixed(0)}px tall; it should be one short strip`);
+  if (!s.name.trim() || !s.when.trim()) fail(where, `the readout says nothing at rest ("${s.when}" / "${s.name}")`);
+  if (s.whenBox && s.whenBox.l < s.vpBox.l - 1) fail(where, 'the time beside the reading point runs off the left edge');
+  if (s.whatBox && s.whatBox.r > s.vpBox.r + 1) fail(where, 'the name beside the reading point runs off the right edge');
+  if (s.whenBox && s.whatBox && s.whenBox.r > s.whatBox.l) fail(where, 'the time and the name overlap');
+  if (s.at != null) fail(where, 'the strip does not open on now');
+
+  // Drag the timeline left, in steps: it moves under the finger, the
+  // readout follows, and nothing rebuilds it mid-drag.
+  const startX = s.l + s.w * 0.75;
+  await p.mouse.move(startX, s.y);
+  await p.mouse.down();
+  const seen = new Set([s.name]); const tfs = new Set([s.tf]);
+  for (let i = 1; i <= 16; i++) {
+    await p.mouse.move(startX - i * 22, s.y);
+    await p.waitForTimeout(25);
+    const m = await read(); seen.add(m.name); tfs.add(m.tf);
+    if (!m.frozen) fail(where, 'the strip is not held still while it is being dragged');
+  }
+  await p.waitForTimeout(150);
+  await p.mouse.up();
+  if (tfs.size < 8) fail(where, `the timeline did not follow the drag (${tfs.size} positions)`);
+  if (seen.size < 2) fail(where, 'the readout did not change while the timeline moved under it');
+  await p.waitForTimeout(900);
+  s = await read();
+  if (s.at == null) fail(where, 'after a drag the reading point is back at now');
+  if (!s.back) fail(where, 'away from now, there is no way back to Now');
+
+  // Now comes back.
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('.cu-back').click());
+  await p.waitForTimeout(900);
+  s = await read();
+  if (s.at != null || s.back) fail(where, 'Now did not bring the reading point back');
+
+  // A tap on a dot goes there, and the point says it is on something.
+  const dot = s.dots.find((d) => Math.abs(d.x - s.lensX) > 40);
+  if (!dot) fail(where, 'no dot on screen to tap');
+  else {
+    await p.mouse.click(dot.x, s.lensY);
+    await p.waitForTimeout(900);
+    const t = await read();
+    if (!t.hit) fail(where, `tapping a dot did not put the reading point on it ("${t.name}")`);
+    if (!t.dots.some((d) => Math.abs(d.x - t.lensX) < 4)) fail(where, 'the tapped dot did not land under the reading point');
+  }
+
+  // A fast swipe coasts and settles on an event, or says there is nothing.
+  s = await read();
+  await p.mouse.move(s.l + s.w * 0.8, s.y);
+  await p.mouse.down();
+  for (let i = 1; i <= 5; i++) { await p.mouse.move(s.l + s.w * 0.8 - i * 30, s.y); await p.waitForTimeout(12); }
+  await p.mouse.up();
+  await p.waitForTimeout(1000);
+  const sw = await read();
+  if (!sw.hit && sw.name !== 'Nothing here') fail(where, `a swipe did not settle anywhere sensible ("${sw.name}")`);
+
+  // The arrow keys step from one event to the next, keeping focus.
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-upc-vp]').focus());
+  await p.keyboard.press('Home');
+  await p.waitForTimeout(900);
+  await p.keyboard.press('ArrowRight');
+  await p.waitForTimeout(900);
+  const k1 = await read();
+  if (!k1.hit) fail(where, `ArrowRight did not land on the next event ("${k1.name}")`);
+  const focused = await p.evaluate(() => { const a = window.__panel.shadowRoot.activeElement; return !!(a && a.hasAttribute('data-upc-vp')); });
+  if (!focused) fail(where, 'the strip lost keyboard focus after a step');
+  await p.keyboard.press('Home');
+  await p.waitForTimeout(900);
+  if ((await read()).at != null) fail(where, 'Home did not go back to now');
+}
+
 for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phone', true]]) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: false });
   await route(ctx, { narrow });
@@ -176,6 +275,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await settle(p, 2500);
   atRest(`${name} at rest`, await snapshot(p));
   await design(p, name, narrow);
+  await comingUp(p, name, narrow);
 
   // Hold-open, then tap outside, on every kind.
   for (const id of KINDS) {

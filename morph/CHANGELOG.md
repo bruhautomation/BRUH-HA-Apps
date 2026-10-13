@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.7
+
+### Changed
+
+- **Coming up is one short strip you scrub.** It used to be a 12-hour track
+  with every event's name written along it, which crowded and cut names
+  off. Now a thin line stays still a little left of centre and the next day
+  slides behind it: drag or swipe it, scroll sideways on a trackpad, or use
+  the arrow keys. Whatever is at the line is read out beside it, when on the
+  left and what on the right, with the full name. Dots swell as they come
+  near the line; let go mid-swipe and it settles on the nearest event; tap a
+  dot to jump to it; tap the name to show that device's card. **Now** brings
+  it back, and left alone it drifts back by itself after a minute.
+- **Coming up shows how long things take.** A timer that knows its length
+  and a calendar event with an end are bars, filled up to now while they
+  run, and night is a faint band. It looks a day ahead instead of 12 hours,
+  and also reads date-and-time helpers and "next" timestamp sensors.
+
 ## 0.5.6
 
 ### Changed
