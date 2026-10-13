@@ -15755,6 +15755,12 @@ def _diagnostics_payload() -> dict:
         # is (`health.not_used_reason`): the classic assist listener on a
         # fast-mode install read "not running" beside a verdict of fine.
         "daemons": _annotate_daemons(_daemon_rollcall(), safe_options),
+        # Which of those this configuration asked for, beside the bare
+        # roll-call: `assist_listener: false` on a fast-mode install is the
+        # classic listener correctly absent, and a reader handed only the
+        # roll-call reported it as voice being down. Health's own answer,
+        # never a second derivation.
+        "daemons_expected": sorted(health.expected_daemons(safe_options)),
         # The panel's own loops — the generation worker, the scheduler, the
         # checks — alive or not, and when each last went round. A dead
         # worker is cards and fixes queued for ever with every other

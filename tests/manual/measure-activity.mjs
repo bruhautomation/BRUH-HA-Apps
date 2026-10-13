@@ -440,7 +440,12 @@ for (const width of WIDTHS) {
   }
   for (const cut of [/Not every state change/, /no Claude run, nothing spent/,
                      /What does this add up to/, /Tap a row/,
-                     /Home Assistant itself stopping and starting/]) {
+                     /Home Assistant itself stopping and starting/,
+                     // The pane's old intro: the logbook is how it is read,
+                     // which a person does not need on three lines above
+                     // the filters, and the top line is #actNow's.
+                     /What happened in the house and what caused it/,
+                     /read\s+fresh from Home Assistant's logbook/]) {
     if (cut.test(m.pane)) note(`${width}px`, `cut text is back: ${cut}`);
   }
 

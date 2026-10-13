@@ -266,6 +266,14 @@ MAX_FAULTS = 40
 # floor, restated here rather than imported because this module may not
 # import the panel.
 SCORE_MIN_ENDINGS = 4
+# Producers that are not rules and cannot be muted: brAIn's own looks, the
+# safety lane, the tripwire and the tripped-detector check. `cases`' own
+# set, restated because this module must run with the panel down and
+# `cases` reads the stores; `tests/test_fault_rows_say_why.py` holds the two
+# equal. "Ignore all like this" is never offered on their cards, so a row
+# telling somebody to tick it was advice nobody could follow.
+UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security",
+                               "check:safety.tripped"})
 
 
 def faults(diagnostics) -> list[dict]:
@@ -497,19 +505,93 @@ SNAPSHOT_WORDS = {
 }
 
 
-def _run_sentence(outcome: str, n: int, when: str) -> str:
+# What a failed run means, in words a homeowner reads, and whether anything
+# needs doing — keyed on the closed word the run was journaled under. The
+# voice pool and the automation listener journal their own codes as the
+# row's `error` beside an `error` outcome (`partial`, `empty`, `permission`),
+# so the code is read off the error first when it is one of these words.
+# "brAIn tries again" is said only where the next run is scheduled anyway;
+# a voice turn is somebody's request and is never repeated by brAIn.
+RUN_MEANINGS = {
+    "partial": ("a voice request started changing something and then broke " +
+                "off partway, so the device may or may not have changed",
+                "check the device it was about and ask again only if it did " +
+                "not change; brAIn does not repeat a request that had begun " +
+                "acting, so nothing happens twice"),
+    "timeout": ("it ran past its time limit and was stopped, so anything it " +
+                "had started may be only partly done",
+                "nothing to do unless it keeps happening; a lighter model in " +
+                "⚙ › Model & usage helps a long job finish in time"),
+    "auth": ("it could not sign in to Claude",
+             "press Sign in again in ⚙ › Account"),
+    "crash": ("the Claude program stopped unexpectedly before it finished",
+              "nothing to do unless it keeps happening, then use Report a " +
+              "problem below"),
+    "max_turns": ("it reached its step limit before it could answer, so it " +
+                  "produced nothing",
+                  "nothing to do unless it keeps happening, then use Report " +
+                  "a problem below"),
+    "unparseable": ("it answered, but not in the shape brAIn asked for, so " +
+                    "the answer was set aside",
+                    "nothing to do unless it keeps happening, then use " +
+                    "Report a problem below"),
+    "no_cli": ("the Claude program is missing from the add-on",
+               "restart the add-on, which installs it again; if this stays, " +
+               "use Report a problem below"),
+    "empty": ("it finished without saying anything",
+              "nothing to do unless it keeps happening, then use Report a " +
+              "problem below"),
+    "permission": ("a step it needed was not permitted, so it stopped",
+                   "nothing to do unless it keeps happening, then use " +
+                   "Report a problem below"),
+    "heal_failed": ("an overnight repair did not work",
+                    "the card it was for is still on Needs you"),
+    "error": ("it stopped with an error",
+              "nothing to do unless it keeps happening, then use Report a " +
+              "problem below"),
+}
+
+# An error text that is a machine word or a bare exit status, not a line the
+# CLI wrote — nothing in it a person could read as a reason.
+_MACHINE_ERROR_RE = re.compile(
+    r"^\s*(?:claude\s+)?(?:exited|exit)\s+-?\d+\s*$|^\s*\w+\s*$", re.I)
+
+
+def _run_code(outcome: str, error: str) -> str:
+    """The word a failed run's meaning is keyed on: the error when it is
+    one of the closed codes a caller journals beside `error`, else the
+    outcome."""
+    word = str(error or "").strip().lower()
+    if outcome == "error" and word in RUN_MEANINGS:
+        return word
+    return outcome if outcome in RUN_MEANINGS else "error"
+
+
+def _run_said(error: str) -> str:
+    """The CLI's own last line, when the row carries one a person can read."""
+    text = str(error or "").strip()
+    if not text or _MACHINE_ERROR_RE.match(text):
+        return ""
+    return text[:160]
+
+
+def _run_meaning(outcome: str, error: str) -> tuple[str, str]:
+    """(what happened, what to do) for a failed run, in plain words."""
+    code = _run_code(outcome, error)
+    meaning, action = RUN_MEANINGS[code]
+    if code in ("crash", "error"):
+        said = _run_said(error)
+        meaning += (f"; Claude's last words were “{said}”" if said
+                    else " and gave no reason")
+    return meaning, action
+
+
+def _run_sentence(outcome: str, n: int, when: str, error: str = "") -> str:
     """What a failed background job means for the owner, and what to do."""
     times = (f"{n} times in the last day" if n > 1 else "once in the last day")
     last = f", last at {when}" if when else ""
-    if outcome == "auth":
-        return (f"It could not sign in to Claude ({times}{last}). Press Sign "
-                "in again in ⚙ › Account.")
-    if outcome == "timeout":
-        return (f"It ran out of time ({times}{last}). brAIn tries again on "
-                "its own; a lighter model in ⚙ › Model & usage helps if it "
-                "keeps happening.")
-    return (f"It did not finish ({times}{last}). brAIn tries again on its "
-            "own; if it keeps happening, use Report a problem below.")
+    meaning, action = _run_meaning(outcome, error)
+    return _sentence(f"{meaning} ({times}{last})", action)
 
 
 def _faults(diag) -> list[dict]:
@@ -576,14 +658,21 @@ def _faults(diag) -> list[dict]:
     for (where, stage, outcome, error, subject), n, last in \
             distinct[:FAULTS_PER_KIND]:
         when = _clock(last)
+        # The machine half first (the code or the CLI's line, and when), then
+        # what it means and whether to do anything: the detail is the body of
+        # the issue a house files, and "partial; last at Mon 18:51" said
+        # neither. `what` stays the fingerprint and does not carry it.
+        meaning, action = _run_meaning(outcome, error)
         detail = "; ".join(part for part in (
-            error, f"last at {when}" if when else "") if part)
+            error[:160], f"last at {when}" if when else "") if part)
+        detail = (detail.rstrip(".") + ". " if detail else "") \
+            + _sentence(meaning, action)
         _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
              (f"{subject}: " if subject else "") + f"ended {outcome}"
              + (f" ({n} times)" if n > 1 else ""), detail,
              title=plain_words.job_name(where)
              + (f": {subject}" if subject else ""),
-             sentence=_run_sentence(outcome, n, when))
+             sentence=_run_sentence(outcome, n, when, error))
     if len(distinct) > FAULTS_PER_KIND:
         rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",
@@ -858,7 +947,23 @@ def _faults(diag) -> list[dict]:
             name = f"{title} ({source})" if title and title != source else source
             friendly = plain_words.producer_name(source, title)
             record = plain_words.record_words(wrong, total)
-            if source in offered:
+            detail = ("this rule is firing on a healthy house, which is "
+                      "worse than not having it")
+            if source in UNMUTABLE_SOURCES:
+                # Not a rule, and never mutable: say what was marked wrong
+                # and the one thing that does teach it.
+                detail = ("these are brAIn's own reports, not a rule, so "
+                          "they cannot be muted; a reason given with Ignore "
+                          "reaches brAIn's memory as a correction")
+                sentence = _sentence(
+                    f"{record}: you marked brAIn's own reports wrong more "
+                    "often than right",
+                    "They come from brAIn itself rather than a rule, so "
+                    "they cannot be muted",
+                    "When you press Ignore on one, say why in the box: the "
+                    "reason reaches brAIn's memory as a correction and its "
+                    "next looks read it")
+            elif source in offered:
                 sentence = _sentence(
                     f"{record}. brAIn has asked on Needs you whether to "
                     "stop raising these; answer it there")
@@ -868,9 +973,7 @@ def _faults(diag) -> list[dict]:
                     "Ignore one of its cards with “Ignore all like this” "
                     "ticked to stop it")
             _row(out, f"Producer {name}",
-                 f"ignored {wrong} of {total} times",
-                 "this rule is firing on a healthy house, which is worse "
-                 "than not having it",
+                 f"ignored {wrong} of {total} times", detail,
                  title=friendly, sentence=sentence,
                  technical=f"{source}: {wrong} wrong, "
                            f"{total - wrong} confirmed")
@@ -896,24 +999,39 @@ def _faults(diag) -> list[dict]:
                       "do unless this stays for a day.")
 
     # Refusals a producer carried because nothing on the tab could show
-    # them. These are not cards anybody can answer.
+    # them. Only the condition miner's are that: a pattern brAIn can see and
+    # will not act on (an automation with no id, one that already stands
+    # down then, a protected target) is deliberately not a card, so this is
+    # the one place it is said — with each automation and its reason, or the
+    # row is a count nobody can act on. A refused one-off is already a row
+    # on the tab carrying its reason, and a refused scene design answered
+    # the press that asked for it, so both are refusals doing their job and
+    # are not faults (counted in the diagnostics, never listed here).
     props = diag.get("proposals") or {}
-    for key, label in (("conditions", "Condition miner"),
-                       ("intents", "One-off intents"),
-                       ("scenes", "Scene designer")):
-        part = props.get(key) if isinstance(props.get(key), dict) else {}
-        refused = part.get("refused")
-        if isinstance(refused, list) and refused:
-            _row(out, label, f"refused {len(refused)}",
-                 "; ".join(str(r)[:80] for r in refused[:3]),
-                 sentence=f"brAIn could not offer "
-                          f"{plain_words.plural(len(refused), 'suggestion')}. "
-                          "Nothing to do.")
-        elif isinstance(refused, int) and refused:
-            _row(out, label, f"refused {refused}",
-                 sentence=f"brAIn could not offer "
-                          f"{plain_words.plural(refused, 'suggestion')}. "
-                          "Nothing to do.")
+    cond = props.get("conditions") if isinstance(
+        props.get("conditions"), dict) else {}
+    refused = [r for r in (cond.get("refused") or [])
+               if isinstance(r, (dict, str))] \
+        if isinstance(cond.get("refused"), list) else []
+    if refused:
+        said = []
+        for r in refused[:3]:
+            if isinstance(r, dict):
+                name = str(r.get("automation") or "an automation")[:60]
+                why = str(r.get("why") or "no reason recorded")[:120]
+                said.append(f"{name}: {why}")
+            else:
+                said.append(str(r)[:160])
+        more = len(refused) - len(said)
+        listed = "; ".join(said) + (f"; and {more} more" if more > 0 else "")
+        _row(out, "Condition miner", f"refused {len(refused)}", listed,
+             title="Automations you keep undoing",
+             sentence=_sentence(
+                 "brAIn saw you keep undoing "
+                 + plain_words.plural(len(refused), "automation")
+                 + " and did not suggest a change, because: " + listed,
+                 "Each reason says what stands in the way; change that "
+                 "automation yourself if you want brAIn to suggest the fix"))
 
     # The overnight healer: a skip is a refusal doing its job and is NOT a
     # fault; an attempt that failed is.
