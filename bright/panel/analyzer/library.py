@@ -594,7 +594,7 @@ def _write_if_changed(path: Path, text: str) -> None:
     try:
         if path.read_text() == text:
             return
-    except OSError:
+    except OSError:  # a file we cannot read is one to write
         pass
     atomic_write.write_text(path, text)
 

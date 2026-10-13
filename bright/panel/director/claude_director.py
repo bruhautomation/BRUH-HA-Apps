@@ -201,7 +201,7 @@ def _vibe_lines(vibe: str | None) -> list[str]:
         "",
         f"THIS SHOW'S BRIEF, from the host: {vibe[:MAX_VIBE_CHARS]}",
         "It outranks the default energy curve and the house principles "
-        "below wherever they disagree: if it says keep it calm, the peaks "
+        + "below wherever they disagree: if it says keep it calm, the peaks "
         "stay calm too.",
     ]
 
@@ -548,7 +548,7 @@ def _digest_facts(analysis: dict) -> str:
         f"brightness_hint={analysis.get('brightness')} (0=dark/warm 1=bright)",
         "",
         "SECTIONS (start-end kind energy; energy is 0-1 against this "
-        "track's loudest moment):",
+        + "track's loudest moment):",
     ]
     for section in analysis.get("sections") or []:
         lines.append(f"  {section['start']:.0f}-{section['end']:.0f}s "

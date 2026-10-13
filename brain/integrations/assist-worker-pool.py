@@ -674,7 +674,7 @@ def _mark_map_cut(cut: bool) -> None:
                 fh.write("1")
         elif os.path.exists(_map_cut_file()):
             os.remove(_map_cut_file())
-    except OSError:
+    except OSError:  # the flag only adds a sentence to the prompt; a map without it still works
         pass
 
 
