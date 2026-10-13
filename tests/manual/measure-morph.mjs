@@ -265,6 +265,33 @@ async function comingUp(p, name, narrow) {
   if ((await read()).at != null) fail(where, 'Home did not go back to now');
 }
 
+// A section's title row carries Morph's mark: one press opens the Tell box
+// for the whole room outside Edit, a second folds it away again.
+async function sectionMark(p, name) {
+  const where = `${name} section mark`;
+  const m = await p.evaluate(() => {
+    const b = window.__panel.shadowRoot.querySelector('.sechead .secmark');
+    if (!b) return null;
+    const r = b.getBoundingClientRect();
+    return { id: b.dataset.v, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  });
+  if (!m) { fail(where, 'no section title carries Morph\'s mark'); return; }
+  if (m.w < 40 || m.h < 40) fail(where, `the mark is ${m.w}×${m.h}, under the 40px target`);
+  await p.mouse.click(m.x, m.y);
+  await settle(p, 500);
+  const open = await p.evaluate((id) => {
+    const t = window.__panel.s.tell;
+    const head = window.__panel.shadowRoot.querySelector(`[data-sec="${id}"] .sechead`);
+    return { kind: t && t.kind, id: t && t.id, box: !!(head && head.querySelector('[data-tell]')) };
+  }, m.id);
+  if (open.kind !== 'section' || open.id !== m.id) fail(where, `pressing it did not open the section's Tell box (${open.kind} ${open.id})`);
+  if (!open.box) fail(where, 'the Tell box is not under the section title');
+  const again = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('.sechead .secmark'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  await p.mouse.click(again.x, again.y);
+  await settle(p, 500);
+  if (await p.evaluate(() => !!window.__panel.s.tell)) fail(where, 'pressing it again did not fold the box away');
+}
+
 for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phone', true]]) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: false });
   await route(ctx, { narrow });
@@ -276,6 +303,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   atRest(`${name} at rest`, await snapshot(p));
   await design(p, name, narrow);
   await comingUp(p, name, narrow);
+  await sectionMark(p, name);
 
   // Hold-open, then tap outside, on every kind.
   for (const id of KINDS) {

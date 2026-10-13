@@ -166,3 +166,23 @@ export function shortName(name, room) {
 }
 
 export const UNAVAILABLE = ['unavailable', 'unknown'];
+
+// A module whose FETCH failed (a request dropped on the way through the
+// cloud link, a restart mid-load) is a different thing from one whose code
+// threw: the first is worth one more try, the second would only run its
+// side effects twice. These are the three browsers' words for the first.
+const FETCH_FAILED = /failed to fetch dynamically imported module|importing a module script failed|error loading dynamically imported module/i;
+export const fetchFailed = (e) => FETCH_FAILED.test(String((e && e.message) || e || ''));
+
+// Import a module, trying a failed fetch once more on a fresh URL (a failed
+// module fetch may be remembered by its URL). `load` is the importer, so the
+// caller's own `import()` resolves relative to the caller.
+export function importWithRetry(url, opts) {
+  const load = (opts && opts.load) || ((u) => import(u));
+  const delay = opts && opts.delay != null ? opts.delay : 1500;
+  return load(url).catch((e) => {
+    if (!fetchFailed(e)) throw e;
+    const again = url + (url.includes('?') ? '&' : '?') + 'retry=' + Date.now().toString(36);
+    return new Promise((r) => setTimeout(r, delay)).then(() => load(again));
+  });
+}
