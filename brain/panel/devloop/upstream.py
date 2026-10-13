@@ -911,6 +911,18 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
     return True
 
 
+def _seen_before_close(entry: dict, issue: dict) -> bool:
+    """True when the entry's last sighting is no later than the issue's
+    close. A close that cannot be read answers False (the old behaviour)."""
+    from datetime import datetime
+    try:
+        closed = datetime.fromisoformat(
+            str(issue.get("closed_at") or "").replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return False
+    return float(entry.get("last_seen") or 0) <= closed
+
+
 def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
     """One comment, when there is something to say: it stopped, it came
     back, or it is still happening on a newer version. Dates and versions
@@ -939,6 +951,13 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
             entry["error"] = err
             return False
         reopen = issue.get("state") == "closed"
+        if reopen and _seen_before_close(entry, issue):
+            # A version change re-stamps the entry; it is not a sighting.
+            # The last real sighting predates the close, so the close
+            # stands and there is nothing to say.
+            entry["returned"] = False
+            entry["noted_version"] = version
+            return False
         if reopen:
             text = (f"Back again on brAIn {version} after this was closed "
                     f"(last seen {_date(entry.get('last_seen'))}).")
