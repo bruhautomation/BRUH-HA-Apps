@@ -620,9 +620,16 @@ function fmtDayClock(epoch) {
 // The dot goes warning-coloured once the budget is reached.
 const USAGE_PILL_AT = 80;
 
+// With "No limit" chosen the rate-limit pause is what stops automatic work,
+// so it is news the way a reached budget is.
+function usageRateLimited(u) {
+  return !!(u && u.no_limit && u.rate_limited_until
+    && u.rate_limited_until * 1000 > Date.now());
+}
+
 function usagePillWanted(u) {
   if (!u) return false;
-  if (u.blocked) return true;
+  if (u.blocked || usageRateLimited(u)) return true;
   return (Number(u.used_percent) || 0) > USAGE_PILL_AT
     || (Number(u.week_percent) || 0) > USAGE_PILL_AT;
 }
@@ -652,15 +659,16 @@ function renderUsageChip() {
   $("#usageChipPct").textContent = `${est ? "~" : ""}${Math.round(u.used_percent)}%`;
   $("#usageChipWeekPct").textContent = hasWeek ? `${Math.round(u.week_percent)}%` : "";
   $("#usageChipWeek").classList.toggle("hidden", !hasWeek);
-  chip.classList.toggle("ok", !u.blocked && !est);
-  chip.classList.toggle("warn", !!u.blocked || est);
+  const halted = !!u.blocked || usageRateLimited(u);
+  chip.classList.toggle("ok", !halted && !est);
+  chip.classList.toggle("warn", halted || est);
   chip.removeAttribute("title");
   chip.setAttribute("aria-label",
     `Claude usage — session ${est ? "an estimated " : ""}`
     + `${Math.round(u.used_percent)}%`
     + (hasWeek ? `, week ${Math.round(u.week_percent)}%` : "")
     + (est ? ". Your account's own usage is unavailable." : "")
-    + (u.blocked ? ". Automatic insights are paused until it resets." : "")
+    + (halted ? ". Automatic insights are paused until it resets." : "")
     + ". Press for detail.");
   chip.classList.remove("hidden");
   // Keep an open disclosure honest: usage polls every few seconds.
@@ -698,7 +706,9 @@ function usagePopHtml() {
   // here beside the number it is measured against — not in a separate chip
   // repeating a percentage the pill is already showing. When it has been
   // reached this is the only place that says so, so it says it plainly.
-  if (u.budget_percent != null) {
+  if (u.no_limit) {
+    rows.push(budgetNoLimitNote(u));
+  } else if (u.budget_percent != null) {
     rows.push(u.blocked
       ? `<p class="pnote"><b>Automatic insights are paused.</b> The session `
         + `window is past your <b>${Math.round(u.budget_percent)}%</b> budget`
@@ -712,6 +722,28 @@ function usagePopHtml() {
   }
   rows.push(spendRows(u));
   return rows.join("");
+}
+
+// "No limit: run until Anthropic rate-limits": no budget is measured, so
+// the note says what does stop automatic work — Anthropic's own limit —
+// and, while it has, when it lifts.
+function budgetNoLimitNote(u) {
+  if (usageRateLimited(u)) {
+    return `<p class="pnote"><b>Automatic insights are paused.</b> Anthropic `
+      + `rate-limited brAIn; they resume at `
+      + `<b>${esc(fmtClock(u.rate_limited_until))}</b>. Anything you ask for `
+      + `by hand still runs.</p>`;
+  }
+  if (u.blocked) {
+    return `<p class="pnote"><b>Automatic insights are paused.</b> Your Claude `
+      + `account's session is spent`
+      + (u.resets_at ? `, and they resume when it rolls over at `
+                     + `<b>${esc(fmtClock(u.resets_at))}</b>` : "")
+      + `. Anything you ask for by hand still runs.</p>`;
+  }
+  return `<p class="pnote">Automatic insights have <b>no limit</b>: they keep `
+    + `running until Anthropic rate-limits, then pause until the reset. Asking `
+    + `a question by hand always runs.</p>`;
 }
 
 // Why the percentage above is an estimate rather than the account's own.
@@ -2855,13 +2887,15 @@ $("#newModal").addEventListener("click", (ev) => {
 // Auto-saves on change (no Save button) — the point is setting a budget in
 // two taps. Slider commits on release ("change"), not on every pixel.
 
-function renderUsageMeter(usage, budgetPct) {
+function renderUsageMeter(usage, budgetPct, noLimit) {
   if (!usage) return;
   const pct = Math.min(100, usage.used_percent || 0);
   const fill = $("#usageFill");
   fill.style.width = pct + "%";
-  fill.classList.toggle("over", pct >= budgetPct);
+  fill.classList.toggle("over", noLimit ? !!usage.blocked : pct >= budgetPct);
+  // No budget, no mark: a line at 100% would read as a cap that is not there.
   $("#usageMark").style.left = Math.min(100, budgetPct) + "%";
+  $("#usageMark").classList.toggle("hidden", !!noLimit);
   const week = usage.week_percent;
   const weekFill = $("#usageWeekFill");
   if (weekFill) {
@@ -2881,7 +2915,8 @@ function renderUsageMeter(usage, budgetPct) {
   $("#usageText").textContent = (usage.source === "account"
     ? `Session ${Math.round(usage.used_percent || 0)}%${reset}.`
     : `Session about ${Math.round(usage.used_percent || 0)}% (≈${spent} tokens by brAIn, `
-      + `an estimate)${reset}.`) + weekLine + ` Budget mark at ${budgetPct}%.`;
+      + `an estimate)${reset}.`) + weekLine
+    + (noLimit ? " No budget mark." : ` Budget mark at ${budgetPct}%.`);
   // Why the figure is an estimate, when it is one, and what brAIn's own
   // runs spent: the same two blocks the header pill's popover carries.
   const detail = $("#usageDetail");
@@ -2890,6 +2925,42 @@ function renderUsageMeter(usage, budgetPct) {
     try { html = limitsNote(usage) + spendRows(usage); } catch (e) { html = ""; }
     detail.innerHTML = html;
   }
+}
+
+// The budget slider's last position: "No limit", the setting
+// `budget_no_limit` rather than a percentage. 5-100 mean what they always did.
+const BUDGET_NO_LIMIT = 105;
+
+// What the slider is set to, in words, and what that means for automatic
+// work: a percentage stops it at that point; "No limit" lets it run until
+// Anthropic itself rate-limits, and while it has, says when it comes back.
+function renderBudgetWords(value, usage) {
+  const v = Number(value);
+  const noLimit = v > 100;
+  const pct = Math.round(v);
+  const slider = $("#setBudget");
+  const val = $("#setBudgetVal");
+  const note = $("#setBudgetNote");
+  val.textContent = noLimit ? "No limit: run until Anthropic rate-limits"
+    : `up to ${pct}% of each 5-hour session`;
+  slider.setAttribute("aria-valuetext", noLimit
+    ? "No limit: run until Anthropic rate-limits" : `${pct}% of each 5-hour session`);
+  const u = usage || {};
+  let text;
+  let warn = false;
+  if (noLimit && usageRateLimited({ ...u, no_limit: true })) {
+    text = `Paused: Anthropic rate-limited brAIn until ${fmtClock(u.rate_limited_until)}. `
+      + "Asking by hand always runs.";
+    warn = true;
+  } else if (noLimit) {
+    text = "Automatic insights keep running past 100% until Anthropic rate-limits, "
+      + "then pause until the reset. Asking by hand always runs.";
+  } else {
+    text = `Automatic insights stop at ${pct}% of the session until it resets. `
+      + "Asking by hand always runs.";
+  }
+  note.textContent = text;
+  note.classList.toggle("warn", warn);
 }
 
 // Generation-defaults fields: ⚙ number input id → settings key. These are
@@ -2980,9 +3051,10 @@ function renderSettingsForm(data) {
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
   $("#setThinking").value = data.settings.thinking || "normal";
   $("#setPlan").value = data.settings.plan || "pro";
-  $("#setBudget").value = data.settings.budget_percent;
-  $("#setBudgetVal").textContent = data.settings.budget_percent + "%";
-  renderUsageMeter(data.usage, data.settings.budget_percent);
+  const noLimit = data.settings.budget_no_limit === true;
+  $("#setBudget").value = noLimit ? BUDGET_NO_LIMIT : data.settings.budget_percent;
+  renderBudgetWords(noLimit ? BUDGET_NO_LIMIT : data.settings.budget_percent, data.usage);
+  renderUsageMeter(data.usage, data.settings.budget_percent, noLimit);
   Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
     const val = data.settings[key];
     $("#" + id).value = val == null ? "" : String(val);
@@ -5231,11 +5303,16 @@ $("#setTerminalUi").addEventListener("change", () => {
   switchTermMode($("#setTerminalUi").value);
 });
 $("#setBudget").addEventListener("input", () => {
-  $("#setBudgetVal").textContent = $("#setBudget").value + "%";
-  $("#usageMark").style.left = Math.min(100, Number($("#setBudget").value)) + "%";
+  const v = Number($("#setBudget").value);
+  renderBudgetWords(v, state.status && state.status.usage);
+  $("#usageMark").style.left = Math.min(100, v) + "%";
+  $("#usageMark").classList.toggle("hidden", v > 100);
 });
-$("#setBudget").addEventListener("change", () =>
-  saveSettings({ budget_percent: Math.round(Number($("#setBudget").value)) }));
+$("#setBudget").addEventListener("change", () => {
+  const v = Math.round(Number($("#setBudget").value));
+  saveSettings(v > 100 ? { budget_no_limit: true }
+                       : { budget_percent: v, budget_no_limit: false });
+});
 Object.entries(OPTION_FIELDS).forEach(([id, key]) => {
   $("#" + id).addEventListener("change", () => {
     const raw = $("#" + id).value.trim();

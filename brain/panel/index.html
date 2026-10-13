@@ -1044,9 +1044,15 @@
                 always runs.</span></span></label>
             </div>
             <div class="setgroupfield">
-              <label for="setBudget">Let automatic insights use up to
-                <b id="setBudgetVal">25%</b> of each 5-hour session</label>
-              <input id="setBudget" type="range" min="5" max="100" step="5" value="25">
+              <!-- The last position (105) is "No limit", its own setting
+                   (budget_no_limit), never a percentage. -->
+              <label for="setBudget">Automatic insights may use
+                <b id="setBudgetVal">up to 25% of each 5-hour session</b></label>
+              <input id="setBudget" type="range" min="5" max="105" step="5" value="25"
+                     aria-describedby="setBudgetNote">
+              <div class="budgetscale" aria-hidden="true"><span>5%</span><span>No limit</span></div>
+              <p class="hint tight" id="setBudgetNote">Automatic insights stop at 25% of the
+                session until it resets. Asking by hand always runs.</p>
             </div>
           </div>
 

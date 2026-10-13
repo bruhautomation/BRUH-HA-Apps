@@ -1502,6 +1502,10 @@ body.modal-open {
 }
 #setModal .setgroup > .setgroupfield { padding: var(--sp-3) var(--sp-4) var(--sp-2); }
 #setModal .setgroup > .setgroupfield > label:not(.check):not(.setcam) { margin-top: 0; }
+/* The budget slider's two ends: 5% at the left, "No limit" past 100% at
+   the right. Muted and small: the label above already says the value. */
+#setModal .budgetscale { display: flex; justify-content: space-between;
+  font-size: var(--fs-meta); color: var(--ink-3); margin-top: 2px; }
 #setModal .sharebox { padding: 0; }
 
 /* The switch row itself. The input is first in the markup (a label wraps
