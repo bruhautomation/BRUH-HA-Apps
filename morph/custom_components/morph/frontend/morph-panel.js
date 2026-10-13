@@ -488,8 +488,9 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     names.forEach((name) => {
       if (name === mine) {
         const ph = (t.state || {}).phase;
-        const head = ph === 'done' ? `Your change to Morph’s ${name}` : ph === 'failed' ? `Your change to Morph’s ${name} is still paused.` : `brAIn is making your change to Morph’s ${name} again.`;
-        out.push(note(head, ph === 'done' || ph === 'failed' ? '' : 'Morph’s own keeps running until it is done. You can leave this page; it carries on.', this.tellBox('code', name)));
+        const asks = ph === 'done' && t.state.question && t.state.answered == null;
+        const head = asks ? `brAIn needs you to choose how to bring your change to Morph’s ${name} onto the new version.` : ph === 'done' ? `Your change to Morph’s ${name}` : ph === 'failed' ? `Your change to Morph’s ${name} is still paused.` : `brAIn is making your change to Morph’s ${name} again.`;
+        out.push(note(head, asks ? 'The update rewrote the part your change was in. It stays paused, and Morph’s own keeps running, until you pick.' : ph === 'done' || ph === 'failed' ? '' : 'Morph’s own keeps running until it is done. You can leave this page; it carries on.', this.tellBox('code', name)));
         return;
       }
       const running = (st.activity || []).find((a) => a.kind === 'code' && a.target === name && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase));

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.5
+
+### Changed
+
+- **"Make it again" asks when an update rewrote the code your change was
+  in.** brAIn used to pick a merge on its own and put your change back in
+  use. Now, when there is more than one reasonable way to bring the two
+  together, it does not guess: the note asks what the update did and offers
+  one button per way to resolve it, plus **Use Morph's own**. Your change
+  stays paused and Morph's own keeps running until you pick, and the button
+  you press is the merge brAIn makes.
+
 ## 0.5.4
 
 ### Added

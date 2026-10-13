@@ -435,6 +435,37 @@ class TestAnUpdateToAnotherModulePausesTheCopy(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual("paused", self.rows()["styles.js"]["status"])
 
+    def test_a_merge_brain_will_not_guess_at_asks_and_stays_paused_until_answered(self):
+        engine = self.env.shipped / "engine.js"
+        engine.write_text(engine.read_text() + "/* next release */\n")
+        words = self.env.morphcode.redo_words("styles.js", "0.5.5", [])
+        self.assertIn("do not guess", words)
+        self.assertIn("one that uses Morph's own", words)
+
+        def work(task):
+            if len(fake.seen) == 1:
+                return {"data": {"summary": "The update rewrote the header.", "changed": [], "reload": False,
+                                 "question": {"text": "Where should the switch go?", "options": [
+                                     {"label": "Beside the menu", "request": "Put it beside the menu in styles.js."},
+                                     {"label": "Use Morph's own", "request": "Delete /config/morph/frontend/styles.js."}]}}}
+            return {"data": {"summary": "Put it beside the menu.", "changed": [], "reload": True}}
+        fake = FakeBrain(self.env, work)
+        fake.start()
+        self.addCleanup(fake.stop.set)
+
+        async def go():
+            first = await finish(self.env, self.env.tell.start(
+                {"kind": "code", "id": "styles.js", "label": "styles.js"}, words))
+            paused = self.rows()["styles.js"]["status"]
+            second = await finish(self.env, self.env.tell.answer_question(first["id"], 0))
+            return first, paused, second
+        first, paused, second = asyncio.run(go())
+        self.assertEqual("done", first["phase"])
+        self.assertEqual(2, len(first["question"]["options"]))
+        self.assertEqual("paused", paused, "a question is not a merge: the copy stays paused")
+        self.assertEqual("code", second["target"]["kind"])
+        self.assertEqual("active", self.rows()["styles.js"]["status"], "the answered merge puts it back in use")
+
     def test_a_redo_that_failed_leaves_it_paused(self):
         engine = self.env.shipped / "engine.js"
         engine.write_text(engine.read_text() + "/* next release */\n")

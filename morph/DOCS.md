@@ -213,7 +213,10 @@ your copy in place of its own after a page reload.
   is **paused** and Morph's own runs, because an old copy beside new modules
   is how a panel breaks. A note says so and names what changed, with **Make
   it again** (brAIn redoes the change on the new file, or checks it still
-  fits the modules that moved) and **Use Morph's own**. Your dashboard and
+  fits the modules that moved) and **Use Morph's own**. If the update
+  rewrote the same code your change was in, brAIn does not guess: it asks
+  how to bring them together, with a button for each way and one for Morph's
+  own, and your change stays paused until you pick. Your dashboard and
   your own cards (`cards/`) are never touched by an update.
 
 **Settings → Improving Morph itself** lists every change, whether it is in

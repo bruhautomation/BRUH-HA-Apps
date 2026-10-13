@@ -593,11 +593,16 @@ async def _run(state: dict) -> None:
         await asyncio.to_thread(_follow, state, seen)
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
         summary = str((data or {}).get("summary") or text or "").strip()[:1200]
-        if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed":
+        asked = clean_question((data or {}).get("question"))
+        if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed" \
+                and not asked:
             # brAIn was asked to make this house's change work on the Morph
             # installed now and answered: whether it edited the copy or
             # judged it already fits, the copy is in use again. Recorded
-            # before the commit so Undo takes the record with the copy.
+            # before the commit so Undo takes the record with the copy. An
+            # answer that is a QUESTION (the update rewrote the code the
+            # change was in, and brAIn would not guess) leaves it paused
+            # until the person picks.
             if await asyncio.to_thread(morphcode.accept, target.get("id") or ""):
                 _step(state, "Recorded the change as made for this Morph", "good")
         commit = await asyncio.to_thread(
@@ -642,9 +647,8 @@ async def _run(state: dict) -> None:
             _step(state, "Read the dashboard back: " + str(len(back["shows"])) + " change"
                   + ("" if len(back["shows"]) == 1 else "s") + " on screen", "good")
         state["needs_person"] = str((data or {}).get("needs_person") or "")[:600]
-        question = clean_question((data or {}).get("question"))
-        if question:
-            state["question"] = question
+        if asked:
+            state["question"] = asked
         state["saw"] = str((data or {}).get("saw") or "")[:400]
         issue = (data or {}).get("code_issue")
         code_files = [f.split("/", 1)[1] for f in (await asyncio.to_thread(gitrepo.changed_files, commit) if commit else [])

@@ -260,4 +260,10 @@ def redo_words(name: str, version: str, history: list[str] | None = None) -> str
         lines += [f"- {m}" for m in said]
     lines.append(f"If the change is no longer needed (the update already does it), delete {mine} and say so: "
                  f"Morph then runs its own.")
+    lines.append(f"If the update rewrote the same code this house's change was in, so that there is more than one "
+                 f"reasonable way to bring the two together, do not guess and do not write {mine}: answer with "
+                 f"`question`, saying in one sentence what the update did to that part, with one option per way "
+                 f"to resolve it and one that uses Morph's own. Each option's request must say the whole change "
+                 f"to make, file paths included (the files above), because it is sent to you on its own. The "
+                 f"change stays paused until one is pressed.")
     return "\n".join(lines)
