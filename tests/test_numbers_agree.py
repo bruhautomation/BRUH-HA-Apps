@@ -129,7 +129,9 @@ class TestTheDriftCheckSaysItReadably(unittest.TestCase):
     def test_no_card_tells_anybody_to_press_a_button_that_is_not_there(self):
         [row] = self.forecasts.decline(self.snap, self.NOW)
         self.assertNotIn("Wrong", row["fix"])
-        self.assertIn("press Ignore", row["fix"])
+        # Nor to press one that is: Ignore is on every card, and a fix
+        # is one action (`test_card_verdict_and_plain_fix`).
+        self.assertNotIn("press Ignore", row["fix"])
 
 
 class TestNoCheckSaysPressWrong(unittest.TestCase):

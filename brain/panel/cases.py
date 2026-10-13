@@ -497,7 +497,9 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "stakes": _stakes_of(row),
         "severity": row.get("severity") or "warning",
         "entity_id": row.get("entity_id") or "",
-        "fix": row.get("fix") or "",
+        # A check's own errand is not shown under a look's conclusion
+        # (`findings_store.shown_fix`).
+        "fix": findings_store.shown_fix(row),
         # Whose sentence the fix is, so the card can say so.
         "fix_by": row.get("fix_by") or "",
         # The store's own status word, beside the case's four. `planned`,
