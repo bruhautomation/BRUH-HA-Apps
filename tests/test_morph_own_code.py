@@ -175,6 +175,48 @@ class TestTheIntegrationServesTheCopy(unittest.TestCase):
         for bad in ("../const.py", "styles.css", ".base.json", "STYLES.js", ""):
             self.assertIsNone(self.pick(bad), bad)
 
+    # Opening Morph quickly: the modules are fetched under s/<stamp>/ and
+    # cached for good, so the stamp has to move whenever what a module URL
+    # answers with does, and never otherwise.
+    def kw(self):
+        return {"frontend": self.frontend, "code_dir": self.code, "code_state": self.state}
+
+    def test_the_stamp_names_the_code_being_served(self):
+        a = self.static.stamp(**self.kw())
+        self.assertRegex(a, r"^[0-9a-f]{12}$")
+        self.assertEqual(a, self.static.stamp(**self.kw()), "nothing moved, so the name did not")
+        self.say(("styles.js", "active"))
+        b = self.static.stamp(**self.kw())
+        self.assertNotEqual(a, b, "a copy coming into use is different code")
+        (self.frontend / "morph-panel.js").write_text("// Morph's own, updated, and longer\n")
+        self.assertNotEqual(b, self.static.stamp(**self.kw()), "an update to Morph's own files is different code")
+
+    def test_boot_is_served_with_the_stamp_and_the_modules(self):
+        (self.frontend / "boot.js").write_text("const STAMP = '';\nconst MODULES = [];\n")
+        src = self.static.boot_source(**self.kw())
+        self.assertIn(f"const STAMP = \"{self.static.stamp(**self.kw())}\";", src)
+        self.assertIn('const MODULES = ["morph-panel.js", "styles.js"];', src, "every module but the loader")
+
+    def test_a_stamped_module_is_cached_only_under_the_current_stamp(self):
+        self.say(("styles.js", "active"))
+        now = self.static.stamp(**self.kw())
+        body, current = self.static.stamped("styles.js", now, **self.kw())
+        self.assertEqual(b"// this house's\n", body)
+        self.assertTrue(current)
+        body, current = self.static.stamped("styles.js", "0123456789ab", **self.kw())
+        self.assertEqual(b"// this house's\n", body, "an old page still gets today's file")
+        self.assertFalse(current, "but not cached for good under a name it does not match")
+        self.assertIsNone(self.static.stamped("../const.py", now, **self.kw()))
+
+    def test_the_panel_element_is_the_shell_and_load_carries_the_stamp(self):
+        self.assertIn('ELEMENT = "morph-boot"', (COMPONENT / "const.py").read_text())
+        boot = (COMPONENT / "frontend" / "boot.js").read_text()
+        self.assertIn("customElements.define('morph-boot'", boot)
+        self.assertIn("const STAMP = '';", boot)
+        self.assertIn("const MODULES = [];", boot)
+        ws = (COMPONENT / "websocket.py").read_text()
+        self.assertIn('"code": _code_stamp(), "integration": VERSION', ws)
+
 
 @unittest.skipUnless(HAS_GIT, "git is not installed")
 class TestATellMayChangeMorphItself(unittest.TestCase):

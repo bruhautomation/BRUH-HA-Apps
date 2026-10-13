@@ -14,13 +14,14 @@
  * readings, a lock, a garage door, media, a camera, people, and one brAIn
  * finding and one Morph suggestion to be placed in their rooms.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
-export const VERSION = '0.5.5';
+export const VERSION = '0.5.6';
+export const STAMP = 'f00dfeed0001';
 
 const light = (id, name, on, bri, extra) => [`light.${id}`, { entity_id: `light.${id}`, state: on ? 'on' : 'off', attributes: { friendly_name: name, brightness: on ? Math.round(bri * 2.55) : null, color_mode: on ? 'color_temp' : null, supported_color_modes: ['color_temp', 'hs'], color_temp_kelvin: on ? 2700 : null, min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, ...(extra || {}) } }];
 const ago = (min) => new Date(Date.now() - min * 60000).toISOString();
@@ -211,7 +212,7 @@ const hass = {
   async callWS(msg) {
     window.__ws.push(msg);
     const t = msg.type;
-    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000 };
+    if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000, code: window.__code || '${STAMP}', integration: window.__integration || '${VERSION}' };
     if (t === 'morph/request') {
       const p = msg.payload || {};
       if (msg.kind === 'save') { if (p.base && p.base !== rev) return { ok: false, conflict: true, error: 'changed' }; dash = p.dashboard; rev = 'r' + (++seq + 1); return { ok: true, commit: 'abc' + seq, revision: rev }; }
@@ -270,13 +271,19 @@ const hass = {
 };
 window.loadCardHelpers = async () => ({ createCardElement(cfg) { const el = document.createElement('div'); el.className = 'fake-ll'; el.style.cssText = 'padding:14px;border-radius:12px;background:#223;color:#cde;font:14px sans-serif'; el.textContent = 'Lovelace ' + cfg.type + ' · ' + (cfg.entity || ''); return el; } });
 function push() { const h = { ...hass, states }; el.hass = h; }
+// Home Assistant's order (ha-panel-custom.ts): import the module, create
+// the element it names, set its properties, then put it in the page. The
+// element is boot.js's shell; window.__panel is the panel inside it.
 await import('${ORIGIN}/morph_static/${VERSION}/boot.js');
-const el = document.createElement('morph-panel');
+const el = document.createElement('morph-boot');
 el.panel = { config: { version: '${VERSION}', cards_url: '/morph_cards' } };
 el.narrow = ${o.narrow ? 'true' : 'false'};
-document.body.appendChild(el);
 el.hass = hass;
-window.__panel = el;
+document.body.appendChild(el);
+window.__shell = el;
+await customElements.whenDefined('morph-panel');
+while (!el.shadowRoot.querySelector('morph-panel')) await new Promise((r) => setTimeout(r, 10));
+window.__panel = el.shadowRoot.querySelector('morph-panel');
 window.__push = push;
 </script></body></html>`;
 }
@@ -285,8 +292,19 @@ export async function route(context, opts) {
   await context.route(`${ORIGIN}/**`, async (r) => {
     const url = new URL(r.request().url());
     if (url.pathname === '/' || url.pathname === '/index.html') return r.fulfill({ contentType: 'text/html', body: page(opts) });
-    const m = url.pathname.match(/^\/morph_static\/[^/]+\/(.+)$/);
+    const m = url.pathname.match(/^\/morph_static\/[^/]+\/(?:s\/[0-9a-f]{12}\/)?(.+)$/);
+    if (m && m[1] === 'boot.js') {
+      // static.py writes the stamp and module list into boot.js, so the
+      // fixture does too: the modules then load under s/<stamp>/, the path
+      // a real page uses.
+      const names = readdirSync(FRONTEND).filter((n) => n.endsWith('.js') && n !== 'boot.js').sort();
+      const stamp = (opts && opts.stamp) || STAMP;
+      const body = readFileSync(path.join(FRONTEND, 'boot.js'), 'utf8').replace("const STAMP = '';", `const STAMP = ${JSON.stringify(stamp)};`).replace('const MODULES = [];', `const MODULES = ${JSON.stringify(names)};`);
+      return r.fulfill({ contentType: 'text/javascript', body });
+    }
     if (m) {
+      if (opts && opts.requests) opts.requests.push(url.pathname);
+      if (opts && opts.moduleDelay) await new Promise((res) => setTimeout(res, opts.moduleDelay));
       // This house's copy of one of Morph's modules (static.py's rule):
       // served in place of Morph's own, except under shipped/.
       const own = (opts && opts.overrides) || {};

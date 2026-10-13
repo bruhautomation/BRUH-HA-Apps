@@ -75,6 +75,13 @@ class MorphPanel extends HTMLElement {
     this.cache = new Map();
     this.tellStatus = {};
     this._raf = 0;
+    // A page whose Home Assistant still runs an older Morph integration
+    // creates <morph-panel> before this file has defined it, and sets its
+    // properties on the bare element. Those would hide the setters below
+    // for good, so they are taken back through them.
+    for (const k of ['panel', 'narrow', 'route', 'hass']) {
+      if (Object.prototype.hasOwnProperty.call(this, k)) { const v = this[k]; delete this[k]; this[k] = v; }
+    }
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -209,9 +216,11 @@ class MorphPanel extends HTMLElement {
     const set = this.settings();
     const theme = set.theme && set.theme !== 'auto' ? set.theme : (this.hass.themes && this.hass.themes.darkMode === false ? 'light' : 'dark');
     this.rootEl.className = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}`;
+    // boot.js draws its outline in the theme this page last used.
+    if (theme !== this._savedTheme) { this._savedTheme = theme; try { localStorage.setItem('morph.theme', theme); } catch (e) { /* storage refused */ } }
     this.engine.forceReduce = !!set.reduce_motion;
     this.region('bar', this.barHtml());
-    this.region('lede', (this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell brAIn what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
+    this.region('lede', this.updateHtml() + (this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell brAIn what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
     if (this.s.page === 'settings') {
       ['top', 'upcoming', 'scenes', 'notes'].forEach((r) => this.region(r, ''));
       this.$('[data-region="board"]').hidden = true;
@@ -221,6 +230,7 @@ class MorphPanel extends HTMLElement {
     this.$('[data-region="board"]').hidden = false;
     this.region('settings', '');
     if (!this.data) { this.region('top', '<p class="sm">Opening Morph…</p>'); return; }
+    this.readyOnce();
     if (this.data.error) { this.region('top', `<div class="banner bad">Morph could not load: ${esc(this.data.error)}. Is the Morph add-on started?</div>`); return; }
     if (!this.dash) { this.region('top', `<div class="banner">Morph's add-on has not written a dashboard yet. Start the Morph add-on; it builds the first one from your floors and rooms.</div>`); return; }
     const dash = this.dash;
@@ -230,6 +240,38 @@ class MorphPanel extends HTMLElement {
     this.region('notes', this.topNotesHtml());
     this.renderBoard(dash);
     this.tickSince();
+  }
+
+  // boot.js keeps its outline over the page until this says there is
+  // something to show: the dashboard, or the sentence saying why not.
+  readyOnce() {
+    if (this._ready) return;
+    this._ready = true;
+    this.dispatchEvent(new Event('morph-ready'));
+  }
+
+  // Whether what is on screen is what Home Assistant would serve now. A page
+  // stays open for days, and an update, or brAIn changing Morph's own code,
+  // only reaches it on a reload. So this says which of the two it needs:
+  // a reload (the code moved, or Home Assistant restarted onto a newer Morph
+  // integration), or a restart of Home Assistant (the add-on is newer than
+  // the integration it has loaded, so a reload alone would not finish it).
+  updateHtml() {
+    const d = this.data;
+    if (!d || d.error) return '';
+    const loaded = String((this._panel && this._panel.config && this._panel.config.version) || '');
+    const integ = String(d.integration || '');
+    const addon = String((d.state && d.state.version) || '');
+    const stamp = String(window.__morphStamp || '');
+    const bar = (text, act) => `<div class="update rise" role="status"><span>${esc(text)}</span>${act}</div>`;
+    if ((integ && loaded && integ !== loaded) || (stamp && d.code && d.code !== stamp)) {
+      const what = integ && loaded && integ !== loaded ? `Morph ${integ} is ready.` : 'Morph’s code has changed since this page opened.';
+      return bar(`${what} Reload to run it.`, '<button type="button" class="wd strong" data-act="reload-page">Reload</button>');
+    }
+    if (this.admin() && addon && integ && addon !== integ && addon !== 'dev') {
+      return bar(`Morph ${addon} is installed, but Home Assistant is still running Morph ${integ}. Restart Home Assistant to finish the update.`, '');
+    }
+    return '';
   }
 
   region(name, html) {

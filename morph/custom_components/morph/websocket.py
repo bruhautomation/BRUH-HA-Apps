@@ -41,6 +41,7 @@ from .const import (
     STATE,
     TELLS,
     USAGE,
+    VERSION,
     WATCH_SECONDS,
 )
 
@@ -88,8 +89,22 @@ def _brain_feed() -> dict:
 
 
 def _load() -> dict:
+    # ``code`` is the stamp of the panel code Home Assistant would serve now
+    # and ``integration`` the Morph it is running: the page compares both
+    # with what it loaded, which is how it knows a reload, or a restart of
+    # Home Assistant, would change what is on screen.
     return {"mirror": _read_json(MIRROR), "state": _read_json(STATE), "brain": _brain_feed(),
-            "now": time.time()}
+            "now": time.time(), "code": _code_stamp(), "integration": VERSION}
+
+
+def _code_stamp() -> str | None:
+    """None when it cannot be read, which offers no reload rather than a
+    wrong one."""
+    try:
+        from . import static
+        return static.stamp()
+    except Exception:  # noqa: BLE001 — a missing stamp must never fail the load
+        return None
 
 
 @websocket_api.websocket_command({vol.Required("type"): "morph/load"})

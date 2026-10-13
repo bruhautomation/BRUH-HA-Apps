@@ -4,12 +4,12 @@ from __future__ import annotations
 from pathlib import Path
 
 DOMAIN = "morph"
-VERSION = "0.5.5"
+VERSION = "0.5.6"
 
 PANEL_URL = "morph"
 PANEL_TITLE = "Morph"
 PANEL_ICON = "mdi:view-dashboard-variant"
-ELEMENT = "morph-panel"
+ELEMENT = "morph-boot"
 
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 STATIC_BASE = "/morph_static"

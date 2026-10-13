@@ -241,6 +241,8 @@ section.sec{position:absolute;left:0;top:0;border-radius:30px;overflow:hidden}
 .what .wk{color:var(--muted);font-weight:600}
 .what .wv{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
 .issue.askq{background:color-mix(in oklab,var(--violet) 8%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 28%,transparent)}
+.update{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;border-radius:14px;font-size:14px;background:color-mix(in oklab,var(--teal) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--teal) 30%,transparent)}
+.update span{flex:1 1 220px}
 .moreinfo{display:flex;flex-wrap:wrap;gap:0 18px;margin-top:8px;padding-top:6px;border-top:1px solid var(--line)}
 .issue{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border-radius:12px;font-size:14px;line-height:1.45;background:color-mix(in oklab,var(--amber) 9%,transparent);box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--amber) 30%,transparent)}
 .activity{display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:10px;border-radius:14px;background:color-mix(in oklab,var(--violet) 8%,var(--surface));box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--violet) 25%,transparent)}
