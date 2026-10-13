@@ -10634,7 +10634,18 @@ def _open_case_rows(limit: int = 12, exclude=None) -> list[str]:
         log.debug("could not list the open cases: %s", exc)
         return []
     rows = [c for c in rows if c.get("claim") not in drop]
-    return [f"[{c['kind']}] {c['claim']}"[:160] for c in rows[:limit]]
+    out = []
+    for c in rows[:limit]:
+        # The entity rides after the claim, because "already said" is a
+        # question about the SAME device: a run handed only the sentence
+        # could not tell a second card about the hall sensor from a first
+        # card about the landing one. The claim is what is clipped, so the
+        # id — the half that answers it — always survives the cap.
+        eid = str(c.get("entity_id") or "").strip()
+        tail = f" — {eid}" if eid else ""
+        out.append(textclip.clip(f"[{c['kind']}] {c['claim']}",
+                                 160 - len(tail)) + tail)
+    return out
 
 
 def _resident_absorb(now: float) -> None:
@@ -11403,6 +11414,9 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     exclude = {str((refining or {}).get(k) or "") for k in ("claim", "text")}
     rows = signals.prompt_rows([signal], now, numbered=False)
     about = _signal_entities(signal) + outcomes.scope_subjects([signal])
+    # The grant is decided before the prompt is built, because the line
+    # that offers the camera belongs above the sign-off, not after it.
+    grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
     prompt = resident.investigate_prompt(
         signal,
         await asyncio.to_thread(_memory_block, entities=about,
@@ -11414,11 +11428,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         now_line=_now_line(now),
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
                                          investigating=True),
-        situation_line=await asyncio.to_thread(_situation_line, now))
-    grant, trip = await asyncio.to_thread(_camera_grant, signal, now)
-    prompt += camera_policy.prompt_line(grant, trip)
+        situation_line=await asyncio.to_thread(_situation_line, now),
+        camera_line=camera_policy.prompt_line(grant, trip))
     result = await _claude(
-        engine.run_analyst, prompt, resident.INVESTIGATE_SYSTEM, eff_model(),
+        engine.run_analyst, prompt,
+        resident.investigate_system(refining), eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=resident.JOB_INVESTIGATE, schema=resident.CASE_SCHEMA,
         camera_grant=tuple(grant),
@@ -11588,7 +11602,7 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
                                              investigating=True),
             situation_line=await asyncio.to_thread(_situation_line, now)),
-        resident.INVESTIGATE_SYSTEM, eff_model(),
+        resident.investigate_system(refining), eff_model(),
         resident.INVESTIGATE_TIMEOUT_S, resident.INVESTIGATE_MAX_TURNS,
         "resident", job=ESCALATE_JOB, schema=resident.CASE_SCHEMA,
         priority=(run_queue.SAFETY if signal.get("hot")

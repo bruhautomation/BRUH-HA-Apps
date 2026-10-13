@@ -493,6 +493,36 @@ class TestWhatTheVerdictsDo(LoopCase):
         self.assertEqual(findings_store.get(row["ts"])["status"], "open")
         self.assertEqual([r["ts"] for r in self.announced], [row["ts"]])
 
+    def test_the_look_is_not_handed_the_salience_score(self):
+        """Salience orders the batch and never decides; a score on the row
+        reads to a model as a verdict already reached."""
+        self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "ignore",
+                                  "why": "a cupboard nobody opens"}]))
+        self.tick()
+        [call] = self.look_calls
+        signals_part = call["prompt"].split("SIGNALS:", 1)[1]
+        self.assertNotIn(" s=", signals_part)
+        self.assertNotIn("salience", call["prompt"])
+
+    def test_a_camera_grant_is_offered_above_the_sign_off(self):
+        """The camera line was appended after "reply with the JSON contract
+        and nothing else", so the last thing the run read was a tool."""
+        srv = self.server
+        self._restore.append((srv, "_camera_grant", srv._camera_grant))
+        srv._camera_grant = lambda signal, now: (["camera.pantry"], "closure")
+        self.file_check_row()
+        self.looks.append(reply([{"id": 1, "verdict": "investigate",
+                                  "why": "its history would settle this"}]))
+        self.investigations.append(case_reply())
+        self.tick()
+        [call] = self.analyst_calls
+        prompt = call["prompt"]
+        self.assertIn("camera.pantry", prompt)
+        self.assertLess(prompt.index("camera.pantry"),
+                        prompt.index("Reply with the JSON contract"))
+        self.assertTrue(prompt.rstrip().endswith("nothing else."))
+
     def test_investigate_rewrites_the_row_it_was_sent_to_look_at(self):
         """The deeper look CORRECTS the cheaper one. It used to be told the
         row it was investigating was already in front of the homeowner and
@@ -509,7 +539,8 @@ class TestWhatTheVerdictsDo(LoopCase):
         [call] = self.analyst_calls
         self.assertEqual(call["job"], resident.JOB_INVESTIGATE)
         self.assertEqual(call["schema"], resident.CASE_SCHEMA)
-        self.assertEqual(call["system"], resident.INVESTIGATE_SYSTEM)
+        self.assertEqual(call["system"],
+                         resident.investigate_system(refining=True))
         self.assertEqual(call["args"][1], resident.INVESTIGATE_TIMEOUT_S)
         self.assertEqual(call["args"][3], "resident")
         # The prompt carries the row as its subject, the sentence, the

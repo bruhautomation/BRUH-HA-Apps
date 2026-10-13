@@ -546,13 +546,16 @@ class TestPromptRows(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertLessEqual(len(rows[0]), signals.ROW_CHARS)
 
-    def test_a_row_carries_the_kind_the_subject_and_the_score(self):
+    def test_a_row_carries_the_kind_and_the_subject_and_never_the_score(self):
+        """Salience orders the batch; on the row a model reads it as a
+        verdict already made, so it is not there."""
         sig = signals.make("check", "sensor.k", now=NOON, salience=0.42,
                            text="frozen for 9 days")
         row = signals.prompt_rows([sig], NOON)[0]
         self.assertIn("[check]", row)
         self.assertIn("sensor.k", row)
-        self.assertIn("s=0.42", row)
+        self.assertNotIn("0.42", row)
+        self.assertNotIn(" s=", row)
         self.assertIn("frozen for 9 days", row)
 
     def test_hot_and_a_repeat_count_are_said_in_the_row(self):
