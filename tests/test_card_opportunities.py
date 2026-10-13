@@ -265,8 +265,10 @@ class TestTheContract(unittest.TestCase):
 
 
 _SCHEMA_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool}
+# `description` is an annotation: it validates nothing (the summary's says
+# it opens with the verdict, which only the prompt can ask for).
 _SCHEMA_KEYWORDS = {"type", "properties", "required", "additionalProperties",
-                    "items", "enum"}
+                    "items", "enum", "description"}
 
 
 def _schema_errors(value, schema, path="$"):
