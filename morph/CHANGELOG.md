@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.9
+
+### Changed
+
+- **The learning pass runs when there is something to learn.** A pass was keyed on the exact number of uses, so a single tap re-ran it every interval. Uses now count in steps of 25; new answers, changes and unavailable cards still count at once.
+- **The pass is told what is already waiting or done**, and leaves out cards nobody touched (the dashboard it is given already lists them), so it spends fewer tokens and stops proposing what is on the list.
+
+### Fixed
+
+- A suggestion reworded from one still open, snoozed or declined is no longer added as a new one, so copies stop taking the open slots.
+- The use log is pruned once a day. The pruning existed but was never called, so the file grew for ever and every pass read all of it.
+
 ## 0.5.8
 
 ### Added

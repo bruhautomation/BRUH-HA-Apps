@@ -99,6 +99,22 @@ def _key(text: str) -> str:
     return hashlib.sha1(_WS.sub(" ", str(text or "").lower()).strip().encode()).hexdigest()[:12]
 
 
+_WORD = re.compile(r"[a-z0-9]{3,}")
+SIMILAR = 0.75
+EVENT_STEP = 25  # a pass is worth running after this many new uses, not after one
+
+
+def _words(text: str) -> frozenset:
+    return frozenset(_WORD.findall(str(text or "").lower()))
+
+
+def _similar(a: frozenset, b: frozenset) -> bool:
+    """A reworded title for the same idea. Exact keys only catch the same
+    words; a model asked for fresh ideas rewords an open one all the time, and
+    each reworded copy spends a slot of ``MAX_OPEN`` and a person's attention."""
+    return bool(a and b) and len(a & b) / len(a | b) >= SIMILAR
+
+
 # ------------------------------------------------------------------ the log
 
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")
@@ -116,6 +132,17 @@ def prune_usage(max_age_s: int = 60 * 86400) -> None:
             __import__("json").dumps(r, ensure_ascii=False) + "\n" for r in rows))
     except OSError:
         pass  # pruning is housekeeping; the log is read with a time window either way
+
+
+def prune_due(now: float | None = None) -> bool:
+    """Prune the use log once a day. It was written and never called, so the
+    file grew for ever and every pass parsed all of it."""
+    now = now or time.time()
+    if now - float(state().get("last_prune") or 0) < 86400:
+        return False
+    prune_usage()
+    _set_state(last_prune=now)
+    return True
 
 
 def record_outcome(row: dict) -> None:
@@ -166,6 +193,8 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
     cards = {c["id"] for f in dash.get("floors") or [] for s in f.get("sections") or []
              for g in s.get("groups") or [] for c in g.get("cards") or []}
     open_now = sum(1 for it in data["items"] if it.get("status") == "open")
+    seen_words = [_words(it["title"]) for it in data["items"]] + \
+        [_words(v.get("title")) for v in data["declined"].values()]
     added = 0
     for row in rows or []:
         if not isinstance(row, dict) or open_now >= MAX_OPEN:
@@ -177,7 +206,11 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
         key = _key(title)
         if key in known:
             continue
+        words = _words(title)
+        if any(_similar(words, w) for w in seen_words):
+            continue
         known.add(key)
+        seen_words.append(words)
         item = {"id": f"g{int(time.time() * 1000)}{added}", "key": key, "title": title,
                 "why": str(row.get("why") or "").strip()[:400], "change": change,
                 "kind": "code" if row.get("kind") == "code" else "dashboard",
@@ -399,7 +432,10 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
 
 def fingerprint(d: dict) -> str:
     """What has to change for a pass to be worth running."""
-    return _key(f"{d['events']}|{len(d['tells'])}|{len(d['suggestions'])}|{len(d['dead'])}")
+    # Uses are counted in steps: the log grows with every tap, and a pass keyed
+    # on the exact count ran every interval for any house that is lived in,
+    # re-asking a question the last twenty-four hours had barely changed.
+    return _key(f"{d['events'] // EVENT_STEP}|{len(d['tells'])}|{len(d['suggestions'])}|{len(d['dead'])}")
 
 
 def design_rules() -> list[str]:
@@ -418,8 +454,19 @@ def design_rules() -> list[str]:
     return [body[:3000], ""]
 
 
-def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) -> str:
+def _compact(obj) -> str:
     import json
+    return json.dumps(obj, separators=(",", ":"))
+
+
+def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict,
+                 items: list[dict] | None = None) -> str:
+    import json
+    # The dashboard below already lists every card; repeating the ones nobody
+    # touched (and that are not broken) is tokens spent saying nothing.
+    used = [c for c in d["cards"] if c["uses"] or c["unavailable"]]
+    pending = [it["title"] for it in items or [] if it.get("status") in ("open", "doing")]
+    finished = [it["title"] for it in items or [] if it.get("status") in ("done", "sent")]
     lines = [
         "MORPH · learning pass. Morph is this house's dashboard. You are improving the DASHBOARD —",
         "its layout, its cards, what is on it and where — from how the household actually uses it.",
@@ -435,10 +482,11 @@ def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) ->
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
         "",
         "Sections in dashboard order, with how often each was used and when:",
-        json.dumps(d["sections"])[:6000],
+        _compact(d["sections"])[:6000],
         "",
-        "Cards (id, section, type, entity, uses, unavailable):",
-        json.dumps(d["cards"])[:8000],
+        "Cards that were used or are unavailable (id, section, type, entity, uses, unavailable);",
+        "every other card is in the dashboard below:",
+        _compact(used)[:8000],
         "",
         f"Cards nobody has touched in a month: {d['never_used'][:40]}",
         f"Cards whose entity is unavailable: {d['dead'][:40]}",
@@ -451,6 +499,11 @@ def build_prompt(d: dict, dash_text: str, lessons: list[str], declined: dict) ->
         "",
         "Never suggest these again — they were declined:",
         json.dumps([v.get("title") for v in declined.values()][-60:]),
+        "",
+        "Already waiting for an answer, or snoozed (do not suggest them again, reworded or not):",
+        json.dumps(pending[-30:]),
+        "Already done or sent (the dashboard reflects them; suggest only what is still missing):",
+        json.dumps(finished[-30:]),
         "",
         "Lessons so far (from LEARNED.md):",
         *(f"- {ln}" for ln in lessons),
@@ -507,7 +560,7 @@ async def run_pass(states: dict | None = None, *, pressed: bool = False) -> dict
         _set_state(last_pass=time.time(), last_note="Nothing new to learn from since the last pass.")
         return {"skipped": "unchanged"}
     data = _load()
-    prompt = build_prompt(d, text, read_lessons(), data["declined"])
+    prompt = build_prompt(d, text, read_lessons(), data["declined"], data["items"])
     tid = brain.new_id("morph-learn")
     # The fingerprint is recorded only by a pass that answered: one written
     # here would let a pass that failed (brAIn stopped, signed out, slow)
