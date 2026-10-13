@@ -399,11 +399,15 @@ class TestTheListenerLiftsOnlyTheCameraTool(unittest.TestCase):
 
 class TestTheUngovernedPathsAreClosed(unittest.TestCase):
     def test_the_voice_prompts_no_longer_send_turns_to_cameras(self):
+        # Both voice paths build their prompt from the one module now.
+        sys.path.insert(0, str(REPO / "brain" / "scripts"))
+        import brain_voice_context
+        text = brain_voice_context.system_prompt()
+        self.assertNotIn("To CHECK A CAMERA", text)
+        self.assertIn("allowed brAIn to look at it", text)
         for path in (REPO / "brain" / "integrations" / "assist-worker-pool.py",
                      REPO / "brain" / "integrations" / "assist-listener.sh"):
-            text = path.read_text(encoding="utf-8")
-            self.assertNotIn("To CHECK A CAMERA", text, path.name)
-            self.assertIn("allowed brAIn to look at it", text, path.name)
+            self.assertNotIn("To CHECK A CAMERA", path.read_text(encoding="utf-8"), path.name)
 
     def test_the_camera_preset_asks_for_the_tool_and_says_it_is_governed(self):
         sys.path.insert(0, str(REPO / "brain" / "custom_components" / "brain"))

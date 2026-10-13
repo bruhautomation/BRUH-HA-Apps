@@ -269,11 +269,18 @@ REACH_HOUSE = (
 TOOLS_HA = (
     "WHAT YOU CAN DO: every Home Assistant tool you have — read states, "
     "history and statistics, call services, run scenes and scripts — plus "
-    "brAIn's own tools: what it remembers (recall, remember_fact), open "
-    "findings, what is normal for a device, activity and why something "
-    "changed. You have no shell and cannot edit files: for a change to "
-    "automations or configuration YAML, say it needs the brAIn chat or an "
-    "agent with full admin access.")
+    "brAIn's measurements (what is normal for a device, why something "
+    "changed) and what it remembers. You have no shell and cannot edit "
+    "files: for a change to automations or configuration YAML, say it needs "
+    "the brAIn chat or an agent with full admin access.")
+# The voice level: the same, less what voice is refused. It was told it
+# could reach "open findings" and "activity", which every voice-level call
+# then refused.
+TOOLS_VOICE = (
+    "WHAT YOU CAN DO: control and read what is exposed to you, its history "
+    "and statistics, the forecast, and what brAIn remembers. You have no "
+    "shell and cannot edit files: for a change to automations or "
+    "configuration, say it needs the brAIn chat.")
 TOOLS_ADMIN = (
     "WHAT YOU CAN DO: this agent has FULL ADMIN access, the same as the "
     "brAIn chat — every Home Assistant tool and brAIn tool, plus shell "
@@ -285,8 +292,9 @@ TOOLS_ADMIN = (
 
 def capabilities(exposed_only: bool, mcp_only: bool) -> str:
     """The block an agent is told about its own reach, for its two switches."""
+    tools = TOOLS_ADMIN if not mcp_only else (TOOLS_VOICE if exposed_only else TOOLS_HA)
     return ("\n\n" + (REACH_EXPOSED if exposed_only else REACH_HOUSE)
-            + "\n" + (TOOLS_HA if mcp_only else TOOLS_ADMIN))
+            + "\n" + tools)
 
 
 def main(argv: list[str]) -> int:

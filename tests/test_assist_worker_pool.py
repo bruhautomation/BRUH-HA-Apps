@@ -213,39 +213,6 @@ def test_the_oneshot_fallback_claims_its_session_as_voice(tmp_path, monkeypatch)
         shutdown(pool)
 
 
-def test_the_reflection_pass_claims_its_session_as_memorys(tmp_path, monkeypatch):
-    """The memory pipeline's extraction step is a Claude run like any other,
-    and unclaimed it was the single biggest source of machine rows in "Your
-    chats" — one per voice conversation worth remembering."""
-    mod = load_pool_module(tmp_path, monkeypatch)
-    mod.reflect_on_transcript(
-        [("call it the hype button", "Done."), ("thanks", "ok")])
-    claims = ledger_claims(mod)
-    assert [c["source"] for c in claims] == ["memory"]
-    runs = argv_log(tmp_path)
-    assert len(runs) == 1 and "--session-id" in runs[0]
-    assert runs[0][runs[0].index("--session-id") + 1] == claims[0]["id"]
-
-
-def test_reflection_survives_a_cli_that_rejects_session_id(tmp_path, monkeypatch):
-    """The label is optional; the run is not — the same fallback contract
-    as brain-run-source.sh and engine._run_cli."""
-    stub = tmp_path / "claude-old"
-    stub_log = tmp_path / "stub.log"
-    stub.write_text(
-        "#!/bin/sh\necho \"$@\" >> '%s'\n"
-        "case \"$*\" in *--session-id*)\n"
-        "  echo \"error: unknown option '--session-id'\" >&2; exit 2;;\n"
-        "esac\ncat > /dev/null\necho NONE\n" % stub_log)
-    stub.chmod(0o755)
-    mod = load_pool_module(tmp_path, monkeypatch, BRAIN_CLAUDE_BIN=str(stub))
-    mod.reflect_on_transcript([("a", "b"), ("c", "d")])
-    lines = stub_log.read_text().splitlines()
-    assert len(lines) == 2, lines
-    assert "--session-id" in lines[0]
-    assert "--session-id" not in lines[1]
-
-
 def test_auth_error_recycles_pool_and_gives_guidance(tmp_path, monkeypatch):
     """An expired OAuth login must not leak the raw CLI error to the voice
     channel: the pool replaces it with the panel's own sign-in button (the
@@ -569,15 +536,19 @@ def test_prompt_layering_personality_owns_identity(tmp_path, monkeypatch):
     assert "You are a helpful, efficient Home Assistant voice assistant" not in with_persona
     assert "1-2 short sentences" not in with_persona
     # personality comes before the operational block
-    assert with_persona.index("You are Dave") < with_persona.index("Use your MCP tools")
+    assert with_persona.index("You are Dave") < with_persona.index("Your replies are spoken aloud")
     # capabilities always present
     assert "get_weather_forecast" in with_persona
+    # what a refusal is, said where a turn reads it, and no blanket licence
+    # sitting above the block that says what this agent may not reach
+    assert "household's own setting" in with_persona
+    assert "FULL authorization" not in with_persona
 
     no_persona = mod.build_system_prompt("")
     assert no_persona.startswith("You are a helpful, efficient Home Assistant voice assistant")
     assert "1-2 short sentences" in no_persona
     assert "PERSONALITY" not in no_persona
-    assert "Use your MCP tools" in no_persona
+    assert "Your replies are spoken aloud" in no_persona
 
 
 def _env_lines(tmp_path):
@@ -796,3 +767,35 @@ def test_a_death_the_reaper_has_not_seen_yet_is_still_a_death(tmp_path, monkeypa
     finally:
         lingering.proc.kill()
         lingering.proc.wait()
+
+
+def test_a_worker_does_not_read_the_terminals_claude_md(tmp_path, monkeypatch):
+    """A `-p` run in /config reads the project's CLAUDE.md even with
+    --system-prompt (measured against the CLI: a canary in it was read
+    back), and that file is the terminal's 25–40 KB guide. With no setting
+    sources the worker names its MCP server itself — and a CLI that does not
+    know the flag, or a house with no MCP config, is spawned as before."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "cli_supports", lambda flag: True)
+    monkeypatch.setattr(mod, "MCP_CONFIG_FILE", str(tmp_path / ".mcp.json"))
+    assert mod.isolation_args() == []          # no MCP config yet
+    (tmp_path / ".mcp.json").write_text("{}")
+    assert mod.isolation_args() == [
+        "--setting-sources", "", "--mcp-config", str(tmp_path / ".mcp.json"),
+        "--strict-mcp-config"]
+    monkeypatch.setattr(mod, "cli_supports", lambda flag: False)
+    assert mod.isolation_args() == []
+
+
+def test_both_voice_paths_build_the_one_prompt(tmp_path, monkeypatch):
+    """The classic listener carried a hand copy that had drifted from the
+    pool's; both now ask brain_voice_context for it."""
+    mod = load_pool_module(tmp_path, monkeypatch)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain" / "scripts"))
+    import brain_voice_context as vc
+    assert vc.OPERATIONAL.split("\n")[0] in mod.build_system_prompt("")
+    listener = (Path(__file__).resolve().parent.parent / "brain" / "integrations"
+                / "assist-listener.sh").read_text()
+    assert "brain_voice_context.py\" system-prompt" in listener
+    assert "FULL authorization" not in listener
+    assert "isolation_args" in listener

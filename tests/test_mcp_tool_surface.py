@@ -113,8 +113,26 @@ class TestAVoiceProcessIsOfferedWhatVoiceMayUse(unittest.TestCase):
         tools = {t["name"]: t for t in self.voice_list["result"]["tools"]}
         for name in m.ALWAYS_LOAD_TOOLS:
             self.assertEqual(tools[name]["_meta"], {"anthropic/alwaysLoad": True}, name)
-        self.assertNotIn("_meta", tools["get_history"])
-        self.assertNotIn("_meta", tools["remember_fact"])
+        # What the voice prompt sends a turn to — the past, remembering, a
+        # label, a show — is loaded up front rather than searched for.
+        for name in ("get_history", "remember_fact", "print_label", "bright_show"):
+            self.assertIn(name, m.ALWAYS_LOAD_TOOLS)
+        self.assertNotIn("_meta", tools["get_logbook"])
+
+    def test_elsewhere_only_the_search_tools_are_always_loaded(self):
+        # The control schemas are voice's latency rule; the terminal, the
+        # chat and every unattended run paid ~8 KB of them on every turn.
+        loaded = {t["name"] for t in self.full_list["result"]["tools"] if t.get("_meta")}
+        self.assertEqual(loaded, set(m.ALWAYS_LOAD_ELSEWHERE))
+
+    def test_voice_is_not_shown_what_it_is_refused(self):
+        tools = {t["name"]: t for t in self.voice_list["result"]["tools"]}
+        self.assertNotIn("minecraft_addons", tools)
+        enum = tools["minecraft_player"]["inputSchema"]["properties"]["action"]["enum"]
+        self.assertEqual(enum, ["gamemode", "give"])
+        self.assertNotIn("ban", tools["minecraft_player"]["description"])
+        full = {t["name"]: t for t in self.full_list["result"]["tools"]}
+        self.assertIn("ban", full["minecraft_player"]["inputSchema"]["properties"]["action"]["enum"])
 
     def test_the_wire_carries_no_padding(self):
         self.assertNotIn("\n  ", self.full_raw)

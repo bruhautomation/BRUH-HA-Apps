@@ -130,9 +130,23 @@ fi
 CLI_HELP=$(${CLAUDE_BIN} --help < /dev/null 2>&1 || true)
 CLI_HAS_EFFORT=0
 CLI_HAS_SNAPSHOT=0
+CLI_HAS_SETTING_SOURCES=0
 case "$CLI_HELP" in *--effort*) CLI_HAS_EFFORT=1 ;; esac
 case "$CLI_HELP" in *--system-prompt-snapshot*) CLI_HAS_SNAPSHOT=1 ;; esac
+case "$CLI_HELP" in *--setting-sources*) CLI_HAS_SETTING_SOURCES=1 ;; esac
 unset CLI_HELP
+
+# A voice run starts in /config, and a `-p` run there reads the project's
+# CLAUDE.md even with --system-prompt: the terminal's 25–40 KB guide, which
+# also tells it to confirm before acting. No setting sources drops it; the
+# Home Assistant server is then named explicitly, and the voice settings
+# still arrive through --settings or claude-run's headless settings. The
+# pool's `isolation_args`, in shell.
+isolation_args() {
+    if [ "$CLI_HAS_SETTING_SOURCES" = "1" ] && [ -f /config/.mcp.json ]; then
+        printf '%s\n' --setting-sources "" --mcp-config /config/.mcp.json --strict-mcp-config
+    fi
+}
 
 # What a person does about a credential that will not work: the panel's
 # own button, never `/login` in a terminal `enable_terminal` can remove.
@@ -312,8 +326,12 @@ JINJA
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP truncated: ${#rendered} chars > ${AREA_MAP_MAX_BYTES} (some areas omitted — raise AREA_MAP_MAX_BYTES if entities are missed)" \
             >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
         printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "${AREA_MAP_FILE}.tmp"
+        # Said in the prompt, not only in the log: a map that claims to be
+        # complete tells the model not to search for the room it cannot see.
+        printf '1' > "$CACHE_DIR/area_map.cut" 2>/dev/null || true
     else
         printf '%s\n' "$rendered" > "${AREA_MAP_FILE}.tmp"
+        rm -f "$CACHE_DIR/area_map.cut"
     fi
     mv "${AREA_MAP_FILE}.tmp" "$AREA_MAP_FILE"
     return 0
@@ -510,12 +528,14 @@ invoke_claude() {
     # Plain text output (no --output-format json) — proven reliable here.
     # BRAIN_DENIED_SERVICES is inherited by the MCP server subprocess and
     # enforced in call_service (covers every control_* tool).
+    local iso_args=()
+    mapfile -t iso_args < <(isolation_args)
     # shellcheck disable=SC2086
     (cd /config && printf '%s' "$message" | BRAIN_DENIED_SERVICES="${DENIED_SERVICES_CSV:-}" \
         BRAIN_EXPOSED_ONLY="$(exposed_only_flag)" timeout "$limit" \
         ${CLAUDE_BIN} -p --verbose --max-turns "$MAX_TURNS" \
         --system-prompt "$final_system_prompt" \
-        "${session_args[@]}" "${scope_args[@]}" \
+        "${iso_args[@]}" "${session_args[@]}" "${scope_args[@]}" \
         ${model_flag} ${effort_flag} > "$output_file" 2>"$stderr_file")
 }
 
@@ -533,6 +553,9 @@ land_claude() {
     # The landing is a resume too, so it is answered under this request's
     # system prompt for invoke_claude's reason.
     [ "$CLI_HAS_SNAPSHOT" = "1" ] && scope_args+=(--system-prompt-snapshot off)
+    local iso_args=()
+    mapfile -t iso_args < <(isolation_args)
+    scope_args+=("${iso_args[@]}")
     # Into a scratch file, moved over only on success: a landing refused
     # for want of time or a session must not take the run's own output
     # with it.
@@ -631,72 +654,35 @@ process_request() {
         claude_limit="$CLAUDE_TIMEOUT"
     fi
 
-    # Prompt layering (mirrored in assist-worker-pool.py — keep in sync):
-    # identity/tone come from exactly ONE source — the custom personality
-    # when set (with explicit precedence), the default style otherwise.
-    # The operational block is identity-free either way.
-    local operational_prompt="You are connected to the user's Home Assistant with FULL authorization to control all devices — never ask for permission or confirmation. Act on requests immediately, then confirm.
-Replies are spoken aloud by TTS.
-ALWAYS give times in the user's local timezone (stamped on each message), never UTC.
-Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
-For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
-For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
-A camera answers get_camera_snapshot only if the homeowner has allowed brAIn to look at it; if it refuses, say so in one sentence and do not try another camera."
-
-    local base_system_prompt
-    if [ -n "$system_prompt" ]; then
-        base_system_prompt="PERSONALITY — this defines who you are, how you speak, and how verbose you are. It takes precedence over any tone or style implied by the instructions below:
-${system_prompt}
-
-${operational_prompt}"
-    else
-        base_system_prompt="You are a helpful, efficient Home Assistant voice assistant. Answer in 1-2 short sentences unless the user explicitly asks for detail.
-${operational_prompt}"
-    fi
-
-    # Splice in the cached area map so room commands need zero lookup turns
-    local area_map
+    # The voice system prompt comes from the one module the pool imports
+    # (brain_voice_context.system_prompt): this listener used to carry a hand
+    # copy that had drifted from the pool's (no remember_fact line, a byte
+    # cut on memory, the blocks in a different order).
+    local area_map capabilities memory_text="" tz="" partial=false
     area_map=$(get_area_map)
-    if [ -n "$area_map" ]; then
-        base_system_prompt="${base_system_prompt}
-
-Known areas and their controllable entity_ids (current and complete):
-${area_map}
-
-Act on these entity_ids DIRECTLY with your control_* tools in your FIRST response — never call get_areas or get_all_states to verify an entity that is already listed.
-For weather questions, call get_entity_state on a Weather entity above.
-Only for entities not listed anywhere above, search with get_all_states (domain and name_filter arguments)."
-    else
-        base_system_prompt="${base_system_prompt}
-For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to resolve the room to entity_ids first.
-If unsure of an entity_id, call get_all_states with a domain filter first."
-    fi
-
-    # What this agent can reach, in the words the worker pool uses — from
-    # the one module both read, so the two voice paths cannot describe the
-    # same agent differently.
-    local capabilities
-    if capabilities=$(python3 "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" \
-            capabilities "$(exposed_only_flag)" "$(mcp_only_flag)" 2>/dev/null); then
-        base_system_prompt="${base_system_prompt}${capabilities}"
-    fi
-
-    # Splice in the learned household memory (voice distillate, 2 KB cap) —
-    # mirrored in assist-worker-pool.py's build_system_prompt (keep in sync).
+    [ -f "$CACHE_DIR/area_map.cut" ] && partial=true
+    capabilities=$(python3 "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_exposed.py" \
+            capabilities "$(exposed_only_flag)" "$(mcp_only_flag)" 2>/dev/null || true)
     if [ "${BRAIN_MEMORY_INJECTION:-true}" != "false" ]; then
         local memory_dir="${BRAIN_MEMORY_DIR:-/config/.brain/memory}"
-        local memory_text=""
         if [ -s "$memory_dir/voice.md" ]; then
-            memory_text=$(head -c 2048 "$memory_dir/voice.md" 2>/dev/null)
+            memory_text=$(cat "$memory_dir/voice.md" 2>/dev/null)
         elif [ -s "$memory_dir/memory.md" ]; then
-            memory_text=$(head -c 2048 "$memory_dir/memory.md" 2>/dev/null)
+            memory_text=$(cat "$memory_dir/memory.md" 2>/dev/null)
         fi
-        if [ -n "$memory_text" ]; then
-            base_system_prompt="${base_system_prompt}
-
-Known about this household (learned):
-${memory_text}"
-        fi
+    fi
+    [ -r "$HA_TZ_FILE" ] && tz=$(cat "$HA_TZ_FILE" 2>/dev/null)
+    local base_system_prompt
+    if ! base_system_prompt=$(jq -n --arg custom "$system_prompt" --arg tz "$tz" \
+            --arg area_map "$area_map" --arg memory "$memory_text" \
+            --arg capabilities "$capabilities" --argjson partial "$partial" \
+            '{custom: $custom, tz: $tz, area_map: $area_map, memory: $memory,
+              memory_max: 2048, capabilities: $capabilities, partial: $partial}' \
+            | python3 "${BRAIN_SCRIPTS_DIR:-/opt/scripts}/brain_voice_context.py" system-prompt) \
+            || [ -z "$base_system_prompt" ]; then
+        # The run is not the label: a prompt that could not be composed is
+        # the shortest honest one, not a refused request.
+        base_system_prompt="You are a helpful Home Assistant voice assistant. Replies are spoken aloud: answer in one or two short sentences."
     fi
 
     local final_system_prompt="$base_system_prompt"

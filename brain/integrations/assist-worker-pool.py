@@ -128,42 +128,9 @@ AREA_MAP_MAX_BYTES = 16000
 MEMORY_DIR = os.environ.get("BRAIN_MEMORY_DIR", "/config/.brain/memory")
 MEMORY_FILE = os.path.join(MEMORY_DIR, "memory.md")
 VOICE_FILE = os.path.join(MEMORY_DIR, "voice.md")
-MEMORY_INBOX_DIR = os.path.join(MEMORY_DIR, "inbox")
 MEMORY_MAX_BYTES = 2048
 MEMORY_TTL = 300
 MEMORY_INJECTION = os.environ.get("BRAIN_MEMORY_INJECTION", "true").lower() != "false"
-ASSIST_LEARNING = os.environ.get("BRAIN_ASSIST_LEARNING", "true").lower() != "false"
-
-# Transcript buffer caps (per worker) and the trigger heuristic for the
-# end-of-conversation reflection pass.
-TRANSCRIPT_MAX_EXCHANGES = 8
-TRANSCRIPT_MAX_BYTES = 4096
-REFLECT_KEYWORDS = (
-    "actually", "remember", "call it", "we call", "always", "never",
-    "prefer", "instead",
-)
-REFLECT_TIMEOUT = 60
-REFLECT_MODEL = os.environ.get("BRAIN_MEMORY_MODEL", "haiku")
-
-REFLECTION_PROMPT = (
-    "From this smart-home voice conversation, extract 0-3 durable facts "
-    "worth remembering about the household (preferences, corrections, "
-    "entity nicknames, patterns). Exclude transient states, one-off "
-    "commands, secrets, anything sensitive. Output one JSON object per "
-    'line: {"fact": ..., "confidence": "high|medium|low"} or the single '
-    "word NONE."
-)
-# Added when Home Assistant said who was speaking (`context.person`): the
-# one fact a voice turn can supply that nothing else in the house records,
-# and the reason a preference stated by voice used to be filed with no
-# owner and applied to everybody. The model decides which facts are the
-# speaker's own, because "we call the lounge lamp the big light" is the
-# house's and "I like the bedroom at 19" is theirs.
-REFLECTION_SPEAKER = (
-    " The person speaking is {name}. Add \"about\": \"speaker\" to a fact "
-    "that is their own preference or habit, and \"about\": \"house\" to "
-    "one that is true of the household whoever is asking."
-)
 
 # HA's configured timezone (written by run.sh at startup; refreshed here as
 # a fallback). Voice answers must use local time, never the container UTC.
@@ -354,16 +321,6 @@ def context_preamble(context) -> str:
         return ""
 
 
-def context_person(context) -> str:
-    """The speaker's person id off a request's context, or ""."""
-    if not context:
-        return ""
-    try:
-        return _voice_context_module().person_id(context)
-    except Exception:  # noqa: BLE001 — no speaker is a fact filed unowned
-        return ""
-
-
 def _journal_module():
     """`scripts/brain_run_journal.py`: a run made here, into the panel's
     journal, with the usage nudge a panel run gets from its listener."""
@@ -544,36 +501,13 @@ AREA_MAP_TEMPLATE = """\
 {%- endfor -%}
 """
 
-# Prompt layering (mirrored in assist-listener.sh — keep in sync):
-# identity/tone/verbosity come from exactly ONE source. A custom personality
-# leads with explicit precedence and the operational block stays
-# identity-free; without one, the default style applies. Mixing two
-# "You are X" statements is what waters personalities down.
-PERSONALITY_FRAME = """PERSONALITY — this defines who you are, how you speak, and how verbose you are. It takes precedence over any tone or style implied by the instructions below:
-{custom}"""
+# The voice system prompt's text lives in `scripts/brain_voice_context.py`
+# (`system_prompt`), which the classic listener runs too, so the two voice
+# paths cannot describe the same agent differently.
 
-DEFAULT_STYLE_PROMPT = """You are a helpful, efficient Home Assistant voice assistant. Answer in 1-2 short sentences unless the user explicitly asks for detail."""
-
-OPERATIONAL_PROMPT = """You are connected to the user's Home Assistant with FULL authorization to control all devices — never ask for permission or confirmation. Act on requests immediately, then confirm.
-Replies are spoken aloud by TTS.
-Use your MCP tools (control_light, control_climate, control_media_player, control_cover, control_fan, control_switch, control_lock, control_alarm, control_vacuum, call_service, get_all_states, get_areas, activate_scene, run_script, send_notification, get_service_details).
-For questions about the PAST ('how cold did it get last night', 'when did the garage open'), use get_history (recent detail) or get_statistics (daily min/max/mean over weeks).
-For FORECASTS ('weather tomorrow / this week'), use get_weather_forecast; get_entity_state on the weather entity only gives current conditions.
-A camera answers get_camera_snapshot only if the homeowner has allowed brAIn to look at it; if it refuses, say so in one sentence and do not try another camera.
-When the user states a durable preference, correction, or nickname ('actually...', 'we call X...', 'always/never...'), call the remember_fact tool so it sticks for future conversations."""
-
-MAP_PROMPT = """
-
-Known areas and their controllable entity_ids (current and complete):
-{area_map}
-
-Act on these entity_ids DIRECTLY with your control_* tools in your FIRST response — never call get_areas or get_all_states to verify an entity that is already listed.
-For weather questions, call get_entity_state on a Weather entity above.
-Only for entities not listed anywhere above, search with get_all_states (domain and name_filter arguments)."""
-
-NO_MAP_PROMPT = """
-For room/area requests (e.g. 'turn off the bedroom lights') call get_areas to resolve the room to entity_ids first.
-If unsure of an entity_id, call get_all_states with a domain filter first."""
+# The house's MCP config. Workers are started with no setting sources (see
+# `isolation_args`), so the Home Assistant server is named explicitly.
+MCP_CONFIG_FILE = os.environ.get("BRAIN_MCP_CONFIG", os.path.join(WORK_DIR, ".mcp.json"))
 
 
 def log(msg: str) -> None:
@@ -623,6 +557,27 @@ def scoping_args(mcp_only: bool | None = None) -> list:
     return []
 
 
+def isolation_args() -> list:
+    """Keep a voice worker out of the terminal's context.
+
+    A worker starts in /config, and a `-p` run there reads the project's
+    CLAUDE.md even with `--system-prompt` — measured: a canary in it was
+    read back. That file is the terminal's 25–40 KB guide (the Power Tools
+    catalog, dashboard rules, a 16 KB memory excerpt, "confirm before
+    disabling"), so every cold voice worker paid 7–10k tokens of somebody
+    else's instructions and was told the opposite of its own. No setting
+    sources drops it; the Home Assistant server is then named with
+    `--mcp-config`, and the voice settings file still arrives through
+    `--settings` (`scoping_args`) or claude-run's headless settings. A CLI
+    that does not list the flag, or a house with no MCP config yet, gets
+    nothing here — the run it had before.
+    """
+    if not os.path.isfile(MCP_CONFIG_FILE) or not cli_supports("--setting-sources"):
+        return []
+    return ["--setting-sources", "", "--mcp-config", MCP_CONFIG_FILE,
+            "--strict-mcp-config"]
+
+
 # ---------------------------------------------------------------------------
 # Area map (same cache file as the classic listener)
 # ---------------------------------------------------------------------------
@@ -658,8 +613,12 @@ def refresh_area_map() -> bool:
             f"{AREA_MAP_MAX_BYTES} (some areas omitted)"
         ])
         rendered = _truncate_at_line(rendered, AREA_MAP_MAX_BYTES)
+        cut = True
+    else:
+        cut = False
     exposed = apply_exposure(rendered, force=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
+    _mark_map_cut(cut)
     for path, text in ((AREA_MAP_FULL_FILE, rendered),
                        (AREA_MAP_EXPOSED_FILE, exposed),
                        (AREA_MAP_FILE, exposed if EXPOSED_ONLY else rendered)):
@@ -701,6 +660,22 @@ def apply_exposure(rendered: str, force: bool = False) -> str:
                    "could not be read (an agent set to Whole house is not gated)"])
         return ""
     return mod.filter_map(rendered, snap)
+
+
+def _map_cut_file() -> str:
+    return os.path.join(CACHE_DIR, _voice_context_module().AREA_MAP_CUT_NAME)
+
+
+def _mark_map_cut(cut: bool) -> None:
+    """Leave (or clear) the flag that says the cached map was cut to fit."""
+    try:
+        if cut:
+            with open(_map_cut_file(), "w") as fh:
+                fh.write("1")
+        elif os.path.exists(_map_cut_file()):
+            os.remove(_map_cut_file())
+    except OSError:
+        pass
 
 
 def _truncate_at_line(text: str, cap: int) -> str:
@@ -843,28 +818,14 @@ def capabilities_prompt(access: dict) -> str:
 
 def build_system_prompt(custom: str, access: dict | None = None) -> str:
     access = access or resolve_access("voice")
-    if custom:
-        prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + OPERATIONAL_PROMPT
-    else:
-        prompt = DEFAULT_STYLE_PROMPT + "\n" + OPERATIONAL_PROMPT
-    tz = get_ha_timezone()
-    if tz:
-        prompt += (
-            f"\nThe user's timezone is {tz}. Every user message starts with "
-            "the current local time — ALWAYS answer times in that local "
-            "timezone, never UTC."
-        )
-    area_map = get_area_map(_map_for(access))
-    if area_map.strip():
-        prompt += MAP_PROMPT.format(area_map=area_map.rstrip())
-    else:
-        prompt += NO_MAP_PROMPT
-    if MEMORY_INJECTION:
-        memory = get_memory()
-        if memory.strip():
-            prompt += "\n\nKnown about this household (learned):\n" + memory.rstrip()
-    prompt += capabilities_prompt(access)
-    return prompt
+    return _voice_context_module().system_prompt(
+        custom=custom,
+        tz=get_ha_timezone(),
+        area_map=get_area_map(_map_for(access)),
+        memory=get_memory() if MEMORY_INJECTION else "",
+        capabilities=capabilities_prompt(access),
+        partial=os.path.exists(_map_cut_file()),
+    )
 
 
 def save_last_profile(custom: str, model: str, denied_csv: str = "",
@@ -918,154 +879,12 @@ def prewarm_spare(pool: "Pool") -> None:
                        access["level"]))
 
 
-# ---------------------------------------------------------------------------
-# Assist learning: end-of-conversation reflection into the memory inbox
-# ---------------------------------------------------------------------------
-
-
-def _record_exchange(worker: "Worker", user_text: str, response_text: str) -> None:
-    """Append one exchange to a worker's bounded transcript buffer."""
-    try:
-        worker.transcript.append(
-            (str(user_text)[:800], str(response_text)[:800])
-        )
-        while len(worker.transcript) > TRANSCRIPT_MAX_EXCHANGES or sum(
-            len(u) + len(a) for u, a in worker.transcript
-        ) > TRANSCRIPT_MAX_BYTES:
-            worker.transcript.pop(0)
-    except Exception:  # noqa: BLE001 — bookkeeping must never break requests
-        pass
-
-
-def _transcript_worth_reflecting(transcript: list) -> bool:
-    """Cheap heuristic: multi-exchange conversations, or single exchanges
-    containing corrective/preference language, are worth a reflection."""
-    if not transcript:
-        return False
-    if len(transcript) >= 2:
-        return True
-    blob = " ".join(u.lower() for u, _ in transcript)
-    return any(kw in blob for kw in REFLECT_KEYWORDS)
-
-
-def reflect_on_transcript(transcript: list, person: str = "") -> None:
-    """One-shot cheap Claude pass extracting durable facts (daemon thread).
-
-    `person` is the speaker's person id (`ben` for `person.ben`) when one
-    speaker held the whole conversation; a fact the model marks as theirs
-    is filed with subject `person:<id>` so it belongs to them rather than
-    to everyone.
-
-    Never raises: any failure (unauthenticated, timeout, garbage output)
-    just means no facts are stored this time.
-    """
-    try:
-        convo = "\n".join(f"USER: {u}\nASSISTANT: {a}" for u, a in transcript)
-        cmd = resolve_claude_cmd() + [
-            "-p",
-            "--disallowedTools", "*",
-            "--max-turns", "1",
-            "--model", REFLECT_MODEL,
-        ]
-        # Claimed as memory's: this is the memory pipeline's extraction
-        # step, and unclaimed it filed under "Your chats" — dozens of
-        # identical machine prompts burying the person's own conversations.
-        _, session_args = mint_claimed_session("memory")
-        prompt = REFLECTION_PROMPT
-        if person:
-            prompt += REFLECTION_SPEAKER.format(name=person)
-        prompt += "\n\nConversation:\n" + convo
-        proc = subprocess.run(
-            cmd + session_args,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=REFLECT_TIMEOUT,
-            cwd=WORK_DIR,
-        )
-        if proc.returncode != 0 and "session-id" in (proc.stderr or ""):
-            # A CLI from before --session-id: the label is optional, the
-            # run is not.
-            proc = subprocess.run(
-                cmd, input=prompt, capture_output=True, text=True,
-                timeout=REFLECT_TIMEOUT, cwd=WORK_DIR,
-            )
-        if proc.returncode != 0:
-            return
-        facts = []
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if not line or line.upper() == "NONE":
-                continue
-            try:
-                obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if not isinstance(obj, dict):
-                continue
-            fact = obj.get("fact")
-            if not isinstance(fact, str) or not fact.strip():
-                continue
-            confidence = obj.get("confidence")
-            if confidence not in ("high", "medium", "low"):
-                confidence = "medium"
-            record = {
-                "ts": int(time.time()),
-                "source": "assist",
-                "fact": fact.strip()[:500],
-                "confidence": confidence,
-            }
-            # The inbox contract `remember_fact` already writes: `subject`
-            # names what the fact is about and `person` whose it is, and
-            # the facts store files it under `person:<id>`. Only for a fact
-            # the model said was the speaker's — a house fact keeps no
-            # owner, which is what it is.
-            if person and obj.get("about") == "speaker":
-                record["subject"] = f"person:{person}"
-                record["person"] = person
-            facts.append(record)
-            if len(facts) >= 3:
-                break
-        if not facts:
-            return
-        os.makedirs(MEMORY_INBOX_DIR, exist_ok=True)
-        path = os.path.join(MEMORY_INBOX_DIR, f"{int(time.time())}-assist.jsonl")
-        with open(path, "a") as fh:
-            for record in facts:
-                fh.write(json.dumps(record) + "\n")
-        log(f"reflection stored {len(facts)} candidate fact(s)")
-    except Exception as exc:  # noqa: BLE001 — reflection must never crash the pool
-        try:
-            log(f"reflection skipped: {exc}")
-        except Exception:  # noqa: BLE001
-            pass
-
-
-def maybe_reflect(worker: "Worker") -> None:
-    """Kick off a background reflection for a worker being retired.
-
-    The speaker rides only when ONE person held the conversation: two
-    voices in one session (a satellite in a shared kitchen) is a transcript
-    whose preferences belong to nobody in particular, and filing them under
-    either would be a guess about whose they were.
-    """
-    if not ASSIST_LEARNING:
-        return
-    try:
-        transcript = list(worker.transcript)
-        worker.transcript = []  # never reflect the same exchanges twice
-        people = set(getattr(worker, "people", None) or ())
-    except Exception:  # noqa: BLE001
-        return
-    if not _transcript_worth_reflecting(transcript):
-        return
-    person = next(iter(people)) if len(people) == 1 else ""
-    person = person or ""          # a turn with no known speaker is None
-    threading.Thread(
-        target=reflect_on_transcript, args=(transcript,),
-        kwargs={"person": person} if person else {}, daemon=True,
-    ).start()
-
+# Facts a voice turn teaches are filed DURING the turn, by remember_fact
+# (the operational prompt asks for it, and the turn's context names the
+# speaker so a preference is theirs). There used to be a second, after-the-
+# conversation reflection pass as well, which filed the same facts again
+# from a transcript, ran as a separate Claude process in /config with the
+# terminal's whole context, and decided by keyword whether to run at all.
 
 # ---------------------------------------------------------------------------
 # Worker: one live `claude` stream-json process
@@ -1083,10 +902,6 @@ class Worker:
         self.session_id: str | None = None
         self.lock = threading.Lock()  # serializes turns on this worker
         self._events: Queue = Queue()
-        # Bounded conversation buffer for the end-of-life reflection pass
-        # (see _record_exchange / maybe_reflect), and who spoke in it.
-        self.transcript: list = []
-        self.people: set = set()
         # What the last turn did, read by Pool.process: whether it reached a
         # tool before it ended (see `ask`), and the CLI's own result event
         # for the journal (session, turns, tokens).
@@ -1107,7 +922,7 @@ class Worker:
             # process, not one request; per-request control is the timeout.
             "--max-turns", str(max(int(MAX_TURNS) * 10, 50)),
             "--system-prompt", system_prompt,
-        ]
+        ] + isolation_args()
         # Recorded on the worker, because what matters afterwards is what
         # THIS process was spawned with: a worker that died without the
         # flag says nothing at all about the flag.
@@ -1402,7 +1217,6 @@ class Pool:
                 self.spare = None
 
     def _drop_worker(self, conv_id: str, worker: Worker) -> None:
-        maybe_reflect(worker)
         worker.kill()
         with self.lock:
             if self.workers.get(conv_id) is worker:
@@ -1439,14 +1253,12 @@ class Pool:
                     or now - worker.last_used > WORKER_IDLE_REAP
                     or now - worker.created > WORKER_MAX_AGE
                 ):
-                    maybe_reflect(worker)
                     worker.kill()
                     self.workers.pop(conv_id, None)
             # Enforce the cap (LRU), keeping the most recently used.
             while len(self.workers) > MAX_WORKERS - 1:
                 oldest = min(self.workers, key=lambda c: self.workers[c].last_used)
                 evicted = self.workers.pop(oldest)
-                maybe_reflect(evicted)
                 evicted.kill()
             # Recycle a stale spare so its baked-in area map stays fresh.
             if self.spare is not None and (
@@ -1519,7 +1331,6 @@ class Pool:
         # brain_voice_context). Empty for a request that carried none.
         context = req.get("context") if isinstance(req.get("context"), dict) else {}
         preamble = context_preamble(context)
-        person = context_person(context)
 
         debug_log([
             "================================================================",
@@ -1572,8 +1383,6 @@ class Pool:
                         note_partial_ok()
                     worker.last_used = time.time()
                     self._store_session(conv_id, worker.session_id)
-                    _record_exchange(worker, text, response)
-                    worker.people.add(person or None)
                 elif worker.acted:
                     # The turn reached a tool and then died: a toggle, a
                     # relative step, a script or a notification may already
@@ -1672,7 +1481,7 @@ class Pool:
             "-p", "--verbose",
             "--max-turns", str(MAX_TURNS),
             "--system-prompt", system_prompt,
-        ]
+        ] + isolation_args()
         access = access or resolve_access("voice")
         cmd += scoping_args(access["mcp_only"])
         resolved, planned = voice_model(model)
