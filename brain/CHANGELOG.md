@@ -12,7 +12,6 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - A sensor whose readings moved with the season no longer files "outside its usual range" when today is in line with where its last week sat. brAIn keeps how far each reading's last week sat from its usual hour-by-hour pattern, measured nightly; until the first nightly pass after updating, it reports as before. (reports #225)
-- With **Help develop brAIn** on, a report closed in the reports repository is no longer reopened as "Back again" just because brAIn updated. It reopens only when the problem was seen after the close.
 
 ## 2.18.31
 
