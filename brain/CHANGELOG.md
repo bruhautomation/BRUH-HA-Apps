@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.32
+
+### Changed
+
+- When a house check you have mostly answered Wrong (at least two Wrongs, most of its answers, and the latest one) files again, brAIn's first look is told so and sets the row aside unless there is fresh evidence. Nothing is muted and safety, security and brAIn's own reports are never quieted. The scorecard row in ⚙ › Diagnostics says brAIn holds the rule back and that muting it stays your choice. (reports #224)
+- A device with no entities that is a second entry for a device whose readings are on another entry (the same name, or a shared connection) is now named as that, and the card says deleting the empty one leaves the readings alone. (reports #229)
+
+### Fixed
+
+- A sensor whose readings moved with the season no longer files "outside its usual range" when today is in line with where its last week sat. brAIn keeps how far each reading's last week sat from its usual hour-by-hour pattern, measured nightly; until the first nightly pass after updating, it reports as before. (reports #225)
+
 ## 2.18.31
 
 ### Added
