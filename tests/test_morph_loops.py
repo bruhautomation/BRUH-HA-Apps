@@ -202,6 +202,48 @@ class TestLearning(unittest.TestCase):
         later = time.time() + env.learning.SNOOZE_S + 1
         self.assertEqual(1, len(env.learning.listing(now=later)))
 
+    def test_a_reworded_suggestion_is_the_same_suggestion(self):
+        env = self.env
+        self.assertEqual(1, env.learning.add_suggestions(
+            [{"title": "Move the porch light card up to the top", "change": "x"}], self.dash))
+        self.assertEqual(0, env.learning.add_suggestions(
+            [{"title": "Move porch light card to the top", "change": "y"}], self.dash),
+            "an open idea reworded must not take another slot")
+        self.assertEqual(1, env.learning.add_suggestions(
+            [{"title": "Hide the garage camera", "change": "z"}], self.dash))
+
+    def test_a_few_taps_do_not_make_a_pass_worth_running(self):
+        env = self.env
+        base = {"events": 100, "tells": [], "suggestions": [], "dead": []}
+        self.assertEqual(env.learning.fingerprint(base),
+                         env.learning.fingerprint({**base, "events": 110}))
+        self.assertNotEqual(env.learning.fingerprint(base),
+                            env.learning.fingerprint({**base, "events": 100 + 2 * env.learning.EVENT_STEP}))
+        self.assertNotEqual(env.learning.fingerprint(base),
+                            env.learning.fingerprint({**base, "dead": ["c1"]}))
+
+    def test_the_prompt_lists_what_is_pending_and_leaves_out_idle_cards(self):
+        env = self.env
+        d = {"days_with_use": 9, "events": 3, "by_kind": {}, "sections": [], "never_used": ["idle1"],
+             "dead": [], "tells": [], "suggestions": [],
+             "cards": [{"id": "idle1", "section": "s", "type": "t", "entity": "", "uses": 0, "unavailable": False},
+                       {"id": "busy1", "section": "s", "type": "t", "entity": "", "uses": 4, "unavailable": False}]}
+        items = [{"title": "Waiting idea", "status": "open"}, {"title": "Finished idea", "status": "done"}]
+        text = env.learning.build_prompt(d, "floors: []", [], {}, items)
+        self.assertIn("busy1", text)
+        self.assertNotIn('"id":"idle1"', text)
+        self.assertIn("Waiting idea", text)
+        self.assertIn("Finished idea", text)
+
+    def test_the_use_log_is_pruned_once_a_day(self):
+        env = self.env
+        old = time.time() - 90 * 86400
+        env.paths.append_jsonl(env.paths.USAGE, {"ts": old, "kind": "open"})
+        env.paths.append_jsonl(env.paths.USAGE, {"ts": time.time(), "kind": "open"})
+        self.assertTrue(env.learning.prune_due())
+        self.assertEqual(1, len(env.learning.usage()))
+        self.assertFalse(env.learning.prune_due(), "once a day, not every tick")
+
     def test_a_suggestion_being_done_is_settled_by_its_tell(self):
         env = self.env
         env.learning.add_suggestions([{"title": "A", "change": "B"}], self.dash)

@@ -374,6 +374,7 @@ async def tick_loop() -> None:
             if STATE.get("retry_generate"):
                 await retry_generate()
             await asyncio.to_thread(learning.settle_doing, tell.read_state)
+            await asyncio.to_thread(learning.prune_due)
             if learning.due() and not learning.state().get("running"):
                 await _learn()
             await asyncio.to_thread(devloop.ingest_errors)
