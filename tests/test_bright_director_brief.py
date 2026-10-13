@@ -11,8 +11,8 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = os.path.join(os.path.dirname(__file__), "..")
 PANEL_DIR = os.path.join(BASE_DIR, "bright", "panel")
@@ -237,17 +237,17 @@ class TestTheRevisionKnowsTheShow(ClaudeDirectorCase):
             return dict(current)
 
         with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(build.library, "load_analysis",
+                unittest.mock.patch.object(build.library, "load_analysis",
                                   return_value=analysis), \
-                mock.patch.object(build, "fixtures_for_show",
+                unittest.mock.patch.object(build, "fixtures_for_show",
                                   return_value=FIXTURES), \
-                mock.patch.object(build.library, "script_path",
+                unittest.mock.patch.object(build.library, "script_path",
                                   return_value=Path(tmp) / "script.json"), \
-                mock.patch.object(build, "load_report",
+                unittest.mock.patch.object(build, "load_report",
                                   return_value={"vibe": "late night"}), \
-                mock.patch.object(build, "compile_and_save",
+                unittest.mock.patch.object(build, "compile_and_save",
                                   return_value={"stats": {"cues": 1}}), \
-                mock.patch.object(build, "save_report"):
+                unittest.mock.patch.object(build, "save_report"):
             (Path(tmp) / "script.json").write_text(json.dumps(current))
             show = build.revise_show("ab" * 20, {}, 7, "warmer", reviser)
         self.assertEqual("late night", seen["vibe"])
@@ -286,11 +286,13 @@ class TestTheSchemaIsWhatTheValidatorAccepts(unittest.TestCase):
         block = brief[brief.index("ONE SCENE, WRITTEN WELL"):]
         opening = block.index("{")
         depth = 0
+        scene = None
         for index in range(opening, len(block)):
             depth += {"{": 1, "}": -1}.get(block[index], 0)
             if depth == 0:
                 scene = json.loads(block[opening:index + 1])
                 break
+        self.assertIsNotNone(scene, "the worked example's braces never close")
         script = {"version": 2, "scenes": [scene], "moments": []}
         self.assertEqual([], problems(claude_director.script_schema(), script))
 
@@ -389,7 +391,7 @@ class TestTheValidatedAnswerIsTheOneRead(ClaudeDirectorCase):
         script["scenes"][0]["effects"].append(
             {"use": "lamp chase", "params": {"step_beats": 1}})
         with tempfile.TemporaryDirectory() as tmp, \
-                mock.patch.object(effect_presets, "PRESETS_FILE",
+                unittest.mock.patch.object(effect_presets, "PRESETS_FILE",
                                   Path(tmp) / "presets.json"):
             effect_presets.save("lamp chase", {
                 "type": "chase", "select": {"roles": ["lamp"]},
