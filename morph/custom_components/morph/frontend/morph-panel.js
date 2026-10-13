@@ -26,7 +26,7 @@ import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
 import * as upc from './upcoming.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry } from './util.js';
 
 const HOLD_MS = 540;
 const TELL_SUGS = {
@@ -188,7 +188,9 @@ class MorphPanel extends HTMLElement {
       this.loadedModules.add(key);
       const before = IMPORTED.get(m.name);
       IMPORTED.set(m.name, m.v);
-      import(`${base}/${encodeURIComponent(m.name)}?v=${m.v}`).then(() => this.schedule()).catch((e) => {
+      // One dropped fetch is not a broken card: a failed fetch is tried once
+      // more before it is reported (util.importWithRetry).
+      importWithRetry(`${base}/${encodeURIComponent(m.name)}?v=${m.v}`, { load: (u) => import(u) }).then(() => this.schedule()).catch((e) => {
         // A custom element cannot be defined twice on one page. When a card's
         // file changes, its new version runs and its define() throws — that
         // is the browser keeping the old one until the page reloads, not a
@@ -845,7 +847,11 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
 <div class="row" style="gap:0 18px"><button type="button" class="go" data-act="sec-hide" data-v="${esc(sec.id)}" style="font-size:14px;color:var(--muted)">${sec.hidden ? 'Show section' : 'Hide section'}</button><button type="button" class="go" data-act="sec-remove" data-v="${esc(sec.id)}" style="font-size:14px;color:var(--rose)">Remove section</button></div></div>`;
     }
     const grip = edit ? '<svg aria-hidden="true" width="12" height="18" viewBox="0 0 12 18" style="flex-shrink:0;color:var(--quiet);margin-left:-8px"><path d="M3 3h.01M9 3h.01M3 9h.01M9 9h.01M3 15h.01M9 15h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>' : '';
-    return `${grip}<div style="flex:1;min-width:0;display:flex;align-items:baseline;gap:12px"><h2>${esc(sec.title)}</h2><span class="secmeta">${esc(meta)}</span></div>${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
+    // Morph's mark at the end of the title row: one press opens the Tell box
+    // for the whole room, without going through Edit and holding the header.
+    const telling = !!(this.s.tell && this.s.tell.kind === 'section' && this.s.tell.id === sec.id);
+    const mark = !edit && this.admin() ? `<button type="button" class="secmark" data-snap-skip="1" data-act="tell-sec" data-v="${esc(sec.id)}" aria-pressed="${telling}" aria-label="Tell brAIn what to change about ${esc(sec.title)}" title="Tell brAIn what to change about this section">${MARK(18)}</button>` : '';
+    return `${grip}<div style="flex:1;min-width:0;display:flex;align-items:baseline;gap:12px"><h2>${esc(sec.title)}</h2><span class="secmeta">${esc(meta)}</span></div>${mark}${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
   }
 
   renderTile(secEl, it, sec, notes) {
@@ -1397,7 +1403,9 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     if (this.s.secEdit && !inside(`[data-sec-head="${CSS.escape(this.s.secEdit)}"]`)) { this.s.secEdit = null; this.schedule(); }
     if (this.s.ask && !inside('[data-ask]') && !this.s.ask.busy) { this.s.ask = null; this.schedule(); }
     const t = this.s.tell;
-    if (t && !inside('[data-tell]') && !(t.kind === 'card' && inside(`[data-tile="${CSS.escape(t.id)}"]`)) && !t.sent) { this.closeTell(); }
+    // A section's own mark toggles its box; it is not "outside" it.
+    const ownMark = t && t.kind === 'section' && inside(`[data-act="tell-sec"][data-v="${CSS.escape(t.id)}"]`);
+    if (t && !inside('[data-tell]') && !ownMark && !(t.kind === 'card' && inside(`[data-tile="${CSS.escape(t.id)}"]`)) && !t.sent) { this.closeTell(); }
     const v = this.s.view;
     if (v && !inside(`[data-tile="${CSS.escape(v.id)}"]`)) {
       if (inside('[data-tile]') && !this.s.edit) this.swallow = performance.now();
@@ -1745,6 +1753,13 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         this.toast(r && r.ok ? 'Taken back.' : (r && r.error) || 'Morph could not take that back.'); this.load(); return;
       }
       case 'ask-tell': if (this.s.ask && this.s.ask.q) this.tellDashboard(this.s.ask.q); return;
+      case 'tell-sec': {
+        // The mark is a toggle: pressed again before anything was sent, it
+        // folds the box away.
+        const t = this.s.tell;
+        if (t && t.kind === 'section' && t.id === v && !t.sent) { this.closeTell(); return; }
+        this.openTell({ kind: 'section', id: v }); return;
+      }
       case 'tell-card': this.openTell({ kind: 'card', id: v, from: this.s.view && this.s.view.id === v ? 'adv' : '' }); return;
       case 'tell-keep': this.closeTell(); this.load(); return;
       case 'reload-page': location.reload(); return;

@@ -123,7 +123,11 @@ replaces it). To change one:
 3. Copy only the files you change, keep every export the other modules import,
    and never replace `boot.js`. If a copy fails to load, Morph runs its own
    for that page load and says so, so check your JavaScript.
-4. Fill `code_issue` saying what you changed and why. Morph asks the person
+4. A card type your copy of `cards.js` adds to `TYPES` (in the `TYPES` object,
+   or as `TYPES.name = …`) can be used in `dashboard.yaml` like a built-in one
+   while that copy is in use. While it is paused, Morph treats it as a
+   Lovelace card, which cannot draw it.
+5. Fill `code_issue` saying what you changed and why. Morph asks the person
    whether to open an issue so Morph's code gets the change for everybody.
 
 It is one commit like any other, so Undo puts Morph's own back. When Morph is

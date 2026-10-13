@@ -200,6 +200,49 @@ def status() -> list[dict]:
     return out
 
 
+_TYPES_LITERAL = re.compile(r"export\s+const\s+TYPES\s*=\s*\{([^}]*)\}")
+_TYPES_ASSIGN = re.compile(r"\bTYPES\s*(?:\.\s*([A-Za-z_]\w*)|\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\])\s*=(?!=)")
+_TYPE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+
+
+def card_types() -> list[str]:
+    """The card types the served cards.js draws, when that is a copy.
+
+    The dashboard compiler (``store.normalize``) wraps a type it does not
+    know as a Lovelace card, which is right for ``tile`` and wrong for a
+    type this house's own copy of cards.js added: Lovelace has never heard
+    of it and draws "Configuration error". Only an ACTIVE copy counts — a
+    paused one is not what the page is running, so its types would be drawn
+    by a cards.js that does not have them. Read off the copy's ``TYPES``
+    object and any ``TYPES.x = …`` after it; empty when there is no copy.
+    """
+    path = code_dir() / "cards.js"
+    if not path.is_file():
+        return []
+    try:
+        active = any(r.get("name") == "cards.js" and r.get("status") == "active" for r in status())
+    except OSError:
+        return []
+    if not active:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    found: list[str] = []
+    m = _TYPES_LITERAL.search(text)
+    if m:
+        for part in m.group(1).split(","):
+            key = part.split(":", 1)[0].strip().strip("'\"")
+            if _TYPE_NAME.match(key):
+                found.append(key)
+    for a, b in _TYPES_ASSIGN.findall(text):
+        key = a or b
+        if _TYPE_NAME.match(key):
+            found.append(key)
+    return list(dict.fromkeys(found))
+
+
 def publish(version: str) -> list[dict]:
     rows = status()
     paths.write_json(paths.CODE_STATE, {"version": version, "at": time.time(), "files": rows})

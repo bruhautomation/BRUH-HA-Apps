@@ -25,6 +25,7 @@ import time
 
 import yaml
 
+import morphcode
 import paths
 
 COLORS = ("amber", "sand", "sky", "violet", "teal", "lime", "rose", "peach", "indigo")
@@ -105,7 +106,7 @@ def guess_type(entity: str) -> str:
     }.get(domain, "entity")
 
 
-def _card(raw, problems: list[str], where: str) -> dict | None:
+def _card(raw, problems: list[str], where: str, extra: tuple = ()) -> dict | None:
     if not isinstance(raw, dict):
         problems.append(f"{where}: a card must be a mapping")
         return None
@@ -113,7 +114,7 @@ def _card(raw, problems: list[str], where: str) -> dict | None:
     ctype = str(raw.get("type") or "").strip()
     # A Lovelace card written directly (`type: tile`, `type: custom:x`) is
     # wrapped, so the frontend has one shape to read.
-    if ctype and ctype not in MORPH_TYPES:
+    if ctype and ctype not in MORPH_TYPES and ctype not in extra:
         card["type"] = "lovelace"
         card["card"] = {k: v for k, v in raw.items() if k not in ("id", "span", "morph_name")}
     elif ctype == "lovelace":
@@ -169,6 +170,9 @@ def normalize(raw) -> tuple[dict, list[str]]:
         out["theme"] = raw["theme"]
 
     used: set[str] = set()
+    # Types a copy of cards.js in /config/morph/frontend adds are Morph's own
+    # for as long as that copy is served (morphcode.card_types).
+    extra = tuple(morphcode.card_types())
 
     def unique(base: str) -> str:
         cand, n = base, 2
@@ -216,7 +220,7 @@ def normalize(raw) -> tuple[dict, list[str]]:
                 if graw.get("note"):
                     group["note"] = str(graw["note"])[:80]
                 for ci, craw in enumerate(graw.get("cards") or []):
-                    card = _card(craw, problems, f"{ftitle} › {stitle} › card {ci + 1}")
+                    card = _card(craw, problems, f"{ftitle} › {stitle} › card {ci + 1}", extra)
                     if not card:
                         continue
                     inner = card.get("card") or {}

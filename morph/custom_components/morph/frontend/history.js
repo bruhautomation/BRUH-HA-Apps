@@ -259,8 +259,12 @@ function valueAt(pts, t) {
   return v;
 }
 
+// A thermostat's history as [time, [low, high] | null, action]. A fetch
+// that failed answers `{error}`, not a list, and a chart with no target band
+// is still a chart, so anything but a list is no band.
 function climateTargets(rows) {
-  return (rows || []).map((r) => {
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => {
     const a = r.a || {};
     const lo = a.target_temp_low != null ? a.target_temp_low : a.temperature;
     const hi = a.target_temp_high != null ? a.target_temp_high : a.temperature;
@@ -317,7 +321,7 @@ export function readings(hass, card, H, colorFor, head) {
   ids.forEach((eid) => {
     const rows = stats(hass, eid, t0, now, '5minute');
     if (rows === undefined) { pending = true; return; }
-    const pts = rows && !rows.error && rows.length ? rows.map((p) => [p.t, p.mean]) : [];
+    const pts = Array.isArray(rows) && rows.length ? rows.map((p) => [p.t, p.mean]) : [];
     const st = hass.states[eid];
     const nm = st.attributes.friendly_name || eid;
     series.push({ id: eid, name: nm, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
@@ -333,7 +337,7 @@ export function readings(hass, card, H, colorFor, head) {
     const st = hass.states[eid]; if (!st || series.some((x) => x.id === eid)) return;
     const rows = stats(hass, eid, t0, now, '5minute');
     const nm = st.attributes.friendly_name || eid;
-    extreme.push({ id: eid, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: rows && !rows.error ? rows.map((p) => [p.t, p.mean]) : [] });
+    extreme.push({ id: eid, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: 'var(--muted)', now: parseFloat(st.state), pts: Array.isArray(rows) ? rows.map((p) => [p.t, p.mean]) : [] });
   });
 
   // What the house was aiming for: a band the card names, or the
