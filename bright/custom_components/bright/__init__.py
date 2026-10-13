@@ -129,39 +129,43 @@ async def _forward(kind: str, data: dict) -> dict:
     return response if isinstance(response, dict) else {}
 
 
+def _answer(response: dict) -> dict:
+    """The add-on's answer as response data, without the transport's flag."""
+    return {k: v for k, v in response.items() if k != "ok"}
+
+
 def _register_services(hass: HomeAssistant) -> None:
-    async def handle_party_mode(call: ServiceCall) -> None:
-        await _forward(SERVICE_PARTY_MODE, dict(call.data))
+    # The four actions answer with what the add-on said. They used to return
+    # None and register no response support, and brAIn calls every add-on
+    # service with return_response=True so it can repeat the answer — which
+    # Core refuses outright for a service that returns nothing, before the
+    # add-on is ever asked. OPTIONAL keeps a plain automation call working.
+    async def handle_party_mode(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_PARTY_MODE, dict(call.data)))
 
-    async def handle_start_show(call: ServiceCall) -> None:
-        await _forward(SERVICE_START_SHOW, dict(call.data))
+    async def handle_start_show(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_START_SHOW, dict(call.data)))
 
-    async def handle_start_party(call: ServiceCall) -> None:
-        await _forward(SERVICE_START_PARTY, dict(call.data))
+    async def handle_start_party(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_START_PARTY, dict(call.data)))
 
-    async def handle_stop_show(call: ServiceCall) -> None:
-        await _forward(SERVICE_STOP_SHOW, dict(call.data))
+    async def handle_stop_show(call: ServiceCall) -> dict:
+        return _answer(await _forward(SERVICE_STOP_SHOW, dict(call.data)))
 
-    hass.services.async_register(
-        DOMAIN, SERVICE_PARTY_MODE, handle_party_mode, schema=PARTY_MODE_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_START_PARTY, handle_start_party,
-        schema=START_PARTY_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_START_SHOW, handle_start_show, schema=START_SHOW_SCHEMA
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_STOP_SHOW, handle_stop_show, schema=STOP_SHOW_SCHEMA
-    )
+    for name, handler, schema in (
+            (SERVICE_PARTY_MODE, handle_party_mode, PARTY_MODE_SCHEMA),
+            (SERVICE_START_PARTY, handle_start_party, START_PARTY_SCHEMA),
+            (SERVICE_START_SHOW, handle_start_show, START_SHOW_SCHEMA),
+            (SERVICE_STOP_SHOW, handle_stop_show, STOP_SHOW_SCHEMA)):
+        hass.services.async_register(
+            DOMAIN, name, handler, schema=schema,
+            supports_response=SupportsResponse.OPTIONAL)
 
     async def handle_status(_: ServiceCall) -> dict:
         # What is playing, which saved sets exist and which tracks have a
         # show — so a caller (brAIn, asked for "the Friday party") names a
         # set or a track that is really there.
-        result = await _forward(SERVICE_STATUS, {})
-        return {k: v for k, v in result.items() if k != "ok"}
+        return _answer(await _forward(SERVICE_STATUS, {}))
 
     hass.services.async_register(
         DOMAIN, SERVICE_STATUS, handle_status, schema=vol.Schema({}),

@@ -226,6 +226,22 @@ class Panel:
         return self.settings.get("printer", "") or None
 
     # -- rolls -------------------------------------------------------------
+    def quick_stock(self) -> str:
+        """The stock a print with no stock named lands on.
+
+        The configured default, unless the printer says otherwise: when the
+        rolls hold exactly one stock and it is not the default, that is the
+        label in the printer, and a "just print Chili" that refused because
+        a setting named a roll nobody loaded was a refusal about the
+        setting, not about the label. The default still wins whenever it IS
+        loaded, and when nothing is recorded nothing has changed.
+        """
+        default = str(self.settings.get("default_stock") or "")
+        held = sorted({r.stock for r in self.rolls.all() if r.stock})
+        if default in held or len(held) != 1:
+            return default
+        return held[0]
+
     def resolve_side(self, stock_id: str, requested: str = "") -> tuple[str, list[str]]:
         """Which bay this label prints on, and anything worth saying about it.
 
@@ -281,11 +297,17 @@ class Panel:
         if occupied and enforce:
             want = self.stocks.get(stock_id)
             have = ", ".join(
-                f"{r.side}: {(self.stocks.get(r.stock) or r).name if self.stocks.get(r.stock) else r.stock}"
+                f"{r.side}: {self.stocks.get(r.stock).name} (stock id {r.stock})"
+                if self.stocks.get(r.stock) else f"{r.side}: {r.stock}"
                 for r in occupied)
+            # The ids are in the sentence because whoever reads it next may
+            # be brAIn, which can retry on a stock that is loaded only if it
+            # is told what to ask for.
             raise PrintRefused(
-                f"Neither roll holds {want.name if want else stock_id}. "
-                f"Loaded: {have}. Load it, or update the Printer tab.",
+                f"Neither roll holds {want.name if want else stock_id} "
+                f"(stock id {stock_id}). Loaded: {have}. Print on a loaded "
+                f"stock instead, or load this one and say so on the Printer "
+                f"tab.",
                 mismatch={"wanted": stock_id})
 
         if not occupied:
@@ -1560,7 +1582,7 @@ async def h_quick(request: web.Request) -> web.Response:
     state = panel(request)
     payload = await body(request)
     text = str(payload.get("text", "") or "")
-    stock_id = str(payload.get("stock") or state.settings.get("default_stock"))
+    stock_id = str(payload.get("stock") or state.quick_stock())
 
     try:
         entry = state.stocks.require(stock_id)

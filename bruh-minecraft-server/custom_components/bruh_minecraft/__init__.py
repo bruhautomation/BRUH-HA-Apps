@@ -174,9 +174,41 @@ async def _ask(kind: str, payload: dict[str, Any], timeout: float = 15.0) -> dic
     return answer
 
 
+# How the server says no. RCON answers every command with text and no
+# status, so a refused one ("Unknown item 'minecraft:chilli'") came back as
+# a successful call carrying the refusal as its reply, and brAIn told the
+# person it had been done. Matched on the reply's first line, colour codes
+# stripped; a reply that merely informs ("Nothing changed. The player is
+# already an operator") is not a refusal and still answers.
+REFUSAL_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    r"^unknown or incomplete command",
+    r"^unknown command",
+    r"^unknown (item|block|entity|effect|enchantment|gamemode)",
+    r"^no player was found",
+    r"^no entity was found",
+    r"^no targets matched",
+    r"^that player does not exist",
+    r"^player not found",
+    r"^incorrect argument for command",
+    r"^expected ",
+    r"^invalid ",
+    r"<--\[here\]",
+))
+
+
+def refused(reply: str) -> bool:
+    """True when the server's reply is the server saying no."""
+    first = re.sub(r"\u00a7.", "", str(reply or "")).strip().splitlines()
+    line = first[0].strip() if first else ""
+    return any(p.search(line) for p in REFUSAL_PATTERNS)
+
+
 def _reply(answer: dict[str, Any]) -> dict[str, Any]:
     reply = answer.get("reply")
-    return {"reply": str(reply).strip() if reply is not None else ""}
+    text = str(reply).strip() if reply is not None else ""
+    if refused(text):
+        raise HomeAssistantError(f"The Minecraft server refused it: {text}")
+    return {"reply": text}
 
 
 def _register_services(hass: HomeAssistant) -> None:
@@ -209,7 +241,10 @@ def _register_services(hass: HomeAssistant) -> None:
 
     async def handle_status(_: ServiceCall) -> dict[str, Any]:
         answer = await _ask("status", {})
-        return {k: answer.get(k) for k in ("online", "max", "players", "state", "stats")}
+        # `reachable` and `note` are what tell a server that is down from a
+        # server nobody is on; both have an empty player list.
+        return {k: answer.get(k) for k in ("reachable", "note", "online", "max",
+                                           "players", "state", "stats")}
 
     def _strip(answer: dict[str, Any]) -> dict[str, Any]:
         return {k: v for k, v in answer.items() if k != "ok"}
@@ -233,11 +268,17 @@ def _register_services(hass: HomeAssistant) -> None:
         answer = await _ask("backup", {}, timeout=120.0)
         return {"output": str(answer.get("output", ""))[-2000:]}
 
-    async def handle_restart(_: ServiceCall) -> None:
+    # Both answer, like every other action here: brAIn calls each service
+    # with return_response=True, and Core refuses that outright for a
+    # service registered without response support.
+    async def handle_restart(_: ServiceCall) -> dict[str, Any]:
         await _ask("restart", {}, timeout=30.0)
+        return {"done": True, "note": "The server saved the world and is restarting."}
 
-    async def handle_stop(_: ServiceCall) -> None:
+    async def handle_stop(_: ServiceCall) -> dict[str, Any]:
         await _ask("stop", {}, timeout=30.0)
+        return {"done": True, "note": "The server saved the world and stopped. "
+                "It stays stopped until it is started from the add-on."}
 
     async def handle_player_action(call: ServiceCall, action: str) -> dict[str, Any]:
         return _reply(await _ask(
@@ -303,8 +344,8 @@ def _register_services(hass: HomeAssistant) -> None:
     register(SERVICE_ADDON_INSTALL, handle_addon_install, addon_install_schema, optional)
     register(SERVICE_ADDON_REMOVE, handle_addon_remove, addon_remove_schema, optional)
     register(SERVICE_BACKUP, handle_backup, empty_schema, optional)
-    register(SERVICE_RESTART, handle_restart, empty_schema)
-    register(SERVICE_STOP, handle_stop, empty_schema)
+    register(SERVICE_RESTART, handle_restart, empty_schema, optional)
+    register(SERVICE_STOP, handle_stop, empty_schema, optional)
 
     for svc, action in (
         (SERVICE_OP, "op"),

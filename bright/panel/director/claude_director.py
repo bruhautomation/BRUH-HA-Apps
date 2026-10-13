@@ -539,6 +539,11 @@ def _run_task(prompt: str, timeout_s: float,
         "notify": False,
         "ts": time.time(),
         "timeout": int(timeout_s),
+        # The narrowest scope brAIn's listener offers. A task with no
+        # `tools` runs with brAIn's full grant — Bash, file edits and every
+        # acting Home Assistant tool, from /config — and writing a show
+        # script from a brief needs none of it.
+        "tools": "read_only",
     }
     model = _director_model()
     if model:

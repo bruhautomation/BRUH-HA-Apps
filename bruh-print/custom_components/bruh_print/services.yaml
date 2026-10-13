@@ -15,8 +15,9 @@ print_text:
         text:
     stock:
       name: Label stock
-      description: Which label to fit it to. Defaults to the one set in the
-        add-on's configuration.
+      description: Which label to fit it to, by stock id (get_status lists
+        what is loaded). Left out, it is the stock in the printer when only
+        one is loaded, and the add-on's default stock otherwise.
       example: edcc-082wh
       selector:
         text:

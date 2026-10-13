@@ -9,10 +9,12 @@ the outbox brAIn's development loop reads.
 """
 import asyncio
 import json
+import re
 import shutil
 import threading
 import time
 import unittest
+from pathlib import Path
 
 from morph_env import MorphEnv
 
@@ -278,6 +280,22 @@ class TestDevloopOutbox(unittest.TestCase):
             self.assertEqual(3, row["impact"]["times"])
             env.settings.update({"report_code_issues": False})
             self.assertEqual([], env.devloop.publish("0.1.0")["rows"])
+
+    def test_every_issue_points_at_files_that_exist(self):
+        # The body sent the developer to `morph/AGENTS.md`, which is not in
+        # the repository; every path it names now has to be.
+        repo = Path(__file__).resolve().parent.parent
+        with MorphEnv() as env:
+            env.devloop.note_fault("Cards", "A fan card failed to draw", "trace")
+            env.devloop.note_request("The header is too tall", ui=True)
+            rows = env.devloop.rows()
+        self.assertEqual(2, len(rows))
+        for row in rows:
+            named = re.findall(r"(?:morph|docs|tests)/[\w./-]+\.(?:md|mjs)", row["body"])
+            self.assertIn("morph/defaults/AGENTS.md", named)
+            for path in named:
+                self.assertTrue((repo / path).is_file(), path)
+            self.assertNotIn("see morph/AGENTS.md", row["body"])
 
     def test_panel_errors_are_folded_in_and_the_file_emptied(self):
         with MorphEnv() as env:

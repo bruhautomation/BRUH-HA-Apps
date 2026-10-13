@@ -77,9 +77,14 @@ esac
 
 question="$*"
 
+# Cut on a line, never mid-fact: a byte cut ends on half a sentence (or
+# half a UTF-8 character) that reads as a fact it is not.
 memory=""
 if [ -s "$MEMORY_FILE" ]; then
     memory=$(head -c "$MEMORY_BUDGET" "$MEMORY_FILE")
+    if [ "$(wc -c < "$MEMORY_FILE")" -gt "$MEMORY_BUDGET" ]; then
+        memory=$(printf '%s\n' "$memory" | sed '$d')
+    fi
 fi
 
 prompt=$(cat << PROMPT
@@ -100,6 +105,38 @@ PROMPT
 )
 
 claude_cmd=$(resolve_claude)
+
+# A question reads the house and changes nothing, so it runs with the
+# analyst's tool set — the one study sessions and every unattended card
+# use. Without it the run went through claude-run's headless settings,
+# which pre-approve Bash, Write and Edit: a question could change the
+# house. The lists come from engine.py rather than a copy here, and a run
+# that cannot be scoped is refused rather than made unrestricted.
+tool_args=()
+panel_dir="${BRAIN_PANEL_DIR:-/opt/panel}"
+if perms=$(BRAIN_PANEL_DIR="$panel_dir" python3 - <<'PYTOOLS' 2>/dev/null
+import os
+import sys
+sys.path.insert(0, os.environ.get("BRAIN_PANEL_DIR", "/opt/panel"))
+try:
+    import engine
+except Exception:
+    raise SystemExit(1)
+allow, deny = engine.ANALYST_TOOLS, engine.ANALYST_DENIED
+if not allow or not deny:
+    raise SystemExit(1)
+print(",".join(allow))
+print(",".join(deny))
+PYTOOLS
+); then
+    tool_args=(--allowedTools "$(printf '%s' "$perms" | sed -n '1p')"
+               --disallowedTools "$(printf '%s' "$perms" | sed -n '2p')")
+else
+    echo -e "${RED}Cannot read the analyst's tool lists from ${panel_dir}/engine.py;${NC}" >&2
+    echo -e "${RED}refusing to answer with no restriction on what the run may do.${NC}" >&2
+    exit 1
+fi
+
 echo -e "${DIM}Thinking…${NC}" >&2
 
 format=(--output-format text)
@@ -138,7 +175,7 @@ err_file=$(mktemp 2>/dev/null || echo "/tmp/brain-ask-err.$$")
 run_ask() {
     # shellcheck disable=SC2086
     printf '%s' "$prompt" | timeout "$TIMEOUT" \
-        $claude_cmd -p "${turn_args[@]}" "$@" \
+        $claude_cmd -p "${turn_args[@]}" "${tool_args[@]}" "$@" \
         ${MODEL:+--model "$MODEL"} \
         "${format[@]}" 2>"$err_file"
 }
@@ -161,7 +198,8 @@ if [ -n "$ask_session" ] && command -v brain_hit_turn_cap > /dev/null 2>&1 \
     echo -e "${DIM}Ran out of room — landing the answer with what it has…${NC}" >&2
     # shellcheck disable=SC2086
     if landed=$(brain_land "$ask_session" "$((TIMEOUT - ($(date +%s) - ask_started)))" \
-            "$err_file" -- $claude_cmd -p ${MODEL:+--model "$MODEL"} "${format[@]}"); then
+            "$err_file" -- $claude_cmd -p "${tool_args[@]}" ${MODEL:+--model "$MODEL"} \
+            "${format[@]}"); then
         output="$landed"
         rc=0
     fi

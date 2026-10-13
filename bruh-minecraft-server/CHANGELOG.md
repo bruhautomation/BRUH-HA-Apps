@@ -5,6 +5,14 @@ All notable changes to the **BRUH Minecraft Server** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.17.1
+
+### Fixed
+
+- Restarting and stopping the server from brAIn now works: both services answer, as every other action here does.
+- A command the server refuses ("Unknown item", "No player was found", a command it cannot parse) is now an error carrying the server's own sentence. It used to come back as a success with the refusal as its reply.
+- `get_status` says whether the server answered, so a server that is down is not read as one with nobody on it.
+
 ## 1.17.0
 
 ### Changed

@@ -5,6 +5,16 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.2
+
+### Fixed
+
+- Starting a party, a track's show or party mode, and stopping a show, from brAIn now works. brAIn asks every add-on service for its answer, and these four were registered without one, so Home Assistant refused the call before BRight was asked. They now answer with what BRight said; an automation calling them is unaffected.
+
+### Security
+
+- The show director's requests to brAIn ask for read-only tools. With no scope named they ran with brAIn's full grant (shell commands, file edits and every Home Assistant action), which writing a show needs none of.
+
 ## 0.23.1
 
 Security fixes from a code-scanning pass. Nothing you see changes.

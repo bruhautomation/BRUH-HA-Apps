@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 2.18.34
+
+### Fixed
+
+- Times on an insight card are the house's own clock. Home Assistant sends history in UTC and the card's data cut the time zone off, so every time on a card was off by your UTC offset and every "today" was a UTC day. brAIn's history and statistics tools now answer in local time too.
+- `brain ask` runs with the read-only tools insight cards use. It went through the settings that pre-approve shell commands and file edits, so a question could change the house.
+- The memory a study session or `brain ask` is handed is cut at the end of a line, never mid-fact.
+- Other Home Assistant assistants are told brAIn's measurement tools by the names they are registered under (`brain_what_is_normal`, `brain_explain_change`, `brain_recall`).
+- The `call_service` tool no longer says shell commands and YAML edits around a protected entity "are not checked"; they are refused too.
+- Asking for a Minecraft player while the server is down now says the server is down, rather than that the player is offline.
+
 ## 2.18.33
 
 ### Changed

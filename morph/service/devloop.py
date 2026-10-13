@@ -161,6 +161,16 @@ def ingest_errors() -> int:
     return len(rows)
 
 
+# Where the developer who picks the issue up starts. It named
+# `morph/AGENTS.md`, which does not exist in the repository: the AGENTS.md
+# Morph ships is the guide brAIn reads on a house, under `defaults/`.
+FIX_WHERE = ("Fix it in the repository's `morph/` add-on. How Morph is built: "
+             "CLAUDE.md's \"Morph specifics\" and docs/design/morph-ui.md; what "
+             "brAIn is told on a house: morph/defaults/AGENTS.md. Check a change "
+             "with tests/manual/measure-morph.mjs (the fake house is "
+             "tests/manual/morph-fixture.mjs).")
+
+
 def rows(now: float | None = None) -> list[dict]:
     now = now or time.time()
     out = []
@@ -172,8 +182,7 @@ def rows(now: float | None = None) -> list[dict]:
             # Somebody's own words: quoted as they are, not dressed as a
             # count of something Morph noticed.
             out.append({"where": r["where"], "what": r["what"], "detail": detail[:400],
-                        "body": detail + "\n\nFix it in the repository's `morph/` add-on "
-                                         "(see morph/AGENTS.md for how Morph is built).",
+                        "body": detail + "\n\n" + FIX_WHERE,
                         "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
             if len(out) >= MAX_ROWS:
                 break
@@ -189,7 +198,7 @@ def rows(now: float | None = None) -> list[dict]:
             "",
             *fenced,
             "",
-            "Fix it in the repository's `morph/` add-on (see morph/AGENTS.md for how Morph is built).",
+            FIX_WHERE,
         ])
         out.append({"where": r["where"], "what": r["what"], "detail": r.get("detail", "")[:400],
                     "body": body, "impact": {"times": r["count"], "days": len(r.get("days") or [])}})

@@ -237,7 +237,13 @@ remaining=$((MAX_OPEN_HYPOTHESES - open_count))
 [ "$remaining" -lt 0 ] && remaining=0
 
 memory=""
-[ -s "$MEMORY_FILE" ] && memory=$(head -c "$MEMORY_BUDGET" "$MEMORY_FILE")
+if [ -s "$MEMORY_FILE" ]; then
+    # Cut on a line, never mid-fact (or mid-character).
+    memory=$(head -c "$MEMORY_BUDGET" "$MEMORY_FILE")
+    if [ "$(wc -c < "$MEMORY_FILE")" -gt "$MEMORY_BUDGET" ]; then
+        memory=$(printf '%s\n' "$memory" | sed '$d')
+    fi
+fi
 
 hypothesis_rule="You may propose up to ${remaining} hypotheses."
 if [ "$remaining" -eq 0 ]; then

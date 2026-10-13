@@ -40,10 +40,11 @@ _LOGGER = logging.getLogger(__name__)
 API_ID = "brain_measurements"
 API_NAME = "brAIn measurements"
 API_PROMPT = (
-    "brAIn has measured this home over weeks. Use what_is_normal to tell an "
-    "ordinary reading from an odd one, explain_change to say why something "
-    "changed (an automation, a person, brAIn), and recall for what the "
-    "household has told brAIn. These tools only read; they change nothing.")
+    "brAIn has measured this home over weeks. Use brain_what_is_normal to "
+    "tell an ordinary reading from an odd one, brain_explain_change to say "
+    "why something changed (an automation, a person, brAIn), and "
+    "brain_recall for what the household has told brAIn. These tools only "
+    "read; they change nothing.")
 
 
 def _should_expose(hass, assistant: str, entity_id: str) -> bool | None:

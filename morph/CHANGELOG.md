@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.10
+
+### Fixed
+
+- brAIn is no longer told that custom cards must be registered in `dashboard.yaml`: Morph loads every file in `cards/` itself.
+- A problem Morph sends to brAIn's development loop points at files that exist.
+
 ## 0.5.9
 
 ### Changed

@@ -303,6 +303,31 @@ class TestQuick(PanelCase):
             {"text": "HEK293T", "stock": "ed1f-060wh", "rotate": 0})
         self.assertEqual(0, body["label"]["rotate"])
 
+    async def test_no_stock_named_lands_on_the_one_in_the_printer(self):
+        # "Print Chili" from brAIn names no stock. The default named a roll
+        # nobody had loaded, so it was refused about a setting rather than
+        # about the label; with one stock in the printer, that is the label.
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+        status, body = await self.post(
+            "/api/quick", {"text": "Chili", "print": True})
+        self.assertEqual(200, status, body)
+        self.assertEqual("ed1f-060wh", body["label"]["stock"])
+        self.assertEqual(1, body["printed"])
+
+    async def test_the_default_still_wins_when_it_is_loaded(self):
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+        await self.post("/api/roll/right", {"stock": "edcc-082wh"})
+        _, body = await self.post("/api/quick", {"text": "Chili"})
+        self.assertEqual("edcc-082wh", body["label"]["stock"])
+
+    async def test_a_refusal_names_the_stock_ids_it_could_use(self):
+        await self.post("/api/roll/left", {"stock": "ed1f-060wh"})
+        status, body = await self.post(
+            "/api/quick", {"text": "Chili", "stock": "edcc-082wh", "print": True})
+        self.assertEqual(409, status, body)
+        self.assertIn("stock id ed1f-060wh", body["error"])
+        self.assertIn("Print on a loaded stock", body["error"])
+
     async def test_an_unknown_stock_is_a_404_that_names_what_is_known(self):
         status, body = await self.post(
             "/api/quick", {"text": "x", "stock": "not-a-stock"})

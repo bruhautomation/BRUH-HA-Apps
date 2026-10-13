@@ -30,6 +30,7 @@ class _FakeBrain(threading.Thread):
         self.results = results_dir
         self.answer = answer
         self.seen_prompt = None
+        self.seen_task = None
 
     def run(self):
         deadline = time.monotonic() + 5
@@ -38,6 +39,7 @@ class _FakeBrain(threading.Thread):
                 task = json.loads(task_file.read_text())
                 task_file.unlink()
                 self.seen_prompt = task["prompt"]
+                self.seen_task = task
                 self.results.mkdir(parents=True, exist_ok=True)
                 body = (self.answer(task) if callable(self.answer)
                         else self.answer)
@@ -93,6 +95,9 @@ class TestRoundTrip(ClaudeDirectorCase):
         self.assertIn("living", brain.seen_prompt)
         self.assertIn('order:"x"', brain.seen_prompt)
         self.assertIn("no prose", brain.seen_prompt)
+        # A task with no `tools` runs with brAIn's full grant: Bash, file
+        # edits, every acting tool. A show script needs none of them.
+        self.assertEqual("read_only", brain.seen_task["tools"])
 
     def test_a_failed_task_raises(self):
         brain = _FakeBrain(claude_director.TASKS_DIR,

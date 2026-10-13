@@ -2645,11 +2645,25 @@ def _mc_resolve(name, online):
     return None, f"No player called '{raw}' is online. Online now: {who}."
 
 
+MC_DOWN = ("The Minecraft server is not answering, so nobody can be reached in "
+           "it right now. Tell the user the server is down{note}; do not "
+           "say the player is offline.")
+
+
 def _mc_online():
+    """(who is on, a sentence when the server is down).
+
+    A server that is down and a server with nobody on both have an empty
+    player list; only `reachable` tells them apart, and reading the first
+    as the second told people their child was offline when the server was.
+    """
     status = _addon_call("bruh_minecraft", "get_status")
-    if status.get("error") or not status.get("reachable", True):
-        return None
-    return [str(p) for p in status.get("players") or []]
+    if status.get("error"):
+        return None, ""
+    if status.get("reachable") is False:
+        note = str(status.get("note") or "").strip()
+        return None, MC_DOWN.format(note=f" ({note})" if note else "")
+    return [str(p) for p in status.get("players") or []], ""
 
 
 def minecraft_status():
@@ -2674,7 +2688,9 @@ def minecraft_status():
 
 def minecraft_teleport(player, to_player=None, x=None, y=None, z=None):
     """Move a player to another player, or to coordinates."""
-    online = _mc_online()
+    online, down = _mc_online()
+    if down:
+        return {"error": down}
     who, why = _mc_resolve(player, online)
     if who is None:
         return {"error": why}
@@ -2711,7 +2727,10 @@ def minecraft_player(player, action, value=None, amount=None):
     # before they join); only resolve against who is on when that is the
     # only sensible reading.
     needs_online = action in ("gamemode", "give", "kick")
-    who, why = _mc_resolve(player, _mc_online() if needs_online else None)
+    online, down = _mc_online() if needs_online else (None, "")
+    if down:
+        return {"error": down}
+    who, why = _mc_resolve(player, online)
     if who is None:
         return {"error": why}
     if action == "gamemode":
@@ -3849,6 +3868,26 @@ def get_logbook(hours=1, entity_id=None):
     return out
 
 
+def _local_time(value):
+    """A Core timestamp in the house's own zone, offset kept.
+
+    Core answers history in UTC; a person asks "when did the door open"
+    and means the clock on their wall. The MCP server runs in Home
+    Assistant's zone (run.sh exports its TZ), and the offset stays on the
+    string, so the value is correct even where that export is missing.
+    """
+    from datetime import datetime
+    if not value:
+        return value
+    try:
+        when = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if when.tzinfo is None:
+        return value
+    return when.astimezone().isoformat(timespec="seconds")
+
+
 def get_history(entity_id, hours=24):
     """Get recent state history for one entity (recorder, detailed)."""
     from datetime import datetime, timedelta, timezone
@@ -3873,7 +3912,7 @@ def get_history(entity_id, hours=24):
 
     points = [
         {"state": tag_state(p.get("state")),
-         "at": p.get("last_changed") or p.get("last_updated")}
+         "at": _local_time(p.get("last_changed") or p.get("last_updated"))}
         for p in result[0]
     ]
     summary = {"entity_id": entity_id, "hours": hours, "change_count": len(points)}
@@ -3955,15 +3994,16 @@ def _history_cut_short(entity_id, rows, end):
     if last is None or changed - last <= HISTORY_GAP_S:
         return ""
     return (f"Home Assistant's history for {entity_id} stops at "
-            f"{_utc_text(last)}, but its live state last changed at "
-            f"{_utc_text(changed)}: the recorder is missing rows. Do not "
+            f"{_local_text(last)}, but its live state last changed at "
+            f"{_local_text(changed)}: the recorder is missing rows. Do not "
             "read a quiet, flat or offline stretch out of this window.")
 
 
-def _utc_text(epoch):
+def _local_text(epoch):
+    """An epoch as the house's wall clock: every read prompt says never UTC."""
     from datetime import datetime, timezone
-    return datetime.fromtimestamp(epoch, timezone.utc).strftime(
-        "%Y-%m-%d %H:%M UTC")
+    return datetime.fromtimestamp(epoch, timezone.utc).astimezone().strftime(
+        "%Y-%m-%d %H:%M")
 
 
 def get_statistics(entity_id, period="hour", days=7):
@@ -4011,7 +4051,8 @@ def get_statistics(entity_id, period="hour", days=7):
     def _iso(value):
         if isinstance(value, (int, float)):
             try:
-                return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat()
+                return datetime.fromtimestamp(
+                    value / 1000, timezone.utc).astimezone().isoformat()
             except (OverflowError, OSError, ValueError):
                 return value
         return value
@@ -5635,9 +5676,9 @@ TOOLS = [
             "\n\nPROTECTED ENTITIES: the homeowner may have named entities "
             "brAIn must not act on, and this call refuses any target that "
             "matches one — including an area or device that contains one. "
-            "The refusal names the entity. Do not route around it with a "
-            "shell command or by editing a YAML file: it is the homeowner's "
-            "list, and those paths are not checked."
+            "The refusal names the entity. It is the homeowner's list: tell "
+            "them, and do not route around it with a shell command or a YAML "
+            "edit — those routes are refused too."
         ),
         "inputSchema": {
             "type": "object",

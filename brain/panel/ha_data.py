@@ -802,6 +802,31 @@ def related_device_entities(
 # History
 # ---------------------------------------------------------------------------
 
+def local_iso(value, width: int = 19) -> str:
+    """A Core timestamp in the house's local time, cut to `width` characters.
+
+    Core answers history in UTC with an offset (`…T18:04:11.2+00:00`) and
+    statistics in UTC epoch milliseconds, and every card prompt tells the
+    model the times it is handed are the home's local time. Slicing the
+    offset off a UTC stamp kept the digits and dropped the zone, so every
+    time on a card was out by the house's UTC offset and every daily total
+    was a UTC day. The process runs in the house's zone (run.sh exports
+    Home Assistant's `TZ`), so `astimezone()` with no argument is local.
+    A value this cannot read is returned cut as it was rather than dropped.
+    """
+    try:
+        if isinstance(value, (int, float)):
+            seconds = value / 1000 if value > 1e11 else value
+            when = dt.datetime.fromtimestamp(seconds, dt.timezone.utc)
+        else:
+            when = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                return str(value)[:width]
+        return when.astimezone().isoformat()[:width]
+    except (TypeError, ValueError, OverflowError, OSError):
+        return str(value or "")[:width]
+
+
 def _bucket_hourly(points: list[tuple[str, float]]) -> list[list]:
     """Downsample numeric points to hourly means: [[iso_hour, mean], ...]."""
     buckets: dict[str, list[float]] = {}
@@ -858,7 +883,7 @@ async def get_history(
         numeric: list[tuple[str, float]] = []
         changes: list[list] = []
         for point in series:
-            ts = (point.get("last_changed") or point.get("last_updated") or "")[:19]
+            ts = local_iso(point.get("last_changed") or point.get("last_updated") or "")
             val = _num(point.get("state"))
             if val is not None:
                 numeric.append((ts, val))
@@ -899,10 +924,7 @@ async def get_statistics(
         prev_sum = None
         for row in rows:
             ts = row.get("start")
-            if isinstance(ts, (int, float)):
-                ts = dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc).isoformat()[:13]
-            else:
-                ts = str(ts)[:13]
+            ts = local_iso(ts, 13)
             if row.get("sum") is not None:
                 # convert cumulative sum to per-hour delta (usable consumption)
                 cur = row["sum"]
@@ -1238,12 +1260,10 @@ async def collect_bundle(category: dict, history_days: int, question: str | None
                                 "a quiet, flat or offline stretch into "
                                 "this window for them.",
                         "entities": {
-                            eid: {"history_ends": dt.datetime.fromtimestamp(
-                                      row["history_ends"], dt.timezone.utc
-                                  ).isoformat()[:16],
-                                  "live_changed": dt.datetime.fromtimestamp(
-                                      row["live_changed"], dt.timezone.utc
-                                  ).isoformat()[:16]}
+                            eid: {"history_ends": local_iso(
+                                      row["history_ends"], 16),
+                                  "live_changed": local_iso(
+                                      row["live_changed"], 16)}
                             for eid, row in sorted(cut.items())},
                     }
             except Exception:  # noqa: BLE001 — history is best-effort

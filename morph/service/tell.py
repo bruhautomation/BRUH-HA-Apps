@@ -434,7 +434,7 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
     else:
         lines += [
             "Scope: MORPH ONLY — the dashboard and Morph itself. Change /config/morph/dashboard.yaml,",
-            "/config/morph/cards/*.js (registered in dashboard.yaml as AGENTS.md describes) and, when",
+            "/config/morph/cards/*.js (Morph loads every one itself; a card uses one as custom:<name>) and, when",
             "the request is about Morph's own panel, /config/morph/frontend/ (below). Look at Home Assistant with your",
             "read tools as much as you need to get the dashboard right, but do NOT change Home",
             "Assistant itself — entity ids, names, areas, automations, scripts, scenes, helpers,",

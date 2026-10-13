@@ -365,8 +365,10 @@ not depend on the current one's result. So while a pull request is in CI:
 - **Fix them** in `brain/`, `tests/`, `docs/` or `CLAUDE.md` only — or in
   `morph/` for an issue labelled `devloop:morph` (its title begins
   "Morph"): those are faults the Morph dashboard add-on found in its own
-  code, filed through brAIn's loop, and `morph/AGENTS.md` is how Morph is
-  built. Never in any other add-on, never in a `needs_human_paths` file,
+  code, filed through brAIn's loop. How Morph is built is CLAUDE.md's
+  "Morph specifics" and `docs/design/morph-ui.md`; `morph/defaults/AGENTS.md`
+  is what brAIn is told on a house, and `tests/manual/measure-morph.mjs`
+  checks a change. Never in any other add-on, never in a `needs_human_paths` file,
   never in an option's meaning (an existing install must not change
   behaviour because of a default you moved). A batch is brAIn's or Morph's,
   never both, so each carries one version bump.
