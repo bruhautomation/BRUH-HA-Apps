@@ -2,7 +2,7 @@
 
 A model-written row — a Resident case, an insight card's finding, a chat's
 advice — is told to name things the way the homeowner does, and it mostly
-does. What it slips on is always the same three things, and each is a
+does. What it slips on is always the same few things, and each is a
 sentence a person has to translate before they can read the card:
 
   * an **entity id** (`sensor.hall_motion`) where the house has a name for
@@ -10,7 +10,9 @@ sentence a person has to translate before they can read the card:
   * a **time in UTC** ("04:00–14:00 UTC", "2026-10-09T04:00:00Z") where
     every other surface in the panel speaks the house's local time;
   * the add-on's own **Supervisor slug** (`abcd1234_brain`), which is how
-    brAIn appears in a log line and is "brAIn" everywhere a person reads.
+    brAIn appears in a log line and is "brAIn" everywhere a person reads;
+  * **template code** (`{{ today_at('07:00') }}`), quoted out of a trigger
+    or a condition, where a person wants the time or the plain word.
 
 So this is the deterministic half of the rule the prompts state: it turns
 what it can recognise and leaves everything else exactly as it was. An id
@@ -121,6 +123,33 @@ def times(text: str, tz: dt.tzinfo | None,
     return _CLOCK_UTC_RE.sub(clock, _ISO_UTC_RE.sub(iso, text))
 
 
+# Home Assistant template code: `{{ … }}` expressions and `{% … %}`
+# statements, optionally inside backticks. A model quoting a trigger or a
+# condition writes them verbatim, and a person reads Jinja.
+_TEMPLATE_EXPR_RE = re.compile(r"`?\{\{.*?\}\}`?", re.S)
+_TEMPLATE_STMT_RE = re.compile(r"`?\{%.*?%\}`?", re.S)
+# A clock time quoted inside a template (`today_at('07:00')`).
+_QUOTED_CLOCK_RE = re.compile(r"""['"](\d{1,2}:\d{2})(?::\d{2})?['"]""")
+
+
+def templates(text: str) -> str:
+    """Template code as plain words: an expression that only names a clock
+    time is that time, any other expression is "a template", and a
+    statement (`{% if … %}`) is dropped. Text with no template is returned
+    exactly as it was."""
+    if not text or ("{{" not in text and "{%" not in text):
+        return text
+
+    def expr(m: re.Match) -> str:
+        clocks = _QUOTED_CLOCK_RE.findall(m.group(0))
+        return clocks[0] if len(clocks) == 1 else "a template"
+
+    out = _TEMPLATE_EXPR_RE.sub(expr, text)
+    out = _TEMPLATE_STMT_RE.sub("", out)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return re.sub(r"\s+([.,;:])", r"\1", out).strip()
+
+
 def slug(text: str) -> str:
     """The add-on's Supervisor slug as the name people know it by."""
     return _SLUG_RE.sub("brAIn", text) if text else text
@@ -128,10 +157,10 @@ def slug(text: str) -> str:
 
 def plain(text: str, names: Mapping | None = None,
           tz: dt.tzinfo | None = None, now: float | None = None) -> str:
-    """`text` with the three slips turned into the house's own words."""
+    """`text` with the slips turned into the house's own words."""
     if not isinstance(text, str) or not text:
         return text
     try:
-        return entities(slug(times(text, tz, now)), names)
+        return entities(slug(times(templates(text), tz, now)), names)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text

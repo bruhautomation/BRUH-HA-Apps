@@ -318,9 +318,9 @@ class TestEntryFailedSaysWhoseErrorItIs(unittest.TestCase):
         found = system.entry_failed(snap, NOW)
         detail = found[0]["detail"]
         self.assertNotIn("<", detail)
-        self.assertIn("Cloud thing (cloudthing): Error on retrieving data: "
-                      "HTTP 403", detail)
-        self.assertIn("Garage hub (hub): Connection refused", detail)
+        self.assertIn("Cloud thing: Error on retrieving data: HTTP 403",
+                      detail)
+        self.assertIn("Garage hub: Connection refused", detail)
 
     def test_reason_cleaning(self):
         clean = system.clean_reason

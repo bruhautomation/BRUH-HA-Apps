@@ -265,9 +265,14 @@ def failed_entries(snap: dict) -> list[dict]:
 
 
 def entry_name(entry: dict) -> str:
+    """An entry as a person knows it: its own title. The integration's
+    domain is a slug (`homekit_controller`), so it is said only when there
+    is no title, and then as words ("homekit controller")."""
     title = str(entry.get("title") or "").strip()
-    domain = str(entry.get("domain") or "an integration")
-    return f"{title} ({domain})" if title and title != domain else domain
+    if title:
+        return title
+    domain = str(entry.get("domain") or "").strip()
+    return domain.replace("_", " ") if domain else "an integration"
 
 
 _TAG = re.compile(r"<[^>]*>?")

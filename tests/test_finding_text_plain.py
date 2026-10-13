@@ -65,6 +65,34 @@ DOMAINS = _util._CORE_DOMAINS
 ID_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w])")
 MAC_RE = re.compile(r"\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", re.I)
 SERVICE_RE = re.compile(r"\bbrain\.[a-z_]+")
+# Template code: a person reads what a rule does, never its Jinja.
+TEMPLATE_RE = re.compile(r"\{\{|\{%")
+# A snake_case word outside an entity id. It fails the lint only when it is
+# an integration's domain: the house's own (its registry platforms and
+# config entries) or one of the commonly reported ones below. A setting a
+# person types into their configuration (`purge_keep_days`) is not one.
+SNAKE_RE = re.compile(r"(?<![\w.])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?!\w|\.\w)")
+KNOWN_DOMAINS = frozenset({
+    "homekit_controller", "yalexs_ble", "history_stats", "zwave_js",
+    "mobile_app", "switch_as_x", "min_max", "utility_meter",
+    "google_assistant", "music_assistant",
+    "alexa_media", "unifi_protect", "tplink_omada", "ring_doorbell",
+    "xiaomi_miio", "tuya_local", "local_tuya", "bluetooth_le_tracker",
+})
+
+
+def domains_of(snap) -> set[str]:
+    """The integration domains a snapshot names: its entities' platforms
+    and its config entries' domains."""
+    out = set(KNOWN_DOMAINS)
+    if isinstance(snap, dict):
+        for row in snap.get("entities") or []:
+            if isinstance(row, dict) and row.get("platform"):
+                out.add(str(row["platform"]))
+        for row in snap.get("config_entries") or []:
+            if isinstance(row, dict) and row.get("domain"):
+                out.add(str(row["domain"]))
+    return out
 
 # The check modules that plant each defect. Pure over a snapshot: none of
 # them stands up a server or writes a store, so running them here is cheap.
@@ -104,6 +132,10 @@ def problems(check_id: str, row: dict, snap: dict | None) -> list[str]:
         if check_id not in MAC_ALLOWED:
             found += [m.group(0) for m in MAC_RE.finditer(prose)]
         found += SERVICE_RE.findall(prose)
+        if field in ("detail", "fix"):
+            found += TEMPLATE_RE.findall(prose)
+            slugs = domains_of(snap)
+            found += [w for w in SNAKE_RE.findall(prose) if w in slugs]
         if found:
             out.append(f"{check_id} {field}: {found} in {prose!r}")
     return out
@@ -221,6 +253,43 @@ class TestTheReportedRows(unittest.TestCase):
             self.assertTrue(problems("x", {"fix": prose}, None), prose)
         for prose in ("3.5 degrees", "edit automations.yaml", "e.g. this"):
             self.assertFalse(problems("x", {"fix": prose}, None), prose)
+
+    def test_the_lint_catches_template_code_and_integration_slugs(self):
+        for prose in ("It runs at {{ today_at('07:00') }}.",
+                      "{% if is_state('sun.sun', 'below_horizon') %}",
+                      "Reload the homekit_controller integration.",
+                      "The yalexs_ble lock dropped off.",
+                      "It is a history_stats helper."):
+            self.assertTrue(problems("x", {"detail": prose}, None), prose)
+            self.assertTrue(problems("x", {"fix": prose}, None), prose)
+        self.assertFalse(problems(
+            "x", {"fix": "Lower purge_keep_days in configuration.yaml."},
+            None))
+        snap = {"entities": [{"entity_id": "sensor.a",
+                              "platform": "my_custom_thing"}]}
+        self.assertTrue(problems("x", {"detail": "From my_custom_thing."},
+                                 snap))
+
+    def test_a_down_helper_is_named_in_plain_words(self):
+        snap = house()
+        snap["states"]["sensor.water_meter"] = {
+            "state": "unavailable",
+            "attributes": {"friendly_name": "Water this month"},
+            "last_changed": "2026-01-01T00:00:00+00:00"}
+        snap["entities"].append({"entity_id": "sensor.water_meter",
+                                 "platform": "utility_meter"})
+        rows = [r for r in devices.unavailable(snap, NOW)
+                if r.get("entity_id") == "sensor.water_meter"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(problems("dev.unavailable", rows[0], snap), [])
+        self.assertIn("utility meter helper", rows[0]["fix"])
+
+    def test_a_failed_entry_with_no_title_is_named_in_plain_words(self):
+        snap = house(config_entries=[
+            {"entry_id": "a1", "domain": "homekit_controller", "title": "",
+             "state": "setup_error", "source": "user", "reason": "Gone"}])
+        [row] = checks.system.entry_failed(snap, NOW)
+        self.assertEqual(problems("sys.entry_failed", row, snap), [])
 
 
 class TestARewordedFixReachesTheRowsAlreadyFiled(unittest.TestCase):
