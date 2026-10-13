@@ -4,6 +4,23 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## 2.18.34
 
+### Added
+
+- `bright_show` can import an edited BRight show file (`action: import`), which is what makes an edit to a file in `/config/.bright/shows` the show that plays. Not on the voice level.
+- BRUH Print's status tells brAIn which stock a text label prints on and whether each template's stock is loaded.
+
+### Changed
+
+- The chat and the terminal do what they are asked: they edit the automation, script, scene or dashboard directly and say what changed, where they used to route every automation through brAIn's replay. The replay (`brain.intent`) is still offered for a new standing rule when seeing how it would have behaved helps. The generated `/config/CLAUDE.md` opens with how to work in this house, says the same, names the BRUH Minecraft, Print and BRight tools, and takes an 8 KB memory excerpt (the chat already brings in the facts about each message).
+- With *Let brAIn act without asking* on, a discussion about a card acts like the chat: it makes the change you ask for instead of pointing you at a plan. With the switch off it still asks before changing Home Assistant.
+- A voice turn is one prompt in one place (`brain_voice_context.py`), runs with no setting sources or MCP servers but brAIn's own, files what it learns with `remember_fact` during the turn (the second reflection pass after it is gone), and loads the tools a voice turn acts with up front.
+- The action gate judges a change Morph asked for by the person's own words, which Morph now sends beside its prompt, and no longer asks about searching or listing Minecraft add-ons.
+- Tool descriptions: `call_service` is shorter, `get_baseline` points at `what_is_normal`, history and statistics point at each other, `reload_config` lists its targets, and `minecraft_teleport` says to recall (or ask once and remember) which Minecraft name is "me". `offer_resolutions` is listed only in the chat, where its buttons appear.
+
+### Security
+
+- A Minecraft server's replies, Modrinth's add-on descriptions and a music file's own tags reach a run marked as text from outside, so an instruction inside one is read as data.
+
 ### Fixed
 
 - Times on an insight card are the house's own clock. Home Assistant sends history in UTC and the card's data cut the time zone off, so every time on a card was off by your UTC offset and every "today" was a UTC day. brAIn's history and statistics tools now answer in local time too.

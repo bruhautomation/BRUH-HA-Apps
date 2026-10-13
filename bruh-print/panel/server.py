@@ -380,6 +380,9 @@ class Panel:
             "stocks": [self._stock_row(s) for s in self.stocks.all()],
             "templates": [t.as_dict() for t in self.templates.all()],
             "settings": self.settings.all(),
+            # The stock a text print with none named lands on — one answer,
+            # read by the Quick tab's route and by brAIn's status alike.
+            "quick_stock": self.quick_stock(),
             "fonts": list(fonts.catalog().values()),
             "catalog": label_doc.catalog_payload(),
             "history": [e.as_dict() for e in self.history.all(30)],

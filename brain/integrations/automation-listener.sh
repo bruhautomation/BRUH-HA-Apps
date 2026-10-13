@@ -553,6 +553,19 @@ process_task() {
     task_memory=$(jq -r 'if .memory == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_scheduled=$(jq -r 'if .scheduled == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_cameras=$(jq -r 'if .cameras == true then "true" else "" end' "$work_file" 2>/dev/null)
+    # What the person actually asked, when the task's prompt is a caller's
+    # wrapping round it (Morph's Tell). The action gate judges a change by
+    # the person's words and never by the prompt the caller built, which
+    # names every rule it was told — so this rides to the hook in the
+    # environment of this task's own subshell, capped. Absent, the gate
+    # reads the prompt as before.
+    local task_words
+    task_words=$(jq -r 'if (.person_words | type) == "string" then .person_words else empty end' "$work_file" 2>/dev/null)
+    if [ -n "$task_words" ]; then
+        export BRAIN_PERSON_WORDS="${task_words:0:1200}"
+    else
+        unset BRAIN_PERSON_WORDS
+    fi
 
     # A task that names no model takes the plan's tier for a task
     # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);

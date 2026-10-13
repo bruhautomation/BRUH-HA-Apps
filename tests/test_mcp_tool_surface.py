@@ -58,12 +58,21 @@ class TestAVoiceProcessIsOfferedWhatVoiceMayUse(unittest.TestCase):
         (cls.voice_init, cls.voice_list), cls.voice_raw = talk(
             {"BRAIN_EXPOSED_ONLY": "1", "BRAIN_ASSIST_ACCESS": "voice"}, INIT, LIST)
         (cls.full_init, cls.full_list), cls.full_raw = talk({}, INIT, LIST)
+        (_, cls.chat_list), _ = talk({"BRAIN_CHANNEL": "chat"}, INIT, LIST)
 
     def names(self, response):
         return {t["name"] for t in response["result"]["tools"]}
 
     def test_the_whole_house_channel_is_offered_everything(self):
-        self.assertEqual(self.names(self.full_list), set(m.TOOL_IMPLEMENTATIONS))
+        self.assertEqual(self.names(self.chat_list), set(m.TOOL_IMPLEMENTATIONS))
+
+    def test_the_chat_alone_is_offered_its_own_buttons(self):
+        # offer_resolutions puts buttons on the chat's screen and nowhere
+        # else; a terminal or an unattended run would carry its schema for
+        # nothing. Still answered if called.
+        self.assertEqual(self.names(self.full_list),
+                         set(m.TOOL_IMPLEMENTATIONS) - m.CHAT_ONLY_TOOLS)
+        self.assertIn("offer_resolutions", m.TOOL_IMPLEMENTATIONS)
 
     def test_voice_is_not_offered_what_it_would_be_refused(self):
         voice = self.names(self.voice_list)

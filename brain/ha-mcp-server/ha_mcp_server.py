@@ -2572,7 +2572,7 @@ VOICE_ADMIN_SERVICES = frozenset({
         "rcon_command", "op_player", "deop_player", "kick_player", "ban_player",
         "pardon_player", "whitelist_add", "whitelist_remove", "restart_server",
         "stop_server", "install_addon", "remove_addon")
-})
+} | {("bright", "import_show")})
 
 ADDON_NAMES = {
     "bruh_minecraft": ("BRUH Minecraft", "BRUH Minecraft"),
@@ -2707,7 +2707,25 @@ def minecraft_teleport(player, to_player=None, x=None, y=None, z=None):
     result = _addon_call("bruh_minecraft", "teleport", data)
     if result.get("error"):
         return result
-    return {"done": True, **data, "server_reply": result.get("reply", "")}
+    return {"done": True, **data, "server_reply": _reply(result)}
+
+
+def _reply(result):
+    """The Minecraft server's reply, marked as text from outside: it can
+    carry what a player typed (a name, a sign, a chat line)."""
+    text = str(result.get("reply") or "")
+    return untrusted(text) if text else ""
+
+
+def _tag_text(value, keys):
+    """Every string under one of `keys`, anywhere in `value`, marked as
+    text from outside — Modrinth's descriptions, a track's own tags."""
+    if isinstance(value, dict):
+        return {k: (untrusted(v) if k in keys and isinstance(v, str) and v
+                    else _tag_text(v, keys)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_tag_text(v, keys) for v in value]
+    return value
 
 
 MC_ADMIN_ACTIONS = {"op": "op_player", "deop": "deop_player", "kick": "kick_player",
@@ -2757,7 +2775,7 @@ def minecraft_player(player, action, value=None, amount=None):
     if result.get("error"):
         return result
     return {"done": True, "player": who, "action": action,
-            "server_reply": result.get("reply", "")}
+            "server_reply": _reply(result)}
 
 
 def minecraft_world(action, value=None):
@@ -2783,7 +2801,7 @@ def minecraft_world(action, value=None):
     if result.get("error"):
         return result
     return {"done": True, "action": action, "value": value,
-            "server_reply": result.get("reply", "")}
+            "server_reply": _reply(result)}
 
 
 def minecraft_command(command):
@@ -2797,7 +2815,7 @@ def minecraft_command(command):
     result = _addon_call("bruh_minecraft", "rcon_command", {"command": command})
     if result.get("error"):
         return result
-    return {"command": command, "server_reply": result.get("reply", "")}
+    return {"command": command, "server_reply": _reply(result)}
 
 
 def minecraft_server(action):
@@ -2826,7 +2844,8 @@ def minecraft_addons(action, query="", kind="", project_id=""):
         data = {"query": str(query or "")}
         if kind:
             data["kind"] = str(kind)
-        return _addon_call("bruh_minecraft", "search_addons", data)
+        return _tag_text(_addon_call("bruh_minecraft", "search_addons", data),
+                         ("title", "description", "summary", "author"))
     if action in ("install", "remove"):
         refusal = _voice_admin_refusal(f"Installing or removing a Minecraft add-on ({action})")
         if refusal:
@@ -2885,7 +2904,8 @@ def print_label(text="", template="", fields=None, stock="", copies=1):
 
 def bright_status():
     """What BRight is doing, its saved sets, and the tracks with a show."""
-    return _addon_call("bright", "get_status")
+    return _tag_text(_addon_call("bright", "get_status"),
+                     ("title", "artist", "album", "lyrics"))
 
 
 def _entity_arg_refusal(entity_id):
@@ -2930,8 +2950,17 @@ def bright_show(action, party="", track="", media_player="", scene=""):
             return {"error": "Give the track's file path from bright_status."}
         data["track"] = str(track)
         result = _addon_call("bright", "start_show", data)
+    elif action == "import":
+        refusal = _voice_admin_refusal("Importing a BRight show file")
+        if refusal:
+            return refusal
+        if not track:
+            return {"error": "Give the show file's name (or its hash) under /config/.bright/shows."}
+        result = _addon_call("bright", "import_show", {"track": str(track)})
+        if isinstance(result, dict) and not result.get("error"):
+            return {"done": True, "action": action, **{k: v for k, v in result.items() if k != "ok"}}
     else:
-        return {"error": "Use party (with a saved set's name, or none for party mode), track, or stop."}
+        return {"error": "Use party (with a saved set's name, or none for party mode), track, stop or import."}
     if isinstance(result, dict) and result.get("error"):
         return result
     return {"done": True, "action": action}
@@ -5193,7 +5222,10 @@ TOOLS = [
             "are matched against who is online (case, spaces and the Bedrock "
             "prefix ignored; a unique partial match counts), 'everyone' means "
             "all players. An ambiguous or offline name comes back as a question "
-            "to ask, never a guess. Returns the server's reply."
+            "to ask, never a guess. When the person says 'me' or 'my kid', "
+            "recall which Minecraft name is theirs; if brAIn does not know, ask "
+            "once and remember_fact the answer with person set. Returns the "
+            "server's reply."
         ),
         "inputSchema": {"type": "object", "properties": {
             "player": {"type": "string", "description": "Who to move, or 'everyone'."},
@@ -5285,8 +5317,9 @@ TOOLS = [
         "name": "print_label",
         "description": (
             "Print a label on BRUH Print. Either text (fitted as large as it "
-            "will go; a line break starts a new line) with an optional stock id, "
-            "or a saved template by name with its fields (date and time fill "
+            "will go; a line break starts a new line) — on the one stock loaded, "
+            "or name a loaded stock id from label_printer_status when there are "
+            "two — or a saved template by name with its fields (date and time fill "
             "themselves in). copies defaults to 1; a voice-level agent prints "
             "at most 10. Returns how many printed and on which roll."
         ),
@@ -5302,7 +5335,8 @@ TOOLS = [
         "description": (
             "BRight, the music light-show director: what it is doing now, the "
             "saved sets (parties) by name, and the tracks with a show ready "
-            "(file path, whether analyzed). Read-only."
+            "(file path, whether analyzed). Read-only. Track titles come from "
+            "the files' own tags and are marked untrusted."
         ),
         "inputSchema": {"type": "object", "properties": {}},
     },
@@ -5312,11 +5346,14 @@ TOOLS = [
             "Run BRight. action party: a saved set by name (party), or party "
             "mode over the music folder with no name. action track: one track's "
             "show (track = file path from bright_status). action stop: stop "
-            "and put the room back, or call scene instead. media_player "
-            "overrides the speaker; scene is the end scene."
+            "and put the room back, or call scene instead. action import: make "
+            "an edited show file in /config/.bright/shows the show that plays "
+            "(track = its file name or hash) — needed after editing one, which "
+            "otherwise changes nothing. media_player overrides the speaker; "
+            "scene is the end scene."
         ),
         "inputSchema": {"type": "object", "properties": {
-            "action": {"type": "string", "enum": ["party", "track", "stop"]},
+            "action": {"type": "string", "enum": ["party", "track", "stop", "import"]},
             "party": {"type": "string"},
             "track": {"type": "string"},
             "media_player": {"type": "string"},
@@ -5655,25 +5692,17 @@ TOOLS = [
         "description": (
             "Call any Home Assistant service. Use this for services not covered by "
             "the dedicated tools (control_light, control_climate, etc.). "
-            "Pass domain, service name, and a data object with required fields.\n\n"
-            "Common examples:\n"
-            "- switch/turn_on: {\"entity_id\": \"switch.heater\"}\n"
-            "- input_boolean/toggle: {\"entity_id\": \"input_boolean.guest_mode\"}\n"
-            "- input_number/set_value: {\"entity_id\": \"input_number.target\", \"value\": 42}\n"
-            "- input_select/select_option: {\"entity_id\": \"input_select.mode\", \"option\": \"away\"}\n"
-            "- tts/speak: {\"entity_id\": \"tts.google\", \"media_player_entity_id\": \"media_player.kitchen\", \"message\": \"Hello\"}\n"
-            "- number/set_value: {\"entity_id\": \"number.volume\", \"value\": 50}\n"
-            "- button/press: {\"entity_id\": \"button.restart\"}\n"
-            "- select/select_option: {\"entity_id\": \"select.mode\", \"option\": \"eco\"}\n"
-            "- automation/trigger: {\"entity_id\": \"automation.morning_routine\"}\n"
+            "Pass domain, service name, and a data object with required fields, "
+            "e.g. input_select/select_option {\"entity_id\": "
+            "\"input_select.mode\", \"option\": \"away\"}; get_service_details "
+            "lists any service's fields.\n"
             "\nThe brain domain also provides BRUH Power Tools — registry "
             "management services (create_area, rename_entity, add_label, "
             "disable_device, create_repair_issue, ...). Use get_registry to look "
             "up the ids they need, and set return_response true for the ones "
             "that return data (create_area/floor/label, "
             "delete_orphaned_entities, create_repair_issue).\n"
-            "\nUse get_service_details to look up all available fields for any service."
-            "\n\nPROTECTED ENTITIES: the homeowner may have named entities "
+            "\nPROTECTED ENTITIES: the homeowner may have named entities "
             "brAIn must not act on, and this call refuses any target that "
             "matches one — including an area or device that contains one. "
             "The refusal names the entity. It is the homeowner's list: tell "
@@ -5938,7 +5967,7 @@ TOOLS = [
                 },
                 "brightness": {
                     "type": "integer",
-                    "description": "Brightness 0-255 (0=off, 255=max)"
+                    "description": "0-255; prefer brightness_pct"
                 },
                 "brightness_pct": {
                     "type": "integer",
@@ -5947,7 +5976,7 @@ TOOLS = [
                 "rgb_color": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "RGB color as [R, G, B] (0-255 each). Examples: [255,0,0]=red, [0,255,0]=green, [0,0,255]=blue, [255,165,0]=orange, [128,0,128]=purple"
+                    "description": "[R, G, B], 0-255 each"
                 },
                 "hs_color": {
                     "type": "array",
@@ -5961,15 +5990,15 @@ TOOLS = [
                 },
                 "color_temp_kelvin": {
                     "type": "integer",
-                    "description": "Color temperature in Kelvin (2000=warm/candlelight, 3000=soft white, 4000=neutral, 5000=daylight, 6500=cool)"
+                    "description": "Kelvin: 2700 warm white, 4000 neutral, 6500 cool"
                 },
                 "color_name": {
                     "type": "string",
-                    "description": "CSS3 color name (e.g., 'red', 'blue', 'green', 'purple', 'orange', 'pink', 'white', 'coral', 'gold')"
+                    "description": "A CSS colour name, e.g. 'orange'"
                 },
                 "effect": {
                     "type": "string",
-                    "description": "Light effect name (device-specific, e.g., 'colorloop', 'random', 'rainbow', 'breathe', 'strobe')"
+                    "description": "One of the light's own effect_list"
                 },
                 "transition": {
                     "type": "number",
@@ -6525,7 +6554,9 @@ TOOLS = [
         "description": (
             "Get recent state-change history for ONE entity (up to 7 days, from "
             "the recorder). Includes min/max for numeric sensors. Use this for "
-            "'when did the garage last open' or 'how warm was it this morning'."
+            "'when did the garage last open' or 'how warm was it this morning'; "
+            "further back, get_statistics. A history_incomplete note means the "
+            "recorder stopped short — absence there is not evidence."
         ),
         "inputSchema": {
             "type": "object",
@@ -6545,11 +6576,10 @@ TOOLS = [
     {
         "name": "get_baseline",
         "description": (
-            "What is NORMAL for one numeric entity — its usual reading for each "
-            "hour of the week and how much it usually varies, measured from a "
-            "month of this house's own history. Use it before calling anything "
-            "unusual: it is the difference between 'that looks high' and '4.2 "
-            "times its normal variation for a Tuesday morning'."
+            "The raw stored baseline for one numeric entity (every hour of the "
+            "week). To ask whether a reading is unusual, use what_is_normal — "
+            "it answers the question; this is for when you need the whole "
+            "table."
         ),
         "inputSchema": {
             "type": "object",
@@ -6842,7 +6872,8 @@ TOOLS = [
         "description": (
             "Get long-term statistics (hourly/daily mean, min, max) for a numeric "
             "sensor — survives recorder purging, so it answers 'how cold did it "
-            "get last week/month'. Only works for sensors with a state_class."
+            "get last week/month'. Only works for sensors with a state_class; "
+            "for when something changed, get_history."
         ),
         "inputSchema": {
             "type": "object",
@@ -6980,13 +7011,16 @@ TOOLS = [
     },
     {
         "name": "reload_config",
-        "description": "Reload a specific Home Assistant configuration area after making YAML changes. Valid targets: automations, scripts, scenes, groups, input_booleans, input_numbers, input_selects, input_texts, input_datetimes, timers, counters, core, all.",
+        "description": "Reload a Home Assistant configuration area after a YAML change, then read the result back (a reload that returned is not the change working).",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "What to reload: automations, scripts, scenes, groups, input_booleans, input_numbers, input_selects, input_texts, input_datetimes, timers, counters, core, all"
+                    "enum": ["automations", "scripts", "scenes", "groups",
+                             "input_booleans", "input_numbers", "input_selects",
+                             "input_texts", "input_datetimes", "timers",
+                             "counters", "core", "all"]
                 }
             },
             "required": ["target"]
@@ -7341,6 +7375,9 @@ def _is_voice():
     return EXPOSED_ONLY or os.environ.get("BRAIN_CHANNEL", "") == "voice"
 
 
+CHAT_ONLY_TOOLS = frozenset({"offer_resolutions"})
+
+
 def tools_for_channel():
     """What tools/list offers this process: everything, or on the voice
     channel everything voice is not refused outright — each marked
@@ -7353,6 +7390,10 @@ def tools_for_channel():
                  and t["name"] not in VOICE_HIDDEN_TOOLS
                  and not t["name"].startswith(VOICE_REFUSED_PREFIXES)
                  and not t["name"].startswith(VOICE_HIDDEN_PREFIXES)]
+    # offer_resolutions puts buttons on the chat's screen; anywhere else it
+    # is ~1.5 KB of schema a run can never use. Still answered if called.
+    if os.environ.get("BRAIN_CHANNEL", "") != "chat":
+        tools = [t for t in tools if t["name"] not in CHAT_ONLY_TOOLS]
     keep = ALWAYS_LOAD_TOOLS if voice else ALWAYS_LOAD_ELSEWHERE
     return [dict(t, _meta=_ALWAYS) if t["name"] in keep else t for t in tools]
 

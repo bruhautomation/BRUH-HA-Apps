@@ -2,6 +2,10 @@
 
 ## 0.14.2
 
+### Added
+
+- `get_status` says which stock a text label with none named prints on, and whether each template's stock is loaded.
+
 ### Fixed
 
 - Printing text with no label stock named uses the stock in the printer when only one is loaded, instead of the add-on's default stock, which was refused whenever that roll was not loaded. The default still wins when it is loaded.
