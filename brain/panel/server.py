@@ -16082,7 +16082,9 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         score = await asyncio.to_thread(findings_store.scorecard)
         unmet = await asyncio.to_thread(
             dl_streams.unmet, Path(chat_session.TRANSCRIPT_DIR))
-        context = dl_streams.context_block(payload, score, unmet)
+        context = dl_streams.context_block(
+            payload, score, unmet,
+            await asyncio.to_thread(findings_store._load_settled))
         if stream == "design":
             # What brAIn showed this house, in its own words: the run is
             # handed it as its subject, the way a look is handed the owner's.
@@ -16094,14 +16096,21 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             engine.run_analyst,
             dl_streams.analyst_prompt(
                 stream, context, topic,
-                dl_streams.reported_block(await asyncio.to_thread(up.listing))),
+                dl_streams.reported_block(await asyncio.to_thread(up.listing)),
+                dl_streams.rejected_block(await asyncio.to_thread(up.rejected))),
             dl_streams.analyst_system(stream), eff_model(),
             TIMEOUT_S, ANALYST_MAX_TURNS, "maintenance", job="devloop",
+            schema=dl_streams.reply_schema(stream),
             priority=run_queue.PRESS if pressed else run_queue.SCHEDULED)
         _record_usage(result, "devloop")
-        rows = dl_streams.parse_rows(
-            (result or {}).get("text") or "", stream, topic) \
-            if result and result.get("ok") else []
+        rows, unreadable = dl_streams.reply_rows(result, stream, topic) \
+            if result and result.get("ok") else ([], "")
+        if unreadable:
+            # Not "nothing found": a run that answered and could not be
+            # read is counted in the loop's status (`/api/devloop`).
+            log.warning("devloop: the %s run's reply could not be read (%s): %.200s",
+                        stream, unreadable, (result or {}).get("text") or "")
+            await asyncio.to_thread(up.note_unreadable, stream, unreadable)
         # The owner pressed Send on their own words: a run that failed or
         # came back empty must not be the reason nothing was filed. Their
         # sentence goes as it is, and the developer reads it.

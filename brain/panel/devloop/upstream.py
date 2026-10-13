@@ -41,7 +41,10 @@ Claude streams not under the part of brAIn it names either, since a run
 rewords its sentence every time. A stream whose last `SLOW_WINDOW`
 resolved reports were mostly noise runs half as often, says so, and can
 be put back by a press. `fixed` is never noise, and a fixed fault coming
-back is still *Back again*. Each new report says how much it matters
+back is still *Back again*. A noise verdict also keeps what was filed and
+the first line of the comment it was closed with, and the next Claude run
+is shown those (`rejected`), so it learns why as well as what. Each new
+report says how much it matters
 (`impact`), and the most impactful are filed first under the day's cap.
 """
 from __future__ import annotations
@@ -55,6 +58,7 @@ import time
 
 import atomic_write
 import reports
+from textclip import clip
 
 from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
 from . import github
@@ -86,6 +90,12 @@ VERDICT_INTERVAL_S = SWEEP_INTERVAL_S
 # Issues older than the newest three pages of the listing are asked for
 # one at a time, at most this many a pass.
 VERDICT_GETS_PER_PASS = 10
+# Why a report was closed as noise is the first line of its closing
+# comment, read once per report: at most this many a pass, given up on
+# (the label standing in) after this many failed reads, and cut to this.
+REASONS_PER_PASS = 5
+REASON_TRIES = 3
+REASON_CHARS = 200
 # Label → verdict, first match wins. `fixed` leads: a fix is never noise.
 VERDICT_LABELS = (("devloop:fixed", "fixed"), ("devloop:duplicate", "duplicate"),
                   ("devloop:not-brain", "not_brain"), ("devloop:declined", "declined"))
@@ -738,9 +748,18 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
             resolved.pop(fp, None)
         else:
             old = resolved.get(fp) or {}
-            resolved[fp] = {"stream": stream, "verdict": verdict, "issue": number,
-                            "at": old.get("at") if old.get("verdict") == verdict
-                            else now}
+            same = old.get("verdict") == verdict
+            row = {"stream": stream, "verdict": verdict, "issue": number,
+                   "at": old.get("at") if same else now,
+                   # What was filed, so the next run can be told what was
+                   # turned down after the queue entry itself is pruned.
+                   "where": clip(str(entry.get("where") or ""), 120),
+                   "what": clip(str(entry.get("what") or ""), 200)}
+            if same:
+                for k in ("reason", "reason_tries"):
+                    if k in old:
+                        row[k] = old[k]
+            resolved[fp] = row
         for key in [k for k, row in stood.items() if row.get("fp") == fp]:
             stood.pop(key)
         if verdict in NOISE and stream in STAND_DOWN_STREAMS:
@@ -752,8 +771,74 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
     for entry in items.values():
         if isinstance(entry, dict) and entry.get("state") in ("pending", "ready"):
             _stand_down(entry, stood)
+    _fetch_reasons(token, repo, resolved)
     _evaluate_slow(v, now)
     v["at"] = now
+
+
+def _first_line(text: str) -> str:
+    """A closing comment's first line of prose: markdown markers, blank
+    lines and whitespace taken off, cut on a word."""
+    for line in str(text or "").splitlines():
+        line = re.sub(r"^[\s>#-]+", "", re.sub(r"\*\*|__|`", "", line)).strip()
+        if line:
+            return clip(" ".join(line.split()), REASON_CHARS)
+    return ""
+
+
+def _fetch_reasons(token: str, repo: str, resolved: dict) -> None:
+    """Why the cloud closed a report as noise: the first line of its
+    closing comment. One request per closed report, at most
+    REASONS_PER_PASS a pass, and only for the streams whose next run is
+    told. A comment GitHub would not hand over is asked again on a later
+    pass, REASON_TRIES times, and then the label stands in for the reason —
+    a verdict with no reason is still worth showing, and asking for ever is
+    not."""
+    asked = 0
+    for row in sorted(resolved.values(), key=lambda r: -float(r.get("at") or 0)):
+        if asked >= REASONS_PER_PASS:
+            break
+        if (row.get("verdict") not in NOISE or row.get("reason")
+                or row.get("stream") not in STAND_DOWN_STREAMS):
+            continue
+        asked += 1
+        body, err = github.last_comment(token, repo, int(row.get("issue") or 0))
+        if body is None:
+            row["reason_tries"] = int(row.get("reason_tries") or 0) + 1
+            if row["reason_tries"] < REASON_TRIES:
+                log.info("devloop: could not read why #%s was closed: %s",
+                         row.get("issue"), err)
+                continue
+        row["reason"] = _first_line(body or "") or f"labelled {row['verdict']}"
+        row.pop("reason_tries", None)
+
+
+def rejected() -> list[dict]:
+    """The reports the cloud closed as noise, with what they said and why
+    they were closed: what `streams.rejected_block` shows the next run."""
+    return [dict(r) for r in _vload()["resolved"].values()
+            if isinstance(r, dict) and r.get("verdict") in NOISE
+            and r.get("stream") in STAND_DOWN_STREAMS]
+
+
+def note_unreadable(stream: str, why: str, now: float | None = None) -> None:
+    """Count a Claude stream's reply that could not be read. It used to be
+    dropped as if the run had found nothing, which reads the same as a run
+    that looked and had nothing to say; this is what tells them apart in
+    the status the panel shows. Never raises."""
+    if stream not in STREAMS:
+        return
+    try:
+        with _LOCK:
+            data = _load()
+            seen = data.setdefault("unreadable", {})
+            row = seen.get(stream) if isinstance(seen.get(stream), dict) else {}
+            seen[stream] = {"count": int(row.get("count") or 0) + 1,
+                            "at": now or time.time(), "why": str(why or "")[:200]}
+            _save(data)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail a pass
+        log.warning("devloop: could not count an unreadable %s reply: %s",
+                    stream, exc)
 
 
 def _stand_down(entry: dict, stood: dict) -> bool:
@@ -971,4 +1056,7 @@ def status() -> dict:
         "last_send": STATE["last_send"],
         "error": STATE["error"],
         "running": STATE["running"],
+        # Claude replies that could not be read, per stream: count, when the
+        # last one was, and why (`note_unreadable`).
+        "unreadable": data.get("unreadable") or {},
     }

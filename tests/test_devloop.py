@@ -58,6 +58,9 @@ class FakeGitHub:
         # and whether a token without Contents: write is being simulated.
         self.files: dict[str, bytes] = {}
         self.contents_forbidden = False
+        # A comments listing GitHub will not answer (404), for the reason
+        # reader's retry.
+        self.comments_forbidden = False
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -98,6 +101,12 @@ class FakeGitHub:
                 m = re.match(r"^/repos/me/reports/issues/(\d+)$", path)
                 if m:
                     self._send(200, fake.issues[int(m.group(1)) - 1])
+                    return
+                # Oldest first, as GitHub lists them.
+                m = re.match(r"^/repos/me/reports/issues/(\d+)/comments$", path)
+                if m and not fake.comments_forbidden:
+                    self._send(200, [{"body": b} for n, b in fake.comments
+                                     if n == int(m.group(1))])
                     return
                 m = re.match(r"^/repos/me/reports/contents/(.+)$", path)
                 if m and m.group(1) in fake.files:
