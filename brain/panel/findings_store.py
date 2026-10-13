@@ -718,6 +718,32 @@ def shown_look(record: dict, entry: dict) -> dict:
     return {**record, "reason": said}
 
 
+def shown_fix(entry: dict) -> str:
+    """The "what to do" a surface shows for ``entry``.
+
+    A check writes one ``fix`` for every row of its kind, and it is often an
+    errand — go and look at what it is measuring, check whether it is
+    normal. Once a look has CONCLUDED about the row (a reason that says
+    something about the house: not a stock silence, not an echo of the row,
+    `shown_look`'s rule) that errand is the question the look already
+    answered, and showing it under the look's conclusion sends the person
+    off to do brAIn's work again. So a check's own sentence (``fix_by``
+    empty) is not shown there: the look's sentence is what the card carries
+    — its reason, and a fix only when a look or a person wrote one. The
+    stored row is never changed; the rule's sentence stays its own.
+    """
+    entry = entry if isinstance(entry, dict) else {}
+    fix = str(entry.get("fix") or "")
+    if not fix or entry.get("fix_by"):
+        return fix
+    if not str(entry.get("source") or "").startswith("check:"):
+        return fix
+    look = shown_look(_clean_triage(entry.get("triage")), entry)
+    if isinstance(look, dict) and str(look.get("reason") or "").strip():
+        return ""
+    return fix
+
+
 def _clean_triage(value) -> dict:
     """The triage record on a row, normalized — `{}` when nothing looked.
 
@@ -1054,6 +1080,7 @@ def listing() -> dict:
     """
     shaped = [s for s in (_shape(e) for e in _load()) if s["text"]]
     for row in shaped:
+        row["fix"] = shown_fix(row)
         if row.get("triage"):
             row["triage"] = shown_look(row["triage"], row)
     shaped.sort(key=lambda f: f["ts"], reverse=True)
@@ -3308,7 +3335,10 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False) -> str:
             "again. When this card talks about a device one of them covers, "
             "call it by the name shown, quote that row's figures and time "
             "window rather than working out different ones, and mention it "
-            "in one clause rather than retelling it:")
+            "in one clause rather than retelling it. Never reach a different "
+            "verdict about that device: take that row's conclusion as this "
+            "card's own, or, if what you read disagrees with it, say why in "
+            "one clause:")
         for f in live:
             eid = str(f.get("entity_id") or "")
             row = names.get(eid)

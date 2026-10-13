@@ -698,10 +698,12 @@ Answer with ONE JSON object and nothing else. What it means:
   what you found.
 - "confidence" — 0 to 1, how sure you are of the claim.
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
-- "fix" — what to DO about it, in one or two sentences, specific to this
-  house: the entity, the integration, the automation, the setting. Never
-  a category and never generic advice restated. If the honest answer is
-  that there is nothing to do but wait, say that and why. Never tell the
+- "fix" — ONE action, in one sentence, specific to this house: the
+  entity, the integration, the automation, the setting. Never a category,
+  never generic advice restated and never a list of things to try. If you
+  concluded it is normal here or nothing is needed, say that nothing is
+  needed and why. Never tell the person to press a button on the card
+  (Ignore, Snooze) — those are always there. Never tell the
   person to check, look at or confirm something your tools can read —
   read it first and write what you found: not "check whether the hub is
   online" but "the hub has been unavailable since 14:10, so restart it".

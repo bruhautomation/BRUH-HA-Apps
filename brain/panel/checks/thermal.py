@@ -330,8 +330,7 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
                 "Look for where it is going: a draught under a door or "
                 "through a letterbox, a window that does not seal, an open "
                 "flue, a loft hatch, or a room with much more glass than "
-                "the others. If this room is meant to be cool, press Ignore "
-                "and say why."),
+                "the others."),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
@@ -471,9 +470,7 @@ def preheat(snap: dict, now: float) -> list[dict]:
             "fix": (
                 "Move the heating schedule for this room earlier by about "
                 f"{int(round(lead_min))} minutes, or give the thermostat a "
-                "target that starts before the house does. brAIn measured "
-                "the wake time rather than assuming it — if mornings here "
-                "have changed, press Ignore and say why."),
+                "target that starts before the house does."),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
@@ -567,8 +564,7 @@ def freeze(snap: dict, now: float) -> list[dict]:
                 "freezing."),
             "fix": (
                 "Check the heating is actually reaching this room, and "
-                "that nothing is open. If this room is meant to be unheated "
-                "and its pipes are lagged, press Ignore and say why."),
+                "that nothing is open."),
             "severity": "critical",
             "fixable": False,
             "entity_id": eid,
@@ -641,10 +637,8 @@ def window(snap: dict, now: float) -> list[dict]:
                 f"hour at {outside:.1f}{unit} outside. Heat is leaving by "
                 "some route the walls do not have."),
             "fix": (
-                "Something is open: a window, a door to outside, a roof "
-                "light, or a vent. If nothing is, the room may have been "
-                "measured during a spell that does not describe it — press "
-                "Ignore and brAIn will stop asking about this one."),
+                "Shut whatever is open: a window, a door to outside, a roof "
+                "light, or a vent."),
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,

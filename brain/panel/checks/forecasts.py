@@ -211,9 +211,7 @@ def decline(snap: dict, now: float) -> list[dict]:
                 "the whole time, which is why nothing else has said so."
                 + house.placed(eid)),
             "fix": ("Look at what it is measuring before it reaches a "
-                    "number that matters. If this is a season, a new "
-                    "appliance or a move brAIn cannot see, press Ignore and "
-                    "say why."),
+                    "number that matters."),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
