@@ -391,7 +391,8 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
                       open_cases_rows=None, *, now_line: str = "",
                       watch_notes=None, examples=None,
                       inputs: dict | None = None,
-                      situation_line: str = "", used_by=None) -> str:
+                      situation_line: str = "", used_by=None,
+                      rule_records=None) -> str:
     """The prompt for one batch.
 
     ``batch_rows`` is what `signals.prompt_rows` returned — or the raw
@@ -421,6 +422,7 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
             "examples": _rows(examples)[:MAX_EXAMPLES],
             "situation_line": str(situation_line or ""),
             "used_by": _rows(used_by),
+            "rule_records": _rows(rule_records),
         })
     parts = ["Decide what each of these signals is worth.\n"]
     # The clock, in the house's own time. A door at 03:00 and a door at
@@ -463,6 +465,19 @@ def first_look_prompt(batch_rows, memory_excerpt: str = "",
         parts += [f"- {row}" for row in cases]
         parts.append("")
     parts += _examples_block(examples)
+    records = _rows(rule_records)
+    if records:
+        # `rule_record`: a rule the household keeps marking wrong. Context
+        # and never a floor — `never_ignore` is applied after the reply,
+        # and a floored signal is not named here at all.
+        parts.append("RULES THIS HOUSEHOLD MOSTLY MARKS WRONG — show a row "
+                     "from one of these only when it carries fresh, specific "
+                     "evidence that this case is different from the ones "
+                     "they answered; otherwise ignore it (it is set aside, "
+                     "not lost). Context only; it never makes a safety or "
+                     "protected signal worth less:")
+        parts += [f"- {row}" for row in records]
+        parts.append("")
     parts.append("SIGNALS:")
     for i, row in enumerate(_rows(batch_rows), 1):
         parts.append(f"{i}. {row}")

@@ -400,6 +400,68 @@ def trend(rows: list[dict], built: dict, tz: dt.tzinfo,
     }
 
 
+# The last week, against the month's own hour-of-the-week medians. A
+# season turning moves the level of a reading while three of the four
+# weeks in every bucket are still the old season, so a band built from
+# the month is mostly last month's weather.
+RECENT_DAYS = 7.0
+# Enough of that week to mean anything: a few days' hourly readings.
+RECENT_MIN_POINTS = 72
+RECENT_MIN_DAYS = 3.0
+
+
+def recent_shift(rows: list[dict], built: dict, tz: dt.tzinfo,
+                 now: float) -> dict | None:
+    """How far the last week sat from this entity's hour-of-the-week medians.
+
+    Each reading of the last `RECENT_DAYS` minus the median for its hour
+    of the week (the bucket's, else the whole history's — `trend`'s
+    residual, over a shorter window): the median of those is `offset`, the
+    level the house has moved to since the band was mostly measured, and
+    their MAD is `spread`, how far it strays about that new level. The
+    daily shape is kept, because the subtraction is per hour: a 3am
+    reading is still compared with 3am.
+
+    ``None`` when the week holds too little to say — which a reader takes
+    as no recent figure at all, the answer an older store gives too.
+    Nothing here decides anything; `base.unusual` reads it.
+    """
+    buckets = (built or {}).get("buckets") or {}
+    overall = (built or {}).get("overall") or {}
+    if not overall:
+        return None
+    since = now - RECENT_DAYS * 86400.0
+    residuals: list[float] = []
+    first = None
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        start = row.get("start")
+        value = row.get("mean")
+        if not isinstance(start, (int, float)) or isinstance(start, bool):
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if float(start) < since or float(start) > now:
+            continue
+        entry = buckets.get(str(hour_of_week(float(start), tz))) or overall
+        residuals.append(float(value) - (entry.get("median") or 0.0))
+        first = float(start) if first is None else min(first, float(start))
+    if len(residuals) < RECENT_MIN_POINTS or first is None:
+        return None
+    days = (now - first) / 86400.0
+    if days < RECENT_MIN_DAYS:
+        return None
+    offset = median(residuals)
+    return {
+        "offset": round(offset, 4),
+        "spread": round(max(mad(residuals, offset),
+                            spread_floor(overall.get("median") or 0.0)), 6),
+        "n": len(residuals),
+        "days": round(days, 2),
+    }
+
+
 # ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
@@ -706,6 +768,13 @@ async def build(session, states: dict, now: float | None = None,
             moved = trend(series, built, tz, now)
             if moved:
                 built["trend"] = moved
+        # What the last week did against the month's own buckets, for a
+        # band that is mostly the old season (`recent_shift`). Absent on
+        # a store built before it, which the check reads as no figure.
+        if not built.get("flat"):
+            shifted = recent_shift(series, built, tz, now)
+            if shifted:
+                built["recent"] = shifted
         payload["entities"][eid] = built
     save(payload, path)
     log.info("baselines: %d of %d entities measured over %d days (%s)",
