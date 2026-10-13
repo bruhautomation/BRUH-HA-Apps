@@ -164,7 +164,10 @@ class TestTheCaseLine(AuthoringCase):
 
 class TestThePrompt(AuthoringCase):
     def test_it_asks_the_question_the_one_off_prompt_presumed(self):
-        self.assertIn('"once": false', self.authoring.SYSTEM)
+        # A schema run: the shape is the schema's, and the prompt says what
+        # `once` means rather than writing the JSON out again.
+        self.assertIn("once", self.authoring.SCHEMA["properties"])
+        self.assertIn("`once` is true when", self.authoring.SYSTEM)
         self.assertIn("standing rule", self.authoring.SYSTEM)
         for kind in ("time", "state", "numeric_state", "template"):
             self.assertIn(f"`{kind}`", self.authoring.SYSTEM)

@@ -58,6 +58,8 @@ import re
 import time
 
 import atomic_write
+import onboarding
+import prompt_kit
 import user_categories
 
 log = logging.getLogger("brain.ideas")
@@ -493,21 +495,40 @@ def due(now: float | None = None) -> bool:
 # an afternoon's, and the measurements underneath it have had time to
 # become answerable.
 
-IDEAS_SYSTEM = """You propose recurring insight cards for one specific home, for a person who has been living with this dashboard for a while and is asking what they are missing.
-
-You have READ-ONLY Home Assistant tools and brAIn's own measurements. Use them. Search by domain and by name, read the entities that matter, read their history and statistics, and ask what is normal here before you claim something is interesting. Change nothing.
-
-You are given what brAIn has learned about this home, a map of its data, what it has measured, and THE CARDS IT ALREADY HAS. Do not propose a card this home already has, in new words or old.
-
-What makes a good idea here:
-
-- It could not have been written for a different house. Name the real rooms, devices, meters and patterns. "Energy" is not an idea; "The heat pump against everything else — it is 60% of your winter usage and nothing on the dashboard separates them" is.
-- It is worth generating AGAIN. A card runs on a schedule, so the question it answers has to have a moving answer. A one-off curiosity is a question for the ask bar, not a card.
-- It rests on data this home actually has. If the history, the entities or the measurements are not there, the card will say the same empty thing every run. Check before you propose.
-- It tells the person something they would not already know from looking at Home Assistant. A card that restates a thermostat's own screen is a card nobody reads twice.
-
-Prefer ideas that use what brAIn can do and a dashboard cannot: comparing a room against the rest of the house, a month against the month before, a measured baseline against what is happening now, one appliance's own cycle history, the gap between what an automation was meant to do and what it does.
-
+# Person-facing: every `why` is the sentence the homeowner reads to decide.
+# Not a schema run — `parse` reads the JSON out of the reply — so the shape
+# is written out. What makes a card worth having is onboarding's own list,
+# shared rather than reworded.
+IDEAS_SYSTEM = prompt_kit.assemble(
+    "You propose recurring insight cards for one specific home, for a "
+    "person who has been living with this dashboard for a while and is "
+    "asking what they are missing.",
+    inputs=(
+        "You are given what brAIn has learned about this home, a map of its "
+        "data, what it has measured, the ideas already answered or open, "
+        "and THE CARDS IT ALREADY HAS. Do not propose a card this home "
+        "already has, in new words or old."),
+    tools=(
+        "You have Home Assistant's reading tools and brAIn's own "
+        "measurements. Use them: search by domain and by name, read the "
+        "entities that matter and their history and statistics, and ask "
+        "what is normal here before you claim something is interesting. "
+        "Change nothing."),
+    good=onboarding.CARD_PROPOSAL_RULES + """
+- It tells the person something they would not already know from looking
+  at Home Assistant. A card that restates a thermostat's own screen is a
+  card nobody reads twice.
+- Prefer what brAIn can do and a dashboard cannot: a room against the rest
+  of the house, a month against the month before, a measured baseline
+  against now, one appliance's own cycle history, the gap between what an
+  automation was meant to do and what it does.""",
+    rules="""\
+- Propose at most {{CAP}}. Three ideas somebody takes beat eight they
+  scroll past.
+- If this home is already well covered, or what is left is too thin to
+  make a card worth running, set "nothing_new": true, return an empty
+  list, and say so in "note". That is a real answer and a good one.""",
+    output="""\
 Reply with ONE JSON object and nothing else:
 {"ideas": [{"title": "Short card name (max 60 chars)",
             "icon": "one emoji",
@@ -515,11 +536,8 @@ Reply with ONE JSON object and nothing else:
             "question": "The question this card answers every time it runs, in one line.",
             "focus": "What Claude should analyse each run. Specific: name the entities, areas, statistics and comparisons to make. This becomes the card's standing prompt, so write it to be read by a model with tools and no memory of this conversation."}],
  "nothing_new": false,
- "note": "Only when nothing_new is true: one sentence on why there is nothing worth adding right now."}
-
-Propose at most {{CAP}}, and fewer is better. Three ideas somebody takes beat eight they scroll past.
-
-If this home is already well covered, or what is left is too thin to make a card worth running, set "nothing_new": true, return an empty list, and say so in "note". That is a real answer and a good one — padding the page with generic cards is how a dashboard stops being read."""
+ "note": "Only when nothing_new is true: one sentence on why there is nothing worth adding right now."}""",
+)
 
 
 def system_prompt(cap: int = MAX_PER_RUN) -> str:

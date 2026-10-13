@@ -554,18 +554,27 @@ class TestThePrompt(LedgerCase):
         self.assertIn("do not repeat", text.lower())
 
     def test_the_contract_and_the_refusal_are_in_the_system_prompt(self):
-        for needle in ('"confidence"', '"fact"', '"ask"', "explained",
-                       "guess", "unknown", "NEVER invent"):
+        # The fields are the schema's (a schema run does not write its JSON
+        # out again); what each confidence MEANS is the prompt's.
+        for field in ("confidence", "fact", "ask"):
+            self.assertIn(field, curiosity.SCHEMA["properties"])
+        for needle in ("`fact`", "`ask`", "explained", "guess", "unknown",
+                       "NEVER invent"):
             self.assertIn(needle, curiosity.SYSTEM)
 
     def test_it_is_told_not_to_reason_about_people(self):
         """The other half of `manual_ledger.EXCLUDED`'s judgement. A domain
         refusal cannot stop a run reasoning its way to "somebody was
         unwell", and that is not a sentence this should compose."""
+        import prompt_kit
         low = curiosity.SYSTEM.lower()
         for needle in ("health", "whereabouts", "sleep", "household"):
             self.assertIn(needle, low)
-        self.assertIn("no exception to it", low)
+        # The shared privacy block, verbatim — the one that has no
+        # exceptions — and the job's own ending for a person's reason.
+        self.assertIn(prompt_kit.PRIVACY, curiosity.SYSTEM)
+        self.assertIn("about a person", curiosity.SYSTEM)
+        self.assertIn('the answer is "unknown"', curiosity.SYSTEM)
 
     def test_the_reason_it_was_asked_is_stated(self):
         """A question brAIn asked for a reason it cannot state is one

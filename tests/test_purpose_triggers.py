@@ -255,7 +255,7 @@ class TestTheRefusalsSayTheTruth(unittest.TestCase):
             run(purpose("light.turned_on", "light.attic"), LIGHTS)
 
     def test_the_four_legacy_kinds_are_still_the_four(self):
-        # `intents.SYSTEM` tells the model these four by name, and the
+        # `authoring.SYSTEM` tells the model these four by name, and the
         # table is not a fifth thing to tell it.
         self.assertEqual(shadow.REPLAYABLE,
                          {"time", "state", "numeric_state", "template"})

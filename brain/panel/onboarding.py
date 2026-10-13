@@ -33,6 +33,7 @@ from pathlib import Path
 
 import categories as shipped_categories
 import hypotheses
+import prompt_kit
 import prompt_store
 import settings_store
 import user_categories
@@ -86,14 +87,59 @@ FIRST_CARD = "overview"
 # honours that variable.
 STUDY_MAX_TURNS = 20
 
-RECOMMEND_SYSTEM = """You choose which recurring insight cards a specific home should have.
+# What makes a proposed card worth having, shared with `ideas.IDEAS_SYSTEM`
+# — the same job at a later moment in a home's life. The two prompts held
+# about seventy per cent of this in two wordings, and a fix to one (the
+# padding warning, the heat-pump example) never reached the other.
+CARD_PROPOSAL_RULES = """\
+- It could not have been written for a different house. Name the real
+  rooms, devices, meters and patterns. "Energy" is not a proposal; "The
+  heat pump against everything else — it is 60% of your winter usage and
+  nothing on the dashboard separates them" is.
+- It rests on data this home actually has. If the entities, the history or
+  the measurements are not there, the card says the same empty thing every
+  run. Check before you propose.
+- It is worth generating AGAIN: a card runs on a schedule, so the question
+  it answers needs a moving answer. A one-off curiosity is a question for
+  the ask bar, not a card.
+- Fewer is better. Padding with generic cards wastes a run on every
+  refresh and teaches the homeowner to ignore the dashboard."""
 
-You are given what has been learned about this home and a MAP of its data — how many entities of each domain exist, which areas they are in, and a few anchor entities. You also have Home Assistant tools, and they are READ-ONLY: search by domain and by name for what you need, read the entities that matter and their history, and change nothing. Propose cards that are worth generating FOR THIS HOME — grounded in what is actually there, naming its real rooms, devices and patterns.
-
-A good proposal could not have been written for a different house. "Energy" is not a proposal; "Heat pump vs. the rest — it is 60% of your usage" is. If the evidence for a card is not in what you were given, do not propose it.
-
-You are also given a list of GENERAL cards that ship with the add-on. Say which of those fit THIS home — by id, and only where the home has the entities and the history to make one worth generating. A general card on a home with three lights is a card that says the same thing every week. Most homes should get one or two; some should get none.
-
+# Person-facing: every title and `why` is read by the homeowner deciding.
+# Not a schema run — `parse_recommendations` reads the JSON out of the
+# reply — so the shape is written out below. The same prompt serves the
+# search path (reading tools) and the snapshot floor (the house in the
+# prompt, no tools), which is why the tools line says "when".
+RECOMMEND_SYSTEM = prompt_kit.assemble(
+    "You choose which recurring insight cards a specific home should have, "
+    "on the day it is set up.",
+    inputs=(
+        "You are given what has been learned about this home and a MAP of "
+        "its data — how many entities of each domain exist, which areas "
+        "they are in, and a few anchor entities — or the house itself. You "
+        "are also given the GENERAL cards that ship with the add-on."),
+    tools=(
+        "When you have Home Assistant tools they are READ-ONLY: search by "
+        "domain and by name, read the entities that matter and their "
+        "history, and change nothing."),
+    good=CARD_PROPOSAL_RULES,
+    rules="""\
+- Propose at most 8; four sharp cards beat eight vague ones.
+- Say which GENERAL cards fit THIS home, by id, only where it has the
+  entities and the history to make one worth generating. A general card
+  on a home with three lights says the same thing every week. Most homes
+  get one or two; some get none.
+- "try" is AT MOST ONE automation, and optional: leave it out unless you
+  found something it rests on — entities that really exist here and a
+  habit, a gap or a nuisance you actually saw. It is simulated over this
+  home's recorded history before anything is written, so it must trigger
+  on something the recorder keeps (a time, a state change, a number
+  crossing a line) and act on named entities. Never a lock, an alarm or
+  anything that opens the house.
+- If what this home HAS is too thin to justify ANY card — barely any
+  entities, no history, nothing learned — set "sparse": true, return an
+  empty recommendations list, and say plainly in "missing" what is absent.""",
+    output="""\
 Reply with ONE JSON object and nothing else:
 {"recommendations": [{"title": "Short card name (max 40 chars)",
                       "icon": "one emoji",
@@ -104,13 +150,8 @@ Reply with ONE JSON object and nothing else:
  "try": {"sentence": "One automation this home would benefit from, said the way a person would say it: 'When the back door opens after sunset, turn on the patio light.'",
          "why": "One sentence citing what you found that makes it worth trying."},
  "sparse": false,
- "missing": "Only when sparse is true: one sentence on what this home would need before insights are worth generating."}
-
-Propose at most 8, and fewer is better — four sharp cards beat eight vague ones.
-
-"try" is AT MOST ONE automation, and it is optional: leave it out unless you found something it rests on — entities that really exist here and a habit, a gap or a nuisance you actually saw. It will be simulated over this home's own recorded history before anything is written, so it must trigger on something the recorder keeps (a time, a state change, a number crossing a line) and act on named entities. Never a lock, an alarm or anything that opens the house.
-
-If what this home HAS is too thin to justify ANY card — barely any entities, no history, nothing learned — set "sparse": true, return an empty recommendations list, and say plainly in "missing" what is absent. Do not pad with generic cards; a card about a home you know nothing about wastes tokens on every run and teaches the homeowner to ignore the dashboard."""
+ "missing": "Only when sparse is true: one sentence on what this home would need before insights are worth generating."}""",
+)
 
 
 # ---------------------------------------------------------------------------

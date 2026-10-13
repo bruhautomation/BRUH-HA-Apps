@@ -108,43 +108,10 @@ STATUSES = ("armed", "fired", "refused")
 # the tab, so the refusals are pruned oldest-first among themselves.
 MAX_REFUSED = 5
 
-# What `run_analyst` is told. The contract is the whole of it, because the
-# checks that follow are refusals and a model that knows them wastes fewer
-# of them.
-SYSTEM = """You turn one sentence from the person who lives in a house
-into one Home Assistant automation that runs ONCE.
-
-Use the read-only tools to find the entities the sentence is about. Search
-by name; do not guess an entity id.
-
-Answer with ONE JSON object and nothing else. No markdown fence, no
-commentary.
-
-  {"once": true,
-   "plain": "<one sentence: what you understood, in their words>",
-   "trigger": [ ... ], "condition": [ ... ], "action": [ ... ]}
-
-Rules, and each of them is something brAIn will refuse the answer over:
-
-* `trigger` may only use `time`, `state`, `numeric_state` or `template`.
-  Those are the four Home Assistant's recorder can replay, and the card
-  this becomes shows the person how often the trigger would have fired
-  over the last month — which is the only check there is on a trigger
-  that has never fired. Any other kind (`device`, `event`, `webhook`,
-  `mqtt`, `sun`, `zone`) makes the answer unusable.
-* `action` is what to do, and it names entities by id. Do not add an
-  action that switches the automation off — brAIn writes that itself.
-* `condition` may be omitted or empty.
-* Do not set `id`, `alias`, `mode` or `description`.
-* `once` is `false` if what they asked for is a standing rule — something
-  that should keep happening — rather than a single thing to do next
-  time. Say so in `plain` and leave the rest out; brAIn will offer them
-  the other path.
-* If nothing in the house matches what they named, answer
-  {"once": true, "error": "<what you looked for and did not find>"}.
-
-Be literal. A sentence you half-understood, written as an automation,
-is a thing that happens in somebody's house."""
+# There is no system prompt here: `authoring.SYSTEM` drafts both kinds of
+# sentence and answers `once`, so a one-off and a standing rule are told
+# the same rules by one prompt. This module's own copy had no caller left
+# and was the second answer to "what may a trigger be" waiting to drift.
 
 
 def _now() -> float:
@@ -327,15 +294,27 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.S)
 SCHEMA = {
     "type": "object",
     "properties": {
-        "once": {"type": "boolean"},
-        "plain": {"type": "string"},
-        "error": {"type": "string"},
-        "trigger": {"type": "array", "items": {"type": "object"}},
-        "condition": {"type": "array", "items": {"type": "object"}},
-        "action": {"type": "array", "items": {"type": "object"}},
+        "once": {"type": "boolean", "description":
+                 "true for a single thing to happen the next time something "
+                 "occurs; false for a standing rule. Unsure is false."},
+        "plain": {"type": "string", "description":
+                  "One sentence: what you understood, in their words. Shown "
+                  "to them on the card."},
+        "error": {"type": "string", "description":
+                  "Only when nothing in the house matches what they named: "
+                  "what you looked for and did not find. Leave the "
+                  "automation out."},
+        "trigger": {"type": "array", "items": {"type": "object"},
+                    "description": "Home Assistant triggers of kind time, "
+                    "state, numeric_state or template only."},
+        "condition": {"type": "array", "items": {"type": "object"},
+                      "description": "May be empty."},
+        "action": {"type": "array", "items": {"type": "object"},
+                   "description": "What to do, naming entities by id."},
         # A standing rule's own (`authoring.ALLOWED_MODES`); a one-off
         # ignores it, because it disarms itself after one run whatever.
-        "mode": {"type": "string"},
+        "mode": {"type": "string", "description":
+                 "single (the default) or restart."},
     },
     "required": ["once"],
     "additionalProperties": True,
@@ -697,7 +676,7 @@ __all__ = [
     "ID_PREFIX", "INTENT_TTL_DAYS", "MAX_ARMED", "MAX_PER_PASS",
     "MAX_QUEUED", "MAX_REFUSED", "MAX_ROWS", "MAX_SENTENCE",
     "REQUEST_DIR", "STATUSES",
-    "STORE", "SYSTEM", "TIMEOUT_S", "MAX_TURNS", "arm", "armed_count",
+    "STORE", "TIMEOUT_S", "MAX_TURNS", "arm", "armed_count",
     "SELF_TARGET",
     "build", "collect", "disarm", "drop", "expired", "fired_from_state",
     "get", "listing", "mark_fired", "note", "parse_answer",

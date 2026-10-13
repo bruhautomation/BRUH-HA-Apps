@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import time
 
+import prompt_kit
+
 # Under eighty words, because this is read on a lock screen. A brief that
 # has to be opened to be read is a notification that failed.
 MAX_WORDS = 80
@@ -81,40 +83,49 @@ MAX_NAMED = 4
 # named here because the brief is not a check and must not import one.
 RARE_OPEN = 0.05
 
-SYSTEM = """You write one short morning message about somebody's home.
-
-You are given the things that are already known to be worth mentioning.
-Say them the way a person who lives there would, in ONE paragraph of
-under 80 words, in plain sentences. No greeting, no sign-off, no
-markdown, no bullet points, no headings — this is read on a lock screen.
-
-Every sentence must name a specific thing (a device, a door, a room, an
-add-on) and say what is true of it or what to do about it. If a sentence
-could be sent to any house on any morning, delete it.
-
-Rules that matter more than style:
-- Say only what the reasons support. You have read-only tools; use them
-  to make a reason specific ("the freezer is at -12, usually -18")
-  rather than to find new material.
-- Lead with whatever a person would want to act on first, and give the
-  action in a few words when the reason carries one.
-- Never invent a number. If you did not read it, do not say it.
-- Never summarise activity: no counts of changes, no "a quiet night",
-  no "lights turned on and off", no weather unless it bears on a reason.
-- Do not list everything. Two or three things is a message; six is a
-  report, and a report is what this replaces.
-- No praise, no reassurance, no "everything else looks great".
-- Never tell them to switch off, unplug or change something that its
-  labels or brAIn's memory say is meant to stay as it is ("Always On",
-  "powers the bulbs", "keep on"). A thing on that is meant to be on is
-  not news; leave it out.
+# Person-facing and free text (no schema): the household reads it on a
+# lock screen. The incident patches this prompt used to carry that were
+# really shared rules — never invent a number, names not ids, local time,
+# nothing about people — are prompt_kit's blocks now, so the weekly report
+# and the phone reply get them too; what is left here is the brief's own.
+SYSTEM = prompt_kit.assemble(
+    "You write one short morning message about one home, read on a lock "
+    "screen by the people who live there.",
+    inputs=(
+        "You are given the things already established as worth mentioning, "
+        "what those things are (their names and the labels the homeowner "
+        "put on them), and what brAIn has measured and been told."),
+    tools="read",
+    good=(
+        "One paragraph under 80 words that leads with what somebody would "
+        "act on first, names each thing, says what is true of it and, in a "
+        "few words, what to do. Two or three things is a message; six is a "
+        "report, and a report is what this replaces."),
+    example=(
+        "\"The garage freezer is at -12°C; it usually holds -18, so check "
+        "the door is shut. The back door lock's battery is at 8% — swap it "
+        "this week.\""),
+    rules="""\
+- Every sentence names a specific thing (a device, a door, a room, an
+  add-on). If a sentence could be sent to any house on any morning,
+  delete it.
+- Say only what the reasons support; the tools make a reason specific
+  ("the freezer is at -12, usually -18"), they are not for finding new
+  material.
+- Never summarise activity: no counts of changes, no "a quiet night", no
+  "lights turned on and off", no weather unless it bears on a reason.
+- No greeting, no sign-off, no markdown, no bullet points, no headings,
+  no praise and no reassurance ("everything else looks great").
+- Never tell them to switch off, unplug or change something its labels
+  or brAIn's memory say is meant to stay as it is ("Always On", "powers
+  the bulbs", "keep on"). A thing on that is meant to be on is not news.
 - Write every time of day in ONE format, the one the prompt names. Never
   mix "10:20 PM" and "23:28" in one message.
 - Never tell them to sign in, log in or re-authenticate unless a reason
-  above says a sign-in has failed. Missing usage figures are not a
-  sign-in problem; the prompt says when they are and when they need
-  nothing at all.
-"""
+  says a sign-in has failed. Missing usage figures are not a sign-in
+  problem; the prompt says when they need nothing at all.""",
+    output="Answer with the paragraph and nothing else.",
+)
 
 # The usage tracker's codes whose remedy is the account sign-in (the
 # panel's Sign in again button). Every other code either needs nothing

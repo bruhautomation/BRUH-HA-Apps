@@ -326,7 +326,7 @@ class TestAReplyCanEndTheCase(PhoneCase):
 
         ok, _ = self.drive(body)
         self.assertTrue(ok)
-        self.assertEqual([j for j, _ in self.analyst], ["investigate"])
+        self.assertEqual([j for j, _ in self.analyst], ["explain"])
         self.assertIsNotNone(findings_store.get(row["ts"]))
 
     def test_unread_is_the_conversation_it_always_was(self):
@@ -338,7 +338,7 @@ class TestAReplyCanEndTheCase(PhoneCase):
 
         self.drive(body)
         self.assertEqual(self.jobs, [])
-        self.assertEqual([j for j, _ in self.analyst], ["investigate"])
+        self.assertEqual([j for j, _ in self.analyst], ["explain"])
         self.assertIsNotNone(findings_store.get(row["ts"]))
 
     def test_the_undo_action_is_one_word_on_both_sides(self):
