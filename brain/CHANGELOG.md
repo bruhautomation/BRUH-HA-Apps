@@ -20,6 +20,10 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - The next Gaps, Ideas and Design review run is shown the reports the developer closed as declined, not brAIn's problem or a duplicate, with the first line of why. The Gaps run also gets the reasons you typed when you marked a finding Wrong.
 - brAIn's first look at new signals carries three short worked examples (ignore, watch, investigate), each with a reason that answers what the row claims, and no longer shows the model its internal priority score.
 - An investigation is told how to set aside or rewrite a card only when it is looking at one, with an example of each; the open cards it is shown name the device each is about; a camera offer comes before how to answer; and a second opinion is told plainly that making no claim is a valid answer.
+- Twenty-eight of brAIn's prompts are assembled from one shared kit: every one a person reads carries the same rules on names, local time, invented numbers and privacy, every one that reads house, calendar or typed text treats it as data, and each has a worked example of a good answer. Prompts that answer through a schema no longer write their JSON shape out a second time; the guidance for each field lives in the schema.
+- A phone reply speaks of brAIn in the third person, opens with what it just read, fences what was typed so a reply cannot pose as instructions, and runs as the lighter `explain` job.
+- The Timeline's "what this adds up to" paragraph is written from the episodes alone, without Home Assistant tools it was never told about.
+- Ideas and onboarding share one definition of a card worth having; the unused one-off automation prompt is gone.
 - Tool descriptions: `call_service` is shorter, `get_baseline` points at `what_is_normal`, history and statistics point at each other, `reload_config` lists its targets, and `minecraft_teleport` says to recall (or ask once and remember) which Minecraft name is "me". `offer_resolutions` is listed only in the chat, where its buttons appear.
 
 ### Security
