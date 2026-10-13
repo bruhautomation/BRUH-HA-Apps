@@ -289,14 +289,13 @@ class TestTheAnswerIsParsedAsModelsActuallyWriteIt(unittest.TestCase):
             claude_director._extract_json(
                 'Sure! Here is the show:\n```json\n{"a": 1}\n```\nEnjoy.'))
 
-    def test_the_contract_says_not_to_write_comments(self):
-        """The root cause, guarded: the example is annotated, so the
-        instruction that the annotation is not part of the answer has to
-        travel with it."""
+    def test_the_contract_shows_no_annotated_json_to_imitate(self):
+        """The root cause, removed rather than warned about: the shape is
+        described in prose and enforced by a schema, so there is no
+        `//`-annotated example left for a model to copy back."""
         contract = claude_director.schema_contract()
-        self.assertIn("//", contract, "the example is still annotated")
-        self.assertIn("strict JSON", contract)
-        self.assertIn("trailing comma", contract)
+        self.assertNotIn("//", contract)
+        self.assertNotIn("<seconds>", contract)
 
 
 class TestInventingEffectsFromTheRoom(ClaudeDirectorCase):

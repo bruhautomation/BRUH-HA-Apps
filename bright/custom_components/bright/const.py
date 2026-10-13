@@ -22,6 +22,11 @@ SERVICE_START_PARTY = "start_party"
 SERVICE_START_SHOW = "start_show"
 SERVICE_STOP_SHOW = "stop_show"
 SERVICE_STATUS = "get_status"
+SERVICE_IMPORT_SHOW = "import_show"
+
+# An import compiles a whole show, so it is waited for longer than a start
+# or a stop; the add-on's bridge allows the panel a little less than this.
+IMPORT_TIMEOUT_S = 100.0
 
 # The add-on mirrors the names of the saved parties here, because /data is
 # invisible to Core and "which parties exist" is a question a dashboard
