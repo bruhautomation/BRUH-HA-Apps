@@ -54,7 +54,7 @@ to send that as an issue, and sends nothing until you say yes.
 
 **What brAIn adds.** With brAIn installed, the top of the page is a sentence
 about what the house is doing, you can ask the house a question, *Coming up*
-shows what is due, and brAIn's findings appear as notes on the section they
+shows what is due on a strip you scrub through, and brAIn's findings appear as notes on the section they
 are about. Without brAIn, Morph is still a complete dashboard; Tell and
 learning say plainly that they need it.
 

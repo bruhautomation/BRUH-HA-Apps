@@ -25,6 +25,7 @@ import { CSS as STYLES, FONTS_URL } from './styles.js';
 import { TYPES, typeOf } from './cards.js';
 import * as history from './history.js';
 import * as snap from './snap.js';
+import * as upc from './upcoming.js';
 import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing } from './util.js';
 
 const HOLD_MS = 540;
@@ -235,7 +236,9 @@ class MorphPanel extends HTMLElement {
     if (!this.dash) { this.region('top', `<div class="banner">Morph's add-on has not written a dashboard yet. Start the Morph add-on; it builds the first one from your floors and rooms.</div>`); return; }
     const dash = this.dash;
     this.region('top', this.topHtml(dash));
-    this.region('upcoming', dash.coming_up !== false ? this.upcomingHtml() : '');
+    // Coming up is not rebuilt under a finger, or while it is gliding to
+    // where it was let go: the rebuild would land it before it arrives.
+    if (!this.upcFrozen()) this.region('upcoming', dash.coming_up !== false ? this.upcomingHtml() : '');
     this.region('scenes', (dash.scenes || []).length ? this.scenesHtml(dash) : '');
     this.region('notes', this.topNotesHtml());
     this.renderBoard(dash);
@@ -282,10 +285,12 @@ class MorphPanel extends HTMLElement {
     // text, same caret.
     const active = this.shadowRoot.activeElement;
     const keep = active && el.contains(active) && active.dataset && active.dataset.keep ? { key: active.dataset.keep, value: active.value, pos: active.selectionStart } : null;
+    const refocus = active && el.contains(active) && active.hasAttribute && active.hasAttribute('data-upc-vp');
     this.cache.set('r:' + name, html);
     el.hidden = !html;
     el.innerHTML = html;
     this.restoreTellText(el);
+    if (refocus) { const n = el.querySelector('[data-upc-vp]'); if (n) n.focus({ preventScroll: true }); }
     if (keep) {
       const again = el.querySelector(`[data-keep="${keep.key}"]`);
       if (again) { again.value = keep.value; again.focus(); try { again.setSelectionRange(keep.pos, keep.pos); } catch (e) { /* not a text box */ } }
@@ -374,38 +379,100 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     return `<section aria-label="Now" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${dash.greeting !== false ? `<h1 class="hello">${esc(this.greeting())}</h1>` : ''}${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
   }
 
+  // Coming up: a fixed reading point with the next day sliding behind it
+  // (upcoming.js). The cursor is kept as a TIME (`upcAt`, null for now), so
+  // something you stopped on stays under the line as the minutes pass.
   upcomingHtml() {
-    const H = this.hass; const now = Date.now(); const end = now + 12 * 3600000;
-    const ev = [];
-    Object.values(H.states).forEach((s) => {
-      const d = domainOf(s.entity_id); const a = s.attributes;
-      if (d === 'timer' && s.state === 'active' && a.finishes_at) ev.push({ t: Date.parse(a.finishes_at), label: friendly(H, s.entity_id), sub: ' · timer', solid: true, eid: s.entity_id, color: 'var(--amber)' });
-      if (d === 'sun') {
-        if (a.next_setting) ev.push({ t: Date.parse(a.next_setting), label: 'Sunset', solid: true, color: 'var(--peach)' });
-        if (a.next_rising) ev.push({ t: Date.parse(a.next_rising), label: 'Sunrise', solid: true, color: 'var(--amber)' });
-      }
-      if (d === 'calendar' && a.start_time) ev.push({ t: Date.parse(a.start_time.replace(' ', 'T')), label: a.message || friendly(H, s.entity_id), sub: ' · calendar', solid: true, eid: s.entity_id, color: 'var(--sky)' });
-      if (d === 'sensor' && a.device_class === 'timestamp' && /finish|done|end|complete/i.test(s.entity_id)) { const t = Date.parse(s.state); if (t) ev.push({ t, label: friendly(H, s.entity_id), sub: ' · done', solid: true, eid: s.entity_id, color: 'var(--lime)' }); }
-      if (d === 'automation' && a.last_triggered && s.state === 'on') {
-        // "What usually happens": an automation that fired yesterday at a
-        // time still ahead today is a likely next event (dashed ring).
-        const lt = new Date(a.last_triggered); const tomorrow = new Date(); tomorrow.setHours(lt.getHours(), lt.getMinutes(), 0, 0);
-        if (now - lt.getTime() > 3600000 && now - lt.getTime() < 36 * 3600000 && tomorrow.getTime() > now) ev.push({ t: tomorrow.getTime(), label: friendly(H, s.entity_id), sub: ' · usually', solid: false, eid: s.entity_id, color: 'var(--violet)' });
-      }
-    });
-    const list = ev.filter((e) => e.t > now && e.t < end).sort((a, b) => a.t - b.t).slice(0, 8);
+    const reg = this.$('[data-region="upcoming"]');
+    const w = (reg && reg.clientWidth) || (this.rootEl && this.rootEl.clientWidth) || window.innerWidth;
+    const m = upc.model(this.hass, Date.now(), w < 640 ? 0.9 : 1.25);
+    if (!m.stacks.length && !m.durs.length && !this.s.edit) { this._upc = null; return ''; }
+    this._upc = m;
     const holding = this.s.hold === 'top:upcoming' ? ' holding' : '';
-    if (!list.length && !this.s.edit) return '';
-    let lastLeft = -100;
-    const items = list.map((e) => {
-      // Clear of the Now marker, then spread across the whole width.
-      let left = 11 + ((e.t - now) / (end - now)) * 85;
-      if (left - lastLeft < 12) left = lastLeft + 12;
-      lastLeft = left;
-      return `<button type="button" class="ev" data-act="upc" data-v="${esc(e.eid || '')}" style="left:${Math.min(97, left).toFixed(1)}%"><span class="t">${esc(clock(e.t))}</span><span class="dot" style="border:2px ${e.solid ? 'solid' : 'dashed'} ${e.color}"></span><span class="n">${esc(e.label)}<i>${esc(e.sub || '')}</i></span></button>`;
-    }).join('');
-    return `<div class="holdable${holding}" data-hold="upcoming" style="display:flex;flex-direction:column;gap:6px"><div class="rowb"><span class="label">Coming up</span><span class="small">next 12 hours</span></div>
-<div class="upc"><div class="utrack"><div class="line"></div><div class="past"></div><span class="now nowdot"></span><span class="nowl">Now</span>${items || '<span class="small" style="position:absolute;left:60px;top:28px">Nothing scheduled.</span>'}</div></div>${this.tellBox('upcoming')}</div>`;
+    return `<div class="holdable${holding}" data-hold="upcoming" aria-label="Coming up">${upc.html(m, this.upcCursor(m))}${this.tellBox('upcoming')}</div>`;
+  }
+
+  upcCursor(m) { return this.s.upcAt == null ? 0 : upc.clampC(m, (this.s.upcAt - m.base) / 60000); }
+
+  upcFrozen() { return !!(this.upcD || this._upcWc != null || (this._upcGlide && performance.now() < this._upcGlide)); }
+
+  upcRegion() { return this.$('[data-region="upcoming"]'); }
+
+  // Puts the reading point on `c` (minutes from now): glides there, then
+  // lets the next render draw it at rest. Left away from now, it drifts back.
+  upcGo(m, c, glide = true) {
+    c = upc.clampC(m, c);
+    if (Math.abs(c) < 0.5) c = 0;
+    this.s.upcAt = c === 0 ? null : m.base + c * 60000;
+    const el = this.upcRegion();
+    const tr = el && el.querySelector('[data-cu-track]');
+    const still = !glide || !tr || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (!still) {
+      tr.classList.add('glide');
+      this._upcGlide = performance.now() + 620;
+      clearTimeout(this._upcGlideT);
+      this._upcGlideT = setTimeout(() => { tr.classList.remove('glide'); this._upcGlide = 0; this.schedule(); }, 640);
+    }
+    upc.paint(el, m, c);
+    clearTimeout(this._upcIdle);
+    if (c !== 0) this._upcIdle = setTimeout(() => { if (!this.upcD && this._upc) this.upcGo(this._upc, 0); }, upc.IDLE_BACK_MS);
+    if (still) this.schedule();
+  }
+
+  upcDown(e, vp) {
+    const m = this._upc; if (!m) return;
+    const tr = vp.querySelector('[data-cu-track]'); if (tr) tr.classList.remove('glide');
+    clearTimeout(this._upcIdle); clearTimeout(this._upcGlideT); this._upcGlide = 0;
+    const lens = vp.querySelector('[data-cu-lens]'); const lr = lens && lens.getBoundingClientRect();
+    const c0 = this.upcCursor(m);
+    this.upcD = { x0: e.clientX, c0, c: c0, lx: e.clientX, lt: performance.now(), v: 0, moved: false, vp, pid: e.pointerId, px: lr ? lr.left + lr.width / 2 : e.clientX };
+  }
+
+  upcMove(e) {
+    const d = this.upcD; const m = this._upc; if (!d || !m) return;
+    const dx = e.clientX - d.x0;
+    if (!d.moved) { if (Math.abs(dx) < 6) return; d.moved = true; try { d.vp.setPointerCapture(d.pid); } catch (er) { /* fine */ } }
+    const now = performance.now(); const dt = now - d.lt;
+    if (dt > 0) d.v = 0.7 * ((e.clientX - d.lx) / dt) + 0.3 * d.v;
+    d.lx = e.clientX; d.lt = now;
+    d.c = upc.clampC(m, d.c0 - dx / m.k);
+    upc.paint(this.upcRegion(), m, d.c);
+  }
+
+  // A tap goes to what is nearest where it landed; a swipe coasts on its
+  // speed and settles on the nearest event, if one is close.
+  upcUp(e) {
+    const d = this.upcD; this.upcD = null; const m = this._upc;
+    if (!d || !m) return;
+    if (!d.moved) {
+      const t = d.c0 + (e.clientX - d.px) / m.k;
+      const s = upc.snap(m, t, 24 / m.k);
+      this.upcGo(m, s != null ? s : t);
+      return;
+    }
+    if (performance.now() - d.lt > 90) d.v = 0;
+    const proj = upc.clampC(m, d.c - (d.v * 260) / m.k);
+    const s = upc.snap(m, proj, 60 / m.k);
+    this.upcGo(m, s != null ? s : proj);
+  }
+
+  // A sideways trackpad or a tilted wheel scrubs; an ordinary scroll still
+  // scrolls the page.
+  upcWheel(e) {
+    const vp = e.target.closest && e.target.closest('[data-upc-vp]');
+    const m = this._upc;
+    if (!vp || !m || this.s.edit || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    const tr = vp.querySelector('[data-cu-track]'); if (tr) tr.classList.remove('glide');
+    clearTimeout(this._upcIdle);
+    this._upcWc = upc.clampC(m, (this._upcWc != null ? this._upcWc : this.upcCursor(m)) + (e.deltaX / m.k) * 0.7);
+    upc.paint(this.upcRegion(), m, this._upcWc);
+    clearTimeout(this._upcWt);
+    this._upcWt = setTimeout(() => {
+      const c = this._upcWc; this._upcWc = null;
+      const s = upc.snap(m, c, 30 / m.k);
+      this.upcGo(m, s != null ? s : c);
+    }, 170);
   }
 
   scenesHtml(dash) {
@@ -1306,6 +1373,13 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     });
     root.addEventListener('keydown', (e) => {
       const t = e.target;
+      if (t.dataset && t.dataset.upcVp != null && this._upc && ['ArrowRight', 'ArrowLeft', 'Home'].includes(e.key)) {
+        e.preventDefault();
+        const m = this._upc; const c = this.upcCursor(m);
+        const n = e.key === 'Home' ? 0 : upc.step(m, c, e.key === 'ArrowRight' ? 1 : -1);
+        if (n != null) this.upcGo(m, n);
+        return;
+      }
       if (e.key === 'Escape') { if (this.s.tell) this.closeTell(); else if (this.s.view) this.closeView(); return; }
       if (e.key === 'Enter' && !e.shiftKey) {
         if (t.dataset && t.dataset.tellkey) { e.preventDefault(); this.sendTell(t.value); }
@@ -1314,6 +1388,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     });
     root.addEventListener('pointermove', (e) => this.scrub(e));
     root.addEventListener('pointerout', (e) => this.scrubEnd(e));
+    root.addEventListener('wheel', (e) => this.upcWheel(e), { passive: false });
   }
 
   // Anything outside the open thing folds it back (§1.10).
@@ -1338,6 +1413,8 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const mem = t.closest && t.closest('[data-member]');
     if (mem && !this.s.edit) { const r = mem.getBoundingClientRect(); this.mptr = { id: mem.dataset.member, x0: e.clientX, y0: e.clientY, r, drag: false, el: mem, pid: e.pointerId }; return; }
     if (t.closest && t.closest('[data-ctl], button, input, textarea, select, summary, a')) return;
+    const vp = !this.s.edit && t.closest && t.closest('[data-upc-vp]');
+    if (vp) { this.upcDown(e, vp); return; }
     // hold-to-tell on the top regions, floors and section heads (Edit only)
     const holdable = t.closest && t.closest('[data-hold]');
     const head = t.closest && t.closest('.sechead');
@@ -1374,6 +1451,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   holdMs() { return this.settings().hold_ms || HOLD_MS; }
 
   onMove(e) {
+    if (this.upcD) { this.upcMove(e); return; }
     const mp = this.mptr;
     if (mp) {
       const dx = e.clientX - mp.x0, dy = e.clientY - mp.y0;
@@ -1393,6 +1471,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   }
 
   onUp(e) {
+    if (this.upcD) { this.upcUp(e); return; }
     const mp = this.mptr;
     if (mp) {
       this.mptr = null;
@@ -1434,7 +1513,9 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     }
   }
 
-  cancelPtr() { clearTimeout(this.holdT); this.holdEnd(); if (this.ptr && this.ptr.drag) return; this.ptr = null; if (this.s.hold) { this.s.hold = null; this.schedule(); } }
+  cancelPtr() {
+    if (this.upcD) { const d = this.upcD; this.upcD = null; if (this._upc) this.upcGo(this._upc, d.c); return; }
+    clearTimeout(this.holdT); this.holdEnd(); if (this.ptr && this.ptr.drag) return; this.ptr = null; if (this.s.hold) { this.s.hold = null; this.schedule(); } }
 
   holdStart(key, scope, e) {
     clearTimeout(this.tholdT);
@@ -1625,6 +1706,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       case 'reveal': this.revealEntity(v); return;
       case 'reveal-card': this.revealCard(v); return;
       case 'upc': if (v) this.revealEntity(v); return;
+      case 'upc-now': if (this._upc) this.upcGo(this._upc, 0); return;
       case 'ask-sug': {
         const inp = this.shadowRoot.querySelector('input[data-keep="ask"]');
         if (inp) inp.value = v;

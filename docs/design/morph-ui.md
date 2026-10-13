@@ -258,8 +258,11 @@ fits ("Turn off downstairs").
 ### 6.2 Coming up — scheduled and predicted
 The timeline mixes what is scheduled (solid ring: timers, automations,
 appliance finish times) with **what usually happens** (dashed ring,
-"Bedtime · usually"). Tapping a prediction asks brAIn about it, which offers
-to make it automatic.
+"Bedtime · usually"). It is one short strip with a fixed reading point:
+the next day slides behind it (drag, swipe, a sideways trackpad, the arrow
+keys), and only what is at the point is named, beside it. Timers that know
+their length and calendar events with an end are bars, and night is a band.
+Tapping a prediction asks brAIn about it, which offers to make it automatic.
 *Stands on:* `panel/routines.py`, `panel/habits.py`, `panel/rhythm.py`; making it
 automatic is the existing proposal → trial → `automation_writer` path.
 
