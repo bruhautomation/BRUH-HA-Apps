@@ -55,7 +55,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "learn_now", "tell_issue", "report", "report_withdraw")
+READ_ONLY_KINDS = ("history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -194,6 +194,10 @@ async def handle(kind: str, p: dict) -> dict:
         # request, and its words decide whether it may reach the house.
         st = tell.start(p.get("target") or {}, str(p.get("text") or ""), str(p.get("previous") or ""),
                         shot=str(p.get("shot") or ""), view=p.get("view"))
+        await asyncio.to_thread(publish_state)
+        return {"ok": "error" not in st, **st}
+    if kind == "tell_answer":
+        st = tell.answer_question(str(p.get("id") or ""), p.get("choice"))
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
     if kind == "tell_issue":

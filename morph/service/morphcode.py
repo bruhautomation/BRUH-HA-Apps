@@ -17,7 +17,10 @@ panel's own modules can be replaced one file at a time:
   update changes Morph's own file underneath a copy, the copy is PAUSED —
   served as Morph's own until somebody makes the change again on the new
   file — because a copy of last release's module beside this release's
-  others is how a working panel breaks on an update.
+  others is how a working panel breaks on an update. The record also keeps
+  every other module Morph shipped at the time (``others``), and a copy is
+  paused when any of them moved too: a copy of morph-panel.js that imports
+  engine.js can break on an update that never touched morph-panel.js.
 * A copy that fails to load is replaced by Morph's own for that page load
   (the integration's ``boot.js``), and the panel says so.
 
@@ -69,6 +72,16 @@ def _bases() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _shipped() -> dict:
+    """Every module Morph ships, by name, as a short hash."""
+    d = paths.SHIPPED
+    try:
+        return {p.name: _sha(p) for p in sorted(d.iterdir())
+                if p.is_file() and p.suffix == ".js" and p.name not in FIXED}
+    except OSError:
+        return {}
+
+
 def record_bases() -> bool:
     """Note, for every copy that changed since it was last seen, which
     version of Morph's own file it was written against. Called before every
@@ -78,18 +91,54 @@ def record_bases() -> bool:
         return False
     bases = _bases()
     out: dict = {}
+    shipped_now = _shipped()
     for p in copies():
         own = _sha(p)
         prev = bases.get(p.name) if isinstance(bases.get(p.name), dict) else None
         if prev and prev.get("own") == own:
             out[p.name] = prev
+            if "others" not in prev:
+                # A record from before 0.5.4 kept no others: what is
+                # installed now is the best answer left, and it makes the
+                # NEXT update pause the copy when it should.
+                out[p.name] = {**prev, "others": _others(p.name, shipped_now)}
         else:
             shipped = paths.SHIPPED / p.name
-            out[p.name] = {"own": own, "base": _sha(shipped), "at": int(time.time())}
+            out[p.name] = {"own": own, "base": _sha(shipped), "at": int(time.time()),
+                           "others": _others(p.name, shipped_now)}
             _keep_base(p.name, shipped)
     if out == bases:
         return False
     paths.write_json(code_dir() / BASE_FILE, out, indent=1)
+    return True
+
+
+def _others(name: str, shipped: dict) -> dict:
+    return {k: v for k, v in shipped.items() if k != name}
+
+
+def moved_others(rec: dict | None, shipped: dict | None = None) -> list[str]:
+    """Morph's other modules that changed since this copy was written."""
+    was = (rec or {}).get("others")
+    if not isinstance(was, dict):
+        return []
+    now = _shipped() if shipped is None else shipped
+    return sorted(n for n in set(was) | set(now) if was.get(n) != now.get(n))
+
+
+def accept(name: str) -> bool:
+    """Record a copy as written against the Morph installed now: brAIn was
+    asked to make it work on this release, answered, and left it in place.
+    Committed with the next commit like any record."""
+    p = code_dir() / name
+    if not NAME_RE.match(name or "") or not p.is_file():
+        return False
+    bases = _bases()
+    shipped = paths.SHIPPED / name
+    bases[name] = {"own": _sha(p), "base": _sha(shipped), "at": int(time.time()),
+                   "others": _others(name, _shipped())}
+    _keep_base(name, shipped)
+    paths.write_json(code_dir() / BASE_FILE, bases, indent=1)
     return True
 
 
@@ -123,24 +172,31 @@ def status() -> list[dict]:
 
     * ``active``: written against the Morph that is installed, or a module
       of its own that Morph does not ship;
-    * ``paused``: Morph's own file changed since the copy was written.
+    * ``paused``: Morph's own file changed since the copy was written
+      (``kind: changed``), or another of Morph's modules did (``kind:
+      others``, with ``moved`` naming them).
     A copy nobody has recorded yet (brAIn's edit, a moment before Morph
     commits it) was written against what is installed now, so it is active.
     """
     bases = _bases()
+    shipped_now = _shipped()
     out = []
     for p in copies():
         shipped = paths.SHIPPED / p.name
         rec = bases.get(p.name) if isinstance(bases.get(p.name), dict) else None
         now = _sha(shipped)
-        if not shipped.exists():
-            state = "active"
-            kind = "new"
-        elif rec is None or rec.get("own") != _sha(p) or rec.get("base") == now:
-            state, kind = "active", "changed"
+        fresh = rec is None or rec.get("own") != _sha(p)
+        moved = [] if fresh else [n for n in moved_others(rec, shipped_now) if n != p.name]
+        row = {"name": p.name, "kind": "new" if not shipped.exists() else "changed", "at": (rec or {}).get("at")}
+        if fresh:
+            row["status"] = "active"
+        elif shipped.exists() and rec.get("base") != now:
+            row["status"] = "paused"
+        elif moved:
+            row["status"], row["why"], row["moved"] = "paused", "others", moved[:12]
         else:
-            state, kind = "paused", "changed"
-        out.append({"name": p.name, "status": state, "kind": kind, "at": (rec or {}).get("at")})
+            row["status"] = "active"
+        out.append(row)
     return out
 
 
@@ -167,26 +223,41 @@ def redo_words(name: str, version: str, history: list[str] | None = None) -> str
     """What brAIn is asked when an update paused a copy. The first sentence
     is what a person reads where the request is listed."""
     mine = f"/config/morph/frontend/{name}"
-    base = kept_base(name)
-    lines = [f"Make my change to Morph's {name} again on the new Morph ({version}).",
-             f"Morph was updated, its own {name} changed underneath this house's change to it, so the change "
-             f"is paused and Morph's own is running.",
-             f"- This house's version: {mine}",
-             f"- Morph's new {name}: {paths.SHIPPED / name}"]
-    if base:
-        lines += [f"- Morph's {name} as it was when the change was made: {base}",
-                  f"The change is the difference between that file and {mine}. Apply that difference to Morph's "
-                  f"new {name} (a three-way merge: keep everything the update changed) and save the result as "
-                  f"{mine}."]
+    row = next((r for r in status() if r["name"] == name), {})
+    if row.get("why") == "others":
+        moved = row.get("moved") or []
+        lines = [f"Make my change to Morph's {name} work on the new Morph ({version}).",
+                 f"Morph was updated. Its own {name} did not change, but {', '.join(moved)} did, and this house's "
+                 f"{mine} uses Morph's other modules, so the change is paused and Morph's own is running.",
+                 f"- This house's version: {mine}",
+                 f"- Morph's new modules: {paths.SHIPPED}/"]
+        lines.append(f"Read {mine} against the new {', '.join(moved)}: every import it takes must still be "
+                     f"exported under that name, every function it calls must still take what it passes, and "
+                     f"anything it relies on (CSS classes, data attributes, state fields) must still be there. "
+                     f"Fix what no longer fits in {mine} and nothing else. If it already fits, leave it as it "
+                     f"is and say so: Morph uses it again once you answer.")
     else:
-        lines += [f"Morph's {name} from before the update was not kept, so {mine} differs from the new file both "
-                  f"by this house's change and by everything the update changed. Work out what the house's "
-                  f"change was (the commits below say what it was for), then start from Morph's new {name}, "
-                  f"make only that change, and save the result as {mine}. Never copy the old file over the new "
-                  f"one: that would undo the update."]
+        base = kept_base(name)
+        lines = [f"Make my change to Morph's {name} again on the new Morph ({version}).",
+                 f"Morph was updated, its own {name} changed underneath this house's change to it, so the change "
+                 f"is paused and Morph's own is running.",
+                 f"- This house's version: {mine}",
+                 f"- Morph's new {name}: {paths.SHIPPED / name}"]
+        if base:
+            lines += [f"- Morph's {name} as it was when the change was made: {base}",
+                      f"The change is the difference between that file and {mine}. Apply that difference to "
+                      f"Morph's new {name} (a three-way merge: keep everything the update changed) and save the "
+                      f"result as {mine}."]
+        else:
+            lines += [f"Morph's {name} from before the update was not kept, so {mine} differs from the new file "
+                      f"both by this house's change and by everything the update changed. Work out what the "
+                      f"house's change was (the commits below say what it was for), then start from Morph's new "
+                      f"{name}, make only that change, and save the result as {mine}. Never copy the old file "
+                      f"over the new one: that would undo the update."]
     said = [m for m in (history or []) if m][:6]
     if said:
         lines.append(f"Commits that changed {mine}, newest first:")
         lines += [f"- {m}" for m in said]
-    lines.append("If the change is no longer needed (the update already does it), say so and leave the file alone.")
+    lines.append(f"If the change is no longer needed (the update already does it), delete {mine} and say so: "
+                 f"Morph then runs its own.")
     return "\n".join(lines)

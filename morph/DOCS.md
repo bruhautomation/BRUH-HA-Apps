@@ -57,6 +57,12 @@ on (brAIn's Configuration tab). Morph checks that and says so in Settings.
 | **Hold** | Opens the card in place with its options and its history. |
 | **Tap outside** | Folds everything back. |
 
+An opened card also offers **Details**, which opens Home Assistant's own
+dialog for that entity (its history, attributes, settings and what it is
+related to), and **Device page** for an admin, which goes to the device in
+Home Assistant's settings. On a card that lists several things, tap one row
+first.
+
 History is what Home Assistant records for that kind of thing: a light's day
 as a strip of on and off, a sensor's readings as a line you can scrub, a
 meter's week as bars. Tap a day or a bar to see its hours, and the logbook's
@@ -112,6 +118,14 @@ ID", "rename the device", "make an automation that…". When a request would
 need a house change you did not ask for, brAIn does the dashboard part and
 says what would have to change under **Left for you**, so you can ask.
 
+**A choice that is yours comes back as buttons.** The commonest one: a card
+that works a number out from other sensors (a difference, a total, an
+efficiency) has no history, because Home Assistant only records entities.
+When you might want that history, brAIn builds the card with the number
+worked out in it and asks: **Calculate it in the card**, or **Make a Home
+Assistant sensor** so it is recorded. The button that changes Home Assistant
+says so, and pressing one sends it as your next request.
+
 **You can see it working.** brAIn's own steps appear in the box as it takes
 them (looking at the picture, reading `dashboard.yaml`, checking an entity,
 editing a file) with how long it has been at it. Close the box and the work
@@ -122,8 +136,14 @@ and **Show** opens it again.
 half as one change and shows what brAIn did, what it saw, and the card
 **before and after**.
 
+**It says where every change landed.** The result has one line for each
+place a request could reach, whether or not anything happened there:
+**Dashboard**, **Home Assistant**, **Morph's code** (when it changed),
+**brAIn's memory** (facts it queued about the house) and **GitHub** (*Nothing
+sent* unless you say yes to an issue).
+
 **Morph checks the result.** It reads the dashboard back and lists what is
-different on screen under **On the dashboard now**, worked out from the file,
+different on screen on the **Dashboard** line, worked out from the file,
 not from what brAIn said. If nothing changed it says *Nothing on the
 dashboard changed* and quotes brAIn. If brAIn left `dashboard.yaml` unreadable
 it says *Not applied* (Morph keeps showing the last version that read) and
@@ -189,10 +209,12 @@ your copy in place of its own after a page reload.
 - **A copy that does not load is not a blank page.** Morph runs its own copy
   for that page load and says what went wrong.
 - **An update can pause a copy.** If a Morph update changes one of the files
-  you changed, your change is **paused** and Morph's own runs, because an old
-  copy beside new modules is how a panel breaks. A note says so, with **Make
-  it again** (brAIn redoes the change on the new file) and **Use Morph's
-  own**.
+  you changed, or another of Morph's modules your copy builds on, your change
+  is **paused** and Morph's own runs, because an old copy beside new modules
+  is how a panel breaks. A note says so and names what changed, with **Make
+  it again** (brAIn redoes the change on the new file, or checks it still
+  fits the modules that moved) and **Use Morph's own**. Your dashboard and
+  your own cards (`cards/`) are never touched by an update.
 
 **Settings → Improving Morph itself** lists every change, whether it is in
 use or paused, and **Use Morph's own** for each.

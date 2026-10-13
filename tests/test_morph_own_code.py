@@ -363,3 +363,161 @@ class TestMakingAPausedChangeAgain(unittest.TestCase):
     def test_no_brain_memory_folder_means_nothing_is_written(self):
         self.assertEqual(0, self.env.tell.queue_facts([{"fact": "x"}], "morph-abc"))
         self.assertFalse((self.env.brain_shared / "memory").exists())
+
+
+@unittest.skipUnless(HAS_GIT, "git is not installed")
+class TestAnUpdateToAnotherModulePausesTheCopy(unittest.TestCase):
+    """A copy of morph-panel.js imports engine.js, cards.js and the rest:
+    an update that changes engine.js and not morph-panel.js still leaves
+    last release's panel beside this release's engine. The copy pauses
+    whenever any of Morph's modules moved, and a redo brAIn answered puts it
+    back in use whether or not brAIn had to edit it."""
+
+    def setUp(self):
+        self.env = MorphEnv().__enter__()
+        self.addCleanup(self.env.__exit__, None, None, None)
+        self.env.brain_on()
+        fast(self.env)
+        dash, _ = self.env.store.normalize(DOC)
+        self.env.store.write(dash)
+        self.env.gitrepo.commit("First", "morph")
+        self.code = self.env.morph_dir / "frontend"
+        self.code.mkdir()
+        (self.code / "styles.js").write_text((self.env.shipped / "styles.js").read_text() + "/* a theme switch */\n")
+        self.env.gitrepo.commit("brAIn: a theme switch", "brain")
+
+    def rows(self):
+        return {r["name"]: r for r in self.env.morphcode.status()}
+
+    def test_a_change_to_another_module_pauses_and_names_it(self):
+        self.assertEqual("active", self.rows()["styles.js"]["status"])
+        engine = self.env.shipped / "engine.js"
+        engine.write_text(engine.read_text() + "/* next release */\n")
+        row = self.rows()["styles.js"]
+        self.assertEqual("paused", row["status"])
+        self.assertEqual("others", row["why"])
+        self.assertEqual(["engine.js"], row["moved"])
+        words = self.env.morphcode.redo_words("styles.js", "0.5.4", [])
+        self.assertTrue(words.startswith("Make my change to Morph's styles.js work on the new Morph (0.5.4)."))
+        self.assertIn("engine.js", words)
+        self.assertIn("If it already fits, leave it", words)
+
+    def test_a_record_from_before_others_were_kept_is_filled_in_on_the_next_commit(self):
+        base = self.code / ".base.json"
+        data = json.loads(base.read_text())
+        data["styles.js"].pop("others")
+        base.write_text(json.dumps(data))
+        engine = self.env.shipped / "engine.js"
+        engine.write_text(engine.read_text() + "/* an update nobody recorded */\n")
+        self.assertEqual("active", self.rows()["styles.js"]["status"], "nothing to compare with: not guessed")
+        self.env.morphcode.record_bases()
+        engine.write_text(engine.read_text() + "/* the next one */\n")
+        self.assertEqual("paused", self.rows()["styles.js"]["status"])
+
+    def test_a_redo_brain_answers_without_editing_puts_the_copy_back_in_use(self):
+        engine = self.env.shipped / "engine.js"
+        engine.write_text(engine.read_text() + "/* next release */\n")
+        fake = FakeBrain(self.env, lambda task: {"data": {"summary": "It still fits the new engine.js.",
+                                                           "changed": [], "reload": False}})
+        fake.start()
+        self.addCleanup(fake.stop.set)
+
+        async def go():
+            st = self.env.tell.start({"kind": "code", "id": "styles.js", "label": "styles.js"},
+                                     self.env.morphcode.redo_words("styles.js", "0.5.4", []))
+            return await finish(self.env, st)
+        st = asyncio.run(go())
+        self.assertEqual("done", st["phase"])
+        self.assertEqual("active", self.rows()["styles.js"]["status"])
+        self.assertIn("frontend/.base.json", self.env.gitrepo.changed_files(st["commit"]),
+                      "the record goes in the tell's commit, so Undo pauses it again")
+        ok, _ = self.env.gitrepo.revert(st["commit"])
+        self.assertTrue(ok)
+        self.assertEqual("paused", self.rows()["styles.js"]["status"])
+
+    def test_a_redo_that_failed_leaves_it_paused(self):
+        engine = self.env.shipped / "engine.js"
+        engine.write_text(engine.read_text() + "/* next release */\n")
+        fake = FakeBrain(self.env, lambda task: {"status": "failed", "error": "auth", "result": "signed out"})
+        fake.start()
+        self.addCleanup(fake.stop.set)
+
+        async def go():
+            st = self.env.tell.start({"kind": "code", "id": "styles.js", "label": "styles.js"}, "redo")
+            return await finish(self.env, st)
+        asyncio.run(go())
+        self.assertEqual("paused", self.rows()["styles.js"]["status"])
+
+
+@unittest.skipUnless(HAS_GIT, "git is not installed")
+class TestBrainAsksWhenTheChoiceIsTheirs(unittest.TestCase):
+    """A card that works a number out from other sensors has no history
+    unless Home Assistant holds it as an entity. brAIn asks; the answer is
+    the next request, started from the option stored with the tell, and
+    only the button that said it changes Home Assistant may."""
+
+    def setUp(self):
+        self.env = MorphEnv().__enter__()
+        self.addCleanup(self.env.__exit__, None, None, None)
+        self.env.brain_on()
+        fast(self.env)
+        dash, _ = self.env.store.normalize(DOC)
+        self.env.store.write(dash)
+        self.env.gitrepo.commit("First", "morph")
+
+    def answer(self, task):
+        if len(self.fake.seen) > 1:
+            return {"data": {"summary": "Made the sensor.", "changed": ["sensor.hvac_delta"], "reload": False}}
+        return {"data": {"summary": "Added the card.", "changed": [], "reload": True,
+                         "question": {"text": "Keep a history of the supply/return difference?",
+                                      "options": [{"label": "Calculate it in the card", "request": "Keep it in the card."},
+                                                  {"label": "Make a sensor", "home_assistant": True,
+                                                   "request": "Make a template sensor sensor.hvac_delta and use it."},
+                                                  {"label": "", "request": "dropped"}]}}}
+
+    def test_the_prompt_asks_about_history_and_the_answer_reaches_the_house_only_when_it_says_so(self):
+        self.fake = FakeBrain(self.env, self.answer)
+        self.fake.start()
+        self.addCleanup(self.fake.stop.set)
+        morphd = importlib.import_module("morphd")
+
+        async def go():
+            first = await finish(self.env, self.env.tell.start({"kind": "dashboard"}, "Add an HVAC card"))
+            wrong = await morphd.handle("tell_answer", {"id": first["id"], "choice": 7})
+            out = await morphd.handle("tell_answer", {"id": first["id"], "choice": 1})
+            again = await morphd.handle("tell_answer", {"id": first["id"], "choice": 0})
+            second = await finish(self.env, out)
+            return first, wrong, out, again, second
+        first, wrong, out, again, second = asyncio.run(go())
+        self.assertIn("fill `question`", self.fake.seen[0]["prompt"])
+        self.assertIn("has no history", self.fake.seen[0]["prompt"])
+        self.assertEqual(2, len(first["question"]["options"]), "an option with no label is not a button")
+        self.assertFalse(wrong["ok"])
+        self.assertTrue(out["ok"], out)
+        self.assertEqual("Make a template sensor sensor.hvac_delta and use it.", out["text"])
+        self.assertEqual("house", out["scope"])
+        self.assertIn("Scope: this request is about Home Assistant itself", self.fake.seen[1]["prompt"])
+        self.assertFalse(again["ok"], "one answer per question")
+        self.assertEqual(1, self.env.tell.read_state(first["id"])["answered"])
+        self.assertEqual(["sensor.hvac_delta"], second["house"])
+
+    def test_the_card_only_answer_stays_on_the_dashboard(self):
+        self.fake = FakeBrain(self.env, self.answer)
+        self.fake.start()
+        self.addCleanup(self.fake.stop.set)
+
+        async def go():
+            first = await finish(self.env, self.env.tell.start({"kind": "dashboard"}, "Add an HVAC card"))
+            out = self.env.tell.answer_question(first["id"], 0)
+            return await finish(self.env, out)
+        second = asyncio.run(go())
+        self.assertEqual("ui", second["scope"])
+        self.assertIn("Scope: MORPH ONLY", self.fake.seen[1]["prompt"])
+
+    def test_a_question_that_is_not_one_is_dropped(self):
+        clean = self.env.tell.clean_question
+        self.assertIsNone(clean("yes?"))
+        self.assertIsNone(clean({"text": "One option?", "options": [{"label": "a", "request": "b"}]}))
+        self.assertIsNone(clean({"text": "", "options": [{"label": "a", "request": "b"}] * 2}))
+        q = clean({"text": "Pick", "options": [{"label": "a", "request": "b", "home_assistant": "yes"}] * 2})
+        self.assertFalse(q["options"][0]["home_assistant"], "only a literal true changes Home Assistant")

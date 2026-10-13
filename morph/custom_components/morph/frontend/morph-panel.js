@@ -49,6 +49,14 @@ const REDEFINED = /already been (used|defined)|already defined/i;
 const DASH_CHANGE = /\b(add|remove|delete|hide|show(?! me\b)|move|put|rename|make|change|resize|swap|replace|get rid of|bring back|restore|reorder|group|split|merge|drop|take (?:out|off|away))\b[\s\S]*\b(card|cards|tile|tiles|section|sections|dashboard|greeting|header|story|coming up|timeline|scenes? line|layout|column|columns|widget|chart|graph|morph|this page|the page|screen)\b/i;
 const USAGE_KEEP = 400;
 
+// Why a change to Morph's own code is paused (the add-on's morphcode.py):
+// its own file changed in the update, or another of Morph's modules it
+// builds on did.
+function pausedWhy(r) {
+  if (r && r.why === 'others' && (r.moved || []).length) return `Morph was updated and its ${r.moved.slice(0, 3).join(', ')}${r.moved.length > 3 ? ' and more' : ''} changed, which this change builds on. Morph’s own ${r.name} is running until brAIn checks the change still fits.`;
+  return 'Morph’s own is running until the change is made again on the new version.';
+}
+
 class MorphPanel extends HTMLElement {
   constructor() {
     super();
@@ -470,6 +478,7 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     if (window.__morphFallback) out.push(note('A change to Morph itself did not load, so Morph is running its own copy.', window.__morphFallback, '<button type="button" class="wd strong" data-act="page" data-v="settings">See the changes</button>'));
     const st = (this.data && this.data.state) || {};
     const names = (st.code || []).filter((r) => r.status === 'paused').map((r) => r.name).slice(0, 3);
+    const why = (name) => pausedWhy((st.code || []).find((r) => r.name === name));
     // "Make it again" opens brAIn's box HERE, and the note stays until the
     // box is closed: once brAIn has written the copy it is no longer paused,
     // and a note that vanished with the box in it took the result with it.
@@ -493,11 +502,11 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       // edited in place was back to "Make it again" before anyone saw it.
       const r = this.s.redo && this.s.redo.name === name ? this.s.redo : null;
       if (r && !r.error) {
-        out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span><span class="small" data-since="${r.at}"></span></div>`));
+        out.push(note(`Morph was updated, so your change to its ${name} is paused.`, why(name), `<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span><span class="small" data-since="${r.at}"></span></div>`));
         return;
       }
-      const why = r && r.error ? `<p class="sm" style="color:var(--rose);margin:0">brAIn did not start: ${esc(r.error)}</p>` : '';
-      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, 'Morph’s own is running until the change is made again on the new version.', `${why}<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">${why ? 'Try again' : 'Make it again'}</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
+      const failed = r && r.error ? `<p class="sm" style="color:var(--rose);margin:0">brAIn did not start: ${esc(r.error)}</p>` : '';
+      out.push(note(`Morph was updated, so your change to its ${name} is paused.`, why(name), `${failed}<button type="button" class="wd go" data-act="code-redo" data-v="${esc(name)}">${failed ? 'Try again' : 'Make it again'}</button><button type="button" class="wd" data-act="code-reset" data-v="${esc(name)}">Use Morph’s own</button>`));
     });
     return out.join('');
   }
@@ -773,7 +782,7 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
       // An opened card carries Morph's mark: one press opens the Tell box for
       // this card, so changing it does not mean going through Edit.
       const mark = this.admin() && !this.s.edit ? `<div class="tellmark" data-snap-skip="1"><button type="button" data-act="tell-card" data-v="${esc(id)}" aria-label="Tell brAIn what to change about ${esc(name)}" title="Tell brAIn what to change">${MARK(20)}</button></div>` : '';
-      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${mark}${T.more(ctx)}</div>`;
+      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${mark}${T.more(ctx)}${T.host ? '' : this.moreInfoHtml(card, ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
       if (open && mode === 'tell') moreHtml = `<div class="more">${this.tellBox('card', id)}</div>`;
     } catch (e) {
@@ -802,6 +811,21 @@ ${a ? `<div class="answer rise"><span class="small">${esc(a.q)}</span><p>${esc(a
     this.setHtml(face, faceHtml);
     this.setHtml(moreEl, moreHtml);
     if (T.host) this.mountLovelace(face, card);
+  }
+
+  // Home Assistant's own pages for what an opened card shows: the entity's
+  // more-info dialog (history, attributes, settings, related) and, for an
+  // admin, its device page. The dialog is Home Assistant's, opened the way
+  // a Lovelace card opens it, so it is whatever this core's dialog is.
+  moreInfoHtml(card, ctx) {
+    const ids = card.entities || [];
+    const eid = ctx.member || card.entity || (ids.length === 1 ? ids[0] : '');
+    if (!eid || !this.hass.states[eid]) return '';
+    const reg = this.hass.entities && this.hass.entities[eid];
+    const dev = reg && reg.device_id;
+    const who = ctx.member ? friendly(this.hass, eid) : '';
+    const btn = (act, v, label) => `<button type="button" class="wd" data-ctl="1" data-act="${act}" data-v="${esc(v)}">${esc(label)}</button>`;
+    return `<div class="moreinfo">${btn('more-info', eid, who ? `${who}: details` : 'Details')}${dev && this.admin() ? btn('open-device', dev, 'Device page') : ''}</div>`;
   }
 
   async mountLovelace(face, card) {
@@ -916,7 +940,7 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     }
     const sugs = (TELL_SUGS[kind] || []).map((s) => `<button type="button" class="wd" data-act="tell-sug" data-v="${esc(s)}" style="font-size:13px;min-height:34px">${esc(s)}</button>`).join('');
     const head = `<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell brAIn</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>`;
-    const scope = composing ? `<span class="small">Changes this dashboard. Say so if Home Assistant itself should change (“rename the entity”).</span>` : '';
+    const scope = composing ? `<span class="small">${kind === 'code' ? 'Changes Morph’s own code for this house.' : 'Changes this dashboard only.'} Home Assistant is changed only if you ask (“make a sensor for…”), and nothing goes to GitHub unless you say yes.</span>` : '';
     if (composing) {
       return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${this.shotHtml(t.shot, t.turns && t.turns.length ? 'How it looks now — brAIn sees this' : 'What brAIn will see')}
 <textarea class="tellin" rows="3" data-keep="tell" data-tellkey="${esc(kind + ':' + (id || ''))}" aria-label="What should change" placeholder="${esc(kind === 'dashboard' ? 'Add a Pets section with the feeder and water bowl…' : t.turns && t.turns.length ? 'What should it do differently?' : 'Say what should change…')}"></textarea>${scope}
@@ -935,19 +959,44 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     return `<div data-ctl="1" data-tell="1" class="tell" style="margin-top:6px">${head}${turns}
 <span style="font-size:14px">“${esc(t.text)}”</span>${picture}
 <div class="steps">${steps || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div>${working}
-${done ? `<p class="rise" style="font-size:14px;line-height:1.5${st.unchanged || st.phase === 'failed' ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>${this.showsHtml(st)}${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
+${done ? `<p class="rise" style="font-size:14px;line-height:1.5${st.unchanged || st.phase === 'failed' ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>${this.whatHtml(st, kind)}${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.questionHtml(st, t)}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
 ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`;
   }
 
-  // What Morph read back off the dashboard once brAIn finished — the
-  // difference on screen, worked out from the file, not from brAIn's words —
-  // and whether this screen has caught up with it.
-  showsHtml(st) {
+  // What a request touched, one line per place it could have: the
+  // dashboard (read back off the file, not taken from brAIn's words), Home
+  // Assistant, Morph's own code, brAIn's memory and GitHub. Every line is
+  // there whether or not anything happened in that place, so "it only
+  // changed the dashboard" is something a person reads, not infers.
+  whatHtml(st, kind) {
+    const row = (k, v, tone) => `<div class="what"><span class="wk">${esc(k)}</span><span class="wv"${tone ? ` style="color:${tone}"` : ''}>${v}</span></div>`;
+    const rows = [];
     const shows = st.shows || [];
     const stale = st.revision && this.data && this.data.mirror && this.data.mirror.revision !== st.revision;
-    const list = shows.length ? `<div class="sm" style="display:flex;flex-direction:column;gap:2px"><span class="label">On the dashboard now</span>${shows.map((x) => `<span>${esc(x)}</span>`).join('')}</div>` : '';
-    const refresh = stale ? `<p class="sm" style="color:var(--amber)">This screen has not caught up with the change yet. <button type="button" class="wd go" data-act="tell-refresh" style="min-height:28px">Refresh</button></p>` : '';
-    return list + refresh;
+    if (kind !== 'code') {
+      const parts = shows.map((x) => `<span>${esc(x)}</span>`);
+      if (st.cards) parts.push('<span>Custom card code changed</span>');
+      if (stale) parts.push('<span style="color:var(--amber)">This screen has not caught up yet. <button type="button" class="wd go" data-act="tell-refresh" style="min-height:28px">Refresh</button></span>');
+      rows.push(row('Dashboard', parts.length ? parts.join('') : st.undone ? 'Put back' : 'Nothing changed', parts.length ? '' : 'var(--muted)'));
+    }
+    const house = st.house || [];
+    rows.push(row('Home Assistant', house.length ? house.map((x) => `<span>${esc(x)}</span>`).join('') + (st.undone ? '<span class="small">brAIn was asked to put these back.</span>' : '<span class="small">Undo asks brAIn to put these back.</span>') : 'Not changed', house.length ? '' : 'var(--muted)'));
+    if ((st.code || []).length || kind === 'code') rows.push(row('Morph’s code', (st.code || []).length ? `${esc(st.code.join(', '))}<span class="small">Runs after a reload.</span>` : 'Not changed', (st.code || []).length ? '' : 'var(--muted)'));
+    if (st.facts_filed) rows.push(row('brAIn’s memory', `${st.facts_filed} fact${st.facts_filed === 1 ? '' : 's'} about the house queued`));
+    const issue = st.code_issue;
+    rows.push(row('GitHub', !issue ? 'Nothing sent' : st.issue === 'sent' ? 'Sent to your private reports repository' : st.issue === 'declined' ? 'Not sent' : 'Not sent — it asks below', issue && st.issue === 'sent' ? 'var(--teal)' : 'var(--muted)'));
+    return `<div class="whatlist rise">${rows.join('')}</div>`;
+  }
+
+  // A choice brAIn left for the person, as buttons. The answer is the next
+  // request, started from the option stored with this tell; one that
+  // changes Home Assistant says so on the button.
+  questionHtml(st, t) {
+    const q = st.question;
+    if (!q || st.undone) return '';
+    if (st.answered != null) return `<p class="sm">You chose: ${esc((q.options[st.answered] || {}).label || '')}</p>`;
+    const busy = t && t.answering;
+    return `<div class="issue askq rise"><b>${esc(q.text)}</b><div class="row" style="flex-wrap:wrap;gap:6px 18px">${q.options.map((o, i) => `<button type="button" class="wd go" data-act="tell-answer" data-v="${i}"${busy ? ' disabled' : ''}>${esc(o.label)}</button>${o.home_assistant ? '<span class="small">changes Home Assistant</span>' : ''}`).join('')}</div>${busy ? '<div class="working"><span class="pulse"></span><span>Handing it to brAIn…</span></div>' : ''}</div>`;
   }
 
   shotHtml(shot, caption) {
@@ -1610,6 +1659,20 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         if (t.kind !== 'code') this.shoot(this.s.tell); // brAIn sees how it looks NOW
         this.schedule(); return;
       }
+      case 'more-info': this.dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId: v }, bubbles: true, composed: true })); return;
+      case 'open-device': window.history.pushState(null, '', `/config/devices/device/${encodeURIComponent(v)}`); window.dispatchEvent(new CustomEvent('location-changed', { detail: { replace: false } })); return;
+      case 'tell-answer': {
+        const t = this.s.tell; if (!t || !t.tellId || t.answering) return;
+        const q = t.state && t.state.question; const o = q && q.options[Number(v)]; if (!o) return;
+        t.answering = true; this.schedule();
+        let r;
+        try { r = await H.callWS({ type: 'morph/request', kind: 'tell_answer', payload: { id: t.tellId, choice: Number(v) } }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+        t.answering = false;
+        if (!r || !r.ok || !r.id) { this.toast((r && r.error) || 'Morph could not hand that to brAIn.'); this.schedule(); return; }
+        const turns = [...(t.turns || []), { text: t.text, say: (t.state && t.state.say) || '', before: t.shot && t.shot.url, after: t.after }];
+        this.s.tell = { kind: t.kind, id: t.id, label: t.label, entity: t.entity, path: t.path, text: o.request, sent: true, tellId: r.id, state: r, previous: t.tellId, turns };
+        this.pollTell(true); return;
+      }
       case 'tell-issue': {
         const t = this.s.tell; if (!t || !t.tellId) return;
         const r = await H.callWS({ type: 'morph/request', kind: 'tell_issue', payload: { id: t.tellId, verb: v } });
@@ -1755,7 +1818,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const rows = st.code || [];
     const head = '<span class="label">Changes to Morph itself</span>';
     if (!rows.length) return `${head}<p class="sm">None. brAIn can change any part of Morph — its header, its cards, how it lays things out. Ask in Edit, and Morph asks whether to send the change on as an issue.</p>`;
-    return head + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? 'Morph was updated underneath this change, so Morph’s own is running.' : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button></div>`).join('');
+    return head + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Make it again</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Use Morph’s own</button></div>`).join('');
   }
 
   settingsHtml() {

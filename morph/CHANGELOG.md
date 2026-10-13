@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.4
+
+### Added
+
+- **A Tell's result says where every change landed.** One line each for the
+  dashboard, Home Assistant, Morph's own code, brAIn's memory and GitHub,
+  shown whether or not anything happened there. A Home Assistant change is
+  listed with the note that Undo asks brAIn to put it back, and GitHub reads
+  *Nothing sent* unless you say yes to an issue. Before you send, the box
+  says what a request may touch.
+- **brAIn asks when the choice is yours.** A card that works a number out
+  from other sensors has no history, because Home Assistant records only
+  entities. brAIn now builds the card with the number worked out in it and
+  asks whether to keep it that way or make a Home Assistant template sensor
+  so it is recorded. The answers are buttons, the one that changes Home
+  Assistant says so, and pressing it is your next request.
+- **Details and Device page on an opened card.** Details opens Home
+  Assistant's own dialog for the card's entity (or the row you tapped);
+  Device page goes to its device in Home Assistant's settings.
+
+### Fixed
+
+- **An update to any of Morph's modules pauses your changes to Morph's code.**
+  A copy was paused only when its own file changed, so a changed
+  `morph-panel.js` kept running beside an updated `engine.js` it imports.
+  The note names the modules that moved, and **Make it again** asks brAIn to
+  check the copy still fits them. A redo brAIn answered puts the copy back in
+  use whether or not it had to edit it, and **Undo** pauses it again.
+
 ## 0.5.3
 
 ### Fixed

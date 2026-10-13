@@ -29,7 +29,7 @@
  * Exits non-zero with every failure listed.
  */
 import { chromium } from 'playwright';
-import { route, ORIGIN } from './morph-fixture.mjs';
+import { route, ORIGIN, VERSION } from './morph-fixture.mjs';
 
 const problems = [];
 const fail = (where, what) => problems.push(`${where}: ${what}`);
@@ -362,7 +362,8 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   const box = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tell]'); return { text: b ? b.innerText : '', figs: b ? b.querySelectorAll('figure.shot img').length : 0 }; });
   if (!/Looking at the screenshot/.test(box.text)) fail(name, 'brAIn\'s own steps are not shown while it works');
   if (!/brAIn saw:/.test(box.text)) fail(name, 'the finished tell does not say what brAIn saw');
-  if (!/On the dashboard now/i.test(box.text) || !/Cans/.test(box.text)) fail(name, 'the finished tell does not say what is on the dashboard now (read back from the file)');
+  if (!/Dashboard/.test(box.text) || !/Cans/.test(box.text)) fail(name, 'the finished tell does not say what is on the dashboard now (read back from the file)');
+  if (!/Home Assistant\s*Not changed/.test(box.text) || !/GitHub\s*Nothing sent/.test(box.text)) fail(name, `the finished tell does not say Home Assistant and GitHub were left alone (${box.text.slice(0, 300)})`);
   if (box.figs < 2) fail(name, `the finished tell shows ${box.figs} picture(s), not before and after`);
   atRest(`${name} with a tell open`, await snapshot(p));
   // Tell it more: a second turn, photographed again, with the first above it.
@@ -490,7 +491,7 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   if (/is paused/.test(done)) fail(`redo ${name}`, 'the note still says the change is paused after brAIn made it again');
   await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="settings"]'); b && b.click(); });
   await settle(p, 700);
-  if (!(await p.evaluate(() => window.__panel.shadowRoot.textContent.includes('Morph 0.5.3')))) fail(`redo ${name}`, 'Settings does not say which Morph is running');
+  if (!(await p.evaluate((v) => window.__panel.shadowRoot.textContent.includes('Morph ' + v), VERSION))) fail(`redo ${name}`, 'Settings does not say which Morph is running');
   await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="home"]'); b && b.click(); });
   await settle(p, 700);
   // A press brAIn could not take says why, in the note, and can be tried again.
@@ -501,6 +502,59 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
   const refused = await notes();
   if (!/brAIn did not start: brAIn is installed but its Automation integration is off/.test(refused)) fail(`redo ${name}`, `a refusal is not said in the note (${refused.slice(0, 160)})`);
   if (!(await p.locator('[data-act="code-redo"]').count())) fail(`redo ${name}`, 'a refused press cannot be tried again');
+  await ctx.close();
+}
+
+// A card brAIn worked a number out for: the result says where each change
+// landed, brAIn's question is buttons, and the button that changes Home
+// Assistant says so and starts the next request. An opened card offers
+// Home Assistant's own details dialog and, for an admin, the device page.
+for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(name === 'phone' ? { hasTouch: true } : {}) });
+  await route(ctx, { narrow: name === 'phone' });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 900);
+  await p.evaluate(() => window.__panel.openView('c_lr_fan', 'adv'));
+  await settle(p, 900);
+  const info = await p.evaluate(() => { const r = window.__panel.shadowRoot; return { details: !!r.querySelector('[data-tile="c_lr_fan"] [data-act="more-info"][data-v="fan.living_room"]'), device: !!r.querySelector('[data-tile="c_lr_fan"] [data-act="open-device"][data-v="dev_lr_fan"]') }; });
+  if (!info.details) fail(`more-info ${name}`, 'an opened card does not offer Home Assistant’s details');
+  if (!info.device) fail(`more-info ${name}`, 'an opened card on a device does not offer its device page');
+  if (info.details) {
+    const seen = await p.evaluate(() => new Promise((res) => { window.addEventListener('hass-more-info', (e) => res(e.detail && e.detail.entityId), { once: true }); window.__panel.shadowRoot.querySelector('[data-act="more-info"]').click(); setTimeout(() => res(null), 1000); }));
+    if (seen !== 'fan.living_room') fail(`more-info ${name}`, `Details did not ask Home Assistant for its dialog (${seen})`);
+  }
+  if (info.device) {
+    const where = await p.evaluate(() => new Promise((res) => { window.addEventListener('location-changed', () => res(location.pathname), { once: true }); window.__panel.shadowRoot.querySelector('[data-act="open-device"]').click(); setTimeout(() => res(null), 1000); }));
+    if (where !== '/config/devices/device/dev_lr_fan') fail(`more-info ${name}`, `Device page did not go to the device (${where})`);
+    await p.evaluate(() => history.pushState(null, '', '/'));
+  }
+  const btns = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('.moreinfo button')].map((b) => b.getBoundingClientRect().height));
+  if (name === 'phone' && btns.some((x) => x < 40)) fail(`more-info ${name}`, `a details button is under the touch floor (${btns.join(', ')})`);
+  // Tell brAIn about it; the fixture answers with a question.
+  await p.evaluate(() => window.__panel.openTell({ kind: 'card', id: 'c_lr_fan', from: 'adv' }));
+  await settle(p, 600);
+  await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('[data-tell] textarea'); ta.value = 'Show the supply/return difference with its history'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
+  const scopeLine = await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tell]').innerText);
+  if (!/Home Assistant is changed only if you ask/.test(scopeLine) || !/nothing goes to GitHub unless you say yes/.test(scopeLine)) fail(`question ${name}`, 'the Tell box does not say what a request may touch before it is sent');
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-send"]').click());
+  await settle(p, 3500);
+  const box = () => p.evaluate(() => (window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || '');
+  let text = await box();
+  if (!/Keep a history of the supply\/return difference/.test(text)) fail(`question ${name}`, `brAIn’s question is not on screen (${text.slice(0, 200)})`);
+  if (!/changes Home Assistant/.test(text)) fail(`question ${name}`, 'the answer that changes Home Assistant does not say so');
+  if (!/brAIn’s memory\s*2 facts/.test(text)) fail(`question ${name}`, 'the facts queued for brAIn’s memory are not said');
+  const wide = await p.evaluate(() => { const vw = window.innerWidth; return [...window.__panel.shadowRoot.querySelectorAll('[data-tell] *')].filter((e) => e.getBoundingClientRect().right > vw + 1).slice(0, 4).map((e) => `${e.tagName}.${e.className}`); });
+  if (wide.length) fail(`question ${name}`, `the result is wider than the screen: ${wide.join(', ')}`);
+  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-answer"][data-v="1"]').click());
+  await settle(p, 300);
+  const sent = await p.evaluate(() => window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell_answer'));
+  if (!sent || sent.payload.choice !== 1) fail(`question ${name}`, `the answer was not sent as the choice pressed (${JSON.stringify(sent)})`);
+  await settle(p, 3500);
+  text = await box();
+  if (!/Make a template sensor sensor\.hvac_delta/.test(text)) fail(`question ${name}`, `the answer did not become the next request (${text.slice(0, 200)})`);
+  if (!/Home Assistant\s*sensor\.hvac_delta/.test(text) || !/Undo asks brAIn to put these back/.test(text)) fail(`question ${name}`, `the Home Assistant change is not said with its undo (${text.slice(0, 300)})`);
   await ctx.close();
 }
 
