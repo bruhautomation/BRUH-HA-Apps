@@ -562,7 +562,7 @@ jobs:
           cp -r morph/custom_components/morph custom_components/morph
 
       - name: Run hassfest
-        uses: home-assistant/actions/hassfest@06749dd8c0b54f350bc69c8752456cee498808a3  # master @ 2026-08-03
+        uses: home-assistant/actions/hassfest@50baf3a307f87100cf550d4ae127746595030d5d  # master @ 2026-08-03
 
   apparmor:
     name: AppArmor profiles
