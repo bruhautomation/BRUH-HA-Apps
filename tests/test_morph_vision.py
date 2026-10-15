@@ -77,6 +77,91 @@ class TestTheNightPageIsTheOneThingWrong(unittest.TestCase):
     def test_a_locked_house_at_night_lifts_nothing(self):
         self.assertEqual(self.compute(alarm="armed_night")["now"], [])
 
+    def test_armed_home_is_night_until_a_rhythm_is_measured(self):
+        # The house arms armed_home at bedtime and brAIn has not measured
+        # its wake and settle yet: at 11:30 PM that is the night page; at
+        # noon armed_home is a house armed "stay", not night.
+        r = run_node(f"""
+            const S = await import({SAL});
+            {house(alarm="armed_home", lock="unlocked", warm=True)}
+            const at = (h, m) => {{ const d = new Date(now); d.setHours(h, m, 0, 0); return d.getTime(); }};
+            const late = S.compute(items, {{ now: at(23, 30), states, feed, nowMax: 3 }}, null);
+            const noon = S.period({{ now: at(12, 0), states, feed }});
+            console.log(JSON.stringify([late.period, late.now, noon]));
+        """)
+        self.assertEqual(r, ["night", ["c_lock"], "day"])
+
+    def test_the_house_alarm_is_the_one_on_the_dashboard(self):
+        r = run_node(f"""
+            const S = await import({SAL});
+            {house(alarm="disarmed")}
+            states['alarm_control_panel.unifi'] = {{ entity_id: 'alarm_control_panel.unifi', state: 'armed_night', attributes: {{}}, last_changed: ago(1) }};
+            const off = S.period({{ now, states, feed, alarms: ['alarm_control_panel.house'] }});
+            states['alarm_control_panel.house'].state = 'armed_night';
+            const on = S.period({{ now, states, feed, alarms: ['alarm_control_panel.house'] }});
+            console.log(JSON.stringify([off, on]));
+        """)
+        self.assertEqual(r, ["day", "night"])
+
+
+@unittest.skipUnless(HAS_NODE, "node is needed to drive the panel's modules")
+class TestARoomIsAsleepWhenItsSleeperIs(unittest.TestCase):
+
+    def test_a_fan_named_for_sleep_is_not_a_sleeper(self):
+        r = run_node(f"""
+            const S = await import({SAL});
+            const st = (id, state, name) => ({{ entity_id: id, state, attributes: {{ friendly_name: name }} }});
+            console.log(JSON.stringify([
+              S.sleepSignal('input_boolean.sleeping_headphones_fan', st('input_boolean.sleeping_headphones_fan', 'on', 'Sleeping headphones fan')),
+              S.sleepSignal('binary_sensor.kaz_asleep', st('binary_sensor.kaz_asleep', 'on', 'Kaz asleep')),
+              S.sleepSignal('sensor.lev_sleep_state', st('sensor.lev_sleep_state', 'Asleep', 'Lev sleep state')),
+              S.sleepSignal('sensor.lev_sleep_state', st('sensor.lev_sleep_state', 'Awake', 'Lev sleep state')),
+              S.sleepSignal('input_select.kids_room_mode', st('input_select.kids_room_mode', 'Sleep', 'Kids room mode')),
+              S.sleepSignal('switch.sleep_sound_machine', st('switch.sleep_sound_machine', 'on', 'Sleep sound machine')),
+            ]));
+        """)
+        self.assertEqual(r, [False, True, True, False, True, False])
+
+
+@unittest.skipUnless(HAS_NODE, "node is needed to drive the panel's modules")
+class TestAPredictionArrivesEarly(unittest.TestCase):
+    """§7.1: at the start of a habit's window the control lifts into Now on
+    a phone and to the top of its room on a tablet; two ignored windows and
+    the prediction stops."""
+
+    def run_habit(self, device="personal", weight=None, fault=False):
+        return run_node(f"""
+            const S = await import({SAL});
+            const now = Date.now();
+            const d = new Date(now); const minute = d.getHours() * 60 + d.getMinutes() + 5;
+            const states = {{
+              'light.master': {{ entity_id: 'light.master', state: 'off', attributes: {{}}, last_changed: new Date(now - 3 * 3600000).toISOString() }},
+              'sensor.freezer': {{ entity_id: 'sensor.freezer', state: '5', attributes: {{}}, last_changed: new Date(now - 3600000).toISOString() }},
+            }};
+            const feed = {{ v: 1, at: now / 1000, habits: [{{ entity_id: 'light.master', state: 'on', minute, spread: 7, days: '', share: 0.82, days_seen: 23, person: null }}] }};
+            const items = [{{ id: 'c_master', sec: 's_bed', entities: ['light.master'] }}, {{ id: 'c_freezer', sec: 's_garage', entities: ['sensor.freezer'] }}];
+            const cases = {json.dumps(bool(fault))} ? {{ 'sensor.freezer': [{{ severity: 'critical', claim: 'Freezer warm' }}] }} : {{}};
+            const ctx = {{ now, states, feed, nowMax: 1, viewer: {{ device: {json.dumps(device)} }}, casesByEntity: cases, habitWeights: {json.dumps({"light.master": weight} if weight is not None else {})} }};
+            const r = S.compute(items, ctx, null);
+            console.log(JSON.stringify({{ band: r.items.c_master.band, predicted: !!r.items.c_master.predicted, now: r.now }}));
+        """)
+
+    def test_on_a_phone_it_lifts_into_now(self):
+        r = self.run_habit()
+        self.assertTrue(r["predicted"])
+        self.assertEqual(r["now"], ["c_master"])
+
+    def test_on_a_tablet_it_leads_its_room(self):
+        self.assertEqual(self.run_habit(device="family")["band"], "lead")
+
+    def test_it_never_outranks_a_fault(self):
+        self.assertEqual(self.run_habit(fault=True)["now"], ["c_freezer"])
+
+    def test_two_ignored_windows_stop_it(self):
+        r = self.run_habit(weight=0.25)
+        self.assertFalse(r["predicted"])
+        self.assertNotEqual(r["band"], "now")
+
 
 @unittest.skipUnless(HAS_NODE, "node is needed to drive the panel's modules")
 class TestThePageMovesOnlyAtAQuietMoment(unittest.TestCase):
@@ -102,9 +187,15 @@ class TestThePageMovesOnlyAtAQuietMoment(unittest.TestCase):
               S.quietMoment({{ ...calm, lastTouch: now - 500 }}, now, false),
               S.quietMoment({{ ...calm, lastArrange: now - 2000 }}, now, false),
               S.quietMoment({{ ...calm, pointerDown: true }}, now, true),
+              S.quietMoment({{ ...calm, open: true }}, now, true),
+              S.quietMoment({{ ...calm, lastArrange: now - 2000 }}, now, true),
+              S.quietMoment({{ ...calm, pointerDown: true }}, now, 'cut'),
             ]));
         """)
-        self.assertEqual(r, [True, False, False, False, False, True])
+        # Something urgent skips the 8 s spacing and nothing else (§4.4):
+        # under a finger or with a card open it waits. Only a cut (a safety
+        # trip, a door opening at night) goes whatever the hands are doing.
+        self.assertEqual(r, [True, False, False, False, False, False, False, True, True])
 
 
 class TestTheDashboardKeepsWhatAPersonSaid(unittest.TestCase):

@@ -209,6 +209,14 @@ change one:
    `dashboard.yaml` like a built-in one while that copy is in use. While it is
    paused, Morph treats it as a Lovelace card, which cannot draw it.
 
+A change to Morph's code is a change to the design, so it needs a reason the
+household gave. The design's numbers — the springs (K = 150, ζ = 0.82), the
+130 ms / 170 ms make-room-first delays, the three themes' backgrounds
+(`#0A0C0E`, `#2A2D31`, `#ECEBE6`), the type sizes, the floors' summaries and
+the room line's meta on a phone — are changed only when a `(you)` line in
+`LEARNED.md` asks for it, and that line is written in the same change. A
+copy that changes them with no such line is drift: put it back.
+
 When Morph is updated and its own copy of a file you changed moves (or another
 module your copy builds on moves), your change is **paused**: Morph's own runs
 until somebody asks you to make it again on the new file. Morph keeps its file
@@ -284,6 +292,15 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 10. **Tap outside folds it back**, all the way to the compact face.
 11. **History belongs to its device**, in the device's colour, starting with
     its icon and name.
+
+12. **One Now and one list of brAIn's cases.** The Now layer is the salience
+    list's, and brAIn's cases are drawn in their rooms by Morph; never a
+    hand-built card or page that lifts doors and locks, lists findings again,
+    counts them or carries Yes/No/Snooze. Never hand-set what is normal (a
+    "96 h" threshold): brAIn measures it.
+13. **No empty-state text and no tooltips.** A section with nothing in it is
+    not drawn; nothing says "All quiet", and no control carries a `title=`
+    hover text (nothing floats).
 
 When a request conflicts with a rule, do what was asked and say which rule it
 bends.

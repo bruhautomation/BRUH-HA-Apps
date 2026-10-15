@@ -56,6 +56,7 @@ export class Engine {
     this.floorHead = {};
     this.moves = {};
     this.lastLayoutKey = '';
+    this.compensate = false;
   }
 
   // A tile is about to be re-parented from section `from` to `to`: remember
@@ -301,6 +302,22 @@ export class Engine {
     const H = pl.reduce((a, p) => Math.max(a, p.y + p.h), 0);
     const key = [openId, this.openMode, N, Math.round(W)].join('|'); const changed = key !== this.key; this.key = key;
 
+    // Scroll compensation (vision §4.4): a rearrangement the panel applied
+    // at a quiet moment, with the page scrolled into the board, moves the
+    // scroll by as much as the first section in view moves, so nothing the
+    // eye is on moves. Only for a rearrangement (`compensate`, set by the
+    // panel), never for an opening, which scrolls to what was opened.
+    let comp = 0;
+    if (this.compensate && !quiet && !snap && !openSec) {
+      const view = this.scrollY() - this.offsetTop(boardEl);
+      if (view > 40) {
+        let best = null;
+        pl.forEach((p) => { const so = this.it['s:' + p.id]; if (!so || !so.el.isConnected) return; if (so.t.y + so.t.h > view && (!best || so.t.y < best.oy)) best = { oy: so.t.y, ny: p.y }; });
+        if (best) comp = best.ny - best.oy;
+      }
+    }
+    if (!quiet) this.compensate = false;
+
     let ox = null, oy = 0;
     if (!quiet && this.originId && this.it['t:' + this.originId]) {
       const t = this.it['t:' + this.originId]; let sid = null;
@@ -345,6 +362,10 @@ export class Engine {
     this.spring('board', boardEl, { x: 0, y: 0, w: W, h: Math.ceil(H) }, snap, 0);
     this.lastPlacement = { pl: pl, flows: flows, u: u, G: G, W: W };
 
+    if (Math.abs(comp) > 1) {
+      const t = Math.max(0, this.scrollY() + comp);
+      if (this.reduce()) this.scrollTo(t); else this.sc = { p: this.scrollY(), v: 0, t };
+    }
     if (!quiet && !snap && changed && openSec) {
       const p = pl.find((q) => q.id === openSec.id); const t = flows[openSec.id].tiles[openId];
       if (p && t) {

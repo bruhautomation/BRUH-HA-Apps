@@ -881,7 +881,24 @@ def _clean_actions(value) -> list[dict]:
     return out
 
 
-_TODO_SENTENCE_RE = re.compile(r"(?<=[.!])\s+")
+# A sentence ends at "." or "!" — but not after "e.g.", "i.e.", "etc." or
+# "vs.", which cut a fix off mid-thought ("Check the hub, e.").
+_TODO_SENTENCE_RE = re.compile(
+    r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\betc\.)(?<!\bvs\.)(?<=[.!?])\s+")
+# A sentence that says what IS ("The battery is low.", "It is unplugged.")
+# rather than what to DO. To Do is a list of errands, so a statement is not
+# one: it is put after "Look at <name>:" instead of standing on its own.
+_STATEMENT_RE = re.compile(
+    r"^(?:the|it|its|it's|this|that|there|these|those|a|an|no|your|my|our)\b"
+    r"|^[\w'’-]+(?:\s+[\w'’-]+){0,3}\s+(?:is|are|was|were|has been|have been)"
+    r"\b", re.I)
+_IMPERATIVE_RE = re.compile(
+    r"^(?:add|adjust|ask|call|change|charge|check|clean|clear|close|confirm|"
+    r"delete|disable|empty|enable|fill|fix|give|install|let|lock|look|make|"
+    r"mark|move|open|pair|plug|power|put|re-?pair|re-?interview|reload|"
+    r"remove|rename|replace|reset|restart|run|set|swap|take|tell|test|"
+    r"tighten|top|try|turn|unlock|unplug|update|water|wipe|refill|reboot|"
+    r"recharge|re-?add|re-?seat|reseat|tidy|top up|book|order|buy)\b", re.I)
 _IT_RE = re.compile(r"\bit\b", re.I)
 _ITS_RE = re.compile(r"\bits\b", re.I)
 _NOTHING_RE = re.compile(r"^(?:nothing|no action|none)\b", re.I)
@@ -917,41 +934,118 @@ def _display_name(entity_id: str, names: dict | None = None) -> str:
     return str(row or "").strip() if isinstance(row, str) else ""
 
 
+def is_statement(text: str) -> bool:
+    """Whether a sentence says what is, rather than what to do."""
+    text = " ".join(str(text or "").split())
+    if not text or _IMPERATIVE_RE.match(text):
+        return False
+    return bool(_STATEMENT_RE.match(text))
+
+
+def _with_name(sentence: str, name: str) -> str:
+    """The sentence with its first "it"/"its" turned into the thing's name,
+    or the name put in front when the sentence names nothing."""
+    if not name or name.casefold() in sentence.casefold():
+        return sentence
+    # A label that already reads "the scene “before movie”" takes no second
+    # "the" — "the the scene" was the garble on the house's list.
+    the = "" if re.match(r"(?i)^the\b", name) else "the "
+    if _ITS_RE.search(sentence):
+        return _ITS_RE.sub(f"{the}{name}'s", sentence, count=1)
+    if _IT_RE.search(sentence):
+        return _IT_RE.sub(f"{the}{name}", sentence, count=1)
+    body = sentence.rstrip(" .!")
+    if len(body) > 1 and body[1:2].islower():
+        body = body[0].lower() + body[1:]
+    return f"{name}: {body}"
+
+
 def derive_todo_text(row: dict, name: str = "") -> str:
     """The To Do sentence for a row that was filed without one.
 
     Deterministic and cheap, because it runs on every read of a row a
-    producer could not word: the first sentence of `fix`, with the first
-    "it"/"its" turned into the thing's name ("Re-pair it" under the hall
-    sensor is "Re-pair the Hall sensor."), and the name added in brackets
-    when the sentence names nothing. A fix that says nothing is needed, or
-    a row with no fix at all, is "Look at <friendly name>." — the one
+    producer could not word: the first sentence of `fix` that is an errand
+    rather than a statement, with the first "it"/"its" turned into the
+    thing's name ("Re-pair it" under the hall sensor is "Re-pair the Hall
+    sensor."), and the name put in front when the sentence names nothing
+    ("Garage node: reset the Z-Wave node."). A fix that says only what is
+    wrong becomes "Look at <name>: <what is wrong>"; one that says nothing
+    is needed, or none at all, is "Look at <friendly name>." — the one
     errand that is always true — and a row about no entity says what to
-    look into in the row's own words, which is the only thing left to name.
+    look into in the row's own words.
     """
     if not isinstance(row, dict):
         return ""
     name = str(name or "").strip()
     eid = str(row.get("entity_id") or "").strip()
     fix = " ".join(str(row.get("fix") or "").split())
-    first = _TODO_SENTENCE_RE.split(fix, maxsplit=1)[0].strip() if fix else ""
-    if first and not first.endswith("?") and not _NOTHING_RE.match(first):
-        if name and name.casefold() not in first.casefold():
-            if _ITS_RE.search(first):
-                first = _ITS_RE.sub(f"the {name}'s", first, count=1)
-            elif _IT_RE.search(first):
-                first = _IT_RE.sub(f"the {name}", first, count=1)
-            else:
-                first = first.rstrip(" .!") + f" ({name})"
-        cleaned = clean_todo_text(first)
+    sentences = [x.strip() for x in _TODO_SENTENCE_RE.split(fix) if x.strip()] \
+        if fix else []
+    statement = ""
+    for first in sentences:
+        if first.endswith("?"):
+            continue
+        if _NOTHING_RE.match(first):
+            break
+        if is_statement(first):
+            statement = statement or first
+            continue
+        if statement and _IT_RE.search(first):
+            # "The battery is low. Replace it." — the "it" is the battery,
+            # not the thing, so the statement rides along to say what.
+            body = statement.rstrip(" .!")
+            body = body[0].lower() + body[1:] if body[1:2].islower() else body
+            act = first.rstrip(" .!")
+            if name and act[1:2].islower():
+                act = act[0].lower() + act[1:]
+            lead = f"{name}: " if name else ""
+            cleaned = clean_todo_text(f"{lead}{act} — {body}")
+        else:
+            cleaned = clean_todo_text(_with_name(first, name))
         if cleaned:
             return cleaned
-    if name:
-        return clean_todo_text(f"Look at {name}")
-    if eid:
-        return clean_todo_text(f"Look at {eid}")
+    what = name or eid
+    if statement and what:
+        body = statement.rstrip(" .!")
+        if len(body) > 1 and body[1:2].islower():
+            body = body[0].lower() + body[1:]
+        return clean_todo_text(f"Look at {what}: {body}")
+    if what:
+        return clean_todo_text(f"Look at {what}")
     about = str(row.get("claim") or row.get("text") or "").strip()
     return clean_todo_text(f"Look into: {about}") if about else ""
+
+
+def todo_item_text(item: dict, names: dict | None = None) -> str:
+    """What To Do shows for an item already on the list.
+
+    Items moved before findings carried a To Do sentence were filed under
+    the finding's claim ("Hall battery is low"), which is a statement, not
+    an errand; those are reworded on read from the item's own fix and the
+    thing's name, and the stored text is never touched.
+    """
+    if not isinstance(item, dict):
+        return ""
+    text = " ".join(str(item.get("text") or "").split())
+    if not text or not is_statement(text) or item.get("origin") == "hand":
+        return text
+    eid = str(item.get("entity_id") or "")
+    better = derive_todo_text(
+        {"fix": item.get("fix") or "", "entity_id": eid,
+         "claim": item.get("claim") or text},
+        _display_name(eid, names))
+    if better and not better.startswith("Look at"):
+        return better
+    name = _display_name(eid, names)
+    if name:
+        body = text.rstrip(" .!")
+        if body.casefold().startswith(name.casefold()):
+            rest = body[len(name):].strip(" :-—,")
+            return clean_todo_text(f"Look at {name}: it {rest}" if rest else f"Look at {name}") or text
+        if len(body) > 1 and body[1:2].islower():
+            body = body[0].lower() + body[1:]
+        return clean_todo_text(f"Look at {name}: {body}") or text
+    return text
 
 
 def todo_text_of(row: dict, names: dict | None = None) -> str:

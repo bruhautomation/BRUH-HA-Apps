@@ -100,7 +100,9 @@ export function collect(H, now, extra) {
       }
     }
   });
-  (extra || []).forEach((e) => { if (e && e.at > 0 && e.at <= now) out.push(e); });
+  // What happened (then.js) is behind the line; a prediction (a habit's
+  // measured time, a dashed violet dot, §7.1) is ahead of it.
+  (extra || []).forEach((e) => { if (e && e.at > 0 && (e.at <= now || e.kind === 'usual')) out.push(e); });
   const seen = new Set();
   return out.filter((e) => {
     if (!(e.at > 0)) return false;

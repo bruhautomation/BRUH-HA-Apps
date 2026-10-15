@@ -174,7 +174,46 @@ class TestTheToDoSentence(unittest.TestCase):
             "Hall motion sensor"), "Look at Hall motion sensor.")
         self.assertEqual(findings_store.derive_todo_text(
             {"fix": "Reset the Z-Wave node", "entity_id": "sensor.hall"},
-            "Garage node"), "Reset the Z-Wave node (Garage node).")
+            "Garage node"), "Garage node: reset the Z-Wave node.")
+
+    def test_an_errand_not_a_statement(self):
+        # The audit's "battery is low" items: a fix that only says what is
+        # wrong becomes an errand naming the thing, and the "it" after a
+        # statement is the statement's subject, not the device.
+        self.assertEqual(findings_store.derive_todo_text(
+            {"fix": "The battery is low.", "entity_id": "s.h"}, "Hall sensor"),
+            "Look at Hall sensor: the battery is low.")
+        self.assertEqual(findings_store.derive_todo_text(
+            {"fix": "The battery is low. Replace it.", "entity_id": "s.h"},
+            "Hall sensor"), "Hall sensor: replace it — the battery is low.")
+        self.assertEqual(findings_store.derive_todo_text(
+            {"fix": "It is unplugged on purpose? Plug it in.", "entity_id": "s.h"},
+            "Lamp"), "Plug the Lamp in.")
+
+    def test_not_garbled_and_not_cut_off(self):
+        self.assertEqual(findings_store.derive_todo_text(
+            {"fix": "Turn it on.", "entity_id": "scene.x"},
+            "the scene “before movie”"), "Turn the scene “before movie” on.")
+        self.assertEqual(findings_store.derive_todo_text(
+            {"fix": "Check the hub, e.g. the coordinator. Then reload.",
+             "entity_id": "s.h"}, "Hall sensor"),
+            "Hall sensor: check the hub, e.g. the coordinator.")
+
+    def test_an_item_filed_as_a_claim_reads_as_an_errand(self):
+        names = {"sensor.hb": {"name": "Hall battery"}}
+        self.assertEqual(findings_store.todo_item_text(
+            {"text": "Hall battery is low", "entity_id": "sensor.hb",
+             "origin": "finding"}, names), "Look at Hall battery: it is low.")
+        self.assertEqual(findings_store.todo_item_text(
+            {"text": "Buy milk", "origin": "hand"}, names), "Buy milk")
+        self.assertEqual(findings_store.todo_item_text(
+            {"text": "The kettle is descaled", "origin": "hand"}, names),
+            "The kettle is descaled", "a person's own words are theirs")
+        rows = morph_bridge.todo_rows(
+            [{"id": 1, "text": "Hall battery is low", "entity_id": "sensor.hb",
+              "origin": "finding"}], {}, lambda e: "",
+            lambda item: findings_store.todo_item_text(item, names))
+        self.assertEqual(rows[0]["text"], "Look at Hall battery: it is low.")
 
     def test_never_a_question_and_kept_when_written(self):
         self.assertEqual(findings_store.clean_todo_text(
@@ -316,8 +355,8 @@ class TestTheCaseRow(unittest.TestCase):
             {"verb": "dismiss", "label": "Dismiss"},
             {"verb": "not_now", "label": "Snooze"},
             {"verb": "wrong", "label": "Ignore"}])
-        self.assertEqual([a["action"] for a in got],
-                         ["fix", "dismiss", "snooze"])
+        # No Snooze: Morph's face is Fix · Dismiss · To Do (§13.2).
+        self.assertEqual([a["action"] for a in got], ["fix", "dismiss"])
 
     def test_the_ask_line(self):
         self.assertEqual(morph_bridge.ask_line(

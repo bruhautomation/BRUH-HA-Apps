@@ -536,10 +536,10 @@ class TestAgentsMd(unittest.TestCase):
         for f in sorted(FRONTEND.glob("*.js")):
             self.assertIn(f"`{f.name}`", self.text, f.name)
 
-    def test_all_eleven_design_rules(self):
+    def test_all_thirteen_design_rules(self):
         body = self.text[self.text.index("## The design rules"):]
         body = body[:body.index("\n## ", 5)]
-        self.assertEqual([str(i) for i in range(1, 12)],
+        self.assertEqual([str(i) for i in range(1, 14)],
                          [ln.split(".", 1)[0] for ln in body.splitlines() if ln[:1].isdigit()])
 
     def test_the_sections_the_audit_asked_for(self):

@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.1
+
+### Fixed
+
+- **Cases reach Morph with a room.** A case whose subject has no area takes the area most of its evidence is in; ten of twelve cases on a real house went with none.
+- **Morph is not offered Snooze.** Its cards carry Fix, Dismiss and To Do; "remind me later" is a reply's words.
+- **To Do reads as errands.** A fix that only says what is wrong becomes *Look at <thing>: <what is wrong>*; an "it" after such a sentence is not read as the device; a name that already starts with "the" is not doubled; "e.g." no longer cuts a sentence off; and an item filed under a finding's claim before To Do sentences existed is reworded on read (a person's own items never are).
+
 ## 3.0.0
 
 The brAIn half of Morph 1.0. brAIn is the house's mind and Morph, the dashboard, is its face: Morph keeps no list of its own and no measurements of its own, and everything a person does there comes back to brAIn through the same endings as Today, a phone or a Repairs dialog. brAIn's panel port stays unpublished, so the whole wire is files on the shared volume, under `/config/.brain/morph/` and the existing request queue. Morph 1.0 needs brAIn 3.0.

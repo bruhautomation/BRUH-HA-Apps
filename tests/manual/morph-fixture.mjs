@@ -73,7 +73,7 @@ export function house() {
   put(['person.ben', { entity_id: 'person.ben', state: 'home', attributes: { friendly_name: 'Ben' } }]);
   put(['person.cailin', { entity_id: 'person.cailin', state: 'not_home', attributes: { friendly_name: 'Cailin' } }]);
   put(['weather.home', { entity_id: 'weather.home', state: 'partlycloudy', attributes: { friendly_name: 'Home', temperature: 62, humidity: 71, wind_speed: 8, wind_speed_unit: 'mph', temperature_unit: '°F' } }]);
-  put(['alarm_control_panel.house', { entity_id: 'alarm_control_panel.house', state: 'armed_home', attributes: { friendly_name: 'House alarm' } }]);
+  put(['alarm_control_panel.house', { entity_id: 'alarm_control_panel.house', state: 'disarmed', attributes: { friendly_name: 'House alarm' } }]);
   put(['vacuum.obi', { entity_id: 'vacuum.obi', state: 'docked', attributes: { friendly_name: 'Obi', battery_level: 100 } }]);
   ['scene.kitchen_bright', 'scene.kitchen_dim', 'scene.kitchen_off', 'scene.living_room_movie', 'scene.living_room_dim', 'scene.morning', 'scene.evening', 'scene.interior_off'].forEach((e, i) => put([e, { entity_id: e, state: i === 1 || i === 6 ? ago(30) : ago(60 * 30), attributes: { friendly_name: e.split('.')[1].replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) } }]));
   put(['sun.sun', { entity_id: 'sun.sun', state: 'below_horizon', attributes: { next_rising: new Date(Date.now() + 9 * 3600000).toISOString(), next_setting: new Date(Date.now() + 2 * 3600000).toISOString() } }]);

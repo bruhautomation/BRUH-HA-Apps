@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.0.1
+
+From an audit of a real house against the 3.0 vision.
+
+### Fixed
+
+- **A house armed for bed gets its night page.** `armed_home` is night inside the measured settle-to-wake window, and — until brAIn has measured the house's rhythm — between 7 PM and 9 AM, rather than never. `armed_night` is night at any hour. The house's alarm is the alarm panel on the dashboard, not whichever panel Home Assistant lists first (a camera system's panel was being read instead).
+- **A fan named for sleep no longer puts the house into its evening.** A room is asleep when a sleep mode, sleep switch or sleep sensor says so; a switch whose name also names a device (*Sleeping headphones fan*) is a control used at night. A room's sleep sensors are read from its area too, so the ones that are not on the page count. Every room that can sleep being asleep is night.
+- **Something urgent no longer rearranges the page under a finger or an open card.** A serious case only skips the 8-second spacing (§4.4); a safety trip or a door opening at night is the one change that goes at once.
+- **Occupied rooms no longer jump to the top on every device.** Rooms are ordered by the room score through the bands and keep their place unless they lead or need attention; on a family device an occupied room rises one place.
+- **brAIn's cases land in the room they are about.** A room's entities include those inside hosted Lovelace and custom cards, a section with no `area` matches its area by name, and a case is placed by its own subject, then brAIn's area, then the room most of its evidence is in.
+- **A card at the top of its room with a "because" line is a row of its own**, not a row of two heights beside plain strips.
+
+### Added
+
+- **Predictions arrive.** A habit's control lifts into Now on a personal device (to the top of its room on a family one) when its window opens, after anything with a reason of its own; it gets a dashed violet dot on Coming up; a prediction that leaves untouched is reported as ignored, and two ignored windows stop it until it is used again.
+- **Anchors and scroll compensation** (§4.4): a card used on four of the last seven days keeps its slot in its room, and a rearrangement above where you are scrolled moves the scroll with it.
+- `AGENTS.md`: a change to Morph's own code that changes the design's numbers or adds a second Now, a second list of cases or tooltips needs a `(you)` line in `LEARNED.md`; re-merging a paused copy drops what no household rule asked for.
+
 ## 1.0.0
 
 Morph becomes brAIn's face (docs/design/morph-vision.md). Needs brAIn 3.0.0.

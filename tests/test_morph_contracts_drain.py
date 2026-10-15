@@ -380,3 +380,33 @@ class TestTheAskLine(MorphCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestACaseIsSentWithItsRoom(MorphCase):
+    """The audit: ten of twelve cases reached Morph with no area, so most
+    fell to the house-wide fold. A case whose subject has no room takes the
+    room most of its evidence is in."""
+
+    def test_the_evidence_names_the_room(self):
+        ctx = self.server._FACTS_CTX
+        old = ctx.get("entity_areas")
+        ctx["entity_areas"] = {"sensor.garage_freezer": "garage",
+                               "sensor.garage_door": "garage",
+                               "sensor.outdoor": "outside"}
+        try:
+            got = self.server._morph_case_area({
+                "entity_id": "",
+                "evidence": [{"entity": "sensor.outdoor"},
+                             {"entity": "sensor.garage_freezer"},
+                             "sensor.garage_door"]})
+            self.assertEqual(got, "garage")
+            self.assertEqual(self.server._morph_case_area(
+                {"entity_id": "sensor.outdoor",
+                 "evidence": ["sensor.garage_door"]}), "outside",
+                "the subject's own room wins over its evidence")
+            self.assertEqual(self.server._morph_case_area({}), "")
+        finally:
+            if old is None:
+                ctx.pop("entity_areas", None)
+            else:
+                ctx["entity_areas"] = old
