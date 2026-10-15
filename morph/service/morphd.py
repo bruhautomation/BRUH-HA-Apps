@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import brain  # noqa: E402
+import converse  # noqa: E402
 import devloop  # noqa: E402
 import generator  # noqa: E402
 import gitrepo  # noqa: E402
@@ -55,7 +56,7 @@ STATE: dict = {"bootstrapped": False, "last_revision": "", "generate_note": ""}
 # "edited outside Morph" commit must never interleave, or a person's save
 # is committed under the wrong author and its own commit finds nothing.
 LOCK = asyncio.Lock()
-READ_ONLY_KINDS = ("history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw")
+READ_ONLY_KINDS = ("history", "tell", "tell_answer", "learn_now", "tell_issue", "report", "report_withdraw", "converse")
 
 
 # ------------------------------------------------------------- bootstrap
@@ -309,6 +310,28 @@ async def handle(kind: str, p: dict) -> dict:
                         person_words="Merge all paused copies")
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
+    if kind == "converse":
+        # Ask's conversation with brAIn (converse.py): no commit, nothing
+        # on the dashboard; the session rides back for the next turn.
+        st = converse.start(str(p.get("text") or ""), str(p.get("session") or ""))
+        return {"ok": "error" not in st, **st}
+    if kind == "habit":
+        eid = str(p.get("entity") or "")
+        if "." not in eid or len(eid) > 120:
+            return {"ok": False, "error": "Not an entity."}
+        s = await asyncio.to_thread(settings.habit, eid, bool(p.get("used")))
+        if not p.get("used"):
+            await asyncio.to_thread(learning.add_lesson, f"The prediction for {eid} was ignored; it is weighed {s['habit_weights'].get(eid, 1):.2g} now", "learned")
+        await asyncio.to_thread(publish_state)
+        return {"ok": True}
+    if kind == "lesson_add":
+        text = " ".join(str(p.get("text") or "").split())[:300]
+        if not text:
+            return {"ok": False, "error": "Nothing to write."}
+        body, source = learning.split_lesson(text)
+        await asyncio.to_thread(learning.add_lesson, body, source or "you")
+        await asyncio.to_thread(publish_state)
+        return {"ok": True}
     if kind == "lessons":
         await asyncio.to_thread(learning.write_lessons, [str(x) for x in (p.get("lessons") or [])])
         await asyncio.to_thread(publish_state)
@@ -391,12 +414,34 @@ async def _learn(pressed: bool = False) -> None:
     await asyncio.to_thread(publish_state)
 
 
+def _start_suggestion(item: dict) -> str:
+    """The Tell an accepted suggestion asks for, started from the tick's
+    thread on the service's loop."""
+    loop = STATE.get("loop")
+    if not loop:
+        return ""
+
+    async def go() -> str:
+        target = await asyncio.to_thread(
+            tell.target_for, "card" if item.get("card") else "section" if item.get("section") else "dashboard",
+            item.get("card") or item.get("section") or "")
+        st = tell.start(target, item["change"], origin="suggestion", note=item["title"])
+        return st.get("id") or ""
+    try:
+        return asyncio.run_coroutine_threadsafe(go(), loop).result(timeout=30)
+    except Exception:  # noqa: BLE001 — not started is "ask again next time"
+        return ""
+
+
 async def tick_loop() -> None:
     while True:
         try:
             if STATE.get("retry_generate"):
                 await retry_generate()
             await asyncio.to_thread(learning.settle_doing, tell.read_state)
+            # Morph's suggestions are brAIn's cases: filed, withdrawn, and
+            # their endings read back (an accepted one starts its Tell).
+            await asyncio.to_thread(learning.sync_brain, _start_suggestion)
             await asyncio.to_thread(learning.prune_due)
             if learning.due() and not learning.state().get("running"):
                 await _learn()
@@ -429,6 +474,7 @@ async def main() -> None:
     # A learning pass that was running when the add-on stopped never answers.
     if learning.state().get("running"):
         learning._set_state(running="")
+    STATE["loop"] = asyncio.get_running_loop()
     await health_server()
     await bootstrap()
     log.info("Morph %s ready; dashboard at %s", VERSION, paths.DASHBOARD)

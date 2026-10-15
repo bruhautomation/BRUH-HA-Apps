@@ -17,7 +17,13 @@
 //     free place. Make room first, then grow: a growing section waits 130ms
 //     and a growing tile 170ms; a tile travelling more than 30px dips to 12%
 //     opacity on the way.
-//   * A floor heading rides on its floor's highest section every frame.
+//   * A floor heading rides on its floor's highest section every frame. A
+//     floor whose heading is off (`floorHead[f] === 0`, the Now band and a
+//     one-floor dashboard) reserves nothing.
+//   * A tile MOVED into another section (lifted into Now, sent home) keeps
+//     where it is on screen: `moveTile` converts its spring to the new
+//     section's frame, so it travels instead of jumping (vision §8: "a card
+//     that teleports cannot be followed"). Nothing fades on the way.
 //
 // The DOM contract (built by morph-panel.js):
 //   [data-board]                      the positioned container
@@ -47,6 +53,31 @@ export class Engine {
     this.fadingId = null;
     this.onSettle = null;
     this.audit = null;
+    this.floorHead = {};
+    this.moves = {};
+    this.lastLayoutKey = '';
+  }
+
+  // A tile is about to be re-parented from section `from` to `to`: remember
+  // where it is on the board, so layout() can start its spring there.
+  moveTile(id, from) {
+    const t = this.it['t:' + id]; const s = this.it['s:' + from];
+    if (!t || !s) return;
+    this.moves[id] = { ax: s.x + t.x, ay: s.y + t.y };
+  }
+
+  // Tiles change height without their markup changing (an image arriving, a
+  // late custom card, a font): watch their faces and lay out again.
+  watchSize(el) {
+    if (!el || el.__morphWatched || typeof ResizeObserver === 'undefined') return;
+    if (!this.sizeObs) {
+      this.sizeObs = new ResizeObserver(() => {
+        cancelAnimationFrame(this._sizeRaf);
+        this._sizeRaf = requestAnimationFrame(() => this.layout(false, true));
+      });
+    }
+    el.__morphWatched = true;
+    this.sizeObs.observe(el);
   }
 
   reduce() {
@@ -67,6 +98,9 @@ export class Engine {
     const u = (W - G * (N - 1)) / N;
     const px = (w) => w * u + (w - 1) * G;
     const cwOf = (w) => (px(w) - 2 * PAD - 2 * GP - TG * (w - 1)) / w;
+    // offsetHeight rounds DOWN, so a tile 20.3px tall lost its bottom
+    // outline; the layout box is rounded up instead.
+    const hgt = (el) => Math.ceil(el.getBoundingClientRect().height - 0.01);
     const grab = (a) => { const m = {}; r.querySelectorAll('[' + a + ']').forEach((el) => { m[el.getAttribute(a)] = el; }); return m; };
     const GB = grab('data-gbg'), TE = grab('data-tile'), SE = grab('data-sec'), HE = grab('data-sec-head'), TC = grab('data-tc'), FE = grab('data-face'), GL = grab('data-glab');
     const openId = this.openId;
@@ -139,10 +173,10 @@ export class Engine {
         });
       });
       M.sections.forEach((s) => {
-        headH[s.id] = HE[s.id] ? HE[s.id].offsetHeight : 62;
+        headH[s.id] = HE[s.id] ? hgt(HE[s.id]) : 62;
         s.groups.forEach((g) => g.items.forEach((it) => {
-          fH[it.id] = FE[it.id] ? FE[it.id].offsetHeight : 56;
-          hOf[it.id] = it.id === openId && TC[it.id] ? TC[it.id].offsetHeight : fH[it.id];
+          fH[it.id] = FE[it.id] ? hgt(FE[it.id]) : 56;
+          hOf[it.id] = it.id === openId && TC[it.id] ? hgt(TC[it.id]) : fH[it.id];
         }));
       });
     };
@@ -187,7 +221,7 @@ export class Engine {
         boxes[g.key] = { x: PAD, y: top, w: px(w) - 2 * PAD, h: y - top };
         y += GGAP;
       });
-      return { w: w, h: Math.ceil(y - GGAP + PAD), tiles: tiles, labs: labs, boxes: boxes, blank: blank };
+      return { w: w, h: Math.max(headH[s.id] || 0, Math.ceil(y - GGAP + PAD)), tiles: tiles, labs: labs, boxes: boxes, blank: blank };
     };
 
     if (!baseOK) {
@@ -227,8 +261,8 @@ export class Engine {
     });
     const FH = W < 700 ? 76 : 72, FGAP = W < 700 ? 22 : 34;
     let fpos = {}; const FLH = {};
-    r.querySelectorAll('[data-floor]').forEach((el) => { const inn = el.querySelector('[data-flin]'); FLH[el.getAttribute('data-floor')] = inn ? inn.offsetHeight + (W < 700 ? 14 : 16) + 6 : 0; });
-    const fhOf = (f) => Math.max(FH, FLH[String(f)] || 0);
+    r.querySelectorAll('[data-floor]').forEach((el) => { const inn = el.querySelector('[data-flin]'); FLH[el.getAttribute('data-floor')] = inn ? hgt(inn) + (W < 700 ? 14 : 16) + 6 : 0; });
+    const fhOf = (f) => (this.floorHead[String(f)] === 0 ? 0 : Math.max(FH, FLH[String(f)] || 0));
     const place = (oc, ow, hts) => {
       const pl = []; const fp = {}; let cursor = 0, curF = null, top = 0;
       const yAt = (c, w) => { let y = top; pl.forEach((p) => { if (p.f === curF && !(c + w <= p.c || p.c + p.w <= c)) y = Math.max(y, p.y + p.h + G); }); return y; };
@@ -291,10 +325,14 @@ export class Engine {
         te.style.zIndex = id === openId ? '2' : '1';
         const to = this.it['t:' + id]; let td = 0;
         if (to && !quiet) { if (t.w > to.t.w + 1 || t.h > to.t.h + 1) td = 170; else if (t.y < to.t.y - 1 || (t.x < to.t.x - 1 && Math.abs(t.y - to.t.y) < 1)) td = 170; }
-        if (to && !quiet && !snap && id !== openId && (Math.abs(t.y - to.t.y) > 30 || Math.abs(t.x - to.t.x) > 30) && te.animate && !this.reduce()) {
-          try { te.animate([{ opacity: 1 }, { opacity: 0.12, offset: 0.35 }, { opacity: 1 }], { duration: 620, easing: 'ease-in-out' }); } catch (er) { /* WAAPI absent */ }
-        }
         this.spring('t:' + id, te, t, snap, td);
+        // A tile that changed section starts from where it was on screen.
+        const mv = this.moves[id]; const sp = this.it['s:' + p.id];
+        if (mv && sp && !this.reduce()) {
+          const o = this.it['t:' + id];
+          o.x = mv.ax - sp.x; o.y = mv.ay - sp.y; o.live = true; o.at = performance.now() + 60; this.paint(o);
+        }
+        delete this.moves[id];
       });
     });
     pl.forEach((p) => { const f = flows[p.id]; Object.keys(f.tiles).forEach((id) => { if (id !== openId) setW(id, f.tiles[id].w); }); });
@@ -315,7 +353,7 @@ export class Engine {
         const top = this.offsetTop(boardEl) + p.y + t.y; const bot = top + t.h; const sy = this.scrollY();
         let target = null;
         if (top < sy + 70) target = top - 90; else if (bot > sy + vh - 30) target = Math.min(top - 90, bot - vh + 40);
-        if (target != null) this.sc = { p: sy, v: 0, t: Math.max(0, target) };
+        if (target != null) { if (this.reduce()) this.scrollTo(Math.max(0, target)); else this.sc = { p: sy, v: 0, t: Math.max(0, target) }; }
       }
     }
     this.run();
@@ -334,7 +372,9 @@ export class Engine {
 
   scrollToEl(el, pad) {
     if (!el) return;
-    this.sc = { p: this.scrollY(), v: 0, t: Math.max(0, this.offsetTop(el) - (pad || 140)) };
+    const t = Math.max(0, this.offsetTop(el) - (pad || 140));
+    if (this.reduce()) { this.scrollTo(t); return; }
+    this.sc = { p: this.scrollY(), v: 0, t };
     this.run();
   }
 

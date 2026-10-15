@@ -265,31 +265,78 @@ async function comingUp(p, name, narrow) {
   if ((await read()).at != null) fail(where, 'Home did not go back to now');
 }
 
-// A section's title row carries Morph's mark: one press opens the Tell box
-// for the whole room outside Edit, a second folds it away again.
-async function sectionMark(p, name) {
-  const where = `${name} section mark`;
-  const m = await p.evaluate(() => {
-    const b = window.__panel.shadowRoot.querySelector('.sechead .secmark');
-    if (!b) return null;
-    const r = b.getBoundingClientRect();
-    return { id: b.dataset.v, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+// The page brAIn and Morph share (docs/design/morph-vision.md): a verdict
+// at the top, brAIn's cases drawn in the room they are about with a reply
+// line, To Do as a section, and no second door to a Tell beside Ask.
+async function vision(p, name) {
+  const where = `${name} vision`;
+  const v = await p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const reply = root.querySelector('.replyin[data-case="h:1791000100"]');
+    const rr = reply && reply.getBoundingClientRect();
+    const freezer = root.querySelector('[data-case-card="f:1791000000"]');
+    return {
+      story: (root.querySelector('.story') || {}).textContent || '',
+      cases: root.querySelectorAll('.case').length,
+      reply: rr ? { w: rr.width, h: rr.height, fs: parseFloat(getComputedStyle(reply).fontSize) } : null,
+      freezerSec: freezer ? (freezer.closest('[data-sec]') || {}).getAttribute && freezer.closest('[data-sec]').getAttribute('data-sec') : null,
+      todo: root.querySelectorAll('.todorow').length,
+      marks: root.querySelectorAll('.secmark, .hovermark, [data-act="tell-card"], [data-act="tell-sec"]').length,
+      yes: [...root.querySelectorAll('.case button')].map((b) => b.textContent.trim()).filter((t) => /^(Yes|No|Wrong)$/.test(t)),
+    };
   });
-  if (!m) { fail(where, 'no section title carries Morph\'s mark'); return; }
-  if (m.w < 40 || m.h < 40) fail(where, `the mark is ${m.w}×${m.h}, under the 40px target`);
-  await p.mouse.click(m.x, m.y);
-  await settle(p, 500);
-  const open = await p.evaluate((id) => {
-    const t = window.__panel.s.tell;
-    const head = window.__panel.shadowRoot.querySelector(`[data-sec="${id}"] .sechead`);
-    return { kind: t && t.kind, id: t && t.id, box: !!(head && head.querySelector('[data-tell]')) };
-  }, m.id);
-  if (open.kind !== 'section' || open.id !== m.id) fail(where, `pressing it did not open the section's Tell box (${open.kind} ${open.id})`);
-  if (!open.box) fail(where, 'the Tell box is not under the section title');
-  const again = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('.sechead .secmark'); const r = b.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
-  await p.mouse.click(again.x, again.y);
-  await settle(p, 500);
-  if (await p.evaluate(() => !!window.__panel.s.tell)) fail(where, 'pressing it again did not fold the box away');
+  if (!v.story.trim()) fail(where, 'there is no verdict at the top of the page');
+  if (v.cases < 2) fail(where, `brAIn's cases are not on the page (${v.cases})`);
+  if (!v.reply) fail(where, 'a case has no reply line');
+  else {
+    if (v.reply.h < 36) fail(where, `the reply line is ${v.reply.h}px tall, under the touch target`);
+    if (v.reply.fs < 16) fail(where, `the reply line's text is ${v.reply.fs}px, under the 16px floor`);
+  }
+  if (!v.freezerSec || v.freezerSec === '__cases') fail(where, `the freezer case is not drawn in the room it is about (${v.freezerSec})`);
+  if (v.todo < 1) fail(where, 'To Do is not on the page');
+  if (v.marks) fail(where, `${v.marks} Tell marks are on the page; Ask is the one door`);
+  if (v.yes.length) fail(where, `a case carries ${v.yes.join(', ')}: a reply is read, not pressed`);
+  // A reply is a turn, answered in the card.
+  await p.evaluate(() => { const i = window.__panel.shadowRoot.querySelector('.replyin[data-case="h:1791000100"]'); i.focus(); i.value = 'yes, a plug timer'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true })); });
+  await settle(p, 1400);
+  const t = await p.evaluate(() => ({ req: (window.__caseReqs || []).find((x) => x.action === 'reply'), turns: [...window.__panel.shadowRoot.querySelectorAll('[data-case-card="h:1791000100"] .turnline')].map((e) => e.textContent) }));
+  if (!t.req || t.req.text !== 'yes, a plug timer') fail(where, `the reply was not sent as typed: ${JSON.stringify(t.req)}`);
+  if (!t.turns.includes('yes, a plug timer') || t.turns.length < 3) fail(where, `the reply did not become a turn in the card: ${JSON.stringify(t.turns)}`);
+  // A reply that settles the case AND asks for a page change: the case
+  // leaves with brAIn's last word, and Morph runs the Tell brAIn cannot.
+  await p.evaluate(() => { const i = window.__panel.shadowRoot.querySelector('.replyin[data-case="f:1791000000"]'); i.focus(); i.value = 'it is fine, and put it on the kitchen card'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true })); });
+  await settle(p, 1600);
+  const told = await p.evaluate(() => ({ tell: window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell'), gone: !window.__panel.shadowRoot.querySelector('[data-case-card="f:1791000000"]'), toast: (window.__panel.shadowRoot.querySelector('.bar') || {}).innerText || '' }));
+  if (!told.gone) fail(where, 'a case a reply ended is still on the page');
+  if (!told.tell || !/kitchen/i.test(told.tell.payload.text || '')) fail(where, `the page change a reply asked for was not handed to a Tell: ${JSON.stringify(told.tell && told.tell.payload)}`);
+  if (!/asked Morph to add it/.test(told.toast)) fail(where, `brAIn's last word on the ended case was not said: "${told.toast}"`);
+  await p.evaluate(() => { if (window.__panel.s.tell) window.__panel.closeTell(); });
+  await settle(p, 600);
+  atRest(`${name} after a reply`, await snapshot(p));
+}
+
+// At night with the alarm armed, the page is one line about what is wrong
+// and the thing itself, lifted (§11): an unlocked front door, nothing else.
+async function night(p, name) {
+  const where = `${name} night`;
+  await p.evaluate(() => {
+    const S = window.__panel.hass.states;
+    const n = { ...S };
+    n['alarm_control_panel.house'] = { ...S['alarm_control_panel.house'], state: 'armed_night' };
+    n['binary_sensor.garage_freezer'] = { ...S['binary_sensor.garage_freezer'], state: 'off' };
+    n['lock.front_door'] = { ...S['lock.front_door'], state: 'unlocked', last_changed: new Date(Date.now() - 4 * 3600000).toISOString() };
+    window.__panel.hass = { ...window.__panel.hass, states: n };
+  });
+  await settle(p, 2500);
+  const n = await p.evaluate(() => {
+    const r = window.__panel.shadowRoot;
+    const P = window.__panel;
+    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: !!P.s.ask, page: P.s.page, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
+  });
+  if (!/form-night/.test(n.cls)) fail(where, `the armed-night house is not in the night form (${n.cls}) ${n.dbg}`);
+  if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
+  if (n.now.length !== 1 || n.now[0] !== 'c_front_lock') fail(where, `the night page does not hold exactly the unlocked door: ${n.now.join(', ')}`);
+  atRest(`${name} at night`, await snapshot(p));
 }
 
 for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phone', true]]) {
@@ -301,9 +348,24 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await p.goto(ORIGIN + '/');
   await settle(p, 2500);
   atRest(`${name} at rest`, await snapshot(p));
+  await vision(p, name);
+  // A quiet room folds to one line (§6); tapping its name opens it in place.
+  {
+    const f = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('section.folded .roomname'); return b ? b.closest('[data-sec]').getAttribute('data-sec') : null; });
+    if (!f) fail(name, 'no quiet room is folded');
+    else {
+      await p.evaluate((id) => window.__panel.shadowRoot.querySelector(`[data-sec="${id}"] .roomname`).click(), f);
+      await settle(p, 1400);
+      const open = await p.evaluate((id) => { const el = window.__panel.shadowRoot.querySelector(`[data-sec="${id}"]`); return !!el && !el.classList.contains('folded') && el.querySelectorAll('[data-tile]').length > 0; }, f);
+      if (!open) fail(name, `tapping a folded room's name (${f}) did not open it`);
+      atRest(`${name} with a folded room opened`, await snapshot(p));
+    }
+    // The tour below opens every kind of card, so every room stays open.
+    await p.evaluate(() => { window.__panel.data.state.settings = { ...(window.__panel.data.state.settings || {}), fold_rooms: false }; window.__panel._forceApply = true; window.__panel.engine.invalidate(); window.__panel.schedule(); });
+    await settle(p, 1800);
+  }
   await design(p, name, narrow);
   await comingUp(p, name, narrow);
-  await sectionMark(p, name);
 
   // Hold-open, then tap outside, on every kind.
   for (const id of KINDS) {
@@ -379,73 +441,25 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   calls = await p.evaluate(() => window.__calls);
   if (!calls.some((x) => x.service === 'open_cover')) fail(name, 'a second tap did not open the garage door');
 
-  // On a screen with a pointer, a closed card shows Morph's mark in its
-  // top-right corner while it is hovered; pressing it opens the Tell box.
-  if (!narrow) {
-    c = await tileCenter(p, 'c_kitchen_cans');
-    await p.mouse.move(c.x, c.y); await settle(p, 400);
-    const hm = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark'); if (!b) return null; const r = b.getBoundingClientRect(); const t = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"]').getBoundingClientRect(); return { op: parseFloat(getComputedStyle(b).opacity), right: t.right - r.right, top: r.top - t.top }; });
-    if (!hm) fail(name, 'a closed card has no Morph mark to show on hover');
-    else {
-      if (hm.op < 0.5) fail(name, `Morph's mark does not show on hover (opacity ${hm.op})`);
-      if (hm.right > 16 || hm.top > 16) fail(name, `Morph's mark is not in the card's top-right corner (${hm.right}px from the right, ${hm.top}px from the top)`);
-      await p.mouse.move(c.x + 400, c.y + 400); await settle(p, 400);
-      const gone = await p.evaluate(() => parseFloat(getComputedStyle(window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark')).opacity));
-      if (gone > 0.1) fail(name, `Morph's mark stays on a card that is not hovered (opacity ${gone})`);
-      await p.mouse.move(c.x, c.y); await settle(p, 400);
-      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] .hovermark').click());
-      await settle(p, 900);
-      const box = await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-tell] textarea'));
-      if (!box) fail(name, 'the hover mark did not open the Tell box in the card');
-      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-cancel"]').click());
-      await settle(p, 700);
-      const after = await p.evaluate(() => window.__panel.s.view);
-      if (after) fail(name, 'cancelling a Tell opened from a closed card left the card open');
-    }
-  }
-
   // A dashboard change typed into the Ask bar outside Edit is a Tell, not a
   // question for the house's assistant (which cannot touch dashboard.yaml).
   {
     await p.evaluate(() => { window.__ws.length = 0; const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = 'Remove the Coming up timeline card'; window.__panel.act('ask', i); });
     await settle(p, 900);
-    const sent = await p.evaluate(() => ({ tell: window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell'), conv: window.__ws.some((m) => m.type === 'conversation/process') }));
+    const sent = await p.evaluate(() => ({ tell: window.__ws.find((m) => m.type === 'morph/request' && m.kind === 'tell'), conv: window.__ws.some((m) => m.type === 'morph/request' && m.kind === 'converse') }));
     if (!sent.tell || sent.tell.payload.target.kind !== 'dashboard') fail(name, 'a dashboard change in the Ask bar was not handed to brAIn as a Tell');
-    if (sent.conv) fail(name, 'a dashboard change in the Ask bar went to the house\'s assistant');
+    if (sent.conv) fail(name, 'a dashboard change in the Ask bar became a conversation');
     await settle(p, 2200);
     await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="tell-keep"]'); if (b) b.click(); else window.__panel.closeTell(); });
     await settle(p, 600);
     await p.evaluate(() => { window.__ws.length = 0; const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = 'Why is it warm upstairs?'; window.__panel.act('ask', i); });
     await settle(p, 900);
-    const q = await p.evaluate(() => ({ conv: window.__ws.some((m) => m.type === 'conversation/process'), tell: window.__ws.some((m) => m.kind === 'tell'), offer: !!window.__panel.shadowRoot.querySelector('[data-act="ask-tell"]') }));
-    if (!q.conv || q.tell) fail(name, 'a question went somewhere other than the house\'s assistant');
+    await settle(p, 1500);
+    const q = await p.evaluate(() => ({ asked: window.__ws.some((m) => m.type === 'morph/ask'), conv: window.__ws.some((m) => m.type === 'morph/request' && m.kind === 'converse'), tell: window.__ws.some((m) => m.kind === 'tell'), offer: !!window.__panel.shadowRoot.querySelector('[data-act="ask-tell"]') }));
+    if (!q.asked || !q.conv || q.tell) fail(name, 'a question was not handed to brAIn as a conversation');
     if (!q.offer) fail(name, 'an answer does not offer "Change the dashboard instead"');
     await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.ask = null; window.__panel.schedule(); });
     await settle(p, 400);
-  }
-
-  // Outside Edit, an opened card carries Morph's mark; pressing it opens
-  // the Tell box for that card without going through Edit.
-  {
-    c = await tileCenter(p, 'c_kitchen_cans');
-    await p.mouse.move(c.x, c.y); await p.mouse.down(); await p.waitForTimeout(700); await p.mouse.up();
-    await settle(p, 900);
-    const mark = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-act="tell-card"]'); if (!b) return null; const r = b.getBoundingClientRect(); return { w: r.width, h: r.height, svg: !!b.querySelector('svg') }; });
-    if (!mark) fail(name, 'an opened card does not carry Morph\'s mark');
-    else {
-      if (mark.w < 36 || mark.h < 36 || !mark.svg) fail(name, `Morph's mark in an opened card is not a ${mark.w}×${mark.h} press with the mark in it`);
-      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-act="tell-card"]').click());
-      await settle(p, 900);
-      const box = await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('[data-tile="c_kitchen_cans"] [data-tell] textarea'));
-      if (!box) fail(name, 'Morph\'s mark did not open the Tell box in the card');
-      atRest(`${name} with a Tell opened from the mark`, await snapshot(p));
-      await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-cancel"]').click());
-      await settle(p, 700);
-      const back = await p.evaluate(() => { const v = window.__panel.s.view; return v && v.id === 'c_kitchen_cans' ? v.mode : ''; });
-      if (back !== 'adv') fail(name, `cancelling a Tell opened from the mark did not go back to the opened card (${back || 'closed'})`);
-      await p.evaluate(() => window.__panel.closeView());
-      await settle(p, 700);
-    }
   }
 
   // Edit: hold a card, Tell brAIn opens inside it, Send, Keep · Undo.
@@ -521,17 +535,14 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await p.evaluate(() => window.__panel.act('page', { dataset: { v: 'settings' } }));
   await settle(p, 800);
   const set = await p.evaluate(() => ({ text: window.__panel.shadowRoot.querySelector('.settings').innerText, sideways: window.__panel.shadowRoot.querySelector('.scroll').scrollWidth > window.__panel.shadowRoot.querySelector('.scroll').clientWidth + 1 }));
-  for (const h of ['brAIn', 'Learning', 'Improving Morph itself', 'Appearance', 'History', 'Dashboard']) if (!set.text.includes(h)) fail(name, `Settings has no ${h} section`);
+  for (const h of ['brAIn', 'Learning', 'Improving Morph itself', 'This device', 'Appearance', 'History', 'Dashboard']) if (!set.text.includes(h)) fail(name, `Settings has no ${h} section`);
   if (set.sideways) fail(name, 'Settings scrolls sideways');
-  // What do you want to fix in Morph? — sent as typed, listed with Take back.
-  if (!/What do you want to fix in Morph\?/i.test(set.text)) fail(name, 'Settings has no box to report a problem with Morph');
-  await p.evaluate(() => { const ta = window.__panel.shadowRoot.querySelector('textarea[data-keep="report"]'); ta.value = 'The scenes line wraps badly on my phone'; ta.dispatchEvent(new Event('input', { bubbles: true, composed: true })); const cb = window.__panel.shadowRoot.querySelector('input[data-keep="report-ui"]'); cb.checked = true; cb.dispatchEvent(new Event('input', { bubbles: true, composed: true })); });
-  await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="report-send"]').click());
-  await settle(p, 900);
-  const rep = await p.evaluate(() => ({ req: window.__ws.find((x) => x.type === 'morph/request' && x.kind === 'report'), text: window.__panel.shadowRoot.querySelector('.settings').innerText }));
-  if (!rep.req || rep.req.payload.text !== 'The scenes line wraps badly on my phone' || rep.req.payload.ui !== true) fail(name, `the report was not sent as typed: ${JSON.stringify(rep.req)}`);
-  if (!/Take back/.test(rep.text)) fail(name, 'a sent report is not listed with Take back');
+  // "What do you want to fix?" is Ask now (vision §13.3), not a box here.
+  if (/What do you want to fix in Morph\?/i.test(set.text)) fail(name, 'Settings still has its own report box beside Ask');
 
+  await p.evaluate(() => { window.__panel.act('page', { dataset: { v: 'home' } }); if (window.__panel.s.tell) window.__panel.closeTell(); });
+  await settle(p, 800);
+  await night(p, name);
   if (errors.length) fail(name, `page errors: ${errors.join(' | ')}`);
   await ctx.close();
 }

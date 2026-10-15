@@ -62,9 +62,13 @@ def new_id(prefix: str = "morph") -> str:
 
 def submit(task_id: str, prompt: str, *, schema: dict | None = None, tools: str = "full",
            timeout: int = 900, model: str = "", scheduled: bool = False,
-           memory: bool = False, person_words: str | None = None) -> None:
+           memory: bool = False, person_words: str | None = None,
+           kind: str = "", session_id: str = "") -> None:
     """Hand brAIn one task. Written to a scratch name and renamed, because
     the listener globs ``*.json`` and must never read half a file.
+
+    ``kind="conversation"`` is Ask's: brAIn answers as its chat would, on
+    the chat channel, resuming ``session_id`` when it is given.
 
     ``person_words`` is what a person actually asked, apart from the prompt
     Morph wrote around it: brAIn's action gate judges a change against a
@@ -83,6 +87,12 @@ def submit(task_id: str, prompt: str, *, schema: dict | None = None, tools: str 
         task["scheduled"] = True
     if memory:
         task["memory"] = True
+    # A conversation (vision §13.4): brAIn's chat, which may continue — the
+    # listener resumes `session_id` and answers with the session it used.
+    if kind == "conversation":
+        task["kind"] = "conversation"
+        if session_id:
+            task["session_id"] = str(session_id)[:80]
     tdir = tasks_dir()
     scratch = tdir / f".{task_id}.tmp"
     scratch.write_text(json.dumps(task), encoding="utf-8")

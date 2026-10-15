@@ -170,6 +170,11 @@ def _card(raw, problems: list[str], where: str, extra: tuple = ()) -> dict | Non
         card["color"] = raw["color"]
     if isinstance(raw.get("options"), dict):
         card["options"] = raw["options"]
+    # Keep here (vision §11): a pin keeps the card in the Now band, always
+    # (`true`) or while it is on (`active`, the written form of "always show
+    # the printer while it runs").
+    if raw.get("pin") is True or raw.get("pin") in ("always", "active"):
+        card["pin"] = True if raw["pin"] in (True, "always") else "active"
     card["id"] = str(raw.get("id") or "")
     return card
 
@@ -212,6 +217,8 @@ def normalize(raw) -> tuple[dict, list[str]]:
         ftitle = str(fraw.get("title") or f"Floor {fi + 1}")[:60]
         floor = {"id": unique(_pre("f_", fraw.get("id") or ftitle)), "title": ftitle,
                  "sections": []}
+        if fraw.get("heading") is False:
+            floor["heading"] = False
         for si, sraw in enumerate(fraw.get("sections") or []):
             if not isinstance(sraw, dict):
                 problems.append(f"{ftitle} › section {si + 1}: must be a mapping")

@@ -127,6 +127,17 @@ def _load() -> list[dict]:
 def _write(items: list[dict]) -> None:
     TODO_FILE.parent.mkdir(parents=True, exist_ok=True)
     atomic_write.write_json(TODO_FILE, items)
+    hook = ON_WRITE
+    if hook is not None:
+        try:
+            hook()
+        except Exception as exc:  # noqa: BLE001 — a mirror, never the write
+            log.debug("the to-do store's write hook failed: %s", exc)
+
+
+# `findings_store.ON_WRITE`'s twin: told after every write, so the panel's
+# Morph `cases.json` knows the list moved. A flag-setter, never raised.
+ON_WRITE = None
 
 
 def _clean(value, cap: int) -> str:
@@ -175,6 +186,15 @@ def _shape(entry: dict) -> dict:
         "seen_again_at": int(entry.get("seen_again_at") or 0),
         "seen_again": int(entry.get("seen_again") or 0),
         "seen_again_text": _clean(entry.get("seen_again_text"), MAX_TEXT),
+        # Appended only for an item that carries them, so an item written
+        # before they existed is the dict it always was. `claim` is the
+        # finding's own text when `text` is its To Do sentence — what the
+        # settled ledger's entry is still called — and `from_case` the case
+        # id it was moved from (`f:<ts>`), which Morph reads as `origin`.
+        **({"claim": _clean(entry.get("claim"), MAX_TEXT)}
+           if entry.get("claim") else {}),
+        **({"from_case": _clean(entry.get("from_case"), 40)}
+           if entry.get("from_case") else {}),
     }
 
 
@@ -284,7 +304,8 @@ def counts() -> dict:
 def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         severity: str = "warning", origin: str = "hand", source: str = "",
         source_title: str = "", finding_key: str = "", run_id: str = "",
-        now: float | None = None) -> dict | None:
+        now: float | None = None, claim: str = "",
+        from_case: str = "") -> dict | None:
     """Put something on the list. Returns the item, or None if it is not one.
 
     A blank line is not a chore, and neither is one past the cap: the add
@@ -311,6 +332,8 @@ def add(text: str, *, detail: str = "", fix: str = "", entity_id: str = "",
         "run_id": run_id,
         "status": "open",
         "added_at": int(now if now is not None else time.time()),
+        "claim": claim if claim and claim != text else "",
+        "from_case": from_case,
     })
     items.append(entry)
     _write(_pruned(items))

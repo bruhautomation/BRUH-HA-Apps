@@ -10,9 +10,19 @@
 # Request format:  {"id": "<uuid>", "prompt": "...", "notify": true,
 #                   "notify_entity": "notify.mobile_app", "ts": <epoch>,
 #                   "timeout": <secs>}  (+ optional model, tools, schema,
-#                   memory, scheduled)
+#                   memory, scheduled, person_words, and kind
+#                   "conversation" with an optional session_id)
 # Response format: {"id": "<uuid>", "result": "claude output",
 #                   "status": "completed" | "failed", "error": "<code>"}
+#                   (+ "session_id" and "resumed" on a conversation)
+#
+# A `conversation` task (Morph's Ask, brAIn 3.0) runs as brAIn's chat
+# would: channel `chat`, so the action gate asks (which a headless run
+# refuses with a sentence) or, with "Let brAIn act without asking" on,
+# allows; `--resume <session_id>` when the task names one, falling back to a
+# fresh session — said in the result — when the CLI no longer holds it; and
+# its session is NOT claimed in the run-source ledger, so it is the
+# person's own conversation in brAIn's Chats rail and can be picked up there.
 #
 # `status` is the half of the result that says whether `result` is an
 # ANSWER. Until it could say "failed", every task was "completed" — an
@@ -382,25 +392,31 @@ task_progress_on() {
 # reads every answer exactly as before.
 write_task_result() {
     local task_id="$1" text="$2" data="${3:-}" error="${4:-}"
+    # A JSON object merged in last (a conversation's `session_id` and
+    # `resumed`); `{}` adds nothing, so every other task's file is the one
+    # it always wrote, byte for byte.
+    local extra="${5:-}"
+    [ -n "$extra" ] || extra='{}'
     local result_file="$RESULTS_DIR/${task_id}.json"
     local tmp_file="${result_file}.tmp"
     if [ -n "$error" ]; then
         # A failure carries no data: the validated object is an answer's,
         # and a failed run has none however it ended.
         jq -n --arg id "$task_id" --arg result "$text" --arg status "failed" \
-            --arg error "$error" \
-            '{"id": $id, "result": $result, "status": $status, "error": $error}' > "$tmp_file"
+            --arg error "$error" --argjson extra "$extra" \
+            '{"id": $id, "result": $result, "status": $status, "error": $error} + $extra' > "$tmp_file"
     elif [ -n "$data" ]; then
         # `data` is the object the CLI validated against the task's schema,
         # as compact JSON. Written beside the text and never instead of it:
         # the bridge reads `.result` as it always has, and `.data` is what
         # `brain.ask` hands back as structured output.
         jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
-            --argjson data "$data" \
-            '{"id": $id, "result": $result, "status": $status, "data": $data}' > "$tmp_file"
+            --argjson data "$data" --argjson extra "$extra" \
+            '{"id": $id, "result": $result, "status": $status, "data": $data} + $extra' > "$tmp_file"
     else
         jq -n --arg id "$task_id" --arg result "$text" --arg status "completed" \
-            '{"id": $id, "result": $result, "status": $status}' > "$tmp_file"
+            --argjson extra "$extra" \
+            '{"id": $id, "result": $result, "status": $status} + $extra' > "$tmp_file"
     fi
     mv "$tmp_file" "$result_file"
 }
@@ -553,6 +569,24 @@ process_task() {
     task_memory=$(jq -r 'if .memory == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_scheduled=$(jq -r 'if .scheduled == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_cameras=$(jq -r 'if .cameras == true then "true" else "" end' "$work_file" 2>/dev/null)
+    # A conversation (Morph's Ask): brAIn's chat, by task. The session id is
+    # a CLI session uuid or nothing — it becomes an argv entry, so anything
+    # that is not plainly one is dropped and the run starts fresh.
+    local task_conversation task_session
+    task_conversation=$(jq -r 'if .kind == "conversation" then "true" else "" end' "$work_file" 2>/dev/null)
+    task_session=""
+    if [ "$task_conversation" = "true" ]; then
+        task_session=$(jq -r 'if (.session_id | type) == "string" then .session_id else empty end' "$work_file" 2>/dev/null)
+        case "$task_session" in
+            *[!A-Za-z0-9-]*) task_session="" ;;
+        esac
+        if [ "${#task_session}" -gt 64 ]; then
+            task_session=""
+        fi
+        # This task's subshell only: the MCP server, the action gate and
+        # the progress hook read the chat's channel, not a task's.
+        export BRAIN_CHANNEL=chat
+    fi
     # What the person actually asked, when the task's prompt is a caller's
     # wrapping round it (Morph's Tell). The action gate judges a change by
     # the person's words and never by the prompt the caller built, which
@@ -700,11 +734,32 @@ ${prompt}"
     local start_time task_rc=0
     start_time=$(date +%s)
 
+    local resume_flags=() resume_lost=""
+    if [ -n "$task_session" ]; then
+        resume_flags=(--resume "$task_session")
+    fi
+
     # --output-format json: capture the structured result and pull .result,
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+
+    # A conversation whose session the CLI no longer holds (pruned, or
+    # started on another machine) is begun again rather than failed, and
+    # the result says so: the person's words still deserve an answer.
+    if [ -n "$task_session" ] && [ "$task_rc" != "0" ] \
+        && grep -qiE "no conversation found|session.*(not found|does not exist)" "$stderr_file" "$output_file" 2>/dev/null; then
+        resume_lost=1
+        resume_flags=()
+        local fresh_left=$(( claude_limit - ( $(date +%s) - start_time ) ))
+        bashio::log.info "Conversation [$task_id] could not resume ${task_session} — starting it fresh (${fresh_left}s left)"
+        if [ "$fresh_left" -ge 30 ]; then
+            task_rc=0
+            # shellcheck disable=SC2086
+            (cd /config && printf '%s' "$prompt" | timeout "$fresh_left" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+        fi
+    fi
 
     # A task that ended on the turn cap is landed, not failed: resumed on
     # the session the envelope names, with two turns and a prompt to answer
@@ -732,10 +787,16 @@ ${prompt}"
     end_time=$(date +%s)
     duration=$((end_time - start_time))
 
-    local result stderr_output task_data
+    local result stderr_output task_data task_sid=""
     result=$(extract_claude_result "$output_file")
     task_data=$(extract_claude_data "$output_file")
-    claim_task_session "$output_file"
+    # A conversation is the person's own: its session is left unclaimed, so
+    # brAIn's Chats rail lists it as theirs and it can be picked up there.
+    if [ "$task_conversation" = "true" ]; then
+        task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
+    else
+        claim_task_session "$output_file"
+    fi
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     # The envelope is kept until the journal has read it (journal_task
     # removes it); everything else goes now.
@@ -756,14 +817,18 @@ ${prompt}"
 
             task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
 
             result=$(extract_claude_result "$output_file")
             task_data=$(extract_claude_data "$output_file")
-            claim_task_session "$output_file"
+            if [ "$task_conversation" = "true" ]; then
+                task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
+            else
+                claim_task_session "$output_file"
+            fi
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             # The retry's envelope is the one that answers the task. The
             # first run was a run too — it spent tokens and failed — so it
@@ -868,8 +933,21 @@ ${prompt}"
         bashio::log.error "Claude auth error - user needs to sign in from the panel"
     fi
 
+    # A conversation's result names its session (the next turn resumes it)
+    # and whether it is the one that was asked for.
+    local task_extra=""
+    if [ "$task_conversation" = "true" ]; then
+        if [ -n "$resume_lost" ] && [ -z "$fail_code" ]; then
+            result="(brAIn could not pick up the earlier conversation, so this is a new one.) ${result}"
+        fi
+        task_extra=$(jq -cn --arg sid "$task_sid" --arg asked "$task_session" \
+            --arg lost "$resume_lost" \
+            '(if $sid != "" then {"session_id": $sid} else {} end)
+             + (if $asked != "" then {"resumed": ($lost == "")} else {} end)' 2>/dev/null || true)
+    fi
+
     # Write result file (atomic via tmp + rename)
-    write_task_result "$task_id" "$result" "${task_data:-}" "$fail_code"
+    write_task_result "$task_id" "$result" "${task_data:-}" "$fail_code" "$task_extra"
 
     if [ -n "$fail_code" ]; then
         bashio::log.warning "Task failed [$task_id]: ${fail_code}"

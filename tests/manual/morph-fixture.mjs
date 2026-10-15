@@ -169,11 +169,37 @@ export function state() {
   };
 }
 
-export function brainFeed() {
+// brAIn's published files, as Morph's integration hands them to the panel
+// (contracts: /config/.brain/morph/cases.json and feed.json). The house's
+// measurements are examples in brAIn's shapes: the kitchen usually sits at
+// 71.5 at this hour, the back door is usually shut, the master cans have a
+// habit about now.
+export function brainFeed(opts) {
+  const o = opts || {};
+  const now = Date.now();
+  const d = new Date(now); const minute = d.getHours() * 60 + d.getMinutes();
   return {
-    installed: true,
-    situation: { sentence: 'It is a quiet evening: the living room is watching TV and upstairs is winding down.', at: Date.now() / 1000 - 300 },
-    findings: [{ ts: 1791000000, text: 'The garage freezer door has been open for 25 minutes', severity: 'warning', status: 'open', entity_id: 'binary_sensor.garage_freezer', detail: 'It usually closes within a minute; the latch may not catch.', answers: [{ action: 'fixed', label: 'I closed it' }, { action: 'snooze', label: 'Not now' }, { action: 'wrong', label: 'Wrong' }] }],
+    installed: o.installed !== false,
+    situation: { sentence: 'It is a quiet evening: the living room is watching TV and upstairs is winding down.', at: now / 1000 - 300 },
+    findings: [],
+    cases: o.cases || [
+      { id: 'f:1791000000', kind: 'problem', claim: 'The garage freezer door has been open for 25 minutes.', ask: 'Close it, or tell me it is meant to be open.', detail: 'It usually closes within a minute; the latch may not catch.', severity: 'warning', stakes: 'medium', urgent: false, entity_id: 'binary_sensor.garage_freezer', evidence: [], area_id: '', source: 'check:dev.left_open', source_title: 'Left open', fixable: false, status: 'open', plan: null, todo_text: 'Close the garage freezer door.', thread: [], answers: [], created_at: now / 1000 - 1500 },
+      { id: 'h:1791000100', kind: 'question', claim: 'The office lamp looks like it is on a timer.', ask: 'Is it?', detail: '', severity: 'info', stakes: 'low', urgent: false, entity_id: '', evidence: [], area_id: '', source: 'curiosity', source_title: 'A guess', fixable: false, status: 'open', plan: null, todo_text: 'Check the office lamp timer.', thread: [{ who: 'brain', text: 'It turns on at 6:00 PM every weekday.', at: now / 1000 - 600 }], answers: [], created_at: now / 1000 - 900 },
+    ],
+    todo: o.todo || [{ id: 12, text: 'Replace the battery in the hallway motion sensor.', entity_id: '', area_id: '', snoozed_until: null, origin: '' }],
+    open: 2,
+    cases_at: now / 1000,
+    feed: o.feed === null ? null : {
+      v: 1, at: now / 1000, stale_after_s: 7200, tz: 'UTC',
+      bucket: { now: 0, next: 1, until: now / 1000 + 1800 },
+      rhythm: o.rhythm || { weekday: { wake: null, settle: null }, weekend: { wake: null, settle: null } },
+      normal: { 'sensor.kitchen_temperature': { now: [71.5, 0.2, 40], next: [71.4, 0.2, 40], unit: '°F' }, 'sensor.master_temperature': { now: [74.6, 0.4, 40], next: [74.4, 0.4, 40], unit: '°F' } },
+      doors: { 'binary_sensor.back_door': { now: 0.05, next: 0.05 }, 'lock.front_door': { now: 0.02, next: 0.02 } },
+      habits: [{ entity_id: 'light.master_cans', state: 'on', minute: (minute + 10) % 1440, spread: 7, days: 'every day', share: 0.85, days_seen: 23, person: 'person.ben' }],
+      people: { 'person.ben': { name: 'Ben', user_id: 'u-ben' } },
+      appliances: {},
+    },
+    feed_mtime: now / 1000,
     status: { state: 'watching' },
   };
 }
@@ -183,7 +209,7 @@ export function page(opts) {
   const o = opts || {};
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>html,body{margin:0;height:100%;background:#000}</style></head><body>
-<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: state(), brain: brainFeed(), dark: o.dark !== false })};</script>
+<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: state(), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
 <script type="module">
 const F = window.__fixture;
 let states = F.states;
@@ -196,7 +222,7 @@ function series(eid, start, end, step) {
   return out;
 }
 const hass = {
-  states, config: { unit_system: { temperature: '°F' } }, themes: { darkMode: F.dark }, user: { is_admin: true },
+  states, config: { unit_system: { temperature: '°F' } }, themes: { darkMode: F.dark }, user: { id: 'u-ben', is_admin: true },
   entities: { 'conversation.brain': { entity_id: 'conversation.brain', platform: 'brain' }, 'fan.living_room': { entity_id: 'fan.living_room', platform: 'zwave_js', device_id: 'dev_lr_fan' } }, devices: { dev_lr_fan: { id: 'dev_lr_fan', name: 'Living room fan' } },
   callService(domain, service, data) {
     window.__calls.push({ domain, service, data });
@@ -231,11 +257,14 @@ const hass = {
       if (msg.kind === 'tell_undo') return { ok: true, commit: 'undo1' };
       if (msg.kind === 'report') { if (!String(p.text || '').trim()) return { ok: false, error: 'Say what should be fixed.' }; F.state.devloop = { ...F.state.devloop, mine: [{ fp: 'fp' + (++seq), what: p.text, ui: !!p.ui, at: Date.now() / 1000, picked: false }].concat(F.state.devloop.mine || []) }; return { ok: true }; }
       if (msg.kind === 'history') return { ok: true, log: [{ sha: 'abc1', who: 'brain', at: Date.now() / 1000 - 600, message: 'brAIn: Added a Pets section' }, { sha: 'abc0', who: 'person', at: Date.now() / 1000 - 7200, message: 'Moved a section' }] };
+      if (msg.kind === 'converse') { const id = 'conv-t' + (++seq); tells[id] = { id, kind: 'conversation', phase: 'working', steps: [{ t: 'brAIn is thinking', tone: '' }], at: Date.now(), text: p.text, conv: true }; return { ok: true, ...tells[id] }; }
+      if (msg.kind === 'habit' || msg.kind === 'lesson_add') return { ok: true };
       if (msg.kind === 'settings') { F.state.settings = { ...F.state.settings, ...p.patch }; return { ok: true, settings: F.state.settings }; }
       return { ok: true };
     }
     if (t === 'morph/tell_status') {
       const s = tells[msg.tell]; if (!s) return { phase: 'missing' };
+      if (s.conv) { if (Date.now() - s.at > 700) { s.phase = 'done'; s.say = 'Upstairs is warm because the attic is 96° and the Upstairs thermostat is holding at 73°. The Master Fan is on.'; s.session_id = 'sess-1234abcd'; } return { ...s }; }
       if (Date.now() - s.at > 500 && s.phase === 'waiting') { s.phase = 'working'; s.steps.push({ t: 'brAIn is on it', tone: '' }, { t: 'Looking at the screenshot', tone: '', brain: true }, { t: 'Reading dashboard.yaml', tone: '', brain: true }); }
       if (s.redo && s.conflict && Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'The update rewrote the header your switch was in.'; s.steps.push({ t: 'Read both versions of ' + s.redo, tone: '' }); s.question = { text: 'The new header moved the gear into a menu. Where should the theme switch go?', options: [{ label: 'Beside the gear menu', request: 'Put the theme switch beside the new gear menu in /config/morph/frontend/' + s.redo + '.', home_assistant: false }, { label: 'Inside the gear menu', request: 'Put the theme switch inside the new gear menu in /config/morph/frontend/' + s.redo + '.', home_assistant: false }, { label: 'Use Morph’s own', request: 'Delete /config/morph/frontend/' + s.redo + '.', home_assistant: false }] }; }
       if (s.redo && Date.now() - s.at > 1500 && s.phase !== 'done') { s.phase = 'done'; s.say = 'Made the header change again on top of the new morph-panel.js.'; s.commit = 'c0de'; s.code = [s.redo]; s.reload = true; s.steps.push({ t: 'Changed Morph’s own ' + s.redo, tone: 'good' }); s.code_issue = { title: 'A header change', detail: 'brAIn changed Morph’s own ' + s.redo + '.' }; s.issue = 'asked'; F.state.code = []; F.state.activity = []; }
@@ -252,6 +281,27 @@ const hass = {
     // A suspended connection refuses a send; the measure sets this to make one fail.
     if (t === 'morph/usage' && window.__usageFail > 0) { window.__usageFail -= 1; window.__ws.pop(); throw new Error('Connection lost'); }
     if (t === 'morph/usage' || t === 'morph/report' || t === 'morph/finding') return { ok: true };
+    // brAIn's queue, answered the way its drain would: a reply is a turn,
+    // brAIn's answer arrives a moment later in the case's thread.
+    if (t === 'morph/case') {
+      window.__caseReqs = (window.__caseReqs || []).concat([msg]);
+      const c = (F.brain.cases || []).find((x) => x.id === msg.case);
+      if (!c) return { ok: false, error: 'That case is gone.' };
+      // A reply that also asks for a page change carries a tell on brAIn’s
+      // turn; one that settles it ends the case and is said as it leaves.
+      if (msg.action === 'reply' && /card|dashboard/i.test(msg.text)) setTimeout(() => { const at = Date.now() / 1000; F.brain.cases = F.brain.cases.filter((x) => x.id !== msg.case); F.brain.said = (F.brain.said || []).concat([{ case: msg.case, who: 'brain', text: 'Done — and I asked Morph to add it to the kitchen.', at, tell: { kind: 'dashboard', text: 'Add the garage freezer to the Kitchen section.' } }]); listeners.forEach((cb) => cb({ parts: ['brain'] })); }, 300);
+      else if (msg.action === 'reply') setTimeout(() => { c.thread = (c.thread || []).concat([{ who: 'you', text: msg.text, at: Date.now() / 1000 }, { who: 'brain', text: 'Okay, I will leave it.', at: Date.now() / 1000 }]); listeners.forEach((cb) => cb({ parts: ['brain'] })); }, 300);
+      if (['dismiss', 'todo'].includes(msg.action)) setTimeout(() => { F.brain.cases = F.brain.cases.filter((x) => x.id !== msg.case); listeners.forEach((cb) => cb({ parts: ['brain'] })); }, 200);
+      return { ok: true };
+    }
+    if (t === 'morph/todo') { window.__todoReqs = (window.__todoReqs || []).concat([msg]); setTimeout(() => { F.brain.todo = (F.brain.todo || []).filter((x) => x.id !== msg.id); listeners.forEach((cb) => cb({ parts: ['brain'] })); }, 200); return { ok: true }; }
+    if (t === 'morph/ask') {
+      window.__asks = (window.__asks || []).concat([msg.text]);
+      if (/remember/i.test(msg.text)) return { do: 'done', say: 'Remembered.' };
+      if (/card|section|dashboard/i.test(msg.text)) return { do: 'tell_dashboard' };
+      if (window.__askFallback) return { do: 'fallback' };
+      return { do: 'conversation' };
+    }
     if (t === 'morph/yaml') return { text: 'title: Home\\n' };
     if (t === 'history/history_during_period') {
       const out = {}; (msg.entity_ids || []).forEach((e) => {

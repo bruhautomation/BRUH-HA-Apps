@@ -156,6 +156,7 @@ LOOPS = {
     "maintainer": ("the maintainer (tidy-ups, upgrade notes, the house book)",
                    "degraded"),
     "requests": ("answers given in Home Assistant", "degraded"),
+    "morph": ("Morph's Ask line and the list it draws", "degraded"),
     "notify_learn": ("the weekly notification suggestions", "degraded"),
     "followups": ("the follow-up looks at what brAIn changed", "degraded"),
     "resident": ("the attention loop", "degraded"),

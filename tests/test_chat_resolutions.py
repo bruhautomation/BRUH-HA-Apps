@@ -289,7 +289,10 @@ class TestPressingOne(PanelCase):
                              {"fix": "Replace the CR2032"})
         item = payload["added"]
         self.assertEqual(item["fix"], "Replace the CR2032")
-        self.assertEqual(item["text"], row["text"])
+        # The errand is the conversation's step, and the report rides as
+        # the item's `claim` (brAIn 3.0's `todo_text`).
+        self.assertEqual(item["text"], "Replace the CR2032.")
+        self.assertEqual(item["claim"], row["text"])
         self.assertEqual(self.queued_memory(), [])
         self.assertTrue(findings_store.is_known(row["text"]))
 

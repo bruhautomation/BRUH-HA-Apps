@@ -15,6 +15,9 @@ frontend.
 
 - [Installing](#installing)
 - [Using the dashboard](#using-the-dashboard)
+- [What leads the page](#what-leads-the-page)
+- [brAIn's cases and To Do](#brains-cases-and-to-do)
+- [Ask](#ask)
 - [Edit mode](#edit-mode)
 - [Tell brAIn](#tell-brain)
 - [Learning](#learning)
@@ -83,6 +86,75 @@ as a strip of on and off, a sensor's readings as a line you can scrub, a
 meter's week as bars. Tap a day or a bar to see its hours, and the logbook's
 "who" for each change.
 
+## What leads the page
+
+Morph is brAIn's face: the page is laid out by what matters in the house
+right now, and it can always say why.
+
+- **The verdict.** The first line says what is going on, its first clause in
+  the colour of what it means: rose for something wrong, amber for
+  something worth a look, indigo when the house is at rest.
+- **Now.** Up to three cards (two on a phone) are lifted to the top: a door
+  open longer than it usually is, a machine that finished, a light you
+  usually dim about now. A lifted card is **moved**, not copied; its room
+  keeps a faint trace where it was. Under it, one quiet line says why
+  (*open at this hour on 1 night in 20*, *you usually do this now*). Hold
+  that line for **Keep it here** and **Not this**.
+- **Rooms.** A room with something on, moving or unusual is open; a quiet
+  room folds to one line with its name, its scenes and anything open. Tap a
+  room's name to open it. A room where somebody is asleep is dimmed.
+- **Night, away and still.** With the alarm armed for the night (or
+  everyone asleep) the page dims and shows only what is wrong, usually
+  nothing: *Everything is at rest.* With everybody away it says so. A
+  family tablet left untouched settles into a page readable across the room.
+- **Then.** Slide Coming up into the past and every card shows the house as
+  it was at that moment; dots behind the line are what happened.
+
+The page rearranges only at a quiet moment: never under your finger, while
+you scroll, while a card is open, or within a few seconds of the last
+change, unless something urgent (a door opening at night) needs it.
+
+What Morph reads to decide is brAIn's: what is normal for each sensor and
+door at this hour, your habits and the house's rhythm (published in
+`/config/.brain/morph/feed.json`). Without brAIn, the page still works from
+the house's own state.
+
+**Settings → This device** says whether this screen is somebody's own (it
+leads with their habits) or the family's (a wall tablet), and **Fold quiet
+rooms** turns folding off.
+
+## brAIn's cases and To Do
+
+A problem or a question brAIn has is drawn **in the room it is about**: the
+claim, what brAIn wants from you, and a reply line. Answer in your own words
+— "yes, but call it Sump Pump Current", "it is meant to be off in winter",
+"put it on my list" — and brAIn reads the reply and ends the case the way
+the words say, or answers with a question in the card. **Fix** (where brAIn
+could make the change), **Dismiss** and **To Do** are there for when a word
+is quicker. A case about nothing on the page is drawn at the top of its
+floor.
+
+**To Do** is brAIn's list, the same one Home Assistant's To-do app shows.
+Tap a line to tick it off; slide it right to snooze it a week; hold it for
+**Delete**.
+
+Morph's own suggestions for the dashboard are brAIn's cases too, answered the
+same way; a yes makes the change as a Tell.
+
+## Ask
+
+The line under the verdict is brAIn's chat with the dashboard in front of it.
+brAIn decides what the words are:
+
+- **A question** is answered under the line, and the page lifts what the
+  answer names. Answer again to carry on: it is one conversation, also in
+  brAIn's Ask tab.
+- **Something to remember or a rule** ("remember the sump pump is in the
+  laundry", "tell me when the dryer is done") is done and said in a line.
+- **A change to the dashboard or to Morph** is a Tell, with Undo.
+
+Without brAIn's integration, Ask falls back to the house's own assistant.
+
 ## Edit mode
 
 Press **Edit** in the top bar.
@@ -102,16 +174,11 @@ Every save is one commit. The toast after a change offers **Undo**.
 In Edit, **hold** anything — a card, a section, a floor, the whole dashboard —
 and say what should change. **Send** hands it over.
 
-You do not need Edit to change one card. On a computer, hover a card and
-press Morph's mark in its top-right corner (the small tile with one round
-corner); on a phone, open the card and press the mark among its options. The
-same box opens in the card.
-
-You do not need Edit to change the dashboard either. Type the change into the
-Ask bar ("remove the Coming up timeline", "bring back the greeting") and it
-goes to brAIn as a change. The house's assistant answers questions, and
-cannot edit Morph; if an answer was not what you wanted, **Change the dashboard
-instead** sends the same words as a change.
+You do not need Edit to change the dashboard. Type the change into the Ask
+line ("remove the Coming up timeline", "put the porch light in Entry", "the
+kitchen header is too tall") and brAIn reads it as a change to the dashboard
+or to Morph itself, and makes it as a Tell. If an answer was not what you
+wanted, **Change the dashboard instead** sends the same words as a change.
 
 **brAIn looks first.** The moment you hold something, Morph takes a picture
 of it and shows it in the box (**What brAIn will see**). brAIn reads that
@@ -192,10 +259,10 @@ only: learning the house is brAIn's own job, so a pass suggests no
 automations or renames and its lessons are rules about how you want your
 dashboard. What comes back:
 
-- **Suggestions**, shown in place on the dashboard with **Do it**, **Not
-  now** and **No**. Do it hands the suggestion to brAIn as an ordinary Tell.
-  Not now hides it for a week. No (with a reason, if you like) means it is
-  never suggested again.
+- **Suggestions**, filed as brAIn's cases and drawn in the room they are
+  about. Answer in words or with the buttons: a yes hands the suggestion to
+  brAIn as an ordinary Tell, Dismiss hides it for now, and a no (with a
+  reason, if you like) means it is never suggested again.
 - **Lessons**, revised each pass in `/config/morph/LEARNED.md`. Every Tell
   and every pass reads them. Each line ends with who wrote it: **(you)**,
   **(tell)** (brAIn during a Tell) or **(learned)** (a pass). A line you
@@ -277,7 +344,8 @@ The gear in Morph's top bar opens its Settings page.
 |---|---|
 | **brAIn** | Whether brAIn is reachable, the model Tell uses, how long a hold takes. |
 | **Learning** | On or off, how often, which model, **Learn now**, the scorecard, suggestions waiting, the lessons. |
-| **Improving Morph itself** | Report Morph's own problems on or off, **What do you want to fix in Morph?**, the changes this house made to Morph's code, and when brAIn last picked reports up. |
+| **Improving Morph itself** | Report Morph's own problems on or off, the changes this house made to Morph's code, and when brAIn last picked reports up. To report something yourself, say it in Ask. |
+| **This device** | Whether this screen is somebody’s own or the family’s, whose habits lead on it, and **Fold quiet rooms**. |
 | **Appearance** | Theme (auto, dark, medium, light) and reduced motion. |
 | **History** | Every change with who made it, and **Undo** or **Restore** for each. |
 | **Dashboard** | **Rebuild from the house** (itself a commit you can undo). |

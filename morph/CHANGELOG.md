@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.0.0
+
+Morph becomes brAIn's face (docs/design/morph-vision.md). Needs brAIn 3.0.0.
+
+### Added
+
+- **The page is laid out by what matters now, and says why.** A verdict leads the page, its first clause in the colour of what it means. Up to three cards (two on a phone) are lifted into **Now** — moved, not copied — when something is unusual for this hour, finished, a habit about to happen, or something brAIn is asking about. Each says why in one line (*open at this hour on 1 night in 20*, *you usually do this now*); hold the line for **Keep it here** or **Not this**. Rooms are ranked and quiet ones fold to one line; tap a room's name to open it. Morph reads what is normal from brAIn's measurements (`/config/.brain/morph/feed.json`) and works from the house's state alone without them.
+- **Night, away and still forms.** With the alarm armed for the night the page dims to the one thing that is wrong (an unlocked door, an open garage) or *Everything is at rest*; with everyone away it says so; a family tablet left alone settles into a page readable across the room.
+- **brAIn's cases, in the room they are about**, with a reply line: answer in your own words and brAIn ends the case the way the words say, or asks back in the card. **Fix**, **Dismiss** and **To Do** are there too. A reply that also asks for a page change (*and add it to the kitchen card*) is carried out as a Tell.
+- **To Do**, brAIn's list (the one Home Assistant's To-do app shows), as a section: tap to tick off, slide to snooze a week, hold for Delete.
+- **Ask is brAIn's chat.** brAIn reads what is typed: a question is answered under the line and can be continued (one conversation, also in brAIn's Ask tab), a fact or a rule is done, and a change to the dashboard or to Morph is a Tell.
+- **Then.** Slide Coming up into the past and every card shows the house at that moment, with what happened as dots behind the line.
+- `pin:` on a card (`true`, or `active` for "only while it is on") and `heading: false` on a floor.
+- **Settings → This device**: somebody's own screen or the family's, whose habits lead, and **Fold quiet rooms**.
+- Keyboard: `/` focuses Ask, arrows move between cards, Enter or Space taps, Shift+Enter holds, Escape folds back.
+
+### Changed
+
+- **Learning suggestions are brAIn's cases**, answered on the page like any other, and the answer comes back to Morph. Morph keeps no list of its own.
+- **The page updates in place** (`morph-dom.js`): nothing you are touching is rebuilt, an open detail stays open, and a moved card travels instead of fading.
+- Card faces: an action word on every strip (*Lock?*/*Unlock?*, *Open?* on a garage), fans that cannot set a speed show on and off, climate coloured by its mode, list cards in two tones (rose for what needs a look, amber for activity), buttons say when they last ran, media shows its progress, cameras stream when opened.
+- History: unavailable stretches are hatched, a day strip ends at midnight with a mark at now, chart labels are text, readings detect their kind, and only temperatures draw a target band.
+- Coming up shows a day back, moonrise and moonset, and an all-day event today.
+
+### Removed
+
+- Morph's marks: on a hovered card, an opened card and a section title. Ask is the one door to a Tell outside Edit.
+- **What do you want to fix in Morph?** in Settings: say it in Ask, which routes it as a change to Morph.
+- Morph's own notes and suggestion cards: brAIn's cases replace them.
+
+### Fixed
+
+- A loaded page whose first `morph/load` failed stayed blank; it retries with backoff and says so.
+- Tiles measured their height before fonts settled and could overlap by a pixel; heights are measured with `getBoundingClientRect` and watched.
+- An all-day calendar event for today was dropped from Coming up.
+
 ## 0.5.10
 
 ### Added

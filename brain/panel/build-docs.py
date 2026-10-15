@@ -100,6 +100,7 @@ GROUPS: list[tuple[str, list[str]]] = [
         "it-checks-the-house-without-spending-a-token",
         "findings-in-home-assistants-repairs", "replying-from-your-phone",
         "answering-without-opening-anything",
+        "answering-in-morph",
         "corrections-that-know-how-far-they-reach", "why-didnt-brain-tell-me",
         "everything-it-does-can-be-undone",
     ]),

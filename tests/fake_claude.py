@@ -47,6 +47,11 @@ Behavior switches via env:
   FAKE_REJECT      comma-separated flag names this CLI does not know; a
                    call carrying one dies naming it, the way the real
                    arg parser does ("error: unknown option '--tools'")
+  FAKE_RESUME_MISSING  (one-shot) a `--resume` naming this session id (or
+                   any, with "1") is refused the way the real CLI refuses
+                   a session it no longer holds
+  FAKE_JSON_ENVELOPE  (one-shot, ok mode, --output-format json) answer the
+                   real envelope with its `session_id` round the echo
   FAKE_SESSIONS_DIR  the CLI's transcript store, as a directory of empty
                    files named for session ids. A one-shot call that got
                    past the arg parser leaves one behind (it reached the
@@ -211,6 +216,12 @@ else:
             sys.exit(1)
         with open(record, "a"):
             pass
+    if "--resume" in argv and os.environ.get("FAKE_RESUME_MISSING") in (sid, "1"):
+        # The CLI's own words for a session it no longer holds (pruned, or
+        # from another machine), before anything is sent.
+        print(f"No conversation found with session ID: {sid}",
+              file=sys.stderr)
+        sys.exit(1)
     if mode == "ratelimited":
         if json_out:
             print(json.dumps({
@@ -290,5 +301,11 @@ else:
         # A one-shot that answers with exactly this — a reflection pass's
         # JSON lines, say — instead of echoing its prompt.
         print(os.environ["FAKE_ONESHOT_TEXT"])
+    elif json_out and os.environ.get("FAKE_JSON_ENVELOPE"):
+        # The real envelope, session id and all, around the echo.
+        print(json.dumps({"type": "result", "subtype": "success",
+                          "is_error": False, "result": f"ONESHOT: {data}",
+                          "session_id": sid, "num_turns": 1,
+                          "duration_ms": 20}))
     else:
         print(f"ONESHOT: {data}")

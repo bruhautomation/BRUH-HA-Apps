@@ -2338,6 +2338,48 @@ Either way the answer reaches the add-on through a small file on
 not published — so if the add-on is stopped when you tick something off, the
 answer waits for it rather than being lost.
 
+### Answering in Morph
+
+Morph, the dashboard add-on, is brAIn's face: it draws brAIn's list and
+measurements and sends back what you do there. It keeps no list of its own,
+so a card answered in Morph is answered everywhere — on Needs you, in
+Repairs and on your phone — within a second or two.
+
+**A card is a conversation.** Under every card is a reply line, and what you
+type is read the way the question bar reads it, against the card you typed
+it under:
+
+| You type | What happens |
+|---|---|
+| *yes* / *do it* | the card's own first answer: a fix brAIn could make is worked out and shown to you (nothing changes until you Apply it), a waiting plan is applied, something that needs your hands goes on To Do, a question is confirmed |
+| *yes, but call it Sump Pump Current* | the same, with your words as the change brAIn works out |
+| *no, it's mains-powered* | Ignore, with your reason — brAIn learns from it and does not raise it again |
+| *later* / *ask me next week* | snoozed until then |
+| *I replaced it* / *done* | Done; the check that found it looks again on its next pass |
+| *which sensor is that?* | answered under the card, by a run that can read the house and change nothing |
+
+Your words and brAIn's answers stay on the card. If brAIn cannot tell what
+you meant, it asks rather than guessing; if it cannot reach Claude at that
+moment, *yes*, *no*, *done*, *later*, *to do* and *doesn't apply* still work.
+**Dismiss**, **To Do**, **Fix**, **Apply** and **Undo** are the panel's own
+buttons, and To Do uses each card's own sentence for what needs doing
+("Replace the battery in the hallway motion sensor.").
+
+**Morph's Ask line** reads a sentence the way the question bar does — a rule
+is drafted and offered, a fact remembered, a *why* answered — and a change
+to the dashboard ("move the kitchen above the dining room") or to Morph
+itself is Morph's own to make. brAIn never guesses between a change to the
+house ("make the kitchen warmer" is the thermostat) and a change to the page
+("make the kitchen warmer-looking"). A conversation started there is a
+conversation in brAIn's Ask tab too, and can be carried on in either.
+
+Morph's suggestions about its own layout arrive as cards like any other;
+*Stop raising these* on one mutes them.
+
+Everything crosses as files under `/config/.brain/morph/` (`feed.json`,
+`cases.json`, `asks/`, `answers/`) and the same request folder the To-do app
+uses, so nothing about brAIn is published on the network for it.
+
 ### It manages your ESPHome devices
 
 Ask brAIn — in the chat, the terminal or a voice agent set to **Whole house** —
