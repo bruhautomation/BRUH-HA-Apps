@@ -26,10 +26,21 @@ export function caseColor(c) {
 // Which room a case belongs in: its entity's section on the page, else the
 // section whose area is its area. None is a house-wide case.
 export function placeCase(c, secFor) {
-  const ids = [c.entity_id].concat(c.evidence || []).filter(Boolean);
-  for (const e of ids) { const s = secFor(e, c.area_id); if (s) return s; }
+  // The case's own subject first: the room that shows it, else its area;
+  // then the area brAIn sent; only then the evidence, by the room most of
+  // it is shown in. Taking the first evidence id that matched anything —
+  // with the case's area handed to every lookup — put a case about the
+  // garage freezer in whichever room happened to show the outdoor sensor
+  // cited beside it.
+  if (c.entity_id) { const s = secFor(c.entity_id, ''); if (s) return s; }
   if (c.area_id) { const s = secFor('', c.area_id); if (s) return s; }
-  return null;
+  const votes = {}; let best = null;
+  (c.evidence || []).filter(Boolean).forEach((e, i) => {
+    const s = secFor(e, ''); if (!s) return;
+    votes[s] = (votes[s] || 0) + 1 - i * 0.01;
+    if (!best || votes[s] > votes[best]) best = s;
+  });
+  return best;
 }
 
 const turnHtml = (t) => `<div class="turnline ${t.who === 'you' ? 'you' : 'brain'}">${esc(t.text)}</div>`;

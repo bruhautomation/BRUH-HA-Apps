@@ -280,8 +280,10 @@ def publish_feed(feed: dict) -> bool:
 # words Morph's request may carry back (`finding_requests.MORPH_ACTIONS`).
 # Yes, No, Done and the rest are a reply's words, which is how Morph answers
 # them (§14.2); only the presses that need no words are listed here.
+# Snooze is not among them: Morph's face carries Fix/Apply, Dismiss and To
+# Do and nothing else (§13.2), and "remind me next week" is a reply's words.
 _ACTION_OF_VERB = {"fix": "fix", "apply": "apply", "todo": "todo",
-                   "dismiss": "dismiss", "not_now": "snooze",
+                   "dismiss": "dismiss",
                    "not_applicable": "not_applicable"}
 
 
@@ -367,8 +369,12 @@ def ask_line(case: dict, situation: str) -> str:
     return fix[:300]
 
 
-def todo_rows(items: list, snoozes: dict, area_of) -> list:
-    """To Do as Morph lists it: open items, each with its snooze."""
+def todo_rows(items: list, snoozes: dict, area_of, word=None) -> list:
+    """To Do as Morph lists it: open items, each with its snooze.
+
+    `word` turns an item into the sentence shown (`findings_store.
+    todo_item_text`, which rewords a claim filed as an item into an errand);
+    without it the stored text is shown."""
     out = []
     now = time.time()
     for item in items or []:
@@ -377,7 +383,7 @@ def todo_rows(items: list, snoozes: dict, area_of) -> list:
         until = int((snoozes or {}).get(f"t:{item.get('id')}", 0) or 0)
         eid = str(item.get("entity_id") or "")
         out.append({"id": int(item.get("id") or 0),
-                    "text": str(item.get("text") or ""),
+                    "text": str((word(item) if word else "") or item.get("text") or ""),
                     "entity_id": eid,
                     "area_id": area_of(eid) if eid else "",
                     "snoozed_until": until if until > now else None,

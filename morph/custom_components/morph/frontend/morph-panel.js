@@ -43,6 +43,17 @@ import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
 import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, isDashChange, ASK_CONTEXT } from './util.js';
 
 const HOLD_MS = 540;
+// The card types whose entities are `entity`/`entities`; a hosted Lovelace
+// card, and any type a copy of cards.js adds, are read through their config.
+const BUILT_IN = new Set(['light', 'light_group', 'fan', 'cover', 'lock', 'switch', 'button', 'vacuum', 'climate', 'sensor', 'readings', 'meter', 'media', 'camera', 'list', 'person', 'weather', 'alarm', 'scenes', 'entity', 'note']);
+const EID_SHAPE = /^[a-z_]+\.[a-z0-9_]+$/;
+// Every string in a card's config that names an entity Home Assistant has.
+function entityIdsIn(v, states, out, depth) {
+  if (depth > 6 || v == null) return;
+  if (typeof v === 'string') { if (EID_SHAPE.test(v) && states[v] && !out.includes(v)) out.push(v); return; }
+  if (Array.isArray(v)) { v.forEach((x) => entityIdsIn(x, states, out, depth + 1)); return; }
+  if (typeof v === 'object') Object.keys(v).forEach((k) => { if (k !== 'id') entityIdsIn(v[k], states, out, depth + 1); });
+}
 const TELL_SUGS = {
   card: ['Make this wider', 'Move it to the top of the room', 'Show its history by default'],
   section: ['Put the scenes first', 'Split this into two groups', 'Add the room’s temperature here'],
@@ -98,6 +109,12 @@ class MorphPanel extends HTMLElement {
     this._salDirty = true;
     this._watchSig = '';
     try { this.suppressed = JSON.parse(localStorage.getItem('morph.notthis') || '{}') || {}; } catch (e) { this.suppressed = {}; }
+    // The days each card was used on this device, for anchors (§4.4: used
+    // on four of the last seven days, it keeps its slot in its room).
+    try { this.used = JSON.parse(localStorage.getItem('morph.used') || '{}') || {}; } catch (e) { this.used = {}; }
+    // Predictions on screen now, {id: {eid, at}}: one that leaves untouched
+    // is an ignored window, reported once (§7.1).
+    this._pred = {};
     this.data = null;
     this.dash = null;
     // "Not now" on paused changes, keyed on which files are paused: a later
@@ -254,6 +271,7 @@ class MorphPanel extends HTMLElement {
       if (!this.s.edit || !this.dash || rev !== this.revision) {
         this.dash = (d.mirror && d.mirror.dashboard) || null;
         this.revision = rev;
+        this._secEnts = null;
       }
       this._salDirty = true;
       this.loadModules((d.mirror && d.mirror.card_modules) || []);
@@ -420,12 +438,16 @@ class MorphPanel extends HTMLElement {
     const fh = this.feedState();
     const casesByEntity = {};
     this.cases().forEach((c) => { if (c.entity_id) (casesByEntity[c.entity_id] = casesByEntity[c.entity_id] || []).push(c); });
-    const occupied = {}; const asleepRooms = {}; let anyAsleep = false;
+    const occupied = {}; const asleepRooms = {}; let anyAsleep = false; let sleepers = 0; let awake = 0;
     this.eachSection((sec) => {
       const p = this.presence(sec);
       if (p) occupied[sec.id] = true;
-      if (this.asleepSince(sec)) { asleepRooms[sec.id] = true; anyAsleep = true; }
+      if (this.asleepSince(sec)) { asleepRooms[sec.id] = true; anyAsleep = true; sleepers++; } else if (this.canSleep(sec)) awake++;
     });
+    // The alarm panels on the dashboard are the house's alarm; a camera
+    // system's panel elsewhere in the states is not (salience.alarmStates).
+    const alarms = [];
+    this.eachSection((sec) => this.sectionEntities(sec).forEach((e) => { if (domainOf(e) === 'alarm_control_panel' && !alarms.includes(e)) alarms.push(e); }));
     const pins = {};
     this.eachSection((sec) => this.sectionCards(sec).forEach((c) => { if (c.pin) pins[c.id] = c.pin === true || c.pin === 'always' ? true : 'active'; }));
     const day = new Date(now).toDateString();
@@ -435,7 +457,7 @@ class MorphPanel extends HTMLElement {
     return {
       now, states, feed: fh.usable ? this.brain().feed : null, casesByEntity, viewer: this.viewer(),
       habitWeights: this.settings().habit_weights || {}, pins, suppressed, touched: this.touched, asked: this.asked,
-      occupied, asleepRooms, anyAsleep, nowMax: narrow ? sal.NOW_MAX_PHONE : sal.NOW_MAX,
+      occupied, asleepRooms, anyAsleep, allAsleep: sleepers >= 2 && awake === 0, alarms, nowMax: narrow ? sal.NOW_MAX_PHONE : sal.NOW_MAX,
       name: (e) => friendly(this.hass, e),
     };
   }
@@ -453,6 +475,7 @@ class MorphPanel extends HTMLElement {
       return;
     }
     this.salState = res;
+    try { this.notePredictions(res); } catch (e) { /* bookkeeping only */ }
     this.maybeApply(now);
   }
 
@@ -461,7 +484,11 @@ class MorphPanel extends HTMLElement {
     const cur = this.salApplied;
     const sig = (r) => r ? r.now.join(',') + '|' + Object.values(r.items).filter((x) => x.band !== 'folded').map((x) => x.id + ':' + x.band).sort().join(',') : '';
     if (cur && sig(cur) === sig(res)) { this.salApplied = res; return; }
-    const urgent = res.now.some((id) => (!cur || !cur.now.includes(id)) && res.items[id] && res.items[id].urgent) || !!this._forceApply;
+    // A cut (a safety trip, a door opening at night, or a press that asked
+    // for the change) goes at once; anything else urgent only skips the
+    // spacing, and still waits for hands to leave the page (§4.4).
+    const entering = res.now.filter((id) => (!cur || !cur.now.includes(id)) && res.items[id]);
+    const urgent = this._forceApply || entering.some((id) => res.items[id].cut) ? 'cut' : entering.some((id) => res.items[id].urgent);
     const ui = { ...this.ui, open: !!this.s.view || !!this.s.tell, pointerDown: !!(this.ptr || this.mptr || this.upcD || this.drag) };
     // The house entering night or away is a change of form, not a drift:
     // it waits for hands to be off the page but not for the spacing.
@@ -469,6 +496,9 @@ class MorphPanel extends HTMLElement {
     if (!cur || this.s.edit || sal.quietMoment(ui, now, urgent)) {
       this._forceApply = false;
       this.salApplied = res;
+      // A rearrangement above the viewport moves the scroll with it, so
+      // nothing in view moves (§4.4).
+      if (cur && !this.s.edit) this.engine.compensate = true;
       this.ui.lastArrange = now;
       this.engine.invalidate();
     } else {
@@ -476,6 +506,37 @@ class MorphPanel extends HTMLElement {
       clearTimeout(this._applyT);
       this._applyT = setTimeout(() => this.schedule(), 1300);
     }
+  }
+
+  // An anchor (§4.4): a card used on four of the last seven days keeps its
+  // slot in its room whatever its score.
+  anchored(id) {
+    const days = this.used[id]; if (!days || days.length < 4) return false;
+    const week = Date.now() - 7 * 86400000;
+    return days.filter((d) => Date.parse(d) >= week - 86400000).length >= 4;
+  }
+
+  // A prediction that leaves the page untouched is an ignored window: its
+  // habit's weight halves, and two in a row stop it (§7.1). Reported once
+  // per window, and only by the device whose owner it predicted for.
+  notePredictions(res) {
+    const on = (x) => x && x.predicted && ['now', 'lead'].includes(x.band);
+    Object.values(res.items).forEach((x) => { if (on(x) && !this._pred[x.id]) this._pred[x.id] = { eid: x.eid, at: res.at }; });
+    Object.keys(this._pred).forEach((id) => {
+      if (on(res.items[id])) return;
+      const p = this._pred[id]; delete this._pred[id];
+      if ((this.touched[id] || 0) >= p.at || !p.eid || !this.admin()) return;
+      const k = 'morph.ignored:' + p.eid + ':' + new Date(p.at).toDateString();
+      try { if (localStorage.getItem(k)) return; localStorage.setItem(k, '1'); } catch (e) { /* storage refused: report anyway */ }
+      this.hass.callWS({ type: 'morph/request', kind: 'habit', payload: { entity: p.eid, used: false } }).catch(() => {});
+    });
+  }
+
+  // A card at the top of its room with a because line under it.
+  leadsWithReason(id) {
+    if (this.s.edit || this.s.thenAt) return false;
+    const a = this.salOf(id); const x = this.salNow(id);
+    return a.band === 'lead' && !!(x.why && x.why.kind !== 'none');
   }
 
   // The applied result for one item, or {} (folded, nothing to say).
@@ -692,11 +753,34 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const reg = this.$('[data-region="upcoming"]');
     const w = (reg && reg.clientWidth) || (this.rootEl && this.rootEl.clientWidth) || window.innerWidth;
     const now = Date.now();
-    const m = upc.model(this.hass, now, w < 640 ? 0.9 : 1.25, this.dash ? then.past(this.hass, this.watchIds(), now) : []);
+    const m = upc.model(this.hass, now, w < 640 ? 0.9 : 1.25, this.dash ? then.past(this.hass, this.watchIds(), now).concat(this.predictionEvents(now)) : []);
     if (!m.stacks.length && !m.durs.length && !this.s.edit) { this._upc = null; return ''; }
     this._upc = m;
     const holding = this.s.hold === 'top:upcoming' ? ' holding' : '';
     return `<div class="holdable${holding}" data-hold="upcoming" aria-label="Coming up">${upc.html(m, this.upcCursor(m))}${this.tellBox('upcoming')}</div>`;
+  }
+
+  // Each prediction's next measured time as a dashed violet dot on Coming
+  // up (§7.1): a habit with four days behind it, for something on the
+  // page, whose weight has not stopped it. Nothing hand-set.
+  predictionEvents(now) {
+    const feed = this.feedState().usable ? (this.brain().feed || {}) : {};
+    const weights = this.settings().habit_weights || {};
+    const out = [];
+    (feed.habits || []).forEach((h) => {
+      if (!h || !h.entity_id || (h.days_seen || 0) < sal.HABIT_MIN_DAYS || h.minute == null) return;
+      if (!this.onDash(h.entity_id)) return;
+      if (weights[h.entity_id] != null && weights[h.entity_id] <= sal.HABIT_STOP_WEIGHT) return;
+      for (let add = 0; add < 2; add++) {
+        const d = new Date(now); d.setDate(d.getDate() + add); d.setHours(0, Math.round(h.minute), 0, 0);
+        const we = d.getDay() === 0 || d.getDay() === 6;
+        if ((h.days === 'weekdays' && we) || (h.days === 'weekends' && !we)) continue;
+        if (d.getTime() <= now - 60000 || d.getTime() > now + upc.AHEAD_MIN * 60000) continue;
+        out.push({ at: d.getTime(), label: friendly(this.hass, h.entity_id), kind: 'usual', solid: false, eid: h.entity_id, sub: 'usually about now' });
+        break;
+      }
+    });
+    return out;
   }
 
   upcCursor(m) { return this.s.upcAt == null ? 0 : upc.clampC(m, (this.s.upcAt - m.base) / 60000); }
@@ -852,6 +936,10 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const reg = eid && H.entities && H.entities[eid];
     const a = area || (reg && (reg.area_id || (reg.device_id && H.devices && H.devices[reg.device_id] && H.devices[reg.device_id].area_id)));
     if (a) this.eachSection((sec) => { if (!found && !sec.hidden && sec.area === a) found = sec.id; });
+    // A section with no `area` set is matched by its title against the
+    // area's name, which is how most rooms are written by hand.
+    const an = a && H.areas && H.areas[a] && String(H.areas[a].name || '').trim().toLowerCase();
+    if (!found && an) this.eachSection((sec) => { if (!found && !sec.hidden && !sec.area && String(sec.title || '').trim().toLowerCase() === an) found = sec.id; });
     return found;
   }
 
@@ -966,13 +1054,23 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
   eachSection(fn) { (this.dash && this.dash.floors || []).forEach((fl, fi) => (fl.sections || []).forEach((sec) => fn(sec, fl, fi))); }
   sectionCards(sec) { const out = []; (sec.groups || []).forEach((g) => (g.cards || []).forEach((c) => out.push(c))); return out; }
   sectionEntities(sec) {
+    if (!this._secEnts || this._secEntsRev !== this.revision) { this._secEnts = new WeakMap(); this._secEntsRev = this.revision; }
+    const hit = this._secEnts.get(sec); if (hit) return hit;
     const out = [];
     this.sectionCards(sec).forEach((c) => {
       if (c.entity) out.push(c.entity);
-      (c.entities || []).forEach((e) => out.push(e));
+      (c.entities || []).forEach((e) => out.push(typeof e === 'string' ? e : (e && e.entity) || ''));
       if (c.type === 'light_group' && this.hass.states[c.entity]) (this.hass.states[c.entity].attributes.entity_id || []).forEach((e) => out.push(e));
+      // A hosted Lovelace card or a custom card type carries its entities
+      // in its own config, in whatever shape it likes; every string in it
+      // that names an entity Home Assistant has is one this room shows.
+      // Without it a case about the thermostat in a hosted card was placed
+      // as if the room did not show it.
+      if (!BUILT_IN.has(c.type)) entityIdsIn(c.card || c, this.hass.states, out, 0);
     });
-    return out;
+    const done = [...new Set(out.filter(Boolean))];
+    if (Object.keys(this.hass.states || {}).length) this._secEnts.set(sec, done);
+    return done;
   }
   floorEntities(fl) { const out = []; (fl.sections || []).forEach((s) => this.sectionEntities(s).forEach((e) => out.push(e))); return out; }
   onDash(eid) {
@@ -1031,18 +1129,54 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     return facts;
   }
 
-  // A room is asleep when its mode says so: a select set to Sleep, or a
-  // sleep switch that is on. The time is when it went to sleep.
+  // A room is asleep when its mode says so: a select set to Sleep, a sleep
+  // switch or sensor that is on, or a sensor reading asleep. A switch whose
+  // name says sleep but names a DEVICE is a control used at night — "Sleeping
+  // headphones fan" turned on is a fan running, not a room asleep — and
+  // reading it as one put the whole house into its evening. The room's own
+  // sleep sensors are often not on the dashboard, so the entities in the
+  // room's area are read too. The time is when it went to sleep.
   asleepSince(sec) {
     const H = this.hass;
-    for (const e of this.sectionEntities(sec)) {
+    const ents = new Set(this.sectionEntities(sec));
+    this.areaEntities(sec).forEach((e) => ents.add(e));
+    for (const e of ents) {
       const s = H.states[e]; if (!s) continue;
-      const d = domainOf(e);
-      const isSleep = ((d === 'input_select' || d === 'select') && /^(sleep|sleeping|asleep|night)$/i.test(s.state))
-        || ((d === 'input_boolean' || d === 'switch' || d === 'binary_sensor') && /sleep/i.test(e + ' ' + (s.attributes.friendly_name || '')) && s.state === 'on');
-      if (isSleep) return s.last_changed;
+      if (sal.sleepSignal(e, s)) return s.last_changed;
     }
     return null;
+  }
+
+  // Whether this room has anything that could say it is asleep at all.
+  canSleep(sec) {
+    const H = this.hass;
+    const ents = new Set(this.sectionEntities(sec)); this.areaEntities(sec).forEach((e) => ents.add(e));
+    for (const e of ents) {
+      const st = H.states[e]; if (!st) continue;
+      const d = domainOf(e);
+      if (d.endsWith('select')) { if ((st.attributes.options || []).some((o) => /^(sleep|sleeping|asleep|night)$/i.test(o))) return true; continue; }
+      if (sal.sleepSignal(e, { ...st, state: d === 'sensor' ? 'asleep' : 'on' })) return true;
+    }
+    return false;
+  }
+
+  // Every entity Home Assistant places in this room's area (its own area,
+  // or its device's), for the signals a room carries that nobody put on
+  // the page. Cached per revision and per registry, because it is asked of
+  // every room on every render.
+  areaEntities(sec) {
+    const H = this.hass;
+    if (!sec || !sec.area || !H.entities) return [];
+    if (!this._areaEnts || this._areaEntsKey !== H.entities || this._areaEntsDev !== H.devices) {
+      const by = {};
+      Object.values(H.entities).forEach((r) => {
+        if (!r || !r.entity_id || r.hidden || r.disabled_by) return;
+        const a = r.area_id || (r.device_id && H.devices && H.devices[r.device_id] && H.devices[r.device_id].area_id);
+        if (a) (by[a] = by[a] || []).push(r.entity_id);
+      });
+      this._areaEnts = by; this._areaEntsKey = H.entities; this._areaEntsDev = H.devices;
+    }
+    return this._areaEnts[sec.area] || [];
   }
 
   // Somebody in the room, read off its motion, occupancy and presence
@@ -1091,19 +1225,30 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     return cards.find((c) => nightly(c.entity)) || cards.find((c) => domainOf(c.entity) === 'fan') || cards.find((c) => ['switch', 'input_boolean'].includes(domainOf(c.entity))) || null;
   }
 
-  // The floors in the order the list puts them, and the rooms in each:
-  // a floor or room with something leading it rises; otherwise the file's
-  // own order. Read from the APPLIED list, so it moves only when quiet.
+  // The floors in the order the list puts them, and the rooms in each,
+  // from the ROOM SCORE (§4.2: the max of its items, plus 0.1 occupied)
+  // read through the bands. A room keeps its place in its floor unless it
+  // is two full bands above folded — leading or Now, or needing attention
+  // (§4.4's anchor rule for rooms); four fixed buckets with "occupied" as
+  // one of them sent every room somebody walked into to the top of every
+  // device. On a family device an occupied room rises one place (§6.3).
+  // Read from the APPLIED list, so it moves only when quiet.
   orderedFloors(dash) {
     const res = this.salApplied;
+    const family = this.viewer().device === 'family';
     const rank = (sec) => {
       if (this.s.edit || !res) return 0;
-      const st = this.roomState(sec);
-      return st === 'attention' ? 3 : Object.values(res.items).some((x) => x.sec === sec.id && x.band === 'lead') ? 2 : st === 'occupied' ? 1 : 0;
+      if (this.roomState(sec) === 'attention') return 3;
+      const room = res.rooms && res.rooms[sec.id];
+      const b = sal.BAND_ORDER.indexOf(sal.bandFor(room ? room.S : 0, 'folded'));
+      return b >= 2 ? b : 0;
     };
     const floors = (dash.floors || []).map((fl, fi) => {
-      const secs = (fl.sections || []).map((sec, i) => ({ sec, i, r: rank(sec) }));
+      const secs = (fl.sections || []).map((sec, i) => ({ sec, i, r: rank(sec), occ: !this.s.edit && !!res && family && !!this.presence(sec) }));
       secs.sort((a, b) => b.r - a.r || a.i - b.i);
+      for (let i = 1; i < secs.length; i++) {
+        if (secs[i].occ && !secs[i - 1].occ && secs[i].r === secs[i - 1].r && !secs[i - 1].rose) { const t = secs[i - 1]; secs[i - 1] = secs[i]; secs[i] = t; secs[i - 1].rose = true; }
+      }
       return { fl, fi, secs: secs.map((x) => x.sec), r: Math.max(0, ...secs.map((x) => x.r)) };
     });
     // A floor rises only for something leading in it, not for occupancy.
@@ -1157,11 +1302,18 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
         (sec.groups || []).forEach((g, gi) => {
           let cards = (g.cards || []).filter((c) => !lifted.has(c.id));
           // An item the list says leads its room goes first in its group.
+          // An anchor keeps its slot whatever its score (§4.4): the
+          // others are ordered around it.
           if (res && !this.s.edit) {
             const lead = (c) => (res.items[c.id] && res.items[c.id].band === 'lead' ? 1 : 0);
-            cards = cards.map((c, i) => ({ c, i })).sort((a, b) => lead(b.c) - lead(a.c) || a.i - b.i).map((x) => x.c);
+            const fixed = cards.map((c) => this.anchored(c.id));
+            const free = cards.map((c, i) => ({ c, i })).filter((x) => !fixed[x.i]).sort((a, b) => lead(b.c) - lead(a.c) || a.i - b.i).map((x) => x.c);
+            cards = cards.map((c, i) => (fixed[i] ? c : free.shift()));
           }
-          const items = cards.map((c) => this.itemOf(c));
+          // A card that leads its room carries a because line, so it is a
+          // row of its own kind: beside plain strips of its type it was a
+          // row of two heights (the engine's §5 rule).
+          const items = cards.map((c) => { const it = this.itemOf(c); return this.leadsWithReason(c.id) ? { ...it, hk: it.hk + ':lead' } : it; });
           if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' });
           if (items.length || g.label) groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
         });
@@ -1433,7 +1585,9 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       // The because line (§11): one sentence, in the item's meaning colour,
       // on a card the list lifted or put at the top of its room. Hold it to
       // ask brAIn why.
-      if (!this.s.edit && !this.s.thenAt && x.why && (lifted || x.band === 'lead') && x.why.kind !== 'none') faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
+      // Whether it leads is the APPLIED list's word (the row it sits in was
+      // laid out from it, `leadsWithReason`); what it says is the newest.
+      if (!this.s.edit && !this.s.thenAt && x.why && (lifted || this.leadsWithReason(id)) && x.why.kind !== 'none') faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
       else if (lifted && x.why) faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
       if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${this.keepHtml(card, lifted || x.band === 'lead')}${T.more(ctx)}${T.host ? '' : this.moreInfoHtml(card, ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
@@ -1564,6 +1718,7 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
     (draft.floors || []).forEach((f) => { if (!f.id) f.id = 'f_new_' + rid(); (f.sections || []).forEach((sec) => { if (!sec.id) sec.id = 's_new_' + rid(); (sec.groups || []).forEach((g) => (g.cards || []).forEach((c) => { if (!c.id) c.id = 'c_new_' + rid(); })); }); });
     this.dash = draft;
     this._onDash = null;
+    this._secEnts = null;
     this.engine.invalidate();
     this.schedule();
     this.saveQueue = (this.saveQueue || Promise.resolve()).then(() => this.save(message));
@@ -2147,6 +2302,12 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   // a habit's prediction that was used gets its full weight back.
   noteUse(id) {
     this.touched[id] = Date.now();
+    delete this._pred[id];
+    const day = new Date().toDateString();
+    const days = (this.used[id] || []).filter((d) => d !== day);
+    days.push(day);
+    this.used[id] = days.slice(-7);
+    try { localStorage.setItem('morph.used', JSON.stringify(this.used)); } catch (e) { /* storage refused: no anchors on this device */ }
     const x = this.salNow(id);
     if (x.inp && x.inp.h > 0 && x.eid && this.admin()) this.hass.callWS({ type: 'morph/request', kind: 'habit', payload: { entity: x.eid, used: true } }).catch(() => {});
   }

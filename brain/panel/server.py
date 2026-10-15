@@ -3278,6 +3278,23 @@ def _morph_area_of(entity_id: str) -> str:
     return str((_FACTS_CTX.get("entity_areas") or {}).get(entity_id) or "")
 
 
+def _morph_case_area(case: dict) -> str:
+    """The room a case is about: its subject's area, else the area most of
+    its evidence is in. Ten of twelve cases on a real house went to Morph
+    with no area because their subject (a check about an integration, a
+    question about the house) had none, while every sensor they cited did."""
+    area = _morph_area_of(str(case.get("entity_id") or ""))
+    if area:
+        return area
+    votes: dict = {}
+    for ev in case.get("evidence") or []:
+        eid = ev.get("entity") if isinstance(ev, dict) else ev
+        a = _morph_area_of(str(eid or ""))
+        if a:
+            votes[a] = votes.get(a, 0) + 1
+    return max(votes, key=lambda k: votes[k]) if votes else ""
+
+
 def _morph_cases_payload(now: float | None = None) -> dict:
     """`cases.json` (contract B): the one list, as Morph draws it."""
     now = time.time() if now is None else now
@@ -3302,7 +3319,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
             answers=morph_bridge.morph_answers(cases.answers(case)),
-            area_id=_morph_area_of(str(case.get("entity_id") or "")),
+            area_id=_morph_case_area(case),
             urgent=urgent,
             finding_status=str(case.get("finding_status") or ""),
             morph_key=str((row or {}).get("morph_key") or "")))
@@ -3321,8 +3338,9 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         queue = None
     return {"v": morph_bridge.CASES_VERSION, "at": int(now), "open": queue,
             "cases": out,
-            "todo": morph_bridge.todo_rows(items, cases.snoozes(),
-                                           _morph_area_of),
+            "todo": morph_bridge.todo_rows(
+                items, cases.snoozes(), _morph_area_of,
+                lambda item: findings_store.todo_item_text(item, names)),
             "ended_morph": morph_bridge.ended(),
             "said": sorted(said, key=lambda t: t.get("at") or 0)[-20:]}
 

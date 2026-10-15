@@ -33,6 +33,12 @@ export const OCCUPIED_MS = 10 * 60000;
 export const HABIT_AHEAD_MIN = 30;
 export const HABIT_MIN_DAYS = 4;
 export const FEED_OFFLINE_MS = 7 * 86400000;
+export const HABIT_STOP_WEIGHT = 0.25;
+// [from, to] in minutes past midnight: armed_home is night inside it until
+// brAIn has measured the house's own settle and wake.
+export const UNMEASURED_NIGHT = [19 * 60, 9 * 60];
+// A habit this likely is a prediction (§7.1): the control arrives early.
+export const PREDICT_MIN_H = 0.5;
 
 const SEVERITY_U = { critical: 1.0, serious: 0.7, warning: 0.4, info: 0.15 };
 const SAFETY = ['smoke', 'gas', 'carbon_monoxide', 'moisture'];
@@ -58,26 +64,67 @@ const weekend = (ms) => { const w = new Date(ms).getDay(); return w === 0 || w =
 
 // Day, evening, night or away (§4.2), read from the house's own measured
 // rhythm and its alarm, never from the clock alone: an unmeasured house has
-// no evening and no night but the alarm's.
+// no evening and no night but the alarm's and its sleepers'.
+//
+// "Night: alarm armed" (§4.2). Which panel is the house's alarm is the
+// panel's to say (`ctx.alarms`, the alarm panels on the dashboard) — the
+// first panel in the states map may be a camera system's, never armed at
+// bedtime. `armed_night` is night whatever the clock says; `armed_home` is
+// the bedtime arming in a house that has no night mode, so it is night
+// inside the measured settle-to-wake window, and — until brAIn has measured
+// a rhythm — whenever it is set between 7 PM and 9 AM, because waiting for
+// a measurement that may be weeks away meant a house armed for bed never
+// got its night page. The window is wide on purpose: it only has to tell a
+// bedtime arming from a house armed "stay" at noon, never to place bedtime.
+export function alarmStates(ctx) {
+  const S = ctx.states || {};
+  const named = (ctx.alarms || []).map((e) => S[e]).filter(Boolean);
+  if (named.length) return named;
+  return Object.values(S).filter((s) => domainOf(s.entity_id) === 'alarm_control_panel');
+}
+
 export function period(ctx) {
   const S = ctx.states || {};
   const people = Object.values(S).filter((s) => domainOf(s.entity_id) === 'person');
   const home = people.filter((s) => s.state === 'home');
   if (people.length && !home.length) return 'away';
-  const alarm = Object.values(S).find((s) => domainOf(s.entity_id) === 'alarm_control_panel');
-  if (alarm && alarm.state === 'armed_night') return 'night';
-  if (alarm && alarm.state === 'armed_away' && !home.length) return 'away';
+  const alarms = alarmStates(ctx);
+  const armed = (word) => alarms.some((a) => a.state === word);
+  if (armed('armed_night')) return 'night';
+  if (armed('armed_away') && !home.length) return 'away';
   const feed = ctx.feed || {};
   const r = feed.rhythm && feed.rhythm[weekend(ctx.now) ? 'weekend' : 'weekday'];
   const m = minuteOf(ctx.now);
   if (r && r.settle != null && r.wake != null) {
     const settle = r.settle, wake = r.wake;
     const inNight = settle > wake ? (m >= settle || m < wake) : (m >= settle && m < wake);
-    if (inNight || (alarm && alarm.state === 'armed_home' && (m >= settle - 60 || m < wake))) return 'night';
+    if (inNight || (armed('armed_home') && (m >= settle - 60 || m < wake))) return 'night';
     if (m >= settle - 150 && m < settle) return 'evening';
-  }
+  } else if (armed('armed_home') && (m >= UNMEASURED_NIGHT[0] || m < UNMEASURED_NIGHT[1])) return 'night';
+  // "Or every tracked person asleep": every room that can say it is asleep
+  // says so, and there are at least two of them (one asleep room is a
+  // child's bedtime, not the house's).
+  if (ctx.allAsleep) return 'night';
   if (ctx.anyAsleep) return 'evening';
   return 'day';
+}
+
+// Whether one entity says its room is asleep (§6.4). A mode (a select set
+// to Sleep), a sleep switch or sensor that is on, or a sensor whose state
+// is asleep. A name that says sleep AND names a device is a control used at
+// night, not a sleeper: "Sleeping headphones fan" on is a fan running, and
+// it used to flip the whole house into its evening.
+const SLEEP_WORD = /\b(sleep|sleeping|asleep|bedtime)\b/i;
+const DEVICE_WORD = /\b(fan|fans|light|lights|lamp|headphones?|speaker|sound|noise|machine|music|tv|heater|heat|humidifier|purifier|plug|outlet|socket|blind|blinds|shade|curtain|timer|alarm clock)\b/i;
+const SLEEP_STATE = /^(sleep|sleeping|asleep|night|in bed|in_bed|light sleep|deep sleep|rem)$/i;
+export function sleepSignal(eid, st) {
+  if (!st) return false;
+  const d = domainOf(eid);
+  const name = String(eid).split('.')[1].replace(/_/g, ' ') + ' ' + String((st.attributes || {}).friendly_name || '');
+  if ((d === 'input_select' || d === 'select') && /^(sleep|sleeping|asleep|night)$/i.test(st.state)) return true;
+  if (d === 'sensor' && SLEEP_WORD.test(name) && SLEEP_STATE.test(String(st.state))) return true;
+  if (['input_boolean', 'switch', 'binary_sensor'].includes(d) && st.state === 'on' && SLEEP_WORD.test(name) && !DEVICE_WORD.test(name)) return true;
+  return false;
 }
 
 // ------------------------------------------------------------------ inputs
@@ -158,6 +205,9 @@ function habit(st, feed, ctx) {
     let ahead = start - m; if (ahead < -720) ahead += 1440; if (ahead > 720) ahead -= 1440;
     if (ahead > HABIT_AHEAD_MIN || ahead < -(spread * 2 + 20)) return;
     const w = (ctx.habitWeights && ctx.habitWeights[st.entity_id] != null) ? ctx.habitWeights[st.entity_id] : 1;
+    // Two ignored windows in a row and the prediction stops (§7.1): each
+    // halves the weight, so a quarter is two ignored and silence.
+    if (w <= HABIT_STOP_WEIGHT) return;
     const h = Math.min(0.9, (x.share || 0)) * w;
     if (!best || h > best.h) best = { h, row: x };
   });
@@ -304,6 +354,13 @@ export function compute(items, ctx, prev) {
     const pinnedNow = pin === true || (pin === 'active' && best.st && (isOpenState(best.st) || ['playing', 'cleaning', 'heating', 'cooling'].includes(best.st.state) || best.inp.g > 0));
     const asked = ctx.asked && ctx.asked[it.id] && ctx.asked[it.id] > now;
     if (pinnedNow || asked) Sx = Math.max(Sx, 0.8);
+    // A prediction is a control arriving early (§7.1): into Now on a
+    // personal device, to the top of its room on a family one. The score
+    // alone cannot carry it there — a habit at its 0.9 cap is 0.63 — so
+    // the lift is a floor, and in Now a prediction takes only the places
+    // nothing with a reason of its own wanted (it never outranks a fault).
+    const predicted = !!(best.inp.h > 0 && best.inp.h * (best.inp.v == null ? 1 : best.inp.v) >= PREDICT_MIN_H && !best.isCase);
+    if (predicted) Sx = Math.max(Sx, ctx.viewer && ctx.viewer.device === 'family' ? BANDS.lead.enter : BANDS.now.enter);
     // Not this: suppressed for today, whatever lifted it.
     if (ctx.suppressed && ctx.suppressed[it.id]) Sx = Math.min(Sx, BANDS.lead.enter - 0.01);
     // Decay: in Now and untouched past its window.
@@ -321,16 +378,21 @@ export function compute(items, ctx, prev) {
     // Urgent goes at once (§4.4): a safety trip, a serious case, and a
     // door or lock that just opened at night — the 3 AM moment, a cut.
     const justOpened = best.st && best.st.last_changed && now - Date.parse(best.st.last_changed) < 120000;
-    const urgent = best.inp.ur.safety || best.inp.u >= 0.7 || (per === 'night' && best.st && isOpenState(best.st) && (domainOf(best.st.entity_id) === 'lock' || isClosure(best.st)) && justOpened);
+    // A cut is the one change that goes even under a hand (a safety trip,
+    // a door opening at night); everything else urgent only skips the
+    // spacing between rearrangements (§4.4).
+    const cut = !!(best.inp.ur.safety || (per === 'night' && best.st && isOpenState(best.st) && (domainOf(best.st.entity_id) === 'lock' || isClosure(best.st)) && justOpened));
+    const urgent = cut || best.inp.u >= 0.7;
     const night = per === 'night' && best.st && (domainOf(best.st.entity_id) === 'lock' || isClosure(best.st));
-    const x = { id: it.id, sec: it.sec, S: Sx, band, eid: best.eid, inp: best.inp, urgent, isCase: !!best.isCase, pinned: pinnedNow ? pin : null, asked, night, open: best.st && isOpenState(best.st) };
+    const x = { id: it.id, sec: it.sec, S: Sx, band, eid: best.eid, inp: best.inp, urgent, cut, isCase: !!best.isCase, pinned: pinnedNow ? pin : null, asked, night, open: best.st && isOpenState(best.st), predicted: predicted && !(ctx.suppressed && ctx.suppressed[it.id]) };
     x.why = because(x, ctx);
     x.color = colorOf(x);
     out[it.id] = x;
   });
   // Now: at most N, highest first; the rest wait at the top of their room.
   const max = ctx.nowMax || NOW_MAX;
-  const nowIds = Object.values(out).filter((x) => x.band === 'now').sort((a, b) => b.S - a.S || String(a.id).localeCompare(String(b.id)));
+  const mere = (x) => (x.predicted && !(x.inp.u || x.inp.d || x.inp.g) && !x.pinned && !x.asked ? 1 : 0);
+  const nowIds = Object.values(out).filter((x) => x.band === 'now').sort((a, b) => mere(a) - mere(b) || b.S - a.S || String(a.id).localeCompare(String(b.id)));
   // One thing is lifted once: two cards for the same lock (the Entry and
   // the Security room both carry it) are one card in Now, the first.
   const seenE = new Set(); const kept = [];
@@ -373,15 +435,19 @@ export function colorOf(x) {
 }
 
 // Whether the page may rearrange now (§4.4). `ui`: {lastTouch, pointerDown,
-// open, lastScroll, lastArrange}; `urgent`: an item entering Now with u ≥
-// 0.7, or a safety trip, which goes at once.
+// open, lastScroll, lastArrange}; `urgent`: true for an item entering Now
+// with u ≥ 0.7, 'cut' for a safety trip or a door opening at night.
 export function quietMoment(ui, now, urgent) {
-  if (urgent) return true;
+  // A cut (a safety trip, a door opening at night) goes at once, whatever
+  // hands are on the page: that is the one moment speed beats grace.
+  if (urgent === 'cut') return true;
   if (ui.pointerDown) return false;
   if (ui.open) return false;
   if (now - (ui.lastTouch || 0) < QUIET_TOUCH_MS) return false;
   if (now - (ui.lastScroll || 0) < QUIET_SCROLL_MS) return false;
-  if (now - (ui.lastArrange || 0) < REARRANGE_SPACING_MS) return false;
+  // Anything else urgent (a case at u ≥ 0.7 entering Now) is exempt from
+  // the spacing and nothing else (§4.4).
+  if (!urgent && now - (ui.lastArrange || 0) < REARRANGE_SPACING_MS) return false;
   return true;
 }
 

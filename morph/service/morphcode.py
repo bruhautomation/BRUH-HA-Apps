@@ -298,6 +298,11 @@ def _redo_part(name: str, version: str, history: list[str] | None, row: dict) ->
                       f"house's change was (the commits below say what it was for), then start from Morph's new "
                       f"{name}, make only that change, and save the result as {mine}. Never copy the old file "
                       f"over the new one: that would undo the update."]
+    lines.append("Carry over only what this household asked for: a change a commit below or a `(you)` line in "
+                 "/config/morph/LEARNED.md explains. A change to the design's own numbers (springs, the "
+                 "make-room-first delays, the theme backgrounds, type sizes), a second Now, a second list of "
+                 "brAIn's cases, or hover tooltips, with no such reason behind it, is drift: leave Morph's new "
+                 "code as it is there and name what you dropped in your answer.")
     said = [m for m in (history or []) if m][:6]
     if said:
         lines.append(f"Commits that changed {mine}, newest first:")
