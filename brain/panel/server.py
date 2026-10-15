@@ -8103,8 +8103,8 @@ findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
 todo_store.SNOOZED = lambda: cases.snoozes()
 # Every write to either store marks Morph's `cases.json` as owed, and the
 # Morph loop rewrites it within a second (`_morph_loop`).
-findings_store.ON_WRITE = lambda: _morph_dirty()
-todo_store.ON_WRITE = lambda: _morph_dirty()
+findings_store.ON_WRITE = _morph_dirty
+todo_store.ON_WRITE = _morph_dirty
 
 
 def _counts(now: float | None = None) -> dict:
