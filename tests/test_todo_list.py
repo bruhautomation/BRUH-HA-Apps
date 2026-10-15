@@ -340,7 +340,11 @@ class TestTheFourthEnding(PanelCase):
         self.assertEqual(payload["open"], 0)
         # ...and on the other list, carrying the card's own evidence.
         added = payload["added"]
-        self.assertEqual(added["text"], row["text"])
+        # The item reads as the errand (brAIn 3.0's `todo_text`), and the
+        # report it came from rides beside it as `claim`.
+        self.assertEqual(added["text"], findings_store.todo_text_of(row))
+        self.assertEqual(added["claim"], row["text"])
+        self.assertEqual(added["from_case"], f"f:{row['ts']}")
         self.assertEqual(added["detail"], "last seen 3 Sep")
         self.assertEqual(added["fix"], "Re-pair it")
         self.assertEqual(added["origin"], "finding")

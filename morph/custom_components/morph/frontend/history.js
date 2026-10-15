@@ -87,6 +87,11 @@ export function kindOf(type, st) {
 const ACTIVE = ['on', 'open', 'opening', 'unlocked', 'playing', 'home', 'heat', 'cool', 'heating', 'cooling', 'cleaning', 'detected', 'wet', 'triggered', 'armed_away', 'armed_home', 'armed_night'];
 export const isActive = (s) => ACTIVE.includes(String(s));
 
+// Stretches the record says nothing about (unavailable, unknown): drawn
+// hatched, never as "off".
+const GAP = ['unavailable', 'unknown'];
+function gaps(rows, start, end) { return segments(rows, start, end, (r) => GAP.includes(String(r.s))); }
+
 function segments(rows, start, end, test) {
   const out = []; let cur = null;
   (rows || []).forEach((r, i) => {
@@ -99,10 +104,14 @@ function segments(rows, start, end, test) {
   return out;
 }
 
-function stripHtml(segs, start, end, color) {
+// A day strip covers midnight to midnight: its right edge is the next
+// midnight (it said "Now"), and now is a mark of its own.
+function stripHtml(segs, start, end, color, holes) {
   const span = end - start;
-  return `<div class="dstrip">${segs.map((s) => `<span style="left:${((s.a - start) / span * 100).toFixed(2)}%;width:${Math.max(0.8, (s.b - s.a) / span * 100).toFixed(2)}%;background:${color}"></span>`).join('')}</div>
-<div class="ticks"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>Now</span></div>`;
+  const nowAt = Math.max(0, Math.min(100, (Date.now() - start) / span * 100));
+  const bar = (s, bg, cls) => `<span${cls ? ` class="${cls}"` : ''} style="left:${((s.a - start) / span * 100).toFixed(2)}%;width:${Math.max(0.8, (s.b - s.a) / span * 100).toFixed(2)}%;${bg ? `background:${bg}` : ''}"></span>`;
+  return `<div class="dstrip">${(holes || []).map((s) => bar(s, '', 'gap')).join('')}${segs.map((s) => bar(s, color)).join('')}<i class="dnow" style="left:${nowAt.toFixed(2)}%"></i></div>
+<div class="ticks"><span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>12 AM</span></div>`;
 }
 
 function barsHtml(points, color, act, fmtv, labelOf) {
@@ -115,7 +124,9 @@ function barsHtml(points, color, act, fmtv, labelOf) {
   }).join('')}</div>`;
 }
 
-let chartSeq = 0;
+// A chart's key is what it shows, so a redraw keeps a finger's place: a new
+// key on every render dropped the scrub state each time the house moved.
+const chartKey = (o, series) => 'c' + (o.key || series.map((s) => s.id).join('+')).replace(/[^a-z0-9_+.-]/gi, '_').slice(0, 120);
 // A line chart read by sliding a finger. The series are kept in CHARTS so
 // the panel's pointer handler can answer "what was it at this instant".
 export function lineChart(series, t0, t1, opts) {
@@ -128,7 +139,7 @@ export function lineChart(series, t0, t1, opts) {
   const H = o.height || 120, W = 600;
   const X = (t) => ((t - t0) / (t1 - t0 || 1)) * W;
   const Y = (v) => H - ((v - lo) / (hi - lo)) * H;
-  const key = 'c' + (++chartSeq);
+  const key = chartKey(o, series);
   CHARTS.set(key, { series, t0, t1, unit: o.unit || '' });
   if (CHARTS.size > 60) CHARTS.delete(CHARTS.keys().next().value);
   const focus = o.focus;
@@ -139,14 +150,17 @@ export function lineChart(series, t0, t1, opts) {
   }).join('');
   const band = o.band ? `<rect x="0" width="${W}" y="${Y(o.band[1]).toFixed(1)}" height="${Math.max(1, Y(o.band[0]) - Y(o.band[1])).toFixed(1)}" fill="${mix(o.bandColor || 'var(--teal)', 12)}"></rect>` : '';
   const runs = (o.runs || []).map((r) => `<rect x="${X(r.a).toFixed(1)}" width="${Math.max(1, X(r.b) - X(r.a)).toFixed(1)}" y="${H + 6}" height="5" rx="2" fill="${r.color || 'var(--teal)'}"></rect>`).join('');
-  // Labels at the end of each line, nudged apart so they never collide.
+  // Labels at the end of each line, nudged apart so they never collide —
+  // as HTML beside the plot: SVG text inside a viewBox drawn with
+  // preserveAspectRatio="none" came out stretched.
   let labels = '';
   if (series.length > 1) {
     const ends = series.map((s) => { const last = s.pts.filter((p) => isFinite(p[1])).slice(-1)[0]; return last ? { s, y: Y(last[1]) } : null; }).filter(Boolean).sort((a, b) => a.y - b.y);
-    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
-    labels = ends.map((e) => `<text x="${W + 6}" y="${e.y + 4}" font-size="11" fill="${e.s.color}" opacity="${focus && focus !== e.s.id ? 0.35 : 1}">${esc(e.s.short || e.s.name)}</text>`).join('');
+    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) ends[i].y = ends[i - 1].y + 14;
+    labels = `<div class="chlabs" aria-hidden="true">${ends.map((e) => `<span style="top:${(e.y - 7).toFixed(1)}px;color:${e.s.color};opacity:${focus && focus !== e.s.id ? 0.35 : 1}">${esc(e.s.short || e.s.name)}</span>`).join('')}</div>`;
   }
-  return `<div class="chart" data-chart="${key}"><svg viewBox="0 0 ${series.length > 1 ? W + 90 : W} ${H + (o.runs ? 14 : 2)}" preserveAspectRatio="none" style="height:${H + (o.runs ? 14 : 2)}px">${band}${paths}${runs}${labels}</svg><span class="scrub" hidden></span></div><div class="readout" data-readout="${key}">${esc(o.caption || 'Slide along the line to read it.')}</div>`;
+  const hh = H + (o.runs ? 14 : 2);
+  return `<div class="chart${labels ? ' haslabs' : ''}" data-chart="${key}"><svg viewBox="0 0 ${W} ${hh}" preserveAspectRatio="none" style="height:${hh}px">${band}${paths}${runs}</svg><span class="scrub" hidden></span>${labels}</div><div class="readout" data-readout="${key}">${esc(o.caption || 'Slide along the line to read it.')}</div>`;
 }
 
 export function scrubAt(key, frac) {
@@ -182,10 +196,11 @@ export function block(hass, card, st, H, color, name) {
         if (rows.error) return `<p class="sm">History could not be read: ${esc(rows.error)}</p>`;
         const test = runs ? (r) => ['heating', 'cooling', 'drying', 'fan'].includes(r.a && r.a.hvac_action) : (r) => isActive(r.s);
         const segs = segments(rows, d0, now, test);
+        const holes = gaps(rows, d0, now);
         const total = segs.reduce((a, s) => a + (s.b - s.a), 0);
         const word = runs ? 'Ran' : card.type === 'lock' ? 'Unlocked' : ['cover', 'list'].includes(card.type) ? 'Open' : card.type === 'person' ? 'Home' : 'On';
         const changes = rows.length;
-        return `<button type="button" class="lrow" data-act="h-open" style="border-top:0;flex-direction:column;align-items:stretch;gap:6px"><span class="rowb"><b style="font-size:13px">${esc(word)} ${esc(dur(total))} today</b><span class="small">${changes} change${changes === 1 ? '' : 's'} · tap for who and when</span></span>${stripHtml(segs, d0, d0 + 86400000, mix(color, 70))}</button>`;
+        return `<button type="button" class="lrow" data-act="h-open" style="border-top:0;flex-direction:column;align-items:stretch;gap:6px"><span class="rowb"><b style="font-size:13px">${esc(word)} ${esc(dur(total))} today</b><span class="small">${changes} change${changes === 1 ? '' : 's'} · tap for who and when</span></span>${stripHtml(segs, d0, d0 + 86400000, mix(color, 70), holes)}</button>`;
       }
       const day = H.day || d0;
       const rows = logbook(hass, eid, day, Math.min(now, day + 86400000));
@@ -243,6 +258,7 @@ export function block(hass, card, st, H, color, name) {
 // outside) on one quiet line of their own so they do not flatten the rest.
 
 const OV = new Map(); // chart key → what the overlay needs to answer a finger
+export const SERIES = ['var(--sky)', 'var(--amber)', 'var(--violet)', 'var(--teal)', 'var(--peach)', 'var(--sand)', 'var(--indigo)', 'var(--lime)', 'var(--rose)'];
 const CH = 150;       // plot height, px (the viewBox is 600 × CH)
 const LABEL_GAP = 19;
 
@@ -278,7 +294,7 @@ function labelsHtml(o, at) {
   for (let i = 1; i < lab.length; i++) lab[i].y = Math.max(lab[i].y, lab[i - 1].y + LABEL_GAP);
   const over = lab.length ? lab[lab.length - 1].y - (CH - 9) : 0;
   if (over > 0) { lab[lab.length - 1].y -= over; for (let i = lab.length - 2; i >= 0; i--) lab[i].y = Math.min(lab[i].y, lab[i + 1].y - LABEL_GAP); }
-  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b>${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
+  return lab.map((x) => `<button type="button" class="ovlab" data-act="r-focus" data-v="${esc(x.l.id)}" aria-pressed="${focus === x.l.id}" style="top:${(x.y - 9).toFixed(1)}px;opacity:${focus && focus !== x.l.id ? 0.45 : 1}"><span class="sw" style="background:${x.l.color}"></span><span class="nm">${esc(x.l.short)}</span><b style="color:${x.l.valColor || 'inherit'}">${x.v == null ? '—' : esc(Number(x.v).toFixed(digits) + unit)}</b></button>`).join('');
 }
 
 // What the overlay says under a finger: the labels' values, a dot on every
@@ -313,9 +329,15 @@ export function readings(hass, card, H, colorFor, head) {
   const opts = card.options || {};
   const first = hass.states[ids[0]];
   const unitRaw = first.attributes.unit_of_measurement || '';
-  const humidity = first.attributes.device_class === 'humidity' || unitRaw === '%';
-  const unit = humidity ? '%' : '°';
-  const digits = humidity ? 0 : 1;
+  const dc = first.attributes.device_class;
+  // What these lines ARE: a soil-moisture card was called "rooms", given a
+  // degree sign and drawn under the thermostats' target band.
+  const moisture = dc === 'moisture' || /moist|soil/i.test(ids.join(' '));
+  const temperature = !moisture && (dc === 'temperature' || /°/.test(unitRaw));
+  const humidity = !moisture && !temperature && (dc === 'humidity' || unitRaw === '%');
+  const unit = temperature ? '°' : unitRaw === '%' ? '%' : unitRaw ? ' ' + unitRaw : '';
+  const digits = humidity || moisture || unitRaw === '%' ? 0 : 1;
+  const what = moisture ? 'line' : temperature || humidity ? 'room' : 'line';
   const series = [];
   let pending = false;
   ids.forEach((eid) => {
@@ -324,7 +346,9 @@ export function readings(hass, card, H, colorFor, head) {
     const pts = Array.isArray(rows) && rows.length ? rows.map((p) => [p.t, p.mean]) : [];
     const st = hass.states[eid];
     const nm = st.attributes.friendly_name || eid;
-    series.push({ id: eid, name: nm, short: nm.replace(/\s*(temperature|humidity|temp)$/i, ''), color: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
+    // A line's colour is its place in a fixed palette, so two rooms never
+    // share one; the reading's own warmth colours its value instead.
+    series.push({ id: eid, name: nm, short: nm.replace(/\s*(temperature|humidity|temp|moisture)$/i, ''), color: SERIES[series.length % SERIES.length], valColor: colorFor(parseFloat(st.state)), pts, now: parseFloat(st.state) });
   });
   if (pending && !series.length) return header('') + '<p class="sm">Reading the day…</p>';
   // Extremes (an attic, the outside) leave the plot for the line below it.
@@ -347,7 +371,7 @@ export function readings(hass, card, H, colorFor, head) {
   if (Array.isArray(opts.band) && opts.band.length === 2) {
     const fixed = [Number(opts.band[0]), Number(opts.band[1])];
     bandAt = () => fixed;
-  } else if (!humidity) {
+  } else if (temperature) {
     const climates = (opts.climate ? [].concat(opts.climate) : Object.keys(hass.states).filter((e) => e.startsWith('climate.'))).filter((e) => hass.states[e]).slice(0, 4);
     const tls = climates.map((c) => climateTargets(timeline(hass, c, t0, now, true))).filter((r) => r.length);
     if (tls.length) {
@@ -398,8 +422,8 @@ export function readings(hass, card, H, colorFor, head) {
     band = runsOf.filter((r) => r.length > 1).map((r) => `<polygon points="${r.map((bp) => X(bp[0]).toFixed(1) + ',' + yOf(bp[1][1]).toFixed(1)).concat(r.slice().reverse().map((bp) => X(bp[0]).toFixed(1) + ',' + yOf(bp[1][0]).toFixed(1))).join(' ')}" style="fill:${mix(bandColor, 9)}"></polygon>`).join('');
   }
   const nowBand = bandAt ? bandAt(now) : null;
-  const sub = `${lines.length} room${lines.length === 1 ? '' : 's'}${nowBand ? ` · ${bandWord} ${fmt(nowBand[0], '')}${nowBand[1] !== nowBand[0] ? '–' + fmt(nowBand[1], '') : ''}${unit}` : ''}`;
-  const key = 'c' + (++chartSeq);
+  const sub = `${lines.length} ${what}${lines.length === 1 ? '' : 's'}${nowBand ? ` · ${bandWord} ${fmt(nowBand[0], '')}${nowBand[1] !== nowBand[0] ? '–' + fmt(nowBand[1], '') : ''}${unit}` : ''}`;
+  const key = chartKey({ key: 'ov-' + (card.id || ids.join('+')) }, lines);
   const o = { t0, t1: now, lines, yOf, focus, unit, digits, bandAt, bandWord, sub };
   OV.set(key, o); if (OV.size > 30) OV.delete(OV.keys().next().value);
   CHARTS.set(key, { series: lines, t0, t1: now, unit });

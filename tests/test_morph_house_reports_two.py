@@ -99,41 +99,22 @@ class TestACardFileIsFetchedTwiceBeforeItIsAFault(unittest.TestCase):
         self.assertNotIn(" import(`", body)
 
 
-class TestASectionTitleCarriesTheMark(unittest.TestCase):
+class TestARoomIsToldAboutThroughAsk(unittest.TestCase):
+    """The section title used to carry Morph's mark, a second door to a Tell
+    beside the Ask line. The vision (docs/design/morph-vision.md §13.3) folds
+    both into Ask: words about a room or a card reach a Tell through brAIn's
+    interpreter, so a section head carries no mark at all."""
 
-    def head(self, admin, edit):
-        return run_node(f"""
-            globalThis.HTMLElement = class {{}};
-            let C; globalThis.customElements = {{ get: () => false, define: (n, c) => {{ C = c; }} }};
-            await import({json.dumps((FRONTEND / 'morph-panel.js').as_uri())});
-            const p = Object.create(C.prototype);
-            p.s = {{ edit: {json.dumps(edit)}, secEdit: null, tell: null }};
-            p.data = {{ admin: {json.dumps(admin)} }};
-            Object.defineProperty(p, 'hass', {{ value: {{ states: {{}} }} }});
-            p.dash = {{ floors: [] }};
-            p.sectionEntities = () => [];
-            p.asleepSince = () => null;
-            p.presence = () => null;
-            console.log(JSON.stringify(p.secHeadHtml({{ id: 's_kitchen', title: 'Kitchen', groups: [] }})));
-        """)
-
-    def test_an_admin_outside_edit_can_tell_brain_about_the_room(self):
-        html = self.head(True, False)
-        self.assertIn('data-act="tell-sec"', html)
-        self.assertIn('data-v="s_kitchen"', html)
-        self.assertIn("data-snap-skip", html)
-        self.assertIn("Kitchen", html)
-
-    def test_not_for_a_non_admin_and_not_in_edit(self):
-        self.assertNotIn('tell-sec', self.head(False, False))
-        self.assertNotIn('tell-sec', self.head(True, True))
-
-    def test_the_press_is_handled_and_does_not_close_its_own_box(self):
+    def test_no_section_mark_survives(self):
         src = (FRONTEND / "morph-panel.js").read_text()
-        self.assertIn("case 'tell-sec':", src)
-        start = src.index("  outside(e) {")
-        body = src[start:src.index("\n  }\n", start)]
-        self.assertIn("tell-sec", body)
+        self.assertNotIn("tell-sec", src)
+        self.assertNotIn("secmark", (FRONTEND / "styles.js").read_text())
+
+    def test_ask_hands_a_dashboard_answer_to_a_tell(self):
+        src = (FRONTEND / "morph-panel.js").read_text()
+        self.assertIn("morph/ask", src)
+        self.assertIn("tell_dashboard", src)
+        self.assertIn("tell_code", src)
 
 
 class TestACardTypeTheServedCopyAdds(unittest.TestCase):

@@ -177,6 +177,26 @@ ACTION_SHAPES = ("notify", "edit_file", "call_service", "write_automation")
 # has one writer and this store is not it.
 MAX_MEMORY_HINT = 300
 
+# The imperative sentence To Do shows for this row ("Replace the battery in
+# the hallway motion sensor."): what needs doing, naming the thing — never
+# the claim, never a question (Morph's contract B). Written by the producer
+# that filed the row when it can (a check, from its `fix` and the friendly
+# name; the Resident's case, `todo_text` in its schema, rewritten by
+# `refine`), and derived on read when it could not (`todo_text_of`). Absent
+# on a row that carries none, `_case_fields`' rule, so a row filed before it
+# existed is the dict it always was.
+MAX_TODO_TEXT = 200
+# A case's conversation (Morph's reply line): the person's words and brAIn's
+# answers, newest last. Capped in turns and in each turn's length, because
+# the row is rewritten on every store write and a thread is a few lines on
+# a card, never a transcript.
+MAX_THREAD_TURNS = 12
+MAX_THREAD_TEXT = 600
+THREAD_WHO = ("you", "brain")
+# A Morph suggestion's own key (`morph_case`), kept on the row so Morph can
+# find its own suggestion again and be told how it ended.
+MAX_MORPH_KEY = 64
+
 # What an ending can say. `fixed` and `ignored` are the two the tab has
 # always had; `accepted` is the third and it is a different claim from
 # both — the report was right AND the work is not done yet, which is what
@@ -286,6 +306,25 @@ def _write(items: list[dict]) -> None:
     # Every write republishes the shared-volume mirror, so the two can never
     # drift: there is no code path that changes the store without it.
     _publish_state(items)
+    _written()
+
+
+# Told after every store write, for a reader that republishes something of
+# its own from the store (the panel's Morph `cases.json`, which cannot be
+# built here: it reads all four stores through `cases`, which reads this
+# one). A flag-setter, never the publish itself — a write must not wait on
+# four stores being read — and never raised: a mirror is not the store.
+ON_WRITE = None
+
+
+def _written() -> None:
+    hook = ON_WRITE
+    if hook is None:
+        return
+    try:
+        hook()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("the store's write hook failed: %s", exc)
 
 
 def _urgent(row: dict) -> bool:
@@ -386,7 +425,7 @@ def plain(text: str, names: dict | None = None, tz=None) -> str:
         tz if tz is not None else _tz_now())
 
 
-def _plain_row(row: dict, keys=("claim", "detail", "fix")) -> dict:
+def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
     """A copy of a model-written row with `keys` in the house's words.
 
     `text` is in `keys` only where the caller says: it is the dedupe key,
@@ -842,6 +881,138 @@ def _clean_actions(value) -> list[dict]:
     return out
 
 
+_TODO_SENTENCE_RE = re.compile(r"(?<=[.!])\s+")
+_IT_RE = re.compile(r"\bit\b", re.I)
+_ITS_RE = re.compile(r"\bits\b", re.I)
+_NOTHING_RE = re.compile(r"^(?:nothing|no action|none)\b", re.I)
+
+
+def clean_todo_text(value) -> str:
+    """A To Do sentence as stored, or "" for anything that is not one.
+
+    One line, capped, a capital first letter and a full stop where it had
+    none. A question is not a chore — "Is the freezer meant to be off?" on
+    a to-do list is a card that should have stayed a question — so a
+    sentence ending in "?" is refused rather than stored.
+    """
+    if not isinstance(value, str):
+        return ""
+    text = " ".join(value.split()).strip(" -—:;,")
+    if not text or text.endswith("?"):
+        return ""
+    text = text[0].upper() + text[1:]
+    if text[-1] not in ".!…":
+        text += "."
+    return textclip.clip(text, MAX_TODO_TEXT)
+
+
+def _display_name(entity_id: str, names: dict | None = None) -> str:
+    """The friendly name the panel knows for an entity, or ""."""
+    if not entity_id:
+        return ""
+    names = _names_now() if names is None else names
+    row = names.get(entity_id)
+    if isinstance(row, dict):
+        return str(row.get("name") or "").strip()
+    return str(row or "").strip() if isinstance(row, str) else ""
+
+
+def derive_todo_text(row: dict, name: str = "") -> str:
+    """The To Do sentence for a row that was filed without one.
+
+    Deterministic and cheap, because it runs on every read of a row a
+    producer could not word: the first sentence of `fix`, with the first
+    "it"/"its" turned into the thing's name ("Re-pair it" under the hall
+    sensor is "Re-pair the Hall sensor."), and the name added in brackets
+    when the sentence names nothing. A fix that says nothing is needed, or
+    a row with no fix at all, is "Look at <friendly name>." — the one
+    errand that is always true — and a row about no entity says what to
+    look into in the row's own words, which is the only thing left to name.
+    """
+    if not isinstance(row, dict):
+        return ""
+    name = str(name or "").strip()
+    eid = str(row.get("entity_id") or "").strip()
+    fix = " ".join(str(row.get("fix") or "").split())
+    first = _TODO_SENTENCE_RE.split(fix, maxsplit=1)[0].strip() if fix else ""
+    if first and not first.endswith("?") and not _NOTHING_RE.match(first):
+        if name and name.casefold() not in first.casefold():
+            if _ITS_RE.search(first):
+                first = _ITS_RE.sub(f"the {name}'s", first, count=1)
+            elif _IT_RE.search(first):
+                first = _IT_RE.sub(f"the {name}", first, count=1)
+            else:
+                first = first.rstrip(" .!") + f" ({name})"
+        cleaned = clean_todo_text(first)
+        if cleaned:
+            return cleaned
+    if name:
+        return clean_todo_text(f"Look at {name}")
+    if eid:
+        return clean_todo_text(f"Look at {eid}")
+    about = str(row.get("claim") or row.get("text") or "").strip()
+    return clean_todo_text(f"Look into: {about}") if about else ""
+
+
+def todo_text_of(row: dict, names: dict | None = None) -> str:
+    """What To Do shows for this row: the producer's sentence, or one
+    derived from its fix and the thing's friendly name."""
+    if not isinstance(row, dict):
+        return ""
+    stored = clean_todo_text(row.get("todo_text"))
+    if stored:
+        return stored
+    return derive_todo_text(
+        row, _display_name(str(row.get("entity_id") or ""), names))
+
+
+def clean_morph_key(value) -> str:
+    """A Morph suggestion's key, or "" — letters, digits and `._:-` only,
+    because it comes from another add-on and rides back out in a file."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if not value or len(value) > MAX_MORPH_KEY:
+        return ""
+    return value if re.fullmatch(r"[A-Za-z0-9._:-]+", value) else ""
+
+
+def _clean_thread(value) -> list[dict]:
+    """A case's conversation as stored: the newest `MAX_THREAD_TURNS`
+    turns, each `{who, text, at}` with `who` one of `THREAD_WHO`, plus a
+    brAIn turn's optional `tell` — a change it handed to Morph's Tell
+    (`{"kind": "dashboard"|"code", "text": ...}`)."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for turn in value:
+        if not isinstance(turn, dict) or turn.get("who") not in THREAD_WHO:
+            continue
+        text = textclip.clip(" ".join(str(turn.get("text") or "").split()),
+                             MAX_THREAD_TEXT)
+        if not text:
+            continue
+        at = turn.get("at")
+        clean = {"who": turn["who"], "text": text,
+                 "at": int(at) if isinstance(at, (int, float))
+                 and not isinstance(at, bool) else 0}
+        tell = turn.get("tell")
+        if (turn["who"] == "brain" and isinstance(tell, dict)
+                and tell.get("kind") in ("dashboard", "code")):
+            words = textclip.clip(" ".join(str(tell.get("text") or "").split()),
+                                  MAX_THREAD_TEXT)
+            if words:
+                clean["tell"] = {"kind": tell["kind"], "text": words}
+        out.append(clean)
+    return out[-MAX_THREAD_TURNS:]
+
+
+# The thread's one cleaner, for a reader that keeps a thread of its own (the
+# panel's side thread for a case with no findings row).
+def clean_thread(value) -> list[dict]:
+    return _clean_thread(value)
+
+
 def _case_fields(entry: dict) -> dict:
     """The Resident's half of a row — only the keys it actually carries.
 
@@ -881,6 +1052,9 @@ def _case_fields(entry: dict) -> dict:
         run_id = str(investigation.get("run_id") or "").strip()[:64]
         if run_id:
             out["investigation"] = {"run_id": run_id}
+    todo = clean_todo_text(entry.get("todo_text"))
+    if todo:
+        out["todo_text"] = todo
     return out
 
 
@@ -962,6 +1136,14 @@ def _shape(entry: dict) -> dict:
     # reader, mirror and test already knows, key for key and order for
     # order — see the block by CASE_KINDS.
     out.update(_case_fields(entry))
+    # The case's conversation and a Morph suggestion's own key, each only on
+    # a row that carries one (`_case_fields`' rule).
+    thread = _clean_thread(entry.get("thread"))
+    if thread:
+        out["thread"] = thread
+    morph_key = clean_morph_key(entry.get("morph_key"))
+    if morph_key:
+        out["morph_key"] = morph_key
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
@@ -1229,6 +1411,9 @@ def coerce(obj: dict) -> dict | None:
     if looked:
         entry["triage"] = looked
     entry.update(_case_fields(obj))
+    morph_key = clean_morph_key(obj.get("morph_key"))
+    if morph_key:
+        entry["morph_key"] = morph_key
     return entry
 
 
@@ -1268,7 +1453,7 @@ def _prune(items: list[dict]) -> list[dict]:
 SUBJECT_FOLD_EXCLUDED = frozenset({
     "safety", "security", "correction", "notify_policy",
     "house_book", "healing", "followup", "fix", "doctor", "condition",
-    "scene"})
+    "scene", "morph"})
 
 
 def _folds_by_subject(entry: dict) -> tuple[str, str] | None:
@@ -1509,9 +1694,9 @@ def add_many(objs: list[dict]) -> list[dict]:
             # the producers whose text is a key code chose (a question's
             # subject, a playbook, a fix's record).
             entry = _plain_row(entry, (
-                ("claim", "detail", "fix")
+                ("claim", "detail", "fix", "todo_text")
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED
-                else ("text", "claim", "detail", "fix")))
+                else ("text", "claim", "detail", "fix", "todo_text")))
         if entry is None or normalize(entry["text"]) in seen:
             continue
         about = str(entry.get("entity_id") or "")
@@ -1585,6 +1770,9 @@ def add(text: str, **fields) -> tuple[dict | None, bool]:
 # number the design page always wanted is the Resident's own precision.
 # The title is what the tab and the scorecard show instead of the id.
 RESIDENT_SOURCE = "resident"
+# Morph's learning suggestions (`morph_case`): a model-written producer like
+# an insight card, deduped on its text and never folded across producers.
+MORPH_SOURCE = "morph"
 RESIDENT_TITLE = "brAIn, watching the house"
 # What a Resident row was titled before the title stopped naming an internal
 # part. Stored rows and ledger entries still carry it, and `_titled` reads
@@ -1632,9 +1820,9 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
     # included where it is the claim (the Resident's), and left alone where
     # code chose it as a key (`SUBJECT_FOLD_EXCLUDED`'s producers).
     row = _plain_row(row, (
-        ("claim", "detail", "fix")
+        ("claim", "detail", "fix", "todo_text")
         if str(row.get("source") or "") in SUBJECT_FOLD_EXCLUDED
-        else ("claim", "detail", "fix", "text")))
+        else ("claim", "detail", "fix", "text", "todo_text")))
     claim = textclip.clip(str(row.get("claim") or "").strip(), MAX_CLAIM)
     if not claim:
         return None
@@ -1711,6 +1899,10 @@ def refine(ts: int, case: dict, run_id: str = "",
         if fix:
             entry["fix"] = textclip.clip(fix, MAX_FIX)
             entry["fix_by"] = "resident"
+        # And the To Do sentence, in the words of the run that looked.
+        todo = clean_todo_text(case.get("todo_text"))
+        if todo:
+            entry["todo_text"] = todo
         if _severity_rank(case.get("severity")) > _severity_rank(
                 entry.get("severity")):
             entry["severity"] = case["severity"]
@@ -3126,6 +3318,74 @@ def _came_back(items: list[dict], sources: set[str], keep_keys: set[str],
         f["result"] = CAME_BACK_RESULT
         came += 1
     return came
+
+
+@_mutates
+def append_thread(ts: int, who: str, text: str, *, when: float | None = None,
+                  tell: dict | None = None) -> dict | None:
+    """Add one turn to a case's conversation. Returns the row, or None.
+
+    The thread is what was said ABOUT a case — the person's reply typed in
+    Morph, and brAIn's answer or one-sentence account of what it did — so
+    it rides on the row rather than in a store of its own: it goes when the
+    row goes, which is when the case has ended. Capped at
+    `MAX_THREAD_TURNS`, oldest first, and each turn at `MAX_THREAD_TEXT`.
+    None for a row that is gone (the case ended meanwhile, an ordinary
+    race) and for a turn with nothing in it.
+    """
+    if who not in THREAD_WHO:
+        return None
+    turn: dict = {"who": who, "text": str(text or ""),
+                  "at": int(when if when is not None else time.time())}
+    if who == "brain" and isinstance(tell, dict):
+        turn["tell"] = tell
+    if not _clean_thread([turn]):
+        return None
+    items = _load()
+    for entry in items:
+        if int(entry.get("ts") or 0) != int(ts):
+            continue
+        entry["thread"] = _clean_thread(
+            list(entry.get("thread") or []) + [turn])
+        _write(items)
+        return _shape(entry)
+    return None
+
+
+def by_morph_key(key: str) -> dict | None:
+    """The live row Morph filed under this key, or None."""
+    key = clean_morph_key(key)
+    if not key:
+        return None
+    for entry in _load():
+        if (entry.get("morph_key") == key
+                and entry.get("source") == MORPH_SOURCE):
+            return _shape(entry)
+    return None
+
+
+@_mutates
+def withdraw_morph_key(key: str) -> list[dict]:
+    """Take Morph's own suggestion off the list. Returns the rows removed.
+
+    `clear_resolved`'s ending, reached by the producer that filed it: no
+    memory line and no ledger entry, because Morph withdrawing a suggestion
+    says nothing about the house — if it suggests the same thing again it
+    is filed again. Only a `source: morph` row in a status nobody is
+    working on is taken.
+    """
+    key = clean_morph_key(key)
+    if not key:
+        return []
+    items = _load()
+    gone = [e for e in items if e.get("morph_key") == key
+            and e.get("source") == MORPH_SOURCE
+            and e.get("status") in CLEARABLE]
+    if not gone:
+        return []
+    keep = [e for e in items if e not in gone]
+    _write(keep)
+    return [_shape(e) for e in gone]
 
 
 @_mutates

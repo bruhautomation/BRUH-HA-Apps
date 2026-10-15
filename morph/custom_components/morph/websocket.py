@@ -9,8 +9,17 @@ its full grant. Anybody signed in may look and press their own lights.
 `morph/subscribe` is what makes a change appear without a reload: a watcher
 here stats the mirrors every couple of seconds and tells every open panel
 which part moved — the dashboard (brAIn edited it), Morph's state (a
-suggestion, a setting, the learning loop), or brAIn's own published files
-(a new finding to place in its room).
+setting, the learning loop), or brAIn's own published files (a case to
+place in its room, a new hour of measurements).
+
+brAIn is Morph's mind (docs/design/morph-vision.md §13): its one list of
+cases (`/config/.brain/morph/cases.json`) and its measurements
+(`feed.json`) are read here; an answer to a case and a To Do press are
+REQUESTS dropped into brAIn's own queue through brAIn's own writer
+(`custom_components.brain.requests.write_morph_request`), the same queue a
+phone's button and the To-do app use; and the Ask line hands its words to
+brAIn's interpreter by a file in `/config/.brain/morph/asks/`, answered in
+`answers/`.
 """
 from __future__ import annotations
 
@@ -48,8 +57,15 @@ from .const import (
 
 WRITE_KINDS = ("save", "save_yaml", "undo_commit", "restore", "history", "tell", "tell_undo",
                "tell_answer", "tell_issue", "settings", "suggestion", "learn_now", "regenerate", "lessons",
-               "code_reset", "code_redo", "code_merge_all", "report", "report_withdraw")
-BRAIN_FILES = ("findings_state.json", "situation.json", "status.json")
+               "code_reset", "code_redo", "code_merge_all", "report", "report_withdraw",
+               "converse", "habit", "lesson_add")
+BRAIN_FILES = ("findings_state.json", "situation.json", "status.json", "morph/cases.json", "morph/feed.json")
+BRAIN_MORPH = BRAIN_SHARED / "morph"
+CASE_ID = re.compile(r"^[a-z]{1,3}:[A-Za-z0-9_.:-]{1,64}$")
+CASE_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo", "not_applicable")
+TODO_ACTIONS = ("done", "drop", "snooze")
+ASK_WAIT_S = 40
+MAX_CASE_TEXT = 500
 TELL_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")
 MAX_EVENTS = 50
@@ -71,16 +87,35 @@ def _read_json(path) -> dict:
         return {}
 
 
+def _mtime(path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _brain_feed() -> dict:
-    """What brAIn has published that Morph places on the dashboard: findings
-    (as notes in the room they are about), the situation sentence (the
-    story's first line), and the queue count."""
+    """What brAIn has published that Morph draws: its cases (each in the
+    room it is about), its To Do list, its measurements for the salience
+    list (`feed`, aged by the file's mtime, never by a stamp inside it), the
+    situation sentence, and the queue count."""
     findings = _read_json(BRAIN_SHARED / "findings_state.json")
     situation = _read_json(BRAIN_SHARED / "situation.json")
     status = _read_json(BRAIN_SHARED / "status.json")
+    cases = _read_json(BRAIN_MORPH / "cases.json")
+    feed = _read_json(BRAIN_MORPH / "feed.json")
     return {
         "installed": BRAIN_SHARED.is_dir(),
         "findings": [f for f in (findings.get("findings") or []) if isinstance(f, dict)][:60],
+        "cases": [c for c in (cases.get("cases") or []) if isinstance(c, dict)][:120],
+        "todo": [t for t in (cases.get("todo") or []) if isinstance(t, dict)][:100],
+        "open": cases.get("open"),
+        # brAIn's last word on a case a reply just ended (the row went with
+        # its thread), and a turn's `tell`: a page change brAIn cannot make.
+        "said": [x for x in (cases.get("said") or []) if isinstance(x, dict)][:20],
+        "cases_at": cases.get("at"),
+        "feed": feed if feed.get("v") else None,
+        "feed_mtime": _mtime(BRAIN_MORPH / "feed.json"),
         "situation": {k: situation.get(k) for k in ("sentence", "mode", "at", "reading", "rooms")
                       if k in situation},
         "status": {k: status.get(k) for k in ("state", "label", "sentence", "queue_count")
@@ -293,6 +328,133 @@ async def ws_finding(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"ok": bool(ok)})
 
 
+def _brain_requests():
+    """brAIn's own request writer, or None when brAIn's integration is not
+    loaded (or is older than the one that takes Morph's requests)."""
+    try:
+        mod = importlib.import_module("custom_components.brain.requests")
+    except ImportError:
+        return None
+    return mod if hasattr(mod, "write_morph_request") else None
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "morph/case",
+    vol.Required("case"): str,
+    vol.Required("action"): vol.In(CASE_ACTIONS),
+    vol.Optional("text", default=""): str,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_case(hass: HomeAssistant, connection, msg) -> None:
+    """Answer one of brAIn's cases from where Morph draws it (§14). A reply
+    is free words, read by brAIn's interpreter on the `morph` surface; the
+    rest are the presses every surface has. One implementation of what an
+    answer is: brAIn's queue, through brAIn's own writer."""
+    if not CASE_ID.match(msg["case"]):
+        connection.send_error(msg["id"], "invalid", "Not a case id")
+        return
+    req = _brain_requests()
+    if req is None:
+        connection.send_result(msg["id"], {"ok": False, "error": "brAIn's integration is not loaded, or is older than this Morph. Restart Home Assistant after updating brAIn."})
+        return
+    text = msg["text"].strip()[:MAX_CASE_TEXT]
+    if msg["action"] == "reply" and not text:
+        connection.send_result(msg["id"], {"ok": False, "error": "Say something first."})
+        return
+    body = {"kind": "morph", "case": msg["case"], "action": msg["action"], "text": text, "via": "morph"}
+    ok = await hass.async_add_executor_job(lambda: req.write_morph_request(hass, body))
+    connection.send_result(msg["id"], {"ok": bool(ok), **({} if ok else {"error": "brAIn did not take that."})})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "morph/todo",
+    vol.Required("action"): vol.In(TODO_ACTIONS),
+    vol.Required("id"): int,
+    vol.Optional("days", default=7): int,
+})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_todo(hass: HomeAssistant, connection, msg) -> None:
+    """A To Do press: tick it off, delete it, or snooze it — brAIn's list,
+    the same one Home Assistant's To-do app shows."""
+    req = _brain_requests()
+    if req is None:
+        connection.send_result(msg["id"], {"ok": False, "error": "brAIn's integration is not loaded."})
+        return
+    body = {"kind": "todo", "action": msg["action"], "id": int(msg["id"]), "via": "morph"}
+    if msg["action"] == "snooze":
+        body["days"] = max(1, min(60, int(msg["days"])))
+    ok = await hass.async_add_executor_job(lambda: req.write_morph_request(hass, body))
+    connection.send_result(msg["id"], {"ok": bool(ok), **({} if ok else {"error": "brAIn did not take that."})})
+
+
+def _write_ask(ask_id: str, text: str, user_id: str) -> bool:
+    asks = BRAIN_MORPH / "asks"
+    if not BRAIN_MORPH.is_dir():
+        return False
+    asks.mkdir(parents=True, exist_ok=True)
+    scratch = asks / f".{ask_id}.tmp"
+    scratch.write_text(json.dumps({"id": ask_id, "text": text, "ts": time.time(), "user_id": user_id}), encoding="utf-8")
+    os.replace(scratch, asks / f"{ask_id}.json")
+    return True
+
+
+def _take_answer(ask_id: str) -> dict | None:
+    path = BRAIN_MORPH / "answers" / f"{ask_id}.json"
+    data = _read_json(path)
+    if not data:
+        return None
+    try:
+        path.unlink()
+    except OSError:
+        pass  # brAIn tidies its own answers too
+    return data
+
+
+def _withdraw_ask(ask_id: str) -> None:
+    try:
+        (BRAIN_MORPH / "asks" / f"{ask_id}.json").unlink()
+    except OSError:
+        pass  # brAIn took it after all; its late answer is dropped unread
+
+
+@websocket_api.websocket_command({vol.Required("type"): "morph/ask", vol.Required("text"): str})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_ask(hass: HomeAssistant, connection, msg) -> None:
+    """Hand Ask's words to brAIn's interpreter (§13.3) and wait for what it
+    made of them: done (with a sentence), a conversation, a Tell, or
+    `fallback` — no answer, which the panel meets with its old behaviour."""
+    import asyncio
+    text = msg["text"].strip()[:MAX_CASE_TEXT]
+    if not text:
+        connection.send_result(msg["id"], {"do": "fallback"})
+        return
+    ask_id = "a-" + uuid.uuid4().hex[:16]
+    user = connection.user.id if connection.user else ""
+    try:
+        wrote = await hass.async_add_executor_job(_write_ask, ask_id, text, user)
+    except OSError:
+        wrote = False
+    if not wrote:
+        connection.send_result(msg["id"], {"do": "fallback"})
+        return
+    waited = 0.0
+    while waited < ASK_WAIT_S:
+        await asyncio.sleep(0.4)
+        waited += 0.4
+        got = await hass.async_add_executor_job(_take_answer, ask_id)
+        if got:
+            out = {k: got.get(k) for k in ("do", "say", "routes", "tell_text", "undo") if k in got}
+            if out.get("do") not in ("done", "conversation", "tell_dashboard", "tell_code", "fallback"):
+                out["do"] = "fallback"
+            connection.send_result(msg["id"], out)
+            return
+    await hass.async_add_executor_job(_withdraw_ask, ask_id)
+    connection.send_result(msg["id"], {"do": "fallback"})
+
+
 @websocket_api.websocket_command({vol.Required("type"): "morph/subscribe"})
 @callback
 def ws_subscribe(hass: HomeAssistant, connection, msg) -> None:
@@ -355,6 +517,6 @@ def async_register(hass: HomeAssistant) -> None:
     if data.get("ws"):
         return
     for handler in (ws_load, ws_yaml, ws_request, ws_tell_status, ws_shot, ws_usage, ws_report,
-                    ws_finding, ws_subscribe):
+                    ws_finding, ws_case, ws_todo, ws_ask, ws_subscribe):
         websocket_api.async_register_command(hass, handler)
     data["ws"] = True

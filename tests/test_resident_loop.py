@@ -948,7 +948,12 @@ class TestEachPressFiresOneExistingEnding(RouteCase):
         self.assertIsNone(findings_store.get(row["ts"]))
         [entry] = findings_store.settled_listing()
         self.assertEqual(entry["kind"], "accepted")
-        self.assertEqual([i["text"] for i in todo_store.listing()["items"]],
+        # The errand (brAIn 3.0's `todo_text`: no fix and no entity, so it
+        # says what to look into), with the report it came from as `claim`.
+        items = todo_store.listing()["items"]
+        self.assertEqual([i["text"] for i in items],
+                         ["Look into: Back door battery is dead."])
+        self.assertEqual([i.get("claim") for i in items],
                          ["Back door battery is dead"])
         # …and NO memory line, because nothing is true of the house when you
         # put something on a list.

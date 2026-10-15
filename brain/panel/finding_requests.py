@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -99,8 +100,32 @@ SNOOZE_DEFAULT_H = 24
 SNOOZE_MAX_H = 24 * 30
 
 
-TODO_ACTIONS = ("done", "drop", "add")
+TODO_ACTIONS = ("done", "drop", "add", "snooze")
 TODO_TEXT_MAX = 200
+# A To Do item slid aside in Morph comes back after this many days unless
+# the request names its own (`cases.CHORE_SNOOZE_S` is the same week).
+TODO_SNOOZE_DEFAULT_DAYS = 7
+TODO_SNOOZE_MAX_DAYS = 90
+
+# Morph's two kinds (Morph 1.0 / brAIn 3.0, contracts C.1 and C.3). A
+# `morph` request is an answer on a CASE — any of the four stores, named by
+# the `cases` id Morph read off `cases.json` — and `reply` carries free text
+# the panel reads with the interpreter on the `morph` surface before it
+# applies anything; every other action is one of the panel's own presses.
+MORPH_KIND = "morph"
+MORPH_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo",
+                 "not_applicable")
+MORPH_TEXT_MAX = 1000
+# A suggestion Morph files as a case of its own, and its withdrawal.
+MORPH_CASE_KIND = "morph_case"
+MORPH_CASE_ACTIONS = ("file", "withdraw")
+MORPH_CASE_KINDS = ("opportunity", "question", "problem")
+MORPH_CLAIM_MAX = 240
+MORPH_DETAIL_MAX = 600
+MORPH_ASK_MAX = 300
+_CASE_ID_RE = re.compile(r"^[fhpt]:\d{1,16}$")
+_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 
 # The third kind on this queue, and the only one that is not an answer
 # about a row: `brain.check` and the Run-checks button ask the panel to
@@ -139,6 +164,10 @@ def parse(obj) -> dict | None:
         return _parse_checks(obj)
     if kind == HYPOTHESIS_KIND:
         return _parse_hypothesis(obj)
+    if kind == MORPH_KIND:
+        return _parse_morph(obj)
+    if kind == MORPH_CASE_KIND:
+        return _parse_morph_case(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -182,7 +211,7 @@ def _parse_todo(obj: dict) -> dict | None:
             return None
     elif not item_id:
         return None
-    return {
+    out = {
         "kind": "todo",
         "action": action,
         "id": int(item_id),
@@ -190,6 +219,82 @@ def _parse_todo(obj: dict) -> dict | None:
         "note": str(obj.get("note") or "").strip()[:NOTE_MAX],
         "via": str(obj.get("via") or "")[:32],
     }
+    if action == "snooze":
+        # Morph's slide: a week unless the request names its own days.
+        days = obj.get("days")
+        if isinstance(days, bool) or not isinstance(days, (int, float)) \
+                or days <= 0:
+            days = TODO_SNOOZE_DEFAULT_DAYS
+        out["days"] = max(1.0, min(float(days), TODO_SNOOZE_MAX_DAYS))
+    return out
+
+
+def _clean_line(value, cap: int) -> str:
+    return " ".join(str(value or "").split())[:cap] \
+        if isinstance(value, str) else ""
+
+
+def _parse_morph(obj: dict) -> dict | None:
+    """An answer Morph sent on a case, or None. Every field is Morph's.
+
+    The case id is one `cases.case_id` could have minted (`f:`, `h:`, `p:`
+    or `t:` and a number), the action one of `MORPH_ACTIONS`, and a reply
+    carries words or it is not a turn. `hours` is a snooze's own length,
+    bounded the way a finding's is.
+    """
+    case = obj.get("case")
+    if not isinstance(case, str) or not _CASE_ID_RE.match(case.strip()):
+        return None
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in MORPH_ACTIONS:
+        return None
+    text = obj.get("text")
+    text = str(text).strip()[:MORPH_TEXT_MAX] if isinstance(text, str) else ""
+    if action == "reply" and not text:
+        return None
+    hours = obj.get("hours")
+    if isinstance(hours, bool) or not isinstance(hours, (int, float)) \
+            or hours <= 0:
+        hours = None
+    else:
+        hours = max(1.0, min(float(hours), SNOOZE_MAX_H))
+    return {"kind": MORPH_KIND, "case": case.strip(), "action": action,
+            "text": text, "hours": hours,
+            "via": str(obj.get("via") or "morph")[:32]}
+
+
+def _parse_morph_case(obj: dict) -> dict | None:
+    """A suggestion Morph files (or withdraws) as a case, or None.
+
+    Filing needs a key and a claim; withdrawing needs only the key. The
+    words are capped where the store caps a case's own, and an entity id
+    that is not shaped like one is dropped rather than trusted.
+    """
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in MORPH_CASE_ACTIONS:
+        return None
+    key = obj.get("key")
+    if not isinstance(key, str) or not _KEY_RE.match(key.strip()):
+        return None
+    out = {"kind": MORPH_CASE_KIND, "action": action, "key": key.strip(),
+           "via": str(obj.get("via") or "morph")[:32]}
+    if action == "withdraw":
+        return out
+    claim = _clean_line(obj.get("claim"), MORPH_CLAIM_MAX)
+    if not claim:
+        return None
+    case_kind = str(obj.get("case_kind") or "opportunity").strip().lower()
+    if case_kind not in MORPH_CASE_KINDS:
+        case_kind = "opportunity"
+    entity = _clean_line(obj.get("entity_id"), 255)
+    out.update({
+        "case_kind": case_kind,
+        "claim": claim,
+        "detail": _clean_line(obj.get("detail"), MORPH_DETAIL_MAX),
+        "ask": _clean_line(obj.get("ask"), MORPH_ASK_MAX),
+        "entity_id": entity if _ENTITY_RE.match(entity) else "",
+    })
+    return out
 
 
 def _parse_checks(obj: dict) -> dict:
@@ -313,6 +418,7 @@ def pending() -> int:
 
 
 __all__ = [
+    "MORPH_ACTIONS", "MORPH_CASE_ACTIONS", "MORPH_CASE_KIND", "MORPH_KIND",
     "ACTIONS", "CHECKS_KIND", "HYPOTHESIS_ACTIONS", "HYPOTHESIS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
     "TODO_ACTIONS", "TODO_TEXT_MAX",

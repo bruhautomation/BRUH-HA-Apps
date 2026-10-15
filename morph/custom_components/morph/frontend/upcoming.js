@@ -17,7 +17,7 @@
 
 import { esc, clock, friendly, domainOf } from './util.js';
 
-export const PAST_MIN = 60;          // how far behind now you can look
+export const PAST_MIN = 24 * 60;     // how far behind now you can look: a day (vision §2.3, Came up)
 export const AHEAD_MIN = 24 * 60;    // and ahead
 export const ZONE_PX = 14;           // an event this close to the line is "here"
 const STACK_PX = 5;                  // dots closer than this are one dot with a count
@@ -33,6 +33,8 @@ const KINDS = {
   done: { color: 'var(--lime)', word: '' },
   date: { color: 'var(--teal)', word: '' },
   usual: { color: 'var(--violet)', word: 'usually about now' },
+  moon: { color: 'var(--indigo)', word: '' },
+  past: { color: 'var(--quiet)', word: 'happened' },
 };
 
 function parseLocal(s) {
@@ -47,8 +49,9 @@ function parseDur(s) {
 }
 
 // Everything worth reading out in the next day, as {at, end?, label, kind,
-// solid, eid}. Times are epoch milliseconds.
-export function collect(H, now) {
+// solid, eid}. Times are epoch milliseconds. `extra` is what the panel adds
+// from outside the states: what happened in the last day (then.js).
+export function collect(H, now, extra) {
   const out = [];
   const lo = now - PAST_MIN * 60000, hi = now + AHEAD_MIN * 60000;
   Object.values((H && H.states) || {}).forEach((s) => {
@@ -65,11 +68,20 @@ export function collect(H, now) {
     if (d === 'calendar' && a.start_time) {
       const at = parseLocal(a.start_time); const end = parseLocal(a.end_time);
       const label = a.message || friendly(H, s.entity_id);
-      if (a.all_day) { if (at > now) out.push({ at, label, kind: 'calendar', solid: true, eid: s.entity_id, sub: 'all day' }); }
+      // An all-day event that is today stays on the strip all day, at now:
+      // it used to vanish at midnight, the moment it started.
+      if (a.all_day) {
+        if (at > now) out.push({ at, label, kind: 'calendar', solid: true, eid: s.entity_id, sub: 'all day' });
+        else if (end && end > now) out.push({ at: now, label, kind: 'calendar', solid: true, eid: s.entity_id, sub: 'all day today' });
+      }
       else if (at && end && end > at) out.push({ at, end, label, kind: 'calendar', solid: true, eid: s.entity_id });
       else if (at) out.push({ at, label, kind: 'calendar', solid: true, eid: s.entity_id });
     }
-    if (d === 'sensor' && a.device_class === 'timestamp' && /finish|done|end|complete|next|alarm|due/i.test(s.entity_id)) {
+    // AstroWeather's moon_next_* timestamps are the moon, not a date to keep.
+    if (d === 'sensor' && a.device_class === 'timestamp' && /moon_next_(rising|setting|full_moon|new_moon)/.test(s.entity_id)) {
+      const at = Date.parse(s.state);
+      if (at > now) out.push({ at, label: friendly(H, s.entity_id), kind: 'moon', solid: true, eid: s.entity_id });
+    } else if (d === 'sensor' && a.device_class === 'timestamp' && /finish|done|end|complete|next|alarm|due/i.test(s.entity_id)) {
       const at = Date.parse(s.state);
       if (at > now) out.push({ at, label: friendly(H, s.entity_id), kind: /finish|done|end|complete/i.test(s.entity_id) ? 'done' : 'date', solid: true, eid: s.entity_id });
     }
@@ -88,6 +100,7 @@ export function collect(H, now) {
       }
     }
   });
+  (extra || []).forEach((e) => { if (e && e.at > 0 && e.at <= now) out.push(e); });
   const seen = new Set();
   return out.filter((e) => {
     if (!(e.at > 0)) return false;
@@ -102,10 +115,10 @@ export function collect(H, now) {
 // Places the events for a scale of `k` pixels a minute. Every time inside is
 // in minutes from `base` (now, to the minute, so the drawing only changes
 // once a minute rather than on every render).
-export function model(H, now, k) {
+export function model(H, now, k, extra) {
   const base = Math.floor(now / 60000) * 60000;
   const min = (ms) => (ms - base) / 60000;
-  const evs = collect(H, now).map((e) => ({ ...e, t: min(e.at), t2: e.end != null ? min(e.end) : null }));
+  const evs = collect(H, now, extra).map((e) => ({ ...e, t: min(e.at), t2: e.end != null ? min(e.end) : null }));
   const points = evs.filter((e) => e.t2 == null).sort((a, b) => a.t - b.t);
   const stacks = [];
   points.forEach((e) => {
@@ -131,10 +144,13 @@ function nights(H, base, min) {
   const rise = Date.parse(sun.attributes.next_rising), set = Date.parse(sun.attributes.next_setting);
   if (!rise || !set) return [];
   const day = 86400000; const out = [];
-  // The sun rises before it next sets: it is night now, until it rises.
-  if (rise < set) out.push([base - (PAST_MIN + 120) * 60000, rise]);
-  for (let i = 0; i < 2; i++) {
-    const s = set + i * day; let r = rise; while (r <= s) r += day;
+  // Every night from two days back to tomorrow: each sunset (the next one,
+  // stepped a day at a time) to the first sunrise after it. A night in
+  // progress starts at the last sunset, not at an arbitrary point.
+  for (let i = -2; i <= 1; i++) {
+    const s = set + i * day; let r = rise;
+    while (r <= s) r += day;
+    while (r - day > s) r -= day;
     out.push([s, r]);
   }
   return out.map(([a, b]) => [min(a), min(b)]).filter(([a, b]) => b > -PAST_MIN - 60 && a < AHEAD_MIN + 60);

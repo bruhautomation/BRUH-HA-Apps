@@ -36,6 +36,34 @@ const pct = (st) => {
 const off = (st) => !st || UNAVAILABLE.includes(st.state);
 const fanLevel = (p) => ['Low', 'Low', 'Medium', 'Medium', 'High', 'High'][Math.min(5, Math.floor(p / 20))];
 
+// One wording for a state everywhere: "Armed home", "Unavailable", "Missing".
+export function stateWord(st) {
+  if (!st) return 'Missing';
+  if (st.state === 'unavailable') return 'Unavailable';
+  if (st.state === 'unknown') return 'Unknown';
+  const w = String(st.state).replace(/_/g, ' ');
+  return w ? w[0].toUpperCase() + w.slice(1) : '';
+}
+
+// When something ran or was pressed, as a person says it: "Ran 9:14 PM",
+// "Pressed Mon 8:03 PM". A script that never ran says nothing.
+export function whenWord(iso) {
+  const t = Date.parse(iso || '');
+  if (!t) return '';
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return t >= today.getTime() ? clock(t) : new Date(t).toLocaleDateString([], { weekday: 'short' }) + ' ' + clock(t);
+}
+
+// A fan with a speed to set: SET_SPEED (1) and a step finer than on/off.
+export const fanHasSpeed = (st) => {
+  const a = (st && st.attributes) || {};
+  return !!(a.percentage != null && (a.supported_features == null || (a.supported_features & 1)) && !(a.percentage_step >= 100));
+};
+
+// A light's colour, pulled a little toward the theme's ink, so a yellow or
+// white bulb still reads on the light theme.
+const lightAccent = (st) => `color-mix(in oklab, ${lightColor(st)} 82%, var(--lpull))`;
+
 // The prototype's tones (docs/design/morph-ui.html): a fill runs strong at
 // the left and fades toward the thumb, the strip itself is untinted (only a
 // switch tints its strip, because a switch has no fill to show it is on), and
@@ -54,13 +82,13 @@ export function stripFace(o) {
   } else if (o.kind === 'lanes') {
     layer = `<div aria-hidden="true" class="lanes">${(o.lanes || []).map((l) => `<span class="lane" style="background:${l.on ? mix(l.color, 5) : 'transparent'}"><span style="width:${l.on ? Math.max(3, l.pct) : 0}%;background:linear-gradient(90deg, ${mix(l.color, 34)}, ${mix(l.color, 14)});box-shadow:inset -1.5px 0 0 ${l.on ? mix(l.color, 70) : 'transparent'}"></span></span>`).join('')}</div>`;
   }
-  const isSwitch = o.kind === 'switch';
+  const isSwitch = o.kind === 'switch' && !o.action;
   const sw = isSwitch ? `<span aria-hidden="true" class="track" style="background:${active ? mix(accent, 30) : 'transparent'};box-shadow:inset 0 0 0 1px ${active ? 'transparent' : 'var(--line2)'}"><span class="knob" style="left:${active ? 15 : 3}px;background:${active ? accent : 'var(--quiet)'}"></span></span>` : '';
   const valColor = o.valColor || (isSwitch ? (active ? accent : 'var(--muted)') : active ? 'var(--text)' : 'var(--quiet)');
   const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
   return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
 <div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${sw}</div></div>`;
+<span class="nv"><b title="${esc(o.name)}">${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}" style="--ac:${o.actionColor || accent}">${esc(o.armed || o.action)}</span>` : sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -89,7 +117,7 @@ function lightMore(ctx, target) {
 
 const light = {
   item: STRIP,
-  accent: (ctx) => (ctx.st && ctx.st.state === 'on' ? lightColor(ctx.st) : 'var(--amber)'),
+  accent: (ctx) => (ctx.st && ctx.st.state === 'on' ? lightAccent(ctx.st) : 'var(--amber)'),
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on'; const p = ctx.preview != null ? ctx.preview : pct(st);
     const lit = on || ctx.preview > 0;
@@ -121,7 +149,7 @@ const lightGroup = {
   more: (ctx) => {
     const members = lightGroup.members(ctx);
     const strips = members.map((m) => {
-      const ms = ctx.hass.states[m]; const on = ms && ms.state === 'on'; const acc = on ? lightColor(ms) : 'var(--amber)';
+      const ms = ctx.hass.states[m]; const on = ms && ms.state === 'on'; const acc = on ? lightAccent(ms) : 'var(--amber)';
       const pv = ctx.memberPreview && ctx.memberPreview.id === m ? ctx.memberPreview.v : null;
       return `<div class="notecard" data-member="${esc(m)}" style="position:relative;touch-action:pan-y">${stripFace({ kind: 'fill', icon: 'bulb', accent: acc, active: on || pv > 0, pct: pv != null ? pv : on ? pct(ms) : 0, name: shortName(shortName(friendly(ctx.hass, m), ctx.sec.title), ctx.name), val: !ms ? 'Missing' : pv != null ? pv + '%' : on ? pct(ms) + '%' : 'Off' })}</div>`;
     }).join('');
@@ -135,10 +163,15 @@ const lightGroup = {
 
 const fan = {
   item: STRIP,
-  accent: () => 'var(--teal)',
+  accent: () => 'var(--sky)',
   face: (ctx) => {
-    const st = ctx.st; const on = st && st.state === 'on'; const p = ctx.preview != null ? ctx.preview : (st && st.attributes.percentage != null ? st.attributes.percentage : on ? 100 : 0);
-    return stripFace({ kind: 'fill', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.4 - (p || 0) / 50).toFixed(2) + 's', name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? 'Unavailable' : on || ctx.preview > 0 ? (p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
+    const st = ctx.st; const on = st && st.state === 'on';
+    // A fan with no speed control is on or off: "High · 100%" on one was a
+    // speed it does not have, and sliding it called a service it refuses.
+    const speed = fanHasSpeed(st);
+    const p = ctx.preview != null ? ctx.preview : (speed ? st.attributes.percentage : on ? 100 : 0);
+    // 2.6 s a turn at the bottom to 1.1 s at the top: faster strobed.
+    return stripFace({ kind: speed ? 'fill' : 'switch', icon: 'fan', accent: ctx.accent, active: on || ctx.preview > 0, pct: on || ctx.preview != null ? p : 0, dur: (2.6 - (p || 0) / 100 * 1.5).toFixed(2) + 's', name: ctx.name, fillA: mix(ctx.accent, 26), fillB: mix(ctx.accent, 8), val: off(st) ? stateWord(st) : on || ctx.preview > 0 ? (speed && p ? `${fanLevel(p)} · ${p}%` : 'On') : 'Off', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];
@@ -148,7 +181,7 @@ const fan = {
     return parts.join('') + histBlock(ctx);
   },
   tap: (ctx) => ({ domain: 'fan', service: 'toggle', data: { entity_id: ctx.card.entity } }),
-  slide: (ctx) => (ctx.st && ctx.st.attributes.percentage != null ? { get: () => ctx.st.attributes.percentage || 0, call: (v) => ({ domain: 'fan', service: 'set_percentage', data: { entity_id: ctx.card.entity, percentage: v <= 1 ? 0 : v } }) } : null),
+  slide: (ctx) => (fanHasSpeed(ctx.st) ? { get: () => ctx.st.attributes.percentage || 0, call: (v) => ({ domain: 'fan', service: 'set_percentage', data: { entity_id: ctx.card.entity, percentage: v <= 1 ? 0 : v } }) } : null),
 };
 
 const isGarage = (st) => st && ['garage', 'gate', 'door'].includes(st.attributes.device_class);
@@ -159,7 +192,11 @@ const cover = {
     const st = ctx.st; const pos = ctx.preview != null ? ctx.preview : (st && st.attributes.current_position != null ? st.attributes.current_position : st && st.state === 'open' ? 100 : 0);
     const open = st && ['open', 'opening'].includes(st.state);
     if (isGarage(st)) {
-      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--rose)' : 'var(--teal)', active: open, name: ctx.name, val: off(st) ? 'Unavailable' : ctx.confirm || (st.state[0].toUpperCase() + st.state.slice(1)), iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
+      // The word says what a tap will do: Open, Close, or Stop while it
+      // moves. The old switch could only ever open the door.
+      const moving = st && ['opening', 'closing'].includes(st.state);
+      const action = off(st) ? '' : moving ? 'Stop' : open ? 'Close' : 'Open';
+      return stripFace({ kind: 'switch', icon: 'garage', accent: open ? 'var(--amber)' : 'var(--indigo)', active: open, name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actionColor: open ? 'var(--amber)' : 'var(--indigo)', iconTransform: open ? 'translateY(-4px)' : 'none', hint: ctx.hint });
     }
     return stripFace({ kind: 'slats', icon: 'blinds', accent: ctx.accent, iconColor: 'var(--sky)', edgeMix: 28, fillA: mix(ctx.accent, 20), fillB: mix(ctx.accent, 6), active: pos > 0, pct: pos, iconTransform: `scaleY(${Math.max(0.08, (100 - pos) / 100).toFixed(2)})`, name: ctx.name, val: off(st) ? 'Unavailable' : st.state === 'opening' ? 'Opening' : st.state === 'closing' ? 'Closing' : pos >= 100 ? 'Open' : pos <= 0 ? 'Closed' : pos + '% open', hint: ctx.hint });
   },
@@ -171,7 +208,9 @@ const cover = {
   },
   tap: (ctx) => {
     const st = ctx.st; const open = st && ['open', 'opening'].includes(st.state);
-    if (isGarage(st) && !open) return { domain: 'cover', service: 'open_cover', data: { entity_id: ctx.card.entity }, confirm: 'Tap again to open' };
+    if (isGarage(st) && st && ['opening', 'closing'].includes(st.state)) return { domain: 'cover', service: 'stop_cover', data: { entity_id: ctx.card.entity } };
+    if (isGarage(st) && !open) return { domain: 'cover', service: 'open_cover', data: { entity_id: ctx.card.entity }, confirm: 'Open?' };
+    if (isGarage(st)) return { domain: 'cover', service: 'close_cover', data: { entity_id: ctx.card.entity } };
     return { domain: 'cover', service: 'toggle', data: { entity_id: ctx.card.entity } };
   },
   slide: (ctx) => (ctx.st && ctx.st.attributes.current_position != null && !isGarage(ctx.st) ? { get: () => ctx.st.attributes.current_position, call: (v) => ({ domain: 'cover', service: 'set_cover_position', data: { entity_id: ctx.card.entity, position: v <= 1 ? 0 : v } }) } : null),
@@ -179,24 +218,31 @@ const cover = {
 
 // ---------------------------------------------------------- switches, locks
 
-const SWITCH_COLOR = { switch: 'var(--lime)', input_boolean: 'var(--lime)', siren: 'var(--rose)', automation: 'var(--violet)' };
+// Colour carries meaning (vision §9.2): power is warm, the garden is the
+// only green, an automation is the house's own (violet).
+const SWITCH_COLOR = { switch: 'var(--amber)', input_boolean: 'var(--sand)', siren: 'var(--rose)', automation: 'var(--violet)' };
+const GARDEN = /irrigat|sprinkler|lawn|garden|drip|zone/i;
 const sw = {
   item: { ...STRIP, want: 2 },
-  accent: (ctx) => SWITCH_COLOR[domainOf(ctx.card.entity)] || 'var(--lime)',
+  accent: (ctx) => (GARDEN.test(ctx.card.entity + ' ' + (ctx.name || '')) ? 'var(--lime)' : SWITCH_COLOR[domainOf(ctx.card.entity)] || 'var(--amber)'),
   face: (ctx) => {
     const st = ctx.st; const on = st && st.state === 'on';
-    return stripFace({ kind: 'switch', icon: 'power', accent: ctx.accent, active: on, name: ctx.name, val: off(st) ? (st ? 'Unavailable' : 'Missing') : on ? 'On' : 'Off', hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: /fan/i.test(ctx.name || '') ? 'fan' : 'power', dur: '1.6s', accent: ctx.accent, active: on, name: ctx.name, val: off(st) ? stateWord(st) : on ? 'On' : 'Off', hint: ctx.hint });
   },
   more: (ctx) => histBlock(ctx),
   tap: (ctx) => ({ domain: 'homeassistant', service: 'toggle', data: { entity_id: ctx.card.entity } }),
 };
 
+// Locked is secure (indigo); unlocked is a caution (amber), which the
+// salience list turns rose at night. The word on the right is what a tap
+// does, and either way it takes a second tap (vision §3, 11:30 PM).
 const lock = {
   item: { ...STRIP, want: 2 },
-  accent: (ctx) => (ctx.st && ctx.st.state === 'unlocked' ? 'var(--rose)' : 'var(--teal)'),
+  accent: (ctx) => (ctx.st && ctx.st.state === 'unlocked' ? 'var(--amber)' : 'var(--indigo)'),
   face: (ctx) => {
     const st = ctx.st; const unlocked = st && ['unlocked', 'open', 'opening', 'unlocking'].includes(st.state);
-    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: off(st) ? 'Unavailable' : ctx.confirm || st.state[0].toUpperCase() + st.state.slice(1), iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
+    const action = off(st) ? '' : unlocked ? 'Lock' : 'Unlock';
+    return stripFace({ kind: 'switch', icon: 'lock', accent: ctx.accent, active: unlocked || (st && st.state === 'locked'), name: ctx.name, val: stateWord(st), action, armed: ctx.confirm || '', actionColor: ctx.night && unlocked ? 'var(--rose)' : ctx.accent, iconTransform: unlocked ? 'translateY(-3px)' : 'none', hint: ctx.hint });
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
@@ -205,14 +251,20 @@ const lock = {
   },
   // Unlocking from a dashboard is the one tap that needs a second tap.
   tap: (ctx) => (ctx.st && ctx.st.state === 'locked'
-    ? { domain: 'lock', service: 'unlock', data: { entity_id: ctx.card.entity }, confirm: 'Tap again to unlock' }
-    : { domain: 'lock', service: 'lock', data: { entity_id: ctx.card.entity } }),
+    ? { domain: 'lock', service: 'unlock', data: { entity_id: ctx.card.entity }, confirm: 'Unlock?' }
+    : { domain: 'lock', service: 'lock', data: { entity_id: ctx.card.entity }, confirm: 'Lock?' }),
 };
 
 const button = {
   item: { ...STRIP, want: 2 },
   accent: () => 'var(--violet)',
-  face: (ctx) => stripFace({ kind: 'none', icon: 'play', accent: ctx.accent, active: ctx.st && ctx.st.state === 'on', name: ctx.name, val: ctx.st && domainOf(ctx.card.entity) === 'script' && ctx.st.state === 'on' ? 'Running' : 'Tap to run', hint: ctx.hint }),
+  face: (ctx) => {
+    const st = ctx.st; const script = domainOf(ctx.card.entity) === 'script';
+    const last = st && (script ? st.attributes.last_triggered : st.state);
+    const w = whenWord(last);
+    const val = off(st) ? stateWord(st) : script && st.state === 'on' ? 'Running' : w ? (script ? 'Ran ' : 'Pressed ') + w : script ? 'Tap to run' : 'Tap to press';
+    return stripFace({ kind: 'none', icon: 'play', accent: ctx.accent, active: st && st.state === 'on', name: ctx.name, val, hint: ctx.hint });
+  },
   more: (ctx) => histBlock(ctx),
   tap: (ctx) => {
     const d = domainOf(ctx.card.entity);
@@ -222,11 +274,11 @@ const button = {
 
 const vacuum = {
   item: STRIP,
-  accent: () => 'var(--lime)',
+  accent: () => 'var(--sand)',
   face: (ctx) => {
     const st = ctx.st; const run = st && ['cleaning', 'returning'].includes(st.state);
     const bat = st && st.attributes.battery_level != null ? ` · ${st.attributes.battery_level}%` : '';
-    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? 'Unavailable' : st.state[0].toUpperCase() + st.state.slice(1) + bat, hint: ctx.hint });
+    return stripFace({ kind: 'switch', icon: 'vacuum', accent: ctx.accent, active: run, name: ctx.name, val: off(st) ? stateWord(st) : stateWord(st) + bat, hint: ctx.hint });
   },
   more: (ctx) => words([svcBtn('Start', 'vacuum', 'start', { entity_id: ctx.card.entity }), svcBtn('Pause', 'vacuum', 'pause', { entity_id: ctx.card.entity }), svcBtn('Go home', 'vacuum', 'return_to_base', { entity_id: ctx.card.entity })]) + histBlock(ctx),
   tap: (ctx) => ({ domain: 'vacuum', service: ctx.st && ctx.st.state === 'cleaning' ? 'return_to_base' : 'start', data: { entity_id: ctx.card.entity } }),
@@ -234,7 +286,7 @@ const vacuum = {
 
 // ----------------------------------------------------------------- climate
 
-const MODE = { heat: ['Heating', 'var(--rose)'], cool: ['Cooling', 'var(--teal)'], heat_cool: ['Auto', 'var(--lime)'], auto: ['Auto', 'var(--lime)'], dry: ['Drying', 'var(--sky)'], fan_only: ['Fan', 'var(--sky)'], off: ['Off', 'var(--quiet)'] };
+const MODE = { heat: ['Heating', 'var(--peach)'], cool: ['Cooling', 'var(--sky)'], heat_cool: ['Auto', 'var(--teal)'], auto: ['Auto', 'var(--teal)'], dry: ['Drying', 'var(--sky)'], fan_only: ['Fan', 'var(--sky)'], off: ['Off', 'var(--quiet)'] };
 const ACTION = { heating: 'Heating', cooling: 'Cooling', drying: 'Drying', fan: 'Fan', idle: 'Holding', off: 'Off' };
 const climate = {
   item: { span: 2, grow: 3, dir: 'side', want: 4, hk: 't' },
@@ -329,10 +381,13 @@ const meter = {
     const now = Date.now(); const d0 = new Date(); d0.setHours(0, 0, 0, 0);
     const week = st ? history.stats(ctx.hass, ctx.card.entity, d0.getTime() - 6 * 86400000, now, 'day') : null;
     const ok = week && !week.error && week.length;
-    const today = ok ? week[week.length - 1].change : null;
+    // Until today has a statistics row, the last row is YESTERDAY's total,
+    // and calling it today's was a day off.
+    const lastRow = ok ? week[week.length - 1] : null;
+    const today = lastRow && lastRow.t >= d0.getTime() ? lastRow.change : ok ? 0 : null;
     const vals = ok ? week.map((w) => w.change || 0) : [];
     const hi = Math.max(1e-6, ...vals);
-    const bars = ok ? `<div class="cols" style="height:40px;gap:4px">${vals.map((v, i) => `<span class="colbar" style="flex:1;height:${Math.max(2, v / hi * 38)}px;background:${mix(ctx.accent, i === vals.length - 1 ? 85 : 45)}"></span>`).join('')}</div>` : '';
+    const bars = ok ? `<div class="cols" style="height:40px;gap:4px">${week.map((w, i) => `<span class="colbar" title="${esc(new Date(w.t).toLocaleDateString([], { weekday: 'short' }) + ' · ' + fmt(vals[i], unit))}" style="flex:1;height:${Math.max(2, vals[i] / hi * 38)}px;background:${mix(ctx.accent, i === vals.length - 1 ? 85 : 45)}"></span>`).join('')}</div>` : '';
     return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(/water/.test((st && st.attributes.device_class) || '') ? 'water' : 'bolt', { color: ctx.accent, size: 16 })}<b style="font-size:13px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${today != null ? esc(fmt(today, '')) : '—'}</span><span class="sm">${esc(unit)} today</span></div>${bars}</div>`;
   },
   more: (ctx) => histBlock(ctx),
@@ -351,8 +406,14 @@ const media = {
     const sub = [a.media_artist, a.app_name || a.source].filter(Boolean).join(' · ');
     let prog = '';
     if (a.media_duration && a.media_position != null) {
-      const pos = a.media_position + (playing && a.media_position_updated_at ? (Date.now() - Date.parse(a.media_position_updated_at)) / 1000 : 0);
-      prog = `<div style="height:3px;border-radius:2px;background:var(--line);margin-top:8px"><div style="height:3px;border-radius:2px;width:${clamp(pos / a.media_duration * 100, 0, 100).toFixed(1)}%;background:${ctx.accent}"></div></div>`;
+      // Drawn from the last reported position and RUN to the end by the
+      // stylesheet, so it moves between the player's updates rather than
+      // freezing until the next one.
+      const at = Date.parse(a.media_position_updated_at || '') || Date.now();
+      const p0 = clamp(a.media_position / a.media_duration * 100, 0, 100);
+      const left = Math.max(0, a.media_duration - a.media_position);
+      const anim = playing ? `animation:mprog ${left.toFixed(1)}s linear forwards;animation-delay:-${Math.max(0, (Date.now() - at) / 1000).toFixed(1)}s;--p0:${p0.toFixed(2)}%` : '';
+      prog = `<div style="height:3px;border-radius:2px;background:var(--line);margin-top:8px;overflow:hidden"><div class="mprog" style="height:3px;border-radius:2px;width:${p0.toFixed(1)}%;background:${ctx.accent};${anim}" data-k="prog-${esc(a.media_position_updated_at || '')}"></div></div>`;
     }
     const img = a.entity_picture ? `<img src="${esc(a.entity_picture)}" alt="" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex-shrink:0">` : icon(a.device_class === 'tv' ? 'tv' : 'speaker', { color: playing ? ctx.accent : 'var(--quiet)', active: playing, size: 22 });
     const t = (svc, label, path) => `<button type="button" class="sq" data-ctl="1" data-act="svc" data-domain="media_player" data-service="${svc}" data-data="${esc(JSON.stringify({ entity_id: e }))}" aria-label="${label}"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${path}"></path></svg></button>`;
@@ -374,14 +435,18 @@ ${st && !off(st) && st.state !== 'off' ? `<div class="row" style="gap:4px">${t('
 const CAM_STATE = { idle: 'Quiet', streaming: 'Live', recording: 'Recording' };
 const camera = {
   item: { span: 1, grow: 2, dir: 'side', want: 3, hk: 'c' },
-  accent: () => 'var(--rose)',
+  accent: () => 'var(--indigo)',
   face: (ctx) => {
     const st = ctx.st; const a = (st && st.attributes) || {};
     const bucket = Math.floor(Date.now() / 10000);
     const src = a.access_token ? `/api/camera_proxy/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}&t=${bucket}` : '';
     const sub = !st ? 'Missing' : UNAVAILABLE.includes(st.state) ? 'Unavailable' : CAM_STATE[st.state] || st.state[0].toUpperCase() + st.state.slice(1);
     const live = st && !UNAVAILABLE.includes(st.state);
-    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${src ? `<img class="cam" src="${esc(src)}" alt="${esc(ctx.name)}" loading="lazy">` : ''}${live ? '<span class="live"><i></i>LIVE</span>' : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+    // A closed tile is a snapshot every 10 s, so it says Still; an opened
+    // one streams, and only then says Live.
+    const stream = ctx.open && a.access_token ? `/api/camera_proxy_stream/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}` : '';
+    const pic = stream || src;
+    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b title="${esc(ctx.name)}">${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Events'),
   tap: () => null,
@@ -392,10 +457,14 @@ const camera = {
 const WORDS = {
   door: ['Open', 'Closed'], window: ['Open', 'Closed'], garage_door: ['Open', 'Closed'], opening: ['Open', 'Closed'],
   moisture: ['Wet', 'Dry'], smoke: ['Smoke', 'Clear'], gas: ['Gas', 'Clear'], carbon_monoxide: ['CO', 'Clear'],
-  motion: ['Motion', 'Still'], occupancy: ['Occupied', 'Empty'], presence: ['Here', 'Away'], lock: ['Unlocked', 'Locked'],
+  motion: ['Motion', 'Clear'], occupancy: ['Occupied', 'Empty'], presence: ['Here', 'Away'], lock: ['Unlocked', 'Locked'],
   battery: ['Low', 'OK'], problem: ['Problem', 'OK'], safety: ['Unsafe', 'Safe'], vibration: ['Shaking', 'Still'],
 };
-const listWord = (st) => {
+// Two tones: something open, wet or smoking wants attention (rose); a room
+// with motion or someone in it is only activity (amber).
+const ACTIVITY = ['motion', 'occupancy', 'presence', 'vibration'];
+const isActivity = (st) => !!(st && ACTIVITY.includes(st.attributes.device_class));
+export const listWord = (st) => {
   if (!st) return ['Missing', false];
   if (UNAVAILABLE.includes(st.state)) return ['Unavailable', false];
   const w = WORDS[st.attributes.device_class] || ['On', 'Off'];
@@ -404,15 +473,26 @@ const listWord = (st) => {
 };
 const list = {
   item: { span: 2, grow: 3, dir: 'down', want: 3 },
-  accent: (ctx) => ((ctx.card.entities || []).some((e) => listWord(ctx.hass.states[e])[1]) ? 'var(--rose)' : 'var(--teal)'),
+  accent: (ctx) => {
+    const sts = (ctx.card.entities || []).map((e) => ctx.hass.states[e]);
+    if (sts.some((st) => listWord(st)[1] && !isActivity(st))) return 'var(--rose)';
+    if (sts.some((st) => listWord(st)[1])) return 'var(--amber)';
+    return 'var(--indigo)';
+  },
   face: (ctx) => {
-    const rows = (ctx.card.entities || []).map((e) => { const st = ctx.hass.states[e]; const [w, on] = listWord(st); return { e, w, on, name: shortName(friendly(ctx.hass, e), ctx.sec.title), st }; });
-    rows.sort((a, b) => (b.on - a.on));
+    const rows = (ctx.card.entities || []).map((e) => { const st = ctx.hass.states[e]; const [w, on] = listWord(st); return { e, w, on, act: isActivity(st), name: shortName(friendly(ctx.hass, e), ctx.sec.title), st }; });
+    rows.sort((a, b) => (b.on - a.on) || (a.act - b.act));
     const openRows = rows.filter((r) => r.on);
-    const summary = openRows.length ? `${openRows.length === 1 ? openRows[0].name : openRows.length + ' of ' + rows.length} ${openRows.length === 1 ? openRows[0].w.toLowerCase() : 'need you'}` : `All ${rows[0] ? listWord(rows[0].st)[0].toLowerCase() : 'quiet'}`;
+    const attention = openRows.filter((r) => !r.act);
+    const tone = attention.length ? 'var(--rose)' : openRows.length ? 'var(--amber)' : 'var(--quiet)';
+    // "All closed" in the kind's own word when every row is one kind.
+    const kinds = new Set(rows.map((r) => (r.st && r.st.attributes.device_class) || ''));
+    const summary = openRows.length
+      ? `${openRows.length === 1 ? openRows[0].name : openRows.length + ' of ' + rows.length} ${openRows.length === 1 ? openRows[0].w.toLowerCase() : attention.length ? 'need you' : 'active'}`
+      : kinds.size === 1 && rows[0] ? `All ${listWord({ ...rows[0].st, state: 'off' })[0].toLowerCase()}` : 'All quiet';
     const shown = ctx.open ? rows : rows.slice(0, 6);
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px ${openRows.length ? mix('var(--rose)', 35) : 'var(--line)'};padding:12px 12px 8px 16px"><div class="rowb"><b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${openRows.length ? 'var(--rose)' : 'var(--teal)'}">${esc(summary)}</span></div>
-${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" style="padding:7px 4px"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${r.on ? 'var(--rose)' : 'var(--quiet)'}">${esc(r.w)}</span><span class="small">${r.st ? esc(since(r.st.last_changed).replace('since ', '')) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more · hold to see them</span>` : ''}</div>`;
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px ${attention.length ? mix('var(--rose)', 35) : 'var(--line)'};padding:12px 12px 8px 16px"><div class="rowb">${ctx.card.name ? `<b style="font-size:14px">${esc(ctx.name)}</b>` : ''}<span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${tone}">${esc(summary)}</span></div>
+${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="member" data-v="${esc(r.e)}" data-member="${esc(r.e)}" aria-pressed="${ctx.member === r.e}" style="padding:7px 4px;min-height:44px"><span class="lx"><span>${esc(r.name)}</span></span><span style="font-size:13px;font-weight:600;color:${r.on ? (r.act ? 'var(--amber)' : 'var(--rose)') : 'var(--quiet)'}">${esc(r.w)}</span><span class="small">${r.st ? esc(since(r.st.last_changed).replace('since ', '')) : ''}</span></button>`).join('')}${rows.length > shown.length ? `<span class="small" style="padding:4px">+${rows.length - shown.length} more · hold to see them</span>` : ''}</div>`;
   },
   more: (ctx) => {
     if (!ctx.member) return '<p class="sm">Tap a row for its history.</p>';
@@ -426,7 +506,7 @@ ${shown.map((r) => `<button type="button" class="lrow" data-ctl="1" data-act="me
 
 const person = {
   item: { span: 1, grow: 2, dir: 'down', want: 2, hk: 's' },
-  accent: (ctx) => (ctx.st && ctx.st.state === 'home' ? 'var(--teal)' : 'var(--sky)'),
+  accent: (ctx) => (ctx.st && ctx.st.state === 'home' ? 'var(--peach)' : 'var(--quiet)'),
   face: (ctx) => {
     const st = ctx.st; const a = (st && st.attributes) || {};
     const home = st && st.state === 'home';
@@ -472,18 +552,21 @@ ${days.length ? `<div class="row" style="justify-content:space-between;margin-to
   tap: () => null,
 };
 
-const ALARM = [['disarmed', 'Off', 'alarm_disarm'], ['armed_home', 'Home', 'alarm_arm_home'], ['armed_away', 'Away', 'alarm_arm_away'], ['armed_night', 'Night', 'alarm_arm_night']];
+// The modes a panel offers, filtered by what it says it supports (ARM_HOME
+// 1, ARM_AWAY 2, ARM_NIGHT 4); a panel that says nothing offers all.
+const ALARM = [['disarmed', 'Off', 'alarm_disarm', 0], ['armed_home', 'Home', 'alarm_arm_home', 1], ['armed_away', 'Away', 'alarm_arm_away', 2], ['armed_night', 'Night', 'alarm_arm_night', 4]];
+const alarmModes = (st) => { const f = st && st.attributes.supported_features; return ALARM.filter((m) => !m[3] || f == null || (f & m[3])); };
 const alarm = {
   item: { span: 2, grow: 3, dir: 'down', want: 3 },
-  accent: (ctx) => (ctx.st && ctx.st.state === 'triggered' ? 'var(--rose)' : ctx.st && ctx.st.state.startsWith('armed') ? 'var(--teal)' : 'var(--quiet)'),
+  accent: (ctx) => (ctx.st && ctx.st.state === 'triggered' ? 'var(--rose)' : ctx.st && ctx.st.state.startsWith('armed') ? 'var(--indigo)' : 'var(--quiet)'),
   face: (ctx) => {
     const st = ctx.st; const a = (st && st.attributes) || {};
-    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon('shield', { color: ctx.accent, size: 18 })}<b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${ctx.accent}">${esc(ctx.confirm || (st ? st.state.replace('_', ' ') : 'Missing'))}</span></div>
-${a.code_format ? '<p class="small">Needs a code — hold to enter it.</p>' : words(ALARM.map((m) => svcBtn(m[1], 'alarm_control_panel', m[2], { entity_id: ctx.card.entity }, { pressed: st && st.state === m[0], confirm: m[0] === 'disarmed' ? 'Tap again to disarm' : '' })))}</div>`;
+    return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon('shield', { color: ctx.accent, size: 18 })}<b style="font-size:14px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}<span style="font-size:13px;font-weight:700;color:${ctx.accent}">${esc(ctx.confirm || stateWord(st))}</span></div>
+${a.code_format ? '<p class="small">Needs a code — hold to enter it.</p>' : words(alarmModes(st).map((m) => svcBtn(m[1], 'alarm_control_panel', m[2], { entity_id: ctx.card.entity }, { pressed: st && st.state === m[0], confirm: m[0] === 'disarmed' ? 'Tap again to disarm' : '' })))}</div>`;
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {};
-    const code = a.code_format ? `${blockLabel('Code')}<input class="fld" type="password" inputmode="numeric" data-alarm-code="1" autocomplete="off">${words(ALARM.map((m) => `<button type="button" class="wd" data-ctl="1" data-act="alarm" data-service="${m[2]}">${m[1]}</button>`))}` : '';
+    const code = a.code_format ? `${blockLabel('Code')}<input class="fld" type="password" inputmode="numeric" data-alarm-code="1" autocomplete="off" aria-label="Alarm code">${words(alarmModes(ctx.st).map((m) => `<button type="button" class="wd" data-ctl="1" data-act="alarm" data-service="${m[2]}">${m[1]}</button>`))}` : '';
     return code + histBlock(ctx);
   },
   tap: () => null,
@@ -540,6 +623,25 @@ const lovelace = {
 };
 
 export const TYPES = { light, light_group: lightGroup, fan, cover, lock, switch: sw, button, vacuum, climate, sensor, readings, meter, media, camera, list, person, weather, alarm, scenes, entity, note, lovelace };
+
+// A card whose entity is unavailable or missing opens in place with its
+// history rather than calling a service that will refuse.
+Object.values(TYPES).forEach((T) => {
+  const tap = T.tap; const slide = T.slide;
+  if (tap) T.tap = (ctx) => (ctx.card && ctx.card.entity && off(ctx.st) ? null : tap(ctx));
+  if (slide) T.slide = (ctx) => (ctx.card && ctx.card.entity && off(ctx.st) ? null : slide(ctx));
+});
+
+// A tile's role for a screen reader: a slider when it has a level, a switch
+// when a tap toggles it, a button that opens otherwise.
+export function tileAria(T, ctx, name) {
+  const slide = T.slide ? T.slide(ctx) : null;
+  const tap = T.tap ? T.tap(ctx) : null;
+  const word = ctx.st ? stateWord(ctx.st) : '';
+  if (slide) { const v = slide.get(); return { role: 'slider', label: name, value: `${v}%`, now: v }; }
+  if (tap && !tap.confirm) return { role: 'switch', label: name, checked: !!(ctx.st && ['on', 'open', 'unlocked', 'playing'].includes(ctx.st.state)), value: word };
+  return { role: 'button', label: `${name}${word ? ', ' + word : ''}`, expanded: !!ctx.open };
+}
 
 export function typeOf(card) {
   return TYPES[card.type] || TYPES.entity;

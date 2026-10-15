@@ -650,6 +650,7 @@ CASE_SCHEMA = {
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "stakes": {"type": "string", "enum": ["low", "medium", "high"]},
         "fix": {"type": "string"},
+        "todo_text": {"type": "string"},
         "evidence": {
             "type": "array",
             "items": {
@@ -728,6 +729,10 @@ Answer with ONE JSON object and nothing else. What it means:
   Never tell the person to read a log, a trace or a file your tools can
   read — the Home Assistant log, the Supervisor log, brAIn's own errors:
   read it and say what it says.
+- "todo_text" — the same errand as ONE imperative sentence for a to-do
+  list, naming the thing ("Replace the battery in the hallway motion
+  sensor."). Never the claim, never a question; empty when nothing needs
+  doing.
 - NAME things the way the person does. Call a device or an automation by
   its friendly name ("the laundry room countertop light", "Motion -
   Laundry Room") in "claim", "detail" and "fix"; the entity id goes in
@@ -1043,6 +1048,7 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
         "severity": SEVERITY_BY_STAKES[stakes],
         "fix": str(obj.get("fix") or "").strip(),
         "fix_by": "resident",
+        "todo_text": str(obj.get("todo_text") or "").strip(),
         "evidence": evidence,
         "actions": actions,
         "memory_hint": str(obj.get("memory_hint") or "").strip(),

@@ -919,6 +919,33 @@ def end(value: str, verb: str, note: str = "", *, hooks: Hooks,
             "when": int(now), "snoozed_until": 0, "result": result}
 
 
+def snooze_case(value: str, until: int, now: float | None = None) -> dict | None:
+    """Snooze a case until a given time — `not_now` with its length named.
+
+    Written to the same place `end`'s `not_now` writes (the finding's own
+    field, the hypothesis queue's, or this module's sidecar), so a snooze
+    with a length — Morph's "ask me next week", a To Do item slid aside for
+    seven days — is the same snooze as the panel's, read by the same
+    readers. None for a case that is not there or not open to one.
+    """
+    now = time.time() if now is None else now
+    case = get(value, now)
+    if case is None or case["status"] not in ENDABLE_STATUSES:
+        return None
+    until = int(max(until, now + 60))
+    store, key = case["origin"]["store"], case["origin"]["key"]
+    if store == "findings":
+        findings_store.snooze(int(key), until)
+    elif store == "hypotheses" and hypotheses.snooze(int(key), until):
+        pass
+    else:
+        rows = _read_snoozes()
+        rows[case["id"]] = until
+        _write_snoozes(rows, now)
+    return {"id": case["id"], "kind": case["kind"], "verb": "not_now",
+            "when": int(now), "snoozed_until": until, "result": None}
+
+
 def snoozes() -> dict[str, int]:
     """The sidecar's snoozes, `{case id: epoch}` — for a surface that lists
     a store directly and must hide what a Snooze on its case hid (Today's
@@ -1044,5 +1071,5 @@ __all__ = [
     "MIN_SNOOZE_S", "PREFIXES", "SNOOZE_BY_STAKES", "SNOOZE_FILE", "STAKES",
     "STATUSES", "STORES", "VERBS", "answers", "case_id", "end", "get",
     "list_cases", "more", "open_count", "overflow", "queue_count", "situation",
-    "snooze_until", "snoozes", "split_id", "wake",
+    "snooze_case", "snooze_until", "snoozes", "split_id", "wake",
 ]

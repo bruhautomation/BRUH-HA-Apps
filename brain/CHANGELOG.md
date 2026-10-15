@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.0
+
+The brAIn half of Morph 1.0. brAIn is the house's mind and Morph, the dashboard, is its face: Morph keeps no list of its own and no measurements of its own, and everything a person does there comes back to brAIn through the same endings as Today, a phone or a Repairs dialog. brAIn's panel port stays unpublished, so the whole wire is files on the shared volume, under `/config/.brain/morph/` and the existing request queue. Morph 1.0 needs brAIn 3.0.
+
+### Added
+
+- **`feed.json`** — brAIn's measurements for Morph's salience engine: what each sensor usually reads at this hour of the week and the next (median, spread, samples), how much of this hour each door is usually open, when the house wakes and settles, the habits people keep by hand, who lives here, and which hour-of-week bucket it is now. Rewritten at startup, at the top of every local hour, and after a nightly build moves a store it reads. A store brAIn could not read is left out rather than written as empty.
+- **`cases.json`** — the one list, as Morph draws it: every open case (findings, questions, suggestions) with its claim, what brAIn wants from you (`ask`), its To Do sentence, its conversation, the presses Morph can carry back, plus To Do itself and how Morph's own suggestions ended (`ended_morph`). Rewritten within a second of any change to the stores it reads, and at least once a minute.
+- **A finding is a conversation.** An answer typed under a card in Morph reaches the request queue as `{"kind": "morph", "action": "reply", ...}` and is read by the interpreter on the new `morph` surface: "yes" is the card's own first answer (a fix is planned with any instruction that came with the yes, never applied without Apply), "no, it's mains powered" is Ignore with that reason, "later" a snooze, "done" Done, and a question back is answered by a read-only run. Your words and brAIn's answer are kept on the card as its thread (12 turns). A reply brAIn cannot read is answered with a question, never guessed at.
+- Morph's presses — Dismiss, To Do, Snooze, Fix, Apply, Undo and Doesn't apply — reach the same code as the panel's buttons, and a To Do item can be snoozed for a number of days.
+- Morph's own suggestions about its dashboard are filed as cases (`source: morph`), muted by *Stop raising these* like any producer, and withdrawn by Morph when they no longer apply. brAIn does nothing to the dashboard itself; Morph reads the answer and makes the change.
+- **Morph's Ask line**: a sentence typed there is answered by the interpreter within a second or two — a rule is drafted and offered, a fact remembered, a why explained — and a change to the dashboard or to Morph itself is handed back for Morph's own Tell. The interpreter never guesses between a house change ("make the kitchen warmer") and a dashboard change ("make the kitchen warmer-looking").
+- **Conversation tasks**: Morph can run a conversation through brAIn's task folder as brAIn's chat would (`kind: conversation`), on the chat's channel, resuming the same session turn to turn. It is not labelled as an automation, so it is in brAIn's Ask tab as your own conversation and can be carried on there.
+- Every finding carries a **To Do sentence** (`todo_text`): what needs doing, naming the thing ("Replace the battery in the hallway motion sensor."). House checks write it from their own fix; an investigation writes it in its own words; otherwise it is worked out from the fix. Moving a finding onto To Do uses it.
+- `write_morph_request` in the integration, which checks and drops Morph's requests on the queue.
+
+### Changed
+
+- A To Do item reads as the errand rather than the report, and the report rides beside it; the memory line written when it is done is still about the report.
+- The diagnostics bundle reports the Morph wire (replies, presses, asks, when each file was last written), and a stopped Morph loop is a health problem naming itself.
+
 ## 2.18.34
 
 ### Added

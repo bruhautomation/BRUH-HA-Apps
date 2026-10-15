@@ -57,6 +57,7 @@ scenes: [scene.morning, scene.evening]   # house-wide scenes, shown as words
 floors:
   - id: f_first_floor
     title: First floor
+    heading: true        # false: no floor heading (a one-floor house has none either way)
     sections:
       - id: s_kitchen
         title: Kitchen
@@ -95,7 +96,9 @@ after the title, and a section may give `cards:` instead of `groups:`.
 renaming one makes the card look new. A new card or section may leave `id` out
 and Morph assigns one.
 
-Optional keys on any card: `name`, `icon` (mdi:…), `span` (1–4 columns),
+Optional keys on any card: `pin` (`true` keeps it in place whatever is
+happening; `active` keeps it in place only while it is on, open or running),
+`name`, `icon` (mdi:…), `span` (1–4 columns),
 `color`, `unit` (kept for a card that reads it; built-in cards show the entity's
 own unit), and `options` (a free mapping for card code to read; no built-in
 type reads it).
@@ -150,6 +153,17 @@ that copy is in use.
   there is one. `story:` only switches it on or off.
 - **Coming up** is drawn by Morph's own code (`upcoming.js` gathers the events,
   `morph-panel.js` places the strip). `coming_up:` only switches it.
+- **What leads the page.** The verdict at the top, the **Now** row, which rooms
+  are open and which are one folded line, and each card's "because" line are
+  worked out by Morph (`salience.js`) from the house's state and what brAIn
+  publishes (`/config/.brain/morph/feed.json`). A card moves up because it
+  matters right now and goes back when it stops; `pin:` is how a person says a
+  card stays where it is. Never write an order into `dashboard.yaml` to make
+  something lead.
+- **brAIn's cases and To Do.** A problem or a question brAIn has is drawn in
+  the room it is about, with a reply line, from brAIn's own list
+  (`/config/.brain/morph/cases.json`). Morph keeps no list of its own; never
+  add a card for a case.
 - **How anything looks or moves** — the header, the layout, a built-in card's
   face — is Morph's own code.
 
@@ -165,13 +179,17 @@ Morph's own panel modules are in `/config/custom_components/morph/frontend/`:
 | Module | What it is |
 |---|---|
 | `boot.js` | The loader: paints the page's outline, loads the panel, and falls back to Morph's own panel when a copy fails |
-| `morph-panel.js` | The page: header, story, Ask, Edit, Tell, Settings |
+| `morph-panel.js` | The page: the verdict, Now, the rooms, brAIn's cases, To Do, Ask, Edit, Tell, Settings |
 | `cards.js` | The built-in card types (`TYPES`) |
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
+| `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
+| `cases.js` | brAIn's cases as Morph draws them in a room, and the To Do list |
+| `then.js` | The house as it was at a moment in the last day (Coming up slid into the past) |
+| `morph-dom.js` | Updating the page in place, so nothing a person is touching is rebuilt |
 | `util.js` | Icons and small helpers |
 
 That copy is Morph's: read it, never edit it there (an update replaces it). To

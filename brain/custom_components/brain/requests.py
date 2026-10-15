@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import itertools
+import re
 import time
 import uuid
 
@@ -199,6 +200,119 @@ def write_hypothesis_request(hass: HomeAssistant, ts: int, action: str, *,
             "note": str(note or "")[:500], "via": str(via or "")[:32]}
     return _drop(hass, requests_dir(hass), body,
                  what=f"the answer to guess {ts}")
+
+
+# Morph (brAIn 3.0). Its integration calls `write_morph_request` with the
+# body it built; this checks every field and drops it on the same queue, so
+# an answer given on the dashboard is ordered with every other answer.
+# The words are spelled here as well as in the panel's `finding_requests`,
+# because this module imports nothing of the add-on's;
+# `tests/test_morph_contracts_requests.py` drives this writer straight into
+# that reader rather than writing the shape down twice.
+MORPH_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo",
+                 "not_applicable")
+MORPH_TODO_ACTIONS = ("done", "drop", "add", "snooze")
+MORPH_CASE_ACTIONS = ("file", "withdraw")
+MORPH_CASE_KINDS = ("opportunity", "question", "problem")
+_CASE_ID_RE = re.compile(r"^[fhpt]:\d{1,16}$")
+_MORPH_KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+_ENTITY_ID_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if value > 0 else None
+
+
+def _line(value, cap: int) -> str:
+    return " ".join(value.split())[:cap] if isinstance(value, str) else ""
+
+
+def morph_body(body) -> dict | None:
+    """Morph's request, checked and normalised, or None for one the add-on
+    could never apply — refused here rather than written and dropped there.
+    """
+    if not isinstance(body, dict):
+        return None
+    kind = str(body.get("kind") or "").strip().lower()
+    if kind == "morph":
+        case = body.get("case")
+        action = str(body.get("action") or "").strip().lower()
+        if not isinstance(case, str) or not _CASE_ID_RE.match(case.strip()):
+            return None
+        if action not in MORPH_ACTIONS:
+            return None
+        text = body.get("text")
+        text = text.strip()[:1000] if isinstance(text, str) else ""
+        if action == "reply" and not text:
+            return None
+        out = {"kind": "morph", "case": case.strip(), "action": action,
+               "text": text, "via": "morph"}
+        hours = _number(body.get("hours"))
+        if hours:
+            out["hours"] = min(hours, 24 * 30)
+        return out
+    if kind == "todo":
+        action = str(body.get("action") or "").strip().lower()
+        if action not in MORPH_TODO_ACTIONS:
+            return None
+        item_id = body.get("id")
+        item_id = int(item_id) if isinstance(item_id, (int, float)) \
+            and not isinstance(item_id, bool) else 0
+        text = _line(body.get("text"), 200)
+        if action == "add" and not text:
+            return None
+        if action != "add" and not item_id:
+            return None
+        out = {"kind": "todo", "action": action, "id": item_id, "text": text,
+               "note": _line(body.get("note"), 500), "via": "morph"}
+        days = _number(body.get("days"))
+        if action == "snooze" and days:
+            out["days"] = min(days, 90.0)
+        return out
+    if kind == "morph_case":
+        action = str(body.get("action") or "").strip().lower()
+        key = body.get("key")
+        if action not in MORPH_CASE_ACTIONS or not isinstance(key, str) \
+                or not _MORPH_KEY_RE.match(key.strip()):
+            return None
+        out = {"kind": "morph_case", "action": action, "key": key.strip(),
+               "via": "morph"}
+        if action == "withdraw":
+            return out
+        claim = _line(body.get("claim"), 240)
+        if not claim:
+            return None
+        case_kind = str(body.get("case_kind") or "opportunity").strip().lower()
+        entity = _line(body.get("entity_id"), 255)
+        out.update({
+            "case_kind": case_kind if case_kind in MORPH_CASE_KINDS
+            else "opportunity",
+            "claim": claim,
+            "detail": _line(body.get("detail"), 600),
+            "ask": _line(body.get("ask"), 300),
+            "entity_id": entity if _ENTITY_ID_RE.match(entity) else "",
+        })
+        return out
+    return None
+
+
+def write_morph_request(hass: HomeAssistant, body: dict) -> bool:
+    """Drop one of Morph's requests. Returns whether it landed.
+
+    Blocking: call it from the executor. A body that is not one of the
+    three kinds Morph writes — an answer on a case, a To Do press, or a
+    suggestion of its own — is refused and logged rather than written, and
+    a write that fails is logged and returned, `write_request`'s rule.
+    """
+    checked = morph_body(body)
+    if checked is None:
+        _LOGGER.warning("refusing a Morph request brAIn could not apply: %s",
+                        str(body)[:200])
+        return False
+    return _drop(hass, requests_dir(hass), checked,
+                 what=f"Morph's {checked['kind']} {checked['action']}")
 
 
 def _drop(hass: HomeAssistant, directory: str, body: dict,

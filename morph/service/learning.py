@@ -48,7 +48,9 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import json
 import logging
+import os
 import re
 import time
 
@@ -365,6 +367,106 @@ def settle_doing(read_tell) -> None:
             changed = True
     if changed:
         _save(data)
+
+
+# ------------------------------------------------------ brAIn's one list
+
+# A suggestion is not a list of Morph's own any more (docs/design/
+# morph-vision.md §13.1): each open one is FILED as one of brAIn's cases
+# (source "morph", kind "opportunity") through brAIn's request queue, and
+# its ending — given in Morph, on a phone, in Repairs or in brAIn's Today —
+# comes back in brAIn's `cases.json` under `ended_morph`. This file keeps
+# what it filed and what it was told, as an index (it is what stops the
+# next pass proposing the same thing), never as something drawn.
+MORPH_SOURCE = "morph"
+_SEQ = 0
+
+
+def _brain_requests_dir():
+    return paths.BRAIN_SHARED / "finding-requests"
+
+
+def _drop_request(body: dict) -> bool:
+    """One request into brAIn's queue: a scratch name renamed, a name that
+    sorts chronologically (brAIn drains oldest first)."""
+    global _SEQ
+    d = _brain_requests_dir()
+    if not paths.BRAIN_SHARED.is_dir():
+        return False
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        _SEQ += 1
+        name = f"{int(time.time() * 1000):015d}-{_SEQ:06d}-morph"
+        scratch = d / f".{name}.tmp"
+        scratch.write_text(json.dumps(body, ensure_ascii=False), encoding="utf-8")
+        os.replace(scratch, d / f"{name}.json")
+        return True
+    except OSError:
+        return False
+
+
+def case_body(item: dict) -> dict:
+    """The case brAIn files for one suggestion: the claim is the change in a
+    sentence, the ask is the question a person answers in their own words."""
+    code = item.get("kind") == "code"
+    return {"kind": "morph_case", "action": "file", "key": item["id"], "case_kind": "opportunity",
+            "claim": item["title"], "detail": item.get("why") or "",
+            "ask": "Should brAIn change Morph itself for this?" if code else "Should I make this change to the dashboard?",
+            "section": item.get("section") or "", "card": item.get("card") or "",
+            "entity_id": item.get("entity_id") or "", "via": MORPH_SOURCE}
+
+
+def sync_brain(start_tell=None) -> dict:
+    """File what is open and not yet filed; withdraw what ended here; read
+    the endings brAIn published and act on them. ``start_tell(item)``
+    begins the Tell an accepted suggestion asks for and returns its id."""
+    data = _load()
+    filed = withdrawn = applied = 0
+    now = time.time()
+    for it in data["items"]:
+        if it.get("status") == "open" and not it.get("filed") and float(it.get("snoozed_until") or 0) <= now:
+            if _drop_request(case_body(it)):
+                it["filed"] = now
+                filed += 1
+        elif it.get("filed") and it.get("status") in ("declined", "sent") and not it.get("withdrawn"):
+            if _drop_request({"kind": "morph_case", "action": "withdraw", "key": it["id"], "via": MORPH_SOURCE}):
+                it["withdrawn"] = now
+                withdrawn += 1
+    feed = paths.read_json(paths.BRAIN_SHARED / "morph" / "cases.json", {}) or {}
+    ended = feed.get("ended_morph") if isinstance(feed, dict) else None
+    seen = set(data.setdefault("ended_seen", []))
+    for e in ended if isinstance(ended, list) else []:
+        if not isinstance(e, dict):
+            continue
+        key = str(e.get("key") or "")
+        mark = f"{key}@{e.get('at')}"
+        if not key or mark in seen:
+            continue
+        seen.add(mark)
+        it = next((x for x in data["items"] if x.get("id") == key), None)
+        if not it or it.get("status") not in ("open",):
+            continue
+        how = str(e.get("how") or "")
+        note = str(e.get("note") or "")[:400]
+        if how == "accepted" and start_tell:
+            tid = start_tell(it)
+            if tid:
+                it.update(status="doing", tell=tid, decided=now)
+                record_outcome({"kind": "suggestion", "id": key, "verb": "do", "title": it["title"], "tell": tid, "at": now})
+        elif how == "declined":
+            it.update(status="declined", note=note, decided=now)
+            data["declined"][it["key"]] = {"title": it["title"], "note": note, "at": now}
+            record_outcome({"kind": "suggestion", "id": key, "verb": "no", "title": it["title"], "note": note, "at": now})
+        else:
+            # Dismissed, snoozed or put on To Do: not now, and filed again
+            # when it comes back round.
+            it["snoozed_until"] = now + SNOOZE_S
+            it.pop("filed", None)
+            record_outcome({"kind": "suggestion", "id": key, "verb": "not_now", "title": it["title"], "at": now})
+        applied += 1
+    data["ended_seen"] = sorted(seen)[-200:]
+    _save(data)
+    return {"filed": filed, "withdrawn": withdrawn, "applied": applied}
 
 
 # ----------------------------------------------------------------- lessons

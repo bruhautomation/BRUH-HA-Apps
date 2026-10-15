@@ -63,7 +63,21 @@ KINDS = ("card_question", "one_off", "standing_rule", "automation_edit",
          "case_ending", "defer", "remember", "study", "explain", "scenes",
          "chat")
 ENDINGS = ("wrong", "done", "todo", "not_now")
-SURFACES = ("ask_bar", "reply", "repairs", "service")
+SURFACES = ("ask_bar", "reply", "repairs", "service", "morph")
+
+# Morph, the dashboard (`morph/`), is the fifth box and the one that is
+# also a Tell: what it carries is the ask bar's vocabulary and every case
+# ending, plus two kinds no other surface has — `dashboard` (a change to the
+# dashboard's layout or look, which Morph makes itself) and `code` (a change
+# to Morph's own code). They are kept OUT of `KINDS` and `SCHEMA`, which
+# every other surface's run is still validated against byte for byte, and
+# live in `MORPH_SCHEMA` (`schema_for`). So are the two endings only a case
+# card in Morph offers: `consent` ("yes", "do it" — the card's own primary
+# ending, with any instruction that came with it as `change`) and
+# `not_applicable` (a question that does not fit this house).
+MORPH_KINDS = KINDS + ("dashboard", "code")
+MORPH_ENDINGS = ENDINGS + ("consent", "not_applicable")
+MAX_CHANGE = 300
 
 # What each surface can carry. A case ending needs a case, which only a
 # reply and a Repairs dialog have; a card needs a screen to land on.
@@ -76,6 +90,15 @@ ALLOWED = {
     "repairs": frozenset({"case_ending", "defer", "remember"}),
     "service": frozenset({"one_off", "standing_rule", "automation_edit",
                           "remember", "study"}),
+    # The ask bar's kinds, every case ending, and the Tell's two. A case
+    # ending needs a case, which a reply under a card has and Morph's Ask
+    # line does not — the server drops what the request cannot carry
+    # (`server._morph_reply` / `_answer_morph_ask`), exactly as it drops a
+    # route a surface cannot carry here.
+    "morph": frozenset({"card_question", "one_off", "standing_rule",
+                        "automation_edit", "remember", "study", "explain",
+                        "scenes", "chat", "case_ending", "defer",
+                        "dashboard", "code"}),
 }
 # The endings a surface's words may give. The Repairs reason box sits under
 # "Not a problem", and the same dialog's own step for "I've fixed it" is
@@ -89,9 +112,10 @@ ALLOWED = {
 # the opposite of what was pressed.
 SURFACE_ENDINGS = {
     "repairs": frozenset({"wrong", "todo", "not_now"}),
+    "morph": frozenset(MORPH_ENDINGS),
 }
 # A person is waiting on these: the budget does not stop them.
-PRESSED = frozenset({"ask_bar", "reply", "repairs"})
+PRESSED = frozenset({"ask_bar", "reply", "repairs", "morph"})
 
 MAX_ROUTES = 3
 MAX_WORDS = 500
@@ -153,7 +177,19 @@ Routes (use only these words):
   did not tell them ("why didn't you tell me the garage was open?");
   subject is the device they mean, as they named it.
 - scenes: design lighting moods for a room; subject is the room.
-- chat: anything else — a conversation.""",
+- chat: anything else — a conversation, or a question back about the
+  report ("which sensor is that?", "why?").
+Only when they typed it into Morph, the dashboard:
+- case_ending may also be "consent" (yes, ok, do it, sure — agreeing to
+  what the report asks; an instruction that comes with it, "yes, but call
+  it Sump Pump Current", goes in change) or "not_applicable" (the question
+  does not fit this house).
+- dashboard: a change to how the dashboard looks or is laid out ("move
+  the kitchen above the dining room", "make the kitchen warmer-looking").
+- code: a change to Morph itself ("the kitchen header is too tall").
+- Never guess between a house change and a dashboard change: "make the
+  kitchen warmer" is the thermostat (chat or standing_rule); "make the
+  kitchen warmer-looking" is dashboard.""",
     person_facing=False,
 )
 
@@ -189,6 +225,41 @@ SCHEMA = {
     "required": ["routes"],
     "additionalProperties": False,
 }
+
+
+# Morph's run is validated against its own vocabulary; every other
+# surface's against `SCHEMA`, unchanged.
+MORPH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "routes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_ROUTES,
+            "items": {
+                "type": "object",
+                "properties": {
+                    **SCHEMA["properties"]["routes"]["items"]["properties"],
+                    "kind": {"type": "string", "enum": list(MORPH_KINDS)},
+                    "ending": {"type": "string", "enum": ["", *MORPH_ENDINGS],
+                               "description": "Only for case_ending."},
+                    "change": {"type": "string", "description":
+                               "consent only: the instruction that came "
+                               "with the yes, in their words."},
+                },
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["routes"],
+    "additionalProperties": False,
+}
+
+
+def schema_for(surface: str) -> dict:
+    """The schema a surface's run is validated against."""
+    return MORPH_SCHEMA if surface == "morph" else SCHEMA
 
 
 def _day(now: float) -> str:
@@ -241,6 +312,9 @@ def prompt(words: str, surface: str, case: dict | None = None) -> str:
         "repairs": "They typed this into the reason box under “Not a "
                    "problem” on a report.",
         "service": "An automation sent this sentence.",
+        "morph": ("They typed this into Morph, their dashboard — under the "
+                  "report below when there is one, otherwise into its Ask "
+                  "line."),
     }.get(surface, "They typed this.")]
     if case:
         lines.append("The report they are looking at: “"
@@ -257,7 +331,8 @@ def _clean_route(item, surface: str, words: str) -> dict | None:
     if not isinstance(item, dict):
         return None
     kind = str(item.get("kind") or "")
-    if kind not in KINDS or kind not in ALLOWED.get(surface, ()):
+    vocabulary = MORPH_KINDS if surface == "morph" else KINDS
+    if kind not in vocabulary or kind not in ALLOWED.get(surface, ()):
         return None
     text = " ".join(str(item.get("text") or "").split())[:MAX_TEXT] or words
     route: dict = {"kind": kind, "text": text}
@@ -267,6 +342,12 @@ def _clean_route(item, surface: str, words: str) -> dict | None:
             return None
         route["ending"] = ending
         route["note"] = " ".join(str(item.get("note") or "").split())[:MAX_NOTE]
+        if surface == "morph" and ending == "consent":
+            # The instruction that came with the yes, which the fix route
+            # takes as the agreed change (`_run_plan`'s `change`).
+            change = " ".join(str(item.get("change") or "").split())
+            if change:
+                route["change"] = change[:MAX_CHANGE]
     elif kind == "defer":
         hours = item.get("hours")
         if isinstance(hours, (int, float)) and not isinstance(hours, bool) \
@@ -436,7 +517,8 @@ def summary() -> dict:
             "last": int(STATE["last"]), "routed": dict(STATE["routed"])}
 
 
-__all__ = ["ALLOWED", "ENDINGS", "EXPLAIN_KINDS", "EXPLAIN_SCHEMA",
+__all__ = ["ALLOWED", "ENDINGS", "MORPH_ENDINGS", "MORPH_KINDS",
+           "MORPH_SCHEMA", "schema_for", "EXPLAIN_KINDS", "EXPLAIN_SCHEMA",
            "EXPLAIN_SYSTEM", "KINDS", "MAX_PER_DAY", "MAX_ROUTES", "PRESSED",
            "SCHEMA", "STATE", "SURFACES", "SURFACE_ENDINGS", "SYSTEM",
            "explain_prompt", "gate", "note_fallback", "note_run", "parse",
