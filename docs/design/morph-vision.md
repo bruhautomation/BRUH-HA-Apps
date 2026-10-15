@@ -293,7 +293,7 @@ The engine's springs (K = 150, ζ = 0.82) stay as the carrier of every position.
 |---|---|---|---|
 | A value painting in place (a fill, a number) | 180 ms | ease-out | never waits for anything |
 | A strip following a finger | 0 | — | the fill is under the finger on the same frame |
-| A fan changing speed | 600 ms | ease-in-out on angular velocity | the blades never stop between speeds and never jump (rule 12) |
+| A fan changing speed | 600 ms | ease-in-out on angular velocity | the blades ease between speeds and never jump; a fan that is off may stop (rule 12) |
 | Neighbours making room | spring, after 130 ms (section) or 170 ms (tile) | the spring | as today: neighbours move first, then the growing thing grows |
 | A card lifting into Now | 420 ms | the spring, with opacity 1 throughout | the card travels along the page; it never fades out and in, because a thing that teleports cannot be followed |
 | A card sinking home | 420 ms, after a 300 ms pause | the spring | the room it returns to unfolds first |
@@ -548,7 +548,6 @@ A finding in Morph passes the same test as the house: a glance says whether some
 - It never keeps a list of its own: a finding, a question, a suggestion or a chore is brAIn's, drawn here.
 - It never forces a yes or a no: every case takes a sentence, and a sentence it cannot place is answered with a question.
 - It never sends a person to brAIn's panel for anything but brAIn's own settings.
-- It never stops the fans.
 
 ---
 
