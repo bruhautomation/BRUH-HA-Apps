@@ -108,6 +108,7 @@ def hardware_name(snap: dict, now: float) -> list[dict]:
         "fixable": True,
         "entity_id": hits[0][0],
         "evidence": evidence_for([h[0] for h in hits], "named after hardware"),
+        "items": [h[0] for h in hits],
     }]
 
 
@@ -168,6 +169,11 @@ def no_area(snap: dict, now: float) -> list[dict]:
         "severity": "info",
         "fixable": True,
         "entity_id": sorted(by_device[sorted(by_device)[0]])[0],
+        # One entity per device: a Wrong written under it reaches the
+        # device's other entities (`House.withheld_by`'s device step).
+        "items": [sorted(by_device[d])[0] for d in sorted(by_device)],
+        "evidence": evidence_for([sorted(by_device[d])[0]
+                                  for d in sorted(by_device)], "no area"),
     }]
 
 
@@ -228,6 +234,7 @@ def unused_helper(snap: dict, now: float) -> list[dict]:
         "fixable": False,
         "entity_id": unused[0],
         "evidence": evidence_for(unused, "nothing refers to it"),
+        "items": list(unused),
     }]
 
 
@@ -328,6 +335,7 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
     parents = {str(d.get("via_device_id")) for d in house.devices.values()
                if d.get("via_device_id")}
     orphans = []
+    answered_ids: list[str] = []
     twins: list[tuple[str, str]] = []
     for dev_id, dev in house.devices.items():
         if dev_id in has_entities or dev_id in parents:
@@ -336,6 +344,11 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
             continue
         if _integrations_of(dev, entry_domains) & NO_ENTITIES_BY_DESIGN:
             continue
+        # A device with no entities has no entity to answer under, so the
+        # answer is kept under the device itself (`device:<id>`).
+        if not house.should_report(f"device:{dev_id}", "reg.orphan_device"):
+            continue
+        answered_ids.append(str(dev_id))
         orphans.append(house.device_name(dev))
         other = _twin_with_readings(house, dev, has_entities)
         if other:
@@ -385,6 +398,7 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
         "severity": "info",
         "fixable": True,
         "entity_id": "",
+        "items": [f"device:{d}" for d in sorted(answered_ids)],
     }]
 
 
