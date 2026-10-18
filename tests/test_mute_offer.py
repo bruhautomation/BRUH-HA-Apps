@@ -37,7 +37,10 @@ class TestTheArithmetic(unittest.TestCase):
         self.assertEqual(len(self.plan([row(3, 1), ])), 1)   # 75%, last wrong
 
     def test_below_the_floor_or_share_or_last_agreed_does_not(self):
-        self.assertEqual(self.plan([row(3, 0)]), [])          # 3 endings
+        self.assertEqual(self.plan([row(2, 1)]), [])          # 3 endings
+        # Never confirmed asks sooner (`NEVER_RIGHT_MIN_WRONG`), but not
+        # off one Wrong.
+        self.assertEqual(self.plan([row(1, 0)]), [])
         self.assertEqual(self.plan([row(2, 2)]), [])          # 50%
         self.assertEqual(self.plan([row(4, 0, last="confirmed")]), [])
 

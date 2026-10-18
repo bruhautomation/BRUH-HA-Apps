@@ -24,6 +24,7 @@ from pathlib import Path
 
 import atomic_write
 import plain_words
+from rule_record import SAFETY_CHECKS
 
 log = logging.getLogger("brain.mute_offer")
 
@@ -33,6 +34,13 @@ SOURCE_TITLE = "Rule suggestions"
 
 MIN_ENDINGS = 4
 MIN_WRONG_SHARE = 0.75
+# A rule never once confirmed here is asked about sooner: two Wrongs and
+# not a single "that was right" is the house's answer already, and waiting
+# for four left rules at 0 confirmed / 2 Wrong filing for ever.
+NEVER_RIGHT_MIN_WRONG = 2
+# A safety check is never offered, whatever its record: muting the freeze
+# warning is not a question brAIn should be the one to ask.
+SAFETY_SOURCES = frozenset(f"check:{c}" for c in SAFETY_CHECKS)
 RE_ASK_DAYS = 28
 MAX_PER_PASS = 2
 MAX_SUBJECTS = 200
@@ -67,8 +75,11 @@ def qualifies(row: dict) -> bool:
     somebody last agreed with has changed or been fixed since."""
     total = int(row.get("total") or 0)
     wrong = int(row.get("wrong") or 0)
-    return (total >= MIN_ENDINGS and wrong >= MIN_WRONG_SHARE * total
-            and row.get("last") == "wrong")
+    if row.get("last") != "wrong":
+        return False
+    if int(row.get("confirmed") or 0) == 0 and wrong >= NEVER_RIGHT_MIN_WRONG:
+        return True
+    return total >= MIN_ENDINGS and wrong >= MIN_WRONG_SHARE * total
 
 
 def due(state: dict, row: dict, now: float, live_ts: set[int]) -> bool:
@@ -90,7 +101,8 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
     for row in scorecard or []:
         source = str(row.get("source") or "")
         if (not source or source in muted or source in excluded
-                or source in SELF_SOURCES or not qualifies(row)
+                or source in SELF_SOURCES or source in SAFETY_SOURCES
+                or not qualifies(row)
                 or not due(state, row, now, live_ts)):
             continue
         title = str(row.get("title") or source)
