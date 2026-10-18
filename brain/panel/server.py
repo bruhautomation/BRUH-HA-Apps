@@ -1031,7 +1031,7 @@ def _journal_usage_listener(row: dict) -> None:
 
 _CLI_VERSION: dict = {"value": None}
 AUTH_CHECK: dict = {"state": "unchecked", "error": "", "checked_at": 0,
-                    "running": False}
+                    "running": False, "limited": ""}
 # How old a settled auth verdict may get before it is re-earned.
 #
 # The check used to run at startup, after a credential was saved, and after
@@ -7695,9 +7695,18 @@ async def _options_poller() -> None:
 async def _check_auth_bg() -> None:
     try:
         result = await _claude(engine.validate_auth, priority=run_queue.PRESS)
+        error = str(result.get("error") or "")
+        # A usage-limit refusal is the account answering the credential:
+        # it is signed in and over its limit, and the remedy is to wait,
+        # never to sign in again. Read as "failed" it told somebody to
+        # redo a sign-in that was working, from every surface that reads
+        # this verdict (health, the status line, the fault rows).
+        limited = (not result["ok"] and journal.classify(
+            {"ok": False, "error": error}) == "rate_limited")
         AUTH_CHECK.update(
-            state="ok" if result["ok"] else "failed",
-            error=result["error"],
+            state="ok" if result["ok"] or limited else "failed",
+            error="" if limited else error,
+            limited=journal.scrub(error)[:200] if limited else "",
             checked_at=time.time(),
         )
     finally:
@@ -16496,6 +16505,7 @@ def _diagnostics_payload() -> dict:
             "state": AUTH_CHECK.get("state"),
             "checked_at": AUTH_CHECK.get("checked_at"),
             "error": journal.scrub(AUTH_CHECK.get("error") or ""),
+            "limited": AUTH_CHECK.get("limited") or "",
         },
         "journal": journal.summary(24),
         "journal_tail": journal.tail(30),
@@ -22608,7 +22618,7 @@ async def h_auth_logout(request: web.Request) -> web.Response:
             body = {}
     engine.clear_auth(include_shared=bool(body.get("shared")))
     engine.SETUP_FLOW.cancel()
-    AUTH_CHECK.update(state="unchecked", error="", checked_at=0)
+    AUTH_CHECK.update(state="unchecked", error="", checked_at=0, limited="")
     return web.json_response({"cleared": True})
 
 
