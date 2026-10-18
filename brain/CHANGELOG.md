@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.3
+
+### Fixed
+
+- **An answer about one part of a device covers the device.** Answering a battery, frozen-reading or offline card about a device as wrong ("the battery is dead and I won't replace it", "not in use") now stands those checks down for the device's other sensors too. A smoke, leak or other safety sensor on the same device is never covered. A reading that stopped beside a battery at or near empty is left to the battery card rather than filed twice. (#146, #253)
+- **A 0% battery on a device that is clearly plugged in is not a dead battery.** When the same device has a power or energy reading that moved in the last day, brAIn files nothing. When it does file a 0% card, the suggested fix now mentions disabling the battery entity on a mains-powered device. (#254)
+- **"That's fine" on a card about several things sticks to each of them.** Unassigned devices, unused helpers, leftover devices, hardware-style names and locks exposed to a cloud voice assistant were one card each. Answering one as wrong silenced the card for good, including for new items later. Now the answer is recorded for every item it listed, and a later card names only the new ones. (#276, #290, #291)
+- **brAIn's look is only handed readings the baseline check would file.** Out-of-range readings went to brAIn's look with none of the check's filters, so sensors the owner had called normal, phone pressure readings, resistance readings and HVAC coil sensors came back as cases, under their raw ids. They now go through the same filters and corrections, under their friendly names. (#300)
+
 ## 3.0.2
 
 ### Fixed
