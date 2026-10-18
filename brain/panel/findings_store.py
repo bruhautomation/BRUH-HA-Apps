@@ -3692,7 +3692,11 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False) -> str:
             "in one clause rather than retelling it. Never reach a different "
             "verdict about that device: take that row's conclusion as this "
             "card's own, or, if what you read disagrees with it, say why in "
-            "one clause:")
+            "one clause. Never call a device, door or automation fine, safe "
+            "or normal while a row here says otherwise about it: mention "
+            "that row instead. A figure from a sensor a row calls offline, "
+            "stuck, on a dead battery or unreliable is doubtful, and the "
+            "card says so wherever it quotes one:")
         for f in live:
             eid = str(f.get("entity_id") or "")
             row = names.get(eid)
