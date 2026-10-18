@@ -707,6 +707,34 @@ def _never_above_zero(snap: dict, entity_id: str) -> bool:
     return max(means) <= 0
 
 
+# A power or energy reading that changed inside this window is the device
+# running, whatever its battery field says.
+MAINS_LIVE_S = 86400
+MAINS_CLASSES = frozenset({"power", "energy", "current", "apparent_power"})
+
+
+def _runs_on_mains(house: House, eid: str, now: float) -> bool:
+    """Whether a sibling power or energy sensor is reporting live readings.
+
+    A 0% battery beside watts that moved in the last day is a mains device
+    filling an unused battery field — the same claim `_never_above_zero`
+    makes from a week of statistics, made from the live states the snapshot
+    already holds. A sensor unavailable, not a number, or still for a day is
+    no evidence, and the row files as it always did.
+    """
+    for other in house.siblings(eid):
+        st = house.states.get(other) or {}
+        attrs = st.get("attributes") or {}
+        if attrs.get("device_class") not in MAINS_CLASSES:
+            continue
+        if num(st.get("state")) is None:
+            continue
+        changed = parse_ts(st.get("last_changed"))
+        if changed is not None and now - changed <= MAINS_LIVE_S:
+            return True
+    return False
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -733,7 +761,8 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         if not house.should_report(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
-        if level == 0 and _never_above_zero(snap, eid):
+        if level == 0 and (_never_above_zero(snap, eid)
+                           or _runs_on_mains(house, eid, now)):
             continue
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
@@ -742,7 +771,10 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "text": f"{who} battery is low",
                 "detail": f"{level:g}% as of {when(st.get('last_updated'))}."
                           + house.placed(eid, who),
-                "fix": "Replace the battery.",
+                "fix": ("Replace the battery. If this device runs off "
+                        "mains power and has no battery, disable its "
+                        "battery entity in Home Assistant instead."
+                        if level == 0 else "Replace the battery."),
                 "severity": "warning" if level > 5 else "serious",
                 "fixable": False,
                 "entity_id": eid,
