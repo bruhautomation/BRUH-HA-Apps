@@ -471,15 +471,17 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                     not in FEATURE_PLATFORMS]
             if not rows:
                 continue
-        rows.sort(key=lambda r: r[1], reverse=True)
-        first, longest = rows[0]
         # The row is filed under whichever entity has been down longest, so
         # a Wrong given about it is written under that one; the next pass
-        # may lead with a sibling (a restart re-stamps them all). It is one
-        # device and one answer, so any of its rows being answered stands
-        # the device down.
-        if not all(house.should_report(r[0], "dev.unavailable") for r in rows):
+        # may lead with a sibling (a restart re-stamps them all). An answer
+        # about one entity of a device reaches its siblings
+        # (`House.withheld_by`'s device step), so what is left here is only
+        # what nobody answered — a safety sibling, which no answer covers.
+        rows = [r for r in rows if house.should_report(r[0], "dev.unavailable")]
+        if not rows:
             continue
+        rows.sort(key=lambda r: r[1], reverse=True)
+        first, longest = rows[0]
         name = house.device_name(dev)
         if answers:
             out.append({
@@ -705,6 +707,34 @@ def _never_above_zero(snap: dict, entity_id: str) -> bool:
     return max(means) <= 0
 
 
+# A power or energy reading that changed inside this window is the device
+# running, whatever its battery field says.
+MAINS_LIVE_S = 86400
+MAINS_CLASSES = frozenset({"power", "energy", "current", "apparent_power"})
+
+
+def _runs_on_mains(house: House, eid: str, now: float) -> bool:
+    """Whether a sibling power or energy sensor is reporting live readings.
+
+    A 0% battery beside watts that moved in the last day is a mains device
+    filling an unused battery field — the same claim `_never_above_zero`
+    makes from a week of statistics, made from the live states the snapshot
+    already holds. A sensor unavailable, not a number, or still for a day is
+    no evidence, and the row files as it always did.
+    """
+    for other in house.siblings(eid):
+        st = house.states.get(other) or {}
+        attrs = st.get("attributes") or {}
+        if attrs.get("device_class") not in MAINS_CLASSES:
+            continue
+        if num(st.get("state")) is None:
+            continue
+        changed = parse_ts(st.get("last_changed"))
+        if changed is not None and now - changed <= MAINS_LIVE_S:
+            return True
+    return False
+
+
 def battery_low(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
@@ -731,7 +761,8 @@ def battery_low(snap: dict, now: float) -> list[dict]:
         if not house.should_report(eid, "dev.battery_low"):
             continue
         level = num(st.get("state"))
-        if level == 0 and _never_above_zero(snap, eid):
+        if level == 0 and (_never_above_zero(snap, eid)
+                           or _runs_on_mains(house, eid, now)):
             continue
         dev = house.device_of(eid)
         who = house.device_name(dev) if dev else house.name(eid)
@@ -740,7 +771,10 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "text": f"{who} battery is low",
                 "detail": f"{level:g}% as of {when(st.get('last_updated'))}."
                           + house.placed(eid, who),
-                "fix": "Replace the battery.",
+                "fix": ("Replace the battery. If this device runs off "
+                        "mains power and has no battery, disable its "
+                        "battery entity in Home Assistant instead."
+                        if level == 0 else "Replace the battery."),
                 "severity": "warning" if level > 5 else "serious",
                 "fixable": False,
                 "entity_id": eid,
@@ -841,6 +875,24 @@ def implausible(snap: dict, now: float) -> list[dict]:
 # dev.frozen — exactly one value for a week, from long-term statistics
 # ---------------------------------------------------------------------------
 
+def _flat_battery_beside(house: House, eid: str) -> str:
+    """A battery on this entity's device reading at or under the low mark.
+
+    Read off the live state only — the snapshot holds it already — and a
+    battery somebody charges (`rechargeable`) does not count, because a
+    phone at 9% is not why its other sensors stopped.
+    """
+    for other in house.siblings(eid):
+        st = house.states.get(other) or {}
+        if not _is_battery(st):
+            continue
+        level = num(st.get("state"))
+        if level is not None and level <= BATTERY_LOW_PCT \
+                and not rechargeable(house, other):
+            return other
+    return ""
+
+
 def frozen(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     stats = snap.get("stats") or {}
@@ -885,6 +937,18 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if (live is not None and abs(live - lo) > 1e-9
                 and changed is not None
                 and changed >= now - len(days) * 86400):
+            continue
+        flat = _flat_battery_beside(house, eid)
+        if flat:
+            # A reading that stopped beside a battery at or near empty is
+            # the battery's row (`dev.battery_low`), not a second card about
+            # the same box under a different fix.
+            house._note({"kind": "dedupe", "subject": eid,
+                         "check": "dev.frozen",
+                         "reason": f"{house.label(flat)} reads "
+                                   f"{house.states[flat].get('state')}%, so "
+                                   "the battery check owns this device",
+                         "text": ""})
             continue
         if not house.should_report(eid, "dev.frozen"):
             # "It is a contact on a cupboard nobody opens" — said once,

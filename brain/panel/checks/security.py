@@ -43,8 +43,8 @@ import re
 
 import prompt_kit
 
-from ._util import (House, counted_names, domain_of, join_names, load_yaml_file,
-                    parse_ts)
+from ._util import (House, counted_names, domain_of, evidence_for, join_names,
+                    load_yaml_file, parse_ts)
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 IP_BANS_FILE = os.environ.get(
@@ -235,7 +235,7 @@ def lock_cloud_voice(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     hits = [(eid, who) for eid, who in cloud_exposed(snap)
             if house.exists(eid) and house.enabled(eid)
-            and not house.excepted(eid, "sec.lock_cloud_voice")]
+            and house.should_report(eid, "sec.lock_cloud_voice")]
     if not hits:
         return []
     names = [f"{house.name(eid)} ({' and '.join(who)})" for eid, who in hits]
@@ -251,6 +251,9 @@ def lock_cloud_voice(snap: dict, now: float) -> list[dict]:
         "severity": "warning",
         "fixable": False,
         "entity_id": hits[0][0],
+        "items": [eid for eid, _who in hits],
+        "evidence": evidence_for([eid for eid, _who in hits],
+                                 "a cloud assistant may control it"),
     }]
 
 
