@@ -302,6 +302,12 @@ class TestARestartIsNotAHole(unittest.TestCase):
 
     def test_a_couple_sharing_a_second_are_still_judged(self):
         series, live = self.restart_house(2)
+        # Each now reads a state its history does not have: two clocks in
+        # one second with the SAME state is a small reload and is excused
+        # (`test_refusals_are_not_faults`), so the shared second alone is
+        # what is under test here.
+        for i in range(2):
+            live[f"sensor.re_stamped_{i}"]["state"] = "2"
         cut = ha_data.history_cutoffs(series, live, NOW)
         self.assertEqual(set(cut), {"sensor.re_stamped_0",
                                     "sensor.re_stamped_1",

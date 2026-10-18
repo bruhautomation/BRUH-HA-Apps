@@ -1060,13 +1060,11 @@ def _faults(diag) -> list[dict]:
                  sentence="An overnight repair did not work. The card it "
                           "was for is still on Needs you.")
 
-    # Answers given in Home Assistant that never reached the store.
-    reqs = diag.get("finding_requests") or {}
-    if reqs.get("missed"):
-        _row(out, "Answers from Home Assistant",
-             f"{reqs['missed']} could not be applied",
-             "a tick in the To-do app or a notification button that named a "
-             "finding already gone")
+    # Answers given in Home Assistant that were not applied are NOT a
+    # fault: each is a request naming a finding already gone (an app still
+    # holding last week's list), a pass already running, or a suggestion
+    # already answered — a race or a refusal doing its job. The count
+    # stays in the diagnostics payload and each one is logged with why.
 
     # And the roll-call — read against the options, never raw. A daemon
     # whose option is off was not asked for, and the assist channel is one

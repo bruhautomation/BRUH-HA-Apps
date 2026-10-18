@@ -208,8 +208,9 @@ def _epoch(value: Any) -> float | None:
     return when.timestamp()
 
 
-def _shared_seconds(live: dict[str, dict] | None) -> set[int]:
-    """The seconds at least `SHARED_CHANGE_MIN` live states changed in."""
+def _shared_seconds(live: dict[str, dict] | None,
+                    minimum: int = SHARED_CHANGE_MIN) -> set[int]:
+    """The seconds at least ``minimum`` live states changed in."""
     counts: dict[int, int] = {}
     for st in (live or {}).values():
         if not isinstance(st, dict):
@@ -217,7 +218,7 @@ def _shared_seconds(live: dict[str, dict] | None) -> set[int]:
         changed = _epoch(st.get("last_changed"))
         if changed is not None:
             counts[int(changed)] = counts.get(int(changed), 0) + 1
-    return {sec for sec, n in counts.items() if n >= SHARED_CHANGE_MIN}
+    return {sec for sec, n in counts.items() if n >= minimum}
 
 
 def history_cutoffs(series: dict[str, list], live: dict[str, dict],
@@ -247,11 +248,16 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
     changed. Nor is a live state that is no reading (`NO_READING`) when
     it carries `restored: true` — a restored orphan Core re-published at
     startup — or when the history's last row was no reading either: no
-    state change is missing between the two. Pure, so every caller reads
-    one rule.
+    state change is missing between the two. Nor is an entity whose live
+    state is the state its last history row recorded and whose live change
+    shares its second with another state: a reload of an integration with
+    two or three entities re-stamps their clocks with the same state,
+    which writes no row because nothing changed. Pure, so every caller
+    reads one rule.
     """
     stop = _epoch(end)
     shared = _shared_seconds(live)
+    paired = _shared_seconds(live, 2)
     out: dict[str, dict] = {}
     for eid, rows in (series or {}).items():
         if not isinstance(rows, list) or not rows:
@@ -278,6 +284,16 @@ def history_cutoffs(series: dict[str, list], live: dict[str, dict],
         if last is None or changed - last <= gap_s:
             continue
         if no_reading and last_state in NO_READING:
+            continue
+        # The same state now as on the last recorded row, re-stamped in a
+        # second some other entity was re-stamped in too, is a reload of a
+        # small integration — too few entities to reach
+        # `SHARED_CHANGE_MIN`. The recorder writes no row for that, so no
+        # row is missing. Alone, the same state at both ends is not
+        # enough: the thermostat this rule was measured on read heat_cool
+        # on both sides of a hole that had lost a day of changes.
+        if (last_state is not None and last_state == st.get("state")
+                and int(changed) in paired):
             continue
         out[eid] = {"history_ends": last, "live_changed": changed}
     return out
