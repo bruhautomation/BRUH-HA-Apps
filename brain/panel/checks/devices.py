@@ -471,15 +471,17 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                     not in FEATURE_PLATFORMS]
             if not rows:
                 continue
-        rows.sort(key=lambda r: r[1], reverse=True)
-        first, longest = rows[0]
         # The row is filed under whichever entity has been down longest, so
         # a Wrong given about it is written under that one; the next pass
-        # may lead with a sibling (a restart re-stamps them all). It is one
-        # device and one answer, so any of its rows being answered stands
-        # the device down.
-        if not all(house.should_report(r[0], "dev.unavailable") for r in rows):
+        # may lead with a sibling (a restart re-stamps them all). An answer
+        # about one entity of a device reaches its siblings
+        # (`House.withheld_by`'s device step), so what is left here is only
+        # what nobody answered — a safety sibling, which no answer covers.
+        rows = [r for r in rows if house.should_report(r[0], "dev.unavailable")]
+        if not rows:
             continue
+        rows.sort(key=lambda r: r[1], reverse=True)
+        first, longest = rows[0]
         name = house.device_name(dev)
         if answers:
             out.append({
@@ -841,6 +843,24 @@ def implausible(snap: dict, now: float) -> list[dict]:
 # dev.frozen — exactly one value for a week, from long-term statistics
 # ---------------------------------------------------------------------------
 
+def _flat_battery_beside(house: House, eid: str) -> str:
+    """A battery on this entity's device reading at or under the low mark.
+
+    Read off the live state only — the snapshot holds it already — and a
+    battery somebody charges (`rechargeable`) does not count, because a
+    phone at 9% is not why its other sensors stopped.
+    """
+    for other in house.siblings(eid):
+        st = house.states.get(other) or {}
+        if not _is_battery(st):
+            continue
+        level = num(st.get("state"))
+        if level is not None and level <= BATTERY_LOW_PCT \
+                and not rechargeable(house, other):
+            return other
+    return ""
+
+
 def frozen(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     stats = snap.get("stats") or {}
@@ -885,6 +905,18 @@ def frozen(snap: dict, now: float) -> list[dict]:
         if (live is not None and abs(live - lo) > 1e-9
                 and changed is not None
                 and changed >= now - len(days) * 86400):
+            continue
+        flat = _flat_battery_beside(house, eid)
+        if flat:
+            # A reading that stopped beside a battery at or near empty is
+            # the battery's row (`dev.battery_low`), not a second card about
+            # the same box under a different fix.
+            house._note({"kind": "dedupe", "subject": eid,
+                         "check": "dev.frozen",
+                         "reason": f"{house.label(flat)} reads "
+                                   f"{house.states[flat].get('state')}%, so "
+                                   "the battery check owns this device",
+                         "text": ""})
             continue
         if not house.should_report(eid, "dev.frozen"):
             # "It is a contact on a cupboard nobody opens" — said once,

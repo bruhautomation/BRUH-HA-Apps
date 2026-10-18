@@ -259,6 +259,12 @@ def _names_room(name: str, area: str) -> bool:
     return False
 
 
+# Checks that each say "this device has gone quiet": a battery nobody will
+# replace, a reading stuck on one value, a device not answering. An answer to
+# one of them about one entity of a device is an answer about the device.
+DEVICE_QUIET = frozenset({"dev.battery_low", "dev.frozen", "dev.unavailable"})
+
+
 class House:
     """Lookups over a snapshot that several checks want."""
 
@@ -418,12 +424,51 @@ class House:
                 return True
         return False
 
+    def siblings(self, entity_id: str) -> list[str]:
+        """The other entities on this entity's device, or [] for none."""
+        device = (self.registry.get(entity_id) or {}).get("device_id")
+        if not device:
+            return []
+        by_device = getattr(self, "_by_device", None)
+        if by_device is None:
+            by_device = {}
+            for row in self.entities:
+                if row.get("device_id") and row.get("entity_id"):
+                    by_device.setdefault(row["device_id"], []).append(
+                        str(row["entity_id"]))
+            self._by_device = by_device
+        return [e for e in by_device.get(device, ()) if e != entity_id]
+
+    def _device_rule(self, entity_id: str, check_id: str, rules_of) -> dict | None:
+        """An answer given about another entity of the same device.
+
+        A Wrong is written under the entity its row was filed under, and a
+        device publishes several: the battery row of a sensor somebody will
+        not re-battery, and the temperature reading on the same box that
+        `dev.frozen` then reports as stuck. The person answered about the
+        DEVICE. So a `*` rule on a sibling, or a rule for this check, or a
+        rule for any check in `DEVICE_QUIET` when this check is one of them
+        (a dead battery, a frozen reading and an unavailable device are one
+        device having gone quiet), stands this check down too. The caller
+        has already refused this for a pair `_never_covered` names, so a
+        smoke detector on the same device is never covered.
+        """
+        family = DEVICE_QUIET if check_id in DEVICE_QUIET else {check_id}
+        for other in self.siblings(entity_id):
+            rules = rules_of(other) or {}
+            for key in ("*", check_id, *sorted(family)):
+                if key in rules:
+                    rule = rules[key] if isinstance(rules[key], dict) else {}
+                    return {**rule, "scope": "device", "via": other}
+        return None
+
     def withheld_by(self, entity_id: str, check_id: str) -> dict | None:
         """The correction that stands this check down for this entity, or None.
 
         Four scopes, narrowest first (`corrections.SCOPES`): this check on
-        this entity, anything on this entity, this check in this entity's
-        room, this check everywhere. The three wide ones never cover a pair
+        this entity, anything on this entity, then an answer about another
+        entity of the same device (`_device_rule`), this check in this
+        entity's room, this check everywhere. The wide ones never cover a pair
         `_never_covered` names. A snapshot with no ``corrections`` key — an
         older collector, a store that could not be read — falls back to the
         exception map `excepted` reads, so nothing that was standing down
@@ -433,7 +478,14 @@ class House:
         if not isinstance(table, dict):
             if self.excepted(entity_id, check_id):
                 return {"scope": "entity_check", "text": ""}
-            return None
+            if self._never_covered(entity_id, check_id):
+                return None
+            facts = self.snap.get("facts")
+            return self._device_rule(
+                entity_id, check_id,
+                lambda eid: {c: {"text": ""} for c in
+                             ((facts or {}).get(eid) or ())}
+                if isinstance(facts, dict) else None)
         rules = (table.get("entity") or {}).get(entity_id) or {}
         if check_id in rules:
             return {**rules[check_id], "scope": "entity_check"}
@@ -441,6 +493,10 @@ class House:
             return None
         if "*" in rules:
             return {**rules["*"], "scope": "entity"}
+        hit = self._device_rule(entity_id, check_id,
+                                lambda eid: (table.get("entity") or {}).get(eid))
+        if hit:
+            return hit
         area = self.area_id_of(entity_id)
         if area:
             hit = ((table.get("area") or {}).get(area) or {}).get(check_id)
