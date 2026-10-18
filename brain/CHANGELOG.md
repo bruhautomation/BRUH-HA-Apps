@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.4
+
+### Changed
+
+- **Insight cards that only say all is well say it once and sort to the bottom.** A card whose answer is "nothing needs you" is one short sentence with no chart, and cards that need something come first on Insights. (#292)
+- **Card writing is plainer.** The title's number appears in the summary inside a comparison and a reason, not repeated on its own. Cards use no units a reader would have to look up (degree-hours, "2.4x"), and compare part of a day with the same hours of other days. Cards no longer use brAIn's own working words ("the tool's cap", "baseline", "this hour of the week"), and they say "more", "again" or "still" only next to the earlier figure. A card that calls a reading unusual names the cause it checked, or says it found none and what to do next. (#304, #303, #277, #294)
+- **One way to write dates, times and units.** Cards follow the house's own clock (24-hour or 12-hour) and write dates, durations and temperatures one way. (#278)
+- **Cards and findings tell one story.** A card never calls a device, door or automation fine while an open finding about it says otherwise; it mentions the finding. A figure from a sensor a finding calls offline or unreliable is marked as doubtful. Each card is shown the other cards' headlines, so two cards do not cover the same thing. (#301)
+- **A card checks the sensor before blaming the house.** Before describing a missing or odd event, a card checks whether the sensor itself was offline or on a dead battery, and a card whose conclusion is "fine" files no finding. (#267)
+
 ## 3.0.3
 
 ### Fixed

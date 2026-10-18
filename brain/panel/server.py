@@ -1217,6 +1217,45 @@ def load_insights() -> list[dict]:
     return out + custom
 
 
+# How many other cards a card is told about, and how much of each.
+OTHER_CARDS_MAX = 10
+OTHER_CARD_SUMMARY_CHARS = 140
+
+
+def _other_cards_block(insight_id: str) -> str:
+    """The other cards on the dashboard, by title and summary, for a run.
+
+    A card was written blind to its neighbours, so two cards about one
+    air conditioner on one day told the homeowner two stories. The card
+    files are already on disk (the listing reads them on every poll), so
+    this costs one read of each and no Claude turn. Empty when there is
+    nothing else, or nothing could be read.
+    """
+    try:
+        cards = load_insights()
+    except Exception:  # noqa: BLE001 — a list nobody could read is no list
+        return ""
+    rows = []
+    for card in cards:
+        if not isinstance(card, dict) or card.get("id") == insight_id:
+            continue
+        title = str(card.get("title") or "").strip()
+        if not title:
+            continue
+        summary = textclip.clip(str(card.get("summary") or "").strip(),
+                                OTHER_CARD_SUMMARY_CHARS)
+        rows.append(f"- {title}" + (f" — {summary}" if summary else ""))
+        if len(rows) >= OTHER_CARDS_MAX:
+            break
+    if not rows:
+        return ""
+    return ("OTHER CARDS ON THIS DASHBOARD, read beside this one. Do not make "
+            "this card about the same device or question as one of them; "
+            "where yours touches one, use its figures or say in one clause "
+            "why yours differ. Never name or mention another card:\n"
+            + "\n".join(rows))
+
+
 def save_insight(insight: dict) -> None:
     path = _insight_path(insight["id"])
     atomic_write.write_json(path, insight)
@@ -5270,7 +5309,10 @@ async def _generate(insight_id: str) -> None:
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
                        house=await _house_prompt_block(),
-                       refine=refine or None)
+                       refine=refine or None,
+                       clock=await asyncio.to_thread(_clock_style),
+                       others=await asyncio.to_thread(
+                           _other_cards_block, insight_id))
 
         result = cost = sent = None
         if eff_gather_mode() == "search":
@@ -8908,7 +8950,9 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                    previous=previous,
                    findings=findings_store.prompt_block(
                        own=findings_store.own_reports(cat_id), figures=True),
-                   house=await _house_prompt_block())
+                   house=await _house_prompt_block(),
+                   clock=await asyncio.to_thread(_clock_style),
+                   others=await asyncio.to_thread(_other_cards_block, cat_id))
 
     # The named blocks, in the order `_framing` puts them, each with what
     # it is FOR — because "why is this in my prompt" is the question a
@@ -8926,6 +8970,9 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
          "what": "Guesses you rejected, so they are not re-asked."},
         {"name": "The work list", "chars": len(framing["findings"] or ""),
          "what": "What is already filed, and what you ignored and why."},
+        {"name": "The other cards", "chars": len(framing["others"] or ""),
+         "what": "Their titles, so this card does not tell the same "
+                 "story twice or a different one."},
         {"name": "Last run of this card",
          "chars": len(_previous_block(previous)) if previous else 0,
          "what": "So it advances the story instead of regenerating it."},
