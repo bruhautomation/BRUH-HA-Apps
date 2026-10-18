@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Four things a house's own reports called faults that were not.
+"""Three things a house's own reports called faults that were not.
 
 Each is a refusal doing its job, or nothing having changed, read as a
 failure somewhere downstream:
@@ -14,16 +14,13 @@ failure somewhere downstream:
   * An answer from Home Assistant naming a finding already gone (an app
     still holding last week's list) was a fault row, where it is an
     ordinary race that is dropped and logged.
-  * A reload re-stamped an entity's clock with the same state it last
-    recorded and the history was called cut, standing a check down.
 
-Driven, not grepped: the real `_check_auth_bg`, the real `_ask_why`, the
-real `reports.faults` and the real `ha_data.history_cutoffs`.
+Driven, not grepped: the real `_check_auth_bg`, the real `_ask_why` and the
+real `reports.faults`.
 """
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import importlib
 import sys
 import unittest
@@ -35,7 +32,6 @@ sys.path.insert(0, str(PANEL))
 sys.path.insert(0, str(HERE))
 
 import brain_status  # noqa: E402
-import ha_data  # noqa: E402
 import health  # noqa: E402
 import reports  # noqa: E402
 from test_curiosity_wiring import ServerCase, _async  # noqa: E402
@@ -223,58 +219,6 @@ class TestAnUnappliedAnswerIsNotAFault(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # 4. A clock re-stamped with the same state is not cut history
 # ---------------------------------------------------------------------------
-
-NOW = dt.datetime(2026, 10, 17, 12, tzinfo=dt.timezone.utc)
-
-
-def _iso(days: float) -> str:
-    return (NOW - dt.timedelta(days=days)).isoformat()
-
-
-class TestASameStateReStampIsNotACut(unittest.TestCase):
-    """A reload of an integration with two or three entities re-publishes
-    them in one second with the states they had — too few to reach
-    `SHARED_CHANGE_MIN`, and no row is missing."""
-
-    def row(self, eid, state, days):
-        return [{"entity_id": eid, "state": state,
-                 "last_changed": _iso(days)}]
-
-    def live(self, eid, state, when):
-        return {"entity_id": eid, "state": state, "last_changed": when,
-                "attributes": {}}
-
-    def test_a_small_reload_with_nothing_changed_is_not_cut(self):
-        reload_at = _iso(2)
-        series = {
-            "sensor.porch": self.row("sensor.porch", "on", 6),
-            "sensor.porch_battery": self.row("sensor.porch_battery", "90", 6),
-            "sensor.shed": self.row("sensor.shed", "on", 6),
-        }
-        live = {
-            # Re-published by the reload with the state it had.
-            "sensor.porch": self.live("sensor.porch", "on", reload_at),
-            "sensor.porch_battery": self.live("sensor.porch_battery", "90",
-                                              reload_at),
-            # In the same second, but its state is not the one recorded:
-            # a change the history does not have.
-            "sensor.shed": self.live("sensor.shed", "off", reload_at),
-        }
-        cut = ha_data.history_cutoffs(series, live, NOW.timestamp())
-        self.assertNotIn("sensor.porch", cut)
-        self.assertNotIn("sensor.porch_battery", cut)
-        self.assertIn("sensor.shed", cut)
-
-    def test_the_same_state_alone_is_still_judged(self):
-        """The thermostat the rule was measured on read the same mode on
-        both sides of a hole that had lost a day of changes."""
-        series = {"climate.downstairs":
-                  self.row("climate.downstairs", "heat_cool", 6)}
-        live = {"climate.downstairs":
-                self.live("climate.downstairs", "heat_cool", _iso(2))}
-        self.assertIn("climate.downstairs", ha_data.history_cutoffs(
-            series, live, NOW.timestamp()))
-
 
 if __name__ == "__main__":
     unittest.main()

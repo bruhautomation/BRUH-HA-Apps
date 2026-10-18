@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.2
+
+### Fixed
+
+- **A usage limit is not a sign-out.** When the periodic sign-in check met the account's usage limit, brAIn recorded the sign-in as failed, so health said "Claude is not signed in" and asked for a sign-in that was working. A usage-limit answer now keeps the sign-in verdict and is recorded as a limit. (#248, #250)
+- **A question the account refused is not a failed one.** When curiosity's one question a day was refused for a usage limit, it counted as "an asking that ended without an answer" and used up the day's question. It now goes back to how it was and can be asked again. (#249)
+- **An answer from Home Assistant that arrives after its finding has gone is not a fault.** It is an ordinary race (an app still holding an old list), so it is logged and counted in diagnostics but no longer opens the problems list. (#274)
+
 ## 3.0.1
 
 ### Fixed
