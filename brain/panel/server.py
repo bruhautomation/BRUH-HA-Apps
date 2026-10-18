@@ -18186,6 +18186,14 @@ def _exception_rule(finding: dict) -> tuple[str, list[str]]:
             for extra in _finding_subjects(finding)[1:]:
                 if extra not in subjects:
                     subjects.append(extra)
+        # A row about several things (devices in no area, helpers nothing
+        # uses, orphaned devices) names them in `items`, and a Wrong on it
+        # is an answer about every one: the check asks about each before it
+        # files again, so a new item is a new row and an answered one stays
+        # answered.
+        for item in findings_store.clean_items(finding.get("items")):
+            if item not in subjects:
+                subjects.append(item)
         return (check_id, subjects)
     if source == findings_store.RESIDENT_SOURCE:
         return "resident", _finding_subjects(finding)
@@ -18202,19 +18210,28 @@ def _record_exception(finding: dict, note: str) -> list[str]:
         return []
     report = str(finding.get("claim") or finding.get("text") or "")
     text = note.strip() if note else f'"{report}" was reported and marked wrong'
-    try:
-        row, _created = facts_store.add(
-            text, subject=subjects[0], extra_subjects=subjects[1:],
-            source="correction",
-            predicate=facts_store.EXCEPTION_PREFIX + rule,
-            run_id=str(finding.get("run_id") or ""), confidence=0.95,
-            about=report,
-            finding_key=findings_store.normalize(finding.get("text") or ""))
-    except Exception as exc:  # noqa: BLE001
-        log.debug("could not record the exception for %s: %s",
-                  log_safe(subjects[0]), exc)
-        return []
-    return [row["id"]] if row else []
+    # One fact carries at most `MAX_SUBJECTS`, so a row naming more items is
+    # several facts under one report key — `forget_exceptions` takes them
+    # all back together.
+    per = max(1, int(getattr(facts_store, "MAX_SUBJECTS", 12)))
+    ids: list[str] = []
+    for start in range(0, len(subjects), per):
+        chunk = subjects[start:start + per]
+        try:
+            row, _created = facts_store.add(
+                text, subject=chunk[0], extra_subjects=chunk[1:],
+                source="correction",
+                predicate=facts_store.EXCEPTION_PREFIX + rule,
+                run_id=str(finding.get("run_id") or ""), confidence=0.95,
+                about=report,
+                finding_key=findings_store.normalize(finding.get("text") or ""))
+        except Exception as exc:  # noqa: BLE001
+            log.debug("could not record the exception for %s: %s",
+                      log_safe(chunk[0]), exc)
+            continue
+        if row:
+            ids.append(row["id"])
+    return ids
 
 
 # ---------------------------------------------------------------------------

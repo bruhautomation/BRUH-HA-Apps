@@ -158,6 +158,10 @@ MAX_CLAIM = 240
 # opinion, and the thing a person checks a claim against. Capped because a
 # card renders every row of it.
 MAX_EVIDENCE = 8
+# Every item a row about several things names (`items`): the entities, or
+# `device:<id>` for a device with none, that one Wrong answers. Kept apart
+# from `evidence`, which is what a card shows and is capped at a handful.
+MAX_ITEMS = 200
 MAX_EVIDENCE_ENTITY = 255
 MAX_EVIDENCE_VALUE = 120
 MAX_EVIDENCE_WHEN = 40
@@ -1238,6 +1242,9 @@ def _shape(entry: dict) -> dict:
     morph_key = clean_morph_key(entry.get("morph_key"))
     if morph_key:
         out["morph_key"] = morph_key
+    items = clean_items(entry.get("items"))
+    if items:
+        out["items"] = items
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
@@ -1452,6 +1459,26 @@ def split_overlong(text: str, detail: str) -> tuple[str, str]:
     return text[:cut].strip(), (f"{tail}\n{detail}" if detail else tail).strip()
 
 
+def clean_items(value) -> list[str]:
+    """The item keys a row about several things names, cleaned and capped.
+
+    Strings only, each short, deduplicated in order. Absent from a row that
+    names one thing, so every row filed before this existed is unchanged.
+    """
+    out: list[str] = []
+    if not isinstance(value, (list, tuple)):
+        return out
+    for raw in value:
+        if not isinstance(raw, str):
+            continue
+        item = raw.strip()[:MAX_EVIDENCE_ENTITY]
+        if item and item not in out:
+            out.append(item)
+        if len(out) >= MAX_ITEMS:
+            break
+    return out
+
+
 def coerce(obj: dict) -> dict | None:
     """One wire-shaped finding — from a model reply or an inbox line — turned
     into a stored entry, or None if there is nothing there.
@@ -1508,6 +1535,9 @@ def coerce(obj: dict) -> dict | None:
     morph_key = clean_morph_key(obj.get("morph_key"))
     if morph_key:
         entry["morph_key"] = morph_key
+    items = clean_items(obj.get("items"))
+    if items:
+        entry["items"] = items
     return entry
 
 
@@ -1753,8 +1783,10 @@ def add_many(objs: list[dict]) -> list[dict]:
     thing you answered today.
     """
     items = _load()
-    seen = {normalize(f.get("text", "")) for f in items}
+    live = {normalize(f.get("text", "")) for f in items}
+    seen = set(live)
     seen |= suppressing_keys()
+    answered = answered_items()
     subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
     subjects |= _subjects_answered_wrong()
     # entity -> the live model-written row about it (`CROSS_FOLD_STATUSES`),
@@ -1791,7 +1823,10 @@ def add_many(objs: list[dict]) -> list[dict]:
                 ("claim", "detail", "fix", "todo_text")
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED
                 else ("text", "claim", "detail", "fix", "todo_text")))
-        if entry is None or normalize(entry["text"]) in seen:
+        if entry is None:
+            continue
+        if normalize(entry["text"]) in seen and not _names_unanswered(
+                entry, live, answered):
             continue
         about = str(entry.get("entity_id") or "")
         if (about and entry.get("source") == TRIPPED_CHECK_SOURCE
@@ -2525,6 +2560,11 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         # from the same producer is recognised as answered
         # (`_subjects_answered_wrong`).
         "entity_id": str(shaped.get("entity_id") or "")[:255],
+        # Every item a row about several things named, so the answer covers
+        # those and a later row naming something else is news
+        # (`answered_items`).
+        **({"items": clean_items(shaped.get("items"))}
+           if clean_items(shaped.get("items")) else {}),
     })
     _write_settled(ledger[-MAX_SETTLED:])
 
@@ -2575,6 +2615,38 @@ def _suppresses(entry: dict, now: float) -> bool:
         age = now - float(entry.get("ts") or 0)
         return age < FIXED_LAPSE_DAYS * 86400
     return True
+
+
+def answered_items(now: float | None = None) -> dict[str, set]:
+    """``{key: {items}}`` for the suppressing answers that named items.
+
+    A row about several things (devices in no area, helpers nothing uses)
+    has one stable text, so a Wrong on it settled that text for good — and
+    the next device to turn up in no area was swallowed by an answer about
+    two others. The items the answer covered ride on its ledger entry; a
+    row under the same key naming anything outside them is not suppressed
+    (`_names_unanswered`). An entry with no items is the old answer and
+    suppresses exactly as it always did.
+    """
+    now = time.time() if now is None else float(now)
+    out: dict[str, set] = {}
+    for e in _load_settled():
+        items = clean_items(e.get("items"))
+        if items and _suppresses(e, now):
+            out[str(e.get("key") or "")] = set(items)
+    return out
+
+
+def _names_unanswered(entry: dict, live: set, answered: dict) -> bool:
+    """A re-report the settled ledger would swallow that names something new.
+
+    Only when the key is not a live row (that one is refreshed in place)
+    and the answer recorded which items it covered.
+    """
+    key = normalize(entry.get("text") or "")
+    if key in live or key not in answered:
+        return False
+    return bool(set(clean_items(entry.get("items"))) - answered[key])
 
 
 def suppressing_keys(now: float | None = None) -> set[str]:
@@ -3071,6 +3143,12 @@ def refresh_details(objs: list[dict]) -> int:
                 _send_to_look(cur)
             elif moved:
                 _verdict_outdated(cur)
+            changed += 1
+        new_items = clean_items(entry.get("items"))
+        if new_items and clean_items(cur.get("items")) != new_items:
+            # What a Wrong pressed on this row will answer is what it names
+            # NOW, not what it named when it was filed.
+            cur["items"] = new_items
             changed += 1
         # A check's own sentence about what to do follows the check, so a
         # reworded rule reaches the rows it already filed. Only while the
