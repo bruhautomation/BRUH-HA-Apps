@@ -68,6 +68,7 @@ import logging
 import os
 import time
 
+import journal
 import prompt_kit
 
 log = logging.getLogger("brain.curiosity")
@@ -236,6 +237,21 @@ def _entry(payload: dict, subject: str) -> dict | None:
     return entry if isinstance(entry, dict) else None
 
 
+def refused(error: str) -> bool:
+    """True when a run's error is the account refusing it for a usage
+    limit. Nothing ran and nothing was spent, so it is not an asking that
+    ended without an answer — the same word the journal counts it under."""
+    return bool(error) and journal.classify(
+        {"ok": False, "error": str(error)}) == "rate_limited"
+
+
+def _never_ran(entry: dict) -> bool:
+    """A stored `failed` whose error was a usage limit: written before
+    `record_answer` learned to put such an asking back."""
+    return (str(entry.get("status") or "") == "failed"
+            and refused(str(entry.get("error") or "")))
+
+
 def may_ask(payload: dict, candidate: dict) -> tuple[bool, str]:
     """Has this subject been asked, and does anything re-open it?
 
@@ -247,6 +263,8 @@ def may_ask(payload: dict, candidate: dict) -> tuple[bool, str]:
     """
     entry = _entry(payload, candidate.get("subject") or "")
     if entry is None:
+        return True, ""
+    if _never_ran(entry):
         return True, ""
     status = str(entry.get("status") or "asked")
     if status not in RETRYABLE:
@@ -281,7 +299,7 @@ def spent(payload: dict, now: float | None = None,
     day = week = 0
     for entry in (payload.get("asked") or {}).values():
         at = entry.get("asked_at")
-        if not isinstance(at, (int, float)) or at <= 0:
+        if not isinstance(at, (int, float)) or at <= 0 or _never_ran(entry):
             continue
         if (now - at) <= 7 * 86400:
             week += 1
@@ -624,6 +642,11 @@ def mark_asked(candidate: dict, now: float | None = None,
         "evidence": [],
         "asks": int(((_entry(payload, subject) or {}).get("asks") or 0)) + 1,
     }
+    # Kept until the answer arrives, so an asking the account refused can
+    # be put back exactly as it was (`record_answer`).
+    before = _entry(payload, subject)
+    if before is not None:
+        entry["prior"] = {k: v for k, v in before.items() if k != "prior"}
     payload.setdefault("asked", {})[subject] = entry
     save(payload, path)
     return entry
@@ -643,6 +666,18 @@ def record_answer(subject: str, answer: dict | None, filed: str = "",
     payload = load(path)
     entry = _entry(payload, subject)
     if entry is None:
+        return None
+    prior = entry.pop("prior", None)
+    if answer is None and refused(error):
+        # The account refused the run for a usage limit: nothing ran,
+        # nothing was spent and nothing was learned, so the subject goes
+        # back to how it was before it was asked — askable again, and not
+        # counted against today's budget or as a failure.
+        if isinstance(prior, dict):
+            payload["asked"][subject] = prior
+        else:
+            payload["asked"].pop(subject, None)
+        save(payload, path)
         return None
     entry["status"] = status_for(answer, filed)
     entry["answered_at"] = int(now)
@@ -689,6 +724,8 @@ def counts(payload: dict | None = None, path: str | None = None) -> dict:
     payload = load(path) if payload is None else payload
     out = {s: 0 for s in STATUSES}
     for entry in (payload.get("asked") or {}).values():
+        if _never_ran(entry):
+            continue
         status = str(entry.get("status") or "asked")
         out[status] = out.get(status, 0) + 1
     return out
