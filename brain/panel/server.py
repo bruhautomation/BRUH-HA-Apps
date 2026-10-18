@@ -10837,6 +10837,13 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
         log.debug("could not bucket the baselines: %s", exc)
         return 0
     ctx = _signal_context()
+    # The same filters `base.unusual` asks before it files, over the same
+    # snapshot: a reading the check would never report (one somebody said
+    # is normal here, a phone's pressure, a heater's resistance) is not
+    # news for the look either, and handing it over brought it back by
+    # another door. `withheld_by` rather than `should_report`, because this
+    # writes nothing to the pass's decision trail.
+    house = House(snapshot)
     hits: list[tuple[float, dict]] = []
     for eid, baseline in entities.items():
         st = states.get(eid) or {}
@@ -10844,13 +10851,17 @@ def _measurement_signals(snapshot: dict, now: float) -> int:
             value = float(st.get("state"))
         except (TypeError, ValueError):
             continue
+        if not checks.baseline.eligible(house, eid, st):
+            continue
+        if house.withheld_by(eid, "base.unusual") is not None:
+            continue
         found = baselines.deviation(value, baseline, bucket)
         if not found or abs(found["sigmas"]) < MEASURED_SPREADS:
             continue
         unit = baseline.get("unit") or ""
         hits.append((abs(found["sigmas"]), {
             "entity_id": eid,
-            "text": (f"{eid} is reading "
+            "text": (f"{house.label(eid)} is reading "
                      f"{numfmt.quantity(found['value'], unit)}, "
                      f"{numfmt.number(abs(found['sigmas']))} spreads from "
                      f"its usual {numfmt.quantity(found['median'], unit)}"),

@@ -110,6 +110,14 @@ SETPOINT_WORDS = frozenset({"target", "setpoint", "setpoints"})
 # A counter that resets every midnight is high at 23:00 and zero at 00:05
 # by construction.
 DAILY_WORDS = frozenset({"today", "yesterday", "daily"})
+# A device's own electrical or radio figure — an element's resistance, a
+# radio's received power — says how the device is, not how the house is,
+# and its band moves with the device's duty rather than the hour of the week.
+DEVICE_UNITS = frozenset({"Ω", "kΩ", "MΩ", "mΩ", "ohm", "ohms", "dBm"})
+# A part of a machine: a heat pump's coil, an evaporator, the air in its
+# ducts. Each swings with the machine's cycle, which is the machine working.
+MACHINE_WORDS = frozenset({"coil", "evaporator", "condenser"})
+MACHINE_PHRASES = ("supply air", "return air")
 
 
 def _name_words(house: House, eid: str, st: dict) -> list[list[str]]:
@@ -225,8 +233,13 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
         return "a span, not a quantity"
     if str(attrs.get("unit_of_measurement") or "").strip() in SPAN_UNITS:
         return "a span, not a quantity"
+    if str(attrs.get("unit_of_measurement") or "").strip() in DEVICE_UNITS:
+        return "a device's own electrical or radio reading"
     for words in _name_words(house, eid, st):
         found = set(words)
+        said = " ".join(words)
+        if found & MACHINE_WORDS or any(p in said for p in MACHINE_PHRASES):
+            return "a part of a machine, which swings with its cycle"
         if found & SETPOINT_WORDS or "set point" in " ".join(words):
             return "a setpoint somebody chose"
         if found & DAILY_WORDS:
