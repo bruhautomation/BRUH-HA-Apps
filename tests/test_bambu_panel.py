@@ -15,7 +15,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
-from unittest import mock
+import unittest.mock as mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import bambu_env  # noqa: E402

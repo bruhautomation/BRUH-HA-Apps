@@ -7,7 +7,7 @@ import os
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest import mock
+import unittest.mock as mock
 
 PATH = os.path.join(os.path.dirname(__file__), "..", "bruh-bambu-studio",
                     "integrations", "ha-bridge.py")

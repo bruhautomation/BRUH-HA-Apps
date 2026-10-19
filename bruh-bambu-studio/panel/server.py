@@ -172,7 +172,9 @@ class Panel:
         self._mirror, self._mirrored_at = text, time.time()
         try:
             SHARED.mkdir(parents=True, exist_ok=True)
-            atomic_write.write_json(STATE_FILE, mirror, mode=0o644)
+            # No explicit mode: Core reads this as root, so the file needs no
+            # world-readable bit, and the umask's default is what it gets.
+            atomic_write.write_json(STATE_FILE, mirror)
         except OSError as exc:
             log.warning("Could not write %s: %s", STATE_FILE, exc)
 
