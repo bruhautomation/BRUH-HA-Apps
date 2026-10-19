@@ -49,6 +49,7 @@ report says how much it matters
 """
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import logging
@@ -77,12 +78,19 @@ MAX_SENDS_PER_PASS = 5
 # stopped. Two days, because a checks pass that skipped a check is not
 # the fault going away and the next pass may bring it back.
 CLEAR_AFTER_S = 48 * 3600
+# A closed report is reopened only when its fault has gone on being seen
+# for this long on a release the house installed AFTER the issue closed.
+# The old rule reopened on any version change, and every update re-stamps
+# every row a window still holds — a 24-hour journal, an all-time count, a
+# Home Assistant restart that is owed after each install — so each update
+# reopened every closed report at once, none of them new evidence.
+REOPEN_AFTER_S = 24 * 3600
 MAX_QUEUE = 60
 MAX_ABRIDGED = 20_000
 FP_RE = re.compile(r"^[0-9a-f]{16}$")
 # Rows that are about the fault list itself rather than a fault.
 SKIP_WHERE = frozenset({"This list"})
-STATES = ("pending", "ready", "sent", "discarded")
+STATES = ("pending", "ready", "sent", "discarded", "retired")
 
 # How often the verdicts the cloud left on filed issues are read back: the
 # hourly sweep's clock, with the call the marker search already makes.
@@ -370,25 +378,39 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                 "state": "pending" if settings["review"] else "ready",
             }
             added += 1
-        if entry.get("cleared_noted"):
-            entry["returned"] = True
-            entry["cleared_noted"] = False
+        # A row that says when it was last true (Morph's ledger keeps a
+        # fault for a fortnight after it last happened, and republishes it
+        # every pass) is seen THEN, not now: re-reading an old row is not
+        # a new sighting, and treating it as one said "Still happening" on
+        # every update about a trace nobody had seen in a week.
+        seen_at = _seen_at(row, now)
+        fresh = seen_at > float(entry.get("last_seen") or 0)
         entry.update({
             "stream": stream, "rolling": rolling,
             "where": where[:200], "what": what[:300],
             "detail": str(row.get("detail") or "")[:400],
             "body": str(row.get("body") or "")[:20_000],
-            "last_seen": now, "seen": int(entry.get("seen") or 0) + 1,
-            "version": version,
             "health": f"{health.get('state') or '?'}"
                       + (f" — {health.get('reason')}" if health.get("reason") else ""),
             "abridged": abridged,
         })
-        day = _day(now)
-        days = [d for d in (entry.get("days") or []) if isinstance(d, str)]
-        if day not in days:
-            days.append(day)
-        entry["days"] = days[-MAX_DAYS:]
+        if fresh:
+            if entry.get("cleared_noted"):
+                entry["returned"] = True
+                entry["returned_at"] = seen_at
+                entry["cleared_noted"] = False
+            if version != entry.get("version") or not entry.get("version_since"):
+                # The first sighting on this release, which is what a
+                # closed report is reopened against (`_follow_up`).
+                entry["version_since"] = seen_at
+            entry.update(last_seen=seen_at, version=version,
+                         seen=int(entry.get("seen") or 0) + 1)
+            day = _day(seen_at)
+            days = [d for d in (entry.get("days") or []) if isinstance(d, str)]
+            if day not in days:
+                days.append(day)
+            entry["days"] = days[-MAX_DAYS:]
+        entry.setdefault("version", version)
         if "impact" in row:
             entry["impact"] = _clean_impact(row.get("impact"))
         # A report about a screen of the panel. The label tells the cloud to
@@ -411,6 +433,24 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
 # ---------------------------------------------------------------------------
 # The schedule and the caps
 # ---------------------------------------------------------------------------
+
+def _seen_at(row: dict, now: float) -> float:
+    """When a row says it was last true, never later than now; ``now`` for
+    a row that does not say (every stream but Morph's)."""
+    try:
+        at = float(row.get("seen_at") or 0)
+    except (TypeError, ValueError):
+        at = 0.0
+    return min(at, now) if at > 0 else now
+
+
+def _epoch(iso) -> float:
+    """GitHub's ``2026-10-19T01:43:19Z`` as an epoch; 0 when unreadable."""
+    try:
+        return float(calendar.timegm(time.strptime(str(iso), "%Y-%m-%dT%H:%M:%SZ")))
+    except (TypeError, ValueError):
+        return 0.0
+
 
 def _day(now: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(now))
@@ -696,12 +736,14 @@ def _send_due(now: float) -> dict:
                 continue
             if _file(token, repo, entry, aliases, now, verdicts):
                 sent += 1
+                if entry.get("rolling"):
+                    updated += _retire_superseded(token, repo, items, entry)
         elif entry.get("state") != "sent":
             continue  # stood down by the verdicts read above
         elif entry.get("rolling"):
             if _rewrite(token, repo, entry, aliases):
                 updated += 1
-        elif _follow_up(token, repo, entry, now):
+        elif _follow_up(token, repo, entry, now, aliases):
             updated += 1
     _save(data)
     _vsave(verdicts)
@@ -744,6 +786,7 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
         if verdict != entry.get("verdict"):
             entry["verdict_at"] = now
         entry["verdict"] = verdict
+        entry["closed_at"] = _epoch(issue.get("closed_at")) if verdict != "open" else 0
         if verdict == "open":
             resolved.pop(fp, None)
         else:
@@ -996,12 +1039,53 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
     return True
 
 
-def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
+def _retire_superseded(token: str, repo: str, items: dict, newest: dict) -> int:
+    """Close the stream's older rolling issues once a new one is filed.
+
+    The scorecard is one issue PER RELEASE, so every update filed a new one
+    and left the last beside it, open for ever: ten scorecards in the open
+    list, nine of them about releases no house runs. The newest is the
+    answer; the older ones are history, closed with a pointer to it."""
+    closed = 0
+    for entry in items.values():
+        if (not isinstance(entry, dict) or entry is newest
+                or entry.get("stream") != newest.get("stream")
+                or not entry.get("rolling") or entry.get("state") != "sent"
+                or not int(entry.get("issue") or 0)
+                or int(entry["issue"]) == int(newest.get("issue") or 0)):
+            continue
+        ok, err = github.close_issue(
+            token, repo, int(entry["issue"]),
+            f"Superseded by #{newest.get('issue')} (brAIn "
+            f"{newest.get('version') or '?'}).")
+        if not ok:
+            entry["error"] = err
+            continue
+        entry["state"] = "retired"
+        entry.pop("error", None)
+        closed += 1
+    return closed
+
+
+def _follow_up(token: str, repo: str, entry: dict, now: float,
+               aliases: Aliases | None = None) -> bool:
     """One comment, when there is something to say: it stopped, it came
     back, or it is still happening on a newer version. Dates and versions
-    only — nothing composed from the house."""
+    only — nothing composed from the house.
+
+    A CLOSED report is the cloud's decision, and three rules keep the house
+    from arguing with it by accident. **A noise verdict is final**:
+    not-brAIn, duplicate and declined are never commented on or reopened —
+    a restart owed after every install is still not brAIn's, however often
+    it is seen, and a person who disagrees reopens it by hand. **A fixed
+    report is reopened only on evidence**: its fault went away and came
+    back after the close, or has been seen for `REOPEN_AFTER_S` on a release
+    first seen AFTER the close — so a row a window still holds from before
+    the fix says nothing. **Anything else
+    says nothing either**, and the house asks again next pass."""
     number = int(entry.get("issue") or 0)
-    absent = now - float(entry.get("last_seen") or 0)
+    last_seen = float(entry.get("last_seen") or 0)
+    absent = now - last_seen
     version = str(entry.get("version") or "?")
     text, reopen = "", False
     # "Not seen" is a claim only a sweep that LOOKED can make: with the
@@ -1012,6 +1096,8 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
         # A request, an idea or a gap is said once; whether it stopped is
         # not a question the stream can answer.
         return False
+    if entry.get("verdict") in NOISE:
+        return False
     looked = stream_on(stream)
     if looked and absent >= CLEAR_AFTER_S and not entry.get("cleared_noted"):
         text = (f"Not seen since {_date(entry.get('last_seen'))} "
@@ -1019,12 +1105,31 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
         entry["cleared_noted"] = True
     elif absent < CLEAR_AFTER_S and (entry.get("returned")
                                      or version != entry.get("noted_version")):
-        issue, err = github.get_issue(token, repo, number)
-        if err or not issue:
-            entry["error"] = err
-            return False
-        reopen = issue.get("state") == "closed"
-        if reopen:
+        verdict = entry.get("verdict")
+        closed_at = float(entry.get("closed_at") or 0)
+        if verdict in (None, "open"):
+            # Not yet read back this hour: ask, once, and keep the answer.
+            issue, err = github.get_issue(token, repo, number)
+            if err or not issue:
+                entry["error"] = err
+                return False
+            verdict = verdict_of(issue)
+            closed_at = _epoch(issue.get("closed_at")) if verdict != "open" else 0
+            entry.update(verdict=verdict, closed_at=closed_at)
+            if verdict in NOISE:
+                return False
+        if verdict != "open":
+            since = float(entry.get("version_since") or 0)
+            # Gone for two days and seen again after the close is a fault
+            # that came back; a row that never went away has to outlast a
+            # day on a release first seen after the close.
+            came_back = (entry.get("returned")
+                         and float(entry.get("returned_at") or 0) > closed_at)
+            persisted = since > closed_at and last_seen - since >= REOPEN_AFTER_S
+            if not (came_back or persisted):
+                # Not evidence yet: say nothing, and look again next pass.
+                return False
+            reopen = True
             text = (f"Back again on brAIn {version} after this was closed "
                     f"(last seen {_date(entry.get('last_seen'))}).")
         elif entry.get("returned"):
@@ -1039,6 +1144,19 @@ def _follow_up(token: str, repo: str, entry: dict, now: float) -> bool:
     if not ok:
         entry["error"] = err
         return False
+    if reopen:
+        entry.update(verdict="open", closed_at=0)
+    if aliases is not None and not text.startswith("Not seen since"):
+        # A fault that is still happening is read from its BODY, and the
+        # body was written once: "18 findings are still waiting" stood for
+        # ten days while the count moved, so nobody could aim a fix at it.
+        # The current numbers go in with the comment that says it is live.
+        doc = compose(entry, aliases)
+        digest = _digest(doc["body"])
+        if digest != entry.get("body_digest"):
+            done, _ = github.update_issue(token, repo, number, doc["title"], doc["body"])
+            if done:
+                entry["body_digest"] = digest
     entry.pop("error", None)
     return True
 

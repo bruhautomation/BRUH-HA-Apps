@@ -125,6 +125,7 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .nm:hover,.nm[aria-expanded="true"]{text-decoration-style:solid;text-decoration-color:currentColor}
 .wd{background:none;border:0;margin:0;font:inherit;cursor:pointer;color:var(--quiet);min-height:40px;padding:0 1px;transition:color .25s ease}
 .wd:hover{color:var(--text)}
+.cl-acts .wd{font-size:12px;min-height:0;padding:12px 2px;margin:-12px 0;color:var(--muted)}
 .wd[aria-pressed="true"]{color:var(--text);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:8px}
 .wd.go{font-weight:700;color:var(--teal)}
 .wd.bad{color:var(--rose)}

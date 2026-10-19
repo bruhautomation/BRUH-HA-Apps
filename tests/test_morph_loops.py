@@ -309,6 +309,26 @@ class TestDevloopOutbox(unittest.TestCase):
             self.assertEqual([], env.paths.read_jsonl(env.paths.ERRORS))
             self.assertIn("climate card", env.devloop.rows()[0]["what"])
 
+    def test_a_debug_trace_is_not_a_fault(self):
+        # Four issues titled "DEBUG …" were filed from traces left in while
+        # chasing a layout bug; a person's own words are never dropped.
+        with MorphEnv() as env:
+            env.paths.append_jsonl(env.paths.ERRORS, {
+                "kind": "panel", "message": "DEBUG wide tile went small #1", "ts": time.time()})
+            env.devloop.ingest_errors()
+            env.devloop.note_fault("Panel", "DEBUG loaded 2026-10-14", "")
+            env.devloop.note_request("Debug view should be hidden", ui=False)
+            whats = [r["what"] for r in env.devloop.rows()]
+        self.assertEqual(["Debug view should be hidden"], whats)
+
+    def test_a_row_says_when_morph_last_saw_it(self):
+        # brAIn's stream reads this as the sighting, so a row republished
+        # for a fortnight is not "still happening" on every update.
+        with MorphEnv() as env:
+            env.devloop.note_fault("Cards", "A fan card failed", "", now=1_700_000_000.0)
+            row = env.devloop.rows(now=1_700_000_100.0)[0]
+        self.assertEqual(1_700_000_000.0, row["last"])
+
 
 if __name__ == "__main__":
     unittest.main()

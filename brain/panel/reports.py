@@ -267,6 +267,12 @@ MAX_FAULTS = 40
 # floor, restated here rather than imported because this module may not
 # import the panel.
 SCORE_MIN_ENDINGS = 4
+# A producer's record is a fault only while people are still marking it
+# Wrong: the scorecard is all-time, so a rule fixed in a release goes on
+# carrying the Wrongs it earned before the fix, and a row read off the total
+# alone reported a fixed rule for ever (and reopened its bug report on every
+# update). A row whose newest Wrong is older than this is history.
+SCORE_RECENT_S = 14 * 86400
 # Producers that are not rules and cannot be muted: brAIn's own looks, the
 # safety lane, the tripwire and the tripped-detector check. `cases`' own
 # set, restated because this module must run with the panel down and
@@ -939,6 +945,9 @@ def _faults(diag) -> list[dict]:
             continue
         total = int(row.get("total") or 0)
         wrong = int(row.get("wrong") or 0)
+        last_wrong = float(row.get("last_wrong_ts") or 0)
+        if last_wrong and stamp and stamp - last_wrong > SCORE_RECENT_S:
+            continue  # nobody has said it is wrong for a fortnight
         if total >= SCORE_MIN_ENDINGS and wrong > total - wrong:
             # Named by its title where the scorecard carries one, because
             # the id (`check:auto.conflict`) is what nobody recognises; the

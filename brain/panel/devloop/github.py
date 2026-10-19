@@ -187,6 +187,22 @@ def comment(token: str, repo: str, number: int, text: str,
     return True, ""
 
 
+def close_issue(token: str, repo: str, number: int, text: str
+                ) -> tuple[bool, str]:
+    """Say why, then close: the only issue this loop closes is one of its
+    own rolling issues that a newer one has replaced."""
+    status, out = _call(token, "POST",
+                        f"/repos/{repo}/issues/{int(number)}/comments",
+                        {"body": text[:MAX_BODY]})
+    if status != 201:
+        return False, _message(status, out)
+    status, out = _call(token, "PATCH", f"/repos/{repo}/issues/{int(number)}",
+                        {"state": "closed", "state_reason": "completed"})
+    if status != 200:
+        return False, _message(status, out)
+    return True, ""
+
+
 def update_issue(token: str, repo: str, number: int, title: str, body: str
                  ) -> tuple[bool, str]:
     status, out = _call(token, "PATCH", f"/repos/{repo}/issues/{int(number)}",

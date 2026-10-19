@@ -288,6 +288,38 @@ const vacuum = {
 
 const MODE = { heat: ['Heating', 'var(--peach)'], cool: ['Cooling', 'var(--sky)'], heat_cool: ['Auto', 'var(--teal)'], auto: ['Auto', 'var(--teal)'], dry: ['Drying', 'var(--sky)'], fan_only: ['Fan', 'var(--sky)'], off: ['Off', 'var(--quiet)'] };
 const ACTION = { heating: 'Heating', cooling: 'Cooling', drying: 'Drying', fan: 'Fan', idle: 'Holding', off: 'Off' };
+// A thermostat's own routines on its face (`options.actions`): a script that
+// drops the humidity, a boost, an away setback. Each runs on tap and reads as
+// pressed while it is running. Built in, so a house never has to copy this
+// card's code to add one (a copy pauses on every Morph update).
+const CLIMATE_ACTION_DOMAINS = ['script', 'button', 'input_button', 'scene'];
+function climateActions(ctx) {
+  const list = ctx.card.options && ctx.card.options.actions;
+  if (!Array.isArray(list)) return '';
+  const btns = list.slice(0, 4).map((x) => {
+    const id = typeof x === 'string' ? x : x && x.entity;
+    if (typeof id !== 'string') return '';
+    const domain = id.split('.')[0];
+    if (!CLIMATE_ACTION_DOMAINS.includes(domain)) return '';
+    const st = ctx.hass.states[id];
+    if (!st) return '';
+    const running = domain === 'script' && st.state === 'on';
+    const label = (x && typeof x === 'object' && x.label) || st.attributes.friendly_name || id;
+    const service = domain === 'scene' ? 'turn_on' : domain === 'script' ? 'turn_on' : 'press';
+    return svcBtn(running ? `${label} · running` : label, domain, service, { entity_id: id }, { pressed: running });
+  }).filter(Boolean);
+  return btns.join('');
+}
+// The ruler's foot. With actions, the buttons take the place of the ruler's
+// two end labels, so the card keeps its height and a thermostat beside it
+// in the same row stays the same size.
+function climateFoot(ctx, lo, hi, unit, a) {
+  const hum = a.current_humidity != null ? esc(a.current_humidity) + '% humidity' : '';
+  const acts = climateActions(ctx);
+  if (acts) return `<div class="row small cl-acts" style="justify-content:space-between"><span>${hum}</span><span class="row" style="gap:0 14px">${acts}</span></div>`;
+  return `<div class="row small" style="justify-content:space-between"><span>${lo}${esc(unit)}</span><span>${hum}</span><span>${hi}${esc(unit)}</span></div>`;
+}
+
 const climate = {
   item: { span: 2, grow: 3, dir: 'side', want: 4, hk: 't' },
   accent: (ctx) => (MODE[ctx.st && ctx.st.state] || MODE.off)[1],
@@ -305,7 +337,7 @@ const climate = {
 <div class="row"><span class="big">${cur != null ? esc(Number(cur).toFixed(1)) + '°' : '—'}</span><span class="flex1"></span>
 ${tgt != null ? `<div data-ctl="1" class="row" style="gap:4px"><button type="button" class="sq" data-act="tgt" data-v="-1" aria-label="Lower ${esc(ctx.name)} target"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg></button><span style="min-width:54px;text-align:center;display:flex;flex-direction:column;line-height:1.1"><span style="font-size:20px;font-weight:600;font-variant-numeric:tabular-nums">${esc(tgt)}°</span><span class="small">target</span></span><button type="button" class="sq" data-act="tgt" data-v="1" aria-label="Raise ${esc(ctx.name)} target"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button></div>` : ''}</div>
 <div aria-hidden="true" class="ruler"><div style="left:0;right:0;top:7px;height:2px;border-radius:1px;background:var(--line)"></div>${band ? `<div style="top:6px;height:4px;border-radius:2px;left:${band[0]}%;width:${band[1] - band[0]}%;background:${st.state === 'off' ? 'transparent' : mix(ctx.accent, 45)}"></div>` : ''}${cur != null ? `<div style="top:1px;width:2px;height:14px;border-radius:1px;left:${P(cur)}%;background:var(--text)"></div>` : ''}${tgt != null ? `<div style="top:2px;width:8px;height:12px;margin-left:-4px;border-radius:3px;left:${P(tgt)}%;background:${ctx.accent};transition:left .6s cubic-bezier(.25,1,.3,1)"></div>` : ''}</div>
-<div class="row small" style="justify-content:space-between"><span>${lo}${esc(unit)}</span><span>${a.current_humidity != null ? esc(a.current_humidity) + '% humidity' : ''}</span><span>${hi}${esc(unit)}</span></div></div>`;
+${climateFoot(ctx, lo, hi, unit, a)}</div>`;
   },
   more: (ctx) => {
     const a = (ctx.st && ctx.st.attributes) || {}; const e = ctx.card.entity; const parts = [];

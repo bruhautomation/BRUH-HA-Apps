@@ -2718,7 +2718,8 @@ def scorecard() -> list[dict]:
         row = by.setdefault(src, {
             "source": src,
             "title": _titled(src, str(e.get("source_title") or "")) or src,
-            "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0})
+            "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
+            "last_wrong_ts": 0})
         # Agreeing to do something is agreeing the report was right, so
         # an accepted row scores exactly as a fixed one. The alternative
         # was to count it as nothing until the chore is done, which would
@@ -2732,6 +2733,11 @@ def scorecard() -> list[dict]:
             # agreed with is not offered for muting.
             if int(e.get("ts") or 0) >= row["last_ts"]:
                 row["last"], row["last_ts"] = label, int(e.get("ts") or 0)
+            # The newest Wrong, so a fault about a rule that is often wrong
+            # is a fault only while people are still saying so.
+            if label == "wrong":
+                row["last_wrong_ts"] = max(row["last_wrong_ts"],
+                                           int(e.get("ts") or 0))
     rows = list(by.values())
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]

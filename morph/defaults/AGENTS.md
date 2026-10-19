@@ -100,8 +100,10 @@ Optional keys on any card: `pin` (`true` keeps it in place whatever is
 happening; `active` keeps it in place only while it is on, open or running),
 `name`, `icon` (mdi:…), `span` (1–4 columns),
 `color`, `unit` (kept for a card that reads it; built-in cards show the entity's
-own unit), and `options` (a free mapping for card code to read; no built-in
-type reads it).
+own unit), and `options` (a free mapping for card code to read). Two keys
+in it mean something to Morph: `options.detail`, a Lovelace card config shown
+only while the card is open (a performance chart under a thermostat: folded
+away until somebody opens that card), and `climate`'s `options.actions`, below.
 
 **Any Lovelace card works.** A `type` that is not in the table below is a
 Lovelace card: write its own YAML directly (`type: tile`, `type: custom:x`),
@@ -127,7 +129,7 @@ wrapper yourself is the same thing:
 | `lock` | `entity` | switch · lock/unlock · — · logbook |
 | `switch` | `entity` (switch, input_boolean, siren, automation) | switch · toggle · — · timeline |
 | `button` | `entity` (script, button, input_button) | runs it on tap |
-| `climate` | `entity` | current temperature, a target ruler, −/+ · — · — · modes, history |
+| `climate` | `entity`; optional `options.actions` (up to 4 scripts, buttons or scenes: an id, or `{entity, label}`) | current temperature, a target ruler, −/+, the actions as buttons (a script reads as pressed while it runs) · — · — · modes, history |
 | `sensor` | `entity` | the value and a 24 h trace · opens history |
 | `readings` | `entities` (several sensors of one kind) | ONE overlaid chart, one line per sensor; slide to read every value at that moment |
 | `meter` | `entity` (an energy or water total) | today's total and 7-day bars |

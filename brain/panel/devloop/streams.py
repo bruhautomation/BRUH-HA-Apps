@@ -106,6 +106,10 @@ def morph(outbox: Path) -> list[dict] | None:
                 "body": str(row.get("body") or "")[:6000]}
         if isinstance(row.get("impact"), dict):
             item["impact"] = row["impact"]
+        # When Morph last saw it: Morph keeps a row for a fortnight after it
+        # last happened, and a row re-read is not a row seen again.
+        if isinstance(row.get("last"), (int, float)) and not isinstance(row.get("last"), bool):
+            item["seen_at"] = float(row["last"])
         out.append(item)
         if len(out) >= MORPH_MAX_ROWS:
             break

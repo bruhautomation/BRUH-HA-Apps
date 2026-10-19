@@ -58,6 +58,7 @@ export function house() {
   put(['switch.frame_art', { entity_id: 'switch.frame_art', state: 'on', attributes: { friendly_name: 'Frame Art' } }]);
   put(['switch.irrigation', { entity_id: 'switch.irrigation', state: 'off', attributes: { friendly_name: 'Irrigation' } }]);
   put(['input_boolean.guest_mode', { entity_id: 'input_boolean.guest_mode', state: 'off', attributes: { friendly_name: 'Guest mode' } }]);
+  put(['script.drop_humidity', { entity_id: 'script.drop_humidity', state: 'off', attributes: { friendly_name: 'Drop humidity' } }]);
   put(['script.movie_time', { entity_id: 'script.movie_time', state: 'off', attributes: { friendly_name: 'Movie time' } }]);
   put(['climate.downstairs', { entity_id: 'climate.downstairs', state: 'cool', attributes: { friendly_name: 'Downstairs', current_temperature: 73.2, temperature: 72, hvac_action: 'cooling', hvac_modes: ['off', 'heat', 'cool', 'heat_cool'], fan_modes: ['auto', 'on'], fan_mode: 'auto', min_temp: 58, max_temp: 82, current_humidity: 51, target_temp_step: 1 } }]);
   put(['climate.upstairs', { entity_id: 'climate.upstairs', state: 'cool', attributes: { friendly_name: 'Upstairs', current_temperature: 74.6, temperature: 73, hvac_action: 'idle', hvac_modes: ['off', 'heat', 'cool'], min_temp: 58, max_temp: 82, current_humidity: 48, target_temp_step: 1 } }]);
@@ -139,7 +140,7 @@ export function dashboard() {
       ] },
       { id: 'f_whole_house', title: 'Whole house', sections: [
         sec('s_climate', 'Climate', 'sky', 4, [
-          { cards: [C('weather.home', { id: 'c_weather' }), C('climate.downstairs', { id: 'c_down' }), C('climate.upstairs', { id: 'c_up' })] },
+          { cards: [C('weather.home', { id: 'c_weather' }), C('climate.downstairs', { id: 'c_down', options: { actions: ['script.drop_humidity'] } }), C('climate.upstairs', { id: 'c_up' })] },
           { cards: [{ id: 'c_temps', type: 'readings', name: 'Temperature', entities: ['sensor.kitchen_temperature', 'sensor.living_room_temperature', 'sensor.master_temperature', 'sensor.loft_temperature', 'sensor.office_temperature', 'sensor.attic_temperature', 'sensor.outside_temperature'] }] },
           { cards: [{ id: 'c_hums', type: 'readings', name: 'Humidity', entities: ['sensor.kitchen_humidity', 'sensor.master_humidity', 'sensor.basement_humidity'] }] },
         ]),

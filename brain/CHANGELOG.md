@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.9
+
+### Changed
+
+- **The development loop files only what is new.** A report the cloud closed as not brAIn's, a duplicate or declined is never commented on or reopened again. A fixed report is reopened only when its problem went away and came back after the close, or has gone on for a day on a release installed after the close; an update on its own no longer reopens every closed report at once.
+- **A newer scorecard closes the one it replaces**, so only the current release's scorecard stays open.
+- **A live report carries its current numbers.** When a report is still happening, its description is rewritten with what the house sees now, not what it saw the day it was filed. (#82)
+- **A rule people have stopped marking wrong is no longer reported as wrong.** The "marked wrong more often than right" problem is listed only while someone has marked the rule Wrong in the last two weeks. (#116, #146, #237)
+- **Morph's reports are dated by when they happened.** A Morph problem republished from its two-week ledger is no longer reported as "Still happening" on every update. (#261–#264)
+
 ## 3.0.8
 
 ### Changed
