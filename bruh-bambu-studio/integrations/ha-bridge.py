@@ -67,6 +67,8 @@ ROUTES = {
     "send_gcode": _command("gcode"),
     "open_in_studio": lambda p: ("POST", "/api/studio/open", {"file": p.get("file", "")}),
     "import_url": _with_wait("/api/import"),
+    "find_printers": lambda p: ("POST", "/api/printers/scan",
+                                {"subnet": p.get("subnet", ""), "wait": 120}),
 }
 
 # The fields a service call carries under the names people use, renamed to

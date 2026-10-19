@@ -47,7 +47,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libudev1 libcurl4 libssl3 libfuse2 \
       fonts-dejavu-core fonts-liberation2 \
       python3 python3-aiohttp python3-paho-mqtt python3-yaml python3-venv \
+      locales \
     && rm -rf /var/lib/apt/lists/*
+
+# A UTF-8 locale for every language Bambu Studio ships (its bbl/i18n). It
+# switches the C library's locale to the language it shows, and when that
+# locale is missing it says "Switching language failed" and, on its first
+# start, exits. en_GB is its fallback, en_US where it starts here.
+RUN printf '%s.UTF-8 UTF-8\n' \
+      en_US en_GB cs_CZ de_DE el_GR es_ES fr_FR hu_HU id_ID it_IT ja_JP ko_KR \
+      nl_NL pl_PL pt_BR ro_RO ru_RU sv_SE th_TH tr_TR uk_UA vi_VN zh_CN zh_TW \
+      > /etc/locale.gen \
+    && locale-gen
 
 # The CAD half of Design with brAIn, in its own virtualenv so OpenCascade's
 # pinned libraries never meet the panel's. A design script is built by

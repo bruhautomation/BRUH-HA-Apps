@@ -18,7 +18,7 @@
  * print is the press nobody can take back.
  */
 
-const CARD_VERSION = '0.1.2';
+const CARD_VERSION = '0.1.3';
 const DOMAIN = 'bruh_bambu';
 
 console.info(

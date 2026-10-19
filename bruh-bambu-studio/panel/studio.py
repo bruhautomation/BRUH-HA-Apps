@@ -43,6 +43,9 @@ class Studio:
 
     def env(self) -> dict:
         return {**os.environ, "DISPLAY": DISPLAY, "HOME": HOME,
+                # English until somebody picks another language in its
+                # Preferences; the image generates a locale for each one.
+                "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
                 "LIBGL_ALWAYS_SOFTWARE": "1", "GDK_BACKEND": "x11",
                 "NO_AT_BRIDGE": "1",
                 # WebKit's sandbox needs user namespaces a container

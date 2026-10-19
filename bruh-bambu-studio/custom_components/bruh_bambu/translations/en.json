@@ -263,6 +263,16 @@
           "description": "The Printables page or the file's own link."
         }
       }
+    },
+    "find_printers": {
+      "name": "Find printers",
+      "description": "Look for Bambu Lab printers on the network Home Assistant is on, by the certificate each one's MQTT port answers with. Answers with each printer's address, serial number and model, and whether it is added already. Changes nothing.",
+      "fields": {
+        "subnet": {
+          "name": "Network",
+          "description": "The network to search instead, such as 192.168.2.0/24."
+        }
+      }
     }
   }
 }

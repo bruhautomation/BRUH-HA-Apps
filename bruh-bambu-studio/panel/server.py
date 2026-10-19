@@ -40,6 +40,7 @@ from aiohttp.abc import AbstractAccessLogger
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bambu_atomic  # noqa: E402
+import discover  # noqa: E402
 import importer  # noqa: E402
 import installer  # noqa: E402
 import library  # noqa: E402
@@ -378,6 +379,50 @@ async def h_printer_save(request):
         return _err(str(exc))
     await asyncio.to_thread(_panel(request).sync_clients)
     return web.json_response({"ok": True, "printer": row})
+
+
+def _scan_job(job: dict, subnet: str) -> None:
+    """Blocking: which networks, then every printer on them, against the saved list."""
+    try:
+        if subnet:
+            networks = [discover.narrowed(subnet)]
+            if networks[0] is None:
+                raise ValueError(f"{subnet} is not a LAN network to scan.")
+        else:
+            networks = discover.lan_networks()
+            for row in store.load():
+                net = discover.narrowed(f"{row['host']}/24")
+                if net is not None and net not in networks:
+                    networks.append(net)
+        if not networks:
+            raise ValueError("Could not tell which network Home Assistant is on. Give the "
+                             "network to scan, such as 192.168.1.0/24.")
+        job.update(phase="scanning", networks=[str(n) for n in networks])
+        found = discover.scan(networks, lambda d, t: job.update(progress=round(d / t * 100)))
+        saved = {row["serial"]: row for row in store.load()}
+        for row in found:
+            known = saved.get(row["serial"])
+            if known:
+                row.update(known=known["id"], name=known["name"], moved=known["host"] != row["host"],
+                           saved_host=known["host"], model=known.get("model") or row["model"])
+        job.update(state="done", phase="done", found=found, progress=None)
+    except ValueError as exc:
+        job.update(state="failed", error=str(exc))
+    except OSError as exc:
+        job.update(state="failed", error=f"The scan could not run: {exc}")
+    finally:
+        job["finished"] = time.time()
+
+
+async def h_printer_scan(request):
+    body = await _body(request)
+    panel = _panel(request)
+    job = panel.new_job("scan")
+    threading.Thread(target=_scan_job, args=(job, str(body.get("subnet") or "").strip()),
+                     daemon=True).start()
+    job = await _wait_for(panel, job, body.get("wait"))
+    return web.json_response({"ok": job["state"] != "failed", "job": job,
+                              **({"error": job["error"]} if job["state"] == "failed" else {})})
 
 
 async def h_printer_delete(request):
@@ -894,6 +939,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_post("/api/studio/{action}", h_studio)
     r.add_get("/api/printers", h_printers)
     r.add_post("/api/printers", h_printer_save)
+    r.add_post("/api/printers/scan", h_printer_scan)
     r.add_delete("/api/printers/{id}", h_printer_delete)
     r.add_post("/api/printer/command", h_command)
     r.add_get("/api/printer/storage", h_storage)

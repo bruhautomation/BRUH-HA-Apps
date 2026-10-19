@@ -27,6 +27,22 @@
 
   <section id="viewPrinters" class="view" data-view="printers" hidden>
     <div id="printerList" class="cards"></div>
+    <div class="card" id="findPrinters">
+      <div class="row spread">
+        <div><h2>Find printers</h2>
+          <p class="hint" id="scanNote">Looks for Bambu Lab printers on the network Home Assistant is on.</p></div>
+        <button class="primary" type="button" id="scanBtn">Find printers on my network</button>
+      </div>
+      <div id="scanResults"></div>
+      <details id="scanOther">
+        <summary>Search a different network</summary>
+        <form id="scanForm" class="importbar">
+          <input id="scanSubnet" inputmode="decimal" autocomplete="off" placeholder="192.168.2.0/24"
+                 aria-label="Network to search">
+          <button type="submit">Search</button>
+        </form>
+      </details>
+    </div>
     <details class="card" id="addPrinter">
       <summary>Add a printer</summary>
       <p class="hint">On the printer's screen: the IP address is under Network, the
@@ -39,6 +55,7 @@
         <label>IP address <input name="host" required placeholder="192.168.1.50" autocomplete="off"></label>
         <label>Serial number <input name="serial" required autocomplete="off"></label>
         <label>Access code <input name="access_code" required autocomplete="off"></label>
+        <p class="hint" id="codeHint" hidden></p>
         <div class="row"><button class="primary" type="submit">Save</button></div>
       </form>
     </details>
