@@ -2035,6 +2035,26 @@ function openProblems() {
   }, 60);
 }
 
+// A tile's status is the card's own claim that something deserves
+// attention (the contract allows one only then), so a card with none and
+// nothing on Needs you beside it is an all-clear. A card not written yet
+// keeps its place: it is not a claim about anything.
+const ATTENTION_STATUSES = new Set(["warning", "serious", "critical"]);
+function cardNeedsSomething(ins, linkedCases) {
+  if (!ins) return true;
+  if (linkedCases > 0) return true;
+  return (Array.isArray(ins.highlights) ? ins.highlights : [])
+    .some((h) => h && ATTENTION_STATUSES.has(h.status));
+}
+// Stable: the cards that need something first, each half in the order it
+// came in.
+function attentionFirst(items, needs) {
+  const loud = [];
+  const quiet = [];
+  items.forEach((it) => (needs(it) ? loud : quiet).push(it));
+  return loud.concat(quiet);
+}
+
 // Past this many reports a search field appears above them.
 const REPORT_SEARCH_AFTER = 8;
 
@@ -2078,17 +2098,22 @@ function render() {
       customs.unshift({ id: jid, category: "custom", category_title: "Custom", icon: "✨", virtual: true });
     }
   });
+  const shown = [];
   customs.forEach((i) => {
     if (i.virtual ? !!q : !matches(i)) return;
     // a virtual card has no insight yet — makeCard works off the job id
-    grid.appendChild(makeCard(null, i.virtual ? null : i, i.id));
+    shown.push({ ins: i.virtual ? null : i, make: () => makeCard(null, i.virtual ? null : i, i.id) });
   });
   s.categories.forEach((c) => {
     const ins = insightFor(c.id);
     // not-yet-generated placeholders only clutter a search
     if (q && !(ins && matches(ins)) && !c.title.toLowerCase().includes(q)) return;
-    grid.appendChild(makeCard(c, ins));
+    shown.push({ ins, make: () => makeCard(c, ins) });
   });
+  // A card whose answer is "all normal" sorts below the ones that need
+  // something, so the slot at the top goes to a card worth reading.
+  attentionFirst(shown, (e) => cardNeedsSomething(e.ins, casesForInsight(e.ins).length))
+    .forEach((e) => grid.appendChild(e.make()));
   renderSchedule();
 }
 

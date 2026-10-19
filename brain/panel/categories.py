@@ -469,7 +469,7 @@ CARD_SCHEMA = {
 }
 
 
-_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary opens with ONE plain verdict — it is fine, it needs action, or here is the one thing to do — then the number that shows it.
+_CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The homeowner reads it in ten seconds on a phone. The highlights ARE the product: concrete numbers with names and times. The summary opens with ONE plain verdict — it is fine, it needs action, or here is the one thing to do — then the number that shows it. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
 OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the verdict first, then its number",
@@ -481,38 +481,40 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 
 highlights: 3-6, each one specific, checkable data point with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something genuinely deserves attention. Escape the HTML correctly as a JSON string.
 tags: what the card is ABOUT, not the category it was asked for. Reuse plain common words.
-hypotheses: usually ZERO, never more than the prompt's stated budget. Not an open question — something you actually BELIEVE, phrased so the homeowner can answer yes or no in one tap. Only when you believe it, the data cannot settle it, and knowing would change how you read this home; never one already answered in the memory document.
-learned: durable NEW discoveries about this home (a pattern, a quirk, how something behaves), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot.
-findings: things that are BROKEN and have an owner. A work list, not observations. Something is actually WRONG; it names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (editing a config, renaming, calling a service — never batteries, unplugging, re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. Most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed.
-opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. brAIn replays it before offering it. Never something broken (a finding).
-live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is part of the story. brAIn injects `window.brainLive(callback)` into the page: register once and you are handed {entity_id: {state, attributes, unit, name}} immediately and on every refresh — but the page must render correctly with NO live data at all, so draw the snapshot values first and let the callback update them. Never poll or fetch. Omit the field for a period that has ended, which is most cards.
+hypotheses: usually ZERO, within the prompt's stated budget. Something you BELIEVE that the data cannot settle and that would change how you read this home, answerable yes or no in one tap; never one the memory document already answers.
+learned: durable NEW discoveries about this home (a pattern, a quirk), one plain factual sentence each, no advice, nothing broken. Never a KNOWN FACT restated, never the current snapshot.
+findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed.
+opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. Never something broken (a finding).
+live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first, so the page works with NO live data. Never poll or fetch. Omit it for a period that has ended.
 
 THE HTML DOCUMENT:
-- ONE focused visual that carries the story — a single chart, timeline or state map. No stat-tile rows duplicating the highlights, no second chart unless the story needs a pair, no prose inside the HTML.
-- It sits directly on the card, under the highlights, so it is NOT a card of its own: no outer border, box, panel, background fill, shadow or padding around the whole thing (the page background is transparent on purpose), and no big heading repeating the card's title — at most one short chart title line (13-14px, bold) with the legend beside or under it.
-- Self-contained: inline CSS and JS only, no external resources. It renders in a sandboxed iframe with scripts enabled. It is shown anywhere from 300px (a phone) to 900px wide, so it must be fluid: fill 100% width, height to content (~220-420px), never a fixed pixel width, no horizontal scrolling. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, and keep every label 11px or more. Leave a left margin that fits the longest label: a label cut at the edge is a bug. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))` so it stacks on a phone. Legends go ABOVE the plot, never under it. Inline SVG (or CSS grid for state maps); no canvas libraries.
-- Interactive: hover tooltips on every mark, hit targets larger than the mark; everything must also read fine without hovering. Tasteful draw-in on load (≤800ms) inside @media (prefers-reduced-motion: no-preference).
+- ONE focused visual that carries the story — a single chart, timeline or state map. No stat tiles duplicating the highlights, no second chart unless the story needs a pair, no prose.
+- It sits directly on the card under the highlights: no outer border, box, background, shadow or padding around it, and no heading repeating the title — at most one short chart title line (13-14px, bold) with the legend beside or under it.
+- Self-contained: inline CSS and JS only, no external resources; a sandboxed iframe with scripts. Shown from 300px (a phone) to 900px wide, so fluid: 100% width, height to content (~220-420px), no fixed pixel width, no horizontal scrolling. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))`. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps); no canvas libraries.
+- Interactive: hover tooltips on every mark, hit targets larger than the mark, readable without hovering. Tasteful draw-in (≤800ms) inside @media (prefers-reduced-motion: no-preference).
 
-DESIGN SYSTEM: brAIn prepends a stylesheet to your document, so use its variables and never hard-code a colour — both light and dark mode (prefers-color-scheme) then come for free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series colours in this fixed order: var(--c1) (blue, #2a78d6 in light) … var(--c8); past six series fold the rest into var(--other). Sequential: one hue from var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Each series in a chart gets a different --cN. Status: var(--good), var(--warning), var(--serious), var(--critical) — reserved, never used as series, always paired with a label. Dark surface is #0e1e30. Marks: 2px lines; bars flat at the baseline with 4px rounded tops; ≥8px hover markers; a 2px surface gap between stacked segments. ONE y-axis per chart (two scales → two small charts). Legend when ≥2 series, direct labels when ≤4, label selectively; text is always ink-coloured. Bars start at zero. No chart junk, no drop shadows. Use class "tabular" for aligned numbers.
+DESIGN SYSTEM: brAIn prepends a stylesheet, so use its variables and never hard-code a colour; light and dark (prefers-color-scheme) come free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series in order var(--c1) (blue, #2a78d6 in light) … var(--c8), a different one per series, past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — never a series, always with a label. Dark surface is #0e1e30. Marks: 2px lines; bars from zero, flat at the baseline, 4px rounded tops; ≥8px hover markers; 2px gaps between stacked segments. ONE y-axis per chart (two scales → two charts). Legend at ≥2 series, direct labels at ≤4; text is ink-coloured. No chart junk, no shadows. Class "tabular" for aligned numbers.
 
 ANALYSIS RULES:
-- RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time; delete any that doesn't. No hedging, no methodology, no restating a highlight. Depth goes into WHICH data points you surface, never into word count.
-- Be specific to this home: real friendly names, real areas, real numbers and times. Convert entity_ids to friendly names in all user-facing text.
-- Read every number against this house's own normal (its usual, last week, its baseline) and say which side it is on; never leave a figure for the reader to judge.
-- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain. Use the "device_context" section (entities sharing a device with a presence tracker) as those clues.
+- RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time. No hedging, no methodology, no restating a highlight. Depth is WHICH data points you surface, never word count.
+- Be specific to this home: real friendly names, areas, numbers and times. Convert entity_ids to friendly names in all user-facing text.
+- Read every number against this house's own normal (its usual, last week) and say which side it is on.
+- Plain words: never a tool or its cap, "baseline", "readings window", "this hour of the week" or a field name; a limit that matters is "at least 10". No unit to look up (°F·h, degree-hours, "2.4x", "cooling load"): hours, degrees, "twice the usual". A partial day is compared with the same hours of other days.
+- One style: times of day in the house's clock (the prompt says which; data times are local unless suffixed Z), dates "Tue 13 Oct", ranges "13–19 Oct", durations "6 h 42 min", temperatures "66 °F" in whole degrees.
+- REASON LIKE A DETECTIVE, not a meter reader. Cross-reference related entities to reach conclusions no single sensor states outright, and cite the chain. Use "device_context" (entities sharing a device with a presence tracker) as clues.
 - BUILD ON what you know: KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth — use them, never rediscover or contradict them without new evidence, never re-ask.
-- GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeat of the same headline is a failed run.
-- Each card stands alone: never refer to an earlier card or run ("the last card", "Thursday's card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.") — say what the figures mean. With nothing new, say what holds now, with its numbers.
-- Anything that could have done harm (a door, fridge or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have (the freezer's temperature over that window), or one clear thing for the owner to do.
+- GO DEEPER each run: when the prompt shows your previous analysis, lead with what CHANGED and push one level deeper on what didn't — a repeated headline is a failed run.
+- Each card stands alone: never refer to an earlier card or run ("the last card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.") — say what the figures mean. "More", "again", "still", "new" or "outdated" only with the earlier value stated in the same card; never answer a worry nobody raised here. With nothing new, say what holds now, with its numbers.
+- Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the owner to do.
+- Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
 - If the data for the requested angle is thin, visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow.
-- Times in the data are ISO timestamps in the home's local timezone unless suffixed Z; present them in a friendly way ("6:42 PM").
-- Never invent data. Every number shown must come from the data you were given or fetched.
+- Never invent data: every number comes from data you were given or fetched.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
-- The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a number in the title appears in the summary with the same meaning."""
+- The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a number in the title appears in the summary with the same meaning, inside its comparison and reason, never restated alone."""
 
 
 SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.
@@ -584,6 +586,15 @@ def _previous_block(previous: dict, revising: bool = False) -> str:
     return "\n".join(lines)
 
 
+# The line `_framing` adds for the house's clock (`brief.clock_style`).
+CLOCK_LINES = {
+    "12h": "CLOCK: this house reads 12-hour time. Write every time of day "
+           "like 6:42 PM, converting any 24-hour time in the data.",
+    "24h": "CLOCK: this house reads 24-hour time. Write every time of day "
+           "like 18:42, converting any 12-hour time in the data.",
+}
+
+
 def _framing(
     category: dict,
     question: str | None,
@@ -595,6 +606,8 @@ def _framing(
     house: str | None = None,
     refine: str | None = None,
     pending: str | None = None,
+    clock: str | None = None,
+    others: str | None = None,
 ) -> list[str]:
     """Everything the analyst is told before it is told about the data.
 
@@ -681,6 +694,19 @@ def _framing(
             "still the expected outcome for most runs."
         )
 
+    # The other cards on the dashboard, by title: the homeowner reads them
+    # side by side, and two cards about one air conditioner on one day
+    # read as brAIn disagreeing with itself.
+    if others and others.strip():
+        parts.append("\n" + others.strip())
+
+    # The house's own clock. The contract asks for one style of time of
+    # day and says the prompt names it; a contract that said "6:42 PM"
+    # put 12-hour times on a 24-hour house beside 24-hour ones copied
+    # from the data.
+    if clock in CLOCK_LINES:
+        parts.append("\n" + CLOCK_LINES[clock])
+
     if previous:
         parts.append("\n" + _previous_block(previous, revising=bool(refine)))
 
@@ -699,6 +725,8 @@ def build_prompt(
     house: str | None = None,
     refine: str | None = None,
     pending: str | None = None,
+    clock: str | None = None,
+    others: str | None = None,
 ) -> str:
     """Assemble the user prompt: analysis focus + the data bundle.
 
@@ -715,7 +743,8 @@ def build_prompt(
     list, and what the homeowner dismissed as not a problem here.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house, refine, pending)
+                     hypothesis_budget, previous, house, refine, pending,
+                     clock, others)
     parts.append(
         "\nHOME DATA SNAPSHOT (JSON). Sections: meta (now, timezone, location name), areas, "
         "entities (e=entity_id, s=state, n=friendly name — ABSENT when it is just the "
@@ -747,6 +776,8 @@ def build_orientation_prompt(
     house: str | None = None,
     refine: str | None = None,
     pending: str | None = None,
+    clock: str | None = None,
+    others: str | None = None,
 ) -> str:
     """The searching path's prompt: the map, not the territory.
 
@@ -757,7 +788,8 @@ def build_orientation_prompt(
     instruction to go and get what answering it needs.
     """
     parts = _framing(category, question, feedback, knowledge, findings,
-                     hypothesis_budget, previous, house, refine, pending)
+                     hypothesis_budget, previous, house, refine, pending,
+                     clock, others)
     parts.append(
         "\nMAP OF THIS HOME (JSON). NOT the data — the shape of it. Sections: meta (now, "
         "timezone, location name), entity_count (how many entities exist in total), "
