@@ -633,6 +633,7 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
   await settle(p, 1500);
   await p.evaluate((def) => {
     delete window.loadCardHelpers;
+    window.__panel.llCards.clear();
     if (def) customElements.define('morph-now', class extends HTMLElement { setConfig(c) { this.c = c; this.textContent = 'MORPH-NOW ' + c.type; } });
     const P = window.__panel;
     let found; const seek = (o) => { if (!o || typeof o !== 'object') return; if (o.id === 'c_tile') { o.card = { type: def ? 'custom:morph-now' : 'tile', entity: 'sensor.outside_temperature' }; found = o; return; } Object.values(o).forEach(seek); };

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+### Fixed
+
+- **A hosted card draws when Morph is opened before Home Assistant's dashboard code has loaded.** Morph waits briefly for Home Assistant's card helpers and loads them the way Home Assistant's own panels do; a house's own custom card is drawn directly without them. A card that still cannot be drawn says so in plain words instead of showing a script error. (#281)
+
 ## 1.0.1
 
 From an audit of a real house against the 3.0 vision.
