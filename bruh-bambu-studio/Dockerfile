@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /opt/cad/bin/python in a process of its own (panel/design/runner.py).
 RUN python3 -m venv /opt/cad \
     && /opt/cad/bin/pip install --no-cache-dir \
-       cadquery==2.8.0 trimesh==5.1.1 networkx==3.7 lxml==6.1.3 \
+       cadquery==2.8.0 trimesh==5.1.1 networkx==3.6.1 lxml==6.1.3 \
     && /opt/cad/bin/python -c "import cadquery, trimesh"
 
 # three.js for the Design tab's 3D view, pinned and fetched here so the
