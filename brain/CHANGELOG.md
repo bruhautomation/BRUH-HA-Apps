@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.8
+
+### Changed
+
+- **Device findings say what stopped working, in household words.** brAIn's overnight check and its own investigations name the thing, say what stopped working in the house and give one step, without IP addresses or terms like RTSP, EOF, token or probe. An address left in a model-written finding is removed before it is stored. (#316)
+- **Cards don't invent measures.** A card says what happened ("the light came on 13 times") instead of a made-up measure, and a threshold says whose it is ("your usual limit is 350 gal between cycles"). (#317)
+
 ## 3.0.7
 
 ### Fixed
