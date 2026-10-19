@@ -38,7 +38,7 @@ from aiohttp.abc import AbstractAccessLogger
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import atomic_write  # noqa: E402
+import bambu_atomic  # noqa: E402
 import installer  # noqa: E402
 import library  # noqa: E402
 import slicer  # noqa: E402
@@ -174,7 +174,7 @@ class Panel:
             SHARED.mkdir(parents=True, exist_ok=True)
             # No explicit mode: Core reads this as root, so the file needs no
             # world-readable bit, and the umask's default is what it gets.
-            atomic_write.write_json(STATE_FILE, mirror)
+            bambu_atomic.write_json(STATE_FILE, mirror)
         except OSError as exc:
             log.warning("Could not write %s: %s", STATE_FILE, exc)
 
@@ -657,7 +657,7 @@ async def h_design_thumb(request):
     data = await request.read()
     if len(data) > 1_000_000 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
         return _err("Send a PNG under 1 MB.")
-    await asyncio.to_thread(atomic_write.write_bytes, path, data)
+    await asyncio.to_thread(bambu_atomic.write_bytes, path, data)
     return web.json_response({"ok": True})
 
 

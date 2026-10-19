@@ -19,7 +19,7 @@ import time
 import uuid
 from pathlib import Path
 
-import atomic_write
+import bambu_atomic
 import library
 
 DESIGNS = "designs"
@@ -52,7 +52,7 @@ def folder(part_id: str) -> Path:
 
 
 def load(part_id: str) -> dict:
-    data = atomic_write.read_json(folder(part_id) / "part.json", None)
+    data = bambu_atomic.read_json(folder(part_id) / "part.json", None)
     if not isinstance(data, dict):
         raise LookupError("No such part.")
     return data
@@ -62,7 +62,7 @@ def save(part: dict) -> dict:
     with _LOCK:
         part["updated"] = time.time()
         part["messages"] = part.get("messages", [])[-MAX_MESSAGES:]
-        atomic_write.write_json(folder(part["id"]) / "part.json", part)
+        bambu_atomic.write_json(folder(part["id"]) / "part.json", part)
     return part
 
 
@@ -82,7 +82,7 @@ def listing() -> list[dict]:
         return []
     out = []
     for path in root().glob("*/part.json"):
-        part = atomic_write.read_json(path, None)
+        part = bambu_atomic.read_json(path, None)
         if not isinstance(part, dict):
             continue
         current = version(part, part.get("current"))

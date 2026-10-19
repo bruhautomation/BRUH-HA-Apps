@@ -16,7 +16,7 @@ import os
 import re
 from pathlib import Path
 
-import atomic_write
+import bambu_atomic
 
 DATA = Path(os.environ.get("BAMBU_DATA", "/data"))
 PRINTERS = DATA / "printers.json"
@@ -54,12 +54,12 @@ def clean(entry: dict) -> dict:
 
 
 def load() -> list[dict]:
-    rows = atomic_write.read_json(PRINTERS, [])
+    rows = bambu_atomic.read_json(PRINTERS, [])
     return [r for r in rows if isinstance(r, dict) and r.get("id")] if isinstance(rows, list) else []
 
 
 def codes() -> dict:
-    data = atomic_write.read_json(SECRETS, {})
+    data = bambu_atomic.read_json(SECRETS, {})
     return data if isinstance(data, dict) else {}
 
 
@@ -78,8 +78,8 @@ def save(entry: dict, access_code: str | None) -> dict:
     rows.append(printer)
     SECRETS.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(SECRETS.parent, 0o700)
-    atomic_write.write_json(SECRETS, secrets, mode=0o600)
-    atomic_write.write_json(PRINTERS, rows)
+    bambu_atomic.write_json(SECRETS, secrets, mode=0o600)
+    bambu_atomic.write_json(PRINTERS, rows)
     return printer
 
 
@@ -88,9 +88,9 @@ def remove(printer_id: str) -> bool:
     kept = [r for r in rows if r["id"] != printer_id]
     secrets = codes()
     secrets.pop(printer_id, None)
-    atomic_write.write_json(PRINTERS, kept)
+    bambu_atomic.write_json(PRINTERS, kept)
     if SECRETS.exists():
-        atomic_write.write_json(SECRETS, secrets, mode=0o600)
+        bambu_atomic.write_json(SECRETS, secrets, mode=0o600)
     return len(kept) != len(rows)
 
 

@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-import atomic_write
+import bambu_atomic
 
 DATA = Path(os.environ.get("BAMBU_DATA", "/data"))
 INSTALL_ROOT = DATA / "bambu-studio"
@@ -47,7 +47,7 @@ _LOCK = threading.Lock()
 
 def installed() -> dict | None:
     """The unpacked install, if its launcher is really there."""
-    data = atomic_write.read_json(MARKER, None)
+    data = bambu_atomic.read_json(MARKER, None)
     if not isinstance(data, dict):
         return None
     apprun = Path(str(data.get("apprun") or ""))
@@ -141,7 +141,7 @@ def install(version: str = "latest", url: str = "", *, force: bool = False) -> N
         apprun = _extract(scratch, INSTALL_ROOT / safe_label)
         scratch.unlink(missing_ok=True)
         previous = current.get("dir") if current else None
-        atomic_write.write_json(MARKER, {"version": label, "url": link,
+        bambu_atomic.write_json(MARKER, {"version": label, "url": link,
                                          "dir": str(INSTALL_ROOT / safe_label),
                                          "apprun": str(apprun),
                                          "installed_at": int(time.time())})

@@ -1,6 +1,8 @@
 """Importing BRUH Bambu Studio's panel without inheriting another add-on's.
 
-Every panel here has a top-level `server` and an `atomic_write`, and each is
+Every panel here has a top-level `server` (and most an `atomic_write`; ours is
+`bambu_atomic`, so a code scanner cannot match another add-on's callers to it),
+and each is
 imported by putting its own `panel/` on `sys.path` — fine in each add-on's
 process, a collision under one test interpreter. `bruh_print_env`'s fix:
 purge the colliding names, import ours, then put the module table back.
@@ -13,7 +15,7 @@ import os
 import sys
 
 PANEL = os.path.join(os.path.dirname(__file__), "..", "bruh-bambu-studio", "panel")
-SHARED = ("server", "atomic_write", "store", "library", "installer", "slicer",
+SHARED = ("server", "bambu_atomic", "store", "library", "installer", "slicer",
           "studio", "vnc_bridge", "bambu", "design")
 
 
