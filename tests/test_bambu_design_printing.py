@@ -341,8 +341,10 @@ class TestBrainPrintsFromTheChat(PrintTest):
         self.assertEqual(part["state"], "idle")
 
     def test_a_reply_without_go_prints_nothing(self):
-        part, _fake = self.turn([{"reply": "Which colour for the logo?",
-                                  "print": {"go": False, "printer": "aaaa11112222"}}])
+        part, fake = self.turn([{"reply": "Which colour for the logo?",
+                                 "print": {"go": False, "printer": "aaaa11112222"}}])
+        self.assertEqual(len(fake.tasks), 1)
+        self.assertEqual(part["messages"][-1]["text"], "Which colour for the logo?")
         self.assertEqual(self.sent, [])
 
     def test_a_print_that_cannot_start_is_said_in_the_conversation(self):
