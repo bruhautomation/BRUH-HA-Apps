@@ -187,6 +187,7 @@ async function loadModel(p, v) {
     note.hidden = false;
     note.textContent = v ? "This version did not build." : "No version yet — describe the part to brAIn.";
     if (design.viewer) design.viewer.group.clear();
+    $("#bodyList").replaceChildren();
     return;
   }
   if (!window.BambuViewer) {
@@ -205,11 +206,18 @@ async function loadModel(p, v) {
         : `${m.distance.toFixed(2)} mm  (ΔX ${m.dx.toFixed(2)} · ΔY ${m.dy.toFixed(2)} · ΔZ ${m.dz.toFixed(2)})`;
     };
   }
-  const colors = {};
+  // Each body in the colour it prints in: the script's own COLORS first,
+  // then the filament brAIn suggested for the whole part (versions built
+  // before COLORS existed), and only then the palette that tells bodies apart.
+  const colors = v.colors || {};
+  const partColour = (p.print_settings && p.print_settings.colour) || "";
   const bodies = Object.entries((v.files && v.files.bodies) || {}).map(([name, path]) => ({
-    name, url: `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(path)}`, color: colors[name] }));
+    name, url: `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(path)}`,
+    color: colors[name] || partColour }));
   try {
     await design.viewer.load(bodies);
+    renderBodies(bodies);
+    firstHelp();
     const size = design.viewer.size();
     if (size && !$("#measureBtn").getAttribute("aria-pressed").includes("true")) {
       $("#measureOut").textContent = `Overall ${fmtSize(size)}`;
@@ -217,6 +225,60 @@ async function loadModel(p, v) {
     if (v.n === p.current) saveThumb(p);
   } catch (e) { note.hidden = false; note.textContent = `Could not show it: ${e.message}`; }
 }
+
+// A key under the view: each body in its colour, and a tap hides or shows
+// it — how somebody looks inside a print-in-place part or at one colour.
+function renderBodies(bodies) {
+  const box = $("#bodyList");
+  const colourOf = window.bambuFilamentColour || (() => null);
+  const named = bodies.filter((b) => b.color);
+  if (bodies.length < 2 && !named.length) { box.replaceChildren(); return; }
+  box.replaceChildren(...bodies.map((b) => {
+    const chip = el("button", { type: "button", class: "chip body", "aria-pressed": "true",
+      title: `Hide or show ${b.name}` },
+    el("i", { style: `background:${colourOf(b.color) || "transparent"}` }),
+    b.color && !b.color.startsWith("#") ? `${b.name} · ${b.color}` : b.name);
+    chip.addEventListener("click", () => {
+      const on = chip.getAttribute("aria-pressed") !== "true";
+      chip.setAttribute("aria-pressed", String(on));
+      if (design.viewer) design.viewer.setVisible(b.name, on);
+    });
+    return chip;
+  }));
+}
+
+// The controls, said once: the first time a part is shown on this browser
+// the help opens by itself, and the ? brings it back.
+function setHelp(open) {
+  $("#viewHelp").hidden = !open;
+  $("#viewHelpBtn").setAttribute("aria-expanded", String(open));
+}
+
+function firstHelp() {
+  let seen = true;
+  try { seen = localStorage.getItem("bambu.viewHelp") === "1"; } catch (_) { /* storage refused */ }
+  if (seen) return;
+  setHelp(true);
+  try { localStorage.setItem("bambu.viewHelp", "1"); } catch (_) { /* storage refused */ }
+}
+
+(function orderHelp() {
+  // The gestures for the device in hand come first; the other set stays,
+  // because a laptop with a touch screen has both.
+  const touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  const pop = $("#viewHelp");
+  const first = pop.querySelector(`[data-input="${touch ? "touch" : "mouse"}"]`);
+  if (first) pop.prepend(first);
+})();
+
+$("#viewHelpBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  setHelp($("#viewHelp").hidden);
+});
+document.addEventListener("pointerdown", (e) => {
+  if (!$("#viewHelp").hidden && !e.target.closest("#viewHelp, #viewHelpBtn")) setHelp(false);
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setHelp(false); });
 
 async function saveThumb(p) {
   if (design.thumbFor === `${p.id}:${p.current}`) return;
@@ -332,7 +394,8 @@ $("#measureBtn").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));
   if (design.viewer) design.viewer.setMeasuring(on);
-  $("#measureOut").textContent = on ? "Tap two points on the part." : "";
+  const touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+  $("#measureOut").textContent = on ? `${touch ? "Tap" : "Click"} two points on the part.` : "";
 });
 $("#wireBtn").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";

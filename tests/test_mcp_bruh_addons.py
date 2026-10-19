@@ -52,6 +52,11 @@ class FakeCore:
         if key == ("bruh_bambu", "list_files"):
             return {"response": {"files": [{"path": "sliced/benchy.gcode.3mf",
                                             "sliced": True, "plates": [1], "size": 9}]}}
+        if key == ("bruh_bambu", "import_url"):
+            url = payload["service_data"].get("url", "")
+            files = (["imports/Set/a.stl", "imports/Set/b.stl"] if "many" in url
+                     else ["imports/3dbenchy.stl"])
+            return {"response": {"job": {"state": "done", "files": files}}}
         if key[0] == "bruh_bambu":
             return {"response": {"printer": "X1C", "acknowledged": True}}
         if key[0] == "bruh_print":
@@ -296,6 +301,24 @@ class TestBambu(Base):
         # And the generic route is held to the same split.
         for service in ("print_file", "stop_print", "send_gcode", "slice_file"):
             self.assertIn(("bruh_bambu", service), m.VOICE_ADMIN_SERVICES)
+
+    def test_a_link_is_imported_then_printed(self):
+        got = m.bambu_print("start", printer="X1C",
+                            url="https://www.printables.com/model/3161-3d-benchy",
+                            slot="external", material="petg")
+        self.assertTrue(got["done"])
+        self.assertEqual(self.core.calls[-2][0], ("bruh_bambu", "import_url"))
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "print_file"), {
+            "printer": "X1C", "file": "imports/3dbenchy.stl", "slot": "external",
+            "material": "PETG"}))
+
+    def test_a_link_with_several_files_asks_which(self):
+        got = m.bambu_print("start", url="https://www.printables.com/model/9-many")
+        self.assertEqual(got["imported"], ["imports/Set/a.stl", "imports/Set/b.stl"])
+        self.assertNotIn(("bruh_bambu", "print_file"), [c[0] for c in self.core.calls])
+
+    def test_voice_may_not_download_a_model(self):
+        self.assertIn(("bruh_bambu", "import_url"), m.VOICE_ADMIN_SERVICES)
 
     def test_the_acting_tools_are_kept_off_an_approved_change(self):
         for name in ("bambu_print", "bambu_control", "bambu_slice"):

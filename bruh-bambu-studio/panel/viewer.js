@@ -10,6 +10,45 @@ import { STLLoader } from "./vendor/STLLoader.js";
 const PALETTE = [0x1e9fe0, 0xf2a33a, 0x4cc38a, 0xe0569b, 0x9b7bf2, 0xd6d6d6];
 const PLATE = 256;
 
+// Filament names CSS has no word for. Anything else a person might say
+// ("white", "matte black", "#ff8800", "Bambu PLA Basic Jade White") is
+// read by the browser's own colour parser, last word first.
+const FILAMENT_WORDS = {
+  natural: "#efe6cf", clear: "#d8e6ee", transparent: "#d8e6ee", translucent: "#d8e6ee",
+  jade: "#e8f0e6", cream: "#f3ead3", charcoal: "#3a3d40", graphite: "#4a4d50",
+  "space gray": "#5b5f63", "space grey": "#5b5f63", "bambu green": "#00ae42",
+};
+const SEE_THROUGH = /\b(clear|transparent|translucent)\b/i;
+const NOISE = /\b(matte|matt|silk|basic|glossy|metallic|pla|petg|abs|asa|tpu|pa|pc|cf|hf|bambu|filament)\b/gi;
+const probe = document.createElement("canvas").getContext("2d");
+
+function cssColour(word) {
+  const text = String(word || "").trim();
+  if (!text) return null;
+  probe.fillStyle = "#010203";
+  probe.fillStyle = text;
+  const out = probe.fillStyle;
+  return out === "#010203" && text.toLowerCase() !== "#010203" ? null : out;
+}
+
+/** "#rrggbb"-ish for a colour as a person or brAIn wrote it, or null. */
+export function filamentColour(text) {
+  const raw = String(text || "").trim().toLowerCase();
+  if (!raw) return null;
+  if (FILAMENT_WORDS[raw]) return FILAMENT_WORDS[raw];
+  const direct = cssColour(raw);
+  if (direct) return direct;
+  const words = raw.replace(NOISE, " ").split(/[\s,/_-]+/).filter(Boolean);
+  for (let n = words.length; n >= 1; n--) {
+    for (let i = words.length - n; i >= 0; i--) {
+      const phrase = words.slice(i, i + n).join(" ");
+      const hit = FILAMENT_WORDS[phrase] || cssColour(phrase.replace(/ /g, ""));
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 export class Viewer {
   constructor(container) {
     this.container = container;
@@ -22,10 +61,16 @@ export class Viewer {
     this.controls.enableDamping = true;
     // Z-up: the part's bed is the XY plane, as it prints.
     this.camera.up.set(0, 0, 1);
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.6));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+    // A white part has to read as white: its lit face near full white,
+    // its other faces a step down each, so the shape still shows. A key
+    // light from the front-top and a weaker fill from behind, over a sky.
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x8a96a2, 1.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.9);
     sun.position.set(120, -160, 260);
     this.scene.add(sun);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.7);
+    fill.position.set(-160, 140, 90);
+    this.scene.add(fill);
     const grid = new THREE.GridHelper(PLATE, PLATE / 10, 0x6f7e8a, 0x2c3a46);
     grid.rotation.x = Math.PI / 2;
     grid.material.transparent = true;
@@ -69,11 +114,21 @@ export class Viewer {
     const loaded = await Promise.all(bodies.map(async (body, i) => {
       const geometry = await loader.loadAsync(body.url);
       geometry.computeVertexNormals();
+      const hex = filamentColour(body.color);
+      const colour = new THREE.Color(hex || PALETTE[i % PALETTE.length]);
+      const clear = SEE_THROUGH.test(String(body.color || ""));
       const material = new THREE.MeshStandardMaterial({
-        color: body.color ? new THREE.Color(body.color) : PALETTE[i % PALETTE.length],
-        metalness: 0.05, roughness: 0.55 });
+        color: colour, metalness: 0, roughness: 0.6,
+        transparent: clear, opacity: clear ? 0.55 : 1 });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = body.name;
+      // Creases drawn faintly in a contrasting shade, so a white part on a
+      // light screen and a black one on a dark screen both keep an outline.
+      const light = colour.r * 0.3 + colour.g * 0.59 + colour.b * 0.11 > 0.5;
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 28),
+        new THREE.LineBasicMaterial({ color: light ? 0x2b3640 : 0xc9d4dd, transparent: true, opacity: 0.35 }));
+      edges.name = "edges";
+      mesh.add(edges);
       this.group.add(mesh);
       return mesh;
     }));
@@ -104,7 +159,11 @@ export class Viewer {
   }
 
   setWireframe(on) {
-    this.group.children.forEach((m) => { m.material.wireframe = on; });
+    this.group.children.forEach((m) => {
+      m.material.wireframe = on;
+      const edges = m.getObjectByName("edges");
+      if (edges) edges.visible = !on;
+    });
   }
 
   setVisible(name, on) {
@@ -132,7 +191,7 @@ export class Viewer {
     const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hit = this.raycaster.intersectObjects(this.group.children.filter((m) => m.visible))[0];
+    const hit = this.raycaster.intersectObjects(this.group.children.filter((m) => m.visible), false)[0];
     if (!hit) return;
     if (this.points.length === 2) this.clearMeasure();
     this.points.push(hit.point.clone());
@@ -171,4 +230,5 @@ export class Viewer {
 }
 
 window.BambuViewer = Viewer;
+window.bambuFilamentColour = filamentColour;
 window.dispatchEvent(new Event("bambu-viewer-ready"));

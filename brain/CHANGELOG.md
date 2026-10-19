@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.2.1
+
+### Changed
+
+- **brAIn can print a model from a link.** `bambu_print` start takes `url` instead of a file: a Printables model page or a link to an .stl or .3mf is imported into `/share/bambu/imports` by BRUH Bambu Studio and printed, and a page with several files comes back for you to pick one. A model with no slicer settings in it (an STL, or a 3MF from Printables) is sliced with Bambu Studio's own profiles for the printer, and `slot`/`material` choose the AMS tray or the external spool. Downloading from a link is refused by voice, like starting a print.
+
 ## 3.2.0
 
 ### Added

@@ -66,6 +66,7 @@ ROUTES = {
     "set_temperature": _command("temperature"),
     "send_gcode": _command("gcode"),
     "open_in_studio": lambda p: ("POST", "/api/studio/open", {"file": p.get("file", "")}),
+    "import_url": _with_wait("/api/import"),
 }
 
 # The fields a service call carries under the names people use, renamed to

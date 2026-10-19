@@ -15,7 +15,7 @@ import os
 import sys
 
 PANEL = os.path.join(os.path.dirname(__file__), "..", "bruh-bambu-studio", "panel")
-SHARED = ("server", "bambu_atomic", "store", "library", "installer", "slicer",
+SHARED = ("server", "bambu_atomic", "store", "library", "importer", "installer", "slicer",
           "studio", "vnc_bridge", "bambu", "design")
 
 

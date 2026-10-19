@@ -28,6 +28,20 @@ def _write(outdir: str, report: dict) -> None:
         json.dump(report, handle, indent=1)
 
 
+def _colours(raw, parts: dict) -> dict | None:
+    """COLORS as the panel can use it: one short string per real body.
+
+    A colour is what the part prints in, so the 3D view can show it; it is
+    whatever the script wrote ("white", "#F2F2F2"), and a body the script
+    did not give one is left to the panel's fallback.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out = {str(k): str(v).strip()[:40] for k, v in raw.items()
+           if str(k) in parts and isinstance(v, str) and v.strip()}
+    return out or None
+
+
 def main(script: str, outdir: str) -> int:
     os.makedirs(outdir, exist_ok=True)
     report = {"ok": False, "stage": "load", "error": "", "warnings": [], "blocking": []}
@@ -44,8 +58,7 @@ def main(script: str, outdir: str) -> int:
                       notes=[str(n) for n in getattr(design, "NOTES", [])][:8],
                       dims=getattr(design, "DIMS", None) if isinstance(
                           getattr(design, "DIMS", None), (list, dict)) else None,
-                      colors=getattr(design, "COLORS", None) if isinstance(
-                          getattr(design, "COLORS", None), dict) else None)
+                      colors=_colours(getattr(design, "COLORS", None), parts))
         import cadkit
 
         report["stage"] = "validate"

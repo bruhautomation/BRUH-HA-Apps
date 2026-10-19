@@ -12,7 +12,8 @@
     "set_light": "mdi:lightbulb",
     "set_temperature": "mdi:thermometer",
     "send_gcode": "mdi:code-braces",
-    "open_in_studio": "mdi:open-in-app"
+    "open_in_studio": "mdi:open-in-app",
+    "import_url": "mdi:link-plus"
   },
   "entity": {
     "sensor": {

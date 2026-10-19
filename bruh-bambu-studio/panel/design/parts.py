@@ -22,7 +22,7 @@ from pathlib import Path
 import bambu_atomic
 import library
 
-DESIGNS = "designs"
+DESIGNS = library.DESIGNS
 MAX_MESSAGES = 200
 ID = re.compile(r"^[a-z0-9-]{4,60}$")
 _LOCK = threading.RLock()
@@ -92,6 +92,26 @@ def listing() -> list[dict]:
                     "size_mm": (current or {}).get("size_mm"),
                     "thumbnail": (folder(part["id"]) / "thumb.png").is_file()})
     out.sort(key=lambda p: p.get("updated") or 0, reverse=True)
+    return out
+
+
+def final_files() -> list[dict]:
+    """Each part's current version as one file, for the Files list."""
+    out = []
+    for row in listing():
+        part = bambu_atomic.read_json(folder(row["id"]) / "part.json", None)
+        current = version(part, part.get("current")) if isinstance(part, dict) else None
+        threemf_name = ((current or {}).get("files") or {}).get("3mf")
+        if not current or not current.get("ok") or not threemf_name:
+            continue
+        try:
+            path = file_in(row["id"], current["n"], threemf_name)
+        except LookupError:
+            continue
+        stat = path.stat()
+        out.append({"path": library.relative(path), "name": f"{row['name']}.3mf",
+                    "size": stat.st_size, "modified": int(stat.st_mtime),
+                    "design": row["id"], "version": current["n"]})
     return out
 
 

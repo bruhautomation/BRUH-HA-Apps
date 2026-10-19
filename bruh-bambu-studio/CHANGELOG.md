@@ -2,13 +2,21 @@
 
 ## 0.1.2
 
-### Fixed
+### Added
 
-- **Bambu Studio 2.x starts.** It links WebKitGTK 4.1 and the image only had 4.0, so it stopped on start with `libwebkit2gtk-4.1.so.0: cannot open shared object file`. The image now has both, plus the other system libraries Bambu Studio's Linux build links.
+- **Import a model from a link.** The Files tab has a box for a link: a Printables model page brings every model file on it into `/share/bambu/imports`, and a link to an `.stl`, `.3mf`, `.step`, `.obj` or `.amf` file downloads it. `bruh_bambu.import_url` does the same from an automation. MakerWorld (what Bambu Handy shares) needs a signed-in Bambu account, so it says to open the model from Bambu Studio's MakerWorld page on the Studio tab instead.
+- **Bare models print.** An STL, a STEP or a 3MF from Printables is sliced with Bambu Studio's own profiles for the printer, and the print dialog asks which AMS tray (or the external spool) to use. `print_file` takes `slot`, `material` and `colour` for the same; with no tray named it picks the best-matching one.
+- **The 3D view shows the part in its colours.** brAIn now gives every body the colour it prints in, and the view draws it that way: a white part is white, a multi-colour part shows each colour, and older versions use the colour brAIn suggested for printing. A key under the view hides or shows a body when you tap it.
+- **How to move the 3D view.** A **?** in the corner of the view explains the touch gestures on a phone and the mouse controls on a computer. It opens by itself the first time.
 
 ### Changed
 
+- **The Files tab lists what you brought in.** The add-on's own slices and every version of a designed part are no longer in it; a designed part is listed once, as its current version, with **Open design**, and its Print opens the design's own print dialog.
 - **A missing library is named, not restarted.** Before starting Bambu Studio the add-on checks every library it needs. If the image lacks one, the Studio tab lists which ones and says to update the add-on or pin an older Bambu Studio, instead of starting a slicer that stops on its first line, over and over.
+
+### Fixed
+
+- **Bambu Studio 2.x starts.** It links WebKitGTK 4.1 and the image only had 4.0, so it stopped on start with `libwebkit2gtk-4.1.so.0: cannot open shared object file`. The image now has both, plus the other system libraries Bambu Studio's Linux build links.
 
 ## 0.1.1
 

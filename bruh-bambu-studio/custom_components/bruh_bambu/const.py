@@ -35,6 +35,7 @@ SERVICE_LIGHT = "set_light"
 SERVICE_TEMPERATURE = "set_temperature"
 SERVICE_GCODE = "send_gcode"
 SERVICE_OPEN = "open_in_studio"
+SERVICE_IMPORT = "import_url"
 
 # The printer card, where run.sh puts it and the URL Core serves it from.
 # The URL carries a hash of the file because /local is served with a 31-day

@@ -460,6 +460,14 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-bambu-card.mjs
 
+      # BRUH Bambu Studio's Design and Files tabs, the real panel files
+      # against stubbed answers at 390 (touch) and 1280: bodies drawn in the
+      # colours their version gives them (white reads white), the 3D
+      # controls help, the body key, and a Files list of what was brought in.
+      - name: Measure BRUH Bambu Studio's Design and Files tabs
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-bambu-design.mjs
+
       # bright: BRight's panel — two static measures, then three on one
       # booted demo panel, in the order the comments below rely on.
 
