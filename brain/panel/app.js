@@ -4468,6 +4468,21 @@ function paintDevloop(data) {
   else if (st.last_sweep) {
     line = "Last pass " + timeAgo(new Date(st.last_sweep * 1000).toISOString()) + ".";
   }
+  // The loop's other end: when the cloud last closed one of this house's
+  // reports (a cloud that has stopped answering is a date going stale, not
+  // a silence), and the fixes this house has not installed yet — a fix
+  // nobody installed is otherwise indistinguishable from one that held.
+  if (s.repo && data.token_set && !st.error) {
+    if (st.cloud_last_seen) {
+      line += " The cloud last closed a report "
+        + timeAgo(new Date(st.cloud_last_seen * 1000).toISOString()) + ".";
+    }
+    if (st.awaiting_update) {
+      const n = st.awaiting_update;
+      line += ` ${n} fixed report${n === 1 ? " waits" : "s wait"} for an update to brAIn `
+        + `${st.awaiting_version || ""}`.trim() + ".";
+    }
+  }
   $("#devStatus").textContent = line;
   devQ.data = data;
   $("#devQueue").innerHTML = devQueueRows(data);

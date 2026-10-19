@@ -38,7 +38,7 @@ WRONG_SHARE = 0.6
 
 # `cases.UNMUTABLE_SOURCES`, restated.
 UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security",
-                               "check:safety.tripped"})
+                               "check:safety.tripped", "devloop_verify"})
 # `signals.SAFETY_FLAG_CHECKS`, restated (check ids, no `check:`).
 SAFETY_CHECKS = frozenset({"climate.freeze", "safety.tripped"})
 # Security checks are never quieted, whatever their record.

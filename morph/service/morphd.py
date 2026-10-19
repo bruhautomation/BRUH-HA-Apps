@@ -346,8 +346,9 @@ async def requests_loop() -> None:
         try:
             for f in sorted(paths.REQUESTS.glob("*.json")):
                 await _one(f)
-        except Exception:  # noqa: BLE001 — the loop must outlive one bad file
+        except Exception as exc:  # noqa: BLE001 — the loop must outlive one bad file
             log.exception("request loop")
+            devloop.note_exception("Service", exc)
         await asyncio.sleep(REQUEST_POLL_S)
 
 
@@ -373,6 +374,7 @@ async def _one(f: Path) -> None:
                 out = await handle(kind, req.get("payload") or {})
     except Exception as exc:  # noqa: BLE001
         log.exception("request %s failed", req.get("kind"))
+        devloop.note_exception(f"Request {kind}"[:40], exc)
         out = {"ok": False, "error": f"Morph could not do that: {exc}"}
     paths.write_json(paths.RESPONSES / f"{rid}.json", out)
 
@@ -402,8 +404,9 @@ async def watch_loop() -> None:
             elif time.time() - last_state > 15:
                 await asyncio.to_thread(publish_state)
                 last_state = time.time()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("watch loop")
+            devloop.note_exception("Watcher", exc)
         await asyncio.sleep(WATCH_S)
 
 
@@ -448,8 +451,9 @@ async def tick_loop() -> None:
             await asyncio.to_thread(devloop.ingest_errors)
             await asyncio.to_thread(devloop.publish, VERSION)
             await asyncio.to_thread(tell.prune)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             log.exception("tick loop")
+            devloop.note_exception("Tick", exc)
         await asyncio.sleep(TICK_S)
 
 

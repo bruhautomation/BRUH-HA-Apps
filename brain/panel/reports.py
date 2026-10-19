@@ -280,7 +280,7 @@ SCORE_RECENT_S = 14 * 86400
 # equal. "Ignore all like this" is never offered on their cards, so a row
 # telling somebody to tick it was advice nobody could follow.
 UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security",
-                               "check:safety.tripped"})
+                               "check:safety.tripped", "devloop_verify"})
 
 
 def faults(diagnostics) -> list[dict]:

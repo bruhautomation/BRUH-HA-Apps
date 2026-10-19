@@ -280,7 +280,10 @@ _STORE_ENDINGS: dict[tuple[str, str, str], tuple[str, str]] = {
 # `check:safety.tripped` is the safety lane's deterministic half (a detector
 # reading tripped now, `checks/safety.py`), and is the same rule.
 UNMUTABLE_SOURCES = frozenset({"resident", "safety", "security",
-                               "check:safety.tripped"})
+                               "check:safety.tripped",
+                               # The development loop's "is this fixed?"
+                               # question: a press, not a rule.
+                               "devloop_verify"})
 
 
 # ---------------------------------------------------------------------------

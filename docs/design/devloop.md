@@ -51,6 +51,7 @@ owes, and `_devloop_tick` runs on `_checks_loop`.
 | `faults` | The `reports.faults` sweep: dead loops and daemons, failing runs, checks that could not look, the health verdict | nothing | on, hourly |
 | `scorecard` | `findings_store.scorecard()` and the journal's outcomes, as ONE rolling issue per release, its body rewritten (PATCH) when what it says changes | nothing | on, daily |
 | `wrongs` | Producers marked Wrong ≥3 times and ≥50% of the time, with the reasons typed | nothing | on, daily |
+| `outcomes` | `outcomes.candidates` — the scopes where the Resident's own looks were lopsided against what the household answered (too loud, too quiet), one keyed issue per scope with the looks' reasons and the typed notes; clears when a confirmed case ends the pattern | nothing | off, daily |
 | `unmet` | What the chat said it could not do (`_CANT_RE` on the reply, never the person), keyed on that sentence normalised (`capability_key`) and filed once it recurs in `UNMET_MIN_CONVERSATIONS` (2) conversations, last 14 days | nothing | off |
 | `snapshot` | Counts and flags only (domains, rooms, boolean options), as one rolling issue, so a cloud UX audit can match a real house without visiting it | nothing | off, weekly |
 | `gaps` | A read-only `run_analyst` over the faults, scorecard and unmet requests: where brAIn falls short here | one run | off, weekly |
@@ -85,10 +86,49 @@ reason in the payload and an Undo press; `fixed` is never noise. Each
 non-rolling issue carries an **Impact** section and new reports are filed in
 `impact_score` order under the day's cap.
 
-Still planned, and not in `STREAMS` until built: **outcomes** (Resident
-verdicts the household contradicted, per scope) and **aliased screenshots
-from the house** (an audit mode that paints aliases before the capture). The
-cloud UX audit below covers the screenshot need from fixtures for now.
+**The loop is closed at both ends, by evidence and not by silence.**
+Four seams were open and each is a rule now:
+
+- **The fix version comes home** (`upstream._fetch_fixed_in` / `FIXED_IN_RE`
+  / `running_at_least`). The cloud's closing comment says `Fixed in brAIn
+  x.y.z`; the house reads x.y.z off it and compares it with the release it
+  RUNS (the queue's `version`, stamped by every sweep — never the release a
+  fault was last seen on, which for a fault that stopped is the old one by
+  definition). A fault still seen on an older release says nothing about
+  the fix: no reopen, no comment. Installed and gone, the house says
+  **Held**. Not installed, the wait is counted (`awaiting_update`, in ⚙ and
+  on the scorecard body), because a fix nobody installed used to read as
+  one that held.
+- **The owner verifies their own fixes** (`devloop/verify.py`,
+  `server._devloop_verify_pass` / `_end_devloop_verify`,
+  `upstream.owner_answer` / `_post_owner_answers`). A `look` or `unmet`
+  report has no fingerprint to stop, so once the fix's release is
+  installed ONE question case is filed through `findings_store.add_case`;
+  Yes posts *The owner confirms this is fixed on brAIn x.y.z*, No posts
+  *Not fixed on brAIn x.y.z: <their words, aliased>* and reopens. Asked
+  once per fix, settled under its own kind (no scorecard label, no memory
+  line), undone with the toast while the comment is unposted.
+- **A fault issue carries its evidence** (`streams.faults(diagnostics,
+  log_text)`, `log_excerpt`, `_occurrences`). The journal rows a `Run (…)`
+  row was folded from (time, job, the error's own words) and the trouble
+  lines of the add-on log, fetched by the server on the hourly faults pass
+  and redacted, then aliased with the rest in `compose`. The cloud fixer
+  reads a traceback instead of guessing at one.
+- **The panel's own crashes are faults** (`server.crash_middleware` /
+  `note_crash`). An unhandled exception in a route used to be aiohttp's 500
+  and its logger's traceback and nothing else; it is a journal row
+  (`panel`, `crash`, the route pattern as the stage, the deepest panel
+  frame in the error), so it is a fault row, a problem file and an issue
+  by the same doors every other failure takes. One row per route and
+  exception type per `CRASH_SPACING_S`.
+
+The cloud half's own health is a date: `cloud_last_seen` (the newest close
+among the verdicts read back) rides `/api/devloop` and ⚙'s line, so a
+routine that stopped running is a date going stale.
+
+Still planned: **aliased screenshots from the house** (an audit mode that
+paints aliases before the capture). The cloud UX audit below covers the
+screenshot need from fixtures for now.
 
 ## The cloud half
 
@@ -154,7 +194,12 @@ and fails it on:
   Dockerfile and the loop's own package);
 - any change but the version line in `config.yaml` and `manifest.json`;
 - a deleted test file, a skip or xfail added, or fewer `def test_` than
-  before.
+  before;
+- a change to the add-ons' code (Python, shell, the integrations, the MCP
+  server) with nothing changed under `tests/`. The skill says "failing
+  test first"; this is the half that holds when a model does not read it.
+  Copy, layout, CSS, JS and docs are exempt, because a measure is run by
+  hand and by CI's `layout` job.
 
 The skill says all of this too. The guard is the half that holds when a
 model does not read it. Issue text is data: the skill forbids acting on

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4
+
+### Fixed
+
+- **Morph's own service faults reach the development loop.** An error inside the request loop, the watcher or the tick was logged and nowhere else; each is now a row in Morph's fault ledger with the exception, the line and the traceback, published to brAIn's loop with everything else under *Report Morph's own problems*.
+
 ## 1.0.3
 
 ### Added

@@ -104,6 +104,17 @@ VERDICT_GETS_PER_PASS = 10
 REASONS_PER_PASS = 5
 REASON_TRIES = 3
 REASON_CHARS = 200
+# The version a fix shipped in, read off the cloud's closing comment
+# ("Fixed in brAIn 3.1.0 (…)", the skill's own wording). It is the one fact
+# that tells "the fix is here and held" from "the fix has not arrived":
+# a fault still seen on a release OLDER than the fix is not evidence
+# against the fix, and a house with auto-update off used to reopen every
+# fixed report a day after its next unrelated update.
+FIXED_IN_RE = re.compile(r"\bFixed in (?:brAIn|Morph) v?(\d+\.\d+\.\d+)")
+FIXED_IN_PER_PASS = 10
+# How long a fixed report waits for the house to update before the wait is
+# said out loud (in the scorecard body and ⚙), rather than read as silence.
+UPDATE_WAIT_S = 7 * 86400
 # Label → verdict, first match wins. `fixed` leads: a fix is never noise.
 VERDICT_LABELS = (("devloop:fixed", "fixed"), ("devloop:duplicate", "duplicate"),
                   ("devloop:not-brain", "not_brain"), ("devloop:declined", "declined"))
@@ -309,6 +320,23 @@ def _version(diagnostics: dict) -> str:
     return str(v.get("addon") or "dev") if isinstance(v, dict) else "dev"
 
 
+def version_tuple(version) -> tuple[int, ...] | None:
+    """``"3.1.0"`` → ``(3, 1, 0)``; None for anything that is not a release
+    number (``dev``, ``?``), which compares as nothing rather than as 0."""
+    m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", str(version or ""))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def running_at_least(version, fixed_in) -> bool | None:
+    """Whether the house runs the release a fix shipped in. None when
+    either side is not a release number — "could not tell", which no
+    caller may read as either answer."""
+    have, need = version_tuple(version), version_tuple(fixed_in)
+    if have is None or need is None:
+        return None
+    return have >= need
+
+
 # ---------------------------------------------------------------------------
 # Sweeping
 # ---------------------------------------------------------------------------
@@ -422,6 +450,10 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
             entry["capture"] = str(row.get("capture") or "")[:20]
     _prune(items)
     data["swept_at"] = now
+    # The release this house runs, read by `awaiting_update` and the
+    # scorecard: the one number that says whether a fix has arrived.
+    if version_tuple(version):
+        data["version"] = version
     data.setdefault("last_run", {})[stream] = now
     _save(data)
     aliases.save()
@@ -743,8 +775,13 @@ def _send_due(now: float) -> dict:
         elif entry.get("rolling"):
             if _rewrite(token, repo, entry, aliases):
                 updated += 1
-        elif _follow_up(token, repo, entry, now, aliases):
+        elif _follow_up(token, repo, entry, now, aliases,
+                        running=str(data.get("version") or "")):
             updated += 1
+    # The owner's answers to "is this fixed?", posted after the follow-ups
+    # so a "Not fixed" reopen is the last word on the issue this pass.
+    updated += _post_owner_answers(token, repo, items, aliases,
+                                   running=str(data.get("version") or ""))
     _save(data)
     _vsave(verdicts)
     aliases.save()
@@ -799,10 +836,12 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
                    "where": clip(str(entry.get("where") or ""), 120),
                    "what": clip(str(entry.get("what") or ""), 200)}
             if same:
-                for k in ("reason", "reason_tries"):
+                for k in ("reason", "reason_tries", "fixed_in", "fixed_in_tries"):
                     if k in old:
                         row[k] = old[k]
             resolved[fp] = row
+            if row.get("fixed_in"):
+                entry["fixed_in"] = row["fixed_in"]
         for key in [k for k, row in stood.items() if row.get("fp") == fp]:
             stood.pop(key)
         if verdict in NOISE and stream in STAND_DOWN_STREAMS:
@@ -815,6 +854,7 @@ def _refresh_verdicts(token: str, repo: str, items: dict, v: dict,
         if isinstance(entry, dict) and entry.get("state") in ("pending", "ready"):
             _stand_down(entry, stood)
     _fetch_reasons(token, repo, resolved)
+    _fetch_fixed_in(token, repo, resolved, tracked)
     _evaluate_slow(v, now)
     v["at"] = now
 
@@ -854,6 +894,71 @@ def _fetch_reasons(token: str, repo: str, resolved: dict) -> None:
                 continue
         row["reason"] = _first_line(body or "") or f"labelled {row['verdict']}"
         row.pop("reason_tries", None)
+
+
+def _fetch_fixed_in(token: str, repo: str, resolved: dict,
+                    tracked: dict[int, dict]) -> None:
+    """Which release each fixed report's fix shipped in, read once off the
+    cloud's closing comment. A comment with no version in it (a hand
+    close) is asked for REASON_TRIES times and then left as unknown, and
+    unknown is never read as "already here": `_follow_up` and
+    `awaiting_update` both treat it as could-not-tell."""
+    asked = 0
+    for fp, row in sorted(resolved.items(), key=lambda kv: -float(kv[1].get("at") or 0)):
+        if asked >= FIXED_IN_PER_PASS:
+            break
+        if (row.get("verdict") != "fixed" or row.get("fixed_in")
+                or int(row.get("fixed_in_tries") or 0) >= REASON_TRIES):
+            continue
+        asked += 1
+        body, err = github.last_comment(token, repo, int(row.get("issue") or 0))
+        m = FIXED_IN_RE.search(body or "")
+        if not m:
+            row["fixed_in_tries"] = int(row.get("fixed_in_tries") or 0) + 1
+            if body is None:
+                log.info("devloop: could not read which release fixed #%s: %s",
+                         row.get("issue"), err)
+            continue
+        row["fixed_in"] = m.group(1)
+        row.pop("fixed_in_tries", None)
+        entry = tracked.get(int(row.get("issue") or 0))
+        if isinstance(entry, dict) and entry.get("fp") == fp:
+            entry["fixed_in"] = m.group(1)
+
+
+def awaiting_update(items: dict | None = None, version: str = "") -> list[dict]:
+    """Fixed reports whose fix is in a release this house does not run
+    yet: the issue, what it was about, the release it needs and how long
+    it has waited. A fix nothing has installed is not a fix that held,
+    and until this the cloud read that silence as success."""
+    if items is None:
+        data = _load()
+        items, version = data["items"], version or str(data.get("version") or "")
+    out = []
+    for entry in items.values():
+        if not isinstance(entry, dict) or entry.get("verdict") != "fixed":
+            continue
+        need = entry.get("fixed_in")
+        if not need or running_at_least(version, need) is not False:
+            continue
+        out.append({"issue": int(entry.get("issue") or 0),
+                    "what": clip(str(entry.get("what") or ""), 120),
+                    "fixed_in": str(need),
+                    "since": float(entry.get("closed_at") or 0)})
+    out.sort(key=lambda r: (r["fixed_in"], r["issue"]))
+    return out
+
+
+def cloud_last_seen(v: dict | None = None) -> float:
+    """When the cloud last closed one of this house's reports: the newest
+    close among the verdicts read back, or 0 when none has been. A loop
+    whose cloud half has stopped answering looks, from the house, exactly
+    like one whose reports are all still open; this is what tells them
+    apart."""
+    v = _vload() if v is None else v
+    return max((float((r or {}).get("at") or 0)
+                for r in (v.get("resolved") or {}).values()
+                if isinstance(r, dict)), default=0.0)
 
 
 def rejected() -> list[dict]:
@@ -1039,6 +1144,84 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
     return True
 
 
+OWNER_NOTE_CHARS = 400
+
+
+def owner_answer(fp: str, accepted: bool, note: str = "",
+                 now: float | None = None) -> bool:
+    """Record the owner's answer to "is this fixed?" on the queue entry;
+    the next send pass posts it (`_post_owner_answers`). Recorded and not
+    posted here because posting needs the token and the lock the send
+    pass already holds, and a press must not wait on GitHub."""
+    if not FP_RE.match(fp or ""):
+        return False
+    with _LOCK:
+        data = _load()
+        entry = data["items"].get(fp)
+        if not isinstance(entry, dict) or not int(entry.get("issue") or 0):
+            return False
+        entry["owner"] = {"verdict": "held" if accepted else "not_fixed",
+                          "note": clip(str(note or ""), OWNER_NOTE_CHARS),
+                          "at": now or time.time(), "posted": False}
+        _save(data)
+    return True
+
+
+def forget_owner_answer(fp: str) -> bool:
+    """Undo: an answer not yet posted is dropped; one already posted
+    stands, and the next answer is posted beside it."""
+    if not FP_RE.match(fp or ""):
+        return False
+    with _LOCK:
+        data = _load()
+        entry = data["items"].get(fp)
+        if not isinstance(entry, dict) or not isinstance(entry.get("owner"), dict):
+            return False
+        if entry["owner"].get("posted"):
+            return False
+        entry.pop("owner", None)
+        _save(data)
+    return True
+
+
+def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
+                        running: str = "") -> int:
+    """The owner's verdict on a fix, as the comment the cloud reads: a
+    confirmation, or "Not fixed" with their words and the issue reopened
+    so the next run's drain takes it. Their words are aliased and
+    scrubbed exactly as an issue body is."""
+    posted = 0
+    for entry in items.values():
+        if not isinstance(entry, dict):
+            continue
+        owner = entry.get("owner")
+        if not isinstance(owner, dict) or owner.get("posted"):
+            continue
+        number = int(entry.get("issue") or 0)
+        # The release the house runs now, which is what the owner answered
+        # about; the entry's own version is the release the report was
+        # last SEEN on, and a request has never been seen since it was
+        # filed.
+        version = running or str(entry.get("version") or "?")
+        if owner.get("verdict") == "held":
+            text, reopen = f"The owner confirms this is fixed on brAIn {version}.", False
+        else:
+            words = aliases.apply(scrub(str(owner.get("note") or "")))
+            text = f"Not fixed on brAIn {version}" + (f": {words}" if words else ".")
+            reopen = True
+        ok, err = github.comment(token, repo, number, text, reopen=reopen)
+        if not ok:
+            entry["error"] = err
+            continue
+        owner["posted"] = True
+        owner["posted_at"] = time.time()
+        if reopen:
+            entry.update(verdict="open", closed_at=0)
+        entry.pop("error", None)
+        posted += 1
+    return posted
+
+
 def _retire_superseded(token: str, repo: str, items: dict, newest: dict) -> int:
     """Close the stream's older rolling issues once a new one is filed.
 
@@ -1068,7 +1251,7 @@ def _retire_superseded(token: str, repo: str, items: dict, newest: dict) -> int:
 
 
 def _follow_up(token: str, repo: str, entry: dict, now: float,
-               aliases: Aliases | None = None) -> bool:
+               aliases: Aliases | None = None, running: str = "") -> bool:
     """One comment, when there is something to say: it stopped, it came
     back, or it is still happening on a newer version. Dates and versions
     only — nothing composed from the house.
@@ -1099,9 +1282,22 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
     if entry.get("verdict") in NOISE:
         return False
     looked = stream_on(stream)
+    fixed_in = str(entry.get("fixed_in") or "")
+    # Whether the fix is installed is asked of the release the house RUNS
+    # (the queue's, stamped by every sweep), never the one the fault was
+    # last seen on: a fault that stopped was last seen on the old release
+    # by definition.
+    running = running or version
+    arrived = running_at_least(running, fixed_in) if fixed_in else None
     if looked and absent >= CLEAR_AFTER_S and not entry.get("cleared_noted"):
-        text = (f"Not seen since {_date(entry.get('last_seen'))} "
-                f"(brAIn {version}).")
+        if entry.get("verdict") == "fixed" and arrived:
+            # The fix is installed and the fault stopped: the one sentence
+            # that closes the loop, said as the claim it is.
+            text = (f"Held: not seen since {_date(entry.get('last_seen'))} "
+                    f"on brAIn {running} (fixed in {fixed_in}).")
+        else:
+            text = (f"Not seen since {_date(entry.get('last_seen'))} "
+                    f"(brAIn {version}).")
         entry["cleared_noted"] = True
     elif absent < CLEAR_AFTER_S and (entry.get("returned")
                                      or version != entry.get("noted_version")):
@@ -1119,6 +1315,12 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
             if verdict in NOISE:
                 return False
         if verdict != "open":
+            if verdict == "fixed" and arrived is False:
+                # The fix shipped in a release this house does not run
+                # yet. Seeing the fault on the OLD release says nothing
+                # about the fix, so nothing is said and nothing reopened;
+                # `awaiting_update` is where the wait is reported.
+                return False
             since = float(entry.get("version_since") or 0)
             # Gone for two days and seen again after the close is a fault
             # that came back; a row that never went away has to outlast a
@@ -1164,10 +1366,19 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
 def status() -> dict:
     data = _load()
     v = _vload()
+    waiting = awaiting_update(data["items"], str(data.get("version") or ""))
     return {
         "usefulness": usefulness(v),
         "slowed": v["slowed"],
         "verdicts_at": float(v.get("at") or 0),
+        # The newest close the cloud made, so a cloud half that has
+        # stopped answering is a date going stale rather than a silence.
+        "cloud_last_seen": cloud_last_seen(v),
+        # Fixed reports whose fix this house has not installed yet: how
+        # many, and the oldest release they need.
+        "awaiting_update": len(waiting),
+        "awaiting_version": waiting[0]["fixed_in"] if waiting else "",
+        "version": str(data.get("version") or ""),
         "last_run": data.get("last_run") or {},
         "runs_left": runs_left(),
         "last_sweep": STATE["last_sweep"] or data.get("swept_at") or 0,
