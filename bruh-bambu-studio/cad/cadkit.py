@@ -14,7 +14,7 @@ Entry points
   thread_groove(spec, length, ...) helical tool to CUT from a bore
   knurl_cut(r, z0, h, n, flute_r)  flute cutters for a grip
   validate(parts)                  validity / bed / interference / gaps / overhang
-  export_all(parts, name, outdir)  STEP + per-body STL + one multi-object 3MF
+  export_all(parts, name, outdir)  STEP + per-body STL + a 3MF of one object, a part per body
 """
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ import os
 
 import cadquery as cq
 import numpy as np
+
+import mf3
 
 # Nominal thread data (d = major diameter, P = pitch, h = working depth,
 # angle = included flank angle). Values here were checked against a
@@ -188,7 +190,8 @@ def validate(parts: dict, gap_min=0.25):
 
 
 def export_all(parts: dict, name: str, outdir: str, colors: dict | None = None) -> dict:
-    """STEP assembly, one STL per body, one combined STL and a multi-object 3MF."""
+    """STEP assembly, one STL per body, one combined STL and a 3MF whose
+    parts each name their filament (by colour: see mf3)."""
     import trimesh
 
     os.makedirs(os.path.join(outdir, "bodies"), exist_ok=True)
@@ -204,12 +207,12 @@ def export_all(parts: dict, name: str, outdir: str, colors: dict | None = None) 
     assembly.save(step)
     combined = trimesh.util.concatenate(list(meshes.values()))
     combined.export(os.path.join(outdir, f"{name}.stl"))
-    scene = trimesh.Scene()
-    for body, mesh in meshes.items():
-        scene.add_geometry(mesh, node_name=body, geom_name=body)
-    scene.export(os.path.join(outdir, f"{name}.3mf"))
+    # One object with a part per body, each part naming its filament (mf3).
+    painted = mf3.write(os.path.join(outdir, f"{name}.3mf"), name,
+                        {b: (m.vertices.tolist(), m.faces.tolist()) for b, m in meshes.items()},
+                        colors)
     files = {"step": f"{name}.step", "stl": f"{name}.stl", "3mf": f"{name}.3mf",
-             "bodies": {b: f"bodies/{b}.stl" for b in meshes}}
+             "bodies": {b: f"bodies/{b}.stl" for b in meshes}, **painted}
     with open(os.path.join(outdir, "files.json"), "w") as handle:
         json.dump(files, handle)
     return files

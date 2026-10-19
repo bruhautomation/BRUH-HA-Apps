@@ -114,6 +114,14 @@ dialog { border: 1px solid var(--line); border-radius: var(--radius);
 .toast[hidden] { display: none; }
 
 /* ---- Design with brAIn ---------------------------------------------- */
+.choice { display: grid; gap: 4px; width: 100%; text-align: left; padding: 12px 14px;
+  min-height: 56px; }
+.choice span { font-size: 13px; font-weight: normal; opacity: .85; }
+.bodytray { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px;
+  align-items: center; font-size: 13px; }
+.bodytray select { min-width: 0; }
+.bodytray i { display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+  border: 1px solid var(--line); vertical-align: -2px; }
 .design { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
 .partlist { min-width: 0; }
 .partrow { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left;

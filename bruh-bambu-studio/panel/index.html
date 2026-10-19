@@ -152,6 +152,25 @@
   </section>
 </main>
 
+<dialog id="printChoice" aria-labelledby="pcTitle">
+  <div class="grid">
+    <h2 id="pcTitle">Print this part</h2>
+    <button type="button" class="choice primary" id="pcAuto">
+      <b>Auto print</b>
+      <span>brAIn picks the printer, the filament for each body and the settings, asks only what it must, and starts the print.</span>
+    </button>
+    <button type="button" class="choice" id="pcManual">
+      <b>Manual print</b>
+      <span>Choose the printer, trays and settings yourself.</span>
+    </button>
+    <button type="button" class="choice" id="pcStudio">
+      <b>Open in Bambu Studio</b>
+      <span>Set it up and start the print in Bambu Studio on the Studio tab.</span>
+    </button>
+    <div class="row"><button type="button" id="pcCancel">Cancel</button></div>
+  </div>
+</dialog>
+
 <dialog id="designPrint">
   <form method="dialog" id="designPrintForm" class="grid">
     <h2>Print this part</h2>

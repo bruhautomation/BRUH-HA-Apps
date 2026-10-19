@@ -19,8 +19,9 @@ from the panel, a dashboard, an automation, or brAIn.
   homing and G-code, on the panel and as `bruh_bambu.*` services.
 - **Design parts with brAIn** (optional). With brAIn installed, a Design tab
   lets you describe a part, shape it in conversation, watch it in a 3D view
-  with measuring, keep every version, and send it to a printer with the
-  slicing brAIn recommends and the filament you pick.
+  with measuring, keep every version, and say *print it*: brAIn picks the
+  printer, a tray for each colour and the settings, and starts the print. Or
+  print it yourself, or open it in Bambu Studio.
 - **brAIn drives it.** Ask brAIn to start the print, pause it, or tell you how
   long is left.
 - **Printer cards** for Lovelace and for Morph: progress, time left,

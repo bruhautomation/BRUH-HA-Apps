@@ -122,13 +122,28 @@ in the add-on changes.
 3. Keep talking to change it. Every change that builds is a new **version**:
    the chips under the view switch between them, and *Keep working from vN*
    makes an older one the base for the next change. Nothing is overwritten.
-4. **Print** asks which printer, then shows how brAIn would print it — the
-   material and colour it suggests and why, layer height, walls, infill,
-   supports and brim, all editable — and the AMS trays with the best match
-   picked. *Slice and print* chooses Bambu Studio's own profiles for that
-   printer and filament, puts the settings over them, slices with Bambu
-   Studio's command line, uploads and starts. Set the printer's **model** on
-   the Printers tab so the right profiles are chosen.
+4. **Print** offers three ways:
+   - **Auto print** — brAIn chooses the printer (one that is online and
+     idle), the AMS tray for every body (the material first, then the closest
+     colour), and the settings, and starts the print. It asks first only when
+     something it needs is missing: no idle printer, a colour or material that
+     is not loaded (it says which to load), or a printer whose last print may
+     still be on the plate. You can also just say *print it* in the
+     conversation — brAIn starts prints from the chat, and the add-on says
+     how it went there.
+   - **Manual print** — choose the printer, the tray for each body, and the
+     layer height, walls, infill, supports and brim yourself, starting from
+     what brAIn suggests.
+   - **Open in Bambu Studio** — opens that version on the Studio tab, to set
+     it up and print it from Bambu Studio itself.
+
+   A part in several colours is several bodies that touch (a logo on a cube
+   is two bodies), and each body prints from its own tray, so those colours
+   need to be loaded in the AMS; the external spool holds one filament and
+   suits a one-colour part. Printing uses Bambu Studio's own profiles for
+   that printer and each tray's filament, puts the settings over them, slices
+   with Bambu Studio's command line, uploads and starts. Set the printer's
+   **model** on the Printers tab so the right profiles are chosen.
 
 Every part lives in `/share/bambu/designs/<part>/` — its conversation, each
 version's `design.py`, STEP, 3MF and STL — so you can open the STEP in

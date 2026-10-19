@@ -15,6 +15,10 @@
  *    leading with the wrong device's gestures, outside the 3D view, not
  *    closing on an outside tap, or under the touch floor;
  *  - the body key missing a body or not hiding one;
+ *  - Print not offering Auto print, Manual print and Open in Bambu Studio
+ *    (each under the touch floor or spilling out of the dialog), Auto print
+ *    not asking brAIn to print, Manual print not offering a tray per body,
+ *    or Open in Bambu Studio not opening that version and the Studio tab;
  *  - the Files list showing a design's working files, a design row with a
  *    Delete, an import box under 16px on touch;
  *  - Find printers not listing what it found, a moved printer with no
@@ -77,7 +81,13 @@ const API = {
   'api/design/parts': { ok: true, parts: [{ id: PART.id, name: PART.name, versions: 1, current: 1,
     state: 'idle', updated: 1 }] },
   [`api/design/parts/${PART.id}`]: { ok: true, part: PART },
+  [`api/design/parts/${PART.id}/plan`]: { ok: true, printer: 'X1C', settings: PART.print_settings,
+    trays: PRINTER.ams, recommended_slot: 0, machine: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    process: '0.20mm Standard @BBL X1C', filament: 'Bambu PLA Basic @BBL X1C',
+    bodies: [{ name: 'Base', colour: '#F4F4F2', recommended_slot: 0 },
+      { name: 'Lid', colour: 'red', recommended_slot: null }] },
 };
+const POSTS = [];
 const STL = { 'bodies/Base.stl': box(0, 0, 0, 40, 30, 30), 'bodies/Lid.stl': box(0, 0, 31, 40, 30, 36) };
 
 const problems = [];
@@ -99,6 +109,10 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
     }
     if (path.endsWith('/file')) {
       return route.fulfill({ body: STL[url.searchParams.get('path')] || '', contentType: 'model/stl' });
+    }
+    if (route.request().method() === 'POST' && /^api\/design\/parts\/[^/]+\/(message|studio)$/.test(path)) {
+      POSTS.push({ label, path, body: route.request().postDataJSON() });
+      return route.fulfill({ json: { ok: true, part: PART, studio: {} } });
     }
     if (path === 'api/printers/scan') {
       return route.fulfill({ json: { ok: true, job: { state: 'done', networks: ['192.168.1.0/24'],
@@ -195,6 +209,48 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Design tab scrolls sideways by ${wide} px`);
 
+  // Print: three ways, each a real target, each doing what it says.
+  await page.locator('#partPrint').click();
+  const choice = page.locator('#printChoice');
+  if (!(await choice.isVisible())) {
+    say('Print did not offer a choice');
+    // Whatever opened instead is closed, so the rest is still measured.
+    await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  } else {
+    const box = await choice.boundingBox();
+    for (const [id, words] of [['#pcAuto', 'Auto print'], ['#pcManual', 'Manual print'],
+      ['#pcStudio', 'Open in Bambu Studio']]) {
+      const b = page.locator(id);
+      if (!(await b.count()) || !(await b.isVisible())) { say(`Print does not offer ${words}`); continue; }
+      if (!(await b.textContent()).includes(words)) say(`${id} does not say ${words}`);
+      const bb = await b.boundingBox();
+      if (touch && bb.height < 44) say(`${words} is ${bb.height}px tall, under the touch floor`);
+      if (bb.x < box.x - 1 || bb.x + bb.width > box.x + box.width + 1) say(`${words} spills out of the dialog`);
+    }
+    await page.locator('#pcManual').click();
+    const selects = page.locator('#dpTrays .bodytray select');
+    await selects.first().waitFor({ timeout: 5000 }).catch(() => say('Manual print offers no tray per body'));
+    if ((await selects.count()) === 2) {
+      const values = await selects.evaluateAll((els) => els.map((e) => e.value));
+      if (values.join() !== '0,external') say(`the body trays start at ${values}, not the closest colour`);
+    }
+    await page.locator('#dpCancel').click();
+    await page.locator('#partPrint').click();
+    await page.locator('#pcAuto').click();
+    await page.waitForTimeout(200);
+    const asked = POSTS.find((p) => p.label === label && p.path.endsWith('/message'));
+    if (!asked || !/Print this part now/.test(asked.body.text)) say('Auto print did not ask brAIn to print');
+    await page.locator('#partPrint').click();
+    await page.locator('#pcStudio').click();
+    await page.waitForTimeout(200);
+    const opened = POSTS.find((p) => p.label === label && p.path.endsWith('/studio'));
+    if (!opened || opened.body.version !== 1) say('Open in Bambu Studio did not open this version');
+    if (!(await page.evaluate(() => document.body.classList.contains('studio-open')))) {
+      say('Open in Bambu Studio did not go to the Studio tab');
+    }
+    await page.locator('#designTab').click();
+  }
+
   // Files: what was brought in, and the design once, with no Delete.
   await page.locator('.tab[data-view="files"]').click();
   await page.locator('#fileList .file').first().waitFor();
@@ -268,4 +324,4 @@ if (problems.length) {
   console.log(`FAIL\n${problems.map((p) => `  - ${p}`).join('\n')}`);
   process.exit(1);
 }
-console.log('OK: colours, controls help, body key, Files list and Find printers at 390 (touch) and 1280.');
+console.log('OK: colours, controls help, body key, Print choices, Files list and Find printers at 390 (touch) and 1280.');

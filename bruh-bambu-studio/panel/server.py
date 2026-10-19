@@ -49,7 +49,7 @@ import store  # noqa: E402
 import vnc_bridge  # noqa: E402
 from bambu import ftps, protocol, threemf  # noqa: E402
 from bambu.client import PrinterClient  # noqa: E402
-from design import brain_link, designer, parts, profiles, runner  # noqa: E402
+from design import brain_link, designer, painting, parts, profiles, runner  # noqa: E402
 from studio import Studio  # noqa: E402
 
 log = logging.getLogger("bruh_bambu")
@@ -232,7 +232,8 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
                 paths = prepared["paths"]
                 slice_job = slicer.start_paths(
                     source, machine=Path(paths["machine"]), process=Path(paths["process"]),
-                    filaments=[Path(paths["filament"])], arrange=True, env=env)
+                    filaments=[Path(f) for f in paths.get("filaments") or [paths["filament"]]],
+                    arrange=True, env=env)
             else:
                 slice_job = slicer.start(body["file"], plate=int(body.get("plate") or 0),
                                          machine=body.get("machine") or "",
@@ -667,7 +668,8 @@ def recommend_tray(trays: list[dict], material: str, colour: str) -> int | None:
     """The AMS slot that best fits what brAIn recommended: the material
     first (a PETG part on a PLA tray is a different part), then the colour."""
     material = str(material or "").upper()
-    wanted = next((rgb for name, rgb in COLOUR_NAMES.items() if name in str(colour).lower()), None)
+    wanted = _rgb(colour) if str(colour or "").startswith("#") else next(
+        (rgb for name, rgb in COLOUR_NAMES.items() if name in str(colour).lower()), None)
     best, best_score = None, None
     for tray in trays:
         kind = str(tray.get("type") or "").upper()
@@ -717,7 +719,7 @@ async def h_design_part(request):
 
 async def h_design_delete(request):
     part = _part_or_404(request)
-    if part.get("state") in ("thinking", "building", "fixing"):
+    if part.get("state") in ("thinking", "building", "fixing", "printing"):
         return _err("brAIn is still working on this part.", 409)
     import shutil
     await asyncio.to_thread(shutil.rmtree, parts.folder(part["id"]), True)
@@ -784,12 +786,39 @@ async def h_design_thumb(request):
     return web.json_response({"ok": True})
 
 
+def _version_3mf(part: dict, n) -> tuple[int, dict, Path]:
+    n = int(n or part.get("current") or 0)
+    row_v = parts.version(part, n)
+    if not row_v or not row_v.get("ok") or not (row_v.get("files") or {}).get("3mf"):
+        raise PrintRefused("This part has no built version to print yet.")
+    return n, row_v, parts.version_dir(part["id"], n) / row_v["files"]["3mf"]
+
+
+def _body_colours(part: dict, row_v: dict, names: list[str] | None) -> dict:
+    """Each body's colour: the script's COLORS, else brAIn's suggestion."""
+    fallback = (part.get("print_settings") or {}).get("colour", "")
+    colours = row_v.get("colors") or {}
+    return {name: colours.get(name) or fallback for name in (names or ["Part"])}
+
+
 def _plan(part: dict, printer_row: dict, client: PrinterClient | None) -> dict:
     settings = part.get("print_settings") or {}
     trays = (client.summary().get("ams") if client else None) or []
     plan = {"settings": settings, "trays": trays,
             "recommended_slot": recommend_tray(trays, settings.get("material", "PLA"),
                                                settings.get("colour", ""))}
+    try:
+        _n, row_v, source = _version_3mf(part, None)
+        names = painting.bodies(source)
+    except PrintRefused:
+        row_v, names = {}, None
+    # A part whose 3MF names a filament per body is offered a tray per
+    # body; an older one prints in one filament.
+    if names and len(names) > 1:
+        material = settings.get("material", "PLA")
+        plan["bodies"] = [{"name": name, "colour": colour,
+                           "recommended_slot": recommend_tray(trays, material, colour)}
+                          for name, colour in _body_colours(part, row_v, names).items()]
     try:
         machine = profiles.machine_for(printer_row.get("model"))
         plan["machine"] = machine
@@ -811,58 +840,197 @@ async def h_design_plan(request):
     return web.json_response({"ok": True, "printer": row["name"], **plan})
 
 
-async def h_design_print(request):
-    part = _part_or_404(request)
-    panel = _panel(request)
-    body = await _body(request)
-    n = int(body.get("version") or part.get("current") or 0)
-    row_v = parts.version(part, n)
-    if not row_v or not row_v.get("ok") or not (row_v.get("files") or {}).get("3mf"):
-        return _err("This part has no built version to print yet.")
+TURN_STATES = ("thinking", "building", "fixing", "printing")
+RECORD_WAIT_S = 1800
+
+
+class PrintRefused(Exception):
+    """A design print that cannot start, with the status a route answers."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def _slot_word(slot, trays: dict) -> str:
+    if slot == "external":
+        return "the external spool"
+    tray = trays.get(slot) or {}
+    return f"AMS {slot + 1} ({' '.join(x for x in (tray.get('colour'), tray.get('type')) if x)})"
+
+
+def _chosen_slots(names: list[str] | None, slots, trays: dict, material: str,
+                  colours: dict) -> dict:
+    """{body: tray or "external"} from what was asked, filling in the rest.
+
+    `slots` is one slot for the whole part, or {body: slot}; a body nobody
+    named takes the tray that best fits its colour, else the external spool.
+    """
+    keys = names or ["Part"]
+    if isinstance(slots, dict) and not names:
+        # A version from before per-body filaments prints in one: the first named.
+        slots = next(iter(slots.values()), None)
+    if not isinstance(slots, dict):
+        slots = {name: slots for name in keys}
+    chosen = {}
+    for name in keys:
+        slot = slots.get(name)
+        if slot is None or slot == "":
+            slot = recommend_tray(list(trays.values()), material, colours.get(name, ""))
+            slot = "external" if slot is None else slot
+        if slot in ("external", -1, "-1"):
+            chosen[name] = "external"
+            continue
+        try:
+            slot = int(slot)
+        except (TypeError, ValueError):
+            raise PrintRefused(f"{slot!r} is not an AMS tray.") from None
+        if slot not in trays:
+            raise PrintRefused(f"AMS tray {slot + 1} has no filament loaded.", 409)
+        chosen[name] = slot
+    return chosen
+
+
+def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None,
+                       slots=None, settings=None, timelapse=False) -> tuple[dict, dict, str]:
+    """Slice a designed part for one printer and send it: (job, prepared, sentence).
+
+    The one path for the dialog's Slice and print and for brAIn starting a
+    print from the conversation. PrintRefused says why it cannot start.
+    """
+    part = parts.load(part_id)
+    n, row_v, source = _version_3mf(part, version)
     try:
-        row, client = panel.printer(body.get("printer"))
+        row, client = panel.printer(printer)
     except LookupError as exc:
-        return _err(str(exc), 404)
+        raise PrintRefused(str(exc), 404) from None
     if not client.connected:
-        return _err(f"{row['name']} is not connected: {client.last_error or 'still connecting'}.", 409)
+        raise PrintRefused(f"{row['name']} is not connected: "
+                           f"{client.last_error or 'still connecting'}.", 409)
+    summary = client.summary()
+    if summary.get("printing"):
+        raise PrintRefused(f"{row['name']} is already printing.", 409)
+    trays = {t["slot"]: t for t in summary.get("ams") or [] if isinstance(t.get("slot"), int)}
     settings = designer.clean_settings({**(part.get("print_settings") or {}),
-                                        **(body.get("print_settings") or {})}) or {}
-    slot = body.get("slot")
-    use_ams = isinstance(slot, int) and 0 <= slot < 16
-    if use_ams:
-        tray = next((t for t in client.summary().get("ams") or [] if t.get("slot") == slot), None)
-        if tray and tray.get("type"):
-            settings["material"] = str(tray["type"]).upper()
-    source = parts.version_dir(part["id"], n) / row_v["files"]["3mf"]
+                                        **(settings or {})}) or {}
+    names = painting.bodies(source)
+    colours = _body_colours(part, row_v, names)
+    chosen = _chosen_slots(names, slots, trays, settings.get("material", "PLA"), colours)
+    order, filament = painting.plan(chosen)
+    if len(order) > 1 and "external" in order:
+        raise PrintRefused("The external spool holds one filament; a part in several "
+                           "filaments prints from the AMS.", 409)
+    use_ams = order != ["external"]
+    wanted = []
+    for slot in order:
+        tray = trays.get(slot) if slot != "external" else None
+        wanted.append({"material": str(tray["type"]).upper() if tray and tray.get("type")
+                       else settings.get("material", "PLA"),
+                       "colour": (tray or {}).get("colour") or ""})
+    settings["material"] = wanted[0]["material"]
+    work = parts.version_dir(part["id"], n) / f"slicing-{row['id']}"
     try:
-        prepared = await asyncio.to_thread(
-            profiles.prepare, row.get("model"), settings,
-            parts.version_dir(part["id"], n) / f"slicing-{row['id']}")
-    except (LookupError, OSError, ValueError) as exc:
-        return _err(str(exc), 409)
+        prepared = profiles.prepare(row.get("model"), settings, work, wanted)
+        if names:
+            # The parts' filament numbers follow the trays used, in order.
+            target = work / source.name
+            painting.retarget(source, target, filament)
+            source = target
+    except (LookupError, OSError, ValueError, KeyError) as exc:
+        raise PrintRefused(str(exc), 409) from None
     job_body = {"file": library.relative(source), "use_ams": use_ams,
-                "ams_mapping": [slot] if use_ams else [0],
-                "timelapse": bool(body.get("timelapse")), "bed_leveling": True}
+                "ams_mapping": order if use_ams else [0],
+                "timelapse": bool(timelapse), "bed_leveling": True}
     job = panel.new_job("print", printer=row["name"], file=job_body["file"], part=part["id"])
+    if names and len(chosen) > 1:
+        where = "; ".join(f"{body} from {_slot_word(slot, trays)}" for body, slot in chosen.items())
+    else:
+        where = f"from {_slot_word(next(iter(chosen.values())), trays)}"
+    sentence = f"version {n} on {row['name']}, {where}"
 
     def record(finished: dict) -> None:
+        # A turn holds the part in memory and saves it when it ends; a note
+        # written under it would be lost, so it waits for the turn to finish.
+        deadline = time.time() + RECORD_WAIT_S
+        while (parts.load(part["id"]).get("state") in TURN_STATES
+               and time.time() < deadline):
+            time.sleep(0.2)
         fresh = parts.load(part["id"])
         fresh.setdefault("prints", []).append({
             "at": time.time(), "printer": row["name"], "version": n, "job": finished["id"],
             "state": finished["state"], "error": finished.get("error", ""),
-            "material": settings.get("material"), "slot": slot})
+            "material": settings.get("material"), "slots": chosen})
         parts.say(fresh, "system", (
-            f"Sent version {n} to {row['name']} ({prepared['filament']}, {prepared['process']})."
+            f"Printing {sentence} ({prepared['filament']}, {prepared['process']})."
             if finished["state"] == "done" else f"Printing version {n} failed: {finished.get('error')}"))
         parts.save(fresh)
 
     threading.Thread(target=_print_job, args=(panel, job, row, client, job_body,
                                               panel.studio.env(), prepared, record),
                      daemon=True).start()
+    return job, prepared, sentence
+
+
+async def h_design_print(request):
+    part = _part_or_404(request)
+    panel = _panel(request)
+    body = await _body(request)
+    slots = body.get("slots") if isinstance(body.get("slots"), dict) else body.get("slot")
+    try:
+        job, prepared, _sentence = await asyncio.to_thread(
+            start_design_print, panel, part["id"], version=body.get("version"),
+            printer=body.get("printer"), slots=slots,
+            settings=body.get("print_settings") or {}, timelapse=bool(body.get("timelapse")))
+    except PrintRefused as exc:
+        return _err(str(exc), exc.status)
     job = await _wait_for(panel, job, body.get("wait"))
     return web.json_response({"ok": job["state"] != "failed", "job": job, "plan": {
         k: prepared[k] for k in ("machine", "process", "filament", "material")},
         **({"error": job["error"]} if job["state"] == "failed" else {})})
+
+
+async def h_design_studio(request):
+    """Open one version's 3MF in Bambu Studio, to set it up and print there."""
+    part = _part_or_404(request)
+    panel = _panel(request)
+    body = await _body(request)
+    try:
+        _n, _row, source = _version_3mf(part, body.get("version"))
+    except PrintRefused as exc:
+        return _err(str(exc), exc.status)
+    if not source.is_file():
+        return _err("That version's 3MF is missing.", 404)
+    await asyncio.to_thread(panel.studio.restart, str(source))
+    return web.json_response({"ok": True, "studio": panel.studio.state()})
+
+
+class DesignPrinting:
+    """What the conversation needs from the printers: what is there, and
+    starting a print brAIn chose (designer.PRINTING)."""
+
+    def __init__(self, panel: Panel):
+        self.panel = panel
+
+    def context(self) -> list[dict]:
+        out = []
+        for row in self.panel.printers():
+            out.append({
+                "id": row["id"], "name": row["name"], "model": row.get("model") or "",
+                "online": bool(row.get("online")), "state": row.get("state") or "unknown",
+                "printing": bool(row.get("printing")),
+                "trays": [{"slot": t["slot"], "material": t.get("type"), "colour": t.get("colour"),
+                           "remaining_percent": t.get("remaining")} for t in row.get("ams") or []],
+            })
+        return out
+
+    def start(self, part_id: str, request: dict) -> str:
+        try:
+            _job, _prepared, sentence = start_design_print(
+                self.panel, part_id, printer=request.get("printer"),
+                slots=request.get("slots"), timelapse=bool(request.get("timelapse")))
+        except (PrintRefused, LookupError, ValueError, OSError) as exc:
+            return f"The print did not start: {exc}"
+        return f"Slicing and sending {sentence}. Follow it on the Printers tab."
 
 
 def _asset(name: str, content_type: str):
@@ -925,6 +1093,8 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     app = web.Application(middlewares=[json_errors],
                           client_max_size=library.MAX_UPLOAD + (1 << 20))
     app[PANEL_KEY] = panel or Panel()
+    # The conversation reads the printers and starts the prints brAIn chose.
+    designer.PRINTING = DesignPrinting(app[PANEL_KEY])
     r = app.router
     r.add_get("/", _asset("index.html", "text/html"))
     r.add_get("/app.js", _asset("app.js", "application/javascript"))
@@ -967,6 +1137,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_post("/api/design/parts/{id}/thumb", h_design_thumb)
     r.add_get("/api/design/parts/{id}/plan", h_design_plan)
     r.add_post("/api/design/parts/{id}/print", h_design_print)
+    r.add_post("/api/design/parts/{id}/studio", h_design_studio)
     if ticker:
         app.cleanup_ctx.append(_ticker)
     return app

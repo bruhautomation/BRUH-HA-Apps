@@ -77,7 +77,7 @@ def main(script: str, outdir: str) -> int:
             _write(outdir, report)
             return 2
         report["stage"] = "export"
-        report["files"] = cadkit.export_all(parts, name, outdir)
+        report["files"] = cadkit.export_all(parts, name, outdir, report.get("colors"))
         report["ok"] = True
         report["stage"] = "done"
         _write(outdir, report)
