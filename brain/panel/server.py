@@ -1890,7 +1890,9 @@ def _brief_morning(now: float, night: dict) -> dict:
     try:
         return brief.morning_facts(
             night.get("states") or [], night.get("actions") or [], now,
-            closures_store=store, bucket=bucket, clock=clock)
+            closures_store=store, bucket=bucket, clock=clock,
+            labels={eid: row.get("labels") for eid, row in _NAMES.items()
+                    if isinstance(row, dict) and row.get("labels")})
     except Exception as exc:  # noqa: BLE001 — a reason lost, not the brief
         log.info("brief could not read this morning: %s", exc)
         return {}
