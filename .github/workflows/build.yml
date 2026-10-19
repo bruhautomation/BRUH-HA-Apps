@@ -30,6 +30,7 @@ on:
       - "bruh-minecraft-server/**"
       - "bright/**"
       - "bruh-print/**"
+      - "bruh-bambu-studio/**"
       - "morph/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -52,8 +53,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [brain, bruh-minecraft-server, bright, bruh-print, morph]
+        addon: [brain, bruh-minecraft-server, bright, bruh-print, bruh-bambu-studio, morph]
         arch: [aarch64, amd64]
+        # Bambu Lab publishes Bambu Studio for Linux on x86-64 only, so the
+        # add-on's config.yaml lists amd64 alone and there is no aarch64
+        # image to build.
+        exclude:
+          - addon: bruh-bambu-studio
+            arch: aarch64
 
     steps:
       - uses: actions/checkout@v7

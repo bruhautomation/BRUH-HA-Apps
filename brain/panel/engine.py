@@ -882,6 +882,7 @@ ANALYST_TOOLS = [
     f"{MCP}minecraft_status",
     f"{MCP}label_printer_status",
     f"{MCP}bright_status",
+    f"{MCP}bambu_status",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -919,6 +920,8 @@ ANALYST_DENIED = [
     f"{MCP}minecraft_world", f"{MCP}minecraft_command",
     f"{MCP}minecraft_server", f"{MCP}minecraft_addons",
     f"{MCP}print_label", f"{MCP}bright_show",
+    # 3D printers: starting, stopping, heating, G-code and slicing.
+    f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
     # What a device shows as: each one rewrites the entity registry or
     # creates and removes a helper's config entry, which an entity in a
     # dashboard, an automation or a voice assistant then stands on.

@@ -66,6 +66,7 @@ GATED_MCP = frozenset({
     "esphome_update_firmware", "esphome_write_config",
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
+    "bambu_print", "bambu_control", "bambu_slice",
 })
 # A gated tool's actions that only read: asking which add-ons exist or
 # searching Modrinth changes nothing, and a gate in front of a search is a

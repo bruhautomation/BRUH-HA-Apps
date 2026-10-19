@@ -86,6 +86,32 @@ at UID 1000 and never touches USB. BRUH Print holds no credential of its
 own, reads and writes its own `/data` and `/config/.bruh_print/`, and writes
 one file under `/config/www/bruh_print/` (the Lovelace card).
 
+**BRUH Bambu Studio** runs Bambu Studio on a virtual X screen inside its
+container. The VNC server that reads that screen listens on **loopback
+only** and has no password of its own, because the only route to it is the
+panel's websocket bridge, which is behind ingress with `panel_admin: true`.
+No port is published and there is no host networking. It holds one kind of
+credential: each printer's LAN **access code**, kept in
+`/data/secrets/printers.json` (mode 0600) and excluded from Home Assistant
+backups. It talks to the printers outbound only (MQTT on 8883 and FTPS on
+990, both TLS; the printers' certificates are self-signed per device and are
+not verified, the access code being what authenticates). It downloads Bambu
+Studio from Bambu Lab's GitHub releases over HTTPS and unpacks it without
+mounting anything. Everything after the first-boot filesystem layout runs at
+UID 1000. Starting a print, stopping one, raw G-code and slicing are refused
+to a voice-level brAIn agent, and every acting tool is kept from brAIn's
+unattended runs.
+
+Its optional **Design** tab runs Python that brAIn writes (a CadQuery part
+script). brAIn answers those requests with reading tools only and never
+writes or runs anything itself; the add-on parses each script first and
+refuses any import other than CadQuery, cadkit, math and numpy and any use of
+`open`, `eval`, `getattr` or underscore attributes, then runs it in a
+separate process with an empty environment (no `SUPERVISOR_TOKEN`), a CPU
+time limit and a cap on what it may write. That check is a guard against a
+model wandering, not a sandbox against an adversary: the words that drive it
+come from an admin, in a panel only an admin can open.
+
 Things we consider vulnerabilities:
 
 - Any management endpoint answering a caller who has not authenticated to

@@ -5,6 +5,12 @@ All notable changes to the **BRight** add-on are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.23.3
+
+### Changed
+
+- BRight is marked **experimental** in the add-on store. Nothing about how it works changed; the label says it is still settling.
+
 ## 0.23.2
 
 ### Added

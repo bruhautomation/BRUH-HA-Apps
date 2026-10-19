@@ -54,6 +54,7 @@ GATED_MCP = frozenset({
     "esphome_update_firmware", "esphome_write_config",
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
+    "bambu_print", "bambu_control", "bambu_slice",
 })
 # Built-in tools the gate reads only while a change contract is in force:
 # under one, a file edit outside its files is off the contract and a shell

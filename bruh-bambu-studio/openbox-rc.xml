@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Openbox for a screen nobody sits in front of: every window starts
+     maximised and undecorated, so Bambu Studio fills the panel, and its
+     dialogs (which are not maximised by this rule's `type`) still open on
+     top where noVNC can reach them. -->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <focus><focusNew>yes</focusNew><followMouse>no</followMouse></focus>
+  <placement><policy>Smart</policy><center>yes</center></placement>
+  <desktops><number>1</number></desktops>
+  <applications>
+    <application class="*" type="normal">
+      <maximized>yes</maximized>
+      <decor>no</decor>
+    </application>
+  </applications>
+</openbox_config>

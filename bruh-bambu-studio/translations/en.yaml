@@ -1,0 +1,48 @@
+---
+# Option labels and help text for BRUH Bambu Studio's configuration UI.
+configuration:
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the companion bruh_bambu integration, which adds the print,
+      pause, resume, stop, slice and status services, a sensor set for each
+      printer, and the route brAIn uses to run your printers. Turn it off if
+      you only ever use the panel.
+  install_lovelace_card:
+    name: Install the printer card
+    description: >-
+      Put the BRUH Bambu printer card in your dashboard card picker: progress,
+      time left, temperatures and AMS for each printer, with pause, resume,
+      stop, speed and light. It is a file in /config/www/bruh_bambu; turning
+      this off stops it being updated and registered.
+  install_morph_card:
+    name: Install the Morph printer card
+    description: >-
+      When Morph is installed, put the same printer card in /config/morph/cards
+      so a Morph dashboard can use it as custom:morph-bambu-printer. Nothing
+      happens without Morph.
+  bambu_studio_version:
+    name: Bambu Studio version
+    description: >-
+      "latest" downloads the newest Bambu Studio release on first start and
+      keeps it. Put a release tag here (for example v02.08.02.61) to stay on
+      that version; changing it downloads the new one on the next start. You
+      can also update from the panel.
+  appimage_url:
+    name: AppImage download link
+    description: >-
+      A direct link to a Bambu Studio Linux AppImage, used instead of looking
+      the release up on GitHub. Leave it empty unless GitHub is unreachable
+      from your Home Assistant or you want a build Bambu Lab did not publish
+      as a release.
+  screen_resolution:
+    name: Screen size
+    description: >-
+      The size of the virtual screen Bambu Studio draws on, as WIDTHxHEIGHT.
+      The panel scales it to fit your window; a larger screen shows more of
+      the slicer at once and makes text smaller on a phone.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the add-on's own logging. "info" is normal. Successful
+      status polls are hidden at every level except "debug".

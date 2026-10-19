@@ -29,6 +29,7 @@ INTEGRATIONS = {
     "bruh_minecraft": REPO / "bruh-minecraft-server" / "custom_components" / "bruh_minecraft",
     "bright": REPO / "bright" / "custom_components" / "bright",
     "bruh_print": REPO / "bruh-print" / "custom_components" / "bruh_print",
+    "bruh_bambu": REPO / "bruh-bambu-studio" / "custom_components" / "bruh_bambu",
 }
 RESPONDS = ("optional", "only")
 

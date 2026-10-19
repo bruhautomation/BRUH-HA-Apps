@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bambu Studio</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{"imports": {"three": "./vendor/three.module.min.js"}}</script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><strong>BRUH</strong> Bambu Studio <span class="tag">Experimental</span></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" data-view="studio" role="tab">Studio</button>
+    <button class="tab" data-view="printers" role="tab">Printers</button>
+    <button class="tab" data-view="files" role="tab">Files</button>
+    <button class="tab" data-view="design" role="tab" id="designTab" hidden>Design</button>
+  </nav>
+</header>
+
+<main>
+  <section id="viewStudio" class="view" data-view="studio">
+    <div id="studioStatus" class="notice" hidden></div>
+    <iframe id="screen" title="Bambu Studio" allow="clipboard-read; clipboard-write"></iframe>
+  </section>
+
+  <section id="viewPrinters" class="view" data-view="printers" hidden>
+    <div id="printerList" class="cards"></div>
+    <details class="card" id="addPrinter">
+      <summary>Add a printer</summary>
+      <p class="hint">On the printer's screen: the IP address is under Network, the
+        access code under LAN settings, the serial number under Device. Turn on
+        LAN-only mode and Developer mode so the printer accepts commands from Home
+        Assistant.</p>
+      <form id="printerForm" class="grid">
+        <label>Name <input name="name" placeholder="Workshop X1C" autocomplete="off"></label>
+        <label>Model <select name="model" id="modelSelect"></select></label>
+        <label>IP address <input name="host" required placeholder="192.168.1.50" autocomplete="off"></label>
+        <label>Serial number <input name="serial" required autocomplete="off"></label>
+        <label>Access code <input name="access_code" required autocomplete="off"></label>
+        <div class="row"><button class="primary" type="submit">Save</button></div>
+      </form>
+    </details>
+  </section>
+
+  <section id="viewFiles" class="view" data-view="files" hidden>
+    <div class="card">
+      <div class="row spread">
+        <div><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
+        <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
+      </div>
+      <div id="jobList"></div>
+      <div id="fileList"></div>
+    </div>
+  </section>
+  <section id="viewDesign" class="view" data-view="design" hidden>
+    <div class="design">
+      <aside class="partlist" id="partList">
+        <div class="row spread"><h2>Parts</h2>
+          <button class="primary" id="newPart" type="button">New part</button></div>
+        <p class="hint" id="designNote"></p>
+        <div id="parts"></div>
+      </aside>
+      <div class="partview" id="partView" hidden>
+        <header class="parthead">
+          <button type="button" id="partBack" class="back" aria-label="All parts">‹ Parts</button>
+          <input id="partName" class="partname" aria-label="Part name">
+          <div class="row wrap" id="partActions">
+            <button type="button" class="primary" id="partPrint">Print</button>
+            <a class="button" id="dl3mf" download>3MF</a>
+            <a class="button" id="dlStep" download>STEP</a>
+            <button type="button" class="danger" id="partDelete">Delete</button>
+          </div>
+        </header>
+        <div class="partbody">
+          <div class="stage">
+            <div class="viewer" id="viewer"><p class="hint center" id="viewerNote">No version yet — describe the part to brAIn.</p></div>
+            <div class="viewtools row wrap">
+              <button type="button" data-view3d="iso">Iso</button>
+              <button type="button" data-view3d="top">Top</button>
+              <button type="button" data-view3d="front">Front</button>
+              <button type="button" data-view3d="right">Right</button>
+              <button type="button" id="measureBtn" aria-pressed="false">Measure</button>
+              <button type="button" id="wireBtn" aria-pressed="false">Wireframe</button>
+            </div>
+            <p class="hint" id="measureOut"></p>
+            <div class="versions" id="versions"></div>
+            <div id="versionInfo" class="hint"></div>
+          </div>
+          <div class="chat">
+            <div class="messages" id="messages"></div>
+            <p class="status" id="designStatus" hidden></p>
+            <form id="composer" class="composer">
+              <textarea id="composerText" rows="2" placeholder="Describe the part, or what to change…"></textarea>
+              <button class="primary" type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<dialog id="designPrint">
+  <form method="dialog" id="designPrintForm" class="grid">
+    <h2>Print this part</h2>
+    <label>Printer <select name="printer" id="dpPrinter"></select></label>
+    <p class="hint" id="dpProfiles"></p>
+    <p id="dpAdvice"></p>
+    <fieldset class="trays" id="dpTrays"><legend>Filament</legend></fieldset>
+    <div class="grid two">
+      <label>Layer height (mm) <input name="layer_height" type="number" step="0.02" min="0.06" max="0.32"></label>
+      <label>Walls <input name="walls" type="number" min="1" max="10"></label>
+      <label>Infill (%) <input name="infill_percent" type="number" min="0" max="100"></label>
+      <label>Supports <select name="supports"><option value="">Profile's</option><option>none</option><option>normal</option><option>tree</option></select></label>
+      <label>Brim <select name="brim"><option value="">Profile's</option><option>none</option><option>auto</option><option>outer</option></select></label>
+    </div>
+    <label class="check"><input type="checkbox" name="timelapse"> Timelapse</label>
+    <div class="row"><button type="button" id="dpCancel">Cancel</button>
+      <button class="primary" value="go">Slice and print</button></div>
+  </form>
+</dialog>
+
+<dialog id="printDialog">
+  <form method="dialog" id="printForm" class="grid">
+    <h2 id="printTitle">Print</h2>
+    <label>Printer <select name="printer" id="printPrinter"></select></label>
+    <label>Plate <input name="plate" type="number" min="1" value="1"></label>
+    <label class="check"><input type="checkbox" name="use_ams" checked> Use the AMS</label>
+    <label class="check"><input type="checkbox" name="bed_leveling" checked> Bed levelling</label>
+    <label class="check"><input type="checkbox" name="timelapse"> Timelapse</label>
+    <p class="hint" id="printNote"></p>
+    <div class="row"><button value="cancel" type="button" id="printCancel">Cancel</button>
+      <button class="primary" value="go">Print</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+<script src="design.js"></script>
+</body>
+</html>

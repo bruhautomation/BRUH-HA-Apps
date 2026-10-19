@@ -1,0 +1,107 @@
+---
+name: "BRUH Bambu Studio"
+description: "Bambu Studio in your Home Assistant sidebar, plus full control of your Bambu Lab printers — slice, upload, start, pause and watch prints from Home Assistant and brAIn"
+version: "0.1.0"
+slug: "bruh-bambu-studio"
+init: false
+
+# The image name follows the FOLDER (build.yml names it after the matrix
+# entry, which is the directory it builds).
+image: "ghcr.io/bruhautomation/{arch}-bruh-bambu-studio"
+
+# amd64 only, and not by choice: Bambu Lab publishes Bambu Studio for Linux
+# as an x86-64 AppImage and nothing else. An aarch64 entry here would be an
+# add-on that installs on a Raspberry Pi and then has no slicer to download.
+arch:
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-bambu-studio"
+
+apparmor: true
+
+boot: auto
+startup: services
+stage: experimental
+
+# Bridged network, port not published. The panel reaches the printers
+# OUTBOUND (MQTT on 8883, FTPS on 990), which a bridged container can do;
+# nothing here needs host networking, so the port is pinned and the
+# watchdog is the Supervisor's own. The cost of not having host networking
+# is SSDP discovery: printers are added by IP address, serial and access
+# code, which the printer's own screen shows.
+watchdog: "http://[HOST]:[PORT:8093]/api/health"
+
+homeassistant: "2024.7.0"
+
+ingress: true
+ingress_port: 8093
+panel_icon: mdi:printer-3d-nozzle
+panel_title: "Bambu Studio"
+panel_admin: true
+
+# ============================================================================
+# Options. Documented inline for whoever edits this file; the text people
+# see is translations/en.yaml.
+# ============================================================================
+options:
+  # enable_ha_integration: deploy the companion `bruh_bambu` integration and
+  # run the file-IPC bridge — the services, the sensors, and the route brAIn
+  # takes to the printers.
+  enable_ha_integration: true
+
+  # install_lovelace_card: copy the printer card to /config/www/bruh_bambu;
+  # the integration registers it so it is in the dashboard card picker.
+  install_lovelace_card: true
+
+  # install_morph_card: when Morph is installed, put the same card in
+  # /config/morph/cards so a Morph dashboard can use it.
+  install_morph_card: true
+
+  # bambu_studio_version: "latest", or a release tag such as v02.08.02.61.
+  # The AppImage is downloaded on first start into /data and kept there; a
+  # different value here downloads that version on the next start.
+  bambu_studio_version: latest
+
+  # appimage_url: a direct link to a Bambu Studio AppImage, used instead of
+  # looking the release up on GitHub. Empty is the normal setting.
+  appimage_url: ""
+
+  # screen_resolution: the size of the virtual screen Bambu Studio draws on.
+  screen_resolution: "1600x900"
+
+  # log_level: verbosity of the add-on's own logging.
+  log_level: info
+schema:
+  enable_ha_integration: bool
+  install_lovelace_card: bool
+  install_morph_card: bool
+  bambu_studio_version: "str"
+  appimage_url: "str?"
+  screen_resolution: "match(^[0-9]{3,4}x[0-9]{3,4}$)"
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config: the integration deploy and the shared state. /share/bambu is where
+# models and sliced files live, so Samba and the File Editor can reach them
+# and Bambu Studio's own Open dialog can too.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+  - type: share
+    read_only: false
+
+# Printer access codes are credentials: they stay out of backups, which are
+# unencrypted unless somebody opts in. The downloaded slicer is 200 MB that
+# the add-on fetches again on its own, so it stays out too.
+backup_exclude:
+  - "secrets/**"
+  - "bambu-studio/**"
+  - "home/.cache/**"
+
+hassio_api: true
+hassio_role: default
+homeassistant_api: true
+auth_api: false
+
+discovery:
+  - bruh_bambu

@@ -1,0 +1,26 @@
+{
+  "services": {
+    "get_status": "mdi:printer-3d",
+    "list_files": "mdi:folder-file-outline",
+    "printer_files": "mdi:sd",
+    "print_file": "mdi:printer-3d-nozzle",
+    "slice_file": "mdi:layers-triple-outline",
+    "pause_print": "mdi:pause",
+    "resume_print": "mdi:play",
+    "stop_print": "mdi:stop",
+    "set_speed": "mdi:speedometer",
+    "set_light": "mdi:lightbulb",
+    "set_temperature": "mdi:thermometer",
+    "send_gcode": "mdi:code-braces",
+    "open_in_studio": "mdi:open-in-app"
+  },
+  "entity": {
+    "sensor": {
+      "status": {"default": "mdi:printer-3d"},
+      "progress": {"default": "mdi:progress-clock"},
+      "remaining": {"default": "mdi:timer-sand"},
+      "nozzle": {"default": "mdi:printer-3d-nozzle-heat"},
+      "bed": {"default": "mdi:radiator"}
+    }
+  }
+}
