@@ -1510,8 +1510,18 @@ def _model_findings(value, max_items: int = 3) -> list[dict]:
     for item in value[:max_items]:
         if isinstance(item, str):
             item = {"text": item}
-        if isinstance(item, dict):
-            out.append(item)
+        if not isinstance(item, dict):
+            continue
+        if not str(item.get("fix") or "").strip() and \
+                str(item.get("text") or "").strip():
+            # A card that named a problem and said nothing about what to
+            # do filed a row with an empty "what to do". It gets the
+            # sentence To Do would have shown for it — the same derivation,
+            # so the card and the list cannot disagree.
+            name = str((_NAMES.get(str(item.get("entity_id") or ""))
+                        or {}).get("name") or "")
+            item = {**item, "fix": findings_store.derive_todo_text(item, name)}
+        out.append(item)
     return out
 
 
@@ -5730,10 +5740,8 @@ async def _run_fix(job_id: str) -> None:
         # than an edit it was not asked to make — and goes through triage
         # like every other producer's, because "I saw this while I was in
         # there" is the most side-channel of all the side channels.
-        also = findings_store.add_many(triage.gate([
-            {"text": extra, "source": "fix",
-             "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
-            for extra in parsed["also_found"]]))
+        also = findings_store.add_many(triage.gate(
+            _also_found_rows(parsed["also_found"], finding)))
         if also:
             log.info("the fix run also filed %d finding(s) for triage",
                      len(also))
@@ -6110,10 +6118,8 @@ async def _run_typed_fix(job_id: str, finding: dict) -> None:
                     subjects=subjects[1:],
                     run_id=capture.run_id_from(run_meta))
         if also:
-            findings_store.add_many(triage.gate([
-                {"text": extra, "source": "fix",
-                 "source_title": f"Noticed while fixing “{textclip.clip(finding['text'], 60)}”"}
-                for extra in also]))
+            findings_store.add_many(triage.gate(
+                _also_found_rows(also, finding)))
         _set_job(job_id, state="done", error="")
         log.info("finding %s → %s (typed fix %s)", ts, status, intervention)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
@@ -6123,6 +6129,24 @@ async def _run_typed_fix(job_id: str, finding: dict) -> None:
             ts, "failed",
             result=f"The fix did not complete: {str(exc)[:400]}")
         _set_job(job_id, state="error", error=str(exc)[:500])
+
+
+def _also_found_rows(extras, finding: dict) -> list[dict]:
+    """A fix run's "also found" notes, as findings — only the ones that are
+    about the house. A note naming an entity the last checks pass did not
+    see (a device already deleted) or speaking about the run itself ("I
+    changed only the ids") is not a problem anybody can act on, and
+    filing it put a card with nothing to do on the list. The names come off
+    `_FACTS_CTX`, the registry that pass already read; one too old to
+    trust is no registry, and then only the first-person notes go."""
+    known = None
+    if (_FACTS_CTX.get("entities")
+            and time.time() - float(_FACTS_CTX.get("at") or 0)
+            < FACTS_REGISTRY_FRESH_S):
+        known = _FACTS_CTX["entities"]
+    title = f"Noticed while fixing “{textclip.clip(finding.get('text') or '', 60)}”"
+    return [{"text": extra, "source": "fix", "source_title": title}
+            for extra in fixer.house_problems(extras, known)]
 
 
 # -- restoring what a fix's service calls changed (a press, never a timer) --

@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.5
+
+### Fixed
+
+- **An automation that builds switch names in a template is not "missing a switch".** A name made from a prefix plus a number or a loop variable is no longer read as a reference to one entity that does not exist. A finding brAIn's look has set aside no longer offers Fix. (#298)
+- **A duct or coil probe is not a room thermometer.** Sensors named for supply air, return air, a coil, a duct, a plenum or an air handler are left out of the room heat model. (#299)
+- **A browser error is not pinned on a phone.** The overnight check no longer files a dashboard script error under a device whose name happened to appear in the browser's details. When it does choose a device's entity, a location tracker is the last choice. Its suggested fixes never ask you to check something brAIn can read. (#297)
+- **A sensor coming back after a restart is not news.** A change from unavailable to a steady state (a tamper sensor reporting its cover off, a door reporting closed) is no longer offered to brAIn's look as an event. A safety detector that comes back tripped still is. (#266)
+- **A fix's side notes are checked before they become findings.** A note naming a device the house no longer has, or a note about the fix run itself ("I changed only the ids"), is no longer filed. (#265, #255)
+- **Automation errors read in plain words, and one error is one finding.** Entity ids in the error are named, the fix no longer asks you to open the trace, and several automations failing with the same error are one finding that lists them. (#293, #280)
+- **Every finding says what to do.** A finding an insight card files without a suggested fix gets the same plain next step its To Do item would have. (#302, #270)
+
 ## 3.0.4
 
 ### Changed
