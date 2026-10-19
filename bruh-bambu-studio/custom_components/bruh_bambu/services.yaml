@@ -17,6 +17,18 @@ printer_files:
       example: Workshop X1C
       selector:
         text: {}
+find_printers:
+  name: Find printers
+  description: Look for Bambu Lab printers on the network Home Assistant is on, by the
+    certificate each one's MQTT port answers with. Answers with each printer's address,
+    serial number and model, and whether it is added already. Changes nothing.
+  fields:
+    subnet:
+      name: Network
+      description: The network to search instead, such as 192.168.2.0/24.
+      example: 192.168.1.0/24
+      selector:
+        text: {}
 print_file:
   name: Print a file
   description: Print a file from /share/bambu. A project that is not sliced yet is sliced

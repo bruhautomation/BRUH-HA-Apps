@@ -61,6 +61,7 @@ function show(view) {
   document.body.classList.toggle("wide", view === "design");
   try { localStorage.setItem("bambu.view", view); } catch (_) { /* storage may be refused in an iframe */ }
   if (view === "files") loadFiles();
+  if (view === "printers" && state.data) renderPrinters();
   if (view === "studio") connectScreen();
 }
 
@@ -236,8 +237,12 @@ function renderPrinters() {
   const list = $("#printerList");
   const printers = state.data.printers;
   if (!printers.length) {
-    list.replaceChildren(el("p", { class: "card hint" }, "No printers yet. Add one below."));
-    $("#addPrinter").open = true;
+    list.replaceChildren(el("p", { class: "card hint" }, "No printers yet. Find them on your network, or add one by hand below."));
+    // The first time somebody opens an empty Printers tab, look for them.
+    if (state.view === "printers" && !renderPrinters.scanned) {
+      renderPrinters.scanned = true;
+      scanPrinters();
+    }
   } else {
     // Rebuilt only when nothing in it has focus, so a half-typed G-code
     // line is not wiped by the next poll.
@@ -257,11 +262,98 @@ async function savePrinter(e) {
   e.preventDefault();
   const data = Object.fromEntries(new FormData(e.target));
   try {
-    await api("api/printers", { json: data });
+    const r = await api("api/printers", { json: data });
     e.target.reset();
+    $("#codeHint").hidden = true;
     $("#addPrinter").open = false;
     toast("Printer saved; connecting…");
     refresh();
+    confirmConnected(r.printer);
+  } catch (err) { toast(err.message, true); }
+}
+
+// Saving is not connecting: the access code, LAN mode and Developer mode are
+// only proven by the printer answering, so say which happened.
+async function confirmConnected(row) {
+  for (let i = 0; i < 10; i++) {
+    await new Promise((res) => setTimeout(res, 2000));
+    await refresh();
+    const p = (state.data.printers || []).find((x) => x.id === row.id);
+    if (p && p.online) { toast(`Connected to ${p.name}.`); return; }
+    if (i === 9) {
+      toast(`${row.name} has not answered${p && p.connection_error ? `: ${p.connection_error}` : ""}. `
+        + "Check the access code, and that LAN mode and Developer mode are on.", true);
+    }
+  }
+}
+
+// --------------------------------------------------------- find printers ---
+const CODE_WHERE = "On the printer's screen, the 8-character access code is in its network "
+  + "settings (LAN Only, or WLAN on the A1 and P1). Turn on LAN-only mode and Developer mode "
+  + "there too, so it takes commands from Home Assistant.";
+
+async function scanPrinters(subnet = "") {
+  const btn = $("#scanBtn");
+  btn.disabled = true;
+  btn.textContent = "Looking…";
+  $("#scanNote").textContent = subnet ? `Looking on ${subnet}…` : "Looking on Home Assistant's network…";
+  try {
+    const r = await api("api/printers/scan", { json: { subnet, wait: 90 } });
+    renderScan(r.job);
+  } catch (err) {
+    $("#scanNote").textContent = err.message;
+    $("#scanResults").replaceChildren();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Find printers on my network";
+  }
+}
+
+function renderScan(job) {
+  const found = job.found || [];
+  const where = (job.networks || []).join(", ");
+  $("#scanNote").textContent = found.length
+    ? `Found ${found.length} on ${where}.`
+    : `No Bambu Lab printer answered on ${where}. Check it is switched on and on this network, `
+      + "or add it below by its IP address.";
+  $("#scanResults").replaceChildren(...found.map((f) => {
+    const what = `${f.model || "Bambu Lab printer"} · ${f.serial}`;
+    let action;
+    if (f.known && !f.moved) {
+      action = el("span", { class: "chip" }, `Added as ${f.name}`);
+    } else if (f.known) {
+      action = el("button", { type: "button", onclick: () => moveP(f) }, "Update address");
+    } else {
+      action = el("button", { type: "button", class: "primary", onclick: () => startAdd(f) }, "Add");
+    }
+    return el("div", { class: "file" },
+      el("div", { class: "grow" }, el("b", {}, what),
+        el("p", { class: "hint" }, f.known && f.moved ? `${f.name} moved from ${f.saved_host} to ${f.host}` : f.host)),
+      action);
+  }));
+}
+
+function startAdd(f) {
+  const form = $("#printerForm");
+  form.name.value = f.model ? `Bambu ${f.model}` : "";
+  form.model.value = f.model || "";
+  form.host.value = f.host;
+  form.serial.value = f.serial;
+  form.access_code.value = "";
+  $("#codeHint").textContent = CODE_WHERE;
+  $("#codeHint").hidden = false;
+  $("#addPrinter").open = true;
+  $("#addPrinter").scrollIntoView({ behavior: "smooth", block: "center" });
+  form.access_code.focus();
+}
+
+async function moveP(f) {
+  try {
+    await api("api/printers", { json: { name: f.name, model: f.model, host: f.host, serial: f.serial } });
+    toast(`${f.name} is at ${f.host} now; reconnecting…`);
+    f.moved = false;
+    refresh();
+    confirmConnected({ id: f.known, name: f.name });
   } catch (err) { toast(err.message, true); }
 }
 
@@ -286,7 +378,7 @@ function jobDone(j) {
 }
 
 function renderJobs() {
-  const jobs = (state.data && state.data.jobs) || [];
+  const jobs = ((state.data && state.data.jobs) || []).filter((j) => j.kind !== "scan");
   $("#jobList").replaceChildren(...jobs.slice(0, 5).map((j) => el("p", { class: `job ${j.state}` },
     `${JOB_VERB[j.kind] || "Job"} ${j.file || j.source && j.kind !== "import" && j.source || j.title || j.url || ""}: `,
     j.state === "running" ? `${j.phase || "working"}${j.progress != null ? ` ${j.progress}%` : ""}…`
@@ -434,6 +526,8 @@ async function refresh() {
 
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => show(t.dataset.view)));
 $("#printerForm").addEventListener("submit", savePrinter);
+$("#scanBtn").addEventListener("click", () => scanPrinters());
+$("#scanForm").addEventListener("submit", (e) => { e.preventDefault(); scanPrinters($("#scanSubnet").value.trim()); });
 $("#printForm").addEventListener("submit", submitPrint);
 $("#printCancel").addEventListener("click", () => $("#printDialog").close());
 $("#upload").addEventListener("change", upload);

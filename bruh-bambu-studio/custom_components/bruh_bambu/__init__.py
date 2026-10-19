@@ -24,6 +24,7 @@ from .const import (
     CARD_RETRY_SECONDS,
     CARD_RETRY_TRIES,
     DOMAIN,
+    SERVICE_FIND,
     SERVICE_GCODE,
     SERVICE_IMPORT,
     SERVICE_LIGHT,
@@ -101,6 +102,7 @@ READS = {
     SERVICE_STATUS: vol.Schema({}),
     SERVICE_LIST_FILES: vol.Schema({}),
     SERVICE_PRINTER_FILES: PRINTER_ONLY,
+    SERVICE_FIND: vol.Schema({vol.Optional("subnet"): cv.string}),
 }
 
 

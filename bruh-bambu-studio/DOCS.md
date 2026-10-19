@@ -20,7 +20,23 @@ x86-64 AppImage and nothing else.
 
 ## Adding a printer
 
-On the **Printers** tab, open *Add a printer* and give:
+The **Printers** tab finds them for you. **Find printers on my network** (it
+runs by itself the first time the tab is empty) lists every Bambu Lab printer
+on the network Home Assistant is on, with its model, serial number and
+address. Press **Add** and only the **access code** is left to type — it is on
+the printer's screen in its network settings (LAN Only, or WLAN on the A1 and
+P1). After **Save** the panel waits for the printer to answer and says whether
+it did. A printer that is already added but has a new address offers
+**Update address**, which keeps its access code. *Search a different network*
+looks somewhere else, such as a separate IoT network (`192.168.2.0/24`).
+
+The scan connects to port 8883 on each address and reads the certificate a
+printer answers with — Bambu Lab's own, named for the printer's serial — so it
+finds printers without broadcasts reaching the add-on and without an access
+code. It covers each of Home Assistant's networks up to a /22 (a wider one is
+narrowed to the /24 Home Assistant is in) and takes a few seconds.
+
+To add one by hand, open *Add a printer* and give:
 
 - the printer's **IP address** (the printer's screen shows it under Network —
   give it a fixed address in your router so it does not move);
@@ -35,8 +51,6 @@ with *"The printer did not confirm it"*.
 The access code is stored apart from everything else and is **left out of
 Home Assistant backups**. After restoring a backup, add the code again.
 
-The add-on is not on your host network, so it cannot discover printers by
-itself; that is why the address is typed.
 
 ## Files
 
@@ -156,6 +170,7 @@ AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
 | `bruh_bambu.set_temperature` | Nozzle (up to 300 °C) or bed (up to 120 °C) target; refused while printing |
 | `bruh_bambu.send_gcode` | Up to 32 lines of G-code; refused while printing |
 | `bruh_bambu.open_in_studio` | Open a file in the sidebar's Bambu Studio |
+| `bruh_bambu.find_printers` | The Bambu Lab printers on the network, and which are added already |
 | `bruh_bambu.import_url` | Import a model from a Printables page or a file link; answers with the new files' paths |
 
 `printer` can be left out when there is only one printer; with two or more it

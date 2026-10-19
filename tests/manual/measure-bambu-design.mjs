@@ -17,6 +17,8 @@
  *  - the body key missing a body or not hiding one;
  *  - the Files list showing a design's working files, a design row with a
  *    Delete, an import box under 16px on touch;
+ *  - Find printers not listing what it found, a moved printer with no
+ *    Update address, or Add not filling the form and leaving the access code;
  *  - sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -64,7 +66,8 @@ const PRINTER = { id: 'x1c', name: 'X1C', online: true, state: 'idle',
 const API = {
   'api/state': { ok: true, version: 'dev', printers: [PRINTER], jobs: [],
     studio: { installed: true, running: false, wanted: false, install: {} } },
-  'api/printers': { ok: true, printers: [PRINTER], models: ['X1C'] },
+  'api/printers': { ok: true, printers: [PRINTER],
+    models: ['X1C', 'X1E', 'X1', 'P1S', 'P1P', 'P2S', 'A1', 'A1 mini', 'H2D', 'H2S'] },
   'api/files': { ok: true, root: '/share/bambu', files: [
     { path: 'imports/3D Benchy/3dbenchy.stl', name: '3dbenchy.stl', size: 11e6, modified: 2,
       sliced: false, project: false },
@@ -96,6 +99,12 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
     }
     if (path.endsWith('/file')) {
       return route.fulfill({ body: STL[url.searchParams.get('path')] || '', contentType: 'model/stl' });
+    }
+    if (path === 'api/printers/scan') {
+      return route.fulfill({ json: { ok: true, job: { state: 'done', networks: ['192.168.1.0/24'],
+        found: [{ host: '192.168.1.60', serial: '01S00C123456789', model: 'P1P' },
+          { host: '192.168.1.77', serial: 'X1CSERIAL0001', model: 'X1C', known: 'x1c',
+            name: 'X1C', moved: true, saved_host: '192.168.1.50' }] } } });
     }
     if (path.startsWith('api/')) {
       if (route.request().method() !== 'GET') return route.fulfill({ json: { ok: true } });
@@ -203,7 +212,47 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   }
   const wideFiles = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wideFiles > 1) say(`the Files tab scrolls sideways by ${wideFiles} px`);
+
+  // Printers: Find lists what is new and what moved; Add leaves only the code.
+  await page.locator('.tab[data-view="printers"]').click();
+  const scanBtn = page.locator('#scanBtn');
+  if (!(await scanBtn.count())) {
+    say('there is no Find printers button');
+  } else {
+    const sb = await scanBtn.boundingBox();
+    if (touch && sb.height < 44) say(`Find printers is ${sb.height}px tall, under the touch floor`);
+    await scanBtn.click();
+    const found = page.locator('#scanResults .file');
+    await found.first().waitFor({ timeout: 5000 }).catch(() => say('Find printers showed nothing'));
+    const texts = await found.allTextContents();
+    if (texts.length !== 2) say(`Find printers listed ${texts.length} printers, not 2`);
+    if (!texts.some((t) => /Update address/.test(t) && t.includes('192.168.1.50'))) {
+      say('a printer that moved does not offer to update its address');
+    }
+    const add = page.locator('#scanResults button', { hasText: 'Add' });
+    if (await add.count()) {
+      await add.first().click();
+      const form = await page.evaluate(() => {
+        const f = document.querySelector('#printerForm');
+        return { host: f.host.value, serial: f.serial.value, model: f.model.value, name: f.name.value,
+          focused: document.activeElement && document.activeElement.name,
+          hint: !document.querySelector('#codeHint').hidden,
+          open: document.querySelector('#addPrinter').open };
+      });
+      if (form.host !== '192.168.1.60' || form.serial !== '01S00C123456789' || form.name !== 'Bambu P1P'
+          || form.model !== 'P1P') {
+        say(`Add did not fill the form from the scan (${JSON.stringify(form)})`);
+      }
+      if (!form.open || form.focused !== 'access_code') say('Add did not leave the access code to type');
+      if (!form.hint) say('Add does not say where the access code is');
+    } else {
+      say('a new printer has no Add');
+    }
+  }
+  const widePrinters = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
+  if (widePrinters > 1) say(`the Printers tab scrolls sideways by ${widePrinters} px`);
   if (process.env.SHOTS) {
+    await page.screenshot({ path: `${process.env.SHOTS}/printers-${label}.png`, fullPage: true });
     await page.locator('.tab[data-view="design"]').click();
     await page.locator('#bodyList .chip.body').nth(1).click();
     await page.waitForTimeout(300);
@@ -219,4 +268,4 @@ if (problems.length) {
   console.log(`FAIL\n${problems.map((p) => `  - ${p}`).join('\n')}`);
   process.exit(1);
 }
-console.log('OK: colours, controls help, body key and Files list at 390 (touch) and 1280.');
+console.log('OK: colours, controls help, body key, Files list and Find printers at 390 (touch) and 1280.');

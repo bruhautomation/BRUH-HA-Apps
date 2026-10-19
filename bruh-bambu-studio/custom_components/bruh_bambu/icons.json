@@ -13,7 +13,8 @@
     "set_temperature": "mdi:thermometer",
     "send_gcode": "mdi:code-braces",
     "open_in_studio": "mdi:open-in-app",
-    "import_url": "mdi:link-plus"
+    "import_url": "mdi:link-plus",
+    "find_printers": "mdi:printer-search"
   },
   "entity": {
     "sensor": {

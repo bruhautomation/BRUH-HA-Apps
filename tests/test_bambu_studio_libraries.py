@@ -105,6 +105,10 @@ class TestStudioIsNotStartedWithoutItsLibraries(unittest.TestCase):
         popen.assert_not_called()
         self.assertEqual(studio.state()["missing_libraries"], ["libwebkit2gtk-4.1.so.0"])
 
+    def test_studio_starts_in_a_locale_the_image_has(self):
+        env = self.studio.Studio().env()
+        self.assertEqual((env["LANG"], env["LC_ALL"]), ("en_US.UTF-8", "en_US.UTF-8"))
+
     def test_could_not_look_still_starts(self):
         studio, popen = self._studio(None)
         studio.restart()
@@ -118,6 +122,19 @@ class TestTheImageCarriesWhatStudioLinks(unittest.TestCase):
             text = f.read()
         self.assertIn("libwebkit2gtk-4.1-0", text)   # Bambu Studio 2.x
         self.assertIn("libwebkit2gtk-4.0-37", text)  # an older pinned release
+
+    def test_every_language_bambu_studio_ships_has_a_locale(self):
+        # Bambu Studio's bbl/i18n, plus en_GB (its fallback) and en_US (where
+        # it starts here). A missing one is "Switching language failed", and
+        # on a first start Bambu Studio exits after it.
+        with open(os.path.join(ROOT, "Dockerfile"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("locale-gen", text)
+        for name in ("en_US", "en_GB", "cs_CZ", "de_DE", "el_GR", "es_ES", "fr_FR", "hu_HU",
+                     "id_ID", "it_IT", "ja_JP", "ko_KR", "nl_NL", "pl_PL", "pt_BR", "ro_RO",
+                     "ru_RU", "sv_SE", "th_TH", "tr_TR", "uk_UA", "vi_VN", "zh_CN", "zh_TW"):
+            with self.subTest(locale=name):
+                self.assertIn(name, text)
 
     def test_the_panel_says_which_libraries(self):
         with open(os.path.join(ROOT, "panel", "app.js"), encoding="utf-8") as f:

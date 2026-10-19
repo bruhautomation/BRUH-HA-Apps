@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+### Added
+
+- **Find printers on your network.** The Printers tab looks for Bambu Lab printers on the network Home Assistant is on (and does so by itself the first time it is empty), listing each one's model, serial and address. **Add** fills in everything but the access code, and after **Save** the panel says whether the printer answered. A printer that has moved to a new address offers **Update address**, keeping its access code. `bruh_bambu.find_printers` does the same from an automation. It reads the certificate each printer's MQTT port answers with, so it works without broadcasts reaching the add-on.
+
+### Fixed
+
+- **Bambu Studio no longer stops on "Switching language failed".** The image had no locales, so Bambu Studio could not switch to English (or any other language) and, on a first start, closed. It now has a locale for every language Bambu Studio ships, and starts in English.
+
 ## 0.1.2
 
 ### Added
