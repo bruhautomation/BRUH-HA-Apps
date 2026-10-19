@@ -1,0 +1,41 @@
+{
+  "entity": {
+    "sensor": {
+      "harvest_season": {
+        "default": "mdi:basket"
+      },
+      "harvest_value": {
+        "default": "mdi:cash"
+      },
+      "last_spray": {
+        "default": "mdi:spray"
+      },
+      "queued_sprays": {
+        "default": "mdi:playlist-clock"
+      },
+      "pre_harvest_intervals": {
+        "default": "mdi:timer-sand"
+      },
+      "low_stock": {
+        "default": "mdi:bottle-tonic-outline"
+      }
+    }
+  },
+  "services": {
+    "log_harvest": {
+      "service": "mdi:basket-plus"
+    },
+    "delete_harvest": {
+      "service": "mdi:basket-remove"
+    },
+    "complete_queued_spray": {
+      "service": "mdi:spray"
+    },
+    "delete_queued_spray": {
+      "service": "mdi:playlist-remove"
+    },
+    "refresh": {
+      "service": "mdi:refresh"
+    }
+  }
+}

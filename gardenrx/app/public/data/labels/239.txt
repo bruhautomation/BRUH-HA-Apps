@@ -1,0 +1,70 @@
+ORTHO MAX GARDEN DISEASE CONTROL — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Chlorothalonil ........................................... 29.6%
+  Other ingredients ........................................ 70.4%
+
+EPA REGISTRATION
+  EPA Reg. No.: 239-2522 (The Scotts Company / Ortho)
+  FRAC group: M5 (multi-site contact)
+
+SIGNAL WORD
+  WARNING
+
+USE
+  Broad-spectrum, multi-site PROTECTANT fungicide for control of
+  many vegetable, fruit, and ornamental diseases — early and late
+  blight on tomato, anthracnose, leaf spots, fruit rots, downy
+  mildew, rusts, mummy berry on blueberry, Septoria on tomato,
+  and many others. Best as a preventive — NOT systemic; will not
+  cure infections that have already established.
+
+  Important crop exclusion: chlorothalonil is NOT labeled for
+  BEARING apple trees (post petal-fall). Use on apples is
+  restricted to dormant-only or non-bearing trees.
+
+RATE (homeowner per-gallon)
+  1.5 - 3 fl oz (3 - 6 tablespoons) per gallon of water.
+  Use higher rate under heavy disease pressure.
+  Spray to thorough coverage; do not let solution run off.
+
+TIMING
+  Apply at 7 - 14 day intervals during disease-prone weather.
+  Begin BEFORE symptoms appear; spray after disease shows will
+  not eradicate, only slow further spread.
+  Re-apply after heavy rainfall (rain-fast in ~2 hours).
+
+PRE-HARVEST INTERVAL (PHI)
+  Crop-dependent. Common PHIs:
+    Tomato, pepper: 0 days.
+    Cucurbits: 0 days.
+    Stone fruit (peach, cherry, nectarine, plum): 1 day.
+    Blueberry: 42 days.
+    Carrot, celery, onion: 7 days.
+  Read the specific PHI for your crop on the label.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours (homeowner pack).
+
+PRECAUTIONS
+  - Eye irritant — wear goggles when mixing/loading.
+  - Toxic to fish; do not contaminate water.
+  - Suspected carcinogen in some classifications; minimize exposure.
+  - NOT for bearing apple trees.
+  - Do not apply more than 7 times per season on most crops.
+
+PPE
+  Goggles or face shield, chemical-resistant gloves, long sleeves,
+  long pants, shoes plus socks.
+
+FIRST AID
+  If in eyes: rinse with water for 15-20 minutes.
+  If on skin: wash with soap and water; remove contaminated clothing.
+  If swallowed: call poison control; do not induce vomiting.
+  If inhaled: move to fresh air; if not breathing, give CPR.
+
+OFFICIAL LABEL
+  See the product packaging or Ortho's website for the binding label.

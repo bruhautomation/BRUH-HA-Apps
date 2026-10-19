@@ -1,0 +1,58 @@
+KASUMIN 2L — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Kasugamycin (as hydrochloride hydrate) ................... 2.30%
+  Other ingredients ........................................ 97.70%
+
+EPA REGISTRATION
+  EPA Reg. No.: 66330-404 (Arysta LifeScience / UPL)
+  FRAC group: 24 (aminoglycoside, antibacterial)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Foliar bactericide for fire blight (Erwinia amylovora) on apple
+  and pear, and for walnut blight (Xanthomonas) on walnut.
+  Section 2(ee) and supplemental labels may exist; check state.
+
+RATE
+  Pome fruit (fire blight): 64 fl oz product per acre,
+                            applied in 100+ gal water.
+                            Backpack equivalent: ~0.5 fl oz / gal.
+  Use up to 4 applications per season; rotate with copper or
+  streptomycin to delay resistance.
+
+TIMING
+  Apply at 70% bloom and again at full bloom under high fire-blight
+  pressure. Repeat at 3-5 day intervals during bloom if blight model
+  indicates infection. Stop at petal fall.
+
+PRE-HARVEST INTERVAL (PHI)
+  90 days.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - DO NOT use in or adjacent to greenhouses or nurseries.
+  - DO NOT apply through irrigation systems.
+  - DO NOT tank-mix with copper — antagonism reduces efficacy.
+  - Resistance management: rotate FRAC groups; never use kasugamycin
+    in back-to-back sprays.
+  - Bee toxicity: low; nonetheless, avoid applying when bees forage.
+
+PPE
+  Long sleeves, long pants, chemical-resistant gloves, eye protection.
+
+FIRST AID
+  If on skin: rinse skin with plenty of water.
+  If in eyes: rinse cautiously with water for several minutes.
+  If swallowed: rinse mouth, do NOT induce vomiting, call poison
+                control (1-800-222-1222).
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from the registrant before use.

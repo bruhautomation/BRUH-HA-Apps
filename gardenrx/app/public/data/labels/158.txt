@@ -1,0 +1,66 @@
+SCYTHE — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Pelargonic acid (nonanoic acid) and related fatty acids .. 57.0%
+  Other ingredients ........................................ 43.0%
+
+EPA REGISTRATION
+  EPA Reg. No.: 10163-325 (Gowan Company)
+  HRAC group: not classified (contact membrane disruptor)
+  OMRI / organic-friendly: NO — Scythe is not OMRI-listed, but its
+  mode of action is non-systemic.
+
+SIGNAL WORD
+  WARNING
+
+USE
+  Broad-spectrum, NON-SELECTIVE, contact post-emergence herbicide
+  for orchard floors, vineyards, around buildings, walkways,
+  and other non-crop areas. Burns down emerged annual and young
+  perennial weeds within hours; no soil activity.
+
+RATE (directed spray on orchard floor)
+  Annual weeds, young growth:
+    3 - 5% solution by volume in water.
+    Backpack: 4 - 6 fl oz product per gallon of water.
+  Tougher / mature weeds:
+    7 - 10% solution by volume.
+    Backpack: 9 - 13 fl oz product per gallon of water.
+  Add a non-ionic surfactant at 0.25% v/v for best burn-down.
+
+TIMING
+  Spray on bright, warm (70°F+), sunny days for fastest activity.
+  Re-treat new growth as needed; perennial weeds will regrow from
+  roots — Scythe controls TOPS only.
+
+DIRECTED SPRAY ONLY — DO NOT contact green stems, leaves, or fruit
+of desirable plants. A drift onto bark or fruit will cause necrotic
+spotting.
+
+PRE-HARVEST INTERVAL (PHI)
+  Not applicable for directed orchard floor use (no crop contact).
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - Wear chemical-resistant clothing during mix/load — Scythe is
+    corrosive and may cause severe eye damage.
+  - Strong vinegar-like odor.
+  - Do not apply to standing water or runoff areas.
+
+PPE
+  Goggles or face shield, chemical-resistant gloves, long sleeves,
+  long pants, chemical-resistant footwear and apron when mixing.
+
+FIRST AID
+  If in eyes: rinse continuously with water for 15-20 minutes;
+              call poison control immediately.
+  If on skin: remove contaminated clothing; wash skin thoroughly.
+  If swallowed: do NOT induce vomiting; call poison control.
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from Gowan before use.

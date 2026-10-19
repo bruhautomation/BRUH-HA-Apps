@@ -158,6 +158,25 @@ const APPS = [
 			['brands/custom_integrations/morph/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'GardenRX',
+		tile: 'gardenrx/gardenrx-tile-dark.svg',
+		logo: 'gardenrx/gardenrx-logo-ondark.svg',
+		squares: [
+			['gardenrx/icon.png', 256],
+			['gardenrx/custom_components/gardenrx/brand/icon.png', 256],
+			['gardenrx/custom_components/gardenrx/brand/icon@2x.png', 512],
+			['brands/custom_integrations/gardenrx/icon.png', 256],
+			['brands/custom_integrations/gardenrx/icon@2x.png', 512],
+		],
+		lockups: [
+			['gardenrx/logo.png', 512, 384],
+			['gardenrx/custom_components/gardenrx/brand/logo.png', 341, 256],
+			['gardenrx/custom_components/gardenrx/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/gardenrx/logo.png', 341, 256],
+			['brands/custom_integrations/gardenrx/logo@2x.png', 682, 512],
+		],
+	},
 ];
 
 const browser = await chromium.launch(

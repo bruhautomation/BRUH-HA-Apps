@@ -13,6 +13,7 @@ body:
         - BRUH Print
         - BRUH Bambu Studio
         - Morph
+        - GardenRX
         - Other / unsure
     validations:
       required: true

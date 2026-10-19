@@ -143,7 +143,7 @@ REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
 ADDONS = ("brain", "bright", "bruh-print", "bruh-bambu-studio",
-          "bruh-minecraft-server", "morph")
+          "bruh-minecraft-server", "morph", "gardenrx")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
@@ -152,6 +152,7 @@ ADDON_TEST_PREFIX = {
     "bruh-bambu-studio": "test_bambu_",
     "bruh-minecraft-server": "test_minecraft_",
     "morph": "test_morph_",
+    "gardenrx": "test_gardenrx_",
 }
 # What a test writes when it means the add-on: its directory, and the
 # underscore spelling its integration domain uses.
@@ -162,6 +163,7 @@ ADDON_NAMES = {
     "bruh-bambu-studio": ("bruh-bambu-studio", "bruh_bambu"),
     "bruh-minecraft-server": ("bruh-minecraft-server", "bruh_minecraft"),
     "morph": ("morph",),
+    "gardenrx": ("gardenrx",),
 }
 ADDON_WIDE_FILES = {"run.sh", "config.yaml", "build.yaml", "Dockerfile",
                     "apparmor.txt"}
@@ -175,6 +177,8 @@ ADDON_WIDE_TESTS = {
     "bruh-minecraft-server": ("tests/test_addon_hardening.py",
                               "tests/test_minecraft_config.py"),
     "morph": ("tests/test_addon_hardening.py", "tests/test_morph_addon.py"),
+    "gardenrx": ("tests/test_addon_hardening.py",
+                 "tests/test_gardenrx_addon.py"),
 }
 # The demo panel a browser measure boots, where it drives the real server
 # rather than loading the page's files: a change to that add-on's panel
@@ -196,7 +200,8 @@ QUIET_DIRS = ("docs/", ".github/", ".claude/")
 QUIET_NAMES = {".gitignore", ".gitattributes", "ruff.toml"}
 UI_SUFFIXES = {".js", ".css", ".html", ".mjs"}
 # Morph has no panel of its own: its page is the integration's frontend.
-UI_DIRS = ("panel", "lovelace", "ttyd-assets", "custom_components/morph/frontend")
+UI_DIRS = ("panel", "lovelace", "ttyd-assets", "custom_components/morph/frontend",
+           "custom_components/gardenrx/frontend")
 # What a source-tree sweep reads; prose and pictures are not among them.
 CODE_SUFFIXES = {".py", ".sh", ".js", ".mjs", ".css", ".html", ".yaml",
                  ".yml", ".json", ".conf"}

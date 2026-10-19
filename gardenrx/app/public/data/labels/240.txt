@@ -1,0 +1,74 @@
+BIOADVANCED FRUIT, CITRUS & VEGETABLE INSECT CONTROL — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Imidacloprid ............................................. 1.47%
+  Other ingredients ........................................ 98.53%
+
+EPA REGISTRATION
+  EPA Reg. No.: 432-1502-72155 (Bayer/BioAdvanced)
+  IRAC group: 4A (neonicotinoid)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  SYSTEMIC, soil-drench insecticide for foliar-feeding pests on
+  listed fruit, citrus, and vegetable plants. Active ingredient
+  is taken up through the roots and translocated upward; protects
+  new growth for up to 8 - 10 weeks per application.
+
+  Controls: aphids, whiteflies, leafhoppers, mealybugs, scale,
+  Japanese beetle adults, lacebugs, certain caterpillars, plant
+  bugs, root weevils, leafminers, thrips.
+
+RATE — MEASURE BY CROP / TREE SIZE (homeowner)
+  Fruit and citrus trees (apple, pear, cherry, plum, peach,
+  nectarine, citrus): 1 fl oz product per 1 inch of trunk diameter
+  measured at chest height, mixed in 1 gallon of water as a soil
+  drench at the dripline.
+  Small fruit (raspberry, blueberry, blackberry):
+    1 oz product per 5 ft of row, mixed in 1 gal of water.
+  Tomato, pepper, leafy / fruiting vegetables:
+    0.5 oz product per plant, mixed in 1 gal of water.
+
+  This is a SOIL DRENCH, not a foliar spray. Pour evenly around
+  the plant's root zone after watering soil.
+
+TIMING
+  Apply once per year per crop. Pre-bloom (before flower opens) on
+  fruit trees is preferred to protect pollinators.
+  Allow 2 - 3 weeks for systemic uptake before pest pressure
+  peaks.
+
+PRE-HARVEST INTERVAL (PHI)
+  21 days (apple, pear, stone fruit, citrus).
+  21 days (cane berries, blueberries).
+   7 days (tomato, pepper).
+  Check the printed label for each crop.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - NEONICOTINOID — highly toxic to bees if any product reaches
+    flowers; apply ONLY before bloom or after petal fall.
+  - Do not apply to crops with flowering weeds underneath.
+  - Apply max ONE drench per calendar year on most crops.
+  - Do not apply where roots overlap with neighboring non-target
+    flowering plants.
+
+PPE
+  Long sleeves, long pants, shoes plus socks, chemical-resistant
+  gloves.
+
+FIRST AID
+  If on skin: wash with soap and water.
+  If in eyes: rinse with water for 15-20 minutes.
+  If swallowed: call poison control (1-800-222-1222); do not
+                induce vomiting.
+
+OFFICIAL LABEL
+  See the BioAdvanced/Bayer product label and the SDS before use.

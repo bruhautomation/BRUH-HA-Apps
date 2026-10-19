@@ -1,0 +1,67 @@
+ALION — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Indaziflam ............................................... 19.05%
+  Other ingredients ........................................ 80.95%
+
+EPA REGISTRATION
+  EPA Reg. No.: 432-1516 (Bayer CropScience)
+  HRAC group: 29 (cellulose biosynthesis inhibitor)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  PRE-EMERGENT, residual herbicide for the floor of established
+  perennial crops: pome fruit, stone fruit, grapes, citrus, nuts,
+  tree-nut crops, certain berries, and bearing/non-bearing
+  ornamentals. Long-residual control (up to 6 months) of grass and
+  broadleaf weeds germinating from seed.
+
+RATE (commercial broadcast on orchard floor)
+  Pome fruit, stone fruit, grapes, nuts:
+    3.5 - 5.0 fl oz product per acre per application;
+    Max 5.0 fl oz per acre per 12 months.
+  Treat strip below trees only; do NOT broadcast across full canopy.
+
+  Tank-mix with glyphosate or glufosinate to provide knockdown of
+  emerged weeds (Alion has NO post-emergence activity).
+
+TIMING
+  Apply in fall (after harvest) OR in spring before weed seeds
+  germinate. Trees must be well-established (3+ years old in most
+  crops) — do NOT use on newly planted trees.
+  Rainfall or irrigation of 0.5" within 21 days is needed to
+  activate.
+
+PRE-HARVEST INTERVAL (PHI)
+  14 days for most labeled crops; check label for each crop.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - NOT FOLIAR. Soil-applied only — do NOT apply over green crop
+    foliage or onto fruit.
+  - Highly mobile in coarse soils — do not use on sand with shallow
+    rooting depth.
+  - One application per 12-month period is typical; do not exceed
+    label maximum.
+  - Restricted in some states; consult state department of
+    agriculture before use.
+  - Drift to non-target plants will produce stunting of new shoots.
+
+PPE
+  Long sleeves, long pants, shoes plus socks, chemical-resistant
+  gloves when mixing/loading.
+
+FIRST AID
+  If in eyes: rinse with water for 15-20 minutes.
+  If on skin: wash with soap and water.
+  If swallowed: call poison control; do not induce vomiting.
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from Bayer before use.

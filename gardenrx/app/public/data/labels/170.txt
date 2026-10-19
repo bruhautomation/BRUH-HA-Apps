@@ -1,0 +1,67 @@
+CHATEAU SW / EZ — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Flumioxazin .............................................. 51.0% (SW)
+  Flumioxazin .............................................. 51.1% (EZ liquid)
+  Other ingredients ........................................ remainder
+
+EPA REGISTRATION
+  EPA Reg. No.: 59639-99 (Chateau SW), 59639-189 (Chateau EZ) — Valent
+  HRAC group: 14 (PPO inhibitor)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Pre-emergence + early post-emergence herbicide for orchards
+  (apples, pears, stone fruit), vineyards, blueberries, and other
+  perennial crops. NOT a foliar spray on crops — soil-applied to
+  controlled-spray strips on the orchard floor.
+
+RATE (commercial broadcast)
+  Pome fruit: 6 - 12 oz product per acre (Chateau SW); apply once
+               in fall or once in spring, OR a split application.
+               Max 12 oz per acre per year.
+  Stone fruit: 6 - 12 oz product per acre per year. Trees must be
+               2+ years established; apply only to dormant trees.
+  Grapes: 6 - 12 oz per acre.
+  Blueberry: 3 - 12 oz per acre.
+
+  Treat orchard floor only — soil surface. Backpack equivalents are
+  not appropriate; this is a banded soil application.
+
+TIMING
+  Apply to weed-free soil before annual weeds germinate.
+  Best applied during dormancy (Nov - Mar) OR pre-budbreak in spring.
+  Trees must be dormant; no green growth at spray site.
+  Activation rainfall of 0.25-0.5" within 14 days improves control.
+
+PRE-HARVEST INTERVAL (PHI)
+  60 days for fruit; do not apply within 60 days of harvest.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - PRE-EMERGENT ONLY. Do not apply over crop foliage or fruit.
+  - Do not allow spray to contact green bark, suckers, or new shoots.
+  - Apply when air is calm; flumioxazin drift is extremely phytotoxic
+    to any green tissue.
+  - Always read all use directions and restrictions in the registrant
+    label before each application.
+
+NOT FOLIAR — DO NOT MIX IN BACKPACK SPRAYER WITH FOLIAR PRODUCTS.
+
+PPE
+  Long sleeves, long pants, shoes plus socks, chemical-resistant gloves.
+
+FIRST AID
+  If in eyes: rinse with water for 15-20 minutes.
+  If on skin: wash with soap and water.
+  If swallowed: call poison control; do not induce vomiting.
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from Valent USA before use.

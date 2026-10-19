@@ -1,0 +1,117 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "GardenRX",
+        "description": "Connect Home Assistant to the GardenRX add-on. The add-on must be installed and running; it usually sets this up itself from the tile under Discovered.",
+        "data": {
+          "host": "Add-on hostname",
+          "port": "Port"
+        }
+      },
+      "hassio_confirm": {
+        "title": "GardenRX",
+        "description": "Set up the GardenRX add-on so Home Assistant gets the harvest, spray and stock sensors, the services, and the cards?"
+      }
+    },
+    "abort": {
+      "already_configured": "GardenRX is already set up."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "harvest_season": {
+        "name": "Harvest this year"
+      },
+      "harvest_value": {
+        "name": "Harvest value this year"
+      },
+      "last_spray": {
+        "name": "Last spray"
+      },
+      "queued_sprays": {
+        "name": "Queued sprays"
+      },
+      "pre_harvest_intervals": {
+        "name": "Crops in a pre-harvest interval"
+      },
+      "low_stock": {
+        "name": "Treatments running low"
+      }
+    }
+  },
+  "services": {
+    "log_harvest": {
+      "name": "Log a harvest",
+      "description": "Record a pick, the same as the panel's Log Harvest. A pick inside a pre-harvest interval is saved and the response says so.",
+      "fields": {
+        "crop": {
+          "name": "Crop",
+          "description": "The crop's name (or its id). Part of a name is enough when only one crop matches."
+        },
+        "variety": {
+          "name": "Variety",
+          "description": "Optional. The variety's name or id."
+        },
+        "weight": {
+          "name": "Amount",
+          "description": "How much was picked, in the unit below."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "lb, oz, kg, g, or ct for a count."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day it was picked. Left out, today."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Optional."
+        }
+      }
+    },
+    "delete_harvest": {
+      "name": "Delete a harvest",
+      "description": "Remove a logged pick by its id (shown on the harvest sensor's recent picks).",
+      "fields": {
+        "id": {
+          "name": "Harvest id",
+          "description": "The pick to remove."
+        }
+      }
+    },
+    "complete_queued_spray": {
+      "name": "Mark a queued spray done",
+      "description": "Log a queued spray as sprayed, the same as the panel: the spray is recorded, the queue entry removed, and what it used comes out of inventory.",
+      "fields": {
+        "id": {
+          "name": "Queued spray id",
+          "description": "Shown on the queued sprays sensor."
+        },
+        "volume_gallons": {
+          "name": "Sprayer volume",
+          "description": "Gallons mixed. Left out, the panel's default sprayer size."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day it was sprayed. Left out, today."
+        }
+      }
+    },
+    "delete_queued_spray": {
+      "name": "Remove a queued spray",
+      "description": "Drop a planned spray without logging it.",
+      "fields": {
+        "id": {
+          "name": "Queued spray id",
+          "description": "Shown on the queued sprays sensor."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Read the garden from the add-on now instead of waiting for the next poll."
+    }
+  }
+}

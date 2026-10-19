@@ -1,0 +1,66 @@
+ORTHO INSECT, MITE & DISEASE 3-IN-1 — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENTS
+  Sulfur ................................................... 0.40%
+  Pyrethrins ............................................... 0.02%
+  Piperonyl butoxide ....................................... 0.20%
+  Other ingredients ........................................ 99.38%
+
+EPA REGISTRATION
+  EPA Reg. No.: 239-2643 (The Scotts Company / Ortho)
+  FRAC group: M2 (sulfur).
+  IRAC group: 3A (pyrethrins).
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Homeowner 3-in-1 spray for roses, flowers, vegetables, fruit
+  trees, and shrubs. Controls:
+
+  INSECTS / MITES:
+    aphids, spider mites, whiteflies, mealybugs, scale crawlers,
+    Japanese beetle adults, leafhoppers, leafminers, lacebugs,
+    thrips, and many caterpillars.
+
+  DISEASES:
+    powdery mildew, rust, black spot, blights, leaf spots,
+    scab — multi-site sulfur action.
+
+  Sold as a Ready-To-Spray hose-end or Concentrate.
+
+RATE (homeowner per-gallon, Concentrate)
+  2 - 3 fl oz product per gallon of water.
+  Spray to thoroughly wet foliage on tops and undersides.
+
+TIMING
+  Apply every 7 - 14 days as a preventive. Apply when temperatures
+  are below 85°F — sulfur can burn foliage above 85°F.
+  Begin at first sign of disease or pest pressure.
+
+PRE-HARVEST INTERVAL (PHI)
+  0 days for most labeled crops.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - Do NOT apply within 14 days of an oil spray (sulfur + oil =
+    phytotoxicity).
+  - Do NOT apply above 85°F.
+  - Toxic to bees; do not apply during bloom or while bees forage.
+  - Pyrethrins degrade in sunlight; reapply if rapid pest rebound.
+
+PPE
+  Long sleeves, long pants, shoes plus socks; gloves recommended.
+
+FIRST AID
+  If on skin: wash with soap and water.
+  If in eyes: rinse with water for 15-20 minutes.
+  If swallowed: call poison control (1-800-222-1222).
+
+OFFICIAL LABEL
+  See the Ortho product label and the SDS before use.
