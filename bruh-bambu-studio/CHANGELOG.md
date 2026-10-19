@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.4
+
+### Added
+
+- **brAIn starts the print from the conversation.** Say *print it* (or press **Auto print**) and brAIn picks the printer, the AMS tray for every body and the settings, and starts the print; the conversation says how it went. It asks first only when something it needs is missing: no idle printer, a colour or material that is not loaded, or a printer whose last print may still be on the plate. It used to answer that it could not start a print and send you to the Print button.
+- **Print offers three ways.** **Auto print** hands it all to brAIn, **Manual print** is the print dialog, and **Open in Bambu Studio** opens that version on the Studio tab to set up and print there.
+- **Multi-colour parts print in their colours.** Each body of a designed part now prints from its own AMS tray: the design's 3MF names a filament per body, and the print dialog picks a tray for each body by colour (and says which colour is not loaded).
+
+### Changed
+
+- **A designed part's 3MF is one object with a part per body.** Bambu Studio arranged each body as its own object, so a print-in-place part could come apart on the plate. Versions built before 0.1.4 still print, in one filament.
+
 ## 0.1.3
 
 ### Added

@@ -178,20 +178,44 @@ def apply(process: dict, settings: dict | None) -> dict:
     return out
 
 
-def prepare(model: str, settings: dict | None, outdir: Path) -> dict:
-    """Write the three settings files for one print; return their paths and names."""
+def coloured(filament: dict, colour: str) -> dict:
+    """A flattened filament profile carrying the tray's colour, so the
+    slicer's preview and the printer's job show the colour it really is."""
+    text = str(colour or "").strip()
+    if len(text) == 7 and text.startswith("#"):
+        try:
+            int(text[1:], 16)
+        except ValueError:
+            return filament
+        return {**filament, "filament_colour": [text.upper()]}
+    return filament
+
+
+def prepare(model: str, settings: dict | None, outdir: Path,
+            filaments: list[dict] | None = None) -> dict:
+    """Write the settings files for one print; return their paths and names.
+
+    `filaments` is one {"material", "colour"} per filament the part prints
+    in, in filament order; with none, the part's own material is the one.
+    """
     machine = machine_for(model)
     material = (settings or {}).get("material") or "PLA"
+    wanted = filaments or [{"material": material, "colour": ""}]
     process = process_for(machine, (settings or {}).get("layer_height"))
-    filament = filament_for(machine, material)
+    names = [filament_for(machine, f.get("material") or material) for f in wanted]
     outdir.mkdir(parents=True, exist_ok=True)
     paths = {}
     for key, data in (("machine", flatten("machine", machine)),
-                      ("process", apply(flatten("process", process), settings)),
-                      ("filament", flatten("filament", filament))):
+                      ("process", apply(flatten("process", process), settings))):
         path = outdir / f"{key}.json"
         path.write_text(json.dumps(data, indent=1))
-        paths[key] = path
-    return {"machine": machine, "process": process, "filament": filament,
-            "material": material, "paths": {k: str(v) for k, v in paths.items()},
-            "dir": os.fspath(outdir)}
+        paths[key] = str(path)
+    paths["filaments"] = []
+    for i, (name, f) in enumerate(zip(names, wanted), start=1):
+        path = outdir / ("filament.json" if len(names) == 1 else f"filament_{i}.json")
+        path.write_text(json.dumps(coloured(flatten("filament", name), f.get("colour")), indent=1))
+        paths["filaments"].append(str(path))
+    paths["filament"] = paths["filaments"][0]
+    return {"machine": machine, "process": process, "filament": " + ".join(dict.fromkeys(names)),
+            "filament_names": names, "material": wanted[0].get("material") or material,
+            "paths": paths, "dir": os.fspath(outdir)}

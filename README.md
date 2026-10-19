@@ -104,7 +104,7 @@ Assistant's control.
   homing and G-code, on the panel and as `bruh_bambu.*` services
 - **Design parts with brAIn** (optional) — describe a part, shape it in
   conversation, watch it in a 3D view with measuring, keep every version, and
-  send it to a printer with the slicing brAIn recommends
+  say *print it*: brAIn picks the printer, a tray per colour and the settings
 - **brAIn runs it** — "how long is left on the print?", "pause the printer",
   "print the benchy on the X1C"
 - **Printer cards** for Lovelace and Morph

@@ -48,7 +48,7 @@ function renderParts() {
   el("span", { class: "grow" }, el("b", {}, p.name),
     el("span", { class: "hint" }, [p.versions ? `v${p.current || "–"} of ${p.versions}` : "no version",
       p.prints ? `${p.prints} printed` : null, ago(p.updated)].filter(Boolean).join(" · "))),
-  ["thinking", "building", "fixing"].includes(p.state) ? el("span", { class: "chip live" }, "working") : null)));
+  ["thinking", "building", "fixing", "printing"].includes(p.state) ? el("span", { class: "chip live" }, "working") : null)));
 }
 
 async function newPart() {
@@ -83,7 +83,7 @@ function closePart() {
 }
 
 function busy(part) {
-  return ["thinking", "building", "fixing"].includes(part.state);
+  return ["thinking", "building", "fixing", "printing"].includes(part.state);
 }
 
 function pollPart() {
@@ -304,7 +304,60 @@ async function send(e) {
 }
 
 // --------------------------------------------------------------- print ---
+const COLOUR_NAMES = { black: [0, 0, 0], white: [255, 255, 255], grey: [128, 128, 128],
+  silver: [192, 192, 192], red: [200, 30, 30], orange: [240, 130, 20], yellow: [240, 210, 30],
+  green: [40, 160, 60], blue: [30, 90, 200], cyan: [0, 180, 220], purple: [120, 50, 160],
+  pink: [240, 120, 170], brown: [120, 80, 40], beige: [220, 200, 160], gold: [210, 170, 50] };
+
+// "#1E9FE0" → "blue": a tray read by the colour a person would call it.
+function colourName(colour) {
+  const m = /^#?([0-9a-f]{6})/i.exec(String(colour || ""));
+  if (!m) return String(colour || "");
+  const rgb = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16));
+  let best = "", bestD = Infinity;
+  for (const [name, ref] of Object.entries(COLOUR_NAMES)) {
+    const d = ref.reduce((sum, v, i) => sum + (v - rgb[i]) ** 2, 0);
+    if (d < bestD) { best = name; bestD = d; }
+  }
+  return best;
+}
+
+// Print offers three ways: brAIn does it all, the person does it here, or
+// the person does it in Bambu Studio.
+function openPrintChoice() {
+  const ready = design.status?.brain.state === "ok";
+  $("#pcAuto").disabled = !ready || busy(design.part);
+  $("#pcAuto").title = ready ? "" : (design.status?.brain.sentence || "brAIn is not available.");
+  $("#printChoice").showModal();
+}
+
+const AUTO_PRINT = "Print this part now. Pick the printer, the filament for each body and the "
+  + "settings yourself, and ask me only if something critical is unknown.";
+
+async function autoPrint() {
+  $("#printChoice").close();
+  if (design.viewing !== design.part.current) {
+    toast(`brAIn prints the current version, v${design.part.current}.`);
+  }
+  try {
+    const r = await api(`api/design/parts/${design.part.id}/message`, { json: { text: AUTO_PRINT } });
+    design.part = r.part;
+    renderPart();
+    pollPart();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function openInStudio() {
+  $("#printChoice").close();
+  try {
+    await api(`api/design/parts/${design.part.id}/studio`, { json: { version: design.viewing } });
+    show("studio");
+    toast("Opening it in Bambu Studio.");
+  } catch (err) { toast(err.message, true); }
+}
+
 async function openDesignPrint() {
+  $("#printChoice").close();
   const printers = (state.data && state.data.printers) || [];
   if (!printers.length) { toast("Add a printer on the Printers tab first.", true); return; }
   $("#dpPrinter").replaceChildren(...printers.map((p) => el("option", { value: p.id },
@@ -336,6 +389,22 @@ async function loadPlan() {
     options.push(el("label", { class: "check tray" },
       el("input", { type: "radio", name: "slot", value: "external", checked: plan.recommended_slot == null }),
       `External spool${s.material ? ` (load ${[s.colour, s.material].filter(Boolean).join(" ")})` : ""}`));
+    if (plan.bodies && plan.bodies.length > 1) {
+      // A part in several bodies: a tray for each, starting from its colour.
+      const rows = plan.bodies.map((b) => el("label", { class: "bodytray" },
+        el("span", {}, el("i", { style: `background:${b.colour || "transparent"}` }), ` ${b.name}`),
+        el("select", { name: `body:${b.name}` },
+          ...plan.trays.map((t) => el("option", { value: String(t.slot), selected: t.slot === b.recommended_slot },
+            `AMS ${t.slot + 1}: ${[colourName(t.colour), t.type].filter(Boolean).join(" ")}${t.remaining != null ? ` · ${t.remaining}%` : ""}`)),
+          el("option", { value: "external", selected: b.recommended_slot == null || !plan.trays.length },
+            "External spool"))));
+      const missing = plan.bodies.filter((b) => b.recommended_slot == null)
+        .map((b) => `${colourName(b.colour) || "its colour"} for ${b.name}`);
+      trays.replaceChildren(el("legend", {}, "Filament for each body"), ...rows,
+        missing.length ? el("p", { class: "warn" }, `Not loaded: ${missing.join(", ")}. Load it into the AMS, or pick another tray.`) : null,
+        el("p", { class: "hint" }, "Bodies on different trays print in those colours; the external spool suits a one-colour print."));
+      return;
+    }
     trays.replaceChildren(el("legend", {}, "Filament"), ...options);
     if (plan.trays.length && plan.recommended_slot == null && s.material) {
       $("#dpAdvice").textContent += ` No ${s.material} is loaded in the AMS — load it, or pick another tray.`;
@@ -350,10 +419,15 @@ async function submitDesignPrint(e) {
   for (const key of ["layer_height", "walls", "infill_percent"]) if (f.get(key)) settings[key] = Number(f.get(key));
   for (const key of ["supports", "brim"]) if (f.get(key)) settings[key] = f.get(key);
   const slot = f.get("slot");
+  const slots = {};
+  for (const [key, value] of f.entries()) {
+    if (key.startsWith("body:")) slots[key.slice(5)] = value === "external" ? "external" : Number(value);
+  }
   try {
     await api(`api/design/parts/${design.part.id}/print`, { json: {
       printer: f.get("printer"), version: design.viewing, print_settings: settings,
-      slot: slot === "external" || slot == null ? "external" : Number(slot),
+      ...(Object.keys(slots).length ? { slots }
+        : { slot: slot === "external" || slot == null ? "external" : Number(slot) }),
       timelapse: f.get("timelapse") === "on" } });
     toast("Slicing and sending it to the printer — follow it on the Printers tab.");
     pollPart();
@@ -385,7 +459,11 @@ $("#composerText").addEventListener("keydown", (e) => {
 });
 $("#partName").addEventListener("change", rename);
 $("#partDelete").addEventListener("click", removePart);
-$("#partPrint").addEventListener("click", openDesignPrint);
+$("#partPrint").addEventListener("click", openPrintChoice);
+$("#pcAuto").addEventListener("click", autoPrint);
+$("#pcManual").addEventListener("click", openDesignPrint);
+$("#pcStudio").addEventListener("click", openInStudio);
+$("#pcCancel").addEventListener("click", () => $("#printChoice").close());
 $("#dpPrinter").addEventListener("change", loadPlan);
 $("#designPrintForm").addEventListener("submit", submitDesignPrint);
 $("#dpCancel").addEventListener("click", () => $("#designPrint").close());

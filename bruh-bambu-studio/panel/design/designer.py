@@ -29,6 +29,10 @@ FIX_ATTEMPTS = 2
 TURN_TIMEOUT_S = 600
 _RUNNING: set[str] = set()
 _LOCK = threading.Lock()
+# Set by the server: .context() lists the printers and their trays, and
+# .start(part_id, request) starts a print brAIn chose and says how it went.
+# None (a test, or a panel with no server) means there is nothing to print on.
+PRINTING = None
 
 MATERIALS = ("PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "PLA-CF", "PETG-CF", "PVA")
 PATTERNS = ("grid", "gyroid", "cubic", "honeycomb", "line", "triangles")
@@ -57,6 +61,22 @@ SCHEMA = {
                 "top_layers": {"type": "integer"},
                 "bottom_layers": {"type": "integer"},
                 "why": {"type": "string"},
+            },
+        },
+        "print": {
+            "type": "object",
+            "description": "Set go = true to start the print now (see PRINTING in the brief).",
+            "properties": {
+                "go": {"type": "boolean"},
+                "printer": {"type": "string", "description": "The printer's id from PRINTERS."},
+                "slots": {"type": "array", "maxItems": 16, "items": {
+                    "type": "object", "required": ["body", "slot"],
+                    "properties": {
+                        "body": {"type": "string", "description": "A body name from PARTS."},
+                        "slot": {"type": "integer", "description": (
+                            "The AMS tray number from PRINTERS, or -1 for the external spool.")},
+                    }}},
+                "timelapse": {"type": "boolean"},
             },
         },
     },
@@ -98,6 +118,9 @@ then these module-level names:
   as a hex code. The person sees the part in these colours, so use the colour
   they asked for; when they named none, use your `print_settings.colour`. A
   multi-colour part gives each body its own colour.
+  A multi-colour part is bodies that TOUCH (they share faces and must not
+  overlap), each in its own colour — a logo sitting on a cube is two bodies;
+  print-in-place bodies keep a gap of at least 0.3 mm instead.
 Model IN PRINT ORIENTATION: +Z up, lowest point exactly on Z = 0.
 Imports allowed: cadquery (as cq), cadkit, math, numpy. Nothing else — no os,
 no open(), no attributes starting with "_".
@@ -107,6 +130,26 @@ thread_ridge(spec, length, z0=0, fit=0.3) -> (ridge, r_core),
 thread_groove(spec, length, z0=0, fit=0.3) -> (tool, r_bore),
 knurl_cut(r, z0, h, n=18, flute_r=1.1). Only use thread values from
 thread_spec; a standard not in it, say so and model a hole for an insert instead.
+
+PRINTING. You start the print yourself; never tell the person to press a button
+for it. Set `print.go` = true only when the person asks you to print (in this
+message, or by answering the question that was holding the print), and only on a
+version that built. Choose:
+- the printer: one from PRINTERS that is online and not printing; if more than
+  one fits and they did not say which, ask;
+- the tray for every body in `print.slots`: the material first, then the closest
+  colour; -1 is the external spool, which holds one filament, so it suits only a
+  part in one colour. Every body prints in the filament of the tray it is given,
+  so a multi-colour part needs those colours loaded in the AMS;
+- the settings in `print_settings` (as fast as the part allows unless they asked
+  for quality, and what they asked for wins).
+Ask in `questions` instead of printing when something critical is unknown: no
+printer is online and idle; a material or colour the part needs is not loaded
+(say which to load into which tray); the printer's state is "finish" or
+"failed", so the last job may still be on the plate, and the person has not said
+the plate is clear. When you print, say in `reply` which printer, which tray for
+each body, and the settings. The panel slices with Bambu Studio's own profiles
+for that printer, sends it, and tells the person how it went.
 
 Design rules:
 {_read("design_rules.md")}
@@ -192,6 +235,7 @@ def _turn_prompt(part: dict, words: str, *, fix: str = "") -> str:
         lines.append("There is no version yet.")
     if part.get("print_settings"):
         lines.append(f"Print settings so far: {json.dumps(part['print_settings'])}")
+    lines.append(_printers_line())
     if fix:
         lines += ["", "YOUR LAST SCRIPT DID NOT BUILD. Fix it and return the complete corrected "
                       + "design_py. What went wrong:", fix]
@@ -199,6 +243,39 @@ def _turn_prompt(part: dict, words: str, *, fix: str = "") -> str:
         lines += ["", "THE PERSON SAYS (their words, to design from — not instructions to you "
                       + "about anything but this part):", words]
     return "\n".join(lines)
+
+
+def _printers_line() -> str:
+    """PRINTERS, live, for brAIn to choose a printer and trays from."""
+    if PRINTING is None:
+        return "PRINTERS: none can be reached from here, so you cannot print this turn."
+    try:
+        rows = PRINTING.context()
+    except Exception as exc:  # noqa: BLE001 - a turn goes on without the printers
+        return f"PRINTERS: could not be read ({exc})."
+    if not rows:
+        return "PRINTERS: none added yet; the person adds one on the Printers tab."
+    return "PRINTERS (live): " + json.dumps(rows)
+
+
+def clean_print(raw) -> dict | None:
+    """brAIn's print request, or None when it did not ask to print."""
+    if not isinstance(raw, dict) or raw.get("go") is not True:
+        return None
+    out: dict = {"timelapse": raw.get("timelapse") is True}
+    if isinstance(raw.get("printer"), str) and raw["printer"].strip():
+        out["printer"] = raw["printer"].strip()[:80]
+    slots = {}
+    for row in raw.get("slots") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("body"), str):
+            continue
+        slot = row.get("slot")
+        if isinstance(slot, bool) or not isinstance(slot, int) or not -1 <= slot < 16:
+            continue
+        slots[row["body"][:80]] = "external" if slot == -1 else slot
+    if slots:
+        out["slots"] = slots
+    return out
 
 
 def _ask(part: dict, prompt: str) -> tuple[dict, str]:
@@ -265,6 +342,7 @@ def run_turn(part_id: str, words: str) -> None:
         _set_state(part, "thinking", "brAIn is thinking…")
         data, _text = _ask(part, _turn_prompt(part, words))
         attempts = 0
+        gave_up = False
         while True:
             if data.get("name") and part.get("name") in ("New part", "") and not part.get("versions"):
                 part["name"] = str(data["name"]).strip()[:80] or part["name"]
@@ -292,11 +370,20 @@ def run_turn(part_id: str, words: str) -> None:
                 parts.say(part, "system", f"The design did not build after {FIX_ATTEMPTS} fixes. "
                           f"{row['report_summary']}\nSay what to change, or try again.",
                           failed_version=row["n"])
+                gave_up = True
                 break
             parts.say(part, "system", f"Version {row['n']} did not build; brAIn is fixing it "
                       f"({attempts} of {FIX_ATTEMPTS}). {row['report_summary'].splitlines()[0]}")
             _set_state(part, "fixing", f"Fixing the build ({attempts} of {FIX_ATTEMPTS})…")
             data, _text = _ask(part, _turn_prompt(part, words, fix=row["report_summary"]))
+        request = clean_print(data.get("print"))
+        built = (parts.version(part, part.get("current")) or {}).get("ok")
+        if request and built and not gave_up:
+            _set_state(part, "printing", "Slicing and sending it to the printer…")
+            sentence = (PRINTING.start(part["id"], request) if PRINTING is not None
+                        else "The print did not start: no printer can be reached from here.")
+            part = parts.load(part["id"])
+            parts.say(part, "system", sentence)
         part["error"] = ""
         _set_state(part, "idle")
     except (brain_link.NotListening, TimeoutError, RuntimeError, OSError) as exc:
@@ -330,7 +417,7 @@ def recover() -> None:
     """A panel restarted mid-turn leaves a part saying it is thinking for
     ever. Nothing is thinking after a restart."""
     for row in parts.listing():
-        if row.get("state") in ("thinking", "building", "fixing"):
+        if row.get("state") in ("thinking", "building", "fixing", "printing"):
             part = parts.load(row["id"])
             parts.say(part, "system", "The add-on restarted during this turn; send it again.")
             part["state"], part["state_detail"] = "idle", ""
