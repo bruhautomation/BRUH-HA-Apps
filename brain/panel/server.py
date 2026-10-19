@@ -23931,6 +23931,7 @@ async def h_chat_state(request: web.Request) -> web.Response:
 # 2.5 s is one row every ten minutes rather than the whole journal.
 CRASH_SPACING_S = 600
 _CRASH_SEEN: dict[str, float] = {}
+_ROUTE_SAFE_RE = re.compile(r"[^\x20-\x7e]")
 
 
 def crash_error(exc: BaseException, panel_dir: str = "") -> str:
@@ -23977,9 +23978,14 @@ async def crash_middleware(request: web.Request, handler):
             route = resource.canonical if resource is not None else route
         except Exception:  # noqa: BLE001 — the path is enough
             pass
-        log.exception("unhandled error in %s %s", request.method, route)
+        # The route pattern is the router's; the fallback path is the
+        # caller's, so it is folded to printable ASCII before it is written
+        # anywhere a line is a record (CodeQL's log-injection rule).
+        route = _ROUTE_SAFE_RE.sub("?", str(route))[:120]
+        method = _ROUTE_SAFE_RE.sub("?", str(request.method))[:12]
+        log.exception("unhandled error in %s %s", method, route)
         try:
-            note_crash(f"{request.method} {route}", exc)
+            note_crash(f"{method} {route}", exc)
         except Exception:  # noqa: BLE001 — accounting never fails the answer
             pass
         raise

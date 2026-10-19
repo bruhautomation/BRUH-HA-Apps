@@ -79,6 +79,26 @@ class TestACrashedRouteIsJournaled(unittest.TestCase):
         # The route pattern, not the path: one fault per route, not per id.
         self.assertEqual(row["extra"]["stage"], "GET /api/boom/{id}")
 
+    def test_the_route_written_is_the_pattern_and_the_fold_takes_a_newline(self):
+        # The stage is the router's canonical pattern, never the caller's
+        # path (a wildcard gets the pattern too); and should the fallback
+        # path ever be written, anything outside printable ASCII is folded
+        # before it reaches a log line or the journal.
+        app = web.Application(middlewares=[self.server.crash_middleware])
+
+        async def boom(request):
+            raise RuntimeError("x")
+
+        app.router.add_get("/{tail:.*}", boom)
+
+        async def go():
+            async with TestClient(TestServer(app)) as client:
+                return (await client.get("/api/x%C3%A9/forged")).status
+        self.assertEqual(asyncio.run(go()), 500)
+        [row] = self.journal.tail(10)
+        self.assertEqual(row["extra"]["stage"], "GET /{tail}")
+        self.assertEqual(self.server._ROUTE_SAFE_RE.sub("?", "a\nb\x7f\u00e9"), "a?b??")
+
     def test_a_refusal_and_a_success_write_nothing(self):
         self.assertEqual(self._drive(["/api/refused", "/api/fine"]), [400, 200])
         self.assertEqual(self.journal.tail(10), [])
