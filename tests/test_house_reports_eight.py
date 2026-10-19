@@ -217,7 +217,7 @@ class TestAlsoFoundIsAboutTheHouse(unittest.TestCase):
     def test_a_deleted_device_and_a_note_about_the_run_file_nothing(self):
         self.assertEqual(fixer.house_problems([
             "sensor.old_plug_power and sensor.old_plug_energy still have "
-            "statistics but no entity",
+            + "statistics but no entity",
             "I changed only the ids; the rest of the automation is as it was",
         ], self.KNOWN), [])
 
@@ -288,8 +288,8 @@ class TestTraceErrorsInPlainWords(unittest.TestCase):
                          [r for r in again if r.get("items")][0]["text"])
 
     def test_two_different_errors_are_two_rows(self):
-        snap = self.three(["Timeout talking to the hub", "Timeout talking to "
-                           "the hub", "Service not found"])
+        snap = self.three(["Timeout talking to the hub",
+                           "Timeout talking to the hub", "Service not found"])
         found = [r for r in automations.trace_error(snap, NOW)
                  if r["entity_id"].startswith("automation.rule_")]
         self.assertEqual(len(found), 2)

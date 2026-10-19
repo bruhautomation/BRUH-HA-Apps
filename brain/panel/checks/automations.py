@@ -446,66 +446,62 @@ def trace_error(snap: dict, now: float) -> list[dict]:
 
     out = []
     for key, members in groups.items():
-        if len(members) == 1 or not key or key.startswith("\0"):
-            out.extend(_trace_row(house, f) for f in members)
+        if len(members) > 1 and key and not key.startswith("\0"):
+            members = sorted(members, key=lambda f: f["item"]["entity_id"])
+            error, ids = _plain_error(house, members[0]["last"].get("error"))
+            short = error[:80].rsplit(" ", 1)[0] if len(error) > 80 else error
+            names = join_names([f["item"]["alias"] for f in members], limit=6)
+            entity_ids = [f["item"]["entity_id"] for f in members]
+            out.append({
+                "text": "Several automations fail with the same error: "
+                        f"“{short.rstrip('.')}”",
+                "detail": (f"{len(members)} ended in the same error the last "
+                           f"time they ran: {names}. The error: "
+                           f"{error[:300].rstrip('.')}. One cause behind them "
+                           f"all is likelier than {len(members)} separate "
+                           "faults."),
+                "fix": "Press Fix and brAIn reads one of their traces and "
+                       "proposes the change; it is likely to fix every one "
+                       "of them.",
+                "severity": ("serious" if any(
+                    not (f["failed"] == 1 and len(f["rows"]) > 1)
+                    for f in members) else "warning"),
+                "fixable": True,
+                "entity_id": entity_ids[0],
+                "evidence": (evidence_for(entity_ids, "ended in this error",
+                                          limit=12)
+                             + evidence_for(ids, "named in the error")),
+                "items": entity_ids,
+            })
             continue
-        out.append(_shared_trace_row(house, members))
+        for f in members:
+            item, rows, last, failed = (f["item"], f["rows"], f["last"],
+                                        f["failed"])
+            error, ids = _plain_error(house, last.get("error"))
+            step = str(last.get("last_step") or "")
+            tally = (f" {failed} of its last {len(rows)} runs ended in an "
+                     "error." if len(rows) > 1 else "")
+            row = {
+                "text": f"{_label_of(item)} failed the last time it ran",
+                "detail": (f"On {when(_trace_start(last))}"
+                           + (f", at step {step}" if step else "")
+                           + (f": {error[:300].rstrip('.')}." if error else
+                              ": the run ended in an error.")
+                           + tally),
+                "fix": "Press Fix and brAIn reads the run's trace and "
+                       "proposes the change, or open the automation in Home "
+                       "Assistant and look at its last run.",
+                # A single failure among clean runs is most often something
+                # transient (a device that did not answer once).
+                "severity": ("warning" if failed == 1 and len(rows) > 1
+                             else "serious"),
+                "fixable": True,
+                "entity_id": item["entity_id"],
+            }
+            if ids:
+                row["evidence"] = evidence_for(ids, "named in the error")
+            out.append(row)
     return out
-
-
-def _trace_row(house: House, f: dict) -> dict:
-    item, rows, last, failed = f["item"], f["rows"], f["last"], f["failed"]
-    error, ids = _plain_error(house, last.get("error"))
-    step = str(last.get("last_step") or "")
-    tally = (f" {failed} of its last {len(rows)} runs ended in an error."
-             if len(rows) > 1 else "")
-    return {
-        "text": f"{_label_of(item)} failed the last time it ran",
-        "detail": (f"On {when(_trace_start(last))}"
-                   + (f", at step {step}" if step else "")
-                   + (f": {error[:300].rstrip('.')}." if error else
-                      ": the run ended in an error.")
-                   + tally),
-        "fix": "Press Fix and brAIn reads the run's trace and proposes the "
-               "change, or open the automation in Home Assistant and look "
-               "at its last run.",
-        # A single failure among clean runs is most often something
-        # transient (a device that did not answer once).
-        "severity": ("warning" if failed == 1 and len(rows) > 1
-                     else "serious"),
-        "fixable": True,
-        "entity_id": item["entity_id"],
-        **({"evidence": evidence_for(ids, "named in the error")}
-           if ids else {}),
-    }
-
-
-def _shared_trace_row(house: House, members: list[dict]) -> dict:
-    members = sorted(members, key=lambda f: f["item"]["entity_id"])
-    error, ids = _plain_error(house, members[0]["last"].get("error"))
-    short = error[:80].rsplit(" ", 1)[0] if len(error) > 80 else error
-    names = [f["item"]["alias"] for f in members]
-    serious = any(not (f["failed"] == 1 and len(f["rows"]) > 1)
-                  for f in members)
-    entity_ids = [f["item"]["entity_id"] for f in members]
-    return {
-        "text": f"Several automations fail with the same error: "
-                f"“{short.rstrip('.')}”",
-        "detail": (f"{len(members)} ended in the same error the last time "
-                   f"they ran: {join_names(names, limit=6)}. The error: "
-                   f"{error[:300].rstrip('.')}. One cause behind them all is "
-                   "likelier than {n} separate faults.".replace(
-                       "{n}", str(len(members)))),
-        "fix": "Press Fix and brAIn reads one of their traces and proposes "
-               "the change; it is likely to fix every one of them.",
-        "severity": "serious" if serious else "warning",
-        "fixable": True,
-        "entity_id": entity_ids[0],
-        "evidence": (evidence_for(entity_ids, "ended in this error",
-                                  limit=12)
-                     + evidence_for(ids, "named in the error")),
-        "items": entity_ids,
-    }
 
 
 # Core keeps five traces per automation by default, so a motion-triggered
