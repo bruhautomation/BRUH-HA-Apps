@@ -699,6 +699,7 @@ SYSTEM = prompt_kit.assemble(
   stopped working or a safety device cannot be relied on.
 - brAIn has already read the records: a fix never tells the homeowner to
   check a log, a trace, a state or a setting. Say what to change.
+- """ + prompt_kit.DEVICE_WORDS + """
 - Records are cited by id EXACTLY as given.
 - At most 5 causes. If nothing here is a real problem, answer with no
   causes — that is a good answer.""",
