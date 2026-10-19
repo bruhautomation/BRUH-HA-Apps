@@ -612,9 +612,31 @@ def digest(collected: dict, now: float) -> dict:
     entity_device = {str(e["entity_id"]): str(e.get("device_id") or "")
                      for e in reg if e.get("device_id")
                      and str(e["entity_id"]) in named}
+    # What every entity and device is called, for `_unrelated`: a cause's
+    # prose may name only what its own records are about. Beside the
+    # records and never in the prompt, `subjects`' reason.
+    names = {}
+    for eid, st in (collected.get("states") or {}).items():
+        attrs = (st or {}).get("attributes") if isinstance(st, dict) else None
+        friendly = str((attrs or {}).get("friendly_name") or "").strip()
+        names[str(eid)] = friendly
+    for eid in known:
+        names.setdefault(eid, "")
+    device_names = {}
+    for d in collected.get("devices") or []:
+        if isinstance(d, dict) and d.get("id"):
+            device_names[str(d["id"])] = [
+                n for n in {str(d.get("name_by_user") or ""),
+                            str(d.get("name") or "")} if n]
+    entity_devices = {str(e["entity_id"]): str(e.get("device_id") or "")
+                      for e in reg if e.get("device_id")}
     return {"records": records,
             "subjects": _subjects(records, collected.get("entities") or []),
             "entity_device": entity_device,
+            "names": names, "device_names": device_names,
+            "entity_devices": entity_devices,
+            "area_names": sorted({str(v).lower() for v in
+                                  (collected.get("areas") or {}).values() if v}),
             "available": dict(collected.get("available") or {})}
 
 
@@ -812,9 +834,119 @@ def _not_your_template_fix(logs: list[dict]) -> str:
             "keeps happening.")
 
 
+# Integration names that are also everyday words in a fix ("the sensor",
+# "a template") or Home Assistant's own plumbing: never read as naming
+# another integration.
+_PLAIN_INTEGRATIONS = frozenset({
+    "sensor", "binary_sensor", "switch", "light", "template", "automation",
+    "script", "scene", "homeassistant", "recorder", "http", "frontend",
+    "zha", "zwave_js", "mqtt", "default_config", "history", "logbook",
+})
+
+
+def _own_names(real: list[str], by_id: dict, dig: dict, eid: str) -> set[str]:
+    """Everything a cause citing ``real`` may name: its records' entities,
+    their names and devices, and the integrations its log lines are from."""
+    names = dig.get("names") or {}
+    dev_names = dig.get("device_names") or {}
+    ent_dev = dig.get("entity_devices") or {}
+    own: set[str] = set()
+    devices: set[str] = set()
+    entities: set[str] = {eid} if eid else set()
+    for rid in real:
+        rec = by_id[rid]
+        own |= {n for n in _names_of(rec) if n}
+        entities |= _record_entities(rec)
+        devices |= set(rec.get("devices") or [])
+        if rec.get("device_id"):
+            devices.add(str(rec["device_id"]))
+        if rec["kind"] == "zwave":
+            devices.add(rid.split(":", 1)[1])
+        for key in ("integration", "owner"):
+            if rec.get(key):
+                own.add(str(rec[key]))
+    for e in entities:
+        own.add(e)
+        if names.get(e):
+            own.add(names[e])
+        if ent_dev.get(e):
+            devices.add(ent_dev[e])
+    for dev in devices:
+        own |= set(dev_names.get(dev) or [])
+    return {n.lower() for n in own if n}
+
+
+def _house_names(dig: dict, by_id: dict) -> set[str]:
+    """Every name a sentence could use for a thing in this house: entity
+    ids, friendly names of two words or more, device names, and the
+    integrations tonight's log lines came from — less room names, which a
+    sentence about anything may say."""
+    areas = set(dig.get("area_names") or ())
+    out: set[str] = set()
+    for eid, friendly in (dig.get("names") or {}).items():
+        out.add(eid.lower())
+        f = str(friendly or "").strip().lower()
+        if len(f.split()) >= 2 and len(f) >= MIN_DEVICE_NAME and f not in areas:
+            out.add(f)
+    for dev_list in (dig.get("device_names") or {}).values():
+        for n in dev_list or []:
+            n = str(n).strip().lower()
+            if len(n) >= MIN_DEVICE_NAME and n not in areas:
+                out.add(n)
+    for rec in by_id.values():
+        out |= {n.lower() for n in _record_entities(rec)}
+        for key in ("name", "automation"):
+            n = str(rec.get(key) or "").strip().lower()
+            if len(n) >= MIN_DEVICE_NAME and n not in areas:
+                out.add(n)
+        for key in ("integration", "owner"):
+            n = str(rec.get(key) or "").strip().lower()
+            if len(n) >= 4 and n not in _PLAIN_INTEGRATIONS:
+                out.add(n)
+    return out
+
+
+def _unrelated(text: str, pattern, own: set[str]) -> bool:
+    """Whether ``text`` names a thing of this house that is not ``own``.
+    Longest name first, so "Kitchen motion" is not read as "Kitchen"."""
+    if not text or pattern is None:
+        return False
+    for match in pattern.finditer(text):
+        if match.group(1).lower() not in own:
+            return True
+    return False
+
+
+def _names_pattern(names: set[str]):
+    names = [n for n in names if n]
+    if not names:
+        return None
+    alts = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    return re.compile(r"(?<![\w.])(" + alts + r")(?![\w])", re.I)
+
+
+def _plain_title(rec: dict, dig: dict) -> str:
+    """A title naming only what this record is about, for a cause whose own
+    title named something else."""
+    names = dig.get("names") or {}
+    if rec["kind"] == "zigbee":
+        return f"{rec.get('name') or 'A Zigbee device'} is struggling on the Zigbee network"
+    if rec["kind"] == "zwave":
+        return f"The Z-Wave device {rec.get('name') or ''} is having trouble".replace("  ", " ")
+    if rec["kind"] == "automation":
+        return f"{rec.get('automation') or 'An automation'} switches off a Zigbee router"
+    ents = rec.get("entities") or []
+    if ents:
+        who = names.get(ents[0]) or ents[0]
+        return f"Errors in the log about {who}"
+    where = rec.get("owner") or rec.get("integration")
+    return (f"Errors in the log from the {where} integration" if where
+            else "Errors keep appearing in the log")
+
+
 def parse_causes(answer: dict | None, dig: dict) -> dict:
-    """`{causes, refused, invented, bundled, rewritten}` — only causes
-    citing real records, each about one problem.
+    """`{causes, refused, invented, bundled, rewritten, unrelated}` — only
+    causes citing real records, each about one problem.
 
     `invented` counts ids that were not in the digest at all: a cause can
     survive one of those if it also cites a real record, and the number is
@@ -822,9 +954,13 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
     `bundled` counts causes that cited records about another problem as
     well (those records, and the sentences about them, are taken off), and
     `rewritten` the fixes that told the homeowner to edit a template no
-    template of theirs could be behind.
+    template of theirs could be behind. `unrelated` counts the causes whose
+    prose named a device, entity or integration their own records are not
+    about: the sentence naming it is taken out of the detail and the fix,
+    and a title naming it is replaced by one naming the cause's own record.
     """
     by_id = {r["id"]: r for r in dig.get("records") or []}
+    house_names = _house_names(dig, by_id)
     entities: set[str] = set()
     for r in by_id.values():
         entities |= _record_entities(r)
@@ -832,7 +968,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
     groups = _groups(by_id, entity_device)
     causes_in = (answer or {}).get("causes") if isinstance(answer, dict) else None
     causes, refused, invented = [], 0, 0
-    bundled = rewritten = 0
+    bundled = rewritten = unrelated = 0
     for raw in causes_in if isinstance(causes_in, list) else []:
         if len(causes) >= MAX_CAUSES:
             break
@@ -898,6 +1034,29 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
                     if not _TEMPLATE_WORDS.search(s)]
             detail = " ".join(kept).strip()
             rewritten += 1
+        # A cause names only what its own records are about. A fix telling
+        # somebody to reload an integration entry none of them came from,
+        # or a title about a sensor its template never reads, is a sentence
+        # about another problem — `bundled`'s rule for prose.
+        own = _own_names(real, by_id, dig, eid)
+        pattern = _names_pattern(house_names | own)
+        touched = False
+        for field in ("detail", "fix"):
+            value = detail if field == "detail" else fix
+            kept = [sent for sent in _SENTENCES.split(value)
+                    if not _unrelated(sent, pattern, own)]
+            if len(kept) != len(_SENTENCES.split(value)) and value:
+                touched = True
+                value = " ".join(kept).strip()
+                if field == "detail":
+                    detail = value
+                else:
+                    fix = value
+        if _unrelated(title, pattern, own):
+            title = textclip.clip(_plain_title(by_id[real[0]], dig), MAX_TITLE)
+            touched = True
+        if touched:
+            unrelated += 1
         causes.append({
             "title": title,
             "detail": textclip.clip(detail, MAX_DETAIL),
@@ -908,7 +1067,8 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             "entity_id": eid,
         })
     return {"causes": causes, "refused": refused, "invented": invented,
-            "bundled": bundled, "rewritten": rewritten}
+            "bundled": bundled, "rewritten": rewritten,
+            "unrelated": unrelated}
 
 
 # ---------------------------------------------------------------------------

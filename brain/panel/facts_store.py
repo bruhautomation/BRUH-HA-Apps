@@ -584,6 +584,82 @@ def about_brain(text: str, subjects=(), self_entities=frozenset()) -> bool:
     return bool(_NAMES_BRAIN_RE.search(body))
 
 
+# ---------------------------------------------------------------------------
+# A reply that says nothing, and a note about the software, are not facts
+# ---------------------------------------------------------------------------
+#
+# The reason box under Ignore is optional and what people type in it is
+# often only "that's fine" — an acknowledgement, not a fact about the house.
+# Filed as it was, it became a fact whose whole text was "That's fine" (the
+# exception rule's text) and a memory line ending "because: That's fine".
+# This is a small explicit set of WHOLE replies, never a word gate over
+# prose: "that's fine in winter" is a reason and stays one.
+ACKNOWLEDGEMENTS = frozenset({
+    "that's fine", "thats fine", "that is fine", "it's fine", "its fine",
+    "it is fine", "fine", "ok", "okay", "all good", "yes", "no",
+})
+
+
+def bare_acknowledgement(text) -> bool:
+    """A whole reply that only acknowledges ("ok", "that's fine")."""
+    body = str(text or "").strip().lower().replace("\u2019", "'")
+    body = re.sub(r"\s+", " ", body).strip(" .!")
+    return body in ACKNOWLEDGEMENTS
+
+
+# The sentence a Wrong with a reason files (server's `FINDING_VERBS`), read
+# back so a stored one whose reason was only an acknowledgement is known.
+_NOTED_WRONG_RE = re.compile(
+    r'^brAIn reported: ".*"\. The homeowner says that is not a problem '
+    r"here, because:\s*(.*)$", re.S)
+
+
+def acknowledged_correction(text) -> bool:
+    """A filed Wrong whose whole reason was an acknowledgement."""
+    found = _NOTED_WRONG_RE.match(str(text or "").strip())
+    return bool(found) and bare_acknowledgement(found.group(1))
+
+
+# How Morph's or brAIn's own screens behave — full screen in the companion
+# app, pull-to-refresh, safe-area insets — is a note about software, and it
+# was filed under "The house". Both halves are needed, `about_brain`'s
+# rule: the text names one of the two panels (or the companion app), AND it
+# describes how a screen behaves. "The kitchen tablet shows the Morph
+# dashboard" names Morph and says nothing about a screen's behaviour, and
+# "brAIn reads the hall sensor" names brAIn and no screen at all.
+_NAMES_PANEL_RE = re.compile(
+    r"\bmorph\b|\bbrain'?s? (?:own )?(?:panel|dashboard|ui|interface|"
+    r"screen|page|app)\b|\bcompanion app\b", re.I)
+_SCREEN_RE = re.compile(
+    r"\bfull[- ]?screen\b|\bpull[- ]to[- ]refresh\b|\bsafe[- ]?area\b|"
+    r"\binsets?\b|\bviewport\b|\biframe\b|\bscroll(?:s|ing|bar)?\b|"
+    r"\bswipe\b|\bzoom(?:s|ed|ing)?\b|\bnotch\b|\bstatus bar\b|"
+    r"\b(?:header|sidebar|toolbar)\b|\blayout\b|\brenders?\b", re.I)
+
+
+def about_software(text) -> bool:
+    """A note about how Morph's or brAIn's own screens behave."""
+    body = str(text or "")
+    return bool(_NAMES_PANEL_RE.search(body)) and bool(_SCREEN_RE.search(body))
+
+
+def exception_text(report: str, note: str) -> str:
+    """What a Wrong's rule says: the reason, unless it was only an
+    acknowledgement — then which report was marked wrong."""
+    note = str(note or "").strip()
+    if note and not bare_acknowledgement(note):
+        return note
+    if report:
+        return f'"{report}" was reported and marked wrong'
+    return "A report was marked wrong"
+
+
+def not_a_fact(text) -> bool:
+    """Text the store does not file as a plain fact (see above)."""
+    return (bare_acknowledgement(text) or acknowledged_correction(text)
+            or about_software(text))
+
+
 def outlived(row: dict, current: str | None = None) -> bool:
     """A fact about brAIn being broken, filed under an older version than
     the one running now."""
@@ -1829,6 +1905,10 @@ def _ingest_line(obj, ctx) -> bool:
                       entries=ctx["entries"])
     if not text:
         return False
+    if not obj.get("predicate") and not_a_fact(text):
+        # An acknowledgement, or a note about the software: neither is
+        # about the house, and the store is what every run is handed.
+        return False
     person = str(obj.get("person") or "")
     named = str(obj.get("subject") or "").strip()
     also = [str(x).strip() for x in (obj.get("subjects") or [])
@@ -1972,8 +2052,11 @@ def _read_reconcile_state() -> dict:
 # old rules is put right once and not on every pass. 2: a machine's
 # reading of one moment (`is_moment`) filed before it was given a short
 # life gets one, counted from when it was last said — so one from last month
-# ages out on this pass rather than being asserted for ever.
-REPAIR_VERSION = 2
+# ages out on this pass rather than being asserted for ever. 3: a plain fact
+# that is only an acknowledgement, a filed Wrong whose reason was one, or a
+# note about Morph's or brAIn's own screens (`not_a_fact`) is dropped, and a
+# rule whose text was only an acknowledgement says what it was about instead.
+REPAIR_VERSION = 3
 
 
 def _repair_one(row: dict, ctx: dict, version: str) -> bool:
@@ -2003,6 +2086,11 @@ def _repair_one(row: dict, ctx: dict, version: str) -> bool:
             row["subject"] = cleaned[0]
             changed = True
     text = str(row.get("text") or "")
+    if _is_exception_predicate(predicate) and bare_acknowledgement(text):
+        # "That's fine" is not why a rule stands; the report it answered is.
+        text = exception_text(str(row.get("about") or ""), "")
+        row["text"] = text
+        changed = True
     better = clean_text(text, str(row.get("source") or ""),
                         devices=ctx["devices"], entries=ctx["entries"])
     if better and better != text:
@@ -2036,8 +2124,16 @@ def _repair_one(row: dict, ctx: dict, version: str) -> bool:
 def _repair(rows: list[dict], ctx: dict) -> tuple[list[dict], dict]:
     """Every row through `_repair_one`, then the folds `add` makes at
     ingest made over what is already stored. Never raises past a row."""
-    out = {"repaired": 0, "folded": 0}
+    out = {"repaired": 0, "folded": 0, "not_facts": 0}
     version = current_version()
+    kept_rows = []
+    for row in rows:
+        if not str(row.get("predicate") or "") and not_a_fact(
+                row.get("text", "")):
+            out["not_facts"] += 1
+            continue
+        kept_rows.append(row)
+    rows = kept_rows
     for row in rows:
         try:
             if _repair_one(row, ctx, version):
@@ -2128,9 +2224,10 @@ def reconcile(document: str | None, inbox_dir, *,
         if _read_reconcile_state().get("repair") != mark:
             with _locked():
                 repaired, moved = _repair(_load(), ctx)
-                if moved["repaired"] or moved["folded"]:
+                if moved["repaired"] or moved["folded"] or moved["not_facts"]:
                     _write(repaired)
             out["repaired"], out["folded"] = moved["repaired"], moved["folded"]
+            out["not_facts"] = moved["not_facts"]
             try:
                 state0 = _read_reconcile_state()
                 state0["repair"] = mark

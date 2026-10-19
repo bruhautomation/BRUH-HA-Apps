@@ -584,9 +584,50 @@ def from_finding(row: dict, now: float,
     )
 
 
+# The domains whose own state change starts a run: what they set next
+# carries the same context id. Home Assistant's logbook reads a cause off
+# exactly this — the first entity to change in a context — so a signal can
+# say "set by the scene Goodnight" without walking any chain.
+RUNNER_DOMAINS = ("automation", "script", "scene")
+
+
+def runner_of(event: dict) -> dict | None:
+    """`{entity_id, name, domain}` when this state change is a run starting.
+
+    An automation's state change on a trigger (its `last_triggered` moving),
+    a script turning on, a scene being activated. Anything else is None.
+    """
+    if not isinstance(event, dict):
+        return None
+    entity = str(event.get("entity_id") or "").strip()
+    domain = domain_of(entity)
+    if domain not in RUNNER_DOMAINS:
+        return None
+    new_state = event.get("new_state")
+    if not isinstance(new_state, dict):
+        return None
+    attrs = new_state.get("attributes") if isinstance(
+        new_state.get("attributes"), dict) else {}
+    name = str(attrs.get("friendly_name") or entity)
+    return {"entity_id": entity, "name": name, "domain": domain}
+
+
+def cause_words(cause: dict | None) -> str:
+    """", set by the scene Goodnight", or nothing."""
+    if not isinstance(cause, dict):
+        return ""
+    entity = str(cause.get("entity_id") or "")
+    domain = domain_of(entity)
+    if domain not in RUNNER_DOMAINS:
+        return ""
+    name = str(cause.get("name") or entity).strip() or entity
+    return f", set by the {domain} {name}"
+
+
 def from_state_change(event: dict, ctx: RegistryContext, now: float,
                       rhythm_payload: dict | None = None,
-                      tz: dt.tzinfo | None = None) -> dict | None:
+                      tz: dt.tzinfo | None = None,
+                      cause: dict | None = None) -> dict | None:
     """Home Assistant's `state_changed` data as a signal, or None.
 
     **Most state changes are not signals, and returning None is the whole
@@ -602,6 +643,11 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     and the event's `context`. A change with no new state is an entity
     being removed, which is a registry event wearing a state change's
     clothes and is not this module's business.
+
+    ``cause`` is the scene, automation or script whose run this change was
+    part of (the bus matches the context id, `runner_of`), and the row says
+    so: a light a scene turned off is the scene working, and the look reads
+    this text.
     """
     if not isinstance(event, dict):
         return None
@@ -646,6 +692,7 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     friendly = str(attrs.get("friendly_name") or entity)
     text = f"{friendly} {was or 'unknown'} → {value}" if was \
         else f"{friendly} → {value}"
+    text += cause_words(cause)
     kind = "presence" if person else "state"
     return make(
         kind, entity, now=now, source="eventbus", text=text,
