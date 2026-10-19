@@ -23,7 +23,11 @@ describe('the SQLite executor', () => {
 
   it('round-trips booleans and JSON as the app wrote them', async () => {
     const db = client(openForTest());
-    const { data: crop } = await db.from('crops').insert({ name: 'Apples', crop_group_id: null }).select().single();
+    const { data: crop } = await db
+      .from('crops')
+      .insert({ name: 'Apples', crop_group_id: null })
+      .select()
+      .single();
     expect(crop?.is_active).toBe(true);
     expect(crop?.track_fungicide).toBe(false);
     const { data: v } = await db
@@ -75,16 +79,26 @@ describe('the SQLite executor', () => {
     const db = openForTest();
     const bad = (req: DbRequest) => execute(db, req).error?.message ?? '';
     expect(bad({ table: 'crops; DROP TABLE crops', action: 'select' })).toMatch(/does not exist/);
-    expect(bad({ table: 'crops', action: 'select', columns: 'name, "x"' })).toMatch(/does not exist/);
-    expect(bad({ table: 'crops', action: 'select', filters: [{ column: 'id = 1 OR 1', op: 'eq', value: 1 }] })).toMatch(
+    expect(bad({ table: 'crops', action: 'select', columns: 'name, "x"' })).toMatch(
       /does not exist/
     );
-    expect(bad({ table: 'crops', action: 'insert', values: { __proto__: 1, name: 'a' } as never })).toBe('');
-    expect(bad({ table: 'crops', action: 'select', order: [{ column: 'name desc', ascending: true }] })).toMatch(
-      /does not exist/
-    );
+    expect(
+      bad({
+        table: 'crops',
+        action: 'select',
+        filters: [{ column: 'id = 1 OR 1', op: 'eq', value: 1 }],
+      })
+    ).toMatch(/does not exist/);
+    expect(
+      bad({ table: 'crops', action: 'insert', values: JSON.parse('{"__proto__": 1, "name": "a"}') })
+    ).toMatch(/column crops.__proto__ does not exist/);
+    expect(
+      bad({ table: 'crops', action: 'select', order: [{ column: 'name desc', ascending: true }] })
+    ).toMatch(/does not exist/);
     expect(bad({ table: 'crops', action: 'delete' })).toMatch(/needs a filter/);
-    expect(bad({ table: 'crops', action: 'update', values: { name: 'x' } })).toMatch(/needs a filter/);
+    expect(bad({ table: 'crops', action: 'update', values: { name: 'x' } })).toMatch(
+      /needs a filter/
+    );
   });
 
   it('values are bound, so a value can never be SQL', async () => {

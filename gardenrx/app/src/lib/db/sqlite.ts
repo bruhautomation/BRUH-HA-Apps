@@ -238,13 +238,13 @@ function project(
 function valuesOf(table: Table, tableName: string, v: unknown): Record<string, unknown> {
   if (!v || typeof v !== 'object' || Array.isArray(v))
     throw new Refused('values must be an object');
-  const out: Record<string, unknown> = {};
+  const out = new Map<string, unknown>();
   for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
     if (val === undefined) continue;
     needColumn(table, k, tableName);
-    out[k] = val;
+    out.set(k, val);
   }
-  return out;
+  return Object.fromEntries(out);
 }
 
 /** Run one request. Never throws: a refusal or a SQLite error is `error`. */

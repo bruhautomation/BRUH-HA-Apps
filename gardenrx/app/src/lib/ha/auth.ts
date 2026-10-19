@@ -17,15 +17,21 @@ let cached: { file: string; mtimeMs: number; token: string } | null = null;
 function expectedToken(): string | null {
   const file = process.env.GARDENRX_HA_TOKEN_FILE;
   if (!file) return null;
+  let fd: number | null = null;
   try {
-    const st = fs.statSync(/*turbopackIgnore: true*/ file);
+    // Stat and read the same open file, so the token read is the one whose
+    // mtime was checked.
+    fd = fs.openSync(/*turbopackIgnore: true*/ file, 'r');
+    const st = fs.fstatSync(fd);
     if (cached && cached.file === file && cached.mtimeMs === st.mtimeMs) return cached.token;
-    const token = fs.readFileSync(/*turbopackIgnore: true*/ file, 'utf8').trim();
+    const token = fs.readFileSync(fd, 'utf8').trim();
     if (token.length < 32) return null;
     cached = { file, mtimeMs: st.mtimeMs, token };
     return token;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) fs.closeSync(fd);
   }
 }
 

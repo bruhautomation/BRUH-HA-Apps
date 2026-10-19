@@ -411,7 +411,7 @@ function checkRotationWarnings(state: InterlockState): InterlockResult[] {
           results.push({
             severity: 'warning',
             rule: 'FRAC/IRAC rotation',
-            explanation: `Group ${ingredient.frac_irac_hrac_group} has been used ${count} time${count > 1 ? 's' : ''} consecutively on ${crop?.name}. Adding another increases resistance risk.`,
+            explanation: `Group ${ingredient.frac_irac_hrac_group} has been used ${count} times consecutively on ${crop?.name}. Adding another increases resistance risk.`,
           });
         }
       }
