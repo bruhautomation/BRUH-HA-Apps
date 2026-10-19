@@ -7228,8 +7228,8 @@ function todayGroups(cards) {
 // The one line at the top of the queue about rows no look has judged.
 function waitingNote(n) {
   return el("p", "qwaiting", n === 1
-    ? "1 card is waiting for brAIn's first look (Unchecked)."
-    : `${n} cards are waiting for brAIn's first look (Unchecked).`);
+    ? "1 card is waiting for brAIn's first look."
+    : `${n} cards are waiting for brAIn's first look.`);
 }
 
 // Which group opens by itself: the problems when there are any, else the
@@ -13634,6 +13634,14 @@ function renderConvKinds() {
     b.addEventListener("click", () => { if (!on) pickConvSource(o.id); });
     host.appendChild(b);
   });
+  // On a phone the kinds are a strip: bring the chosen one into view,
+  // moving the strip only (never the page).
+  const on = host.querySelector(".pill.active");
+  if (on && host.scrollWidth > host.clientWidth) {
+    const hr = host.getBoundingClientRect();
+    const r = on.getBoundingClientRect();
+    if (r.left < hr.left || r.right > hr.right) host.scrollLeft += r.left - hr.left - 12;
+  }
 }
 
 function renderChatRail() {
