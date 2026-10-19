@@ -567,6 +567,8 @@ class TestMCPProtocol(unittest.TestCase):
             # 2.11: what a device shows as, through the brain Power Tools
             "set_device_class", "show_switch_as", "stop_showing_switch_as",
             "set_sensor_display",
+            # 3.2: BRUH Bambu Studio's 3D printers
+            "bambu_status", "bambu_print", "bambu_control", "bambu_slice",
         }
         self.assertEqual(tool_names, expected_tools)
 

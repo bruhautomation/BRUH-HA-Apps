@@ -1,0 +1,259 @@
+get_status:
+  name: Get status
+  description: Every printer's state, progress, temperatures and AMS, whether Bambu Studio
+    is installed and running, and the latest jobs. Changes nothing.
+list_files:
+  name: List files
+  description: The models and sliced print files in /share/bambu, with which are sliced, their
+    plates, print time and weight.
+printer_files:
+  name: List the printer's files
+  description: What is on a printer's own storage.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+print_file:
+  name: Print a file
+  description: Print a file from /share/bambu. A project that is not sliced yet is sliced
+    first with the settings saved in it, then uploaded to the printer and started.
+  fields:
+    file:
+      name: File
+      description: Its path inside /share/bambu, as list_files shows it.
+      required: true
+      example: sliced/benchy.gcode.3mf
+      selector:
+        text: {}
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    plate:
+      name: Plate
+      description: Which plate of the project to print. Left out, the first.
+      selector:
+        number:
+          min: 1
+          max: 64
+          mode: box
+    use_ams:
+      name: Use the AMS
+      description: Feed filament from the AMS. Left out, it is used when the printer has one.
+      selector:
+        boolean: {}
+    ams_mapping:
+      name: AMS slots
+      description: Which AMS slot (0-based) feeds each filament in the file, in order. Left
+        out, filament 1 from slot 1 and so on.
+      example: '[0, 2]'
+      selector:
+        object: {}
+    timelapse:
+      name: Timelapse
+      selector:
+        boolean: {}
+    bed_leveling:
+      name: Bed levelling
+      selector:
+        boolean: {}
+    flow_cali:
+      name: Flow calibration
+      selector:
+        boolean: {}
+    vibration_cali:
+      name: Vibration calibration
+      selector:
+        boolean: {}
+    machine:
+      name: Machine profile
+      description: 'Only for a bare model that has to be sliced: the printer profile name
+        as Bambu Studio lists it.'
+      example: Bambu Lab X1 Carbon 0.4 nozzle
+      selector:
+        text: {}
+    process:
+      name: Process profile
+      description: 'Only for a bare model: the process profile name.'
+      example: 0.20mm Standard @BBL X1C
+      selector:
+        text: {}
+    filaments:
+      name: Filament profiles
+      description: 'Only for a bare model: filament profile names, one per filament.'
+      selector:
+        object: {}
+slice_file:
+  name: Slice a file
+  description: Slice a project or model from /share/bambu with Bambu Studio and save the print
+    file in /share/bambu/sliced.
+  fields:
+    file:
+      name: File
+      required: true
+      example: benchy.3mf
+      selector:
+        text: {}
+    plate:
+      name: Plate
+      description: 0 slices every plate.
+      selector:
+        number:
+          min: 0
+          max: 64
+          mode: box
+    machine:
+      name: Machine profile
+      selector:
+        text: {}
+    process:
+      name: Process profile
+      selector:
+        text: {}
+    filaments:
+      name: Filament profiles
+      selector:
+        object: {}
+    arrange:
+      name: Arrange
+      description: Arrange the objects on the plate first.
+      selector:
+        boolean: {}
+    orient:
+      name: Orient
+      description: Turn each object to its best orientation first.
+      selector:
+        boolean: {}
+pause_print:
+  name: Pause
+  description: Pause the current print.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+resume_print:
+  name: Resume
+  description: Resume a paused print.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+stop_print:
+  name: Stop
+  description: Stop the current print. A stopped print cannot be resumed.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+set_speed:
+  name: Set speed
+  description: The print speed profile.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    speed:
+      name: Speed
+      required: true
+      selector:
+        select:
+          options:
+          - silent
+          - standard
+          - sport
+          - ludicrous
+set_light:
+  name: Chamber light
+  description: Turn the chamber light on or off.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    'on':
+      name: 'On'
+      required: true
+      selector:
+        boolean: {}
+set_temperature:
+  name: Set temperature
+  description: Set the nozzle or bed target. Refused while printing.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    target:
+      name: Heater
+      required: true
+      selector:
+        select:
+          options:
+          - nozzle
+          - bed
+    temperature:
+      name: Temperature
+      description: °C. Nozzle up to 300, bed up to 120; 0 turns it off.
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 300
+          unit_of_measurement: °C
+          mode: box
+send_gcode:
+  name: Send G-code
+  description: Send G-code lines to the printer. Refused while printing; at most 32 lines.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    gcode:
+      name: G-code
+      required: true
+      example: G28
+      selector:
+        text:
+          multiline: true
+open_in_studio:
+  name: Open in Bambu Studio
+  description: Open a file from /share/bambu in the Bambu Studio panel.
+  fields:
+    file:
+      name: File
+      required: true
+      selector:
+        text: {}

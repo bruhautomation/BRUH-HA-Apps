@@ -121,6 +121,25 @@ const APPS = [
 		],
 	},
 	{
+		name: 'BRUH Bambu Studio',
+		tile: 'bambu/bruh-bambu-tile-dark.svg',
+		logo: 'bambu/bruh-bambu-logo-ondark.svg',
+		squares: [
+			['bruh-bambu-studio/icon.png', 256],
+			['bruh-bambu-studio/custom_components/bruh_bambu/brand/icon.png', 256],
+			['bruh-bambu-studio/custom_components/bruh_bambu/brand/icon@2x.png', 512],
+			['brands/custom_integrations/bruh_bambu/icon.png', 256],
+			['brands/custom_integrations/bruh_bambu/icon@2x.png', 512],
+		],
+		lockups: [
+			['bruh-bambu-studio/logo.png', 512, 384],
+			['bruh-bambu-studio/custom_components/bruh_bambu/brand/logo.png', 341, 256],
+			['bruh-bambu-studio/custom_components/bruh_bambu/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/bruh_bambu/logo.png', 341, 256],
+			['brands/custom_integrations/bruh_bambu/logo@2x.png', 682, 512],
+		],
+	},
+	{
 		name: 'Morph',
 		tile: 'morph/morph-tile-dark.svg',
 		logo: 'morph/morph-logo-ondark.svg',
@@ -162,7 +181,11 @@ const shoot = async (html, w, h, out) => {
 	console.log(`  ${out.padEnd(52)} ${w}x${h}`);
 };
 
+// BRAND_ONLY="BRUH Bambu Studio" renders one app and leaves every other PNG
+// byte-for-byte as it is.
+const ONLY = process.env.BRAND_ONLY;
 for (const app of APPS) {
+	if (ONLY && app.name !== ONLY) continue;
 	console.log(`\n${app.name}`);
 
 	// Tiles rasterise as-is: they already carry their own ground and radius.

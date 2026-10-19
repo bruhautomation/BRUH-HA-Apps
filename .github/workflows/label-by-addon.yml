@@ -42,8 +42,9 @@ jobs:
               'BRUH Minecraft':        ['minecraft'],
               'BRight':                 ['bright'],
               'BRUH Print':            ['print'],
+              'BRUH Bambu Studio':     ['bambu'],
               'Morph':                 ['morph'],
-              'Multiple add-ons':      ['brain', 'minecraft', 'bright', 'print', 'morph'],
+              'Multiple add-ons':      ['brain', 'minecraft', 'bright', 'print', 'bambu', 'morph'],
               'The repository / docs': ['repo'],
             };
             const COLORS = {
@@ -51,6 +52,7 @@ jobs:
               minecraft: { color: '3fa34d', description: 'The BRUH Minecraft add-on' },
               bright:     { color: '5ac4f2', description: 'The BRight add-on' },
               print:     { color: '0b6bcb', description: 'The BRUH Print add-on' },
+              bambu:     { color: '00ae42', description: 'The BRUH Bambu Studio add-on' },
               morph:     { color: '7c5cff', description: 'The Morph add-on' },
               repo:      { color: '6e7781', description: 'Repository, CI or docs' },
             };

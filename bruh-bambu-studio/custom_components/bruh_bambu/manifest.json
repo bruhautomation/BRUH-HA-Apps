@@ -1,0 +1,13 @@
+{
+  "domain": "bruh_bambu",
+  "name": "BRUH Bambu Studio",
+  "codeowners": ["@bruhautomation"],
+  "config_flow": true,
+  "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-bambu-studio",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

@@ -8,6 +8,7 @@
 - [ ] BRUH Minecraft
 - [ ] BRight
 - [ ] BRUH Print
+- [ ] BRUH Bambu Studio
 - [ ] Repo-wide (CI, docs, etc.)
 
 ## Checklist

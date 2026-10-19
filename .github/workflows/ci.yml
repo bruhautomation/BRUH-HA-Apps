@@ -140,6 +140,7 @@ jobs:
           }
           narrow "BRight" bright test_bright_
           narrow "BRUH Print" bruh-print test_bruh_print_
+          narrow "BRUH Bambu Studio" bruh-bambu-studio test_bambu_
           narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
           narrow "Morph" morph test_morph_
 
@@ -701,6 +702,12 @@ jobs:
           dockerfile: bright/Dockerfile
           failure-threshold: error
 
+      - name: Lint BRUH Bambu Studio Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
+        with:
+          dockerfile: bruh-bambu-studio/Dockerfile
+          failure-threshold: error
+
       - name: Lint Morph Dockerfile
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
@@ -779,6 +786,20 @@ jobs:
             echo "::error::Morph's add-on ($addon_version), manifest ($manifest_version) and const.py ($const_version) versions disagree"
             exit 1
           fi
+
+      - name: Check BRUH Bambu Studio version parity
+        run: |
+          addon_version=$(grep -E '^version:' bruh-bambu-studio/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-bambu-studio/custom_components/bruh_bambu/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::BRUH Bambu Studio add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check BRUH Bambu Studio changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-bambu-studio
 
       - name: Check Morph changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh morph

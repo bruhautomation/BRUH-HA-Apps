@@ -30,6 +30,7 @@ ADDONS = {
     "bruh_minecraft_server": os.path.join(BASE_DIR, "bruh-minecraft-server"),
     "bright": os.path.join(BASE_DIR, "bright"),
     "bruh-print": os.path.join(BASE_DIR, "bruh-print"),
+    "bruh-bambu-studio": os.path.join(BASE_DIR, "bruh-bambu-studio"),
     "morph": os.path.join(BASE_DIR, "morph"),
 }
 
@@ -475,6 +476,8 @@ class TestWatchdog(unittest.TestCase):
             "bright": os.path.join(ADDONS["bright"], "panel", "server.py"),
             "bruh-print": os.path.join(
                 ADDONS["bruh-print"], "panel", "server.py"),
+            "bruh-bambu-studio": os.path.join(
+                ADDONS["bruh-bambu-studio"], "panel", "server.py"),
             # Morph has no panel of its own (its UI is a Home Assistant
             # sidebar panel); the service answers the health poll.
             "morph": os.path.join(ADDONS["morph"], "service", "morphd.py"),
@@ -547,6 +550,9 @@ class TestIntegrationManifests(unittest.TestCase):
             ADDONS["bright"], "custom_components", "bright", "manifest.json"),
         "bruh_print": os.path.join(
             ADDONS["bruh-print"], "custom_components", "bruh_print",
+            "manifest.json"),
+        "bruh_bambu": os.path.join(
+            ADDONS["bruh-bambu-studio"], "custom_components", "bruh_bambu",
             "manifest.json"),
         "morph": os.path.join(
             ADDONS["morph"], "custom_components", "morph", "manifest.json"),

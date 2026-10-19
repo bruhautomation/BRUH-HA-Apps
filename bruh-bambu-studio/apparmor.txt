@@ -1,0 +1,87 @@
+#include <tunables/global>
+
+# AppArmor profile for the BRUH Bambu Studio add-on.
+#
+# Bambu Studio is a desktop application, so this profile looks after a
+# virtual screen (Xvfb), a VNC server bound to loopback, a slicer that JITs
+# (Mesa's llvmpipe renders its OpenGL in software, and WebKit runs its
+# JavaScript) and a panel that talks to printers on the LAN over MQTT and
+# FTPS. None of that needs a device node, a raw socket or host networking.
+# The host-escape primitives are denied as everywhere else.
+
+profile bruh-bambu-studio flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # A writable docker.sock is root on the host by another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities: run.sh lays /data out as root and drops to the `bambu`
+  # user with setpriv, so setuid/setgid and chown are genuinely needed.
+  # ------------------------------------------------------------------
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  # No mounting, ever. The AppImage is EXTRACTED, never FUSE-mounted, for
+  # exactly this reason.
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+  file,
+
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+  ptrace (trace,read) peer=bruh-bambu-studio,
+
+  # The ingress panel, the Supervisor API, the printers (MQTT 8883, FTPS
+  # 990), GitHub for the download, and X11/VNC on unix sockets and loopback.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  # `m` as well as `ix`: llvmpipe and WebKit map executable memory, and
+  # without it the slicer's window never draws.
+  /** ixm,
+}

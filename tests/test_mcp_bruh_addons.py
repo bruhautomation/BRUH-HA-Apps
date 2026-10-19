@@ -46,6 +46,14 @@ class FakeCore:
             return {"response": {"reachable": True, "online": len(self.online), "max": 20,
                                  "players": self.online, "state": {"active_world": "family"},
                                  "stats": {"version": "1.21.4"}}}
+        if key == ("bruh_bambu", "get_status"):
+            return {"response": {"printers": [{"id": "a", "name": "X1C", "state": "running",
+                                               "progress": 40, "remaining_min": 55}]}}
+        if key == ("bruh_bambu", "list_files"):
+            return {"response": {"files": [{"path": "sliced/benchy.gcode.3mf",
+                                            "sliced": True, "plates": [1], "size": 9}]}}
+        if key[0] == "bruh_bambu":
+            return {"response": {"printer": "X1C", "acknowledged": True}}
         if key[0] == "bruh_print":
             return {"response": {"printed": payload["service_data"].get("copies", 1),
                                  "side": "left", "notes": []}}
@@ -241,9 +249,57 @@ class TestTheOtherCalls(Base):
         for name in ("minecraft_status", "minecraft_teleport", "minecraft_player",
                      "minecraft_world", "minecraft_command", "minecraft_server",
                      "minecraft_addons", "label_printer_status", "print_label",
-                     "bright_status", "bright_show"):
+                     "bright_status", "bright_show", "bambu_status", "bambu_print",
+                     "bambu_control", "bambu_slice"):
             self.assertIn(name, names)
             self.assertTrue(callable(getattr(m, m.TOOL_IMPLEMENTATIONS[name])))
+
+
+class TestBambu(Base):
+    def test_status_and_files_come_back_together(self):
+        got = m.bambu_status(files=True)
+        self.assertEqual(got["printers"][0]["remaining_min"], 55)
+        self.assertEqual(got["files"], [{"path": "sliced/benchy.gcode.3mf", "sliced": True,
+                                         "plates": [1], "seconds": None, "grams": None}])
+        self.assertEqual(self.core.acted(), [("bruh_bambu", "list_files")])
+
+    def test_a_print_names_the_file_and_the_printer(self):
+        got = m.bambu_print("start", printer="X1C", file="sliced/benchy.gcode.3mf", plate=2)
+        self.assertTrue(got["done"], got)
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "print_file"),
+                                               {"printer": "X1C", "file": "sliced/benchy.gcode.3mf",
+                                                "plate": 2}))
+        self.assertIn("error", m.bambu_print("start"))
+
+    def test_control_maps_to_the_services_by_their_own_field_names(self):
+        m.bambu_control("speed", value="Sport")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "set_speed"), {"speed": "sport"}))
+        m.bambu_control("light", value="off")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "set_light"), {"on": False}))
+        m.bambu_control("temperature", value="60", target="bed")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "set_temperature"),
+                                               {"temperature": 60, "target": "bed"}))
+        m.bambu_control("home")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "send_gcode"), {"gcode": "G28"}))
+
+    def test_voice_may_pause_and_may_not_start_stop_slice_or_send_gcode(self):
+        self.voice()
+        self.assertTrue(m.bambu_print("pause")["done"])
+        self.assertTrue(m.bambu_control("light", value="on")["done"])
+        before = len(self.core.calls)
+        for refused in (lambda: m.bambu_print("start", file="a.3mf"),
+                        lambda: m.bambu_print("stop"),
+                        lambda: m.bambu_control("gcode", value="G28"),
+                        lambda: m.bambu_slice("a.3mf")):
+            self.assertIn("administration action", refused()["error"])
+        self.assertEqual(len(self.core.calls), before)
+        # And the generic route is held to the same split.
+        for service in ("print_file", "stop_print", "send_gcode", "slice_file"):
+            self.assertIn(("bruh_bambu", service), m.VOICE_ADMIN_SERVICES)
+
+    def test_the_acting_tools_are_kept_off_an_approved_change(self):
+        for name in ("bambu_print", "bambu_control", "bambu_slice"):
+            self.assertIn(name, m.CONTRACT_REFUSED_TOOLS)
 
 
 if __name__ == "__main__":

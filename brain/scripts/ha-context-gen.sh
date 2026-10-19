@@ -589,6 +589,10 @@ asked.
   \`print_label\`; print on a loaded stock.
 - BRight — \`bright_status\` for the parties and speakers that exist, then
   \`bright_show\`.
+- BRUH Bambu Studio — \`bambu_status\` (printers, progress, temperatures;
+  \`files: true\` for what is in /share/bambu), then \`bambu_print\` (start,
+  pause, resume, stop — confirm before stop), \`bambu_control\` (speed,
+  light, temperatures, G-code) and \`bambu_slice\`.
 
 ## Registry Management — BRUH Power Tools
 

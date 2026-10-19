@@ -1,7 +1,7 @@
 ---
 name: "BRUH Minecraft"
 description: "Rock-solid Minecraft Java Edition server with ingress panel, RCON, git world backups, auto-updates, plugin management, and deep Home Assistant integration"
-version: "1.17.1"
+version: "1.17.2"
 slug: "bruh_minecraft_server"
 init: false
 
@@ -31,7 +31,7 @@ apparmor: true
 # Boot policy
 boot: auto
 startup: services
-stage: stable
+stage: experimental
 
 # Restart the add-on if the panel stops answering. /api/health is the one
 # endpoint the LAN gate lets through unauthenticated (it reports liveness

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bambu Studio</title>
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><strong>BRUH</strong> Bambu Studio <span class="tag">Experimental</span></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" data-view="studio" role="tab">Studio</button>
+    <button class="tab" data-view="printers" role="tab">Printers</button>
+    <button class="tab" data-view="files" role="tab">Files</button>
+  </nav>
+</header>
+
+<main>
+  <section id="viewStudio" class="view" data-view="studio">
+    <div id="studioStatus" class="notice" hidden></div>
+    <iframe id="screen" title="Bambu Studio" allow="clipboard-read; clipboard-write"></iframe>
+  </section>
+
+  <section id="viewPrinters" class="view" data-view="printers" hidden>
+    <div id="printerList" class="cards"></div>
+    <details class="card" id="addPrinter">
+      <summary>Add a printer</summary>
+      <p class="hint">On the printer's screen: the IP address is under Network, the
+        access code under LAN settings, the serial number under Device. Turn on
+        LAN-only mode and Developer mode so the printer accepts commands from Home
+        Assistant.</p>
+      <form id="printerForm" class="grid">
+        <label>Name <input name="name" placeholder="Workshop X1C" autocomplete="off"></label>
+        <label>Model <select name="model" id="modelSelect"></select></label>
+        <label>IP address <input name="host" required placeholder="192.168.1.50" autocomplete="off"></label>
+        <label>Serial number <input name="serial" required autocomplete="off"></label>
+        <label>Access code <input name="access_code" required autocomplete="off"></label>
+        <div class="row"><button class="primary" type="submit">Save</button></div>
+      </form>
+    </details>
+  </section>
+
+  <section id="viewFiles" class="view" data-view="files" hidden>
+    <div class="card">
+      <div class="row spread">
+        <div><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
+        <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
+      </div>
+      <div id="jobList"></div>
+      <div id="fileList"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="printDialog">
+  <form method="dialog" id="printForm" class="grid">
+    <h2 id="printTitle">Print</h2>
+    <label>Printer <select name="printer" id="printPrinter"></select></label>
+    <label>Plate <input name="plate" type="number" min="1" value="1"></label>
+    <label class="check"><input type="checkbox" name="use_ams" checked> Use the AMS</label>
+    <label class="check"><input type="checkbox" name="bed_leveling" checked> Bed levelling</label>
+    <label class="check"><input type="checkbox" name="timelapse"> Timelapse</label>
+    <p class="hint" id="printNote"></p>
+    <div class="row"><button value="cancel" type="button" id="printCancel">Cancel</button>
+      <button class="primary" value="go">Print</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

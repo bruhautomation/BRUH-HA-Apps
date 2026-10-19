@@ -35,6 +35,7 @@ INTEGRATIONS = [
     ("bruh-minecraft-server", "bruh_minecraft"),
     ("bright", "bright"),
     ("bruh-print", "bruh_print"),
+    ("bruh-bambu-studio", "bruh_bambu"),
     ("morph", "morph"),
 ]
 

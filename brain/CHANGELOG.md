@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.2.0
+
+### Added
+
+- **brAIn runs your 3D printers.** With the new BRUH Bambu Studio add-on installed, four tools reach Bambu Lab printers through its `bruh_bambu` services: `bambu_status` (state, progress, time left, temperatures, AMS, and the files in `/share/bambu`), `bambu_print` (start, pause, resume, stop), `bambu_control` (speed, chamber light, nozzle and bed temperature, homing, G-code) and `bambu_slice`. A voice agent may check on a print, pause, resume, and change the speed, light and temperatures; starting or stopping a print, slicing and G-code are refused by voice, and unattended runs may only read.
+
 ## 3.1.0
 
 ### Added

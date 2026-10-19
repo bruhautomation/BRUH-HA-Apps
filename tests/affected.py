@@ -142,12 +142,14 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
-ADDONS = ("brain", "bright", "bruh-print", "bruh-minecraft-server", "morph")
+ADDONS = ("brain", "bright", "bruh-print", "bruh-bambu-studio",
+          "bruh-minecraft-server", "morph")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
     "bright": "test_bright_",
     "bruh-print": "test_bruh_print_",
+    "bruh-bambu-studio": "test_bambu_",
     "bruh-minecraft-server": "test_minecraft_",
     "morph": "test_morph_",
 }
@@ -157,6 +159,7 @@ ADDON_NAMES = {
     "brain": ("brain",),
     "bright": ("bright",),
     "bruh-print": ("bruh-print", "bruh_print"),
+    "bruh-bambu-studio": ("bruh-bambu-studio", "bruh_bambu"),
     "bruh-minecraft-server": ("bruh-minecraft-server", "bruh_minecraft"),
     "morph": ("morph",),
 }
@@ -167,6 +170,8 @@ ADDON_WIDE_TESTS = {
     "bright": ("tests/test_addon_hardening.py", "tests/test_bright_addon.py"),
     "bruh-print": ("tests/test_addon_hardening.py",
                    "tests/test_bruh_print_addon.py"),
+    "bruh-bambu-studio": ("tests/test_addon_hardening.py",
+                          "tests/test_bambu_addon.py"),
     "bruh-minecraft-server": ("tests/test_addon_hardening.py",
                               "tests/test_minecraft_config.py"),
     "morph": ("tests/test_addon_hardening.py", "tests/test_morph_addon.py"),

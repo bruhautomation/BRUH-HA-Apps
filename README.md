@@ -24,6 +24,8 @@ One install, one sidebar panel, one login. **Runs on the Claude Pro or Max subsc
 
 ### [BRUH Minecraft](bruh-minecraft-server/)
 
+> ⚠️ **Experimental.** Works, and is still settling — expect rough edges.
+
 Rock-solid Minecraft **Java Edition** server add-on with an ingress management panel, git-based world version control, RCON, and a first-class HA integration:
 
 - **Any flavour** - Paper, Purpur, Folia, Vanilla, Fabric, or Forge, `LATEST` / `SNAPSHOT` / explicit versions resolved from upstream APIs
@@ -34,6 +36,8 @@ Rock-solid Minecraft **Java Edition** server add-on with an ingress management p
 - **Plugin management** with `If-Modified-Since` caching
 
 ### [BRight](bright/)
+
+> ⚠️ **Experimental.** Works, and is still settling — expect rough edges.
 
 **Your music, your lights, actually in time.** Point BRight at a folder of
 music and it analyzes every track once — tempo and beat grid, song sections
@@ -79,6 +83,30 @@ from an automation.
 - **A Lovelace card** with a text mode, a template mode and one-press buttons
 
 📖 [add-on README](bruh-print/) · [full documentation](bruh-print/DOCS.md)
+
+### [BRUH Bambu Studio](bruh-bambu-studio/)
+
+> ⚠️ **Experimental.** Keep Bambu Handy or the printer's screen within reach
+> the first few times you start a print from Home Assistant.
+
+**Slice and print on your Bambu Lab printers from Home Assistant.** Bambu
+Studio itself, in the sidebar, and every printer on your LAN under Home
+Assistant's control.
+
+- **The real slicer** — Bambu Lab's own Bambu Studio, downloaded on first
+  start and run on a virtual screen you use from the sidebar
+- **Live printer status** — state, progress, time left, temperatures, speed
+  and AMS trays, as sensors per printer
+- **Print from anywhere** — drop a project or model into `/share/bambu` and
+  print it; unsliced projects are sliced first by Bambu Studio's own command
+  line, uploaded and started
+- **Full control** — pause, resume, stop, speed, chamber light, temperatures,
+  homing and G-code, on the panel and as `bruh_bambu.*` services
+- **brAIn runs it** — "how long is left on the print?", "pause the printer",
+  "print the benchy on the X1C"
+- **amd64 only** — Bambu Lab publishes Bambu Studio for Linux on x86-64 only
+
+📖 [add-on README](bruh-bambu-studio/) · [full documentation](bruh-bambu-studio/DOCS.md)
 
 ### [Morph](morph/)
 
