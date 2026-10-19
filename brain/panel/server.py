@@ -23932,6 +23932,7 @@ async def h_chat_state(request: web.Request) -> web.Response:
 CRASH_SPACING_S = 600
 _CRASH_SEEN: dict[str, float] = {}
 _ROUTE_SAFE_RE = re.compile(r"[^\x20-\x7e]")
+_KNOWN_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
 
 
 def crash_error(exc: BaseException, panel_dir: str = "") -> str:
@@ -23972,17 +23973,20 @@ async def crash_middleware(request: web.Request, handler):
     except (web.HTTPException, asyncio.CancelledError):
         raise
     except Exception as exc:
-        route = request.path
+        # What is written is the router's own canonical pattern and a
+        # method from a fixed list — never the caller's path or verb, which
+        # is what a log line or a journal row must not be built from
+        # (CodeQL's log-injection rule). A request that matched no route
+        # raised HTTPNotFound above and never reaches here, so the
+        # fallback names the absence rather than quoting the path.
+        route = "(no route)"
         try:
             resource = request.match_info.route.resource
-            route = resource.canonical if resource is not None else route
-        except Exception:  # noqa: BLE001 — the path is enough
+            if resource is not None:
+                route = _ROUTE_SAFE_RE.sub("?", str(resource.canonical))[:120]
+        except Exception:  # noqa: BLE001 — the absence is enough
             pass
-        # The route pattern is the router's; the fallback path is the
-        # caller's, so it is folded to printable ASCII before it is written
-        # anywhere a line is a record (CodeQL's log-injection rule).
-        route = _ROUTE_SAFE_RE.sub("?", str(route))[:120]
-        method = _ROUTE_SAFE_RE.sub("?", str(request.method))[:12]
+        method = request.method if request.method in _KNOWN_METHODS else "?"
         log.exception("unhandled error in %s %s", method, route)
         try:
             note_crash(f"{method} {route}", exc)

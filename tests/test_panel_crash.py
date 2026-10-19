@@ -12,6 +12,7 @@ the real journal, pointed at this test's own file.
 from __future__ import annotations
 
 import asyncio
+import json
 import importlib
 import sys
 import tempfile
@@ -98,6 +99,9 @@ class TestACrashedRouteIsJournaled(unittest.TestCase):
         [row] = self.journal.tail(10)
         self.assertEqual(row["extra"]["stage"], "GET /{tail}")
         self.assertEqual(self.server._ROUTE_SAFE_RE.sub("?", "a\nb\x7f\u00e9"), "a?b??")
+        # And the caller's path is never what is written: a route named
+        # nowhere in the journal, however the request was spelled.
+        self.assertNotIn("forged", json.dumps(row))
 
     def test_a_refusal_and_a_success_write_nothing(self):
         self.assertEqual(self._drive(["/api/refused", "/api/fine"]), [400, 200])
