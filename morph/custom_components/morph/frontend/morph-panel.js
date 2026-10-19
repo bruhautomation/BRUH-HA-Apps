@@ -90,6 +90,39 @@ function pausedWhy(r) {
   return 'Morph’s own version is running until you update your change.';
 }
 
+// Home Assistant defines window.loadCardHelpers only once its Lovelace chunk
+// has loaded, and a panel opened directly may get here first. Wait briefly,
+// then load that chunk the way Home Assistant's own panels do; null when
+// neither works (the caller then tries a custom card without the helpers).
+async function cardHelpers() {
+  if (typeof window.loadCardHelpers === 'function') return window.loadCardHelpers();
+  const until = Date.now() + 1000;
+  while (Date.now() < until && typeof window.loadCardHelpers !== 'function') await new Promise((r) => setTimeout(r, 100));
+  if (typeof window.loadCardHelpers !== 'function') {
+    try {
+      await Promise.race([customElements.whenDefined('partial-panel-resolver'), new Promise((_, no) => setTimeout(no, 1500))]);
+      const ppr = document.createElement('partial-panel-resolver');
+      ppr.hass = { panels: [{ url_path: 'tmp', component_name: 'lovelace' }] };
+      ppr._updateRoutes();
+      await ppr.routerOptions.routes.tmp.load();
+      await Promise.race([customElements.whenDefined('hui-view'), new Promise((_, no) => setTimeout(no, 1500))]);
+    } catch (e) { /* fall through */ }
+  }
+  try { if (typeof window.loadCardHelpers === 'function') return await window.loadCardHelpers(); } catch (e) { /* fall through */ }
+  return null;
+}
+
+// A house's own custom card needs nothing from Lovelace: its element is
+// defined, so make it and hand it the config.
+function customCardWithoutHelpers(config) {
+  const tag = String((config && config.type) || '');
+  if (!tag.startsWith('custom:') || !customElements.get(tag.slice(7))) throw new Error('Lovelace card helpers are not available and the card is not a defined custom element');
+  const el = document.createElement(tag.slice(7));
+  if (typeof el.setConfig !== 'function') throw new Error(`${tag} has no setConfig`);
+  el.setConfig(config);
+  return el;
+}
+
 class MorphPanel extends HTMLElement {
   constructor() {
     super();
@@ -1656,20 +1689,24 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       if (this._llPending && this._llPending.has(card.id)) return;
       (this._llPending = this._llPending || new Set()).add(card.id);
       try {
-        const helpers = await window.loadCardHelpers();
+        const ctag = String((card.card && card.card.type) || '');
+        // A defined custom card needs nothing from Lovelace; do not wait for it.
+        const direct = typeof window.loadCardHelpers !== 'function' && ctag.startsWith('custom:') && window.customElements && !!customElements.get(ctag.slice(7));
+        const helpers = direct ? null : await cardHelpers();
         // A custom card mounted before its element is defined shows
         // "Configuration error" for good: wait (up to 4 s) for it first.
         const tag = String((card.card && card.card.type) || '');
         if (tag.startsWith('custom:') && window.customElements && !customElements.get(tag.slice(7))) {
           await Promise.race([customElements.whenDefined(tag.slice(7)), new Promise((r) => setTimeout(r, 4000))]);
         }
-        el = await helpers.createCardElement(card.card);
+        if (helpers) el = await helpers.createCardElement(card.card);
+        else el = customCardWithoutHelpers(card.card);
         el.__sig = sig;
         el.hass = this.hass;
         el.addEventListener('ll-rebuild', () => { this.llCards.delete(card.id); this.schedule(); });
         this.llCards.set(card.id, el);
       } catch (e) {
-        slot.innerHTML = `<p class="sm" style="padding:12px">This Lovelace card could not be created: ${esc(e.message || e)}</p>`;
+        slot.innerHTML = '<p class="sm" style="padding:12px">This card could not be drawn yet; reload the page.</p>';
         this.report('card', `A Lovelace card failed: ${e.message || e}`, sig.slice(0, 500), String(card.card && card.card.type));
         return;
       } finally { this._llPending.delete(card.id); }

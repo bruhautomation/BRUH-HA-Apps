@@ -618,6 +618,36 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
   await ctx.close();
 }
 
+// A hosted Lovelace card when Home Assistant's Lovelace chunk has not loaded
+// (window.loadCardHelpers is not a function): a house's own custom card is
+// still drawn without the helpers; with neither route the card says so in
+// plain words and nothing shows the JS error.
+for (const [label, define] of [['a defined custom card', true], ['no way to draw it', false]]) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await route(ctx, { narrow: false });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 900);
+  await p.evaluate(() => { const P = window.__panel; P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false }; P._forceApply = true; P.engine.invalidate(); P.schedule(); });
+  await settle(p, 1500);
+  await p.evaluate((def) => {
+    delete window.loadCardHelpers;
+    window.__panel.llCards.clear();
+    if (def) customElements.define('morph-now', class extends HTMLElement { setConfig(c) { this.c = c; this.textContent = 'MORPH-NOW ' + c.type; } });
+    const P = window.__panel;
+    let found; const seek = (o) => { if (!o || typeof o !== 'object') return; if (o.id === 'c_tile') { o.card = { type: def ? 'custom:morph-now' : 'tile', entity: 'sensor.outside_temperature' }; found = o; return; } Object.values(o).forEach(seek); };
+    seek(P.dash); const slot = P.shadowRoot.querySelector('[data-ll]'); P.mountLovelace(slot.parentElement, found);
+  }, define);
+  await settle(p, define ? 1500 : 6500);
+  const got = await p.evaluate(() => { const r = window.__panel.shadowRoot; return r.textContent; });
+  if (process.env.DBG) console.log(label, await p.evaluate(() => { const s = window.__panel.shadowRoot.querySelector('[data-ll]'); return [s && s.innerHTML.slice(0, 150), [...(window.__panel._llPending || [])]]; }));
+  if (define && !got.includes('MORPH-NOW custom:morph-now')) fail('lovelace helpers', `${label}: the custom card was not drawn without the helpers`);
+  if (!define && !got.includes('This card could not be drawn yet; reload the page.')) fail('lovelace helpers', `${label}: the card did not show the plain message`);
+  if (!define && /is not a function|not available/.test(got)) fail('lovelace helpers', `${label}: the household was shown a JS error`);
+  await ctx.close();
+}
+
 // Morph's own code, changed by the house: a copy is served in place of
 // Morph's own, and a copy that fails to load falls back to Morph's own with
 // a sentence saying so (boot.js, static.py).
