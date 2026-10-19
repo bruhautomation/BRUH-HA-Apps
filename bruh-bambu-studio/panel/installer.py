@@ -177,6 +177,51 @@ def apprun() -> Path | None:
     return Path(data["apprun"]) if data else None
 
 
+_NOT_FOUND = re.compile(r"^\s*(\S+)\s+=>\s+not found\s*$")
+_MISSING_CACHE: dict = {}
+
+
+def missing_libraries(run: Path | None = None) -> list[str] | None:
+    """The system libraries Bambu Studio needs that this image lacks.
+
+    The AppImage carries only Bambu Studio's own `.so` files; WebKitGTK,
+    GTK and GStreamer come from the image, and a release that moves to a
+    newer one (2.x went from webkit2gtk-4.0 to 4.1) fails on its first line
+    with a loader error. `ldd` over the binary and its bundled libraries
+    names every gap at once, so the panel can say which instead of
+    restarting a slicer that cannot start. None is "could not look", which
+    never blocks a launch: [] and None are different answers.
+    """
+    run = run or apprun()
+    if run is None:
+        return None
+    bindir = run.parent / "bin"
+    if not bindir.is_dir():
+        return None
+    try:
+        key = (str(bindir), bindir.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if key in _MISSING_CACHE:
+        return _MISSING_CACHE[key]
+    targets = [p for p in sorted(bindir.iterdir())
+               if p.is_file() and (p.name.startswith("bambu-studio") or ".so" in p.name)]
+    missing: set[str] = set()
+    env = {**os.environ, "LD_LIBRARY_PATH": str(bindir)}
+    try:
+        for target in targets:
+            result = subprocess.run(["ldd", str(target)], env=env, capture_output=True,
+                                    timeout=30, check=False)
+            for line in result.stdout.decode(errors="replace").splitlines():
+                match = _NOT_FOUND.match(line)
+                if match:
+                    missing.add(match.group(1))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    _MISSING_CACHE[key] = sorted(missing)
+    return _MISSING_CACHE[key]
+
+
 def resources() -> Path | None:
     run = apprun()
     if run is None:

@@ -96,6 +96,10 @@ function renderStudio() {
     text = inst.phase === "failed" ? `Bambu Studio could not be installed: ${inst.error}`
       : "Bambu Studio is not installed yet.";
     buttons.push(el("button", { class: "primary", onclick: () => install(false) }, "Install"));
+  } else if (!s.running && s.missing_libraries && s.missing_libraries.length) {
+    text = `Bambu Studio ${s.version || ""} needs system libraries this add-on does not have yet: `
+      + `${s.missing_libraries.join(", ")}. Update BRUH Bambu Studio, or pin an older Bambu Studio `
+      + "version in the add-on's Configuration tab.";
   } else if (!s.running) {
     text = s.wanted ? (s.next_start_in ? `Bambu Studio closed; starting it again in ${s.next_start_in} s.`
       : "Starting Bambu Studio…") : "Bambu Studio is stopped.";
