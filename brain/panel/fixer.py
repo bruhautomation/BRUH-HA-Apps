@@ -33,6 +33,8 @@ it without the add-on runtime.
 """
 from __future__ import annotations
 
+import re
+
 import engine
 import plan_ops
 import textclip
@@ -58,7 +60,7 @@ HOW TO WORK
 4. VERIFY. Re-read the state, re-validate the YAML, reload the relevant config. A fix you did not check is a claim, not a fix.
 
 HARD RULES — these are not negotiable
-- Fix ONLY the finding you were given. Anything else you notice along the way goes in "also_found", not into an edit.
+- Fix ONLY the finding you were given. Anything else you notice along the way goes in "also_found", not into an edit. "also_found" is only problems in the house that still exist and someone could act on, in plain words: never a note about what you did or did not change, and never a device or entity that is already gone.
 - NEVER delete an entity, device, area, automation, script, dashboard or file you did not create in this run. Disable, correct, or comment out instead.
 - NEVER touch secrets.yaml, credentials, tokens, or anything under .storage that you cannot validate.
 - NEVER act on a PROTECTED ENTITY. The homeowner's protected list is given to you in the prompt below; anything matching it must not be turned on or off, set, unlocked, disabled, renamed, deleted, or written into an automation, a script or a scene that could act on it. Reading its state and its history is fine — the restriction is on acting. If the fix requires acting on one, do not do it: set "ok": false and say which entity and why. The MCP tools refuse these on your behalf, but shell and file edits do not go through them, so this rule is yours to keep.
@@ -75,7 +77,7 @@ When you are finished, reply with ONE JSON object and nothing else — no markdo
   "summary": "What you did, in one or two plain sentences the homeowner can check. Name what you changed and what it does now.",
   "changed": ["automation.morning_lights — trigger entity corrected to sensor.hall_motion", "one line per change; empty list if you changed nothing"],
   "verified": "How you confirmed it worked, or why you could not.",
-  "also_found": ["optional: other problems you noticed and deliberately did not touch"]
+  "also_found": ["optional: other problems in the house you noticed and deliberately did not touch"]
 }
 Set "ok": false when the problem is still there. Set "needs_you": true when it needs hands rather than software — with "ok": false, because you did not fix it."""
 
@@ -331,7 +333,8 @@ def plan_block(plan: dict) -> str:
         "unsafe, STOP and say so — return \"ok\": false with what you found. "
         "Do not substitute a different change: they did not agree to one, and "
         "a fix nobody approved is worse than a fix that did not happen. "
-        "Anything else you notice goes in \"also_found\". A file you cannot "
+        "Anything else you notice goes in \"also_found\" — only problems "
+        "in the house, never a note about this run. A file you cannot "
         "write is not a step going wrong: run `brain own <path>` and carry "
         "on — handing a file back to yourself changes nothing in the house, "
         "so it is never a substitute step and never a reason to stop.")
@@ -454,6 +457,41 @@ def build_prompt(finding: dict, memory: str = "", context: str = "",
         "the contract — JSON only, no commentary."
     )
     return "\n".join(parts)
+
+
+# An entity id in a note, bounded so "e.g." and a version are not one.
+_NOTE_ID_RE = re.compile(r"(?<![\w.])([a-z_]{2,})\.([a-z0-9_]+)(?![\w.])")
+_FILE_SUFFIXES = frozenset({"yaml", "yml", "json", "py", "js", "txt", "log",
+                            "db", "md", "html", "sh", "csv", "conf"})
+# The run talking about itself: "I changed only the ids", "We left it".
+_FIRST_PERSON_RE = re.compile(
+    r"(?:^|(?<=[\s(\"“]))(?:I(?=\s+[a-z])|I['’](?:m|ve|d|ll)\b"
+    r"|[Ww]e(?=\s+[a-z])|[Ww]e['’](?:ve|d|ll)\b|[Mm]y(?=\s))")
+
+
+def house_problems(notes, known=None) -> list[str]:
+    """The "also found" notes that are problems in the house.
+
+    Two kinds are dropped. A note in the first person is the run talking
+    about itself ("I changed only the ids; the rest is as it was"), which
+    is a change note and not something anybody can act on. And a note
+    naming an entity id the house does not have — read against `known`,
+    the ids the last checks pass saw — is about a device already deleted.
+    With `known` None nothing is checked for the second: "I could not
+    look" must not drop a real problem. A file name (`automations.yaml`)
+    has an id's shape and is not judged."""
+    out: list[str] = []
+    for note in notes or []:
+        text = str(note or "").strip()
+        if not text or _FIRST_PERSON_RE.search(text):
+            continue
+        if known:
+            named = [f"{d}.{o}" for d, o in _NOTE_ID_RE.findall(text)
+                     if o not in _FILE_SUFFIXES]
+            if any(eid not in known for eid in named):
+                continue
+        out.append(text)
+    return out
 
 
 def parse_result(text: str, obj: dict | None = None) -> dict:

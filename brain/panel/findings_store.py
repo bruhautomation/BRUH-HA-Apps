@@ -1175,7 +1175,10 @@ def _shape(entry: dict) -> dict:
         "fix_by": (entry.get("fix_by")
                    if entry.get("fix_by") in FIX_AUTHORS else ""),
         "severity": severity,
-        "fixable": bool(entry.get("fixable", True)),
+        # A row a look set aside offers no Fix: brAIn looked and found
+        # nothing to change (often the rule misread the house). The stored
+        # claim is kept, so "Let brAIn raise it again" puts it back whole.
+        "fixable": bool(entry.get("fixable", True)) and status != "held",
         "entity_id": str(entry.get("entity_id") or "")[:255],
         "source": str(entry.get("source") or "")[:64],
         "source_title": _titled(str(entry.get("source") or ""),

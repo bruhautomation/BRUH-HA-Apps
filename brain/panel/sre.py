@@ -286,6 +286,13 @@ def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]
     return ents[:4], sorted(set(devs))[:4]
 
 
+def _is_frontend(logger: str) -> bool:
+    """A record the browser wrote: Home Assistant files a frontend error
+    under ``frontend.js.<build>.<version>``."""
+    name = str(logger or "")
+    return name == "frontend" or name.startswith("frontend.")
+
+
 def _refers(user_text: str, eid: str) -> bool:
     return bool(re.search(r"(?<![\w])" + re.escape(eid) + r"(?![\w])",
                           user_text))
@@ -316,7 +323,11 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
             "last_hours_ago": round(max(0.0, now - float(
                 row.get("timestamp") or now)) / 3600, 1),
         }
-        ents, devs = _named_in(str(first or ""), known or set(), devices)
+        # A browser's error line carries the browser's user agent, and a
+        # phone's model in it is not the device the error is about: the
+        # frontend's records name no device by name.
+        ents, devs = _named_in(str(first or ""), known or set(),
+                               None if _is_frontend(logger) else devices)
         if ents:
             rec["entities"] = ents
             owners = sorted({(platforms or {}).get(e) for e in ents} - {None, ""})
@@ -501,13 +512,17 @@ def _representatives(entities: list) -> tuple[dict, dict]:
     for e in entities or []:
         if not isinstance(e, dict) or not e.get("entity_id"):
             continue
-        rank = (1 if e.get("entity_category") else 0, str(e["entity_id"]))
+        # A device_tracker is where the device is, never what went wrong
+        # with it, so it is the last choice of subject.
+        rank = (1 if e.get("entity_category") else 0,
+                1 if str(e["entity_id"]).startswith("device_tracker.") else 0,
+                str(e["entity_id"]))
         if e.get("device_id"):
             by_device.setdefault(str(e["device_id"]), []).append(rank)
         if e.get("platform"):
             by_platform.setdefault(str(e["platform"]), []).append(rank)
-    return ({k: min(v)[1] for k, v in by_device.items()},
-            {k: min(v)[1] for k, v in by_platform.items()})
+    return ({k: min(v)[-1] for k, v in by_device.items()},
+            {k: min(v)[-1] for k, v in by_platform.items()})
 
 
 # Which records name a device or a rule (the cause is ABOUT it) and which
@@ -660,6 +675,8 @@ SYSTEM = prompt_kit.assemble(
 - Severity: info — worth knowing, nothing breaks; warning — something is
   degraded or will break if left; serious — something in the house has
   stopped working or a safety device cannot be relied on.
+- brAIn has already read the records: a fix never tells the homeowner to
+  check a log, a trace, a state or a setting. Say what to change.
 - Records are cited by id EXACTLY as given.
 - At most 5 causes. If nothing here is a real problem, answer with no
   causes — that is a good answer.""",
