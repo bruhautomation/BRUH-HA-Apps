@@ -109,6 +109,11 @@ class TestServices(unittest.TestCase):
         app_actions = set(re.findall(r"^\s*(\w+):", block, re.M))
         self.assertEqual(set(const_value("ACTIONS").values()), app_actions)
 
+    def test_the_route_has_a_branch_for_every_action(self):
+        route = (ADDON / "app" / "src" / "app" / "api" / "ha" / "action" / "route.ts").read_text()
+        cases = set(re.findall(r"case '(\w+)':", route))
+        self.assertEqual(set(const_value("ACTIONS").values()), cases)
+
 
 class TestCardsFindTheirSensors(unittest.TestCase):
     def test_every_kind_a_card_reads_is_a_kind_a_sensor_publishes(self):

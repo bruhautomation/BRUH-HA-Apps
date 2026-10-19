@@ -1,7 +1,14 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/db/server';
 import { authorized } from '@/lib/ha/auth';
-import { ACTIONS } from '@/lib/ha/actions';
+import {
+  completeQueuedSpray,
+  deleteHarvest,
+  deleteQueuedSpray,
+  logHarvest,
+  type ActionResult,
+} from '@/lib/ha/actions';
+import type { DbClient } from '@/lib/db/query';
 import { LOCATION } from '@/config/thresholds';
 
 // What the `gardenrx.*` services call. Token-only — see auth.ts. A refusal is
@@ -9,8 +16,27 @@ import { LOCATION } from '@/config/thresholds';
 // HomeAssistantError so it reaches the automation trace or the card's toast.
 export const dynamic = 'force-dynamic';
 
-// A Map, so the name off the wire can only ever select one of these four.
-const HANDLERS = new Map(Object.entries(ACTIONS));
+/** The name off the wire chooses a branch, never a function by name. */
+function run(
+  name: string,
+  db: DbClient,
+  data: Record<string, unknown>,
+  now: Date
+): Promise<ActionResult> | null {
+  const tz = LOCATION.timezone;
+  switch (name) {
+    case 'log_harvest':
+      return logHarvest(db, data, now, tz);
+    case 'delete_harvest':
+      return deleteHarvest(db, data);
+    case 'complete_queued_spray':
+      return completeQueuedSpray(db, data, now, tz);
+    case 'delete_queued_spray':
+      return deleteQueuedSpray(db, data);
+    default:
+      return null;
+  }
+}
 
 export async function POST(request: Request) {
   if (!authorized(request)) {
@@ -23,13 +49,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: 'not JSON' }, { status: 400 });
   }
   const name = String(body.action ?? '');
-  const handler = HANDLERS.get(name);
-  if (!handler) {
-    return NextResponse.json({ ok: false, error: `unknown action "${name}"` }, { status: 400 });
-  }
   const data =
     body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : {};
-  const db = await createClient();
-  const result = await handler(db, data, new Date(), LOCATION.timezone);
+  const pending = run(name, await createClient(), data, new Date());
+  if (!pending) {
+    return NextResponse.json({ ok: false, error: `unknown action "${name}"` }, { status: 400 });
+  }
+  const result = await pending;
   return NextResponse.json(result, { status: result.ok ? 200 : 409 });
 }
