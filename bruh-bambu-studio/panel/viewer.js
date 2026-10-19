@@ -22,13 +22,16 @@ const SEE_THROUGH = /\b(clear|transparent|translucent)\b/i;
 const NOISE = /\b(matte|matt|silk|basic|glossy|metallic|pla|petg|abs|asa|tpu|pa|pc|cf|hf|bambu|filament)\b/gi;
 const probe = document.createElement("canvas").getContext("2d");
 
+// A fresh style object takes a colour the browser can read and stays empty
+// for one it cannot; the canvas then turns what it took into #rrggbb.
 function cssColour(word) {
   const text = String(word || "").trim();
   if (!text) return null;
-  probe.fillStyle = "#010203";
-  probe.fillStyle = text;
-  const out = probe.fillStyle;
-  return out === "#010203" && text.toLowerCase() !== "#010203" ? null : out;
+  const style = document.createElement("i").style;
+  style.color = text;
+  if (!style.color) return null;
+  probe.fillStyle = style.color;
+  return probe.fillStyle;
 }
 
 /** "#rrggbb"-ish for a colour as a person or brAIn wrote it, or null. */
