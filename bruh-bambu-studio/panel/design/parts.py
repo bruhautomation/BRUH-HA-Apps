@@ -38,9 +38,17 @@ def _slug(name: str) -> str:
 
 
 def folder(part_id: str) -> Path:
+    """A part's folder. The id arrives off the wire, so it is checked for
+    shape AND the result is normalised and held under the designs folder —
+    the second is the form a path check can be read in (brAIn's
+    `transcript_path` makes the same pair for the same reason)."""
     if not ID.match(str(part_id or "")):
         raise ValueError("No such part.")
-    return root() / part_id
+    base = os.path.normpath(os.path.realpath(root()))
+    candidate = os.path.normpath(os.path.join(base, part_id))
+    if not candidate.startswith(base + os.sep):
+        raise ValueError("No such part.")
+    return Path(candidate)
 
 
 def load(part_id: str) -> dict:
@@ -109,8 +117,8 @@ def say(part: dict, role: str, text: str, **extra) -> None:
 
 def file_in(part_id: str, n: int, relative: str) -> Path:
     """A built file of one version, never anything outside it."""
-    base = os.path.realpath(version_dir(part_id, n))
-    path = os.path.realpath(os.path.join(base, relative))
+    base = os.path.normpath(os.path.realpath(version_dir(part_id, n)))
+    path = os.path.normpath(os.path.realpath(os.path.join(base, relative)))
     if not path.startswith(base + os.sep) or not os.path.isfile(path):
         raise LookupError("No such file.")
     return Path(path)

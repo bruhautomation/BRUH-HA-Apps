@@ -33,8 +33,10 @@ def path_of(relative: str) -> Path:
     rel = str(relative or "").strip().lstrip("/")
     if not rel or "\x00" in rel:
         raise ValueError("No file named.")
-    root = os.path.realpath(ROOT)
-    candidate = os.path.realpath(os.path.join(root, rel))
+    # realpath so a link cannot lead out; normpath + the prefix check is
+    # the form a path check is read in.
+    root = os.path.normpath(os.path.realpath(ROOT))
+    candidate = os.path.normpath(os.path.realpath(os.path.join(root, rel)))
     if not candidate.startswith(root + os.sep):
         raise ValueError("That file is outside the Bambu library.")
     return Path(candidate)
