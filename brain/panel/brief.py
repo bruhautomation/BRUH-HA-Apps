@@ -39,6 +39,7 @@ It is not handed the house.
 """
 from __future__ import annotations
 
+import re
 import time
 
 import prompt_kit
@@ -291,9 +292,25 @@ def _parse_iso(value) -> float | None:
     return stamp.timestamp()
 
 
+# A label somebody put on a light to say it is meant to stay on. Read in
+# whole words over the registry's label id (Core slugs "Always On" to
+# `always_on`), so `always_online` is not it.
+_ALWAYS_ON_RE = re.compile(r"\balways on\b")
+
+
+def always_on_label(labels) -> bool:
+    """A label list that says the thing is meant to stay on."""
+    for label in labels or ():
+        words = re.sub(r"[_\-]+", " ", str(label or "")).lower()
+        if _ALWAYS_ON_RE.search(words):
+            return True
+    return False
+
+
 def morning_facts(states: list[dict], night_actions: list[dict], now: float,
                   *, closures_store: dict | None = None,
-                  bucket: int | None = None, clock=None) -> dict:
+                  bucket: int | None = None, clock=None,
+                  labels: dict | None = None) -> dict:
     """What is true of the house at wake-up that somebody would act on.
 
     Two things, both read off the states the brief fetches once: a
@@ -305,6 +322,8 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
 
     Pure over what it is handed; `clock` turns an epoch into the house's
     own "HH:MM" and defaults to UTC for a caller with no timezone.
+    `labels` is `{entity_id: [label]}` off the last checks pass; a light
+    labelled "always on" is meant to be on and is not left on.
     """
     import datetime  # noqa: PLC0415
 
@@ -341,6 +360,8 @@ def morning_facts(states: list[dict], night_actions: list[dict], now: float,
             if not LEFT_ON_HOURS <= hours <= LEFT_ON_MAX_HOURS:
                 continue
             if last_on.get(eid) in INTENTIONAL_CAUSES:
+                continue
+            if always_on_label((labels or {}).get(eid)):
                 continue
             left_on.append({"entity_id": eid, "name": name,
                             "since": hhmm(since), "ts": since})

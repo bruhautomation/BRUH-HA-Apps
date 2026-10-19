@@ -12,7 +12,9 @@ sentence a person has to translate before they can read the card:
   * the add-on's own **Supervisor slug** (`abcd1234_brain`), which is how
     brAIn appears in a log line and is "brAIn" everywhere a person reads;
   * **template code** (`{{ today_at('07:00') }}`), quoted out of a trigger
-    or a condition, where a person wants the time or the plain word.
+    or a condition, where a person wants the time or the plain word;
+  * a device's **IP address** ("calls to 192.168.1.20 keep timing out"),
+    which nobody in the house knows their camera or plug by.
 
 So this is the deterministic half of the rule the prompts state: it turns
 what it can recognise and leaves everything else exactly as it was. An id
@@ -150,6 +152,35 @@ def templates(text: str) -> str:
     return re.sub(r"\s+([.,;:])", r"\1", out).strip()
 
 
+# An IPv4 address, optionally with a port, not inside a longer run of dots
+# and digits (a version number like 2026.10.1 is three parts and never
+# matches; four parts each 0-255 is an address).
+_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_IPV4 = (r"(?<![\d.])" + _OCTET + r"(?:\." + _OCTET + r"){3}"
+         r"(?::\d{1,5})?(?![\d]|\.\d)")
+# "(192.168.1.20)" and "at/on 192.168.1.20" say nothing the sentence needs:
+# the thing is already named ("the gateway at 10.0.0.5" is the gateway).
+_IPV4_ASIDE_RE = re.compile(
+    r"\s*\(\s*(?:IP(?:\s+address)?:?\s*)?" + _IPV4 + r"\s*\)", re.I)
+_IPV4_AT_RE = re.compile(
+    r"\s+(?:at|on)\s+(?:the\s+)?(?:IP(?:\s+address)?\s+)?" + _IPV4, re.I)
+# Anything left is the address standing in for the thing: "its address".
+_IPV4_RE = re.compile(r"(?:\b(?:the\s+)?IP(?:\s+address)?\s+)?" + _IPV4,
+                      re.I)
+
+
+def addresses(text: str) -> str:
+    """IPv4 addresses out of a sentence a person reads: an aside or an
+    "at <address>" is dropped (the thing is already named), and any other
+    is "its address". Text with none is returned exactly as it was."""
+    if not text or not re.search(_IPV4, text):
+        return text
+    out = _IPV4_ASIDE_RE.sub("", text)
+    out = _IPV4_AT_RE.sub("", out)
+    out = _IPV4_RE.sub("its address", out)
+    return re.sub(r"[ \t]{2,}", " ", out)
+
+
 def slug(text: str) -> str:
     """The add-on's Supervisor slug as the name people know it by."""
     return _SLUG_RE.sub("brAIn", text) if text else text
@@ -161,6 +192,7 @@ def plain(text: str, names: Mapping | None = None,
     if not isinstance(text, str) or not text:
         return text
     try:
-        return entities(slug(times(templates(text), tz, now)), names)
+        return entities(slug(times(addresses(templates(text)), tz,
+                                       now)), names)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text

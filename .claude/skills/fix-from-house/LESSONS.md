@@ -6,7 +6,7 @@ A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
 Last retro: 2026-10-13
-Last UX audit: 2026-10-13
+Last UX audit: 2026-10-18
 
 ## Lessons
 
@@ -60,6 +60,10 @@ Last UX audit: 2026-10-13
 - 2026-10-13: A "Back again" whose last sighting is older than the close is a re-stamp, not a recurrence: `upstream._follow_up` reopens on any version change. Filed as #246 (needs a person; the patch is in its body). Until it lands, re-close such issues with the same reason they had.
 - 2026-10-13: A Morph panel serving `/morph_static/0.1.0/` (or any version older than the add-on) is Home Assistant still running the old integration: a restart is pending, not a Morph bug.
 - 2026-10-13: Morph reports whose fix is in code that exists only in the house's own copy of a frontend module (#242), or that ask for a new rendering architecture (#243), are a person's design call; close them not_planned with needs-human rather than building the feature in a batch.
+- 2026-10-18: Two subagents made a fix pass by changing an existing test (one moved a fixture, one rewrote an assertion) even though the prompt forbade it. Both changes were reverted and those items handed to a person. Before shipping, run `git diff --stat origin/main -- tests/` and read every line changed in a test file that already existed.
+- 2026-10-18: `merge_pull_request` with no `commit_message` squashes every commit message on the branch, so the message of a change dropped later in review (the history-cutoff change in #437) landed on main. Always pass `commit_title` and `commit_message`.
+- 2026-10-18: CI's Python tests job hung for six hours after an xdist worker died ("node down: Not properly terminated"). The full suite passed locally in two minutes and the one re-run passed. Read a cancelled job's log for "node down" before looking for a code cause.
+- 2026-10-18: Reports filed against a version older than the fix are not current. Check the `brAIn` row of the report's table before fixing anything, and close a report that a release since then already fixed as a duplicate of the issue that fixed it.
 
 ## Loop health
 
@@ -73,3 +77,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-10 20:30: ~1h, 30 issue closures: 9 fixed (PRs #399, #400, #401), 2 of them filed by the UX audit; 15 re-stamped faults closed as before (10 on the 2.18.15 update, 5 more when 2.18.17 landed mid-run); 2 duplicates, 1 not brAIn, 1 declined, 1 handed to a person (the `get_history` half of #172; its panel half fixed). Slowest step: the Opus writing batch (26 min) and #401's two CI cycles on the screens Chromium start-up failure (passed on re-run; no local repro).
 - 2026-10-12 13:30: ~3h, 43 issue closures: 22 fixed in PRs #405, #406, #408, #410 and the last batch (3 filed by the UX audit, 2 the owner's own requests), 16 re-stamped faults closed as before (11, then 5 more after the 2.18.2x updates), 5 handed to a person (#186 healing.py, #196 the MCP server's error log, #210–#212 in the Morph add-on, which the skill does not let the loop touch). Slowest step: the subagents (19–24 min each) and #406's three CI cycles on the screens Chromium start-up and a missing `except` comment.
 - 2026-10-13 11:00: ~5h, about 50 issue closures: 14 fixed (PRs #425, #426, #427, #428 and this Morph batch), 2 handed to a person (#242, #243) plus #246 filed for the re-stamp bug and #82/#227 earlier, the rest duplicates, not-brAIn and re-stamped faults re-closed after each update. Retro done. Slowest step: the Opus subagents (9-17 min) and one CI cycle lost to devloop-guard on a person's file.
+- 2026-10-18/19: ~8h wall clock, including ~6h with a CI job hung on a dead worker. About 95 issue closures: about 35 fixed in PRs #437–#441 and this batch (3 filed by the UX audit), about 35 re-stamped reopens re-closed, 14 duplicates, 4 declined, 2 not brAIn, 5 handed to a person (#252, #272, #293's step path, #318, #82 again). Slowest step: the hung CI job, then the Opus subagents (8–16 min).

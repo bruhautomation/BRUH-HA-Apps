@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.8
+
+### Changed
+
+- **Device findings say what stopped working, in household words.** brAIn's overnight check and its own investigations name the thing, say what stopped working in the house and give one step, without IP addresses or terms like RTSP, EOF, token or probe. An address left in a model-written finding is removed before it is stored. (#316)
+- **Cards don't invent measures.** A card says what happened ("the light came on 13 times") instead of a made-up measure, and a threshold says whose it is ("your usual limit is 350 gal between cycles"). (#317)
+
+## 3.0.7
+
+### Fixed
+
+- **"That's fine" is not a fact.** Answering a card wrong with a bare "that's fine", "ok" or "all good" still stops the rule that filed it, but no longer files the words themselves into memory or Knowledge. Notes about how Morph's or brAIn's own screens behave are no longer filed as facts about the house. Existing rows of both kinds are cleared once. (#306)
+- **The morning brief leaves out lights labelled "always on".** Lights with an "always on" label in Home Assistant are not listed as left on overnight, and the brief says nothing about lights when none remain. (#287)
+- **brAIn's look is told when a scene, script or automation made a change.** A light turned off by a scene arrives with "set by the scene …", so it is not mistaken for something unexpected. (#259)
+- **The overnight check names only what it read.** A cause's suggested fix or title no longer names a sensor, device or integration from a different log line; such sentences are removed and the title names the cause's own subject. (#284, #285)
+
 ## 3.0.6
 
 ### Changed

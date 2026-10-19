@@ -41,12 +41,17 @@ panel has to come up on a machine that is not inside Home Assistant, and
 an import that works and a start that throws is the same failure one line
 later.
 
-What it deliberately does **not** do is work out who caused a change.
+What it deliberately does **not** do is walk a chain of causes.
 ``state_changed`` carries a context id and no chain; Home Assistant walks
 that chain itself when it writes the logbook, which is where
 :mod:`actions` reads it from. Re-deriving attribution off the raw stream
 would be a second answer to "who did this", and the wrong one would
-attribute somebody's press to an automation.
+attribute somebody's press to an automation. The one thing it does read is
+the narrowest link: a scene, an automation or a script changes its own
+state in the context its run uses, and a change carrying that SAME id a
+moment later was made by that run (``CAUSE_TTL_S``,
+``signals.runner_of``). That is the logbook's first rule, not a walk, and a
+change in any other context is offered exactly as before.
 """
 from __future__ import annotations
 
@@ -135,6 +140,13 @@ HEARTBEAT_S = 20.0
 # of something else, and waiting on it for ever is how a listener looks
 # connected while reading nothing.
 AUTH_TIMEOUT_S = 30.0
+
+# How long a run's context id is remembered. A scene sets its lights within
+# a second or two and an automation's actions run straight after its
+# trigger; a delay step longer than this goes unnamed, which is the cheap
+# direction (the change is offered as it always was).
+CAUSE_TTL_S = 120
+CAUSE_MAX = 256
 
 # How often the registry context is rebuilt. The protected list changes
 # when somebody edits an option and restarts; the known-entity set changes
@@ -231,6 +243,9 @@ class EventBus:
         # dict is answered without a call.
         self._rhythm_cache = None if callable(rhythm_payload) else rhythm_payload
         self._rhythm_at = 0.0
+
+        # `{context id: (seen at, runner)}`, the runs started lately.
+        self._runs: dict[str, tuple[float, dict]] = {}
 
         self._connected = False
         self._connected_since = 0.0
@@ -527,19 +542,47 @@ class EventBus:
             return
         if callable(self._on_event):
             self._deliver(self._on_event, event_type, payload)
-        signal = self._to_signal(event_type, payload, now)
+        cause = None
+        if event_type == "state_changed":
+            cause = self._note_run(_context_id(event, payload), payload, now)
+        signal = self._to_signal(event_type, payload, now, cause=cause)
         if signal is None:
             return
         self._signals_emitted += 1
         self._deliver(self._on_signal, signal)
 
+    def _note_run(self, context_id: str, payload: dict,
+                  now: float) -> dict | None:
+        """Remember a run starting; answer the run this change belongs to.
+
+        Returns the runner whose context this change carries, or None. A
+        runner's own state change is remembered and answers nothing about
+        itself.
+        """
+        if not context_id:
+            return None
+        runner = signals.runner_of(payload)
+        if runner is not None:
+            self._runs.pop(context_id, None)
+            self._runs[context_id] = (now, runner)
+            while len(self._runs) > CAUSE_MAX:
+                self._runs.pop(next(iter(self._runs)))
+            return None
+        seen = self._runs.get(context_id)
+        if seen is None:
+            return None
+        if now - seen[0] > CAUSE_TTL_S:
+            self._runs.pop(context_id, None)
+            return None
+        return seen[1]
+
     def _to_signal(self, event_type: str, payload: dict,
-                   now: float) -> dict | None:
+                   now: float, cause: dict | None = None) -> dict | None:
         """The one place an event becomes a signal, or does not."""
         if event_type == "state_changed":
             return signals.from_state_change(
                 payload, self._refresh_context(now), now,
-                rhythm_payload=self._rhythm_now(), tz=self._tz)
+                rhythm_payload=self._rhythm_now(), tz=self._tz, cause=cause)
         if event_type == "mobile_app_notification_action":
             # Dismiss answers nothing — it closes the notification and the
             # card stays where it is — so it is not a reply to look at.
@@ -565,6 +608,17 @@ class EventBus:
         except Exception as exc:  # noqa: BLE001 — a consumer's bug is not ours
             self._last_error = f"callback: {type(exc).__name__}: {exc}"[:200]
             log.warning("event bus callback failed: %s", self._last_error)
+
+
+def _context_id(event: dict, payload: dict) -> str:
+    """The context id a state change was made in: the new state's own,
+    else the event's."""
+    new_state = (payload or {}).get("new_state")
+    for ctx in ((new_state or {}).get("context") if isinstance(
+            new_state, dict) else None, (event or {}).get("context")):
+        if isinstance(ctx, dict) and ctx.get("id"):
+            return str(ctx["id"])[:64]
+    return ""
 
 
 def _frame(msg) -> dict | None:
