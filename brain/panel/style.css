@@ -2635,7 +2635,7 @@ body.modal-open {
 @media (max-width: 899px) {
   .pillseg.crkinds {
     flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity; scrollbar-width: none;
+    scroll-snap-type: x proximity; scroll-padding-inline: 12px; scrollbar-width: none;
   }
   .pillseg.crkinds::-webkit-scrollbar { display: none; }
   .pillseg.crkinds .pill { flex: none; scroll-snap-align: start; }

@@ -13638,7 +13638,9 @@ function renderConvKinds() {
   // moving the strip only (never the page).
   const on = host.querySelector(".pill.active");
   if (on && host.scrollWidth > host.clientWidth) {
-    host.scrollLeft = Math.max(0, on.offsetLeft - 12);
+    const hr = host.getBoundingClientRect();
+    const r = on.getBoundingClientRect();
+    if (r.left < hr.left || r.right > hr.right) host.scrollLeft += r.left - hr.left - 12;
   }
 }
 
