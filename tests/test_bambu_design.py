@@ -287,12 +287,31 @@ class TestProfiles(Isolated):
                                             "supports": "tree", "brim": "auto"},
                                     self.root / "slicing")
         process = json.loads(Path(prepared["paths"]["process"]).read_text())
-        self.assertEqual(process["inherits"], "")
+        self.assertEqual(process["inherits"], "0.20mm Standard @BBL X1C")
         self.assertEqual(process["wall_loops"], "4")
         self.assertEqual(process["sparse_infill_density"], "30%")
         self.assertEqual((process["enable_support"], process["support_type"]), ("1", "tree(auto)"))
         self.assertEqual(process["brim_type"], "auto_brim")
         self.assertEqual(prepared["filament"], "Bambu PETG Basic @BBL X1C")
+
+
+    def test_the_cli_reads_the_process_as_compatible_with_the_printer(self):
+        """The check Bambu Studio's CLI makes before it slices
+        (BambuStudio.cpp: a User profile's system name is its `inherits`, and
+        the process must list the machine's). It exited -17 when it failed."""
+        prepared = profiles.prepare("X1C", {"material": "PLA"}, self.root / "slicing")
+        paths = prepared["paths"]
+
+        def system_name(path):
+            data = json.loads(Path(path).read_text())
+            self.assertIn(data["from"], ("system", "User", "user"))
+            return data["name"] if data["from"] == "system" else data.get("inherits", "")
+
+        machine = system_name(paths["machine"])
+        self.assertEqual(machine, "Bambu Lab X1 Carbon 0.4 nozzle")
+        process = json.loads(Path(paths["process"]).read_text())
+        self.assertIn(machine, process["compatible_printers"])
+        self.assertEqual(system_name(paths["filament"]), prepared["filament_names"][0])
 
 
 class TestTrays(unittest.TestCase):

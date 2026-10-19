@@ -41,6 +41,38 @@ JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
 
 
+# What the CLI's exit codes mean (src/libslic3r/Utils.hpp, the cli_errors
+# table in src/BambuStudio.cpp), in words for somebody printing a part. The
+# process exits with the negative code, which the shell reads as 256 + code.
+EXIT_REASONS = {
+    -3: "an input file was not found",
+    -5: "a printer, process or filament profile could not be read",
+    -6: "the model file could not be read",
+    -14: "it ran out of memory; a simpler model would help",
+    -15: "the printer is not one it supports",
+    -16: "the printer does not match the file",
+    -17: "the process profile does not list this printer as compatible",
+    -18: "the file carries a setting value it rejects",
+    -20: "the printer's bed is smaller than the profile's",
+    -21: "it could not arrange the part on the plate",
+    -50: "nothing is fully on the plate",
+    -51: "a slicing setting is wrong",
+    -52: "part of the model is over the edge of the bed",
+    -61: "a filament does not suit the build plate",
+    -62: "the filaments' temperatures are too far apart to print together",
+    -64: "objects collide",
+    -66: "a filament could not be mapped to the printer",
+    -67: "it will not print two TPU filaments together",
+    -100: "slicing failed",
+    -104: "some of the print would be outside the printable area",
+}
+
+
+def exit_reason(returncode: int) -> str:
+    code = returncode - 256 if returncode > 127 else returncode
+    return EXIT_REASONS.get(code, "")
+
+
 def profile_names(kind: str) -> list[str]:
     root = installer.resources()
     if root is None:
@@ -143,10 +175,12 @@ def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
         lines = result.stdout.decode(errors="replace").strip().splitlines()
         job["log"] = [line[:300] for line in lines[-20:]]
         if result.returncode != 0 or not out.exists():
-            reason = next((ln for ln in reversed(lines) if "error" in ln.lower()), "")
+            reason = exit_reason(result.returncode) or next(
+                (ln.strip()[:240] for ln in reversed(lines) if "error" in ln.lower()), "")
             job.update(state="failed", error=(
                 f"Bambu Studio could not slice it (exit {result.returncode})"
-                + (f": {reason.strip()[:240]}" if reason else ".")))
+                + (f": {reason}." if reason and not reason.endswith(".") else
+                   f": {reason}" if reason else ".")))
             return
         info = threemf.inspect(str(out))
         if not info["sliced"]:

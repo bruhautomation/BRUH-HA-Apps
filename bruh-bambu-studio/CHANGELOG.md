@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+### Fixed
+
+- **Designed parts slice again.** Every print of a designed part, from Auto print, Manual print or the conversation, stopped with *Bambu Studio could not slice it (exit 239): run found error, return -17*. The slicer settings brAIn hands Bambu Studio did not say which of Bambu Studio's own printer and process profiles they came from, so its command line could not tell that the process suits the printer and refused it. They name it now.
+- **A failed slice says why in words.** The panel reads Bambu Studio's exit code (*the process profile does not list this printer as compatible*, *part of the model is over the edge of the bed*, and others) instead of quoting its log line.
+
 ## 0.1.4
 
 ### Added

@@ -220,6 +220,20 @@ class TestSlicerCommand(Isolated):
                 slicer.start("m.stl")
         self.assertIn("machine", str(caught.exception))
 
+    def test_a_failed_slice_says_what_the_exit_code_means(self):
+        """The CLI exits with a negative code the shell reads as 256 + code;
+        -17 (239) is a process profile that does not list the printer."""
+        script = self.lib / "AppRun"
+        script.write_text("#!/bin/sh\necho 'run found error, return -17, exit...'\nexit 239\n")
+        script.chmod(0o755)
+        job = {"log": [], "state": "running"}
+        slicer._run(job, [str(script)], self.lib / "out.gcode.3mf", None)
+        self.assertEqual(job["state"], "failed")
+        self.assertIn("exit 239", job["error"])
+        self.assertIn("does not list this printer as compatible", job["error"])
+        self.assertEqual(slicer.exit_reason(239), slicer.exit_reason(-17))
+        self.assertEqual(slicer.exit_reason(1), "")
+
 
 class FakeMQTT:
     """paho's client, answering a publish the way a printer does."""
