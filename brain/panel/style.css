@@ -2630,6 +2630,16 @@ body.modal-open {
   gap: 6px;
 }
 .crkinds .pill { font-size: var(--fs-meta); }
+/* Below the rail's breakpoint the list is the whole page: the kinds are one
+   strip that scrolls along, never three rows above the first chat. */
+@media (max-width: 899px) {
+  .pillseg.crkinds {
+    flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity; scrollbar-width: none;
+  }
+  .pillseg.crkinds::-webkit-scrollbar { display: none; }
+  .pillseg.crkinds .pill { flex: none; scroll-snap-align: start; }
+}
 .crhint {
   flex: none;
   margin: 0;
