@@ -74,9 +74,18 @@ For each finding brAIn:
    comments that contain only dates and version numbers, and these are posted
    without asking:
    - *Not seen since …*: it stopped happening.
-   - *Back again on brAIn x.y.z*: it returned. brAIn reopens the issue if it
-     had been closed.
+   - *Back again on brAIn x.y.z*: it returned. brAIn reopens a closed issue
+     only on evidence: the problem went away and came back after the close,
+     or has gone on for a day on a release installed after the close. An
+     update on its own reopens nothing.
    - *Still happening on brAIn x.y.z*: an update came out and did not fix it.
+     The issue's description is rewritten with what the house sees now.
+
+   An issue closed as not brAIn's, a duplicate or declined gets no more
+   comments at all; reopen it by hand if you disagree. When a new release's
+   scorecard is filed, the previous one is closed with a pointer to it. A
+   Morph report is dated by when Morph last saw it, not by when brAIn read
+   it.
 
    These comments are what tell anyone whether a fix actually worked on your
    house. A stream you switch off never claims anything stopped: it was not

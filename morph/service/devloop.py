@@ -141,6 +141,7 @@ def withdraw(fp: str) -> dict:
     return {"ok": True}
 
 
+_DEBUG = re.compile(r"^\s*\[?DEBUG\b")
 _CARD_LOAD = re.compile(r"^Card code (\S+?) failed to load: (.*)$", re.S)
 
 
@@ -174,6 +175,10 @@ def ingest_errors() -> int:
         area = {"card": "Cards", "layout": "Layout", "panel": "Panel",
                 "history": "History"}.get(kind, "Panel")
         what = str(r.get("message") or "").strip()
+        if _DEBUG.match(what):
+            # A trace somebody left in while chasing a bug is not a fault:
+            # filed, it was four issues of "DEBUG loaded <time>" a week.
+            continue
         if kind == "card" and r.get("card_type"):
             what = f"A {r['card_type']} card failed to draw: {what}"
         note_fault(area, what, str(r.get("detail") or ""), now=float(r.get("ts") or time.time()))
@@ -199,13 +204,15 @@ def rows(now: float | None = None) -> list[dict]:
     now = now or time.time()
     out = []
     for fp, r in sorted(_load().items(), key=lambda kv: -float(kv[1].get("last") or 0)):
-        if now - float(r.get("last") or 0) > KEEP_S:
+        if now - float(r.get("last") or 0) > KEEP_S or (
+                r.get("source") != "person" and _DEBUG.match(str(r.get("what") or ""))):
             continue
         detail = (r.get("detail") or "(none)")[:DETAIL_MAX]
         if r.get("source") == "person" and r.get("where") in ("Morph · Looks", "Morph · From you"):
             # Somebody's own words: quoted as they are, not dressed as a
             # count of something Morph noticed.
             row = {"where": r["where"], "what": r["what"], "detail": detail[:400],
+                   "last": float(r.get("last") or 0),
                    "body": detail + "\n\n" + FIX_WHERE,
                    "impact": {"times": r["count"], "days": len(r.get("days") or [])}}
             if r["where"] == "Morph · Looks":
@@ -232,7 +239,7 @@ def rows(now: float | None = None) -> list[dict]:
             FIX_WHERE,
         ])
         out.append({"where": r["where"], "what": r["what"], "detail": r.get("detail", "")[:400],
-                    "body": body, "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
+                    "last": float(r.get("last") or 0), "body": body, "impact": {"times": r["count"], "days": len(r.get("days") or [])}})
         if len(out) >= MAX_ROWS:
             break
     return out

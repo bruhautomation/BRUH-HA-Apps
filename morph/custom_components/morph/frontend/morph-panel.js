@@ -123,6 +123,16 @@ function customCardWithoutHelpers(config) {
   return el;
 }
 
+// A card's `options.detail`, when it is a Lovelace card config: the deeper
+// view (a performance chart under a thermostat) that belongs in the opened
+// card rather than on the face. A built-in card that hosts Lovelace itself
+// has no second slot.
+function detailCard(card) {
+  const d = card && card.options && card.options.detail;
+  if (!d || typeof d !== 'object' || Array.isArray(d) || typeof d.type !== 'string' || card.type === 'lovelace') return null;
+  return d;
+}
+
 class MorphPanel extends HTMLElement {
   constructor() {
     super();
@@ -1622,7 +1632,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       // laid out from it, `leadsWithReason`); what it says is the newest.
       if (!this.s.edit && !this.s.thenAt && x.why && (lifted || this.leadsWithReason(id)) && x.why.kind !== 'none') faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
       else if (lifted && x.why) faceHtml += `<p class="because" data-why="${esc(id)}" style="color:${x.why.color}">${esc(x.why.text)}</p>`;
-      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${this.keepHtml(card, lifted || x.band === 'lead')}${T.more(ctx)}${T.host ? '' : this.moreInfoHtml(card, ctx)}</div>`;
+      if (open && mode === 'adv') moreHtml = `<div class="more rise" data-ctl-scope="1">${this.keepHtml(card, lifted || x.band === 'lead')}${T.more(ctx)}${detailCard(card) ? `<div class="ll" data-ll="${esc(id)}:detail"></div>` : ''}${T.host ? '' : this.moreInfoHtml(card, ctx)}</div>`;
       if (open && mode === 'edit') moreHtml = this.cardEditHtml(hit, name);
       if (open && mode === 'tell') moreHtml = `<div class="more">${this.tellBox('card', id)}</div>`;
     } catch (e) {
@@ -1654,6 +1664,11 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     this.setHtml(face, faceHtml);
     this.setHtml(moreEl, moreHtml);
     if (T.host) this.mountLovelace(face, card);
+    // `options.detail`: a Lovelace card shown only while this card is open.
+    // Mounted the first time and kept (llCards), so opening it again does
+    // not load it again.
+    const detail = open && mode === 'adv' ? detailCard(card) : null;
+    if (detail) this.mountLovelace(moreEl, { id: id + ':detail', card: detail });
   }
 
   // The two extra words on a card the list lifted or led (§11): Keep here

@@ -648,6 +648,35 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
   await ctx.close();
 }
 
+// `options.detail`: a Lovelace card that belongs inside an opened card (a
+// thermostat's performance chart) is folded away on the face and shown only
+// while the card is open, without the rooms overlapping either way.
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await route(ctx, { narrow: false });
+  const p = await ctx.newPage();
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 900);
+  await p.evaluate(() => {
+    const P = window.__panel;
+    P.data.state.settings = { ...(P.data.state.settings || {}), fold_rooms: false }; P._forceApply = true;
+    const seek = (o) => { if (!o || typeof o !== 'object') return; if (o.id === 'c_up') { o.options = { detail: { type: 'tile', entity: 'sensor.outside_temperature' } }; return; } Object.values(o).forEach(seek); };
+    seek(P.dash); P.engine.invalidate(); P.schedule();
+  });
+  await settle(p, 1500);
+  const text = () => p.evaluate(() => { const t = window.__panel.shadowRoot.querySelector('[data-tile="c_up"]'); return t ? t.textContent : ''; });
+  if ((await text()).includes('Lovelace tile')) fail('detail', 'options.detail was drawn on a closed card');
+  await p.evaluate(() => window.__panel.openView('c_up', 'adv'));
+  await settle(p, 1500);
+  if (!(await text()).includes('Lovelace tile')) fail('detail', 'options.detail was not drawn when the card opened');
+  { const so = sectionOverlaps(await snapshot(p)); if (so.length) fail('detail', `sections overlap with the detail open: ${so.join(', ')}`); }
+  await p.evaluate(() => window.__panel.closeView ? window.__panel.closeView() : (window.__panel.s.view = null, window.__panel.schedule()));
+  await settle(p, 1500);
+  if ((await text()).includes('Lovelace tile')) fail('detail', 'options.detail stayed on the face after the card closed');
+  await ctx.close();
+}
+
 // Morph's own code, changed by the house: a copy is served in place of
 // Morph's own, and a copy that fails to load falls back to Morph's own with
 // a sentence saying so (boot.js, static.py).

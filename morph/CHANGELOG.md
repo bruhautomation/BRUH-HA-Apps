@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.3
+
+### Added
+
+- **Thermostat routines on the climate card.** A climate card's `options.actions` lists up to four scripts, buttons or scenes (a "drop humidity" script, a boost) that sit on the card's face; a running script reads as pressed. A house no longer has to copy Morph's own card code to add one. (#247)
+- **A card's deeper view opens with the card.** `options.detail` holds a Lovelace card that is shown only while the card is open, such as a performance chart under a thermostat. (#242)
+
+### Fixed
+
+- **Debug traces are not filed as Morph faults**, and each fault Morph publishes says when it last happened, so brAIn's development loop no longer reports a two-week-old row as still happening. (#261–#264)
+
 ## 1.0.2
 
 ### Fixed
