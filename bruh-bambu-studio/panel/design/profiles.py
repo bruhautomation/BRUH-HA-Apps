@@ -72,8 +72,13 @@ def flatten(kind: str, name: str) -> dict:
     merged: dict = {}
     for data in reversed(chain):
         merged.update(data)
+    # A "User" profile names the system profile it came from in `inherits`,
+    # and the CLI takes that as the system name it checks compatibility
+    # with: a process is sliced only if its compatible_printers lists the
+    # machine's system name (BambuStudio.cpp, CLI_PROCESS_NOT_COMPATIBLE).
+    # An empty `inherits` made that name "" and every print exit -17.
     merged["name"] = name
-    merged["inherits"] = ""
+    merged["inherits"] = name
     merged["from"] = "User"
     return merged
 
