@@ -68,6 +68,23 @@ class TestBuild(unittest.TestCase):
             with self.subTest(package=package):
                 self.assertIn(package, dockerfile)
 
+    def test_the_cad_stack_and_the_viewer_ship_in_the_image(self):
+        dockerfile = (ADDON / "Dockerfile").read_text()
+        self.assertIn("python3 -m venv /opt/cad", dockerfile)
+        self.assertRegex(dockerfile, r"cadquery==\d")
+        self.assertIn("three@${THREE_VERSION}", dockerfile)
+        self.assertIn("COPY cad/ /opt/bruh-bambu/cad/", dockerfile)
+        self.assertIn("COPY lovelace/ /opt/bruh-bambu/lovelace/", dockerfile)
+
+    def test_the_card_goes_to_lovelace_and_to_morph(self):
+        run_sh = (ADDON / "run.sh").read_text()
+        self.assertIn("/config/www/bruh_bambu/bruh-bambu-card.js", run_sh)
+        self.assertIn("/config/morph/cards/bruh-bambu-printer.js", run_sh)
+        card = (ADDON / "lovelace" / "bruh-bambu-card.js").read_text()
+        for name in ("bruh-bambu-card", "morph-bambu-printer"):
+            self.assertIn(f"customElements.define('{name}'", card)
+        self.assertNotRegex(card, r"^\s*import ", "a card may import nothing")
+
     def test_the_appimage_is_extracted_never_mounted(self):
         """FUSE would need `mount`, which the AppArmor profile denies."""
         self.assertIn("--appimage-extract", (ADDON / "panel" / "installer.py").read_text())
@@ -78,8 +95,10 @@ class TestBuild(unittest.TestCase):
         request to Home Assistant's own root."""
         page = (ADDON / "panel" / "index.html").read_text()
         self.assertEqual(re.findall(r'(?:src|href)="/', page), [])
-        script = (ADDON / "panel" / "app.js").read_text()
-        self.assertEqual(re.findall(r'api\("/', script), [])
+        for name in ("app.js", "design.js"):
+            script = (ADDON / "panel" / name).read_text()
+            self.assertEqual(re.findall(r'api\(["`]/', script), [], name)
+            self.assertEqual(re.findall(r'fetch\(["`]/', script), [], name)
 
 
 class TestServicesDocumented(unittest.TestCase):

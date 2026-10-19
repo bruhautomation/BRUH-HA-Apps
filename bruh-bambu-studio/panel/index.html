@@ -6,6 +6,7 @@
 <title>Bambu Studio</title>
 <link rel="icon" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
+<script type="importmap">{"imports": {"three": "./vendor/three.module.min.js"}}</script>
 </head>
 <body>
 <header class="bar">
@@ -14,6 +15,7 @@
     <button class="tab" data-view="studio" role="tab">Studio</button>
     <button class="tab" data-view="printers" role="tab">Printers</button>
     <button class="tab" data-view="files" role="tab">Files</button>
+    <button class="tab" data-view="design" role="tab" id="designTab" hidden>Design</button>
   </nav>
 </header>
 
@@ -52,7 +54,73 @@
       <div id="fileList"></div>
     </div>
   </section>
+  <section id="viewDesign" class="view" data-view="design" hidden>
+    <div class="design">
+      <aside class="partlist" id="partList">
+        <div class="row spread"><h2>Parts</h2>
+          <button class="primary" id="newPart" type="button">New part</button></div>
+        <p class="hint" id="designNote"></p>
+        <div id="parts"></div>
+      </aside>
+      <div class="partview" id="partView" hidden>
+        <header class="parthead">
+          <button type="button" id="partBack" class="back" aria-label="All parts">‹ Parts</button>
+          <input id="partName" class="partname" aria-label="Part name">
+          <div class="row wrap" id="partActions">
+            <button type="button" class="primary" id="partPrint">Print</button>
+            <a class="button" id="dl3mf" download>3MF</a>
+            <a class="button" id="dlStep" download>STEP</a>
+            <button type="button" class="danger" id="partDelete">Delete</button>
+          </div>
+        </header>
+        <div class="partbody">
+          <div class="stage">
+            <div class="viewer" id="viewer"><p class="hint center" id="viewerNote">No version yet — describe the part to brAIn.</p></div>
+            <div class="viewtools row wrap">
+              <button type="button" data-view3d="iso">Iso</button>
+              <button type="button" data-view3d="top">Top</button>
+              <button type="button" data-view3d="front">Front</button>
+              <button type="button" data-view3d="right">Right</button>
+              <button type="button" id="measureBtn" aria-pressed="false">Measure</button>
+              <button type="button" id="wireBtn" aria-pressed="false">Wireframe</button>
+            </div>
+            <p class="hint" id="measureOut"></p>
+            <div class="versions" id="versions"></div>
+            <div id="versionInfo" class="hint"></div>
+          </div>
+          <div class="chat">
+            <div class="messages" id="messages"></div>
+            <p class="status" id="designStatus" hidden></p>
+            <form id="composer" class="composer">
+              <textarea id="composerText" rows="2" placeholder="Describe the part, or what to change…"></textarea>
+              <button class="primary" type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
 </main>
+
+<dialog id="designPrint">
+  <form method="dialog" id="designPrintForm" class="grid">
+    <h2>Print this part</h2>
+    <label>Printer <select name="printer" id="dpPrinter"></select></label>
+    <p class="hint" id="dpProfiles"></p>
+    <p id="dpAdvice"></p>
+    <fieldset class="trays" id="dpTrays"><legend>Filament</legend></fieldset>
+    <div class="grid two">
+      <label>Layer height (mm) <input name="layer_height" type="number" step="0.02" min="0.06" max="0.32"></label>
+      <label>Walls <input name="walls" type="number" min="1" max="10"></label>
+      <label>Infill (%) <input name="infill_percent" type="number" min="0" max="100"></label>
+      <label>Supports <select name="supports"><option value="">Profile's</option><option>none</option><option>normal</option><option>tree</option></select></label>
+      <label>Brim <select name="brim"><option value="">Profile's</option><option>none</option><option>auto</option><option>outer</option></select></label>
+    </div>
+    <label class="check"><input type="checkbox" name="timelapse"> Timelapse</label>
+    <div class="row"><button type="button" id="dpCancel">Cancel</button>
+      <button class="primary" value="go">Slice and print</button></div>
+  </form>
+</dialog>
 
 <dialog id="printDialog">
   <form method="dialog" id="printForm" class="grid">
@@ -70,5 +138,6 @@
 
 <div id="toast" class="toast" hidden></div>
 <script src="app.js"></script>
+<script src="design.js"></script>
 </body>
 </html>

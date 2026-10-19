@@ -8,6 +8,19 @@ configuration:
       pause, resume, stop, slice and status services, a sensor set for each
       printer, and the route brAIn uses to run your printers. Turn it off if
       you only ever use the panel.
+  install_lovelace_card:
+    name: Install the printer card
+    description: >-
+      Put the BRUH Bambu printer card in your dashboard card picker: progress,
+      time left, temperatures and AMS for each printer, with pause, resume,
+      stop, speed and light. It is a file in /config/www/bruh_bambu; turning
+      this off stops it being updated and registered.
+  install_morph_card:
+    name: Install the Morph printer card
+    description: >-
+      When Morph is installed, put the same printer card in /config/morph/cards
+      so a Morph dashboard can use it as custom:morph-bambu-printer. Nothing
+      happens without Morph.
   bambu_studio_version:
     name: Bambu Studio version
     description: >-

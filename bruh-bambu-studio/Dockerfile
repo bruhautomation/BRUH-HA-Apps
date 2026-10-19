@@ -40,8 +40,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libegl1 libgl1 libgl1-mesa-dri libglu1-mesa libosmesa6 libglx-mesa0 \
       libudev1 libcurl4 libssl3 libfuse2 \
       fonts-dejavu-core fonts-liberation2 \
-      python3 python3-aiohttp python3-paho-mqtt python3-yaml \
+      python3 python3-aiohttp python3-paho-mqtt python3-yaml python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# The CAD half of Design with brAIn, in its own virtualenv so OpenCascade's
+# pinned libraries never meet the panel's. A design script is built by
+# /opt/cad/bin/python in a process of its own (panel/design/runner.py).
+RUN python3 -m venv /opt/cad \
+    && /opt/cad/bin/pip install --no-cache-dir \
+       cadquery==2.8.0 trimesh==5.1.1 networkx==3.7 lxml==6.1.3 \
+    && /opt/cad/bin/python -c "import cadquery, trimesh"
+
+# three.js for the Design tab's 3D view, pinned and fetched here so the
+# panel works with no internet at runtime.
+ARG THREE_VERSION=0.160.0
+RUN mkdir -p /opt/bruh-bambu/vendor \
+    && for f in build/three.module.min.js examples/jsm/controls/OrbitControls.js \
+                examples/jsm/loaders/STLLoader.js; do \
+         curl -fsSL "https://cdn.jsdelivr.net/npm/three@${THREE_VERSION}/${f}" \
+           -o "/opt/bruh-bambu/vendor/$(basename "${f}")" || exit 1; \
+       done
 
 # The one user everything runs as. Nothing in this add-on opens a device or
 # binds a privileged port, so the slicer, the X server and the panel all
@@ -57,6 +75,8 @@ WORKDIR /opt/bruh-bambu
 COPY run.sh /run.sh
 COPY openbox-rc.xml /opt/bruh-bambu/openbox-rc.xml
 COPY panel/ /opt/bruh-bambu/panel/
+COPY cad/ /opt/bruh-bambu/cad/
+COPY lovelace/ /opt/bruh-bambu/lovelace/
 COPY integrations/ /opt/bruh-bambu/integrations/
 COPY custom_components/ /opt/bruh-bambu/custom_components/
 COPY config.yaml /opt/bruh-bambu/config.yaml

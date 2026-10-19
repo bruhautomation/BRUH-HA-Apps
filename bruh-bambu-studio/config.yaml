@@ -49,6 +49,14 @@ options:
   # takes to the printers.
   enable_ha_integration: true
 
+  # install_lovelace_card: copy the printer card to /config/www/bruh_bambu;
+  # the integration registers it so it is in the dashboard card picker.
+  install_lovelace_card: true
+
+  # install_morph_card: when Morph is installed, put the same card in
+  # /config/morph/cards so a Morph dashboard can use it.
+  install_morph_card: true
+
   # bambu_studio_version: "latest", or a release tag such as v02.08.02.61.
   # The AppImage is downloaded on first start into /data and kept there; a
   # different value here downloads that version on the next start.
@@ -65,6 +73,8 @@ options:
   log_level: info
 schema:
   enable_ha_integration: bool
+  install_lovelace_card: bool
+  install_morph_card: bool
   bambu_studio_version: "str"
   appimage_url: "str?"
   screen_resolution: "match(^[0-9]{3,4}x[0-9]{3,4}$)"

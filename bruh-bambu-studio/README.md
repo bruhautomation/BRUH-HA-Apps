@@ -17,8 +17,14 @@ from the panel, a dashboard, an automation, or brAIn.
   projects are sliced first by Bambu Studio's own command line.
 - **Full control.** Pause, resume, stop, speed, chamber light, temperatures,
   homing and G-code, on the panel and as `bruh_bambu.*` services.
+- **Design parts with brAIn** (optional). With brAIn installed, a Design tab
+  lets you describe a part, shape it in conversation, watch it in a 3D view
+  with measuring, keep every version, and send it to a printer with the
+  slicing brAIn recommends and the filament you pick.
 - **brAIn drives it.** Ask brAIn to start the print, pause it, or tell you how
   long is left.
+- **Printer cards** for Lovelace and for Morph: progress, time left,
+  temperatures and AMS, with pause, resume, stop, speed and light.
 
 **amd64 only.** Bambu Lab publishes Bambu Studio for Linux on x86-64 only, so
 the add-on does not install on a Raspberry Pi or other ARM box.

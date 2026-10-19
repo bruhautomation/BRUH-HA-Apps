@@ -453,6 +453,13 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-phone.mjs
 
+      # BRUH Bambu Studio's printer card, as a Lovelace card and as a Morph
+      # card, against a stubbed `hass`: it renders the printers, its
+      # controls call the services they name, and Stop takes two presses.
+      - name: Measure BRUH Bambu Studio's printer card
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-bambu-card.mjs
+
       # bright: BRight's panel — two static measures, then three on one
       # booted demo panel, in the order the comments below rely on.
 

@@ -62,6 +62,58 @@ them (`bruh_bambu.list_files` lists them under `profiles`). When in doubt, open
 the model in Bambu Studio, set it up, and save it as a project into
 `/share/bambu`.
 
+## Design with brAIn (optional)
+
+With [brAIn](../brain/) installed and its **Automation integration** on, a
+**Design** tab appears. Without brAIn the tab is not there (or, if you have
+parts already, it shows them and says why it cannot chat) and nothing else
+in the add-on changes.
+
+1. Press **New part** and describe it: what it is for, what it fits, sizes you
+   know. brAIn picks sensible defaults, says them, and asks only what it
+   cannot guess (a mating size, a clearance) — its questions are buttons you
+   can tap to answer.
+2. brAIn writes the part as a parametric CadQuery script; the add-on checks it,
+   builds it, and shows it in a **3D view**: orbit, pan and zoom, Iso / Top /
+   Front / Right, **Measure** (tap two points for the distance and its X, Y, Z
+   parts), wireframe, and the overall size. If a build fails, the error goes
+   straight back to brAIn to fix (twice at most) before you see it.
+3. Keep talking to change it. Every change that builds is a new **version**:
+   the chips under the view switch between them, and *Keep working from vN*
+   makes an older one the base for the next change. Nothing is overwritten.
+4. **Print** asks which printer, then shows how brAIn would print it — the
+   material and colour it suggests and why, layer height, walls, infill,
+   supports and brim, all editable — and the AMS trays with the best match
+   picked. *Slice and print* chooses Bambu Studio's own profiles for that
+   printer and filament, puts the settings over them, slices with Bambu
+   Studio's command line, uploads and starts. Set the printer's **model** on
+   the Printers tab so the right profiles are chosen.
+
+Every part lives in `/share/bambu/designs/<part>/` — its conversation, each
+version's `design.py`, STEP, 3MF and STL — so you can open the STEP in
+Onshape or Fusion, or the 3MF in Bambu Studio, and come back to the
+conversation days later from the parts list: it resumes the same brAIn
+conversation (which also appears in brAIn's own chat list).
+
+brAIn answers design requests with reading tools only; it never writes files
+or runs anything itself. The add-on runs the script it writes in a separate
+process with no Home Assistant token and a time limit, after checking it
+imports nothing but CadQuery, cadkit, math and numpy.
+
+## The printer card
+
+The add-on installs one card in two places:
+
+- **Lovelace:** add *BRUH Bambu printers* from the card picker
+  (`type: custom:bruh-bambu-card`). With no options it shows every printer;
+  `entity: sensor.workshop_x1c_status` shows one. `show_ams: false` and
+  `show_controls: false` trim it.
+- **Morph:** with Morph installed, the same card is in `/config/morph/cards`
+  and is used as `type: custom:morph-bambu-printer`, in Morph's own look.
+
+It shows progress, time left and the finish time, the layer, temperatures and
+AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
+
 ## Services
 
 | Service | What it does |
@@ -112,6 +164,8 @@ misheard sentence there is filament and hours.
 | Option | |
 |---|---|
 | `enable_ha_integration` | Deploy the `bruh_bambu` integration and its bridge |
+| `install_lovelace_card` | Put the printer card in the dashboard card picker |
+| `install_morph_card` | Put the printer card in Morph's cards folder, when Morph is installed |
 | `bambu_studio_version` | `latest`, or a release tag such as `v02.08.02.61` |
 | `appimage_url` | A direct AppImage link to use instead of the GitHub release |
 | `screen_resolution` | The virtual screen's size, `WIDTHxHEIGHT` |

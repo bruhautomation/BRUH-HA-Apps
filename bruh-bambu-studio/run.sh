@@ -52,12 +52,14 @@ except Exception:
 # under `with-contenv`, which reloads the s6 environment.
 load_config() {
     ENABLE_HA_INTEGRATION=$(bashio::config 'enable_ha_integration' 'true')
+    INSTALL_LOVELACE_CARD=$(bashio::config 'install_lovelace_card' 'true')
+    INSTALL_MORPH_CARD=$(bashio::config 'install_morph_card' 'true')
     BAMBU_STUDIO_VERSION=$(bashio::config 'bambu_studio_version' 'latest')
     BAMBU_APPIMAGE_URL=$(bashio::config 'appimage_url' '')
     SCREEN_RESOLUTION=$(bashio::config 'screen_resolution' '1600x900')
     BAMBU_LOG_LEVEL=$(bashio::config 'log_level' 'info')
     [ "${BAMBU_APPIMAGE_URL}" = "null" ] && BAMBU_APPIMAGE_URL=""
-    export ENABLE_HA_INTEGRATION BAMBU_STUDIO_VERSION BAMBU_APPIMAGE_URL \
+    export ENABLE_HA_INTEGRATION INSTALL_LOVELACE_CARD INSTALL_MORPH_CARD BAMBU_STUDIO_VERSION BAMBU_APPIMAGE_URL \
            SCREEN_RESOLUTION BAMBU_LOG_LEVEL
     {
         {
@@ -110,6 +112,26 @@ deploy_custom_integration() {
         cp -a "${src}" "${dst}"
     else
         bashio::log.info "bruh_bambu integration up-to-date (${src_ver})"
+    fi
+}
+
+# The printer card: one file, two hosts. /config/www is what Core serves as
+# /local (the integration registers it with the frontend); Morph loads every
+# file in /config/morph/cards by itself. Copied on every start, because an
+# old card against a new integration is a dashboard that quietly breaks.
+install_cards() {
+    local src="${BAMBU_HOME}/lovelace/bruh-bambu-card.js"
+    [ -f "${src}" ] || return 0
+    if [ "${INSTALL_LOVELACE_CARD}" = "true" ] && mkdir -p /config/www/bruh_bambu 2>/dev/null; then
+        cp -f "${src}" /config/www/bruh_bambu/bruh-bambu-card.js
+        bashio::log.info "Printer card at /local/bruh_bambu/bruh-bambu-card.js"
+    fi
+    if [ "${INSTALL_MORPH_CARD}" = "true" ] && [ -d /config/morph ]; then
+        mkdir -p /config/morph/cards
+        cp -f "${src}" /config/morph/cards/bruh-bambu-printer.js
+        # Morph's own user edits these files; hand it over like the rest.
+        chown --reference=/config/morph /config/morph/cards/bruh-bambu-printer.js 2>/dev/null || true
+        bashio::log.info "Morph printer card at /config/morph/cards (custom:morph-bambu-printer)"
     fi
 }
 
@@ -203,6 +225,7 @@ main() {
     load_config
     prepare_filesystem
     deploy_custom_integration
+    install_cards
     start_screen
     start_ha_bridge
     announce_ha_discovery

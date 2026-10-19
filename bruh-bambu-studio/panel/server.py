@@ -46,12 +46,16 @@ import store  # noqa: E402
 import vnc_bridge  # noqa: E402
 from bambu import ftps, protocol, threemf  # noqa: E402
 from bambu.client import PrinterClient  # noqa: E402
+from design import brain_link, designer, parts, profiles, runner  # noqa: E402
 from studio import Studio  # noqa: E402
 
 log = logging.getLogger("bruh_bambu")
 
 PANEL_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 NOVNC_DIR = Path(os.environ.get("BAMBU_NOVNC_DIR", "/usr/share/novnc"))
+# three.js, fetched at image build time (see the Dockerfile), for the
+# Design tab's 3D view. A panel with none still works and says so.
+VENDOR_DIR = Path(os.environ.get("BAMBU_VENDOR_DIR", "/opt/bruh-bambu/vendor"))
 SHARED = Path(os.environ.get("BAMBU_SHARED", "/config/.bruh_bambu"))
 STATE_FILE = SHARED / "state.json"
 BIND_HOST = "0.0.0.0"
@@ -205,19 +209,32 @@ def run_command(client: PrinterClient, action: str, body: dict) -> dict:
 
 
 def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
-               body: dict, env: dict) -> None:
+               body: dict, env: dict, prepared: dict | None = None,
+               after=None) -> None:
+    """Slice if needed, upload, start.
+
+    `prepared` is a designed part's own settings files (design/profiles.py),
+    built here from the part and never taken off a request. `after` is told
+    the finished job.
+    """
     try:
         source = library.path_of(body["file"])
         info = threemf.inspect(str(source)) if source.name.lower().endswith(".3mf") else {
             "sliced": False}
         if not info.get("sliced"):
             job["phase"] = "slicing"
-            slice_job = slicer.start(body["file"], plate=int(body.get("plate") or 0),
-                                     machine=body.get("machine") or "",
-                                     process=body.get("process") or "",
-                                     filaments=body.get("filaments") or None,
-                                     arrange=bool(body.get("arrange")),
-                                     orient=bool(body.get("orient")), env=env)
+            if prepared:
+                paths = prepared["paths"]
+                slice_job = slicer.start_paths(
+                    source, machine=Path(paths["machine"]), process=Path(paths["process"]),
+                    filaments=[Path(paths["filament"])], arrange=True, env=env)
+            else:
+                slice_job = slicer.start(body["file"], plate=int(body.get("plate") or 0),
+                                         machine=body.get("machine") or "",
+                                         process=body.get("process") or "",
+                                         filaments=body.get("filaments") or None,
+                                         arrange=bool(body.get("arrange")),
+                                         orient=bool(body.get("orient")), env=env)
             job["slice_job"] = slice_job["id"]
             done = slicer.wait(slice_job["id"], slicer.TIMEOUT_S + 30)
             if not done or done["state"] != "done":
@@ -256,6 +273,11 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
         job.update(state="failed", error=str(exc) or exc.__class__.__name__)
     finally:
         job["finished"] = time.time()
+        if after:
+            try:
+                after(job)
+            except Exception:  # noqa: BLE001 - a bookkeeping hook must not lose the job
+                log.exception("Recording the print failed")
 
 
 # ---------------------------------------------------------------------------
@@ -494,6 +516,230 @@ async def h_profiles(_request):
     return web.json_response({"ok": True, **await asyncio.to_thread(_profiles)})
 
 
+# ---------------------------------------------------------------------------
+# Design with brAIn (optional: every route works without brAIn except a turn)
+# ---------------------------------------------------------------------------
+
+COLOUR_NAMES = {
+    "black": (0, 0, 0), "white": (255, 255, 255), "grey": (128, 128, 128),
+    "gray": (128, 128, 128), "silver": (192, 192, 192), "red": (200, 30, 30),
+    "orange": (240, 130, 20), "yellow": (240, 210, 30), "green": (40, 160, 60),
+    "blue": (30, 90, 200), "cyan": (0, 180, 220), "purple": (120, 50, 160),
+    "pink": (240, 120, 170), "brown": (120, 80, 40), "beige": (220, 200, 160),
+    "gold": (210, 170, 50),
+}
+
+
+def _rgb(hex_colour: str):
+    text = str(hex_colour or "").lstrip("#")
+    try:
+        return tuple(int(text[i:i + 2], 16) for i in (0, 2, 4)) if len(text) >= 6 else None
+    except ValueError:
+        return None
+
+
+def recommend_tray(trays: list[dict], material: str, colour: str) -> int | None:
+    """The AMS slot that best fits what brAIn recommended: the material
+    first (a PETG part on a PLA tray is a different part), then the colour."""
+    material = str(material or "").upper()
+    wanted = next((rgb for name, rgb in COLOUR_NAMES.items() if name in str(colour).lower()), None)
+    best, best_score = None, None
+    for tray in trays:
+        kind = str(tray.get("type") or "").upper()
+        score = 0 if kind == material else 1 if kind.startswith(material) else 3
+        rgb = _rgb(tray.get("colour"))
+        if wanted and rgb:
+            score += sum((a - b) ** 2 for a, b in zip(wanted, rgb)) ** 0.5 / 450
+        if best_score is None or score < best_score:
+            best, best_score = tray.get("slot"), score
+    return best if best_score is not None and best_score < 3 else None
+
+
+def _part_or_404(request) -> dict:
+    try:
+        return parts.load(request.match_info["id"])
+    except (ValueError, LookupError):
+        raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "No such part."}),
+                               content_type="application/json") from None
+
+
+async def h_design_status(_request):
+    return web.json_response({"ok": True, "brain": brain_link.status(),
+                              "cad": runner.available(),
+                              "viewer": (VENDOR_DIR / "three.module.min.js").is_file()})
+
+
+async def h_design_parts(_request):
+    return web.json_response({"ok": True, "parts": await asyncio.to_thread(parts.listing)})
+
+
+async def h_design_create(request):
+    body = await _body(request)
+    await asyncio.to_thread(library.ensure)
+    part = await asyncio.to_thread(parts.create, body.get("name") or "New part")
+    started = False
+    if str(body.get("message") or "").strip():
+        if brain_link.status()["state"] != "ok":
+            return _err(brain_link.status()["sentence"], 409)
+        started = await asyncio.to_thread(designer.start_turn, part["id"], body["message"])
+        part = parts.load(part["id"])
+    return web.json_response({"ok": True, "part": part, "started": started})
+
+
+async def h_design_part(request):
+    return web.json_response({"ok": True, "part": _part_or_404(request)})
+
+
+async def h_design_delete(request):
+    part = _part_or_404(request)
+    if part.get("state") in ("thinking", "building", "fixing"):
+        return _err("brAIn is still working on this part.", 409)
+    import shutil
+    await asyncio.to_thread(shutil.rmtree, parts.folder(part["id"]), True)
+    return web.json_response({"ok": True})
+
+
+async def h_design_message(request):
+    part = _part_or_404(request)
+    body = await _body(request)
+    status = brain_link.status()
+    if status["state"] != "ok":
+        return _err(status["sentence"], 409)
+    try:
+        started = await asyncio.to_thread(designer.start_turn, part["id"], body.get("text"))
+    except ValueError as exc:
+        return _err(str(exc))
+    if not started:
+        return _err("brAIn is still working on the last message.", 409)
+    return web.json_response({"ok": True, "part": parts.load(part["id"])})
+
+
+async def h_design_update(request):
+    """Rename, make a version current, or edit the print settings."""
+    part = _part_or_404(request)
+    body = await _body(request)
+    if "name" in body:
+        part["name"] = str(body["name"]).strip()[:80] or part["name"]
+    if "current" in body:
+        row = parts.version(part, body["current"])
+        if row is None or not row.get("ok"):
+            return _err("That version did not build, so it cannot be the current one.")
+        part["current"] = row["n"]
+        parts.say(part, "system", f"Went back to version {row['n']}; the next change builds on it.")
+    if "print_settings" in body:
+        settings = designer.clean_settings(body["print_settings"])
+        if settings is None:
+            return _err("Those print settings could not be read.")
+        part["print_settings"] = settings
+    await asyncio.to_thread(parts.save, part)
+    return web.json_response({"ok": True, "part": part})
+
+
+async def h_design_file(request):
+    part = _part_or_404(request)
+    try:
+        n = int(request.query.get("v") or part.get("current") or 0)
+        path = parts.file_in(part["id"], n, request.query.get("path") or "")
+    except (ValueError, LookupError):
+        return _err("No such file.", 404)
+    return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+
+async def h_design_thumb(request):
+    part = _part_or_404(request)
+    path = parts.folder(part["id"]) / "thumb.png"
+    if request.method == "GET":
+        if not path.is_file():
+            return _err("No picture yet.", 404)
+        return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+    data = await request.read()
+    if len(data) > 1_000_000 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return _err("Send a PNG under 1 MB.")
+    await asyncio.to_thread(atomic_write.write_bytes, path, data)
+    return web.json_response({"ok": True})
+
+
+def _plan(part: dict, printer_row: dict, client: PrinterClient | None) -> dict:
+    settings = part.get("print_settings") or {}
+    trays = (client.summary().get("ams") if client else None) or []
+    plan = {"settings": settings, "trays": trays,
+            "recommended_slot": recommend_tray(trays, settings.get("material", "PLA"),
+                                               settings.get("colour", ""))}
+    try:
+        machine = profiles.machine_for(printer_row.get("model"))
+        plan["machine"] = machine
+        plan["process"] = profiles.process_for(machine, settings.get("layer_height"))
+        plan["filament"] = profiles.filament_for(machine, settings.get("material", "PLA"))
+    except LookupError as exc:
+        plan["problem"] = str(exc)
+    return plan
+
+
+async def h_design_plan(request):
+    part = _part_or_404(request)
+    panel = _panel(request)
+    try:
+        row, client = panel.printer(request.query.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    plan = await asyncio.to_thread(_plan, part, row, client)
+    return web.json_response({"ok": True, "printer": row["name"], **plan})
+
+
+async def h_design_print(request):
+    part = _part_or_404(request)
+    panel = _panel(request)
+    body = await _body(request)
+    n = int(body.get("version") or part.get("current") or 0)
+    row_v = parts.version(part, n)
+    if not row_v or not row_v.get("ok") or not (row_v.get("files") or {}).get("3mf"):
+        return _err("This part has no built version to print yet.")
+    try:
+        row, client = panel.printer(body.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    if not client.connected:
+        return _err(f"{row['name']} is not connected: {client.last_error or 'still connecting'}.", 409)
+    settings = designer.clean_settings({**(part.get("print_settings") or {}),
+                                        **(body.get("print_settings") or {})}) or {}
+    slot = body.get("slot")
+    use_ams = isinstance(slot, int) and 0 <= slot < 16
+    if use_ams:
+        tray = next((t for t in client.summary().get("ams") or [] if t.get("slot") == slot), None)
+        if tray and tray.get("type"):
+            settings["material"] = str(tray["type"]).upper()
+    source = parts.version_dir(part["id"], n) / row_v["files"]["3mf"]
+    try:
+        prepared = await asyncio.to_thread(
+            profiles.prepare, row.get("model"), settings,
+            parts.version_dir(part["id"], n) / f"slicing-{row['id']}")
+    except (LookupError, OSError, ValueError) as exc:
+        return _err(str(exc), 409)
+    job_body = {"file": library.relative(source), "use_ams": use_ams,
+                "ams_mapping": [slot] if use_ams else [0],
+                "timelapse": bool(body.get("timelapse")), "bed_leveling": True}
+    job = panel.new_job("print", printer=row["name"], file=job_body["file"], part=part["id"])
+
+    def record(finished: dict) -> None:
+        fresh = parts.load(part["id"])
+        fresh.setdefault("prints", []).append({
+            "at": time.time(), "printer": row["name"], "version": n, "job": finished["id"],
+            "state": finished["state"], "error": finished.get("error", ""),
+            "material": settings.get("material"), "slot": slot})
+        parts.say(fresh, "system", (
+            f"Sent version {n} to {row['name']} ({prepared['filament']}, {prepared['process']})."
+            if finished["state"] == "done" else f"Printing version {n} failed: {finished.get('error')}"))
+        parts.save(fresh)
+
+    threading.Thread(target=_print_job, args=(panel, job, row, client, job_body,
+                                              panel.studio.env(), prepared, record),
+                     daemon=True).start()
+    job = await _wait_for(panel, job, body.get("wait"))
+    return web.json_response({"ok": job["state"] != "failed", "job": job, "plan": {
+        k: prepared[k] for k in ("machine", "process", "filament", "material")},
+        **({"error": job["error"]} if job["state"] == "failed" else {})})
+
+
 def _asset(name: str, content_type: str):
     async def handler(_request):
         return web.FileResponse(PANEL_DIR / name, headers={
@@ -520,7 +766,7 @@ class QuietAccessLogger(AbstractAccessLogger):
     """Successful polls are not news; failures always log."""
 
     QUIET = ("/api/state", "/api/health", "/api/files", "/api/job", "/websockify",
-             "/novnc/")
+             "/novnc/", "/vendor/", "/api/design/parts/")
 
     def log(self, request, response, time_taken):  # noqa: D102
         status = getattr(response, "status", 0)
@@ -578,6 +824,22 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_post("/api/print", h_print)
     r.add_get("/api/job/{id}", h_job)
     r.add_get("/api/profiles", h_profiles)
+    r.add_get("/viewer.js", _asset("viewer.js", "application/javascript"))
+    r.add_get("/design.js", _asset("design.js", "application/javascript"))
+    if VENDOR_DIR.is_dir():
+        r.add_static("/vendor/", VENDOR_DIR)
+    r.add_get("/api/design/status", h_design_status)
+    r.add_get("/api/design/parts", h_design_parts)
+    r.add_post("/api/design/parts", h_design_create)
+    r.add_get("/api/design/parts/{id}", h_design_part)
+    r.add_delete("/api/design/parts/{id}", h_design_delete)
+    r.add_post("/api/design/parts/{id}", h_design_update)
+    r.add_post("/api/design/parts/{id}/message", h_design_message)
+    r.add_get("/api/design/parts/{id}/file", h_design_file)
+    r.add_get("/api/design/parts/{id}/thumb", h_design_thumb)
+    r.add_post("/api/design/parts/{id}/thumb", h_design_thumb)
+    r.add_get("/api/design/parts/{id}/plan", h_design_plan)
+    r.add_post("/api/design/parts/{id}/print", h_design_print)
     if ticker:
         app.cleanup_ctx.append(_ticker)
     return app
@@ -593,6 +855,7 @@ def main() -> None:
     panel = Panel()
     library.ensure()
     panel.sync_clients()
+    designer.recover()
     if installer.installed() is None or os.environ.get("BAMBU_STUDIO_VERSION", "latest") not in (
             "latest", (installer.installed() or {}).get("version")):
         installer.start_install(os.environ.get("BAMBU_STUDIO_VERSION", "latest"),

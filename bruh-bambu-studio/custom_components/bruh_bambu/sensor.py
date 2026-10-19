@@ -26,9 +26,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import BruhBambuCoordinator
 
-ATTRS = ("file", "layer", "total_layers", "speed", "chamber_light", "ams",
-         "error_code", "hms_count", "nozzle_target_c", "bed_target_c",
-         "chamber_c", "connection_error", "host", "serial", "model")
+# Everything a card needs is on the status sensor, so a card names one
+# entity per printer and reads one state rather than five.
+ATTRS = ("file", "progress", "remaining_min", "layer", "total_layers", "speed",
+         "chamber_light", "ams", "error_code", "hms_count", "nozzle_c",
+         "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c",
+         "connection_error", "host", "serial", "model", "printing")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
@@ -116,6 +119,9 @@ class StatusSensor(_PrinterSensor):
         data = self.coordinator.data or {}
         printer = self._printer() or {}
         attrs = {k: printer.get(k) for k in ATTRS if printer.get(k) is not None}
+        # The id the services take, and the mark the cards find printers by.
+        attrs["bruh_bambu_printer"] = self._pid
+        attrs["printer_name"] = printer.get("name") or self._pid
         if not data.get("available"):
             attrs["reason"] = data.get("reason")
         return attrs

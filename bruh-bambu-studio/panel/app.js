@@ -58,6 +58,7 @@ function show(view) {
   document.querySelectorAll(".view").forEach((v) => { v.hidden = v.dataset.view !== view; });
   document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", t.dataset.view === view));
   document.body.classList.toggle("studio-open", view === "studio");
+  document.body.classList.toggle("wide", view === "design");
   try { localStorage.setItem("bambu.view", view); } catch (_) { /* storage may be refused in an iframe */ }
   if (view === "files") loadFiles();
   if (view === "studio") connectScreen();

@@ -16,9 +16,13 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_call_later
 
 from .bridge import send_request
 from .const import (
+    CARD_FILE,
+    CARD_RETRY_SECONDS,
+    CARD_RETRY_TRIES,
     DOMAIN,
     SERVICE_GCODE,
     SERVICE_LIGHT,
@@ -33,6 +37,7 @@ from .const import (
     SERVICE_STATUS,
     SERVICE_STOP,
     SERVICE_TEMPERATURE,
+    card_url,
 )
 from .coordinator import BruhBambuCoordinator
 
@@ -102,8 +107,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = BruhBambuCoordinator(hass)
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    await _register_card(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
+    """Put the printer card in the dashboard card picker.
+
+    `add_extra_js_url` works in storage and YAML mode alike and needs no
+    restart. The file is looked for again for a while, because Core can set
+    this entry up before the add-on has copied the card in; it is never
+    registered while missing, or every page load logs a 404.
+    """
+    def _url() -> str | None:
+        return card_url(CARD_FILE) if CARD_FILE.is_file() else None
+
+    url = await hass.async_add_executor_job(_url)
+    if url is None:
+        if tries + 1 < CARD_RETRY_TRIES:
+            async_call_later(hass, CARD_RETRY_SECONDS,
+                             lambda _now: hass.async_create_task(_register_card(hass, tries + 1)))
+        return
+    try:
+        from homeassistant.components.frontend import add_extra_js_url
+    except ImportError:  # pragma: no cover - frontend is always there in core
+        return
+    add_extra_js_url(hass, url)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

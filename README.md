@@ -102,8 +102,12 @@ Assistant's control.
   line, uploaded and started
 - **Full control** — pause, resume, stop, speed, chamber light, temperatures,
   homing and G-code, on the panel and as `bruh_bambu.*` services
+- **Design parts with brAIn** (optional) — describe a part, shape it in
+  conversation, watch it in a 3D view with measuring, keep every version, and
+  send it to a printer with the slicing brAIn recommends
 - **brAIn runs it** — "how long is left on the print?", "pause the printer",
   "print the benchy on the X1C"
+- **Printer cards** for Lovelace and Morph
 - **amd64 only** — Bambu Lab publishes Bambu Studio for Linux on x86-64 only
 
 📖 [add-on README](bruh-bambu-studio/) · [full documentation](bruh-bambu-studio/DOCS.md)

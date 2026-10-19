@@ -94,9 +94,6 @@ def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = 
           filaments: list[str] | None = None, arrange: bool = False,
           orient: bool = False, env: dict | None = None) -> dict:
     """Check the request, then slice on a thread. Returns the job."""
-    run = installer.apprun()
-    if run is None:
-        raise RuntimeError("Bambu Studio is not installed yet — it downloads on first start.")
     source = library.path_of(source_rel)
     if not source.is_file():
         raise FileNotFoundError(f"No file {source_rel!r} in the library.")
@@ -109,12 +106,24 @@ def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = 
     m = profile_path("machine", machine) if machine else None
     p = profile_path("process", process) if process else None
     f = [profile_path("filament", name) for name in (filaments or [])]
-    out = _output_for(source)
-    job = {"id": uuid.uuid4().hex[:12], "state": "running", "source": source_rel,
-           "output": None, "error": "", "started": time.time(), "finished": None,
-           "info": None, "log": []}
-    argv = command(str(run), source, out, plate=plate, machine=m, process=p,
-                   filaments=f, arrange=arrange, orient=orient)
+    return start_paths(source, plate=plate, machine=m, process=p, filaments=f,
+                       arrange=arrange, orient=orient, env=env)
+
+
+def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
+                process: Path | None = None, filaments: list[Path] | None = None,
+                arrange: bool = False, orient: bool = False, env: dict | None = None,
+                out: Path | None = None) -> dict:
+    """Slice with settings files already chosen (a designed part's own)."""
+    run = installer.apprun()
+    if run is None:
+        raise RuntimeError("Bambu Studio is not installed yet — it downloads on first start.")
+    out = out or _output_for(source)
+    job = {"id": uuid.uuid4().hex[:12], "kind": "slice", "state": "running",
+           "source": library.relative(source), "output": None, "error": "",
+           "started": time.time(), "finished": None, "info": None, "log": []}
+    argv = command(str(run), source, out, plate=plate, machine=machine, process=process,
+                   filaments=filaments, arrange=arrange, orient=orient)
     with _LOCK:
         JOBS[job["id"]] = job
         for old in sorted(JOBS.values(), key=lambda j: j["started"])[:-MAX_JOBS]:

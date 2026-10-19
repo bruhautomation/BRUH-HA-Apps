@@ -102,6 +102,16 @@ UID 1000. Starting a print, stopping one, raw G-code and slicing are refused
 to a voice-level brAIn agent, and every acting tool is kept from brAIn's
 unattended runs.
 
+Its optional **Design** tab runs Python that brAIn writes (a CadQuery part
+script). brAIn answers those requests with reading tools only and never
+writes or runs anything itself; the add-on parses each script first and
+refuses any import other than CadQuery, cadkit, math and numpy and any use of
+`open`, `eval`, `getattr` or underscore attributes, then runs it in a
+separate process with an empty environment (no `SUPERVISOR_TOKEN`), a CPU
+time limit and a cap on what it may write. That check is a guard against a
+model wandering, not a sandbox against an adversary: the words that drive it
+come from an admin, in a panel only an admin can open.
+
 Things we consider vulnerabilities:
 
 - Any management endpoint answering a caller who has not authenticated to

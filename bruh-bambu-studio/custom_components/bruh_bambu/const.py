@@ -1,6 +1,7 @@
 """Constants shared by the bruh_bambu integration. No Home Assistant imports."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 DOMAIN = "bruh_bambu"
@@ -34,3 +35,18 @@ SERVICE_LIGHT = "set_light"
 SERVICE_TEMPERATURE = "set_temperature"
 SERVICE_GCODE = "send_gcode"
 SERVICE_OPEN = "open_in_studio"
+
+# The printer card, where run.sh puts it and the URL Core serves it from.
+# The URL carries a hash of the file because /local is served with a 31-day
+# cache header and the add-on rewrites the card in place (BRUH Print's
+# `card_url`, for the same reason).
+CARD_URL = "/local/bruh_bambu/bruh-bambu-card.js"
+CARD_FILE = Path("/config/www/bruh_bambu/bruh-bambu-card.js")
+CARD_RETRY_SECONDS = 30
+CARD_RETRY_TRIES = 40
+
+
+def card_url(path: Path) -> str:
+    """The URL to register, with the file's own bytes on the end. Reads the
+    file, so call it in the executor."""
+    return f"{CARD_URL}?v={hashlib.sha256(path.read_bytes()).hexdigest()[:12]}"
