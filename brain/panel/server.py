@@ -18130,6 +18130,13 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     # offer. "Got it" plus a comment is still "Got it": falling back to
     # `memory` is what stops a note silently costing the memory line.
     template = spec["noted"] if note and spec.get("noted") else spec["memory"]
+    if note and facts_store.bare_acknowledgement(note):
+        # "That's fine", "ok": an acknowledgement, not a reason. Wrong still
+        # writes its rule below (that is what stops the check), but nothing
+        # is filed as a fact about the house; any other ending files the
+        # sentence it would have filed with no note.
+        template = "" if spec.get("kind") == "ignored" else spec["memory"]
+        note = ""
     fact = ""
     subjects = _finding_subjects(finding)
     # An investigation's case says what it would teach if a person agreed
@@ -18301,7 +18308,7 @@ def _record_exception(finding: dict, note: str) -> list[str]:
     if not rule or not subjects:
         return []
     report = str(finding.get("claim") or finding.get("text") or "")
-    text = note.strip() if note else f'"{report}" was reported and marked wrong'
+    text = facts_store.exception_text(report, note)
     # One fact carries at most `MAX_SUBJECTS`, so a row naming more items is
     # several facts under one report key — `forget_exceptions` takes them
     # all back together.
@@ -18558,7 +18565,8 @@ async def _complete_todo(item: dict, note: str) -> tuple[dict | None, str]:
     # is the same claim — said later, which is the only difference the to-do
     # list makes to it.
     spec = FINDING_VERBS["done"]
-    template = spec["noted"] if note else spec["memory"]
+    noted = note and not facts_store.bare_acknowledgement(note)
+    template = spec["noted"] if noted else spec["memory"]
     # About the report it came from (`claim`), as the Findings tab's own
     # "I fixed it" would have said it — the item's `text` is the errand.
     fact = template.format(text=item.get("claim") or item["text"], note=note,
