@@ -9888,6 +9888,7 @@ async def _run_sre(reason: str = "schedule") -> None:
                        refused=parsed["refused"], invented=parsed["invented"],
                        bundled=parsed["bundled"],
                        rewritten=parsed["rewritten"],
+                       unrelated=parsed.get("unrelated", 0),
                        run_id=_run_id(result))
     else:
         summary["note"] = "nothing in the log or the mesh worth a run"
