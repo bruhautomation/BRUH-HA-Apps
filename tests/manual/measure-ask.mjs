@@ -215,6 +215,44 @@ for (const { width, touch } of CASES) {
     if (touch && b.h < MIN_TARGET) note(where, `the ${b.source} pill is ${b.h}px`);
   }
 
+  // ---- every kind a house can have: still ONE row on a phone ----------
+  // (the house's photographs: nine kinds wrapped onto three rows, ~150px,
+  // above the first chat). The strip scrolls along; the page never does.
+  {
+    const kinds = await page.evaluate(() => {
+      const names = ['Action gate', 'Automation', 'Cards', 'Fixes', 'Memory', 'Upkeep', 'Voice', 'Watching'];
+      chatState.convSources = [{ id: 'you', label: 'Chats', count: 3 }].concat(
+        names.map((n) => ({ id: n.toLowerCase().replace(/ /g, '_'), label: n, count: 12 })));
+      renderConvKinds();
+      const host = document.querySelector('#chatRailKinds');
+      const pills = [...host.querySelectorAll('.crkind')];
+      const tops = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
+      const first = document.querySelector('#chatRailList .crrow');
+      return {
+        n: pills.length, rows: tops.size, h: Math.round(host.getBoundingClientRect().height),
+        overflowX: getComputedStyle(host).overflowX,
+        wide: document.documentElement.scrollWidth > window.innerWidth + 1,
+        minH: Math.min(...pills.map((b) => Math.round(b.getBoundingClientRect().height))),
+        belowFirst: first ? Math.round(first.getBoundingClientRect().top) : 0,
+      };
+    });
+    if (process.env.SHOTS_DIR) {
+      await page.screenshot({ path: path.join(process.env.SHOTS_DIR, `ask-nine-kinds-${width}-${process.env.SHOTS_TAG || 'after'}.png`) });
+    }
+    if (kinds.wide) note(where, 'the page scrolls sideways with nine kinds');
+    if (touch) {
+      if (kinds.rows !== 1) note(where, `nine kinds sit on ${kinds.rows} rows`);
+      if (kinds.h > 70) note(where, `the kind strip is ${kinds.h}px tall`);
+      if (kinds.minH < MIN_TARGET) note(where, `a kind pill is ${kinds.minH}px`);
+      if (kinds.overflowX !== 'auto') note(where, `the kind strip is overflow-x:${kinds.overflowX}`);
+    }
+    await page.evaluate(() => {
+      chatState.convSources = chatState.convSources.slice(0, 2);
+      chatState.convSources[1] = { id: 'voice', label: 'Voice', count: 55 };
+      renderConvKinds();
+    });
+  }
+
   // ---- a pill switches the list to that kind, and back ----------------
   try {
     await page.click('#chatRailKinds .crkind[data-source="voice"]');

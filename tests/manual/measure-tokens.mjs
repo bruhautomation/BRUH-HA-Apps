@@ -138,8 +138,8 @@ const browser = await chromium.launch({
 });
 
 // Everything on screen that the standard is about, read in one pass.
-function readPage({ sizes, grid, radius, boxes: BOXES }) {
-  const out = { sizes: [], upper: [], spaced: [], selects: [], boxes: [], cards: [], low: [], read: 0, picks: 0 };
+function readPage({ sizes, grid, radius, boxes: BOXES, muted: MUTED }) {
+  const out = { sizes: [], upper: [], spaced: [], selects: [], boxes: [], cards: [], low: [], muted: [], read: 0, picks: 0 };
   // Any CSS colour (rgb, color(srgb …), color-mix's answer) resolved by the
   // browser itself, as straight (not premultiplied) 0–1 RGBA.
   const cvs = document.createElement('canvas');
@@ -223,6 +223,9 @@ function readPage({ sizes, grid, radius, boxes: BOXES }) {
         const r = ratio(over(fg, bg), bg);
         const big = px >= 24 || (px >= 18.66 && parseInt(cs.fontWeight, 10) >= 700);
         const need = big ? 3 : 4.5;
+        // The muted labels a house's screen audit named (#288), recorded
+        // with their ratio so the run can show they were read, and where.
+        if (host.matches(MUTED)) out.muted.push(`${label(host)} ${r.toFixed(2)}`);
         if (r < need - 0.005) {
           out.low.push(`${label(host)} "${text.slice(0, 30)}" ${r.toFixed(2)}:1 (${cs.color})`);
         }
@@ -287,11 +290,20 @@ function readPage({ sizes, grid, radius, boxes: BOXES }) {
 }
 
 const totals = { screens: 0, text: 0, selects: 0 };
+// The muted text the house's audit measured as low in LIGHT mode: inactive
+// segmented buttons, the top bar's tabs and version, pill counts, the
+// conversation kind pills, "Live", "Written by you" and a History row's
+// state. Each is judged like any text here (settled, 250ms after the pane
+// opens, so a `transition: color` is never caught halfway); this list is
+// what proves each was on a screen in light mode at least once.
+const MUTED = ['.segnav .segbtn:not(.active)', '.viewtab', '#versionText', '.pillcount',
+               '.pill.crkind', '.crlive', '.upchip.you', '.histrow [class*="snooz"]'].join(', ');
+const seenMuted = new Map();
 // A pane that painted nothing passes every check above, so each one has to
 // have put some text on the screen for its silence to count.
 const MIN_TEXT = 5;
 async function check(page, where) {
-  const r = await page.evaluate(readPage, { sizes: SIZES, grid: GRID, radius: CARD_RADIUS, boxes: BOXES });
+  const r = await page.evaluate(readPage, { sizes: SIZES, grid: GRID, radius: CARD_RADIUS, boxes: BOXES, muted: MUTED });
   const uniq = (xs) => [...new Set(xs)];
   for (const s of uniq(r.sizes)) note(where, `text off the type scale: ${s}`);
   for (const s of uniq(r.upper)) note(where, `set in capitals: ${s}`);
@@ -299,6 +311,13 @@ async function check(page, where) {
   for (const s of uniq(r.selects)) note(where, `a native select: ${s}`);
   for (const s of uniq(r.boxes)) note(where, `a native control: ${s}`);
   for (const s of uniq(r.cards)) note(where, `card: ${s}`);
+  if (/ light /.test(` ${where} `)) {
+    for (const m of r.muted) {
+      const [name, ratio] = [m.slice(0, m.lastIndexOf(' ')), Number(m.slice(m.lastIndexOf(' ') + 1))];
+      const prev = seenMuted.get(name);
+      if (prev === undefined || ratio < prev) seenMuted.set(name, ratio);
+    }
+  }
   for (const s of uniq(r.low)) note(where, `text under 4.5:1: ${s}`);
   if (r.read < MIN_TEXT) note(where, `only ${r.read} pieces of text were on screen — did it render?`);
   totals.screens += 1;
@@ -330,6 +349,42 @@ for (const [width, height, touch, scheme] of [[1200, 900, false, 'light'], [390,
     await page.waitForTimeout(250);
     await check(page, where);
   }
+  // The labels that only exist once there is data (pill counts, the kind
+  // pills, Live, Written by you, a History row's state), built from the real
+  // classes inside a card and judged like all other text, light and dark.
+  {
+    const low = await page.evaluate(() => {
+      const cv = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+      const rgba = (c) => { cv.clearRect(0, 0, 1, 1); cv.fillStyle = c; cv.fillRect(0, 0, 1, 1);
+        const d = cv.getImageData(0, 0, 1, 1).data; return [d[0] / 255, d[1] / 255, d[2] / 255, d[3] / 255]; };
+      const over = (t, u) => [0, 1, 2].map((i) => t[i] * t[3] + u[i] * (1 - t[3])).concat(1);
+      const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+      const lum = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+      const bd = (n) => { const L = []; for (let e = n; e; e = e.parentElement) {
+        const c = rgba(getComputedStyle(e).backgroundColor); if (c[3] > 0) L.push(c); if (c[3] >= 1) break; }
+        let bg = rgba(getComputedStyle(document.documentElement).backgroundColor);
+        if (bg[3] < 1) bg = over(bg, [1, 1, 1, 1]);
+        for (const l of L.reverse()) bg = over(l, bg); return bg; };
+      const host = document.createElement('div');
+      host.className = 'card';
+      host.style.cssText = 'position:fixed;top:0;left:0;z-index:9';
+      host.innerHTML = '<button class="pill crkind">Voice <span class="pillcount">55</span></button>'
+        + '<span class="crlive">Live</span><span class="upchip you">Written by you</span>'
+        + '<div class="findsnoozed">Snoozed until Wed</div>'
+        + '<div class="histrow" data-filter="snoozed"><span class="histico">z</span></div>';
+      document.body.appendChild(host);
+      const bad = [];
+      for (const e of host.querySelectorAll('.pill, .pillcount, .crlive, .upchip, .findsnoozed, .histico')) {
+        const cs = getComputedStyle(e); const bg = bd(e); const fg = rgba(cs.color);
+        const [h, l] = [lum(over(fg, bg)), lum(bg)].sort((a, b) => b - a);
+        const r = (h + 0.05) / (l + 0.05);
+        if (r < 4.495) bad.push(`.${e.className.replace(/ /g, '.')} ${r.toFixed(2)}:1`);
+      }
+      host.remove();
+      return bad;
+    });
+    for (const m of low) note(`${width}px ${scheme} muted labels`, `text under 4.5:1: ${m}`);
+  }
   // ⚙, every section open.
   const where = `${width}px ${scheme} settings`;
   try {
@@ -348,6 +403,14 @@ for (const [width, height, touch, scheme] of [[1200, 900, false, 'light'], [390,
 }
 
 await browser.close();
+for (const need of ['#versionText', '.segbtn']) {
+  if (![...seenMuted.keys()].some((k) => k.includes(need))) {
+    failures.push(`light: ${need} was never on a screen, so its contrast went unread`);
+  }
+}
+if (process.env.TOKENS_VERBOSE) {
+  for (const [n, v] of seenMuted) console.log(`light ${n} lowest ${v}:1`);
+}
 
 if (failures.length) {
   console.error(`measure-tokens: ${failures.length} failure(s)`);

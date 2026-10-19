@@ -216,9 +216,15 @@ for (const { width, touch, top, fits } of CASES) {
   // waiting. Before it, every such card carried its own stock sentence.
   const waiting = await page.evaluate(() => [...document.querySelectorAll('#findList .qwaiting')]
     .map((n) => ({ text: n.textContent, first: n === document.querySelector('#findList').firstElementChild })));
+  if (process.env.SHOTS_DIR) {
+    await page.locator('#findList .qwaiting').first().scrollIntoViewIfNeeded().catch(() => {});
+    await page.screenshot({ path: path.join(process.env.SHOTS_DIR, `needs-you-${width}-${process.env.SHOTS_TAG || 'after'}.png`) });
+  }
   if (waiting.length !== 1 || !/^2 cards are waiting for brAIn's first look/.test(waiting[0].text)
       || !waiting[0].first) {
     note(where, `the waiting line reads ${JSON.stringify(waiting)}`);
+  } else if (/[()]/.test(waiting[0].text)) {
+    note(where, `the waiting line carries a bracketed label: ${waiting[0].text}`);
   }
   await openEverything(page);
   cards = await readCards(page, CUT);
