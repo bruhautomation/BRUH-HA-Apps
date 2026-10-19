@@ -11,7 +11,7 @@ import os
 import sys
 import tempfile
 import unittest
-import unittest.mock as mock
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import bambu_env  # noqa: E402
@@ -44,8 +44,8 @@ class TestImplicitFTPS(unittest.TestCase):
         ftp.host = "10.0.0.2"
         ftp._prot_p = True
         raw = object()
-        with mock.patch.object(ftps.ftplib.FTP, "ntransfercmd", return_value=(raw, None)), \
-                mock.patch.object(ftp.context, "wrap_socket", return_value="wrapped") as wrap:
+        with unittest.mock.patch.object(ftps.ftplib.FTP, "ntransfercmd", return_value=(raw, None)), \
+                unittest.mock.patch.object(ftp.context, "wrap_socket", return_value="wrapped") as wrap:
             conn, _ = ftp.ntransfercmd("STOR x")
         self.assertEqual(conn, "wrapped")
         self.assertEqual(wrap.call_args.kwargs["session"], "control-session")
@@ -59,7 +59,7 @@ class TestImplicitFTPS(unittest.TestCase):
 class TestUpload(unittest.TestCase):
     def test_an_upload_closes_without_unwrap_and_reads_the_226(self):
         data = FakeSock()
-        ftp = mock.Mock()
+        ftp = unittest.mock.Mock()
         ftp.transfercmd.return_value = data
         storage = ftps.Storage("10.0.0.2", "abcd1234")
         storage.ftp = ftp
@@ -85,7 +85,7 @@ class TestUpload(unittest.TestCase):
 
     def test_a_listing_is_read_off_the_list_lines(self):
         storage = ftps.Storage("h", "c")
-        storage.ftp = mock.Mock()
+        storage.ftp = unittest.mock.Mock()
         storage.ftp.retrlines.side_effect = lambda cmd, cb: [cb(line) for line in (
             "drwxr-xr-x 1 0 0 0 Jan 1 00:00 timelapse",
             "-rw-r--r-- 1 0 0 1048576 Jan 1 00:00 benchy.gcode.3mf",

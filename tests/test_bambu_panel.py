@@ -13,9 +13,9 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
-import unittest.mock as mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import bambu_env  # noqa: E402
@@ -46,13 +46,13 @@ class Isolated(unittest.TestCase):
         root = Path(self.tmp.name)
         self.lib = root / "share" / "bambu"
         patches = [
-            mock.patch.object(store, "PRINTERS", root / "printers.json"),
-            mock.patch.object(store, "SECRETS", root / "secrets" / "printers.json"),
-            mock.patch.object(library, "ROOT", self.lib),
-            mock.patch.object(installer, "INSTALL_ROOT", root / "bambu-studio"),
-            mock.patch.object(installer, "MARKER", root / "bambu-studio" / "installed.json"),
-            mock.patch.object(server, "SHARED", root / "config" / ".bruh_bambu"),
-            mock.patch.object(server, "STATE_FILE", root / "config" / ".bruh_bambu" / "state.json"),
+            unittest.mock.patch.object(store, "PRINTERS", root / "printers.json"),
+            unittest.mock.patch.object(store, "SECRETS", root / "secrets" / "printers.json"),
+            unittest.mock.patch.object(library, "ROOT", self.lib),
+            unittest.mock.patch.object(installer, "INSTALL_ROOT", root / "bambu-studio"),
+            unittest.mock.patch.object(installer, "MARKER", root / "bambu-studio" / "installed.json"),
+            unittest.mock.patch.object(server, "SHARED", root / "config" / ".bruh_bambu"),
+            unittest.mock.patch.object(server, "STATE_FILE", root / "config" / ".bruh_bambu" / "state.json"),
         ]
         for p in patches:
             p.start()
@@ -156,7 +156,7 @@ class TestInstaller(Isolated):
 
     def test_latest_and_a_pinned_tag_ask_the_right_endpoint(self):
         asked = []
-        with mock.patch.object(installer, "_get_json",
+        with unittest.mock.patch.object(installer, "_get_json",
                                side_effect=lambda url: asked.append(url) or self.RELEASE):
             self.assertEqual(installer.resolve("latest"), ("v02.08.02.61", "https://x/2204"))
             installer.resolve("02.08.02.61")
@@ -166,7 +166,7 @@ class TestInstaller(Isolated):
             installer.resolve("newest please")
 
     def test_a_release_with_no_runnable_build_says_so(self):
-        with mock.patch.object(installer, "_get_json", return_value={"tag_name": "v9", "assets": []}):
+        with unittest.mock.patch.object(installer, "_get_json", return_value={"tag_name": "v9", "assets": []}):
             with self.assertRaises(LookupError) as caught:
                 installer.resolve("latest")
         self.assertIn("appimage_url", str(caught.exception))
@@ -187,8 +187,8 @@ class TestInstaller(Isolated):
         apprun.parent.mkdir(parents=True)
         apprun.write_text("#!/bin/sh\n")
         installer.MARKER.write_text(json.dumps({"version": "v1", "apprun": str(apprun)}))
-        with mock.patch.object(installer, "resolve", return_value=("v2", "https://x")), \
-                mock.patch.object(installer, "_download", side_effect=OSError("network down")):
+        with unittest.mock.patch.object(installer, "resolve", return_value=("v2", "https://x")), \
+                unittest.mock.patch.object(installer, "_download", side_effect=OSError("network down")):
             installer.install("latest")
         self.assertEqual(installer.STATE["phase"], "failed")
         self.assertIn("still in use", installer.STATE["error"])
@@ -213,7 +213,7 @@ class TestSlicerCommand(Isolated):
 
     def test_a_bare_model_without_profiles_is_refused_before_anything_runs(self):
         (self.lib / "m.stl").write_bytes(b"solid")
-        with mock.patch.object(installer, "apprun", return_value=Path("/s/AppRun")):
+        with unittest.mock.patch.object(installer, "apprun", return_value=Path("/s/AppRun")):
             with self.assertRaises(ValueError) as caught:
                 slicer.start("m.stl")
         self.assertIn("machine", str(caught.exception))
@@ -232,7 +232,7 @@ class FakeMQTT:
         if self.result is not None and "sequence_id" in section:
             echo = {next(iter(payload)): {**section, "result": self.result,
                                           "reason": "busy" if self.result == "fail" else ""}}
-            msg = mock.Mock(payload=json.dumps(echo).encode())
+            msg = unittest.mock.Mock(payload=json.dumps(echo).encode())
             self.owner._on_message(None, None, msg)
 
 
@@ -258,14 +258,14 @@ class TestPrinterClient(unittest.TestCase):
 
     def test_no_echo_is_reported_as_such_not_as_success(self):
         c = self.make(None)
-        with mock.patch.object(client_mod, "ECHO_WAIT_S", 0.3):
+        with unittest.mock.patch.object(client_mod, "ECHO_WAIT_S", 0.3):
             self.assertEqual(c.send(protocol.simple("pause")), {"acknowledged": False})
 
     def test_reports_merge_and_go_stale(self):
         c = self.make()
         for delta in ({"print": {"gcode_state": "RUNNING", "nozzle_temper": 200}},
                       {"print": {"bed_temper": 60}}):
-            c._on_message(None, None, mock.Mock(payload=json.dumps(delta).encode()))
+            c._on_message(None, None, unittest.mock.Mock(payload=json.dumps(delta).encode()))
         out = c.summary()
         self.assertEqual((out["state"], out["nozzle_c"], out["bed_c"]), ("running", 200.0, 60.0))
         self.assertTrue(out["online"])
@@ -383,7 +383,7 @@ class TestRoutes(RouteTest):
                 progress and progress(10, 10)
                 return 10
 
-        with mock.patch.object(server.ftps, "Storage", Storage):
+        with unittest.mock.patch.object(server.ftps, "Storage", Storage):
             status, body = self.call("POST", "/api/print", json={
                 "file": "sliced/benchy.gcode.3mf", "plate": 2, "wait": 10})
         self.assertEqual(status, 200, body)

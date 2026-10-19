@@ -6,8 +6,8 @@ import json
 import os
 import threading
 import unittest
+import unittest.mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
-import unittest.mock as mock
 
 PATH = os.path.join(os.path.dirname(__file__), "..", "bruh-bambu-studio",
                     "integrations", "ha-bridge.py")
@@ -62,7 +62,7 @@ class TestBridge(unittest.TestCase):
 
     def ask(self, kind, payload=None):
         Panel.seen.clear()
-        with mock.patch.object(bridge, "PANEL_URL", self.url):
+        with unittest.mock.patch.object(bridge, "PANEL_URL", self.url):
             return asyncio.run(bridge.handle({"id": "1", "kind": kind, "payload": payload or {}}))
 
     def test_the_names_people_use_reach_the_panel_as_its_own(self):
@@ -93,7 +93,7 @@ class TestBridge(unittest.TestCase):
         self.assertIn("launch_rocket", answer["error"])
 
     def test_a_panel_that_is_down_says_so(self):
-        with mock.patch.object(bridge, "PANEL_URL", "http://127.0.0.1:1"):
+        with unittest.mock.patch.object(bridge, "PANEL_URL", "http://127.0.0.1:1"):
             answer = asyncio.run(bridge.handle({"id": "1", "kind": "pause_print"}))
         self.assertIn("not answering", answer["error"])
 
