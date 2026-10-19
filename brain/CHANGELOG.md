@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.0.6
+
+### Changed
+
+- **Ask's filters take one row on a phone.** The kinds of conversation (Chats, Voice, Cards and the rest) are one strip you can swipe, with the chosen one in view, instead of three rows above your chats. (#307)
+- **Needs you's waiting line is plain English.** "5 cards are waiting for brAIn's first look." no longer ends with a bracketed label. (#308)
+
 ## 3.0.5
 
 ### Fixed
