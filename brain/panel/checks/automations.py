@@ -373,6 +373,37 @@ def _label_of(item: dict) -> str:
     return f"{item['kind']} '{item['alias']}'"
 
 
+def _plain_error(house: House, error) -> tuple[str, list[str]]:
+    """A trace's error in the words a person reads, and the ids it named.
+
+    Core writes the entity ids into the error ("Entity switch.pump_3 is
+    unavailable"), and an id is a thing a person has to translate; each
+    one the house has a domain for becomes its name (or the id read
+    aloud), and the ids go in the row's evidence instead."""
+    text = " ".join(str(error or "").split())
+    ids: list[str] = []
+    services = set(house.snap.get("services") or ())
+
+    def name(m: re.Match) -> str:
+        eid = f"{m.group(1)}.{m.group(2)}"
+        if m.group(1) not in house.known_domains or eid in services:
+            return m.group(0)
+        if eid not in ids:
+            ids.append(eid)
+        return house.label(eid)
+
+    return _ERROR_ID_RE.sub(name, text), ids
+
+
+_ERROR_ID_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w])")
+
+
+def _error_key(error) -> str:
+    """Two errors are one root cause when they say the same thing: case,
+    spacing and the numbers in them folded."""
+    return re.sub(r"\d+", "#", " ".join(str(error or "").lower().split()))
+
+
 def trace_error(snap: dict, now: float) -> list[dict]:
     """An automation or script whose most recent FINISHED run failed.
 
@@ -383,9 +414,14 @@ def trace_error(snap: dict, now: float) -> list[dict]:
     row stops being reported (which is what lets `clear_resolved` take it
     away). One failure among clean runs is a blip worth a line, not a
     serious card; it is `serious` only when it keeps happening.
+
+    Several automations ending in the SAME error are one root cause — a
+    hub down, a service removed — and are one row naming every one of
+    them, with `items` per automation so a Wrong answers each; two
+    different errors are two rows.
     """
     house = House(snap)
-    out = []
+    failing: list[dict] = []
     for item in _traced(house):
         rows = _traces_for(snap, item["key"])
         if not rows:
@@ -400,27 +436,71 @@ def trace_error(snap: dict, now: float) -> list[dict]:
             continue
         if not house.should_report(item["entity_id"], "auto.trace_error"):
             continue
-        error = last.get("error")
-        failed = sum(1 for r in rows if _errored(r))
-        step = str(last.get("last_step") or "")
-        tally = (f" {failed} of its last {len(rows)} runs ended in an error."
-                 if len(rows) > 1 else "")
-        out.append({
-            "text": f"{_label_of(item)} failed the last time it ran",
-            "detail": (f"On {when(_trace_start(last))}"
-                       + (f", at step {step}" if step else "")
-                       + (f": {str(error)[:300].rstrip('.')}." if error else
-                          ": the run ended in an error.")
-                       + tally),
-            "fix": "Open the automation's trace in Home Assistant and fix "
-                   "the failing step.",
-            # A single failure among clean runs is most often something
-            # transient (a device that did not answer once).
-            "severity": ("warning" if failed == 1 and len(rows) > 1
-                         else "serious"),
-            "fixable": True,
-            "entity_id": item["entity_id"],
-        })
+        failing.append({"item": item, "rows": rows, "last": last,
+                        "failed": sum(1 for r in rows if _errored(r))})
+
+    groups: dict[str, list[dict]] = {}
+    for f in failing:
+        key = _error_key(f["last"].get("error"))
+        groups.setdefault(key or f"\0{f['item']['entity_id']}", []).append(f)
+
+    out = []
+    for key, members in groups.items():
+        if len(members) > 1 and key and not key.startswith("\0"):
+            members = sorted(members, key=lambda f: f["item"]["entity_id"])
+            error, ids = _plain_error(house, members[0]["last"].get("error"))
+            short = error[:80].rsplit(" ", 1)[0] if len(error) > 80 else error
+            names = join_names([f["item"]["alias"] for f in members], limit=6)
+            entity_ids = [f["item"]["entity_id"] for f in members]
+            out.append({
+                "text": "Several automations fail with the same error: "
+                        f"“{short.rstrip('.')}”",
+                "detail": (f"{len(members)} ended in the same error the last "
+                           f"time they ran: {names}. The error: "
+                           f"{error[:300].rstrip('.')}. One cause behind them "
+                           f"all is likelier than {len(members)} separate "
+                           "faults."),
+                "fix": "Press Fix and brAIn reads one of their traces and "
+                       "proposes the change; it is likely to fix every one "
+                       "of them.",
+                "severity": ("serious" if any(
+                    not (f["failed"] == 1 and len(f["rows"]) > 1)
+                    for f in members) else "warning"),
+                "fixable": True,
+                "entity_id": entity_ids[0],
+                "evidence": (evidence_for(entity_ids, "ended in this error",
+                                          limit=12)
+                             + evidence_for(ids, "named in the error")),
+                "items": entity_ids,
+            })
+            continue
+        for f in members:
+            item, rows, last, failed = (f["item"], f["rows"], f["last"],
+                                        f["failed"])
+            error, ids = _plain_error(house, last.get("error"))
+            step = str(last.get("last_step") or "")
+            tally = (f" {failed} of its last {len(rows)} runs ended in an "
+                     "error." if len(rows) > 1 else "")
+            row = {
+                "text": f"{_label_of(item)} failed the last time it ran",
+                "detail": (f"On {when(_trace_start(last))}"
+                           + (f", at step {step}" if step else "")
+                           + (f": {error[:300].rstrip('.')}." if error else
+                              ": the run ended in an error.")
+                           + tally),
+                "fix": "Press Fix and brAIn reads the run's trace and "
+                       "proposes the change, or open the automation in Home "
+                       "Assistant and look at its last run.",
+                # A single failure among clean runs is most often something
+                # transient (a device that did not answer once).
+                "severity": ("warning" if failed == 1 and len(rows) > 1
+                             else "serious"),
+                "fixable": True,
+                "entity_id": item["entity_id"],
+            }
+            if ids:
+                row["evidence"] = evidence_for(ids, "named in the error")
+            out.append(row)
     return out
 
 

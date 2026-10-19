@@ -236,6 +236,9 @@ BRAIN_ID_PREFIX = "brain_"
 
 # States that are not a reading of anything.
 EMPTY_STATES = frozenset({"", "unknown", "none"})
+# What an entity is before it comes back: a state this, then a reading, is
+# the entity reappearing rather than the thing it watches changing.
+REAPPEARED_FROM = frozenset({"unavailable", "unknown"})
 
 
 def _clamp(value: float) -> float:
@@ -628,6 +631,13 @@ def from_state_change(event: dict, ctx: RegistryContext, now: float,
     # a leak detector going dry is good news, and good news at 3am is a
     # phone nobody thanks you for.
     tripped = bool(safety_class) and value.lower() in HOT_SAFETY_STATES
+    # Coming back from unavailable or unknown is not a change: a restart or
+    # an integration reload re-publishes every entity it owns, and a tamper
+    # contact that has read `on` all week read as tripping again each time.
+    # A tripped safety detector is the exception — "it is wet" is news
+    # however the state got there.
+    if was.lower() in REAPPEARED_FROM and not tripped:
+        return None
     odd = is_odd_hour(now, rhythm_payload, tz)
     # The closed hot set, and the two person cases are one case: a person
     # or their phone moving at an hour this house is not usually up.

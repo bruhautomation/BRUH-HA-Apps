@@ -586,6 +586,8 @@ class House:
                 if (domain not in self.known_domains or domain == "notify"
                         or ref in services):
                     continue
+                if spans and _BUILT_ANYWHERE.match(text, m.end()):
+                    continue
                 if spans and _inside(m.start(), spans) and _not_a_ref(
                         text, m, loop_vars):
                     continue
@@ -608,9 +610,15 @@ class House:
 _TEMPLATE_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.S)
 _FOR_RE = re.compile(r"\{%-?\s*for\s+([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)"
                      r"\s+in\b")
-# What follows the token: an optional closing quote, then `~` (glued into a
-# longer string) or `(` (called).
-_GLUED_OR_CALLED = re.compile(r"""['"]?\s*~|\s*\(""")
+# What follows the token: an optional closing quote, then `~` or `+` (glued
+# into a longer string), `(` (called), or the string-format operator `%`
+# with something after it (never `%}`, which closes a tag).
+_GLUED_OR_CALLED = re.compile(r"""['"]?\s*[~+]|\s*\(|['"]?\s*%(?!\})""")
+# A token followed straight away by `{` is a prefix with the rest of the id
+# still to come: `switch.pump_zone{{ repeat.index }}` (the template glued on
+# OUTSIDE its span, which is why this one is asked wherever the string holds
+# a template) and `'switch.zone{}'.format(i)`. An id never ends in a brace.
+_BUILT_ANYWHERE = re.compile(r"\{")
 
 
 def _template_spans(text: str) -> list[tuple[int, int]]:

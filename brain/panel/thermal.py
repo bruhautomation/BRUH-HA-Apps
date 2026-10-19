@@ -167,6 +167,17 @@ OUTDOOR_AREA_WORDS = ("outdoor", "outside", "exterior", "garden", "yard",
 NOT_AIR_WORDS = ("coil", "discharge", "compressor", "evaporator",
                  "condenser", "pool", "water", "pipe", "flow", "return",
                  "supply", "tank", "soil", "probe")
+# Inside a room the same words, plus the ductwork's, mean a sensor in the
+# air handler rather than in the air a person stands in: a supply-air probe
+# reads twenty degrees off the room whenever the system runs, and a heat
+# model fitted to it is a model of the machine. Whole words, because
+# "returned" and "supplyroom" are not ducts.
+NOT_ROOM_AIR_WORDS = NOT_AIR_WORDS + ("duct", "ducts", "plenum",
+                                      "air handler", "air handling")
+_NOT_ROOM_AIR_RE = re.compile(
+    r"(?<![a-z0-9])(?:" + "|".join(
+        re.escape(w).replace(r"\ ", r"[\s_]+") for w in NOT_ROOM_AIR_WORDS)
+    + r")(?![a-z0-9])")
 # The same claim as a `world_model` reading rather than a word, which is
 # how it is made about a house that does not name things in English. A
 # confident reading REPLACES the name's evidence in `rank_outdoor` — the
@@ -731,6 +742,17 @@ def _looks_outdoor(eid: str, st: dict, world=None) -> bool:
     return world_model.is_outdoor(world, eid, by_name)
 
 
+def _measures_a_machine(eid: str, st: dict, world=None) -> bool:
+    """A thermometer in a room that reads a machine's air or water.
+
+    A confident `world_model` reading answers first, in any language; the
+    whole-word list is the fallback."""
+    measures = _read_measures(world, eid)
+    if measures is not None:
+        return measures in NOT_AIR_READINGS
+    return bool(_NOT_ROOM_AIR_RE.search(_name_of(eid, st)))
+
+
 def is_derived(eid: str, st: dict, world=None) -> bool:
     """A temperature-classed reading that is not the air temperature.
 
@@ -1121,6 +1143,10 @@ def room_candidates_why(states: dict, outdoor: str, unit: str,
             if room:
                 why[eid] = ("it is a derived reading (a dew point, a "
                             "feels-like), not the temperature of the room")
+            continue
+        if _measures_a_machine(eid, st, world):
+            if room:
+                why[eid] = "it measures a machine, not the room"
             continue
         if own != unit:
             if room:
