@@ -9,7 +9,9 @@ yarn-error.log
 # Anchored: a bare `package.json` would also swallow one added beside
 # branding/render.mjs, which is Node and could legitimately grow one.
 /package.json
-package-lock.json
+# Anchored too: GardenRX is the one real Node package here, and its lockfile
+# is what the image's `npm ci` and CI install from.
+/package-lock.json
 yarn.lock
 
 # Logs

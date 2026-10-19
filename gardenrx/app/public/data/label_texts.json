@@ -1,0 +1,322 @@
+{
+  "1": {
+    "brand": "Bonide Captan 50W",
+    "textLength": 38498,
+    "fileName": "1.txt"
+  },
+  "2": {
+    "brand": "GardenTech Sevin Concentrate"
+  },
+  "3": {
+    "brand": "Spectracide Immunox Multi-Purpose",
+    "textLength": 29626,
+    "fileName": "3.txt"
+  },
+  "4": {
+    "brand": "Bonide Sulfur Plant Fungicide",
+    "textLength": 8793,
+    "fileName": "4.txt"
+  },
+  "5": {
+    "brand": "Bonide Copper Fungicide",
+    "textLength": 20022,
+    "fileName": "5.txt"
+  },
+  "6": {
+    "brand": "Gravex 20EW",
+    "textLength": 10532,
+    "fileName": "6.txt"
+  },
+  "8": {
+    "brand": "Indar 2F",
+    "textLength": 4281,
+    "fileName": "8.txt"
+  },
+  "13": {
+    "brand": "Captan 80 WDG",
+    "textLength": 41658,
+    "fileName": "13.txt"
+  },
+  "14": {
+    "brand": "Mancozeb / Manzate / Penncozeb 75DF",
+    "textLength": 84279,
+    "fileName": "14.txt"
+  },
+  "18": {
+    "brand": "Daconil / Bravo WeatherStik"
+  },
+  "27": {
+    "brand": "Flint Extra"
+  },
+  "28": {
+    "brand": "Sovran 50WG",
+    "textLength": 4320,
+    "fileName": "28.txt"
+  },
+  "29": {
+    "brand": "Cabrio EG",
+    "textLength": 45177,
+    "fileName": "29.txt"
+  },
+  "30": {
+    "brand": "Heritage 50 WG / G"
+  },
+  "35": {
+    "brand": "Fontelis"
+  },
+  "37": {
+    "brand": "Inspire Super",
+    "textLength": 62141,
+    "fileName": "37.txt"
+  },
+  "38": {
+    "brand": "Pristine"
+  },
+  "40": {
+    "brand": "Luna Sensation",
+    "textLength": 127687,
+    "fileName": "40.txt"
+  },
+  "41": {
+    "brand": "Luna Tranquility",
+    "textLength": 25733,
+    "fileName": "41.txt"
+  },
+  "42": {
+    "brand": "Switch 62.5WG",
+    "textLength": 80031,
+    "fileName": "42.txt"
+  },
+  "45": {
+    "brand": "3336 F / OHP 6672"
+  },
+  "48": {
+    "brand": "Ridomil Gold SL",
+    "textLength": 84557,
+    "fileName": "48.txt"
+  },
+  "67": {
+    "brand": "Prestop WG",
+    "textLength": 7931,
+    "fileName": "67.txt"
+  },
+  "75": {
+    "brand": "OxiDate 2.0",
+    "textLength": 22311,
+    "fileName": "75.txt"
+  },
+  "76": {
+    "brand": "Agri-Mycin 17 / FireWall 17 WP",
+    "textLength": 23206,
+    "fileName": "76.txt"
+  },
+  "81": {
+    "brand": "Sevin XLR Plus",
+    "textLength": 105567,
+    "fileName": "81.txt"
+  },
+  "83": {
+    "brand": "Bonide Eight"
+  },
+  "89": {
+    "brand": "PyGanic 5.0 EC"
+  },
+  "91": {
+    "brand": "Assail 30SG",
+    "textLength": 91850,
+    "fileName": "91.txt"
+  },
+  "95": {
+    "brand": "Monterey Spinosad",
+    "textLength": 5364,
+    "fileName": "95.txt"
+  },
+  "96": {
+    "brand": "Entrust SC",
+    "textLength": 123427,
+    "fileName": "96.txt"
+  },
+  "97": {
+    "brand": "Delegate WG"
+  },
+  "101": {
+    "brand": "Dipel / Thuricide"
+  },
+  "106": {
+    "brand": "Intrepid 2F",
+    "textLength": 69135,
+    "fileName": "106.txt"
+  },
+  "108": {
+    "brand": "Movento MPC",
+    "textLength": 27493,
+    "fileName": "108.txt"
+  },
+  "110": {
+    "brand": "Altacor",
+    "textLength": 19616,
+    "fileName": "110.txt"
+  },
+  "114": {
+    "brand": "Bonide All Seasons Horticultural Oil",
+    "textLength": 46177,
+    "fileName": "114.txt"
+  },
+  "117": {
+    "brand": "Surround WP",
+    "textLength": 59222,
+    "fileName": "117.txt"
+  },
+  "118": {
+    "brand": "M-Pede"
+  },
+  "123": {
+    "brand": "AzaGuard / AzaMax / Neemix"
+  },
+  "124": {
+    "brand": "Bonide Annual Tree & Shrub Insect Control",
+    "textLength": 43403,
+    "fileName": "124.txt"
+  },
+  "126": {
+    "brand": "Merit 75 WSP / 2F"
+  },
+  "135": {
+    "brand": "Arena 50 WDG"
+  },
+  "149": {
+    "brand": "Kanemite 15SC",
+    "textLength": 11019,
+    "fileName": "149.txt"
+  },
+  "151": {
+    "brand": "Bonide Captain Jack's Fruit Tree Spray",
+    "textLength": 32679,
+    "fileName": "151.txt"
+  },
+  "154": {
+    "brand": "Roundup PowerMAX / Cornerstone Plus",
+    "textLength": 39602,
+    "fileName": "154.txt"
+  },
+  "155": {
+    "brand": "Rely 280 / Liberty / Cheetah Pro",
+    "textLength": 85654,
+    "fileName": "155.txt"
+  },
+  "156": {
+    "brand": "Gramoxone SL 3.0"
+  },
+  "158": {
+    "brand": "Scythe",
+    "textLength": 2327,
+    "fileName": "158.txt"
+  },
+  "163": {
+    "brand": "Prowl H2O",
+    "textLength": 157120,
+    "fileName": "163.txt"
+  },
+  "166": {
+    "brand": "Casoron 4G"
+  },
+  "169": {
+    "brand": "Dual Magnum",
+    "textLength": 58386,
+    "fileName": "169.txt"
+  },
+  "170": {
+    "brand": "Chateau SW / EZ",
+    "textLength": 2506,
+    "fileName": "170.txt"
+  },
+  "173": {
+    "brand": "Alion",
+    "textLength": 2343,
+    "fileName": "173.txt"
+  },
+  "182": {
+    "brand": "Freehand 1.75G",
+    "textLength": 43988,
+    "fileName": "182.txt"
+  },
+  "193": {
+    "brand": "Sedgehammer"
+  },
+  "199": {
+    "brand": "Image Kills Nutsedge",
+    "textLength": 2157,
+    "fileName": "199.txt"
+  },
+  "200": {
+    "brand": "Celsius WG"
+  },
+  "209": {
+    "brand": "Prodiamine 65 WDG / Barricade"
+  },
+  "212": {
+    "brand": "Specticle FLO / G",
+    "textLength": 63137,
+    "fileName": "212.txt"
+  },
+  "231": {
+    "brand": "Class Act Flex / Ridion",
+    "textLength": 5295,
+    "fileName": "231.txt"
+  },
+  "77": {
+    "brand": "Agri-Mycin 17 / FireWall 17 WP",
+    "textLength": 2134,
+    "fileName": "77.txt"
+  },
+  "78": {
+    "brand": "Kasumin 2L",
+    "textLength": 1996,
+    "fileName": "78.txt"
+  },
+  "79": {
+    "brand": "Actigard 50WG",
+    "textLength": 2169,
+    "fileName": "79.txt"
+  },
+  "237": {
+    "brand": "Bonide Neem Oil Concentrate",
+    "textLength": 2154,
+    "fileName": "237.txt"
+  },
+  "238": {
+    "brand": "Garden Safe Fungicide 3 Concentrate",
+    "textLength": 2015,
+    "fileName": "238.txt"
+  },
+  "239": {
+    "brand": "Ortho MAX Garden Disease Control",
+    "textLength": 2559,
+    "fileName": "239.txt"
+  },
+  "240": {
+    "brand": "BioAdvanced Fruit, Citrus & Vegetable Insect Control",
+    "textLength": 2669,
+    "fileName": "240.txt"
+  },
+  "241": {
+    "brand": "Natria Neem Oil Concentrate",
+    "textLength": 1861,
+    "fileName": "241.txt"
+  },
+  "242": {
+    "brand": "Bonide Fruit Tree Spray Concentrate",
+    "textLength": 2882,
+    "fileName": "242.txt"
+  },
+  "243": {
+    "brand": "Ortho Insect, Mite & Disease 3-in-1",
+    "textLength": 2117,
+    "fileName": "243.txt"
+  },
+  "244": {
+    "brand": "Safer Brand Garden Fungicide Concentrate",
+    "textLength": 2207,
+    "fileName": "244.txt"
+  }
+}

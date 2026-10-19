@@ -49,6 +49,7 @@ jobs:
       bright: ${{ steps.scope.outputs.bright }}
       print: ${{ steps.scope.outputs.print }}
       morph: ${{ steps.scope.outputs.morph }}
+      gardenrx: ${{ steps.scope.outputs.gardenrx }}
     steps:
       - uses: actions/checkout@v7
 
@@ -76,6 +77,7 @@ jobs:
               echo "bright=true"
               echo "print=true"
               echo "morph=true"
+              echo "gardenrx=true"
             } >> "$out"
             echo "Everything runs: $1" >> "$summary"
             exit 0
@@ -143,6 +145,7 @@ jobs:
           narrow "BRUH Bambu Studio" bruh-bambu-studio test_bambu_
           narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
           narrow "Morph" morph test_morph_
+          narrow "GardenRX" gardenrx test_gardenrx_
 
           # The two layout groups that boot an add-on's panel run when that
           # add-on or one of the files only that group reads changed. The
@@ -159,15 +162,76 @@ jobs:
           if grep -qE '^(morph/|tests/manual/(morph-fixture|measure-morph)\.mjs)' <<<"$changed"; then
             morph=true
           fi
-          echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph"
-          echo "Layout: bright=$bright print=$print morph=$morph" >> "$summary"
+          gardenrx=false
+          if grep -qE '^(gardenrx/|tests/manual/measure-gardenrx-cards\.mjs)' <<<"$changed"; then
+            gardenrx=true
+          fi
+          echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph gardenrx=$gardenrx"
+          echo "Layout: bright=$bright print=$print morph=$morph gardenrx=$gardenrx" >> "$summary"
 
           {
             echo "pytest_args=${args# }"
             echo "bright=$bright"
             echo "print=$print"
             echo "morph=$morph"
+            echo "gardenrx=$gardenrx"
           } >> "$out"
+
+  gardenrx-app:
+    # GardenRX's panel is a Next.js app, so its own checks are npm's: lint,
+    # typecheck, the vitest suite (which drives the SQLite executor and the
+    # Home Assistant summary and actions against a real in-memory database),
+    # and a production build under the same base-path placeholder the image
+    # uses. Gated per step, like the layout groups, so the job always reports.
+    name: GardenRX app
+    needs: changes
+    runs-on: ubuntu-latest
+    env:
+      RUNS: ${{ needs.changes.outputs.gardenrx || 'true' }}
+    defaults:
+      run:
+        working-directory: gardenrx/app
+    steps:
+      - name: Say why there is nothing to do
+        if: env.RUNS != 'true'
+        working-directory: .
+        run: echo "Skipped, because this pull request changes nothing under gardenrx/."
+
+      - uses: actions/checkout@v7
+        if: env.RUNS == 'true'
+
+      # 22.13 is the first Node with node:sqlite unflagged, which the app's
+      # database and its tests need.
+      - uses: actions/setup-node@v5
+        if: env.RUNS == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: gardenrx/app/package-lock.json
+
+      - name: Install
+        if: env.RUNS == 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        if: env.RUNS == 'true'
+        run: npm run lint
+
+      - name: Typecheck
+        if: env.RUNS == 'true'
+        run: npm run typecheck
+
+      - name: Unit tests
+        if: env.RUNS == 'true'
+        run: npm test
+
+      - name: Build under the ingress placeholder
+        if: env.RUNS == 'true'
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          GARDENRX_BASE_PATH: /__gardenrx_base_path__
+          GARDENRX_DB_PATH: /tmp/gardenrx-build.db
+        run: npm run build
 
   tests:
     name: Python tests
@@ -262,9 +326,9 @@ jobs:
       # the first red group hides the second until the next push.
       fail-fast: false
       matrix:
-        group: [static-a, static-b, bright, print, morph]
+        group: [static-a, static-b, bright, print, morph, gardenrx]
     env:
-      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || (matrix.group == 'morph' && needs.changes.outputs.morph) || 'true' }}
+      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || (matrix.group == 'morph' && needs.changes.outputs.morph) || (matrix.group == 'gardenrx' && needs.changes.outputs.gardenrx) || 'true' }}
     steps:
       - name: Say why this group has nothing to do
         if: env.GROUP_RUNS != 'true'
@@ -544,6 +608,13 @@ jobs:
         if: matrix.group == 'print' && env.GROUP_RUNS == 'true'
         run: node tests/manual/measure-print-card.mjs
 
+      # gardenrx: the harvest, spray and stock cards in both hosts, driven
+      # against a stubbed `hass` — what they show, what a press sends, and
+      # that a press which changes the record takes two taps.
+      - name: Measure GardenRX's cards
+        if: matrix.group == 'gardenrx' && env.GROUP_RUNS == 'true'
+        run: node tests/manual/measure-gardenrx-cards.mjs
+
       # morph: Morph's panel, its real modules against a stubbed `hass`. Its
       # layout engine's acceptance tests are about MOTION — no frame in
       # which two sections overlap while a card opens and folds back, an
@@ -576,6 +647,7 @@ jobs:
                 custom_components/bruh_minecraft
           cp -r bright/custom_components/bright custom_components/bright
           cp -r morph/custom_components/morph custom_components/morph
+          cp -r gardenrx/custom_components/gardenrx custom_components/gardenrx
 
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@50baf3a307f87100cf550d4ae127746595030d5d  # master @ 2026-08-03
@@ -597,7 +669,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt gardenrx/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -633,7 +705,10 @@ jobs:
             bright/translations/en.yaml \
             morph/config.yaml \
             morph/build.yaml \
-            morph/translations/en.yaml
+            morph/translations/en.yaml \
+            gardenrx/config.yaml \
+            gardenrx/build.yaml \
+            gardenrx/translations/en.yaml
 
   shellcheck:
     name: Shellcheck
@@ -674,6 +749,18 @@ jobs:
           ignore_paths: >-
             morph/custom_components
             morph/service
+
+      - name: Run shellcheck (gardenrx)
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./gardenrx
+          severity: error
+          ignore_paths: >-
+            gardenrx/app
+            gardenrx/custom_components
+            gardenrx/gateway
 
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -727,6 +814,12 @@ jobs:
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: morph/Dockerfile
+          failure-threshold: error
+
+      - name: Lint GardenRX Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
+        with:
+          dockerfile: gardenrx/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -819,6 +912,28 @@ jobs:
       - name: Check Morph changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh morph
 
+      # GardenRX carries its version in five places: config.yaml (what the
+      # store offers), the manifest and const.py (const versions the card
+      # URL, so a stale one is a browser holding last release's cards), the
+      # app's package.json (the version the panel shows) and the card file.
+      - name: Check GardenRX version parity
+        run: |
+          addon_version=$(grep -E '^version:' gardenrx/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("gardenrx/custom_components/gardenrx/manifest.json"))["version"])')
+          const_version=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' gardenrx/custom_components/gardenrx/const.py)
+          app_version=$(python3 -c 'import json; print(json.load(open("gardenrx/app/package.json"))["version"])')
+          card_version=$(sed -n "s/^const CARD_VERSION = '\(.*\)';/\1/p" gardenrx/custom_components/gardenrx/frontend/gardenrx-cards.js)
+          echo "add-on: $addon_version  manifest: $manifest_version  const: $const_version  app: $app_version  cards: $card_version"
+          for v in "$manifest_version" "$const_version" "$app_version" "$card_version"; do
+            if [ "$v" != "$addon_version" ]; then
+              echo "::error::GardenRX versions disagree (add-on $addon_version, manifest $manifest_version, const $const_version, app $app_version, cards $card_version)"
+              exit 1
+            fi
+          done
+
+      - name: Check GardenRX changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh gardenrx
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -847,3 +962,6 @@ jobs:
 
       - name: Verify Morph version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" morph
+
+      - name: Verify GardenRX version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" gardenrx

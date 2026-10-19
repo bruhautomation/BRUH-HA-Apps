@@ -134,6 +134,25 @@ should change.
 
 📖 [add-on README](morph/) · [full documentation](morph/DOCS.md)
 
+### [GardenRX](gardenrx/)
+
+> ⚠️ **Experimental.**
+
+**A spray decision engine for a home orchard and garden.** Crops and their
+growth stage, the weather and what it means for spraying, pre-harvest
+intervals, a treatment reference built from the labels, your stock, a
+tank-mix planner, and harvests — in the sidebar.
+
+- **Your data stays in Home Assistant** — one SQLite file in the add-on, in
+  every backup, no database server
+- **Forecasts for your house** — Home Assistant's own location and time zone
+- **Sensors and services** — this year's harvest and its value, the last
+  spray, queued sprays, crops not to harvest yet, treatments running low;
+  log a harvest or mark a queued spray done from an automation
+- **Harvest, spray and stock cards** for Lovelace and Morph
+
+📖 [add-on README](gardenrx/) · [full documentation](gardenrx/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):

@@ -1,0 +1,87 @@
+---
+name: "GardenRX"
+description: "A spray decision engine for a home orchard and garden — crops, phenology, weather, treatments, tank mixes, inventory and harvests — in the sidebar, with harvest, spray and stock cards for your dashboards"
+version: "0.1.0"
+slug: "gardenrx"
+init: false
+
+# Pull the prebuilt image rather than building on the user's machine — a
+# Next.js build is minutes of CPU and a gigabyte of node_modules, which is
+# exactly the install that fails on a Raspberry Pi. The image name follows the
+# FOLDER (build.yml names it after the matrix entry).
+image: "ghcr.io/bruhautomation/{arch}-gardenrx"
+
+arch:
+  - aarch64
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/gardenrx"
+
+# AppArmor profile — see apparmor.txt next to this file.
+apparmor: true
+
+boot: auto
+startup: services
+stage: experimental
+
+# The gateway is on a bridged network and its port is not published, so this
+# URL is the Supervisor reaching the container internally. /api/health opens
+# the database, so a server that answers while the garden will not open is
+# restarted rather than reported healthy.
+watchdog: "http://[HOST]:[PORT:8101]/api/health"
+
+homeassistant: "2024.1.0"
+
+ingress: true
+ingress_port: 8101
+panel_icon: mdi:sprout
+panel_title: "GardenRX"
+
+# ============================================================================
+# App configuration options
+# ----------------------------------------------------------------------------
+# Documented inline for whoever edits this file; the text users actually see
+# is in translations/en.yaml.
+# ============================================================================
+options:
+  # enable_ha_integration: deploy the companion `gardenrx` custom integration
+  # (sensors, gardenrx.* services, the cards) and announce it for one-click
+  # setup.
+  enable_ha_integration: true
+
+  # install_morph_cards: when Morph is installed, copy the GardenRX cards into
+  # /config/morph/cards so Morph can show them.
+  install_morph_cards: true
+
+  # use_home_assistant_location: forecast for the latitude, longitude and time
+  # zone set in Home Assistant. Off, the app's built-in location is used.
+  use_home_assistant_location: true
+
+  # log_level: verbosity of the add-on's own start script.
+  log_level: info
+schema:
+  enable_ha_integration: bool
+  install_morph_cards: bool
+  use_home_assistant_location: bool
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config carries the integration deploy, the API token the integration reads,
+# and the Morph cards.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+
+hassio_api: true
+hassio_role: default
+homeassistant_api: true
+auth_api: false
+
+# Auto-discovery: registers "gardenrx" with the Supervisor so HA Core offers a
+# one-click setup tile for the companion integration.
+discovery:
+  - gardenrx
+
+# Nothing in /data is a credential (the API token lives in /config/.gardenrx
+# and is regenerated if missing), so the whole database is in every backup —
+# which is the point of keeping it in /data.

@@ -37,6 +37,7 @@ INTEGRATIONS = [
     ("bruh-print", "bruh_print"),
     ("bruh-bambu-studio", "bruh_bambu"),
     ("morph", "morph"),
+    ("gardenrx", "gardenrx"),
 ]
 
 # The four files HA looks for, and the size each must be. Icons are exact

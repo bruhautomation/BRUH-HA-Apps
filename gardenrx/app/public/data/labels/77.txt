@@ -1,0 +1,58 @@
+FIRELINE 17 WP — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Oxytetracycline hydrochloride (calcium complex) ........... 17.0%
+  Other ingredients .......................................... 83.0%
+
+EPA REGISTRATION
+  EPA Reg. No.: 80990-1 (AgroSource)
+  Trade names: FireLine 17 WP, Mycoshield (Nufarm)
+  FRAC group: 41 (tetracycline antibiotic, bactericide)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Foliar bactericide for fire blight (Erwinia amylovora) on apples and
+  pears, and for bacterial spot on stone fruit (peach, nectarine).
+  Sold for commercial use; not labeled for ornamentals.
+
+RATE (commercial)
+  Pome fruit (fire blight): 1.5 lb (24 oz) per acre at bloom
+                            applied in 100 gal water = ~200 ppm oxytet.
+  Stone fruit (bacterial spot): 1.0 lb per acre, 7-day intervals,
+                                first cover through last cover.
+  Tank-mix with a non-ionic spreader for best coverage.
+
+TIMING
+  Apply at early bloom; repeat every 3-5 days through petal fall.
+  Pair with copper at green tip; do NOT mix copper into bloom sprays.
+  Apply when temperatures are 60-90°F. Avoid full sun midday.
+
+PRE-HARVEST INTERVAL (PHI)
+  60 days (pome fruit), 21 days (stone fruit).
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - Streptomycin and oxytetracycline rotation is mandatory in many
+    states to manage Erwinia resistance.
+  - Store cool and dry; the active ingredient breaks down rapidly above
+    90°F or in direct sun.
+  - Do not exceed 4 applications per season on pome fruit, 5 on stone.
+  - Mix immediately before use; do not allow tank mix to stand.
+
+PPE
+  Long sleeves, long pants, chemical-resistant gloves, eye protection.
+
+FIRST AID
+  If on skin: wash with soap and water for 15-20 minutes.
+  If in eyes: rinse slowly with water for 15-20 minutes.
+  If swallowed: call poison control immediately (1-800-222-1222).
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from the registrant before use.

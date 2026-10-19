@@ -32,6 +32,7 @@ ADDONS = {
     "bruh-print": os.path.join(BASE_DIR, "bruh-print"),
     "bruh-bambu-studio": os.path.join(BASE_DIR, "bruh-bambu-studio"),
     "morph": os.path.join(BASE_DIR, "morph"),
+    "gardenrx": os.path.join(BASE_DIR, "gardenrx"),
 }
 
 
@@ -481,6 +482,9 @@ class TestWatchdog(unittest.TestCase):
             # Morph has no panel of its own (its UI is a Home Assistant
             # sidebar panel); the service answers the health poll.
             "morph": os.path.join(ADDONS["morph"], "service", "morphd.py"),
+            # GardenRX is a Next.js app: the route is a file under app/api.
+            "gardenrx": os.path.join(ADDONS["gardenrx"], "app", "src", "app",
+                                     "api", "health", "route.ts"),
         }
         for slug, path in panels.items():
             with self.subTest(addon=slug):
@@ -488,7 +492,11 @@ class TestWatchdog(unittest.TestCase):
                 if "watchdog" in config:
                     self.assertIn("/api/health", config["watchdog"])
                 with open(path) as f:
-                    self.assertIn('add_get("/api/health"', f.read())
+                    source = f.read()
+                if path.endswith(".ts"):
+                    self.assertIn("export async function GET", source)
+                else:
+                    self.assertIn('add_get("/api/health"', source)
 
 
 class TestOptionTranslations(unittest.TestCase):

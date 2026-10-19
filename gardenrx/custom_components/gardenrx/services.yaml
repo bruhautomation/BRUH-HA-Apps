@@ -1,0 +1,69 @@
+log_harvest:
+  fields:
+    crop:
+      required: true
+      example: "Apples"
+      selector:
+        text:
+    variety:
+      example: "Liberty"
+      selector:
+        text:
+    weight:
+      required: true
+      example: 2.5
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: any
+          mode: box
+    unit:
+      default: lb
+      selector:
+        select:
+          options: ["lb", "oz", "kg", "g", "ct"]
+    date:
+      selector:
+        date:
+    notes:
+      selector:
+        text:
+delete_harvest:
+  fields:
+    id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000000
+          mode: box
+complete_queued_spray:
+  fields:
+    id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000000
+          mode: box
+    volume_gallons:
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: any
+          mode: box
+    date:
+      selector:
+        date:
+delete_queued_spray:
+  fields:
+    id:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 1000000000
+          mode: box
+refresh:

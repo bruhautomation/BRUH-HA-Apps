@@ -1,0 +1,62 @@
+SAFER BRAND GARDEN FUNGICIDE CONCENTRATE — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Sulfur ................................................... 16.0%
+  Other ingredients ........................................ 84.0%
+
+EPA REGISTRATION
+  EPA Reg. No.: 42697-58 (Woodstream / Safer Brand)
+  FRAC group: M2 (multi-site protectant, sulfur)
+  OMRI-listed for organic use.
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Contact, multi-site protectant fungicide AND miticide. Labeled
+  for: roses, flowers, ornamentals, vegetables, small fruits,
+  fruit trees, nut trees. Controls:
+    powdery mildew, rust, black spot, scab, leaf spot, blight,
+    brown rot of stone fruit, and certain mites.
+
+RATE (homeowner per-gallon)
+  3 - 6 tablespoons (1.5 - 3 fl oz) of product per gallon of water.
+  Use the higher rate under heavy disease pressure or when growth
+  is dense.
+
+TIMING
+  Apply every 7 - 10 days as a preventive during disease season.
+  Continue applications until 0 days before harvest.
+
+PRE-HARVEST INTERVAL (PHI)
+  0 days. Wash produce thoroughly before eating.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  24 hours.
+
+PRECAUTIONS
+  - DO NOT apply within 14 days BEFORE or AFTER an oil spray —
+    sulfur + oil = severe phytotoxicity.
+  - DO NOT apply when air temperature is above 85°F — sulfur
+    burns foliage on hot days.
+  - DO NOT use on sulfur-sensitive varieties: Concord and Niagara
+    grapes, apricots, raspberries, Bosc pears, some apple cvs
+    (Red Delicious, Stayman, Baldwin, King). Spot test if uncertain.
+  - May damage some ornamentals; test on a small area first.
+  - Yellow staining on clothing and concrete surfaces may occur.
+
+PPE
+  Goggles or face shield, chemical-resistant gloves, long sleeves,
+  long pants, shoes plus socks.
+
+FIRST AID
+  If in eyes: rinse with water for 15-20 minutes.
+  If on skin: wash with soap and water.
+  If swallowed: call poison control (1-800-222-1222).
+  If inhaled: move to fresh air; if not breathing, call 911.
+
+OFFICIAL LABEL
+  See the Safer Brand product label and the SDS before use.

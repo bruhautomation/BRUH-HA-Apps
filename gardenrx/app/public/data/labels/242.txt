@@ -1,0 +1,81 @@
+BONIDE FRUIT TREE SPRAY CONCENTRATE — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENTS
+  Captan ................................................... 11.76%
+  Malathion ................................................ 6.0%
+  Carbaryl .................................................. 0.30%
+  Other ingredients ........................................ 81.94%
+
+EPA REGISTRATION
+  EPA Reg. No.: 4-58 (Bonide)
+  FRAC group: M4 (Captan).
+  IRAC groups: 1B (Malathion), 1A (Carbaryl).
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  Multi-active ingredient homeowner spray for fruit trees and
+  small fruits — controls a wide spectrum of common diseases AND
+  insects in a single bottle:
+
+  DISEASES:
+    apple scab, cedar-apple rust, black rot, bitter rot,
+    brown rot of stone fruit, peach leaf curl (early-season),
+    fly speck, sooty blotch, anthracnose, leaf spots.
+
+  INSECTS:
+    aphids, codling moth, oriental fruit moth, plum curculio,
+    Japanese beetle adults, leafrollers, cherry fruit fly,
+    apple maggot, leafhoppers.
+
+  Labeled for: apples, pears, peaches, nectarines, plums,
+  cherries, apricots, blueberries, grapes, raspberries,
+  blackberries, and strawberries.
+
+RATE (homeowner per-gallon)
+  3 tablespoons (1.5 fl oz) of product per gallon of water.
+  Spray all surfaces to the point of just barely dripping.
+
+TIMING
+  Apply at 7 - 14 day intervals during the growing season:
+    Apples / pears:  silver tip, pink, petal fall, then every 10-14
+                     days through first cover sprays.
+    Stone fruit:     bud swell, pink, petal fall, shuck split, then
+                     every 10-14 days.
+    Berries / grapes: bud break, then every 10-14 days through pre-
+                     harvest interval.
+  Do NOT apply during full bloom — malathion and carbaryl are
+  highly toxic to pollinators.
+
+PRE-HARVEST INTERVAL (PHI)
+  Apples, pears: 0 days for captan; 7 days for malathion governs.
+  Peaches, nectarines, plums, cherries: 7 days.
+  Berries: 7 days.
+  Use 14 days as a conservative whole-product PHI.
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - DO NOT apply during bloom. Highly toxic to bees from direct
+    contact.
+  - Do not combine with sulfur, lime, or strongly alkaline materials.
+  - Do not feed treated fruit or foliage to livestock.
+  - Carbaryl + Malathion: do not apply more than 7 times per year.
+
+PPE
+  Long sleeves, long pants, shoes plus socks, chemical-resistant
+  gloves, and eye protection.
+
+FIRST AID
+  If on skin: wash with soap and water.
+  If in eyes: rinse with water for 15-20 minutes.
+  If swallowed: call poison control (1-800-222-1222).
+  If inhaled: move to fresh air.
+
+OFFICIAL LABEL
+  See the Bonide product label and the SDS before use.

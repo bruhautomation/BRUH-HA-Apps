@@ -1,0 +1,61 @@
+ACTIGARD 50WG — REFERENCE SUMMARY
+==============================================
+This file is an internal reference summary, not the official EPA label.
+For the binding directions, consult the manufacturer's current label.
+
+ACTIVE INGREDIENT
+  Acibenzolar-S-methyl ..................................... 50.0%
+  Other ingredients ........................................ 50.0%
+
+EPA REGISTRATION
+  EPA Reg. No.: 100-922 (Syngenta)
+  FRAC group: P1 (SAR / Plant defense activator)
+
+SIGNAL WORD
+  CAUTION
+
+USE
+  A plant defense activator — induces Systemic Acquired Resistance
+  (SAR). Used in commercial orchards as part of an integrated fire
+  blight program. Also labeled for bacterial spot, walnut blight,
+  downy mildew on tobacco/leafy vegetables, and certain other diseases.
+
+RATE
+  Pome fruit (apple, pear) for fire blight suppression:
+    1.0 oz product per acre (commercial broadcast, in 100 gal water).
+    Backpack equivalent: ~0.01 oz / gal (very small amount; weigh).
+  Tomato (bacterial spot): 0.33 oz per acre, 7-day interval.
+
+TIMING
+  Pome fruit: start applications at first sign of bloom; continue at
+    5-7 day intervals through the bloom period. Stops at petal fall.
+  Build-up time: requires 3-5 days for SAR response to develop —
+    apply BEFORE infection.
+  DO NOT use as a standalone curative — combine with copper,
+  streptomycin, or kasugamycin during the active infection window.
+
+PRE-HARVEST INTERVAL (PHI)
+  60 days (pome fruit).
+
+RESTRICTED ENTRY INTERVAL (REI)
+  12 hours.
+
+PRECAUTIONS
+  - Phytotoxic at higher-than-label rates — never overdose.
+  - Avoid use on weak or transplant-stressed trees; SAR diverts
+    energy from growth.
+  - Max 4 applications per season on pome fruit.
+  - Compatible with most fungicides and insecticides; jar test before
+    new tank mixes.
+
+PPE
+  Long sleeves, long pants, shoes plus socks, chemical-resistant gloves.
+
+FIRST AID
+  If in eyes: rinse with water for 15-20 minutes.
+  If on skin: wash with soap and water.
+  If swallowed: call poison control (1-800-222-1222); do not induce
+                vomiting unless directed.
+
+OFFICIAL LABEL
+  Obtain the binding label and SDS from Syngenta before use.

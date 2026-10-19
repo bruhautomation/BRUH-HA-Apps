@@ -1,0 +1,28 @@
+---
+# Option labels and help text for GardenRX's configuration UI.
+configuration:
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the companion gardenrx integration, which adds sensors for this
+      year's harvest, the last spray, queued sprays, crops in a pre-harvest
+      interval and treatments running low; the gardenrx.log_harvest and
+      gardenrx.complete_queued_spray services; and the harvest, spray and
+      stock cards. Restart Home Assistant once after the first start to load
+      it.
+  install_morph_cards:
+    name: Install the Morph cards
+    description: >-
+      When Morph is installed, copy the GardenRX cards into /config/morph/cards
+      so Morph can show them (custom:morph-gardenrx-harvest, -spray and
+      -inventory).
+  use_home_assistant_location:
+    name: Use Home Assistant's location
+    description: >-
+      Fetch the forecast and rainfall for the latitude, longitude and time zone
+      set in Home Assistant. Turn it off to use the location built into
+      GardenRX.
+  log_level:
+    name: Log level
+    description: >-
+      How much the add-on writes to its log while it starts.

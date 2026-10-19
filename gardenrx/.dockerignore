@@ -1,0 +1,7 @@
+app/node_modules
+app/.next
+app/coverage
+app/*.db
+app/*.db-*
+app/next-env.d.ts
+app/*.tsbuildinfo
