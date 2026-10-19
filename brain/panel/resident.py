@@ -746,6 +746,7 @@ Answer with ONE JSON object and nothing else. What it means:
 - TIMES are in the house's local time, the way every other screen shows
   them ("06:00", "since 14:10 yesterday") — never "UTC", never an ISO
   stamp with a Z.
+- """ + prompt_kit.DEVICE_WORDS + """
 - Call the add-on "brAIn". Never its Supervisor slug (the hex prefix and
   "_brain" a log line carries) or its container name.
 - "evidence" — every row is something you ACTUALLY READ. Each names the

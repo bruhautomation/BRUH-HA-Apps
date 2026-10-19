@@ -495,8 +495,9 @@ def unavailable(snap: dict, now: float) -> list[dict]:
                           + house.placed(first, house.name(first), name)
                           + _restart_note(snap, house.states[first]),
                 "fix": "The device is reachable, so this is one of its "
-                       "features: check what that entity reads from (a probe, "
-                       "an accessory, a cloud service), or disable the entity "
+                       "features: check what that entity reads from (a "
+                       "sensor lead, an accessory, a cloud service), or "
+                       "disable the entity "
                        "if the device does not support it.",
                 "severity": "warning",
                 "fixable": False,

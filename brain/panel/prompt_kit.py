@@ -72,6 +72,20 @@ PRIVACY = (
     "is about a person rather than the house, give none. This has no "
     "exceptions.")
 
+# A device, camera, login or integration that failed is told the way the
+# household would say it: which thing, what stopped working, one step. Its
+# log's words ("the RTSP stream ended with I/O errors and EOF from
+# 192.168.1.40") are what brAIn read, not what the card says. Held by
+# tests/test_plain_device_words.py in the overnight check and the Resident.
+DEVICE_WORDS = (
+    "WHEN A DEVICE, CAMERA, LOGIN OR INTEGRATION FAILS, say which thing (by "
+    "its name), what stopped working in the house, and one step, in "
+    "household words. Never an IP address, and none of the log's or the "
+    "protocol's words: no RTSP, EOF, I/O, token, probe, subscribe or "
+    "resubscribe, socket, handshake or error codes — \"the porch camera's "
+    "picture stopped; restart the camera\", not \"the RTSP stream ended "
+    "with I/O errors\".")
+
 HONEST_EMPTY = (
     "Nothing, or \"unknown\", is a good answer when that is what the data "
     "says. A guess dressed as a finding is the worst answer, because it goes "
@@ -118,6 +132,7 @@ def assemble(role: str, *, inputs: str = "", tools: str = "none",
 _BLOCKS = {
     "identity": IDENTITY, "fence": DATA_FENCE, "presentation": PRESENTATION,
     "privacy": PRIVACY, "honest-empty": HONEST_EMPTY,
+    "device-words": DEVICE_WORDS,
 }
 
 
