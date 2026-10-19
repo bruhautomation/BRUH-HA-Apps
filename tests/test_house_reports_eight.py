@@ -39,7 +39,6 @@ from test_sre import collected  # noqa: E402
 from test_sre import NOW as SRE_NOW  # noqa: E402
 
 automations = checks.automations
-_util = checks._util
 
 
 # ---------------------------------------------------------------------------
