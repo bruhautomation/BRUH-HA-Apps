@@ -38,6 +38,7 @@ class Studio:
         self.next_start = 0.0
         self.file: str | None = None
         self.tail: collections.deque[str] = collections.deque(maxlen=40)
+        self.missing: list[str] = []
         self._lock = threading.Lock()
 
     def env(self) -> dict:
@@ -55,6 +56,12 @@ class Studio:
     def _spawn(self) -> None:
         run = installer.apprun()
         if run is None:
+            return
+        # A binary that cannot load is not started: it would die on its
+        # first line, every time, and the loader's one line is the only
+        # trace. None (could not look) never blocks.
+        self.missing = installer.missing_libraries(run) or []
+        if self.missing:
             return
         argv = [str(run)]
         if self.file:
@@ -124,5 +131,6 @@ class Studio:
             "next_start_in": max(0, round(self.next_start - time.time()))
             if self.wanted and not self.running() and self.next_start else 0,
             "log_tail": list(self.tail)[-8:],
+            "missing_libraries": list(self.missing),
             "install": dict(installer.STATE),
         }

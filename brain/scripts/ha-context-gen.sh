@@ -591,7 +591,8 @@ asked.
   \`bright_show\`.
 - BRUH Bambu Studio — \`bambu_status\` (printers, progress, temperatures;
   \`files: true\` for what is in /share/bambu), then \`bambu_print\` (start,
-  pause, resume, stop — confirm before stop), \`bambu_control\` (speed,
+  pause, resume, stop — confirm before stop; start takes \`url\` for a
+  Printables page or a link to an .stl/.3mf), \`bambu_control\` (speed,
   light, temperatures, G-code) and \`bambu_slice\`.
 
 ## Registry Management — BRUH Power Tools

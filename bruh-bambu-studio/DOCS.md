@@ -42,15 +42,37 @@ itself; that is why the address is typed.
 
 Models and print files live in **`/share/bambu`** — reachable over Samba, from
 the File Editor, from the panel's **Files** tab, and from Bambu Studio's own
-Open dialog. Sliced print files are saved in `/share/bambu/sliced`.
+Open dialog.
 
-On the Files tab each file says whether it is sliced, how many plates it has,
-and (for sliced files) the print time and filament weight.
+The Files tab lists what you brought in: uploads, imports, and what you save
+from Bambu Studio into the folder. The add-on's own working files stay out of
+it — the slices it makes on the way to a print (`/share/bambu/sliced`) and the
+versions of designed parts (`/share/bambu/designs`). A designed part is listed
+once, as its current version, with **Open design** instead of Delete. Each
+file says whether it is sliced, how many plates it has, and (for sliced
+files) the print time and filament weight.
 
 - **Print** sends it to a printer. A project that is not sliced yet is sliced
-  first with the settings saved in it.
+  first with the settings saved in it. A bare model (an STL, a STEP, a 3MF
+  from Printables) is sliced with Bambu Studio's own profiles for that
+  printer, and you pick the AMS tray (or the external spool) it prints from.
 - **Slice** slices a project without printing.
 - **Open in Studio** opens it in the sidebar's Bambu Studio.
+
+### Importing from a link
+
+Paste a link into the box at the top of the Files tab and press **Import**:
+
+- a **Printables** model page brings every model file on it (STL, 3MF, STEP)
+  into `/share/bambu/imports/<model name>/`;
+- a link straight to an `.stl`, `.3mf`, `.step`, `.obj` or `.amf` file
+  downloads that file into `/share/bambu/imports/`.
+
+**MakerWorld** (what Bambu Handy shares) only gives a model to a signed-in
+Bambu account, so the add-on cannot fetch it for you. Open the **Studio** tab
+instead, sign in on Bambu Studio's MakerWorld page, and open the model there —
+it goes straight into the slicer. **Thingiverse** only gives files to apps
+with a key; paste the link of the STL itself instead.
 
 ### What slices without the GUI
 
@@ -60,7 +82,8 @@ the app. A **bare model** (`.stl`, `.step`, `.obj`) carries none, so slicing
 one needs a machine and a process profile named the way Bambu Studio lists
 them (`bruh_bambu.list_files` lists them under `profiles`). When in doubt, open
 the model in Bambu Studio, set it up, and save it as a project into
-`/share/bambu`.
+`/share/bambu`. **Print** (and `bruh_bambu.print_file`) does not need this: it
+chooses the profiles itself from the printer's model and the tray's material.
 
 ## Design with brAIn (optional)
 
@@ -74,10 +97,14 @@ in the add-on changes.
    cannot guess (a mating size, a clearance) — its questions are buttons you
    can tap to answer.
 2. brAIn writes the part as a parametric CadQuery script; the add-on checks it,
-   builds it, and shows it in a **3D view**: orbit, pan and zoom, Iso / Top /
-   Front / Right, **Measure** (tap two points for the distance and its X, Y, Z
-   parts), wireframe, and the overall size. If a build fails, the error goes
-   straight back to brAIn to fix (twice at most) before you see it.
+   builds it, and shows it in a **3D view** in the colours it will print in —
+   a white part is white, and a multi-colour part shows each body in its own
+   colour, with a key under the view that hides or shows a body when you tap
+   it. Orbit, pan and zoom (the **?** in the corner shows how, for touch and
+   for a mouse), Iso / Top / Front / Right, **Measure** (tap two points for the
+   distance and its X, Y, Z parts), wireframe, and the overall size. If a build
+   fails, the error goes straight back to brAIn to fix (twice at most) before
+   you see it.
 3. Keep talking to change it. Every change that builds is a new **version**:
    the chips under the view switch between them, and *Keep working from vN*
    makes an older one the base for the next change. Nothing is overwritten.
@@ -121,7 +148,7 @@ AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
 | `bruh_bambu.get_status` | Every printer's state, progress, time left, temperatures, speed, light and AMS, plus the latest jobs |
 | `bruh_bambu.list_files` | The files in `/share/bambu` |
 | `bruh_bambu.printer_files` | What is on a printer's own storage |
-| `bruh_bambu.print_file` | Print a file (sliced first if needed) |
+| `bruh_bambu.print_file` | Print a file (sliced first if needed; `slot`/`material` choose the filament for a bare model) |
 | `bruh_bambu.slice_file` | Slice a project or model |
 | `bruh_bambu.pause_print` / `resume_print` / `stop_print` | Control the current print |
 | `bruh_bambu.set_speed` | silent, standard, sport or ludicrous |
@@ -129,6 +156,7 @@ AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
 | `bruh_bambu.set_temperature` | Nozzle (up to 300 °C) or bed (up to 120 °C) target; refused while printing |
 | `bruh_bambu.send_gcode` | Up to 32 lines of G-code; refused while printing |
 | `bruh_bambu.open_in_studio` | Open a file in the sidebar's Bambu Studio |
+| `bruh_bambu.import_url` | Import a model from a Printables page or a file link; answers with the new files' paths |
 
 `printer` can be left out when there is only one printer; with two or more it
 is the printer's name or serial number. Every service answers with the

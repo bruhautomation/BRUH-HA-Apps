@@ -94,6 +94,10 @@ then these module-level names:
 - DIMS = {{"label": "value"}} key functional dimensions
 - NOTES = [3 to 5 short print/assembly notes]
 - MATERIAL
+- COLORS = {{"BodyName": "#RRGGBB"}} — the filament colour every body prints in,
+  as a hex code. The person sees the part in these colours, so use the colour
+  they asked for; when they named none, use your `print_settings.colour`. A
+  multi-colour part gives each body its own colour.
 Model IN PRINT ORIENTATION: +Z up, lowest point exactly on Z = 0.
 Imports allowed: cadquery (as cq), cadkit, math, numpy. Nothing else — no os,
 no open(), no attributes starting with "_".
@@ -249,6 +253,7 @@ def _build_version(part: dict, script: str, summary: str) -> tuple[dict, dict]:
            "warnings": (report.get("warnings") or [])[:8], "size_mm": report.get("size_mm"),
            "grams": report.get("grams_pla"), "files": report.get("files"),
            "name": report.get("name"), "notes": report.get("notes"), "dims": report.get("dims"),
+           "colors": report.get("colors"),
            "report_summary": _summary(report)}
     return row, report
 

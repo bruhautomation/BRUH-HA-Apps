@@ -2578,7 +2578,8 @@ VOICE_ADMIN_SERVICES = frozenset({
         "stop_server", "install_addon", "remove_addon")
 } | {("bright", "import_show")} | {
     ("bruh_bambu", s) for s in (
-        "print_file", "stop_print", "send_gcode", "slice_file", "open_in_studio")
+        "print_file", "stop_print", "send_gcode", "slice_file", "open_in_studio",
+        "import_url")
 })
 
 ADDON_NAMES = {
@@ -2933,7 +2934,7 @@ def bambu_status(files=False):
 
 
 def bambu_print(action, printer="", file="", plate=None, use_ams=None,
-                timelapse=None):
+                timelapse=None, url="", slot=None, material=""):
     """Start, pause, resume or stop a print on a Bambu Lab printer."""
     action = str(action or "").strip().lower()
     if action in BAMBU_VOICE_REFUSED:
@@ -2942,10 +2943,33 @@ def bambu_print(action, printer="", file="", plate=None, use_ams=None,
             return refusal
     data = _printer_arg(printer)
     if action == "start":
+        if str(url or "").strip() and not str(file or "").strip():
+            # A link is imported first; one model file is printed, several
+            # are handed back to choose from.
+            imported = _addon_call("bruh_bambu", "import_url", {"url": str(url).strip()})
+            if imported.get("error"):
+                return imported
+            files = ((imported.get("job") or {}).get("files")) or []
+            if len(files) != 1:
+                return {"imported": files, "note": (
+                    "Imported several files — print one by passing its path as file."
+                    if files else "The link imported nothing to print.")}
+            file = files[0]
         if not str(file or "").strip():
             return {"error": "Name the file to print — its path in /share/bambu, "
-                             "from bambu_status with files=true."}
+                             "from bambu_status with files=true — or give url, a "
+                             "Printables page or a link to an .stl/.3mf."}
         data["file"] = str(file).strip()
+        if slot not in (None, ""):
+            if str(slot).strip().lower() == "external":
+                data["slot"] = "external"
+            else:
+                try:
+                    data["slot"] = max(0, int(slot))
+                except (TypeError, ValueError):
+                    return {"error": "slot is an AMS tray number (0 for the first) or external."}
+        if str(material or "").strip():
+            data["material"] = str(material).strip().upper()
         if plate not in (None, ""):
             try:
                 data["plate"] = max(1, int(plate))
@@ -5477,7 +5501,14 @@ TOOLS = [
             "Control a print on a Bambu Lab printer through BRUH Bambu Studio. "
             "action start: print file (its path in /share/bambu from bambu_status "
             "files=true; an unsliced project is sliced first, then uploaded and "
-            "started — plate defaults to the first). action pause / resume / "
+            "started — plate defaults to the first). Or give url instead of file: "
+            "a Printables model page or a link to an .stl/.3mf is imported into "
+            "/share/bambu/imports and printed (several files come back to pick "
+            "from; MakerWorld needs the user's own Bambu sign-in and is refused). "
+            "A bare model (STL, STEP, a 3MF that is not a Bambu Studio project) is "
+            "sliced with Bambu Studio's profiles for the printer: slot picks the "
+            "AMS tray (0 first, or external), material the filament (PLA when "
+            "unsaid). action pause / resume / "
             "stop: the current print; stop cannot be undone, so confirm with "
             "the user first. printer is its name or serial, left out when there "
             "is one. A voice-level agent may pause and resume only."
@@ -5486,6 +5517,9 @@ TOOLS = [
             "action": {"type": "string", "enum": ["start", "pause", "resume", "stop"]},
             "printer": {"type": "string"},
             "file": {"type": "string"},
+            "url": {"type": "string"},
+            "slot": {"type": "string"},
+            "material": {"type": "string"},
             "plate": {"type": "integer"},
             "use_ams": {"type": "boolean"},
             "timelapse": {"type": "boolean"}},

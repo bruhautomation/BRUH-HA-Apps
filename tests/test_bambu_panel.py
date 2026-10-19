@@ -116,13 +116,15 @@ class TestLibrary(Isolated):
         make_3mf(self.lib / "sliced" / "benchy.gcode.3mf", plates=(1, 2))
         make_3mf(self.lib / "project.3mf", plates=())
         (self.lib / "part.stl").write_bytes(b"solid x")
-        rows = {r["path"]: r for r in library.listing()}
+        rows = {r["path"]: r for r in library.listing(working=True)}
         self.assertTrue(rows["sliced/benchy.gcode.3mf"]["sliced"])
         self.assertEqual(rows["sliced/benchy.gcode.3mf"]["plates"], [1, 2])
         self.assertEqual(rows["sliced/benchy.gcode.3mf"]["seconds"], 3600)
         self.assertEqual(rows["sliced/benchy.gcode.3mf"]["grams"], 12.5)
         self.assertFalse(rows["project.3mf"]["sliced"])
         self.assertFalse(rows["part.stl"]["sliced"])
+        # The add-on's own slices are working files: not in the Files list.
+        self.assertNotIn("sliced/benchy.gcode.3mf", [r["path"] for r in library.listing()])
 
     def test_a_new_name_never_overwrites(self):
         (self.lib / "a.gcode.3mf").write_bytes(b"x")

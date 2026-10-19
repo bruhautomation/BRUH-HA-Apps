@@ -19,6 +19,12 @@ from bambu import threemf
 
 ROOT = Path(os.environ.get("BAMBU_LIBRARY", "/share/bambu"))
 SLICED = "sliced"
+DESIGNS = "designs"
+# What the add-on writes for itself: a slice made on the way to a print, and
+# every version of every designed part with its per-body meshes. The Files
+# list is what somebody brought in, so these stay out of it; a designed part
+# appears there once, as its current version (server.h_files).
+WORKING = (SLICED, DESIGNS)
 SUFFIXES = (".3mf", ".stl", ".step", ".stp", ".obj", ".amf")
 MAX_UPLOAD = 512 * 1024 * 1024
 NAME = re.compile(r"^[^/\\\x00]{1,160}$")
@@ -46,12 +52,16 @@ def relative(path: Path) -> str:
     return os.path.relpath(os.path.realpath(path), os.path.realpath(ROOT))
 
 
-def listing() -> list[dict]:
+def listing(working: bool = False) -> list[dict]:
+    """The model files in the library; `working` adds the add-on's own."""
     if not ROOT.is_dir():
         return []
     out = []
     for path in sorted(ROOT.rglob("*")):
         if not path.is_file() or path.name.startswith("."):
+            continue
+        top = path.relative_to(ROOT).parts[0]
+        if not working and top in WORKING:
             continue
         name = path.name.lower()
         if not name.endswith(SUFFIXES):
@@ -62,7 +72,7 @@ def listing() -> list[dict]:
         if name.endswith(".3mf"):
             row.update(threemf.inspect(str(path)))
         else:
-            row["sliced"] = False
+            row.update(sliced=False, project=False)
         out.append(row)
     out.sort(key=lambda r: r["modified"], reverse=True)
     return out

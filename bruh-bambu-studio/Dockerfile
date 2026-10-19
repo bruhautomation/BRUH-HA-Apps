@@ -24,7 +24,11 @@ ENV ADDON_VERSION=${ADDON_VERSION} \
 # fewer and one port fewer.
 #
 # Bambu Studio's runtime: the AppImage carries most of its libraries and
-# leaves GTK, WebKit, GStreamer and OpenGL to the system. Mesa's software
+# leaves GTK, WebKit, GStreamer and OpenGL to the system. Both WebKitGTK
+# APIs are installed: Bambu Studio 2.x links webkit2gtk-4.1 and older
+# releases (a pinned bambu_studio_version) link 4.0. The rest is what its
+# Linux build links from the system (linux.d/debian upstream) plus what
+# FFmpeg finds on Bambu's build machine (VA-API, VDPAU). Mesa's software
 # renderer is the OpenGL here — there is no GPU in a container — which is
 # slow for a big model's preview and perfectly fine for slicing.
 #
@@ -34,7 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl jq file xz-utils squashfs-tools \
       xvfb x11vnc openbox x11-utils x11-xserver-utils xdotool dbus-x11 \
       novnc \
-      libgtk-3-0 libwebkit2gtk-4.0-37 libsecret-1-0 libnotify4 \
+      libgtk-3-0 libwebkit2gtk-4.1-0 libwebkit2gtk-4.0-37 libsecret-1-0 libnotify4 \
+      libdbus-1-3 libglew2.2 libunwind8 libmspack0 libxkbcommon0 \
+      libva2 libva-drm2 libva-x11-2 libvdpau1 libdrm2 \
       libgstreamer1.0-0 libgstreamer-plugins-base1.0-0 \
       gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
       libegl1 libgl1 libgl1-mesa-dri libglu1-mesa libosmesa6 libglx-mesa0 \

@@ -96,6 +96,10 @@ function renderStudio() {
     text = inst.phase === "failed" ? `Bambu Studio could not be installed: ${inst.error}`
       : "Bambu Studio is not installed yet.";
     buttons.push(el("button", { class: "primary", onclick: () => install(false) }, "Install"));
+  } else if (!s.running && s.missing_libraries && s.missing_libraries.length) {
+    text = `Bambu Studio ${s.version || ""} needs system libraries this add-on does not have yet: `
+      + `${s.missing_libraries.join(", ")}. Update BRUH Bambu Studio, or pin an older Bambu Studio `
+      + "version in the add-on's Configuration tab.";
   } else if (!s.running) {
     text = s.wanted ? (s.next_start_in ? `Bambu Studio closed; starting it again in ${s.next_start_in} s.`
       : "Starting Bambu Studio…") : "Bambu Studio is stopped.";
@@ -271,12 +275,35 @@ async function loadFiles() {
   } catch (e) { toast(e.message, true); }
 }
 
+const JOB_VERB = { print: "Print", slice: "Slice", import: "Import" };
+
+function jobDone(j) {
+  if (j.kind === "import" && j.files) {
+    return `${j.files.length} file${j.files.length === 1 ? "" : "s"} added`
+      + (j.skipped ? ` (${j.skipped} more on the page were not)` : "");
+  }
+  return j.phase || "done";
+}
+
 function renderJobs() {
   const jobs = (state.data && state.data.jobs) || [];
   $("#jobList").replaceChildren(...jobs.slice(0, 5).map((j) => el("p", { class: `job ${j.state}` },
-    `${j.kind === "print" ? "Print" : "Slice"} ${j.file || j.source}: `,
+    `${JOB_VERB[j.kind] || "Job"} ${j.file || j.source && j.kind !== "import" && j.source || j.title || j.url || ""}: `,
     j.state === "running" ? `${j.phase || "working"}${j.progress != null ? ` ${j.progress}%` : ""}…`
-      : j.state === "failed" ? j.error : (j.phase || "done"))));
+      : j.state === "failed" ? j.error : jobDone(j))));
+}
+
+async function importLink(e) {
+  e.preventDefault();
+  const box = $("#importUrl");
+  const url = box.value.trim();
+  if (!url) return;
+  try {
+    await api("api/import", { json: { url } });
+    box.value = "";
+    toast("Importing — it shows up in the list when it is done.");
+    refresh();
+  } catch (err) { toast(err.message, true); }
 }
 
 function renderFiles() {
@@ -285,13 +312,16 @@ function renderFiles() {
       f.plates && f.plates.length > 1 ? `${f.plates.length} plates` : null,
       f.seconds ? duration(Math.round(f.seconds / 60)) : null,
       f.grams ? `${f.grams} g` : null, `${(f.size / 1e6).toFixed(1)} MB`].filter(Boolean).join(" · ");
+    const designed = Boolean(f.design);
     return el("div", { class: "file" },
-      el("div", { class: "grow" }, el("b", {}, f.path), el("p", { class: "hint" }, facts)),
+      el("div", { class: "grow" }, el("b", {}, designed ? f.name : f.path),
+        el("p", { class: "hint" }, designed ? `Designed with brAIn · version ${f.version} · ${facts}` : facts)),
       el("div", { class: "row wrap" },
         el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"),
         !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { onclick: () => slice(f) }, "Slice") : null,
         el("button", { onclick: () => studio("open", f.path) }, "Open in Studio"),
-        el("button", { class: "danger", onclick: async () => {
+        designed ? el("button", { onclick: () => { show("design"); if (window.openPart) window.openPart(f.design); } },
+          "Open design") : el("button", { class: "danger", onclick: async () => {
           if (!confirm(`Delete ${f.path}?`)) return;
           await api(`api/files?path=${encodeURIComponent(f.path)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
           loadFiles();
@@ -310,15 +340,45 @@ async function slice(f) {
   } catch (e) { toast(e.message, true); }
 }
 
-function openPrint(f) {
+// A model with no project settings (an STL, a STEP, a 3MF from Printables)
+// is sliced with Bambu Studio's own profiles for the printer, and the
+// filament profile follows the tray picked here.
+function bareModel(f) { return !f.sliced && !f.project; }
+
+function fillFilaments(f) {
+  const bare = bareModel(f);
+  $("#printFilamentRow").hidden = !bare;
+  $("#printAmsRow").hidden = bare;
+  if (!bare) return;
+  const printer = state.data.printers.find((p) => p.id === $("#printPrinter").value) || {};
+  const trays = printer.ams || [];
+  $("#printFilament").replaceChildren(
+    ...trays.map((t) => el("option", { value: String(t.slot) },
+      `AMS ${t.slot + 1}: ${t.type || "?"}${t.remaining != null ? ` · ${t.remaining}%` : ""}`)),
+    el("option", { value: "external" }, "External spool (PLA)"));
+}
+
+async function openPrint(f) {
+  if (f.design) {
+    // A designed part prints with brAIn's settings and its own tray choice.
+    show("design");
+    await window.openPart(f.design);
+    window.openDesignPrint();
+    return;
+  }
   const dlg = $("#printDialog");
   const printers = state.data.printers;
   if (!printers.length) { toast("Add a printer first.", true); show("printers"); return; }
   $("#printTitle").textContent = `Print ${f.name}`;
   $("#printPrinter").replaceChildren(...printers.map((p) => el("option", { value: p.id }, `${p.name} (${p.online ? p.state || "online" : "offline"})`)));
+  $("#printPrinter").onchange = () => fillFilaments(f);
+  fillFilaments(f);
   $("#printForm").plate.value = (f.plates && f.plates[0]) || 1;
-  $("#printNote").textContent = f.sliced ? "" : "It is sliced first with the settings saved in the project.";
+  $("#printNote").textContent = f.sliced ? ""
+    : bareModel(f) ? "It is sliced first with Bambu Studio's profiles for this printer and the filament you pick."
+      : "It is sliced first with the settings saved in the project.";
   dlg.dataset.file = f.path;
+  dlg.dataset.bare = bareModel(f) ? "1" : "";
   dlg.showModal();
 }
 
@@ -326,10 +386,15 @@ async function submitPrint(e) {
   const dlg = $("#printDialog");
   if (e.submitter && e.submitter.value !== "go") return;
   const f = new FormData(e.target);
+  const job = { file: dlg.dataset.file, printer: f.get("printer"),
+    plate: Number(f.get("plate")), use_ams: f.get("use_ams") === "on",
+    bed_leveling: f.get("bed_leveling") === "on", timelapse: f.get("timelapse") === "on" };
+  if (dlg.dataset.bare) {
+    delete job.use_ams;
+    job.slot = f.get("slot") === "external" ? "external" : Number(f.get("slot"));
+  }
   try {
-    await api("api/print", { json: { file: dlg.dataset.file, printer: f.get("printer"),
-      plate: Number(f.get("plate")), use_ams: f.get("use_ams") === "on",
-      bed_leveling: f.get("bed_leveling") === "on", timelapse: f.get("timelapse") === "on" } });
+    await api("api/print", { json: job });
     toast("Sending it to the printer…");
     refresh();
   } catch (err) { toast(err.message, true); }
@@ -356,9 +421,13 @@ async function refresh() {
     renderStudio();
     renderPrinters();
     if (state.view === "files") renderJobs();
-    if (state.data.jobs.some((j) => j.state === "running" && j.kind !== "print") && state.view === "files") {
+    // A slice or an import that has just finished put a file in the library.
+    const busy = new Set(state.data.jobs.filter((j) => j.state === "running" && j.kind !== "print").map((j) => j.id));
+    const finished = [...(refresh.busy || [])].some((id) => !busy.has(id));
+    refresh.busy = busy;
+    if ((busy.size || finished) && state.view === "files") {
       clearTimeout(refresh.f);
-      refresh.f = setTimeout(loadFiles, 4000);
+      refresh.f = setTimeout(loadFiles, finished ? 0 : 4000);
     }
   } catch (e) { $("#studioStatus").hidden = false; $("#studioStatus").textContent = `The panel is not answering: ${e.message}`; }
 }
@@ -368,6 +437,7 @@ $("#printerForm").addEventListener("submit", savePrinter);
 $("#printForm").addEventListener("submit", submitPrint);
 $("#printCancel").addEventListener("click", () => $("#printDialog").close());
 $("#upload").addEventListener("change", upload);
+$("#importForm").addEventListener("submit", importLink);
 api("api/printers").then((r) => {
   $("#modelSelect").replaceChildren(el("option", { value: "" }, "Not sure"), ...r.models.map((m) => el("option", { value: m }, m)));
 }).catch(() => {});

@@ -19,8 +19,12 @@ MAX_ENTRIES = 5000
 
 
 def inspect(path: str) -> dict:
-    """{sliced, plates, filaments, seconds, grams} — empty answers as None."""
-    out = {"sliced": False, "plates": [], "filaments": None,
+    """{sliced, project, plates, filaments, seconds, grams} — empty answers as None.
+
+    `project` is a Bambu Studio project, which carries the printer and
+    process it is set up for; a 3MF from anywhere else is a bare model and
+    has to be given profiles before it can be sliced."""
+    out = {"sliced": False, "project": False, "plates": [], "filaments": None,
            "seconds": None, "grams": None}
     try:
         with zipfile.ZipFile(path) as archive:
@@ -31,6 +35,7 @@ def inspect(path: str) -> dict:
                             if (m := PLATE_GCODE.match(n)))
             out["plates"] = plates
             out["sliced"] = bool(plates)
+            out["project"] = "Metadata/project_settings.config" in names
             if "Metadata/slice_info.config" in names:
                 _slice_info(archive.read("Metadata/slice_info.config"), out)
             if out["filaments"] is None and plates:

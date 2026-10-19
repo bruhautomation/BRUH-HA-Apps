@@ -25,6 +25,7 @@ from .const import (
     CARD_RETRY_TRIES,
     DOMAIN,
     SERVICE_GCODE,
+    SERVICE_IMPORT,
     SERVICE_LIGHT,
     SERVICE_LIST_FILES,
     SERVICE_OPEN,
@@ -62,7 +63,12 @@ PRINT_FILE_SCHEMA = vol.Schema({
     vol.Optional("machine"): cv.string,
     vol.Optional("process"): cv.string,
     vol.Optional("filaments"): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional("slot"): vol.Any("external", vol.All(vol.Coerce(int), vol.Range(min=0, max=15))),
+    vol.Optional("material"): cv.string,
+    vol.Optional("colour"): cv.string,
 })
+
+IMPORT_SCHEMA = vol.Schema({vol.Required("url"): cv.string})
 
 SLICE_SCHEMA = vol.Schema({
     vol.Required("file"): cv.string,
@@ -88,6 +94,7 @@ SERVICES = {
         vol.Required("temperature"): vol.All(vol.Coerce(int), vol.Range(min=0, max=300))}),
     SERVICE_GCODE: vol.Schema({PRINTER: cv.string, vol.Required("gcode"): cv.string}),
     SERVICE_OPEN: vol.Schema({vol.Required("file"): cv.string}),
+    SERVICE_IMPORT: IMPORT_SCHEMA,
 }
 # Reads: they answer with data and change nothing.
 READS = {

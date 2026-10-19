@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -39,6 +40,7 @@ from aiohttp.abc import AbstractAccessLogger
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bambu_atomic  # noqa: E402
+import importer  # noqa: E402
 import installer  # noqa: E402
 import library  # noqa: E402
 import slicer  # noqa: E402
@@ -426,9 +428,20 @@ def _profiles() -> dict:
     return {kind: slicer.profile_names(kind) for kind in ("machine", "process", "filament")}
 
 
+def _file_rows(working: bool) -> list[dict]:
+    rows = library.listing(working)
+    if not working:
+        for row in parts.final_files():
+            row.update(threemf.inspect(str(library.path_of(row["path"]))))
+            rows.append(row)
+    rows.sort(key=lambda r: r["modified"], reverse=True)
+    return rows
+
+
 async def h_files(request):
+    working = request.query.get("working") in ("1", "true", "yes")
     payload = {"ok": True, "root": str(library.ROOT),
-               "files": await asyncio.to_thread(library.listing)}
+               "files": await asyncio.to_thread(_file_rows, working)}
     # The profile names a bare model is sliced with, for a caller (brAIn, an
     # automation) that has to name one. Asked for, because it is a long list.
     if request.query.get("profiles"):
@@ -459,6 +472,24 @@ async def h_upload(request):
     return web.json_response({"ok": True, "path": library.relative(dest)})
 
 
+async def h_import(request):
+    """Bring a model in from a link (importer.py says which links work)."""
+    body = await _body(request)
+    panel = _panel(request)
+    url = str(body.get("url") or "").strip()
+    if not url:
+        return _err("Paste a link to a model (Printables) or to a model file.")
+    try:
+        await asyncio.to_thread(library.ensure)
+    except OSError as exc:
+        return _err(f"The Bambu library cannot be written: {exc}", 500)
+    job = panel.new_job("import", url=url[:500])
+    threading.Thread(target=importer.run, args=(job, url), daemon=True).start()
+    job = await _wait_for(panel, job, body.get("wait"))
+    return web.json_response({"ok": job["state"] != "failed", "job": job,
+                              **({"error": job["error"]} if job["state"] == "failed" else {})})
+
+
 async def h_file_delete(request):
     try:
         path = library.path_of(request.query.get("path"))
@@ -466,6 +497,11 @@ async def h_file_delete(request):
         return _err(str(exc))
     if not path.is_file():
         return _err("No such file.", 404)
+    if library.relative(path).split(os.sep, 1)[0] == library.DESIGNS:
+        # A version's file is part of the part: its history, its prints
+        # and brAIn's next turn all read it.
+        return _err("That file belongs to a designed part — delete the part on the "
+                    "Design tab instead.", 409)
     path.unlink()
     return web.json_response({"ok": True})
 
@@ -487,6 +523,42 @@ async def h_slice(request):
                               **({"error": job["error"]} if job["state"] == "failed" else {})})
 
 
+def _bare_model_profiles(body: dict, row: dict, client: PrinterClient) -> dict | None:
+    """Profiles for a model that carries none, chosen the way a designed part's are.
+
+    An STL, a STEP or a 3MF from Printables names no printer and no process,
+    so the CLI cannot slice it as it is. Bambu Studio's own profiles for this
+    printer's model are used, with the filament profile following the tray:
+    `slot` names an AMS tray (its material decides), "external" is the
+    external spool with `material` (PLA when unsaid), and no slot is the
+    AMS tray that best matches `material` and `colour`. A Bambu Studio
+    project, or a request that names its own profiles, is left alone.
+    Mutates `body` with the AMS choice the print is started with.
+    """
+    source = library.path_of(body["file"])
+    if body.get("machine") or body.get("process"):
+        return None
+    if source.name.lower().endswith(".3mf"):
+        info = threemf.inspect(str(source))
+        if info.get("sliced") or info.get("project"):
+            return None
+    slot = body.get("slot")
+    material = str(body.get("material") or "PLA").upper()
+    trays = client.summary().get("ams") or []
+    if slot is None and trays:
+        slot = recommend_tray(trays, material, str(body.get("colour") or ""))
+    if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
+        tray = next((t for t in trays if t.get("slot") == slot), None)
+        if not tray:
+            raise LookupError(f"{row['name']} has no AMS tray {slot + 1}.")
+        material = str(tray.get("type") or material).upper()
+        body.update(use_ams=True, ams_mapping=[slot])
+    else:
+        body.update(use_ams=False, ams_mapping=[0])
+    scratch = Path(tempfile.gettempdir()) / "bruh-bambu-profiles" / row["id"]
+    return profiles.prepare(row.get("model"), {"material": material}, scratch)
+
+
 async def h_print(request):
     body = await _body(request)
     panel = _panel(request)
@@ -500,9 +572,13 @@ async def h_print(request):
     if not client.connected:
         return _err(f"{row['name']} is not connected: "
                     f"{client.last_error or 'still connecting'}.", 409)
+    try:
+        prepared = await asyncio.to_thread(_bare_model_profiles, body, row, client)
+    except (LookupError, OSError, ValueError) as exc:
+        return _err(str(exc), 409)
     job = panel.new_job("print", printer=row["name"], file=body["file"])
     threading.Thread(target=_print_job,
-                     args=(panel, job, row, client, body, panel.studio.env()),
+                     args=(panel, job, row, client, body, panel.studio.env(), prepared),
                      daemon=True).start()
     job = await _wait_for(panel, job, body.get("wait"))
     return web.json_response({"ok": job["state"] != "failed", "job": job,
@@ -823,6 +899,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_get("/api/printer/storage", h_storage)
     r.add_get("/api/files", h_files)
     r.add_post("/api/files", h_upload)
+    r.add_post("/api/import", h_import)
     r.add_delete("/api/files", h_file_delete)
     r.add_post("/api/slice", h_slice)
     r.add_post("/api/print", h_print)

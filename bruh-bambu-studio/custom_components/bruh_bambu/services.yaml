@@ -20,7 +20,9 @@ printer_files:
 print_file:
   name: Print a file
   description: Print a file from /share/bambu. A project that is not sliced yet is sliced
-    first with the settings saved in it, then uploaded to the printer and started.
+    first with the settings saved in it; a bare model (an STL, a STEP, a 3MF from
+    Printables) with Bambu Studio's own profiles for the printer and the filament in
+    the tray. Then it is uploaded to the printer and started.
   fields:
     file:
       name: File
@@ -90,6 +92,28 @@ print_file:
       description: 'Only for a bare model: filament profile names, one per filament.'
       selector:
         object: {}
+    slot:
+      name: Filament tray
+      description: 'For a bare model (an STL, or a 3MF from Printables): the AMS tray
+        to print from, 0 for the first, or "external" for the external spool. Left
+        out, the tray that best matches the material and colour.'
+      example: 0
+      selector:
+        text: {}
+    material:
+      name: Material
+      description: 'For a bare model on the external spool, or to pick the AMS tray:
+        PLA, PETG, ABS… Left out, PLA.'
+      example: PETG
+      selector:
+        text: {}
+    colour:
+      name: Colour
+      description: 'For a bare model with no tray named: the colour to look for in the
+        AMS.'
+      example: white
+      selector:
+        text: {}
 slice_file:
   name: Slice a file
   description: Slice a project or model from /share/bambu with Bambu Studio and save the print
@@ -257,3 +281,18 @@ open_in_studio:
       required: true
       selector:
         text: {}
+import_url:
+  name: Import from a link
+  description: Bring a model into /share/bambu/imports from a Printables model page (every
+    model file on it) or from a link to an .stl, .3mf, .step, .obj or .amf file. MakerWorld
+    needs a signed-in Bambu account, so it is refused with where to open it instead. Answers
+    with the imported files' paths, ready for print_file.
+  fields:
+    url:
+      name: Link
+      description: The Printables page or the file's own link.
+      required: true
+      example: https://www.printables.com/model/3161-3d-benchy
+      selector:
+        text:
+          type: url

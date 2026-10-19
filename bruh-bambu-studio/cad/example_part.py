@@ -33,3 +33,4 @@ PARTS = {"Clip": body}
 DIMS = {"cable bore": f"Ø{bore:.1f}", "screw holes": f"2 × Ø{SCREW_D}"}
 NOTES = ["Print flat on the base, no supports.", "PETG for a clip that flexes without cracking."]
 MATERIAL = "PETG"
+COLORS = {"Clip": "#F4F4F2"}  # white

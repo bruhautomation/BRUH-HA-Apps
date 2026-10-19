@@ -50,6 +50,13 @@
         <div><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
         <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
       </div>
+      <form id="importForm" class="importbar">
+        <input id="importUrl" type="url" inputmode="url" autocomplete="off"
+               placeholder="Paste a Printables link or a link to an .stl / .3mf file"
+               aria-label="Link to a model">
+        <button class="primary" type="submit">Import</button>
+      </form>
+      <p class="hint">MakerWorld (Bambu Handy) models need your Bambu sign-in: open them from Bambu Studio's MakerWorld page on the Studio tab.</p>
       <div id="jobList"></div>
       <div id="fileList"></div>
     </div>
@@ -75,15 +82,41 @@
         </header>
         <div class="partbody">
           <div class="stage">
-            <div class="viewer" id="viewer"><p class="hint center" id="viewerNote">No version yet — describe the part to brAIn.</p></div>
-            <div class="viewtools row wrap">
-              <button type="button" data-view3d="iso">Iso</button>
-              <button type="button" data-view3d="top">Top</button>
-              <button type="button" data-view3d="front">Front</button>
-              <button type="button" data-view3d="right">Right</button>
-              <button type="button" id="measureBtn" aria-pressed="false">Measure</button>
-              <button type="button" id="wireBtn" aria-pressed="false">Wireframe</button>
+            <div class="viewer" id="viewer"><p class="hint center" id="viewerNote">No version yet — describe the part to brAIn.</p>
+              <button type="button" class="viewhelp" id="viewHelpBtn" aria-expanded="false"
+                      aria-controls="viewHelp" title="How to move the 3D view" aria-label="How to move the 3D view">?</button>
+              <div class="viewhelp-pop" id="viewHelp" role="dialog" aria-label="3D view controls" hidden>
+                <div data-input="touch">
+                  <b>Touch</b>
+                  <ul>
+                    <li><b>One finger</b> — turn the part</li>
+                    <li><b>Pinch</b> — zoom in and out</li>
+                    <li><b>Two fingers</b> — slide it around</li>
+                    <li><b>Measure</b> — tap two points on the part</li>
+                  </ul>
+                </div>
+                <div data-input="mouse">
+                  <b>Mouse</b>
+                  <ul>
+                    <li><b>Drag</b> — turn the part</li>
+                    <li><b>Scroll</b> — zoom in and out</li>
+                    <li><b>Right-drag</b> or <b>Shift + drag</b> — slide it around</li>
+                    <li><b>Measure</b> — click two points on the part</li>
+                  </ul>
+                </div>
+                <p><b>Iso, Top, Front, Right</b> jump to that view and centre the part again.
+                  <b>Wireframe</b> shows the mesh. Tap a colour below to hide or show that body.</p>
+              </div>
             </div>
+            <div class="viewtools row wrap">
+              <button type="button" data-view3d="iso" title="Corner view, centred">Iso</button>
+              <button type="button" data-view3d="top" title="Looking down on the bed">Top</button>
+              <button type="button" data-view3d="front" title="From the front">Front</button>
+              <button type="button" data-view3d="right" title="From the right">Right</button>
+              <button type="button" id="measureBtn" aria-pressed="false" title="Pick two points on the part to measure between them">Measure</button>
+              <button type="button" id="wireBtn" aria-pressed="false" title="Show the triangles the part is made of">Wireframe</button>
+            </div>
+            <div class="bodies" id="bodyList"></div>
             <p class="hint" id="measureOut"></p>
             <div class="versions" id="versions"></div>
             <div id="versionInfo" class="hint"></div>
@@ -127,7 +160,8 @@
     <h2 id="printTitle">Print</h2>
     <label>Printer <select name="printer" id="printPrinter"></select></label>
     <label>Plate <input name="plate" type="number" min="1" value="1"></label>
-    <label class="check"><input type="checkbox" name="use_ams" checked> Use the AMS</label>
+    <label class="check" id="printAmsRow"><input type="checkbox" name="use_ams" checked> Use the AMS</label>
+    <label id="printFilamentRow" hidden>Filament <select name="slot" id="printFilament"></select></label>
     <label class="check"><input type="checkbox" name="bed_leveling" checked> Bed levelling</label>
     <label class="check"><input type="checkbox" name="timelapse"> Timelapse</label>
     <p class="hint" id="printNote"></p>
