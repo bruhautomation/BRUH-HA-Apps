@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- **The add-on image builds.** The CAD tools Design with brAIn uses were pinned to a release of networkx that needs Python 3.12, and the add-on runs Python 3.11, so the image could not be built and 0.1.0 could not be installed. They are pinned to versions that install on 3.11.
+- **The panel starts.** It used an aiohttp feature newer than the aiohttp in the add-on's image, so once the image did build, the panel would have stopped on its first line. It now runs on the image's own version.
+
 ## 0.1.0
 
 ### Added

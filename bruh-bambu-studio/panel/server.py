@@ -286,7 +286,9 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
 # Routes
 # ---------------------------------------------------------------------------
 
-PANEL_KEY = web.AppKey("panel", Panel)
+# The image's aiohttp is Debian bookworm's 3.8, which has no AppKey (3.9).
+# A plain string key is what 3.8 uses, and it still works on a newer one.
+PANEL_KEY = web.AppKey("panel", Panel) if hasattr(web, "AppKey") else "panel"
 
 
 def _panel(request) -> Panel:
