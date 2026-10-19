@@ -1,7 +1,7 @@
 ---
 name: "Morph"
 description: "EXPERIMENTAL, not for general use yet. A dashboard for Home Assistant that moves to make room for whatever you look at, and that brAIn designs, edits and keeps improving with you"
-version: "1.0.3"
+version: "1.0.4"
 slug: "morph"
 init: false
 

@@ -1580,7 +1580,7 @@ def _prune(items: list[dict]) -> list[dict]:
 SUBJECT_FOLD_EXCLUDED = frozenset({
     "safety", "security", "correction", "notify_policy",
     "house_book", "healing", "followup", "fix", "doctor", "condition",
-    "scene", "morph"})
+    "scene", "morph", "devloop_verify"})
 
 
 def _folds_by_subject(entry: dict) -> tuple[str, str] | None:

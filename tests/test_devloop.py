@@ -1067,10 +1067,24 @@ class TestTheGuard(unittest.TestCase):
 
     def test_an_ordinary_fix_with_a_version_bump_passes(self):
         (self.root / "brain" / "panel" / "cards.py").write_text("x = 2\n")
+        (self.root / "tests" / "test_x.py").write_text(
+            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n\n\n"
+            "def test_c():\n    pass\n")
         (self.root / "brain" / "config.yaml").write_text(
             'name: brAIn\nversion: "2.17.1"\nslug: brain\n')
         r = self.guard()
         self.assertEqual(r.returncode, 0, r.stdout)
+
+    def test_a_code_change_with_no_test_change_fails_and_a_copy_change_does_not(self):
+        # The skill says "failing test first"; the guard is the half that
+        # holds when a model does not read it.
+        (self.root / "brain" / "panel" / "cards.py").write_text("x = 2\n")
+        r = self.guard()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no test change", r.stdout)
+        self.run("git", "reset", "-q", "--hard", "main")
+        (self.root / "brain" / "panel" / "style.css").write_text("a{}\n")
+        self.assertEqual(self.guard().returncode, 0)
 
     def test_a_protected_file_fails(self):
         (self.root / "brain" / "panel" / "gate.py").write_text("x = 2\n")

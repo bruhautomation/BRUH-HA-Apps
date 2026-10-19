@@ -27,25 +27,114 @@ from . import STREAMS
 # --------------------------------------------------------------- faults
 
 SKIP_WHERE = frozenset({"This list"})
+# How many journal rows a fault issue quotes, and how many log lines. The
+# issue used to carry the fault's one sentence and nothing a fix could be
+# aimed at: the cloud fixer read "Run (card): ended crash" and had to guess
+# which exception, in which file, with what on the line before it.
+OCCURRENCES = 5
+LOG_LINES = 40
+_RUN_WHERE_RE = re.compile(r"^Run \((?P<source>[^·)]+?)(?: · (?P<stage>[^)]+))?\)$")
+_ENDED_RE = re.compile(r"\bended (?P<outcome>[a-z_]+)")
+_TROUBLE_RE = re.compile(r"Traceback|Error|ERROR|WARNING|Exception|exited|"
+                         r"failed|refused|timed out|Timeout", re.I)
+# The rows a log excerpt rides on: about a run, a loop or the verdict. A
+# producer's Wrong count has no log line behind it.
+LOGGED_WHERE = ("Run", "Health", "Loops", "Daemons", "Diagnostics")
 
 
-def faults(diagnostics: dict) -> list[dict]:
+def _occurrences(row: dict, failures: list) -> list[dict]:
+    """The journal rows behind one ``Run (…)`` fault row, newest first:
+    the same source and outcome (and stage, where the row names one)."""
+    m = _RUN_WHERE_RE.match(str(row.get("where") or ""))
+    e = _ENDED_RE.search(str(row.get("what") or ""))
+    if not m or not e:
+        return []
+    source, stage, outcome = m.group("source"), m.group("stage") or "", e.group("outcome")
+    out = []
+    for f in reversed(failures or []):
+        if not isinstance(f, dict):
+            continue
+        extra = f.get("extra") if isinstance(f.get("extra"), dict) else {}
+        if (str(f.get("source") or "") == source
+                and str(f.get("outcome") or "") == outcome
+                and (not stage or str(extra.get("stage") or "") == stage)):
+            out.append(f)
+        if len(out) >= OCCURRENCES:
+            break
+    return out
+
+
+def log_excerpt(log_text: str, lines: int = LOG_LINES) -> str:
+    """The trouble in the add-on's log tail: the last ``lines`` lines that
+    name an error, a traceback or a failure, redacted the way a problem
+    report is (`reports.redact`). Aliasing happens with the rest of the
+    issue, in `upstream.compose`."""
+    kept = [ln.rstrip() for ln in str(log_text or "").splitlines()
+            if _TROUBLE_RE.search(ln)]
+    if not kept:
+        return ""
+    return reports.redact("\n".join(kept[-lines:]))
+
+
+def _evidence_body(row: dict, failures: list, excerpt: str) -> str:
+    parts: list[str] = []
+    seen = _occurrences(row, failures)
+    if seen:
+        parts += ["Recent occurrences, from the run journal (newest first):", ""]
+        for f in seen:
+            when = time.strftime("%a %H:%M", time.localtime(int(f.get("ts") or 0)))
+            extra = f.get("extra") if isinstance(f.get("extra"), dict) else {}
+            about = extra.get("title") or extra.get("label") or extra.get("about") or ""
+            line = f"- {when} · {f.get('source')} · {f.get('outcome')}"
+            if about:
+                line += f" · {clip(str(about), 80)}"
+            if f.get("error"):
+                line += f": {clip(str(f['error']), 300)}"
+            parts.append(line)
+        parts.append("")
+    if excerpt:
+        parts += ["<details><summary>Add-on log, the trouble lines (redacted)</summary>",
+                  "", "```", excerpt, "```", "</details>"]
+    return "\n".join(parts).strip()
+
+
+def faults(diagnostics: dict, log_text: str = "") -> list[dict]:
+    """The fault list as rows, each carrying the evidence a fix can be
+    aimed at: the journal rows a ``Run (…)`` row was folded from, and the
+    trouble lines of the add-on's log when the caller fetched it. Pure
+    over what it is handed; the log is the server's to fetch."""
     rows = []
+    failures = ((diagnostics or {}).get("journal") or {}).get("failures") or []
+    excerpt = log_excerpt(log_text)
     for row in reports.faults(diagnostics):
         where, what = str(row.get("where") or ""), str(row.get("what") or "")
         if what and where not in SKIP_WHERE:
-            rows.append({"where": where, "what": what,
-                         "detail": str(row.get("detail") or "")})
+            item = {"where": where, "what": what,
+                    "detail": str(row.get("detail") or "")}
+            body = _evidence_body(
+                row, failures, excerpt if where.startswith(LOGGED_WHERE) else "")
+            if body:
+                item["body"] = body
+            rows.append(item)
     return rows
 
 
 # ------------------------------------------------------------- scorecard
 
-def scorecard(score_rows: list[dict], diagnostics: dict, version: str) -> list[dict]:
+def scorecard(score_rows: list[dict], diagnostics: dict, version: str,
+              awaiting: list[dict] | None = None) -> list[dict]:
     """One rolling issue per release: how right each producer was and how
-    the runs went. Counts only — nothing in it names the house."""
+    the runs went. Counts only — nothing in it names the house.
+
+    ``awaiting`` is `upstream.awaiting_update`'s list: the fixed reports
+    whose fix is in a release this house has not installed. It is said
+    here, on the one issue the cloud reads every run, because a fix the
+    house never received is otherwise indistinguishable from one that
+    held."""
     journal = (diagnostics or {}).get("journal") or {}
     health = (diagnostics or {}).get("health") or {}
+    waiting = [f"#{r['issue']} needs brAIn {r['fixed_in']}"
+               for r in (awaiting or []) if isinstance(r, dict) and r.get("issue")]
     lines = ["| Producer | Confirmed | Wrong | Share right |", "|---|---|---|---|"]
     rows = sorted(score_rows or [], key=lambda r: -int(r.get("total") or 0))
     for r in rows[:40]:
@@ -60,6 +149,10 @@ def scorecard(score_rows: list[dict], diagnostics: dict, version: str) -> list[d
         f"* Health: {health.get('state') or '?'}",
         f"* Runs in the last day: {journal.get('runs', '?')} "
         f"(by outcome: {json.dumps(journal.get('by_outcome') or {}, sort_keys=True)})",
+        ("* Awaiting an update: " + ", ".join(waiting[:20])
+         + (f" and {len(waiting) - 20} more" if len(waiting) > 20 else "")
+         + ". A fix this house has not installed is not one that held.")
+        if waiting else "* Awaiting an update: nothing",
         "",
         "### How right each producer was",
         "",
@@ -273,6 +366,75 @@ def unmet(transcript_dir: Path, now: float | None = None) -> list[dict]:
     for r in rows:
         r.pop("_last")
     return rows[:MAX_UNMET]
+
+
+# -------------------------------------------------------------- outcomes
+
+DIRECTION_WORDS = {"quieter": "too loud about", "louder": "too quiet about"}
+OUTCOMES_MAX_ROWS = 8
+OUTCOMES_MAX_LINES = 6
+
+
+def outcomes(report: dict, candidates: list[dict], version: str) -> list[dict]:
+    """Where brAIn's own looks were wrong about this house, from what the
+    household answered — `outcomes.candidates`' lopsided scopes, one row
+    each, keyed on the scope so a scope stays one issue for as long as it
+    is lopsided and is told "not seen since" once a confirmed case ends it.
+
+    This is the learning signal the loop never carried: the scorecard
+    grades the CHECKS (a rule is right or wrong), while this grades the
+    Resident's judgement (a look that raised what the household marked
+    wrong, or passed over what turned out to matter). Nothing here
+    decides anything — `outcomes` already did, deterministically — and the
+    sentences quoted are the look's own reasons and the household's typed
+    notes, aliased with the rest of the issue.
+    """
+    rows = []
+    cal = str((report or {}).get("calibration_line") or "").strip()
+    stages = (report or {}).get("by_stage") or {}
+    for c in (candidates or [])[:OUTCOMES_MAX_ROWS]:
+        if not isinstance(c, dict) or not c.get("subject"):
+            continue
+        scope, subject = str(c.get("scope") or ""), str(c["subject"])
+        direction = str(c.get("direction") or "")
+        word = DIRECTION_WORDS.get(direction, direction)
+        lines = [f"brAIn's own looks were {word} `{subject}`: "
+                 f"{c.get('counts') or ''}.".replace(" .", "."), ""]
+        whys = [clip(str(w), 200) for w in (c.get("whys") or []) if str(w).strip()]
+        notes = [clip(str(n), 200) for n in (c.get("notes") or []) if str(n).strip()]
+        if whys:
+            lines += ["What the look said each time:", ""]
+            lines += [f"- {w}" for w in whys[:OUTCOMES_MAX_LINES]] + [""]
+        if notes:
+            lines += ["What the household typed when it answered:", ""]
+            lines += [f"- {n}" for n in notes[:OUTCOMES_MAX_LINES]] + [""]
+        if cal:
+            lines += [f"Calibration over every look: {cal}", ""]
+        if stages:
+            lines += ["Agreement by stage: " + ", ".join(
+                f"{k} {v.get('agreed', 0)} agreed / {v.get('disagreed', 0)} disagreed"
+                for k, v in sorted(stages.items()) if isinstance(v, dict)), ""]
+        lines += ["Where to start: the look's prompt and floors in "
+                  "`brain/panel/resident.py` (`CLAIM_RULE`, `never_ignore`), "
+                  "`outcomes.candidates` for how this was found, and the "
+                  "house's judgement facts (`judgement:<scope>`) that the "
+                  "nightly reflect writes. A fix is a prompt or a floor, "
+                  "never a rule keyed on this one subject."]
+        wrong = confirmed = 0
+        m = re.match(r"(\d+) of (\d+)", str(c.get("counts") or ""))
+        if m:
+            wrong, labelled = int(m.group(1)), int(m.group(2))
+            confirmed = max(0, labelled - wrong)
+        rows.append({
+            "key": f"outcomes|{scope}|{subject}",
+            "where": "Judgement",
+            "what": f"{word} {subject}",
+            "detail": str(c.get("counts") or ""),
+            "body": "\n".join(lines),
+            "impact": {"wrong": wrong, "confirmed": confirmed,
+                       "endings": wrong + confirmed},
+        })
+    return rows
 
 
 # -------------------------------------------------------------- snapshot

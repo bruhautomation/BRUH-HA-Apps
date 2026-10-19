@@ -2,6 +2,20 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.1.0
+
+### Added
+
+- **The development loop asks you whether your own request was fixed.** Once the release that fixed a *What do you want to fix?* request (or something the chat said it could not do) is installed, one question appears on Today: *brAIn x.y.z was meant to fix this. Is it fixed here?* Yes confirms it on the report; No sends what you type back and reopens it. Asked once per fix, and nothing is written to memory either way.
+- **A Judgement stream.** Off by default: where brAIn's own looks were wrong about this house from what you answered (a look that keeps raising what you mark Wrong, or passing over what turned out to matter), one report per thing, with the look's reasons and your typed notes, for as long as the record stays lopsided.
+- **Fault reports carry their evidence.** A report about a failed run quotes the journal rows behind it and the trouble lines of the add-on's own log (errors, tracebacks), redacted and aliased, so a fix can be aimed at a line rather than a sentence.
+- **A crash in the panel itself is a fault.** A route that failed used to answer an error and leave no trace anywhere brAIn reports; it is a journal row now, so it reaches ⚙ › Diagnostics, a problem report and the development loop like every other failure.
+
+### Changed
+
+- **The loop knows which release fixed what.** brAIn reads the fix's release off the comment a report was closed with and compares it with the release it runs. A problem still seen on an older release is never reported as the fix failing; once the fix is installed and the problem has stopped, the report says *Held*. ⚙ and the Scorecard say how many fixed reports are waiting for an update, and ⚙ says when the cloud last closed a report.
+- **An automated pull request that changes code must change a test** (`devloop-guard`). Copy, layout and docs are exempt.
+
 ## 3.0.9
 
 ### Changed

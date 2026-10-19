@@ -132,7 +132,21 @@ in" comment:
   `devloop:came-back`, and reopen the issue so this run's drain takes it.
   If it already carried `devloop:came-back` once before, hand it to a
   person instead: two attempts that did not hold means the problem is not
-  understood.
+  understood. (From brAIn 3.1.0 the house compares x.y.z with the version
+  in your "Fixed in" comment itself and says nothing while it still runs
+  an older release, so a comment that arrives is evidence.)
+- A **"Not fixed on brAIn x.y.z: …"** comment is the OWNER answering No to
+  "is this fixed here?" on a request they typed. It is the strongest
+  evidence the loop has and their words are the spec again: treat it
+  exactly as *Back again* (reopen, `devloop:came-back`), read the words
+  before the issue's title, and never close it as a duplicate of the fix
+  that did not satisfy them.
+- A **"Held: not seen since … (fixed in x.y.z)"** or **"The owner confirms
+  this is fixed on brAIn x.y.z"** comment is the fix verified on the house.
+  Nothing to do; it is what *Loop health* counts as held.
+- The `[Scorecard]` issue's **Awaiting an update** line names fixed
+  reports whose release the house has not installed. Those are not held
+  and not failed: leave them, and never read their silence as success.
 - If a fix made things worse, revert it. Signs of that: a new fault issue
   whose first sighting is on the fixed version, or a drop of 20 points or
   more in a producer's share right on the scorecard issue for that version
@@ -203,7 +217,11 @@ several panes before one on a single pane.
 
 Every run, retro or not, also writes one line in `LESSONS.md` under
 `## Loop health`: the date, how long the run took, how many issues ended
-each way, and the slowest step (CI wait, a subagent, a test file). When the
+each way, how many earlier fixes the house has since reported **held**
+(a *Held* or *The owner confirms* comment) against how many **came back**,
+and the slowest step (CI wait, a subagent, a test file). The held/came-back
+pair is the loop's one honest score: closures count work, that pair counts
+fixes. When the
 same step is the slowest three runs in a row, fixing it is this run's first
 batch: a slow test made fast, a measure that is not needed, a step of this
 loop that wastes time.
@@ -439,8 +457,12 @@ Merge with `merge_pull_request`, method `squash`. Merge with the GitHub tool
 and never through a workflow, because a merge made with Actions' own token
 does not start the workflows that run on `main`. Then, for every issue in
 the batch, comment `Fixed in brAIn <version> (<PR link>). The house will say
-"Not seen since" or "Back again" after it updates.`, swap `devloop:fixing`
-for `devloop:fixed`, and close it with reason `completed`. Fetch `main`
+"Not seen since" or "Back again" after it updates.` — **exactly that
+opening, `Fixed in brAIn <version>`** (or `Fixed in Morph <version>` for a
+Morph batch): the house reads the version off it to decide whether the
+fix has reached it, and a comment that does not say it leaves the house
+unable to tell held from not-installed — swap `devloop:fixing` for
+`devloop:fixed`, and close it with reason `completed`. Fetch `main`
 before starting the next batch.
 
 ## 5. Final sweep, release the lock, report

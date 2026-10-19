@@ -80,6 +80,16 @@ STREAMS: dict[str, dict] = {
         "label": "Wrongs: rules you keep marking Wrong, with your reasons",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 24},
+    # The Resident's own judgement, graded by what the household answered
+    # (`outcomes.candidates`): a look that keeps raising what gets marked
+    # wrong, or passing over what turns out to matter. The scorecard grades
+    # the rules; this grades the model's calls, which is the half the loop
+    # never carried. Off by default because the body quotes the reasons a
+    # person typed when answering.
+    "outcomes": {
+        "label": "Judgement: where brAIn's own looks were wrong here, from what you answered",
+        "cost": "free", "clears": True, "rolling": False,
+        "default_on": False, "default_hours": 24},
     "unmet": {
         "label": "Unmet requests: things you asked the chat for that brAIn could not do",
         "cost": "free", "clears": False, "rolling": False,
@@ -139,7 +149,7 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 # lower than these. Somebody who chose that should not tune eight switches
 # to get it, nor find their reports sitting in a review queue they never
 # open.
-AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "unmet": 24,
+AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
                    "screens": 168, "morph": 1, "look": 0}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}

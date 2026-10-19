@@ -21,6 +21,7 @@ schedule and its own **Run** button:
 | **Faults** | The fault list from ⚙ › Diagnostics: a service that stopped, a run that keeps failing | yes, hourly | nothing |
 | **Scorecard** | How right each house check was on this release. One issue per release, rewritten in place | yes, daily | nothing |
 | **Wrongs** | A check you have marked Wrong at least 3 times and at least half the time, with the reasons you typed | yes, daily | nothing |
+| **Judgement** | Where brAIn's own looks were wrong about this house, from what you answered: a look that keeps raising what you mark Wrong, or passing over what turned out to matter. One issue per thing it is wrong about, with the look's own reasons and what you typed when you answered, for as long as the record stays lopsided | no, daily | nothing |
 | **Unmet requests** | Things brAIn told you in the chat it could not do, once the same one has come up in two or more conversations | no | nothing |
 | **House shape** | Counts only: how many lights, rooms and so on, and which features are on. Lets a UI audit match a real house | no | nothing |
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run that reads the fault list, the scorecard and the reasons you typed when you marked a finding Wrong | no | one run |
@@ -87,10 +88,28 @@ For each finding brAIn:
    Morph report is dated by when Morph last saw it, not by when brAIn read
    it.
 
+   - *Held: not seen since … on brAIn x.y.z (fixed in x.y.z)*: the fix
+     is installed here and the problem stopped. This is the one line that
+     says a fix worked.
+
    These comments are what tell anyone whether a fix actually worked on your
    house. A stream you switch off never claims anything stopped: it was not
-   looking.
-4. **Says how much it matters.** Every new issue opens with a short
+   looking. And brAIn reads which release each fix shipped in off the
+   comment it was closed with, so a problem still seen on a release OLDER
+   than the fix is never reported as the fix failing: it waits. ⚙ says how
+   many fixed reports are waiting for an update and to which release, and
+   the Scorecard issue lists them, because a fix nobody has installed is
+   otherwise indistinguishable from one that held.
+4. **Asks you whether your own request was fixed.** A *What do you want to
+   fix?* report (or an unmet request from the chat) has no fault that
+   stops on its own, so once the release that fixed it is installed here,
+   ONE question appears on Today: *brAIn x.y.z was meant to fix this. Is it
+   fixed here?* Yes puts *The owner confirms this is fixed* on the issue;
+   No sends what you type back with it and reopens it, so the next run
+   looks again. Nothing is written to memory either way, it is asked once
+   per fix, and it is never asked about a report a model wrote (a gap, an
+   idea), which would be a quiz about somebody else's sentence.
+5. **Says how much it matters.** Every new issue opens with a short
    **Impact** section: how often it was seen and over how many days, how
    many rows or runs it touched where brAIn knows, and what you did about it
    (marked Wrong, confirmed). When the day's cap holds reports back, the most
@@ -100,7 +119,7 @@ For each finding brAIn:
    A run whose answer could not be read files nothing, and is counted
    against its stream in the loop's status (`unreadable` in
    `/api/devloop`) rather than passing for a run that found nothing.
-5. **Listens to the answer.** Whoever works through your reports closes each
+6. **Listens to the answer.** Whoever works through your reports closes each
    issue with a label: fixed, declined, not brAIn's, or a duplicate. Once an
    hour brAIn reads those back, using the same issue listing it already
    reads, and shows the tally beside each stream. A Gaps, Ideas, *What do you want to fix?* or
@@ -121,7 +140,14 @@ The same controls are in the terminal as `brain devloop status`,
 
 **Sent**, inside the issue:
 
-- the finding's description;
+- the finding's description, and for a fault about a run, the journal
+  rows behind it (when, which job, the error's own words) and the
+  trouble lines of the add-on's own log (errors, tracebacks), with
+  credentials and addresses taken out, so a fix can be aimed at a line
+  rather than guessed at from a sentence;
+- for **Judgement**, the look's own reasons and what you typed when you
+  answered a card, aliased like everything else;
+- your answer to *Is it fixed here?*, with what you typed if you said No;
 - for **Unmet requests**, the sentence brAIn answered with when it could
   not do something, and how many times and in how many conversations it
   said it. What you typed is not sent;
@@ -221,6 +247,9 @@ anything; this feature is only here to make that easier if you want to.
 ## Going further: brAIn fixing itself
 
 Your reports repository can be the input to a loop that needs nobody in it.
+It also tells you how the other end is doing: ⚙ says when the cloud last
+closed one of this house's reports, so a loop whose cloud half has stopped
+running is a date going stale rather than a silence.
 This repository ships the cloud half:
 
 - `.claude/skills/fix-from-house/SKILL.md`: instructions for a scheduled

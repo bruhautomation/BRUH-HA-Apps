@@ -8,7 +8,11 @@ branch starts with `devloop/` and fails on any of:
 * a changed file under one of `.claude/devloop.json`'s `needs_human_paths`
   (the base branch's copy is read, so a PR cannot loosen its own guard);
 * a change to a `version_only_files` file other than its version line;
-* a deleted test file, or a line that skips or deletes a test.
+* a deleted test file, or a line that skips or deletes a test;
+* a change to the add-ons' code (Python, shell, the integrations) with no
+  change under `tests/`: the skill says "failing test first", and this is
+  the half that holds when a model does not read it. Copy, layout and
+  docs are exempt, because a measure is run by hand and CI's `layout` job.
 
 Usage: devloop_guard.py <base-ref>   (run from the repository root)
 """
@@ -23,6 +27,13 @@ SKIP_RE = re.compile(
     r"^\+.*(@unittest\.skip|\.skipTest\(|pytest\.mark\.(skip|xfail)|@skip\b|"
     r"\bxit\(|\.skip\(|it\.skip|describe\.skip)")
 VERSION_RE = re.compile(r'^[+-]\s*("?version"?\s*:|version:)')
+# What counts as code: a change here with nothing under tests/ is a fix
+# nobody proved. The panel's HTML, CSS, JS and the docs are not on it.
+CODE_RE = re.compile(
+    r"^(?:brain/panel/.*\.py|brain/scripts/.*|brain/integrations/.*|"
+    r"brain/custom_components/.*\.py|brain/ha-mcp-server/.*|"
+    r"morph/service/.*\.py|morph/custom_components/.*\.py|"
+    r"bruh-print/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py)$")
 
 
 def git(*args: str) -> str:
@@ -35,6 +46,8 @@ def main(base: str) -> int:
     protected = config.get("needs_human_paths") or []
     version_only = set(config.get("version_only_files") or [])
     problems: list[str] = []
+    code_changed: list[str] = []
+    tests_changed = False
     for line in git("diff", "--name-status", f"{base}...HEAD").splitlines():
         parts = line.split("\t")
         status, paths = parts[0], parts[1:]
@@ -44,6 +57,14 @@ def main(base: str) -> int:
                 problems.append(f"{path} is on needs_human_paths")
             if status.startswith("D") and path.startswith("tests/"):
                 problems.append(f"{path}: a test file was deleted")
+            if path.startswith("tests/"):
+                tests_changed = True
+            elif CODE_RE.match(path) and not status.startswith("D"):
+                code_changed.append(path)
+    if code_changed and not tests_changed:
+        problems.append("a code change with no test change: "
+                        + ", ".join(code_changed[:5])
+                        + (" …" if len(code_changed) > 5 else ""))
     for path in version_only:
         diff = git("diff", f"{base}...HEAD", "--", path)
         for line in diff.splitlines():

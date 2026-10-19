@@ -26,6 +26,8 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+import traceback
+from pathlib import Path
 
 import paths
 import settings
@@ -72,6 +74,27 @@ def note_fault(area: str, what: str, detail: str = "", *, source: str = "morph",
         row["days"] = (row["days"] + [day])[-60:]
     data[fp] = row
     paths.write_json(_file(), data)
+
+
+def note_exception(area: str, exc: BaseException, *, now: float | None = None) -> None:
+    """A fault in Morph's own service, from the exception it raised.
+
+    The request loop, the watcher and the tick each caught their
+    exceptions and logged them — and nothing else happened: the ledger
+    held the panel's faults (a card that threw, an overlap) and not the
+    service's, so a request loop failing every poll was in the add-on log
+    and nowhere the development loop could see. The row names the type,
+    the message and the deepest frame in Morph's own code (digits fold in
+    the fingerprint, so a line that moves is the same fault), and carries
+    the traceback as its detail."""
+    frames = traceback.extract_tb(exc.__traceback__) or []
+    here = str(Path(__file__).resolve().parent)
+    frame = next((f for f in reversed(frames) if str(f.filename).startswith(here)), None)
+    frame = frame or (frames[-1] if frames else None)
+    where = f"{Path(frame.filename).name}:{frame.lineno}" if frame else "?"
+    what = f"{type(exc).__name__} in {where}: {exc}"
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    note_fault(area, what, detail[-DETAIL_MAX:], now=now)
 
 
 REQUEST_MAX = 4000

@@ -132,6 +132,7 @@ import shutil
 import html as html_lib
 import subprocess
 import threading
+import traceback
 import time
 from pathlib import Path
 
@@ -153,6 +154,7 @@ import devloop.github
 import devloop.screens
 import devloop.streams
 import devloop.upstream
+import devloop.verify
 import devloop_archive
 import card_tags
 import cases
@@ -17044,9 +17046,80 @@ async def _devloop_tick(force: bool = False) -> dict:
                 payload = await asyncio.to_thread(_diagnostics_payload)
             ran[stream] = await _devloop_stream(stream, payload, pressed=force)
         sent = await asyncio.to_thread(devloop.upstream.send_due)
-        return {"ran": ran, "sent": sent}
+        # After the send, so the verdicts it read back are what decides
+        # whether a fix has landed and is worth asking about.
+        asked = await _devloop_verify_pass()
+        return {"ran": ran, "sent": sent, "asked": asked}
     finally:
         devloop.upstream.STATE["running"] = False
+
+
+async def _devloop_verify_pass(now: float | None = None) -> int:
+    """Ask the owner, once per fix, whether a request of theirs the cloud
+    closed as fixed is fixed on this house now that the release is
+    installed (`devloop/verify.py`). Files through `findings_store.add_case`
+    like every question brAIn asks; deterministic and free, so no gate."""
+    now = time.time() if now is None else now
+    try:
+        data = await asyncio.to_thread(devloop.upstream._load)
+        state = await asyncio.to_thread(devloop.verify.load)
+        live = {int(f.get("ts") or 0)
+                for f in await asyncio.to_thread(findings_store.list_all)
+                if f.get("source") == devloop.verify.SOURCE}
+        entries = devloop.verify.due(data["items"], str(data.get("version") or ""),
+                                     state, live)
+        asked = 0
+        for entry in entries:
+            row = await asyncio.to_thread(
+                findings_store.add_case, devloop.verify.question_row(entry), when=now)
+            if row:
+                devloop.verify.record_asked(state, entry["fp"], int(row["ts"]),
+                                            str(entry["fixed_in"]), now)
+                asked += 1
+        if asked:
+            await asyncio.to_thread(devloop.verify.save, state)
+            log.info("devloop: asked whether %d fix(es) held", asked)
+        return asked
+    except Exception as exc:  # noqa: BLE001 — a question, not the loop
+        log.warning("devloop: could not ask about a fix: %s", exc)
+        return 0
+
+
+async def _end_devloop_verify(finding: dict, spec: dict,
+                              note: str) -> tuple[dict, str]:
+    """Yes confirms the fix on the issue; No reopens it with the words
+    typed. Neither writes a memory line: it is a fact about brAIn."""
+    state = await asyncio.to_thread(devloop.verify.load)
+    fp = devloop.verify.fp_for_finding(state, finding)
+    accept = spec.get("label") == "accepted"
+
+    def settle() -> dict:
+        if fp:
+            devloop.upstream.owner_answer(fp, accept, note)
+            devloop.verify.record_answer(state, fp, accept, time.time())
+            devloop.verify.save(state)
+        # Settled under the kind no scorecard counts: the answer is about
+        # a fix to brAIn, and must not read as this producer being right
+        # or wrong about the house.
+        findings_store.settle_and_clear(finding["ts"], "not_applicable", note=note)
+        return _findings_payload()
+
+    return await asyncio.to_thread(settle), ""
+
+
+def _devloop_verify_undo(entry: dict) -> None:
+    finding = (entry or {}).get("finding") or {}
+    if finding.get("source") != devloop.verify.SOURCE:
+        return
+    try:
+        state = devloop.verify.load()
+        fp = devloop.verify.fp_for_finding(state, finding)
+        if fp:
+            devloop.upstream.forget_owner_answer(fp)
+            devloop.verify.forget_answer(state, fp)
+            devloop.verify.save(state)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("could not undo a fix question: %s", exc)
 
 
 DEVLOOP_LOOKS: dict = {"running": "", "last": None}
@@ -17067,13 +17140,35 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
         version = up._version(payload)
         names = dict(_NAMES)
         if stream == "faults":
-            return await asyncio.to_thread(up.sweep, payload, names)
+            # The add-on log's trouble lines ride on a fault issue, so the
+            # cloud fixer reads the traceback rather than guessing at it.
+            # Fetched here (a Supervisor call, hourly) and handed in, so
+            # the stream stays pure.
+            if not await asyncio.to_thread(devloop.stream_on, "faults"):
+                rows = []
+            else:
+                log_text = await asyncio.to_thread(reports.fetch_addon_log)
+                rows = dl_streams.faults(payload, log_text)
+            return await asyncio.to_thread(up.ingest, "faults", rows, payload, names)
         if stream in ("scorecard", "wrongs"):
             score = await asyncio.to_thread(findings_store.scorecard)
-            rows = (dl_streams.scorecard(score, payload, version)
+            rows = (dl_streams.scorecard(score, payload, version,
+                                         await asyncio.to_thread(up.awaiting_update))
                     if stream == "scorecard" else
                     dl_streams.wrongs(score, await asyncio.to_thread(
                         findings_store._load_settled)))
+            return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
+        if stream == "outcomes":
+            # The Resident's judgement, graded by the household's answers:
+            # the same deterministic join the nightly reflect reads, and
+            # the same candidates. Free, and never a model.
+            def grade() -> list[dict]:
+                graded = outcomes.load_graded(time.time())
+                return dl_streams.outcomes(
+                    outcomes.report(graded),
+                    outcomes.candidates(outcomes.tallies(outcomes.items(graded))),
+                    version)
+            rows = await asyncio.to_thread(grade)
             return await asyncio.to_thread(up.ingest, stream, rows, payload, names)
         if stream == "unmet":
             rows = await asyncio.to_thread(
@@ -18106,6 +18201,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     if finding.get("source") == mute_offer.SOURCE:
         # "Stop raising this rule?": Yes is the mute, No is remembered.
         return await _end_mute_offer(finding, spec, note)
+    if finding.get("source") == devloop.verify.SOURCE:
+        # "Is this fixed?": the answer goes back on the report; nothing
+        # about it is a fact about the house.
+        return await _end_devloop_verify(finding, spec, note)
     if finding.get("source") == findings_store.MORPH_SOURCE:
         # Morph's own suggestion about its dashboard: the answer is Morph's
         # to act on (`ended_morph` in cases.json), and none of it is a fact
@@ -19689,6 +19788,7 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
     # A Yes to a notification suggestion took a clause with it.
     _notify_learn_undo(entry)
     _mute_offer_undo(entry)
+    _devloop_verify_undo(entry)
     return restored, _findings_payload()
 
 
@@ -23819,12 +23919,89 @@ async def h_chat_state(request: web.Request) -> web.Response:
 # App wiring
 # ---------------------------------------------------------------------------
 
+# A route that raised is a fault the loop could not see. aiohttp answered
+# 500, logged the traceback at its own logger and nothing else happened:
+# no journal row, so no fault row in ⚙ › Diagnostics, no problem file with
+# the log tail, no issue in the development loop — the one class of
+# failure every other surface reports was invisible precisely when it
+# was the panel's own. The middleware writes one journal row per
+# (route, exception) per `CRASH_SPACING_S`, with the exception's type,
+# message and the panel frame it came from, and re-raises: the answer
+# the browser gets is unchanged, and a polled route that crashes every
+# 2.5 s is one row every ten minutes rather than the whole journal.
+CRASH_SPACING_S = 600
+_CRASH_SEEN: dict[str, float] = {}
+_ROUTE_SAFE_RE = re.compile(r"[^\x20-\x7e]")
+_KNOWN_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+
+
+def crash_error(exc: BaseException, panel_dir: str = "") -> str:
+    """``TypeError: … @ server.py:1234`` — the message and the deepest
+    frame inside the panel's own code, which is where a fix is aimed."""
+    frames = traceback.extract_tb(exc.__traceback__) or []
+    panel_dir = panel_dir or str(Path(__file__).resolve().parent)
+    # The middleware's own frame (where the exception passed through) is
+    # in the panel too and is never where the fix goes.
+    frame = next((f for f in reversed(frames)
+                  if str(f.filename).startswith(panel_dir)
+                  and f.name != "crash_middleware"), None)
+    frame = frame or (frames[-1] if frames else None)
+    where = f" @ {Path(frame.filename).name}:{frame.lineno}" if frame else ""
+    return f"{type(exc).__name__}: {exc}"[:200] + where
+
+
+def note_crash(route: str, exc: BaseException, now: float | None = None) -> bool:
+    """One journal row for an unhandled exception in a route. Returns
+    whether a row was written (false inside the spacing window)."""
+    now = time.time() if now is None else now
+    key = f"{route}|{type(exc).__name__}"
+    if now - _CRASH_SEEN.get(key, 0.0) < CRASH_SPACING_S:
+        return False
+    _CRASH_SEEN[key] = now
+    if len(_CRASH_SEEN) > 200:
+        for k in sorted(_CRASH_SEEN, key=_CRASH_SEEN.get)[:100]:
+            _CRASH_SEEN.pop(k, None)
+    journal.record("panel", "crash", error=crash_error(exc),
+                   extra={"stage": route[:120]}, now=now)
+    return True
+
+
+@web.middleware
+async def crash_middleware(request: web.Request, handler):
+    try:
+        return await handler(request)
+    except (web.HTTPException, asyncio.CancelledError):
+        raise
+    except Exception as exc:
+        # What is written is the router's own canonical pattern and a
+        # method from a fixed list — never the caller's path or verb, which
+        # is what a log line or a journal row must not be built from
+        # (CodeQL's log-injection rule). A request that matched no route
+        # raised HTTPNotFound above and never reaches here, so the
+        # fallback names the absence rather than quoting the path.
+        route = "(no route)"
+        try:
+            resource = request.match_info.route.resource
+            if resource is not None:
+                route = _ROUTE_SAFE_RE.sub("?", str(resource.canonical))[:120]
+        except Exception:  # noqa: BLE001 — the absence is enough
+            pass
+        method = request.method if request.method in _KNOWN_METHODS else "?"
+        log.exception("unhandled error in %s %s", method, route)
+        try:
+            note_crash(f"{method} {route}", exc)
+        except Exception:  # noqa: BLE001 — accounting never fails the answer
+            pass
+        raise
+
+
 def make_app() -> web.Application:
     # 1 MiB: leaves room for a full memory-file edit (MAX_MEMORY_CHARS plus
     # JSON escaping) and for /api/memory/import, whose payload is a whole
     # export — the document plus every ledger. Everything else is far
     # smaller.
-    app = web.Application(client_max_size=1024 * 1024)
+    app = web.Application(client_max_size=1024 * 1024,
+                          middlewares=[crash_middleware])
     app.router.add_get("/", h_index)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
