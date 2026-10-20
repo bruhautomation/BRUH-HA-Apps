@@ -34,9 +34,10 @@ PROMPT = """Someone typed this into the Ask line of Morph, the house's dashboard
 which is brAIn's face. Answer them as brAIn's chat would: read the house with
 your tools when the answer depends on it, say it plainly in a few sentences,
 and name devices by their friendly names (the page lifts what you name).
-If they asked you to change something in Home Assistant, do it, check it,
-and say what changed. You cannot change the dashboard's layout or Morph's
-code from here: if that is what they want, say so in one sentence.
+You have the same reach as the chat. If they asked you to change something,
+in Home Assistant or on the dashboard (/config/morph/dashboard.yaml, read
+/config/morph/AGENTS.md first, never run git there), do all of it, check it,
+and say in one sentence what changed.
 
 They wrote:
 """

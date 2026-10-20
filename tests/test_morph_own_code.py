@@ -589,7 +589,7 @@ class TestBrainAsksWhenTheChoiceIsTheirs(unittest.TestCase):
             return await finish(self.env, out)
         second = asyncio.run(go())
         self.assertEqual("ui", second["scope"])
-        self.assertIn("Scope: MORPH ONLY", self.fake.seen[1]["prompt"])
+        self.assertIn("Scope: everything the request needs", self.fake.seen[1]["prompt"])
 
     def test_a_question_that_is_not_one_is_dropped(self):
         clean = self.env.tell.clean_question

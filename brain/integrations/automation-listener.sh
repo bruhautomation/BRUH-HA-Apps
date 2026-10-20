@@ -111,6 +111,28 @@ if [ -r /opt/scripts/brain-landing.sh ]; then
     # shellcheck disable=SC1091
     source /opt/scripts/brain-landing.sh
 fi
+# "Let brAIn act without asking" (brain_perms_flag): whether a task a person
+# asked for runs with the chat's reach. Optional: without the library no task
+# is widened, which is the direction a missing guard may fall.
+if [ -r /opt/scripts/brain-permissions.sh ]; then
+    # shellcheck disable=SC1091
+    source /opt/scripts/brain-permissions.sh
+fi
+
+# A task a PERSON asked for — a conversation (Morph's Ask, Design with brAIn)
+# or one carrying their words (Morph's Tell) — is the chat by another door.
+# With "Let brAIn act without asking" on it gets exactly what the chat gets:
+# the full grant whatever scope the caller asked for, the chat's channel (so
+# the action gate's switch path applies), and no permission prompts. Off,
+# nothing changes. A task nobody typed (an insight job, BRight's director,
+# an automation's brain.run_task) is never widened by this.
+#   person_task_acts "<conversation>" "<words>"  → exit 0 to widen
+person_task_acts() {
+    local conversation="$1" words="$2"
+    [ "$conversation" = "true" ] || [ -n "$words" ] || return 1
+    command -v brain_perms_flag > /dev/null 2>&1 || return 1
+    [ -n "$(brain_perms_flag)" ]
+}
 
 # Resolve the claude binary (see assist-listener.sh for details).
 CLAUDE_BIN="claude-run"
@@ -601,6 +623,14 @@ process_task() {
         unset BRAIN_PERSON_WORDS
     fi
 
+    # Somebody asked for this and the switch is on: the chat's reach.
+    local task_acts=""
+    if person_task_acts "$task_conversation" "$task_words"; then
+        task_acts=true
+        task_tools=""
+        export BRAIN_CHANNEL=chat
+    fi
+
     # A task that names no model takes the plan's tier for a task
     # (`BRAIN_MODEL_TASK`, off panel/model_plan.py via /data/.brain_env);
     # "default" is the request saying the same thing in a word.
@@ -660,6 +690,13 @@ process_task() {
     fi
     if [ -n "$tool_flags_out" ]; then
         mapfile -t tool_flags <<< "$tool_flags_out"
+    fi
+    # No prompt can be answered in a -p run, so a tool outside the headless
+    # allow-list would simply fail. Bypass reaches what the chat reaches: the
+    # platform deny-list, the hooks (protected entities, the gate's floors and
+    # house rules) and the MCP server's tripwire still hold.
+    if [ "$task_acts" = "true" ]; then
+        tool_flags+=(--permission-mode bypassPermissions)
     fi
 
     # A scheduled run answers to the panel's pause and budget before it

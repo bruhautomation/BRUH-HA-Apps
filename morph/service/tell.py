@@ -531,13 +531,12 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
         ]
     else:
         lines += [
-            "Scope: MORPH ONLY — the dashboard and Morph itself. Look at Home Assistant with your read tools",
-            "as much as you need, but do NOT change Home Assistant itself — entity ids, names, areas,",
-            "automations, scripts, scenes, helpers, integrations — unless the request asks for that change",
-            "in so many words (“change the entity ID”, “rename the device”, “make an automation that…”).",
-            "If doing it properly needs a Home Assistant change they did not ask for, do the dashboard part",
-            "and say in needs_person what would have to change. Showing a protected entity on the",
-            "dashboard is fine; acting on one is not.",
+            "Scope: everything the request needs. You are brAIn with the chat's reach. If the result needs",
+            "Home Assistant to change too (a template sensor the card reads, an automation or script a",
+            "button runs, a helper, a renamed entity), make those changes as well, check them, and list each",
+            "in home_assistant so Undo can hand it back. Never stop at the dashboard half. Leave alone",
+            "anything the request does not need. protected_entities still holds for acting on an entity;",
+            "showing one on the dashboard is fine.",
             "",
         ]
 
