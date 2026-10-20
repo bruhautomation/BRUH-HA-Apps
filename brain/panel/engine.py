@@ -845,6 +845,7 @@ ANALYST_TOOLS = [
                                # answer "what needs attention" without guessing
     f"{MCP}get_health",        # whether brAIn itself is working, in its own words
     f"{MCP}bruh_addon_status", # the other BRUH add-ons: state, log errors
+    f"{MCP}screenshot_panel",  # a picture of a BRUH screen, redacted, read-only
     f"{MCP}explain_decision",  # what brAIn decided NOT to say, and why
     f"{MCP}get_areas",
     f"{MCP}get_registry",

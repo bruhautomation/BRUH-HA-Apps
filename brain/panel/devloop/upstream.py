@@ -1139,7 +1139,8 @@ def _upload_gallery(token: str, repo: str, entry: dict) -> bool:
             entry["error"] = "a picture changed on disk after it was redacted"
             return False
         url, err = github.put_file(
-            token, repo, screens.repo_path(entry.get("version", "dev"), g["name"]),
+            token, repo, screens.repo_path(entry.get("version", "dev"), g["name"],
+                                           product_of(entry)),
             data, f"brAIn screens: {g['screen']} at {g['width']}px {g['scheme']}")
         if err:
             entry["error"] = err

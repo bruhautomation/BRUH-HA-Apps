@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.4.0
+
+### Added
+
+- **brAIn photographs every BRUH screen, not just its own.** The Screens stream now also takes pictures of GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft's panels, of Morph's dashboard, and of the BRUH Print, Bambu and GardenRX Lovelace cards. The cards and the dashboard are drawn on your house's real data. Each add-on gets its own UI audit issue per release: the pictures at a phone's width (light and dark) and a laptop's, the measured layout faults, and a label for the directory its fix belongs in. No add-on needs a change.
+- **The chat can look at a screen.** A new `screenshot_panel` tool photographs any screen of brAIn or another BRUH add-on, Morph's dashboard or a card, and hands the picture to Claude with the measured layout problems. Tell brAIn "the GardenRX table runs off my phone" and it looks before it answers or files the report. The *What do you want to fix?* run can use it too. Nothing is kept, and it works with the development loop switched off.
+
+### Security
+
+- **Taking a picture cannot change anything.** While another add-on's panel or a card is photographed, every request that is not a read is stopped in the browser, and no WebSocket may open. GardenRX's data route is let through only for a select, and BRUH Print's label preview because it only renders. The cards' preview page answers reads only and refuses every service call. The issue lists what was held back.
+- **Text inside cards is redacted too.** Redaction, covering and the layout measures now reach inside every card's shadow DOM, where the Lovelace cards and Morph draw everything.
+
 ## 3.3.0
 
 ### Added

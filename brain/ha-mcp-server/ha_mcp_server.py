@@ -2271,6 +2271,28 @@ def bruh_addon_status(addon=""):
     return _panel_get(f"/api/bruh_addons{query}")
 
 
+def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light"):
+    """One screen of brAIn or another BRUH add-on, photographed now — so
+    the chat can LOOK at what somebody is describing. Redacted, guarded
+    against every write, and kept nowhere (the panel's
+    `/api/devloop/screenshot`). With no ``screen`` it lists the screens.
+    The measured layout problems ride beside the picture."""
+    answer = _panel_send("POST", "/api/devloop/screenshot", {
+        "addon": addon or "brAIn", "screen": screen or "", "width": width,
+        "scheme": scheme}, timeout=180)
+    if not isinstance(answer, dict) or answer.get("error") or "png" not in answer:
+        return answer
+    raw = base64.b64decode(answer.pop("png"))
+    encoded = base64.b64encode(raw).decode()
+    mime = "image/png"
+    if len(encoded) > MAX_SNAPSHOT_B64:
+        scaled, _detail = _downscale_jpeg(raw, 2000)
+        encoded, mime = base64.b64encode(scaled).decode(), "image/jpeg"
+        if len(encoded) > MAX_SNAPSHOT_B64:
+            return {"error": "the picture is too large even scaled down — try a narrower width"}
+    return {"_mcp_image": {"data": encoded, "mimeType": mime}, **answer}
+
+
 def report_bug(addon, title, what, evidence="", asked="", done_when="", ui=False):
     """File a report about a BRUH add-on for the development loop: the
     private reports repository the owner set up, which a cloud routine
@@ -7036,6 +7058,35 @@ TOOLS = [
         }
     },
     {
+        "name": "screenshot_panel",
+        "description": (
+            "Take a picture of a screen of brAIn or another BRUH add-on "
+            "(GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft; "
+            "Morph's dashboard and the add-ons' Lovelace cards are drawn on "
+            "this house's real data) and LOOK at it. Use it whenever the owner "
+            "says something looks wrong, is cut off, is ugly or is confusing, "
+            "and to check a screen before and after a change. Call it with no "
+            "screen to list an add-on's screens. width 390 is a phone (touch), "
+            "1200 a laptop; scheme light or dark. The picture is redacted "
+            "(calendar events, addresses, credentials blanked), nothing on the "
+            "screen can change anything while it is taken, and the layout "
+            "problems a script can measure (off the edge, too small to tap, "
+            "overlaps, low contrast) come back beside it. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "addon": {"type": "string",
+                          "description": "brAIn (default) or a BRUH add-on's name"},
+                "screen": {"type": "string",
+                           "description": "A screen's id or label; omit to list them"},
+                "width": {"type": "integer", "minimum": 320, "maximum": 1920,
+                          "description": "Window width in px (390 phone, 1200 laptop)"},
+                "scheme": {"type": "string", "enum": ["light", "dark"]},
+            },
+        },
+    },
+    {
         "name": "bruh_addon_status",
         "description": (
             "How the other BRUH add-ons are doing: GardenRX, BRUH Bambu "
@@ -7476,6 +7527,7 @@ TOOL_IMPLEMENTATIONS = {
     "recall": "recall",
     "get_findings": "get_findings",
     "bruh_addon_status": "bruh_addon_status",
+    "screenshot_panel": "screenshot_panel",
     "report_bug": "report_bug",
     "get_health": "get_health",
     "get_statistics": "get_statistics",
@@ -7560,7 +7612,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
-    "bruh_addon_status", "report_bug",
+    "bruh_addon_status", "report_bug", "screenshot_panel",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

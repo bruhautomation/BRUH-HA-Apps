@@ -120,7 +120,7 @@ STREAMS: dict[str, dict] = {
     # go to the private repository with the issue; `devloop/screens.py`
     # says what is blanked and covered before anything is captured.
     "screens": {
-        "label": "Screens: pictures of brAIn's own panel, redacted, with the layout faults measured",
+        "label": "Screens: pictures of every BRUH panel and card, redacted, with the layout faults measured",
         "cost": "free", "clears": False, "rolling": True,
         "default_on": False, "default_hours": 168},
     # Morph — the dashboard add-on brAIn designs — keeps a ledger of its own
