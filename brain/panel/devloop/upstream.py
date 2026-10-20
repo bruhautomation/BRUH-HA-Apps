@@ -64,6 +64,7 @@ from textclip import clip
 from . import STREAMS, data_dir, enabled, load_settings, read_token, stream_on
 from . import github
 from .aliases import Aliases
+from .siblings import PRODUCTS, spec_by_name
 
 log = logging.getLogger("brain.devloop")
 
@@ -110,7 +111,9 @@ REASON_CHARS = 200
 # a fault still seen on a release OLDER than the fix is not evidence
 # against the fix, and a house with auto-update off used to reopen every
 # fixed report a day after its next unrelated update.
-FIXED_IN_RE = re.compile(r"\bFixed in (?:brAIn|Morph) v?(\d+\.\d+\.\d+)")
+FIXED_IN_RE = re.compile(
+    r"\bFixed in (brAIn|" + "|".join(re.escape(p) for p in PRODUCTS)
+    + r") v?(\d+\.\d+\.\d+)")
 FIXED_IN_PER_PASS = 10
 # How long a fixed report waits for the house to update before the wait is
 # said out loud (in the scorecard body and ⚙), rather than read as silence.
@@ -337,6 +340,24 @@ def running_at_least(version, fixed_in) -> bool | None:
     return have >= need
 
 
+def product_of(entry: dict) -> str:
+    """Which BRUH add-on a report is about: brAIn unless the row said."""
+    product = str((entry or {}).get("product") or "")
+    return product if product in PRODUCTS else "brAIn"
+
+
+def running_for(entry: dict, version: str, products: dict | None) -> str:
+    """The release of the report's OWN add-on this house runs. brAIn's is
+    the queue's ``version``; another add-on's is what the siblings stream
+    last read off the Supervisor, or "" ("could not tell") when nothing
+    has. A GardenRX fix compared against brAIn's version would be
+    "installed" or "missing" by accident of two unrelated numbers."""
+    product = product_of(entry)
+    if product == "brAIn":
+        return str(version or "")
+    return str((products or {}).get(product) or "")
+
+
 # ---------------------------------------------------------------------------
 # Sweeping
 # ---------------------------------------------------------------------------
@@ -353,13 +374,18 @@ def sweep(diagnostics: dict, names: dict | None = None,
 
 
 def ingest(stream: str, rows: list[dict], diagnostics: dict | None = None,
-           names: dict | None = None, now: float | None = None) -> dict:
+           names: dict | None = None, now: float | None = None, *,
+           products: dict | None = None, unread=()) -> dict:
     """File one stream's rows into the queue and stamp the stream as run.
-    Never raises."""
+
+    ``products`` is the installed version of each other BRUH add-on this
+    pass read; ``unread`` names the add-ons it could NOT look at, whose
+    reports in this stream are marked unlooked so none is told it has not
+    been seen since. Never raises."""
     try:
         with _LOCK:
             return _ingest(stream, rows or [], diagnostics or {}, names or {},
-                           now or time.time())
+                           now or time.time(), products or {}, tuple(unread or ()))
     except Exception as exc:  # noqa: BLE001 — see the module docstring
         log.warning("devloop %s pass failed: %s", stream, exc)
         STATE["error"] = f"{stream} pass failed: {exc}"[:300]
@@ -367,7 +393,7 @@ def ingest(stream: str, rows: list[dict], diagnostics: dict | None = None,
 
 
 def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
-            now: float) -> dict:
+            now: float, products: dict | None = None, unread: tuple = ()) -> dict:
     if stream not in STREAMS:
         raise ValueError(f"unknown stream: {stream}")
     settings = load_settings()
@@ -413,6 +439,15 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         # every update about a trace nobody had seen in a week.
         seen_at = _seen_at(row, now)
         fresh = seen_at > float(entry.get("last_seen") or 0)
+        # A report about another BRUH add-on is dated by THAT add-on's
+        # release, which is what its fix will be read against.
+        product = str(row.get("product") or "")
+        if product in PRODUCTS:
+            entry["product"] = product
+            entry["addon"] = str(row.get("addon") or "")[:40]
+        row_version = (str(row.get("product_version") or "")
+                       or str((products or data.get("products") or {}).get(product) or "")
+                       or "?") if product in PRODUCTS else version
         entry.update({
             "stream": stream, "rolling": rolling,
             "where": where[:200], "what": what[:300],
@@ -427,18 +462,19 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                 entry["returned"] = True
                 entry["returned_at"] = seen_at
                 entry["cleared_noted"] = False
-            if version != entry.get("version") or not entry.get("version_since"):
+            if row_version != entry.get("version") or not entry.get("version_since"):
                 # The first sighting on this release, which is what a
                 # closed report is reopened against (`_follow_up`).
                 entry["version_since"] = seen_at
-            entry.update(last_seen=seen_at, version=version,
+            entry.update(last_seen=seen_at, version=row_version,
                          seen=int(entry.get("seen") or 0) + 1)
             day = _day(seen_at)
             days = [d for d in (entry.get("days") or []) if isinstance(d, str)]
             if day not in days:
                 days.append(day)
             entry["days"] = days[-MAX_DAYS:]
-        entry.setdefault("version", version)
+        entry.setdefault("version", row_version)
+        entry.pop("unlooked", None)
         if "impact" in row:
             entry["impact"] = _clean_impact(row.get("impact"))
         # A report about a screen of the panel. The label tells the cloud to
@@ -448,6 +484,18 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         if isinstance(row.get("gallery"), list):
             entry["gallery"] = _clean_gallery(row["gallery"])
             entry["capture"] = str(row.get("capture") or "")[:20]
+    # What this pass could not look at: its reports stay, and say nothing.
+    if unread:
+        for entry in items.values():
+            if (isinstance(entry, dict) and entry.get("stream") == stream
+                    and entry.get("fp") not in seen_now
+                    and product_of(entry) in unread):
+                entry["unlooked"] = True
+    if products:
+        known = data.setdefault("products", {})
+        for name, ver in products.items():
+            if name in PRODUCTS and ver:
+                known[name] = str(ver)[:40]
     _prune(items)
     data["swept_at"] = now
     # The release this house runs, read by `awaiting_update` and the
@@ -635,7 +683,7 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
     if entry.get("gallery"):
         lines += [""] + _gallery_lines(entry)
     lines += ["", "| | |", "|---|---|",
-              f"| brAIn | {clean(entry.get('version', '?'))} |",
+              f"| {product_of(entry)} | {clean(entry.get('version', '?'))} |",
               f"| First seen | {_date(entry.get('first_seen'))} |"]
     # A rolling issue is rewritten only when what it says changes, so it
     # carries no per-pass counter: one would make every pass a rewrite.
@@ -776,12 +824,14 @@ def _send_due(now: float) -> dict:
             if _rewrite(token, repo, entry, aliases):
                 updated += 1
         elif _follow_up(token, repo, entry, now, aliases,
-                        running=str(data.get("version") or "")):
+                        running=running_for(entry, str(data.get("version") or ""),
+                                            data.get("products"))):
             updated += 1
     # The owner's answers to "is this fixed?", posted after the follow-ups
     # so a "Not fixed" reopen is the last word on the issue this pass.
     updated += _post_owner_answers(token, repo, items, aliases,
-                                   running=str(data.get("version") or ""))
+                                   running=str(data.get("version") or ""),
+                                   products=data.get("products"))
     _save(data)
     _vsave(verdicts)
     aliases.save()
@@ -912,21 +962,27 @@ def _fetch_fixed_in(token: str, repo: str, resolved: dict,
             continue
         asked += 1
         body, err = github.last_comment(token, repo, int(row.get("issue") or 0))
-        m = FIXED_IN_RE.search(body or "")
+        entry = tracked.get(int(row.get("issue") or 0))
+        want = product_of(entry) if isinstance(entry, dict) else ""
+        matches = list(FIXED_IN_RE.finditer(body or ""))
+        # A batch comment can name two products; the one this report is
+        # about wins, and any is better than none.
+        m = next((x for x in matches if x.group(1) == want), None) \
+            or (matches[0] if matches else None)
         if not m:
             row["fixed_in_tries"] = int(row.get("fixed_in_tries") or 0) + 1
             if body is None:
                 log.info("devloop: could not read which release fixed #%s: %s",
                          row.get("issue"), err)
             continue
-        row["fixed_in"] = m.group(1)
+        row["fixed_in"] = m.group(2)
         row.pop("fixed_in_tries", None)
-        entry = tracked.get(int(row.get("issue") or 0))
         if isinstance(entry, dict) and entry.get("fp") == fp:
-            entry["fixed_in"] = m.group(1)
+            entry["fixed_in"] = m.group(2)
 
 
-def awaiting_update(items: dict | None = None, version: str = "") -> list[dict]:
+def awaiting_update(items: dict | None = None, version: str = "",
+                    products: dict | None = None) -> list[dict]:
     """Fixed reports whose fix is in a release this house does not run
     yet: the issue, what it was about, the release it needs and how long
     it has waited. A fix nothing has installed is not a fix that held,
@@ -934,14 +990,17 @@ def awaiting_update(items: dict | None = None, version: str = "") -> list[dict]:
     if items is None:
         data = _load()
         items, version = data["items"], version or str(data.get("version") or "")
+        products = products if products is not None else data.get("products")
     out = []
     for entry in items.values():
         if not isinstance(entry, dict) or entry.get("verdict") != "fixed":
             continue
         need = entry.get("fixed_in")
-        if not need or running_at_least(version, need) is not False:
+        if not need or running_at_least(
+                running_for(entry, version, products), need) is not False:
             continue
         out.append({"issue": int(entry.get("issue") or 0),
+                    "product": product_of(entry),
                     "what": clip(str(entry.get("what") or ""), 120),
                     "fixed_in": str(need),
                     "since": float(entry.get("closed_at") or 0)})
@@ -1111,6 +1170,13 @@ def _rewrite(token: str, repo: str, entry: dict, aliases: Aliases) -> bool:
     return True
 
 
+def _addon_labels(entry: dict) -> list[str]:
+    """``devloop:<key>`` for a report about another BRUH add-on, which is
+    how the cloud routine knows the directory its fix belongs in."""
+    spec = spec_by_name(product_of(entry))
+    return [f"devloop:{spec['key']}"] if spec and entry.get("stream") != "morph" else []
+
+
 def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
           verdicts: dict | None = None) -> bool:
     number, err = github.find_issue(token, repo, entry["fp"])
@@ -1126,7 +1192,8 @@ def _file(token: str, repo: str, entry: dict, aliases: Aliases, now: float,
         issue, err = github.create_issue(
             token, repo, doc["title"], doc["body"],
             labels=[github.LABEL, f"devloop:{entry.get('stream') or 'faults'}"]
-            + (["devloop:ux"] if entry.get("ux") is True else []))
+            + (["devloop:ux"] if entry.get("ux") is True else [])
+            + _addon_labels(entry))
         if issue:
             entry["created_here"] = True
             entry["body_digest"] = _digest(doc["body"])
@@ -1185,7 +1252,7 @@ def forget_owner_answer(fp: str) -> bool:
 
 
 def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
-                        running: str = "") -> int:
+                        running: str = "", products: dict | None = None) -> int:
     """The owner's verdict on a fix, as the comment the cloud reads: a
     confirmation, or "Not fixed" with their words and the issue reopened
     so the next run's drain takes it. Their words are aliased and
@@ -1202,12 +1269,14 @@ def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
         # about; the entry's own version is the release the report was
         # last SEEN on, and a request has never been seen since it was
         # filed.
-        version = running or str(entry.get("version") or "?")
+        product = product_of(entry)
+        version = (running_for(entry, running, products)
+                   or str(entry.get("version") or "?"))
         if owner.get("verdict") == "held":
-            text, reopen = f"The owner confirms this is fixed on brAIn {version}.", False
+            text, reopen = f"The owner confirms this is fixed on {product} {version}.", False
         else:
             words = aliases.apply(scrub(str(owner.get("note") or "")))
-            text = f"Not fixed on brAIn {version}" + (f": {words}" if words else ".")
+            text = f"Not fixed on {product} {version}" + (f": {words}" if words else ".")
             reopen = True
         ok, err = github.comment(token, repo, number, text, reopen=reopen)
         if not ok:
@@ -1270,6 +1339,7 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
     last_seen = float(entry.get("last_seen") or 0)
     absent = now - last_seen
     version = str(entry.get("version") or "?")
+    product = product_of(entry)
     text, reopen = "", False
     # "Not seen" is a claim only a sweep that LOOKED can make: with the
     # stream switched off nothing was looking, and silence is not the
@@ -1281,23 +1351,23 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
         return False
     if entry.get("verdict") in NOISE:
         return False
-    looked = stream_on(stream)
+    looked = stream_on(stream) and not entry.get("unlooked")
     fixed_in = str(entry.get("fixed_in") or "")
     # Whether the fix is installed is asked of the release the house RUNS
     # (the queue's, stamped by every sweep), never the one the fault was
     # last seen on: a fault that stopped was last seen on the old release
     # by definition.
-    running = running or version
+    running = running or (version if product == "brAIn" else "")
     arrived = running_at_least(running, fixed_in) if fixed_in else None
     if looked and absent >= CLEAR_AFTER_S and not entry.get("cleared_noted"):
         if entry.get("verdict") == "fixed" and arrived:
             # The fix is installed and the fault stopped: the one sentence
             # that closes the loop, said as the claim it is.
             text = (f"Held: not seen since {_date(entry.get('last_seen'))} "
-                    f"on brAIn {running} (fixed in {fixed_in}).")
+                    f"on {product} {running} (fixed in {fixed_in}).")
         else:
             text = (f"Not seen since {_date(entry.get('last_seen'))} "
-                    f"(brAIn {version}).")
+                    f"({product} {version}).")
         entry["cleared_noted"] = True
     elif absent < CLEAR_AFTER_S and (entry.get("returned")
                                      or version != entry.get("noted_version")):
@@ -1332,12 +1402,12 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
                 # Not evidence yet: say nothing, and look again next pass.
                 return False
             reopen = True
-            text = (f"Back again on brAIn {version} after this was closed "
+            text = (f"Back again on {product} {version} after this was closed "
                     f"(last seen {_date(entry.get('last_seen'))}).")
         elif entry.get("returned"):
-            text = f"Back again on brAIn {version}."
+            text = f"Back again on {product} {version}."
         else:
-            text = f"Still happening on brAIn {version}."
+            text = f"Still happening on {product} {version}."
         entry["returned"] = False
         entry["noted_version"] = version
     if not text:
@@ -1366,7 +1436,8 @@ def _follow_up(token: str, repo: str, entry: dict, now: float,
 def status() -> dict:
     data = _load()
     v = _vload()
-    waiting = awaiting_update(data["items"], str(data.get("version") or ""))
+    waiting = awaiting_update(data["items"], str(data.get("version") or ""),
+                              data.get("products") or {})
     return {
         "usefulness": usefulness(v),
         "slowed": v["slowed"],

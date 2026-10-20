@@ -488,6 +488,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "minecraft_command", "minecraft_server", "minecraft_addons",
     "print_label", "bright_show",
     "bambu_print", "bambu_control", "bambu_slice",
+    "report_bug",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -2247,6 +2248,40 @@ def get_health():
                    if isinstance(f, dict)][:20],
     }
 
+
+
+# ---------------------------------------------------------------------------
+# The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print, BRight,
+# BRUH Minecraft, Morph. Their code lives in their own images, so brAIn can
+# look at them (state, log, integration errors) and file a report the cloud
+# routine fixes upstream; it never patches them in place, because a patch in
+# a container is wiped by the next update and diverges from the repository.
+# ---------------------------------------------------------------------------
+
+SIBLING_ADDON_NAMES = ("brAIn", "GardenRX", "BRUH Bambu Studio", "BRUH Print",
+                    "BRight", "BRUH Minecraft", "Morph")
+
+
+def bruh_addon_status(addon=""):
+    """What every installed BRUH add-on (or one, by name or slug) looks like
+    now: version, Supervisor state, whether an update is waiting, the
+    distinct errors in its log with the lines around them, and what Home
+    Assistant logged about its integration. One panel request; reads only."""
+    query = f"?addon={urllib.parse.quote(str(addon))}" if addon else ""
+    return _panel_get(f"/api/bruh_addons{query}")
+
+
+def report_bug(addon, title, what, evidence="", asked="", done_when="", ui=False):
+    """File a report about a BRUH add-on for the development loop: the
+    private reports repository the owner set up, which a cloud routine
+    fixes and ships as an update. Goes through the panel, which applies the
+    loop's review setting, daily caps and redaction exactly as it does for
+    a *What do you want to fix?* request."""
+    if str(addon or "") not in SIBLING_ADDON_NAMES:
+        return {"error": "addon must be one of: " + ", ".join(SIBLING_ADDON_NAMES)}
+    return _panel_send("POST", "/api/devloop/report", {
+        "addon": addon, "title": title, "what": what, "evidence": evidence,
+        "asked": asked, "done_when": done_when, "ui": ui is True})
 
 
 # ---------------------------------------------------------------------------
@@ -7001,6 +7036,64 @@ TOOLS = [
         }
     },
     {
+        "name": "bruh_addon_status",
+        "description": (
+            "How the other BRUH add-ons are doing: GardenRX, BRUH Bambu "
+            "Studio, BRUH Print, BRight, BRUH Minecraft and Morph. For each "
+            "installed one: version, whether it is running, whether an update "
+            "is waiting, the distinct errors in its log with the lines around "
+            "them, and what Home Assistant logged about its integration. Use "
+            "it first whenever the owner says one of them is broken. "
+            "Read-only. You can restart an add-on or change its options "
+            "through the Supervisor (`ha addon`), but you cannot change its "
+            "code: that is fixed upstream with report_bug."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "addon": {"type": "string",
+                          "description": "A name or slug to narrow to one add-on; omit for all"},
+            },
+        },
+    },
+    {
+        "name": "report_bug",
+        "description": (
+            "Report a bug in brAIn or another BRUH add-on so it gets fixed in "
+            "the code: it is filed as an issue in the owner's private reports "
+            "repository, a cloud routine fixes it, and the fix arrives as an "
+            "add-on update; brAIn then checks it held. Use it when the owner "
+            "asks you to fix or report a problem whose cause is in an "
+            "add-on's own code (a traceback in its log, a screen that is "
+            "wrong), AFTER you have looked (bruh_addon_status, the logs) and "
+            "after any workaround you can make here. Put what you found in "
+            "`what` and the log lines or readings in `evidence`; put the "
+            "owner's own words in `asked`. Needs the development loop on "
+            "(⚙ › Developer); if it is off, say so. Never for a problem in "
+            "the house's own configuration, which you fix directly."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "addon": {"type": "string", "enum": list(SIBLING_ADDON_NAMES),
+                          "description": "Which add-on the bug is in"},
+                "title": {"type": "string",
+                          "description": "Under 80 characters, naming the part that is broken"},
+                "what": {"type": "string",
+                         "description": "One or two sentences: the real problem you found"},
+                "evidence": {"type": "string",
+                             "description": "The log lines, error or readings that show it"},
+                "asked": {"type": "string",
+                          "description": "The owner's own words, if they asked"},
+                "done_when": {"type": "string",
+                              "description": "How a developer can tell it is fixed"},
+                "ui": {"type": "boolean",
+                       "description": "True when the fix is on a screen"},
+            },
+            "required": ["addon", "title", "what"],
+        },
+    },
+    {
         "name": "get_findings",
         "description": (
             "What brAIn has found wrong with this house and is waiting on the "
@@ -7382,6 +7475,8 @@ TOOL_IMPLEMENTATIONS = {
     "simulate_automation": "simulate_automation",
     "recall": "recall",
     "get_findings": "get_findings",
+    "bruh_addon_status": "bruh_addon_status",
+    "report_bug": "report_bug",
     "get_health": "get_health",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
@@ -7465,6 +7560,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
+    "bruh_addon_status", "report_bug",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

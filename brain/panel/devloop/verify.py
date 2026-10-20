@@ -33,7 +33,7 @@ import atomic_write
 from textclip import clip
 
 from . import data_dir
-from .upstream import running_at_least
+from .upstream import product_of, running_at_least, running_for
 
 log = logging.getLogger("brain.devloop")
 
@@ -68,7 +68,8 @@ def save(data: dict) -> None:
         log.info("could not write the verify ledger: %s", exc)
 
 
-def due(items: dict, version: str, state: dict, live_ts: set[int]) -> list[dict]:
+def due(items: dict, version: str, state: dict, live_ts: set[int],
+        products: dict | None = None) -> list[dict]:
     """The fixed reports whose fix this house now runs and nobody has been
     asked about under that release. A fix whose release is unknown is
     never asked about: "is x.y.z here" has no answer when x.y.z is."""
@@ -78,7 +79,8 @@ def due(items: dict, version: str, state: dict, live_ts: set[int]) -> list[dict]
         if (entry.get("verdict") != "fixed"
                 or str(entry.get("stream") or "") not in VERIFY_STREAMS
                 or not entry.get("fixed_in")
-                or running_at_least(version, entry["fixed_in"]) is not True):
+                or running_at_least(running_for(entry, version, products),
+                                    entry["fixed_in"]) is not True):
             continue
         rec = state.get(entry["fp"]) or {}
         if rec.get("fixed_in") == entry["fixed_in"]:
@@ -94,13 +96,14 @@ def due(items: dict, version: str, state: dict, live_ts: set[int]) -> list[dict]
 
 def question_row(entry: dict) -> dict:
     fixed_in = str(entry.get("fixed_in") or "")
+    product = product_of(entry)
     what = clip(str(entry.get("what") or ""), 160)
     return {
         # Stable per fix: the fingerprint and the release, so the store's
         # dedupe and the settled ledger let the same report be asked about
         # again only under a NEW fix.
-        "text": f"{TEXT_PREFIX}{entry.get('fp', '')} (brAIn {fixed_in})",
-        "claim": f"brAIn {fixed_in} was meant to fix this: “{what}”. "
+        "text": f"{TEXT_PREFIX}{entry.get('fp', '')} ({product} {fixed_in})",
+        "claim": f"{product} {fixed_in} was meant to fix this: “{what}”. "
                  "Is it fixed here?",
         "detail": ("Yes tells whoever fixed it that the fix held on this "
                    "house. No sends what you type back with the report and "

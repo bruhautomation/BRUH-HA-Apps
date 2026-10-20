@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.3.0
+
+### Added
+
+- **brAIn watches the other BRUH add-ons and reports their bugs.** A new development-loop stream, *Other BRUH add-ons* (on by default once the loop is on, hourly, costs nothing), reads GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph from outside: an add-on that is stopped although set to start at boot, each distinct error in its log (a traceback is filed as its exception line, with the lines around it), and what Home Assistant logged about its integration. Each report names the add-on, carries its version, and is labelled for the directory its fix belongs in, so the cloud routine fixes it there. The add-ons themselves need no change.
+- **Tell the chat to fix another add-on.** Two new tools: `bruh_addon_status` shows every BRUH add-on's version, state, log errors and integration errors; `report_bug` files what brAIn found (its diagnosis, the log lines, your words) as a report in your private repository, for brAIn or any BRUH add-on. brAIn restarts an add-on or fixes its options here when that is the fix, and never patches an add-on's code inside its container, because the next update would wipe it.
+- ***What do you want to fix?* knows the add-ons.** A complaint about GardenRX or the label printer is filed for that add-on, not turned into one about brAIn.
+
+### Fixed
+
+- **A fix to another add-on is checked against that add-on's version.** The loop compared every "Fixed in …" with brAIn's own release, so a Morph fix read as installed the moment it was closed, whatever Morph was running. Each report now remembers which add-on it is about, and "Held", "Back again" and the "is it fixed here?" question all use that add-on's installed version.
+
 ## 3.2.1
 
 ### Changed

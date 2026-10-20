@@ -155,6 +155,7 @@ import devloop.screens
 import devloop.streams
 import devloop.upstream
 import devloop.verify
+import devloop.siblings
 import devloop_archive
 import card_tags
 import cases
@@ -17067,7 +17068,7 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
                 for f in await asyncio.to_thread(findings_store.list_all)
                 if f.get("source") == devloop.verify.SOURCE}
         entries = devloop.verify.due(data["items"], str(data.get("version") or ""),
-                                     state, live)
+                                     state, live, data.get("products"))
         asked = 0
         for entry in entries:
             row = await asyncio.to_thread(
@@ -17181,6 +17182,8 @@ async def _devloop_stream(stream: str, payload: dict, *, topic: str = "",
             return await _devloop_screens(payload, names, version)
         if stream == "morph":
             return await _devloop_morph(payload, names)
+        if stream == "siblings":
+            return await _devloop_siblings(payload, names)
         # The Claude-run streams. A scheduled one answers to the three gates
         # every unattended run answers to; a press needs only a credential.
         # Both spend from the day's cap, which refuses rather than queues.
@@ -17270,6 +17273,36 @@ async def _devloop_morph(payload: dict, names: dict) -> dict:
 
     await asyncio.to_thread(_ack)
     return out
+
+
+async def _bruh_addons() -> dict:
+    """Every installed BRUH add-on as `devloop.siblings` sees it: the
+    Supervisor's state and log for each, and Home Assistant's own error
+    log, which is a WebSocket read and so is fetched here."""
+    entries = None
+    try:
+        import aiohttp  # noqa: PLC0415 — the client half, deferred like ha_data
+        import ha_data  # noqa: PLC0415
+        async with aiohttp.ClientSession() as session:
+            answer = await ha_data._ws_commands(session, [{"type": "system_log/list"}])
+        entries = answer[0] if answer and isinstance(answer[0], list) else None
+    except Exception as exc:  # noqa: BLE001 — the log is one source of four
+        log.info("devloop: could not read Home Assistant's log: %s", exc)
+    return await asyncio.to_thread(devloop.siblings.collect, entries)
+
+
+async def _devloop_siblings(payload: dict, names: dict) -> dict:
+    """The other BRUH add-ons' faults, read from outside (`devloop/siblings.py`).
+    A Supervisor that could not be asked is a skip, never an empty pass:
+    an empty pass would tell every open report it had not been seen since."""
+    collected = await _bruh_addons()
+    if collected.get("error"):
+        return {"skipped": collected["error"]}
+    rows = devloop.siblings.rows(collected)
+    return await asyncio.to_thread(
+        devloop.upstream.ingest, "siblings", rows, payload, names,
+        products=devloop.siblings.products(collected),
+        unread=tuple(collected.get("unread") or ()))
 
 
 DEVLOOP_SCREENS_TIMEOUT_S = 900
@@ -17530,6 +17563,95 @@ async def h_devloop_look(request: web.Request) -> web.Response:
     return web.json_response({"started": topic,
                               **await asyncio.to_thread(_devloop_payload)},
                              status=202)
+
+
+async def h_bruh_addons(request: web.Request) -> web.Response:
+    """Every installed BRUH add-on: its state, version, the distinct errors
+    in its log and what Home Assistant logged about its integration. The
+    chat's `bruh_addon_status` tool reads this; it changes nothing."""
+    collected = await _bruh_addons()
+    if collected.get("error"):
+        return web.json_response({"error": collected["error"]}, status=503)
+    want = str(request.query.get("addon") or "").strip().lower()
+    every = devloop.siblings.status(collected)
+    rows = [r for r in every if not want or want in str(r["addon"]).lower()
+            or want == str(r["slug"]).lower()]
+    installed = {r["addon"] for r in every}
+    return web.json_response({
+        "addons": rows,
+        "not_installed": [s["name"] for s in devloop.siblings.CATALOG
+                          if s["name"] not in installed],
+    })
+
+
+REPORT_FIELDS = {"title": 100, "what": 300, "asked": 500, "evidence": 6000,
+                 "done_when": 800}
+
+
+def report_row(body: dict) -> tuple[dict | None, str]:
+    """A report the chat wrote, as a `look` row; ``(None, why)`` for one
+    that cannot be filed. Pure, so a test can hand it the body."""
+    body = body if isinstance(body, dict) else {}
+    fields = {k: (str(body.get(k) or "")[:n] if k == "evidence"
+                  else " ".join(str(body.get(k) or "").split())[:n])
+              for k, n in REPORT_FIELDS.items()}
+    if not fields["title"] or not fields["what"]:
+        return None, "a report needs a title and what is wrong"
+    addon = str(body.get("addon") or "brAIn").strip()
+    spec = devloop.siblings.spec_by_name(addon)
+    if addon.lower() != "brain" and not spec:
+        return None, ("addon must be brAIn or one of: "
+                      + ", ".join(devloop.siblings.PRODUCTS))
+    parts = []
+    if fields["asked"]:
+        parts.append("The owner said:\n\n> " + fields["asked"])
+    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"])
+    if fields["evidence"].strip():
+        fence = "`" * 3
+        parts.append("Evidence brAIn read:\n\n" + fence + "\n"
+                     + fields["evidence"].replace(fence, "'" * 3) + "\n" + fence)
+    if fields["done_when"]:
+        parts.append(f"**Done when:** {fields['done_when']}")
+    row = {"where": f"Fix: {fields['title']}", "what": fields["what"],
+           "detail": "", "body": "\n\n".join(parts), "ux": body.get("ui") is True}
+    if spec:
+        row.update(where=f"{spec['name']} · {row['where']}", product=spec["name"])
+    return row, ""
+
+
+async def h_devloop_report(request: web.Request) -> web.Response:
+    """A report the chat wrote, after looking: the add-on it is about, what
+    is wrong, the evidence brAIn read and the owner's own words. Filed into
+    the `look` stream exactly as a *What do you want to fix?* request is —
+    the same review setting, caps, redaction and owner check afterwards —
+    with no second Claude run, because the conversation already was one."""
+    if not await asyncio.to_thread(devloop.enabled):
+        return web.json_response(
+            {"error": "the development loop is off: turn it on in ⚙ › Developer"},
+            status=409)
+    try:
+        body = await request.json()
+    except ValueError:
+        return web.json_response({"error": "expected JSON"}, status=400)
+    row, why = report_row(body)
+    if row is None:
+        return web.json_response({"error": why}, status=400)
+    products = {}
+    if row.get("product"):
+        products = devloop.siblings.products(await _bruh_addons())
+    payload = await asyncio.to_thread(_diagnostics_payload)
+    out = await asyncio.to_thread(devloop.upstream.ingest, "look", [row], payload,
+                                  dict(_NAMES), products=products)
+    if out.get("error"):
+        return web.json_response({"error": out["error"]}, status=500)
+    sent = await asyncio.to_thread(devloop.upstream.send_due)
+    fp = devloop.upstream.fingerprint(row["where"], row["what"])
+    entry = next((e for e in await asyncio.to_thread(devloop.upstream.listing)
+                  if e.get("fp") == fp), {})
+    return web.json_response({"filed": True, "fp": fp, "state": entry.get("state"),
+                              "issue": entry.get("issue"),
+                              "issue_url": entry.get("issue_url"),
+                              "sent": sent}, status=201)
 
 
 async def h_devloop_unslow(request: web.Request) -> web.Response:
@@ -23027,6 +23149,8 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, Morph), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself.
+
 Protected entities and the household's house rules hold whatever route you take. A refusal is their decision: tell them, and never route around it."""
 
 
@@ -24056,6 +24180,8 @@ def make_app() -> web.Application:
     app.router.add_delete("/api/devloop/token", h_devloop_token)
     app.router.add_post("/api/devloop/test", h_devloop_test)
     app.router.add_post("/api/devloop/run", h_devloop_run)
+    app.router.add_post("/api/devloop/report", h_devloop_report)
+    app.router.add_get("/api/bruh_addons", h_bruh_addons)
     app.router.add_post("/api/devloop/look", h_devloop_look)
     app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)

@@ -1,6 +1,6 @@
 ---
 name: fix-from-house
-description: The cloud half of brAIn's development loop. Reads every open issue a house filed into its private reports repository, fixes brAIn in this repository in a few batched pull requests, merges each one when CI is green, closes every issue before the run ends, and checks afterwards that the fixes held on the house. Use when a scheduled routine says to run the development loop.
+description: The cloud half of brAIn's development loop. Reads every open issue a house filed into its private reports repository, fixes brAIn (or the other BRUH add-on the issue names) in this repository in a few batched pull requests, merges each one when CI is green, closes every issue before the run ends, and checks afterwards that the fixes held on the house. Use when a scheduled routine says to run the development loop.
 ---
 
 # fix-from-house
@@ -382,22 +382,39 @@ not depend on the current one's result. So while a pull request is in CI:
   the owner who complained would see it: is what they said true, and what
   else there is crowded, repeated or unnamed? Screenshot it again after the
   fix. A UX fix judged only by a passing measure is a fix nobody has seen.
-- **Fix them** in `brain/`, `tests/`, `docs/` or `CLAUDE.md` only — or in
-  `morph/` for an issue labelled `devloop:morph` (its title begins
-  "Morph"): those are faults the Morph dashboard add-on found in its own
-  code, filed through brAIn's loop. How Morph is built is CLAUDE.md's
-  "Morph specifics" and `docs/design/morph-ui.md`; `morph/defaults/AGENTS.md`
-  is what brAIn is told on a house, and `tests/manual/measure-morph.mjs`
-  checks a change. Never in any other add-on, never in a `needs_human_paths` file,
-  never in an option's meaning (an existing install must not change
-  behaviour because of a default you moved). A batch is brAIn's or Morph's,
-  never both, so each carries one version bump.
+- **Fix them** in the add-on the issue is about, plus `tests/`, `docs/`
+  and `CLAUDE.md`. An issue is brAIn's unless its title begins with
+  another add-on's name, which is also its label:
+
+  | Title begins | Label | Code | How it is built |
+  |---|---|---|---|
+  | (anything else) | — | `brain/` | CLAUDE.md, brAIn specifics |
+  | Morph | `devloop:morph` | `morph/` | CLAUDE.md's "Morph specifics", `docs/design/morph-ui.md`, `tests/manual/measure-morph.mjs` |
+  | GardenRX | `devloop:gardenrx` | `gardenrx/` | CLAUDE.md's GardenRX entry; `gardenrx/app` is Next.js — read `node_modules/next/dist/docs/` before writing it |
+  | BRUH Bambu Studio | `devloop:bruh-bambu-studio` | `bruh-bambu-studio/` | CLAUDE.md's Bambu entry, `tests/test_bambu_*.py` |
+  | BRUH Print | `devloop:bruh-print` | `bruh-print/` | CLAUDE.md's "BRUH Print specifics", `tests/manual/measure-print-*.mjs` |
+  | BRight | `devloop:bright` | `bright/` | CLAUDE.md's BRight bullets, `tests/test_bright_*.py` |
+  | BRUH Minecraft | `devloop:bruh_minecraft_server` | `bruh-minecraft-server/` | CLAUDE.md's Minecraft entry |
+
+  Morph's issues are faults it found in its own code; the others' come
+  from the `siblings` stream (brAIn reading that add-on's log, Supervisor
+  state and integration errors from outside: the body quotes the lines)
+  or from the chat's `report_bug` (brAIn's diagnosis and the owner's
+  words). A log line is evidence, not a spec: find the cause in the code
+  before changing anything, and an error caused by the house's own setup
+  (a printer unplugged, a bad option value) is closed `devloop:not-brain`
+  with the reason, not "fixed" by hiding the message. Never in a
+  `needs_human_paths` file, never in an option's meaning (an existing
+  install must not change behaviour because of a default you moved). A
+  batch is ONE add-on's, never two, so each carries one version bump.
 - **Version**, last, just before pushing, so a prepared batch never
   carries a stale number. One patch bump per batch in `brain/config.yaml` and
   `brain/custom_components/brain/manifest.json` (the same number in both,
   nothing else changed in those two files) — for a Morph batch,
   `morph/config.yaml`, `morph/custom_components/morph/manifest.json` and
-  `const.py`'s `VERSION` — and one entry at the top of that add-on's
+  `const.py`'s `VERSION`; for another add-on, its `config.yaml`, its
+  integration's `manifest.json` and a `VERSION` in its `const.py` where one
+  exists (GardenRX has one) — and one entry at the top of that add-on's
   `CHANGELOG.md` with a line per fix, saying what changed for
   somebody using brAIn and naming each reports issue by its number only,
   never its URL, because the reports repository is private, and grouped
@@ -458,10 +475,12 @@ and never through a workflow, because a merge made with Actions' own token
 does not start the workflows that run on `main`. Then, for every issue in
 the batch, comment `Fixed in brAIn <version> (<PR link>). The house will say
 "Not seen since" or "Back again" after it updates.` — **exactly that
-opening, `Fixed in brAIn <version>`** (or `Fixed in Morph <version>` for a
-Morph batch): the house reads the version off it to decide whether the
-fix has reached it, and a comment that does not say it leaves the house
-unable to tell held from not-installed — swap `devloop:fixing` for
+opening, `Fixed in brAIn <version>`** (or `Fixed in <add-on name>
+<version>` for another add-on's batch, spelled as in the table above:
+`Fixed in GardenRX 0.1.1`, `Fixed in BRUH Bambu Studio 0.1.6`): the house
+reads the version off it and compares it with THAT add-on's installed
+release, so the name is load-bearing. A comment that does not say it
+leaves the house unable to tell held from not-installed — swap `devloop:fixing` for
 `devloop:fixed`, and close it with reason `completed`. Fetch `main`
 before starting the next batch.
 
