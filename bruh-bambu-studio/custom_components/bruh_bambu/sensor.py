@@ -28,9 +28,10 @@ from .coordinator import BruhBambuCoordinator
 
 # Everything a card needs is on the status sensor, so a card names one
 # entity per printer and reads one state rather than five.
-ATTRS = ("file", "progress", "remaining_min", "layer", "total_layers", "speed",
-         "chamber_light", "ams", "error_code", "hms_count", "nozzle_c",
-         "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c",
+ATTRS = ("file", "stage", "progress", "remaining_min", "layer", "total_layers", "speed",
+         "chamber_light", "ams", "ams_units", "active_tray", "external_spool",
+         "error_code", "hms_count", "hms", "fans", "nozzle_c",
+         "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c", "nozzle_diameter",
          "connection_error", "host", "serial", "model", "printing")
 
 
@@ -153,4 +154,14 @@ class BedSensor(_PrinterSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
 
 
-SENSORS = (StatusSensor, ProgressSensor, RemainingSensor, NozzleSensor, BedSensor)
+class StageSensor(_PrinterSensor):
+    """What the printer is doing inside its state: levelling, heating, changing filament."""
+    key, field = "stage", "stage"
+
+    @property
+    def native_value(self):
+        printer = self._printer() or {}
+        return printer.get("stage") or ("Printing" if printer.get("printing") else "Idle")
+
+
+SENSORS = (StatusSensor, StageSensor, ProgressSensor, RemainingSensor, NozzleSensor, BedSensor)

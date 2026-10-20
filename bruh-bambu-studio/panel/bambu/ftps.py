@@ -116,7 +116,8 @@ class Storage:
             if name in (".", ".."):
                 continue
             out.append({"name": name, "dir": row.startswith("d"),
-                        "size": int(parts[4]) if parts[4].isdigit() else None})
+                        "size": int(parts[4]) if parts[4].isdigit() else None,
+                        "date": " ".join(parts[5:8])})
         return out
 
     def upload(self, local_path: str, name: str, progress=None) -> int:
@@ -147,3 +148,91 @@ class Storage:
 
     def delete(self, name: str) -> None:
         self.ftp.delete(safe_name(name))
+
+    def read_range(self, name: str, offset: int, length: int) -> bytes:
+        """`length` bytes of a file from `offset`, without fetching the rest.
+
+        REST then RETR, and the data socket is closed as soon as enough has
+        arrived: a thumbnail out of a 40 MB print job is a few reads of a
+        few kilobytes. The server answers the cut transfer with a 426 or
+        451, which is expected here and read off the control channel.
+        """
+        self.ftp.voidcmd("TYPE I")
+        conn = self.ftp.transfercmd(f"RETR {name}", rest=offset if offset else None)
+        chunks, got = [], 0
+        try:
+            while got < length:
+                block = conn.recv(min(CHUNK, length - got))
+                if not block:
+                    break
+                chunks.append(block)
+                got += len(block)
+        finally:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # already closed by the far end
+            conn.close()
+        try:
+            self.ftp.voidresp()
+        except (ftplib.error_temp, ftplib.error_perm, ftplib.error_reply):
+            pass  # the transfer was cut on purpose; the server says so
+        return b"".join(chunks)
+
+
+class RemoteFile:
+    """A file on the printer, read-only and seekable, for zipfile.
+
+    Reads are cached in BLOCK-sized pieces, so the end-of-archive search,
+    the central directory and one member cost three or four transfers.
+    """
+
+    BLOCK = 64 * 1024
+
+    def __init__(self, storage: "Storage", name: str, size: int):
+        self.storage, self.name, self.size = storage, name, int(size)
+        self.pos = 0
+        self.error: Exception | None = None
+        self._blocks: dict[int, bytes] = {}
+
+    def seekable(self) -> bool:
+        return True
+
+    def readable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self.pos
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        base = {0: 0, 1: self.pos, 2: self.size}[whence]
+        self.pos = max(0, min(self.size, base + offset))
+        return self.pos
+
+    def _block(self, index: int) -> bytes:
+        if index not in self._blocks:
+            start = index * self.BLOCK
+            try:
+                self._blocks[index] = self.storage.read_range(
+                    self.name, start, min(self.BLOCK, self.size - start))
+            except (OSError, EOFError, ftplib.Error) as exc:
+                # zipfile turns a read error into "not a zip file"; this is
+                # how a caller tells "could not read it" from "has none".
+                self.error = exc
+                raise
+        return self._blocks[index]
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0:
+            n = self.size - self.pos
+        n = min(n, self.size - self.pos)
+        out = bytearray()
+        while n > 0:
+            index, inside = divmod(self.pos, self.BLOCK)
+            block = self._block(index)[inside:inside + n]
+            if not block:
+                break
+            out += block
+            self.pos += len(block)
+            n -= len(block)
+        return bytes(out)

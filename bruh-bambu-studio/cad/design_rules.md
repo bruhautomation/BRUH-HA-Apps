@@ -20,5 +20,8 @@
   unioning or cutting; overlap by 0.01–0.1 mm or the mesh seams.
 - **Strength.** Layers are weakest in Z. Orient so loads run along layers.
   Fillet inside corners under load (r ≥ 1 mm).
-- **Size.** Keep within 250 × 250 × 250 mm unless told the printer is larger
-  (A1 mini: 180 mm cube).
+- **Size.** Fit the printer's build volume with ~5 mm to spare (PRINTERS lists
+  it: a 256 mm cube for X1, P1, A1 and P2S, 180 mm for the A1 mini, about
+  325 mm for the H2 series). Bigger parts are split into pieces that join.
+- **Colour.** Every colour change purges filament; keep a second colour to a
+  few layers (a logo on the top or bottom face) unless asked otherwise.

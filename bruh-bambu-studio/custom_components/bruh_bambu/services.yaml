@@ -126,6 +126,49 @@ print_file:
       example: white
       selector:
         text: {}
+    plate_type:
+      name: Build plate
+      description: 'The plate on the printer. The slice and the printer''s plate check follow
+        it.'
+      selector:
+        select:
+          options:
+          - auto
+          - textured_pei
+          - smooth_pei
+          - cool
+          - engineering
+    speed:
+      name: Speed
+      description: The speed profile to switch to once it starts.
+      selector:
+        select:
+          options:
+          - silent
+          - standard
+          - sport
+          - ludicrous
+    layer_inspect:
+      name: First-layer inspection
+      description: 'X1: let the lidar check the first layer.'
+      selector:
+        boolean: {}
+    copies:
+      name: Copies
+      description: How many of it, arranged on the plate. The file is sliced again for this.
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    settings:
+      name: Slicer settings
+      description: 'For a model that is sliced here: options such as layer_height, walls,
+        infill_percent, supports, brim, print_sequence (by layer or by object), ironing,
+        seam. The panel''s Print dialog lists them all.'
+      example: '{"layer_height": 0.12, "walls": 4, "print_sequence": "by object"}'
+      selector:
+        object: {}
 slice_file:
   name: Slice a file
   description: Slice a project or model from /share/bambu with Bambu Studio and save the print
@@ -308,3 +351,27 @@ import_url:
       selector:
         text:
           type: url
+reconnect:
+  name: Reconnect
+  description: Drop the add-on's connection to the printer and open a new one, as after the
+    printer was switched off and on.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+refresh:
+  name: Refresh
+  description: 'Ask the printer for a full report now: its state, temperatures and every
+    AMS tray (after a spool was changed).'
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}

@@ -91,8 +91,8 @@ class TestUpload(unittest.TestCase):
             "-rw-r--r-- 1 0 0 1048576 Jan 1 00:00 benchy.gcode.3mf",
             "garbage")]
         self.assertEqual(storage.listing(), [
-            {"name": "timelapse", "dir": True, "size": 0},
-            {"name": "benchy.gcode.3mf", "dir": False, "size": 1048576}])
+            {"name": "timelapse", "dir": True, "size": 0, "date": "Jan 1 00:00"},
+            {"name": "benchy.gcode.3mf", "dir": False, "size": 1048576, "date": "Jan 1 00:00"}])
 
 
 if __name__ == "__main__":

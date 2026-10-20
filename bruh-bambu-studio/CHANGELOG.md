@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- **The printer card shows the printer's camera.** Live, over your network: a P1 or A1 sends pictures on port 6000, an X1, P2S or H2 streams RTSPS on port 322 (switch on *LAN mode live view* on the printer). Light, pause and full-screen buttons sit on the picture, and Home Assistant gets a **Camera** entity per printer that the dashboard card shows too.
+- **The printer card was redesigned.** The state and what the printer is doing inside it (levelling, heating, changing filament…), a progress ring, time left and the clock time it finishes, the picture of the job, temperature and fan tiles, and the AMS as spools: colour, material, filament name, how much is left, the tray **in use**, and the AMS humidity. The spool on the holder is shown as well. Each printer message (HMS code) links to Bambu Lab's page about it.
+- **Refresh and Reconnect.** **Refresh** asks the printer for a full report, for after you change a spool; pressing a tray has the AMS read its tag again. **Reconnect** drops the connection and opens a new one. Both are also the `bruh_bambu.refresh` and `bruh_bambu.reconnect` services.
+- **What is on the printer, with pictures.** *On the printer* lists the print jobs on its storage with each one's picture (read out of the file where it lies), to print again or delete.
+- **Pictures in the Files tab.** A sliced 3MF shows its own plate picture; an STL, STEP or plain 3MF is drawn once and kept. Each row also shows its filament colours and grams, its time and its plates.
+- **Every common print option, everywhere you print.** Build plate type, speed, bed levelling, flow and vibration calibration, first-layer inspection, timelapse and copies, plus the slicer settings: layer height, first layer, walls, top and bottom layers, infill and its pattern, wall generator, seam, ironing, supports (type, angle, from the plate only), brim and its width, skirt, **print by object**, prime tower, flush into infill or objects, spiral vase, fuzzy skin and nozzle temperature. They are offered in the Files tab's Print dialog, in **Manual print**, in `bruh_bambu.print_file` (`plate_type`, `speed`, `copies`, `settings`), and to brAIn in the conversation, all from one list.
+- **brAIn designs for the printer and keeps you in the loop.** It knows each printer's build volume and nozzle, splits a part that does not fit, lays out copies and print-by-object jobs, and keeps a second colour to a few layers because every colour change purges filament (it says roughly what a wasteful design costs). It states its plan before it prints, sees which printers are busy and when they finish, and warns about a damp AMS. The conversation now shows the sliced time and filament per colour, then when the print started.
+- **A Stage sensor** per printer, and the status sensor's attributes now include the stage, the AMS units, the tray in use, the spool holder, the fans and the HMS codes.
+
+### Fixed
+
+- **The integration, the sensors and the cards appear without hunting for them.** Home Assistant loads the integration only when it starts, and nothing said so. The Printers tab now has a **Home Assistant** card that says whether the integration is set up and offers **Restart Home Assistant** when it is not loaded yet; Home Assistant shows a notification too. After the restart the add-on sets the integration up by itself. The card says how to add the dashboard card, and Morph gets its card within two minutes of being installed (it used to wait for an add-on restart).
+- **A slice that Bambu Studio rejects names the setting.** A two-colour print stopped with *the file carries a setting value it rejects* and nothing else. The message now ends with the setting and the reason Bambu Studio printed.
+- **The Print choices line up.** The three cards under **Print** had their text centred by the button, so a short one sat indented; they are left-aligned cards with icons now, with Auto print marked as recommended.
+
 ## 0.1.6
 
 ### Fixed

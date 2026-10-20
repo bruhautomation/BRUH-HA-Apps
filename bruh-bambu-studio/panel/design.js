@@ -363,8 +363,9 @@ async function openDesignPrint() {
   $("#dpPrinter").replaceChildren(...printers.map((p) => el("option", { value: p.id },
     `${p.name}${p.online ? "" : " (offline)"}`)));
   const s = design.part.print_settings || {};
-  const f = $("#designPrintForm");
-  for (const key of ["layer_height", "walls", "infill_percent", "supports", "brim"]) f[key].value = s[key] ?? "";
+  try {
+    buildOptions($("#dpOptions"), await optionCatalog(), s, { slice: true });
+  } catch (e) { $("#dpOptions").replaceChildren(el("p", { class: "warn" }, e.message)); }
   $("#designPrint").showModal();
   await loadPlan();
 }
@@ -415,9 +416,8 @@ async function loadPlan() {
 async function submitDesignPrint(e) {
   if (e.submitter && e.submitter.value !== "go") return;
   const f = new FormData(e.target);
-  const settings = {};
-  for (const key of ["layer_height", "walls", "infill_percent"]) if (f.get(key)) settings[key] = Number(f.get(key));
-  for (const key of ["supports", "brim"]) if (f.get(key)) settings[key] = f.get(key);
+  const chosen = readOptions(e.target);
+  const settings = { ...chosen.settings, ...chosen.start };
   const slot = f.get("slot");
   const slots = {};
   for (const [key, value] of f.entries()) {
@@ -428,7 +428,7 @@ async function submitDesignPrint(e) {
       printer: f.get("printer"), version: design.viewing, print_settings: settings,
       ...(Object.keys(slots).length ? { slots }
         : { slot: slot === "external" || slot == null ? "external" : Number(slot) }),
-      timelapse: f.get("timelapse") === "on" } });
+      timelapse: Boolean(chosen.start.timelapse) } });
     toast("Slicing and sending it to the printer — follow it on the Printers tab.");
     pollPart();
   } catch (err) { toast(err.message, true); }

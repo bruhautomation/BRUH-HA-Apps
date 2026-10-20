@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 
-from design import brain_link, guard, parts, runner
+from design import brain_link, guard, options, parts, runner
 
 CAD_DIR = Path(os.environ.get("BAMBU_CAD_DIR", "/opt/bruh-bambu/cad"))
 FIX_ATTEMPTS = 2
@@ -35,7 +35,6 @@ _LOCK = threading.Lock()
 PRINTING = None
 
 MATERIALS = ("PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "PLA-CF", "PETG-CF", "PVA")
-PATTERNS = ("grid", "gyroid", "cubic", "honeycomb", "line", "triangles")
 
 SCHEMA = {
     "type": "object",
@@ -52,15 +51,8 @@ SCHEMA = {
             "properties": {
                 "material": {"type": "string", "enum": list(MATERIALS)},
                 "colour": {"type": "string"},
-                "layer_height": {"type": "number"},
-                "walls": {"type": "integer"},
-                "infill_percent": {"type": "integer"},
-                "infill_pattern": {"type": "string", "enum": list(PATTERNS)},
-                "supports": {"type": "string", "enum": ["none", "normal", "tree"]},
-                "brim": {"type": "string", "enum": ["none", "auto", "outer"]},
-                "top_layers": {"type": "integer"},
-                "bottom_layers": {"type": "integer"},
-                "why": {"type": "string"},
+                **options.schema_properties(),
+                "why": {"type": "string", "description": "One sentence: why these settings."},
             },
         },
         "print": {
@@ -101,8 +93,17 @@ clearance), and ask it in `questions`.
 You do not write files or run anything. Answer in the JSON the schema asks for:
 `reply` to the person; `design_py` = the COMPLETE CadQuery script whenever the
 geometry changes (empty when it does not); `print_settings` = how you would
-print it (material, colour suggestion, layer height, walls, infill, supports,
-brim, and `why` in one sentence). The panel checks and builds the script and
+print it, and `why` in one sentence. print_settings takes every option the
+schema lists — quality (layer height, first layer, wall generator, seam,
+ironing), strength (walls, top/bottom layers, infill and its pattern),
+support (type, overhang angle, from the plate only), adhesion (brim and its
+width, skirt), layout (print_sequence "by object" prints each part to the end
+before the next; copies), multi-colour (prime tower, flush into infill or
+objects), special (spiral vase, fuzzy skin), the nozzle temperature, and what
+the printer is told at the start (build plate type, speed, bed levelling,
+flow and vibration calibration, first-layer inspection, timelapse). Set only
+what you have a reason for; anything left out stays at Bambu Studio's own
+profile for that printer and filament. What the person asks for always wins. The panel checks and builds the script and
 shows the person a 3D view with measurements; if the build fails you get the
 error back to fix.
 
@@ -131,6 +132,37 @@ thread_groove(spec, length, z0=0, fit=0.3) -> (tool, r_bore),
 knurl_cut(r, z0, h, n=18, flute_r=1.1). Only use thread values from
 thread_spec; a standard not in it, say so and model a hole for an insert instead.
 
+DESIGN FOR THE PRINTER IT WILL BE PRINTED ON (PRINTERS has each one's model,
+build volume and nozzle):
+- Fit the build volume with ~5 mm to spare; a part that does not fit is split
+  into pieces that join (dovetail, pins, or screw bosses) and you say so.
+- Lay out for the job: several identical small parts print as `copies`; parts
+  that string or need different heights print `print_sequence: "by object"`
+  (only when the printer's gantry clears them — under ~60 mm tall on an A1/P1,
+  spaced apart); a part that must be strong across the layers is turned so the
+  load runs along them.
+- Minimum wall about three nozzle widths; no feature thinner than the nozzle.
+
+MULTI-COLOUR AND THE AMS. Every colour change purges filament: on a Bambu AMS
+roughly 0.3–1 g per change (more from a dark colour to a light one), and one happens on
+every layer that holds two colours. So design colour to cost little: put a
+second colour in a few layers (a raised or inset logo on the top or the
+bottom face, a colour band between Z heights) rather than through the whole
+height; prefer bodies of one colour each; turn `flush_into_infill` on for
+parts with infill so some purge becomes infill; when the person asks for
+something that will waste a lot (a two-colour checkerboard all the way up),
+say roughly how much and offer the cheaper version. One colour needs no prime
+tower. Check the AMS has every material and colour needed (PRINTERS lists the
+trays, their remaining percent and AMS humidity; humidity 1 is dry and 5 is
+wet — a wet nylon, TPU or PETG tray is worth a warning).
+
+KEEP THE PERSON IN THE LOOP. Before a print starts, say in `reply` in one or
+two lines: which printer, which tray each body comes from, the settings that
+matter, and anything that will cost time or filament. A change they did not
+ask for that alters the part (a split, a different material, supports) is a
+question, not a decision. The panel tells them the sliced time and weight
+and when the print starts, in this conversation.
+
 PRINTING. You start the print yourself; never tell the person to press a button
 for it. Set `print.go` = true only when the person asks you to print (in this
 message, or by answering the question that was holding the print), and only on a
@@ -144,7 +176,8 @@ version that built. Choose:
 - the settings in `print_settings` (as fast as the part allows unless they asked
   for quality, and what they asked for wins).
 Ask in `questions` instead of printing when something critical is unknown: no
-printer is online and idle; a material or colour the part needs is not loaded
+printer is online and idle (a printer that is printing shows its stage,
+progress and time left — say when it will be free); a material or colour the part needs is not loaded
 (say which to load into which tray); the printer's state is "finish" or
 "failed", so the last job may still be on the plate, and the person has not said
 the plate is clear. When you print, say in `reply` which printer, which tray for
@@ -167,35 +200,17 @@ def _threads() -> list[str]:
 
 
 def clean_settings(raw) -> dict | None:
-    """brAIn's print settings, kept only where they are sane; the rest falls
-    back to the slicer profile's own value."""
+    """brAIn's print settings, kept only where they are sane (design/options.py);
+    the rest falls back to the slicer profile's own value."""
     if not isinstance(raw, dict):
         return None
     out: dict = {}
-
-    def num(key, lo, hi, cast):
-        try:
-            value = cast(raw[key])
-        except (KeyError, TypeError, ValueError):
-            return
-        if lo <= value <= hi:
-            out[key] = value
-
     if str(raw.get("material", "")).upper() in MATERIALS:
         out["material"] = str(raw["material"]).upper()
     if isinstance(raw.get("colour"), str) and raw["colour"].strip():
         out["colour"] = raw["colour"].strip()[:40]
-    num("layer_height", 0.06, 0.32, float)
-    num("walls", 1, 10, int)
-    num("infill_percent", 0, 100, int)
-    num("top_layers", 0, 20, int)
-    num("bottom_layers", 0, 20, int)
-    if raw.get("infill_pattern") in PATTERNS:
-        out["infill_pattern"] = raw["infill_pattern"]
-    if raw.get("supports") in ("none", "normal", "tree"):
-        out["supports"] = raw["supports"]
-    if raw.get("brim") in ("none", "auto", "outer"):
-        out["brim"] = raw["brim"]
+    out.update(options.clean_slice(raw))
+    out.update(options.clean_start(raw))
     if isinstance(raw.get("why"), str):
         out["why"] = raw["why"].strip()[:300]
     return out or None

@@ -13,12 +13,17 @@
  * connection the dashboard already has. Plain custom elements, no imports:
  * a card that needs a CDN is a card that is blank the day it is down.
  *
+ * The camera is the printer's `camera.*` entity on the same device (the
+ * integration makes one per printer), shown through Home Assistant's own
+ * camera proxy and refreshed every two seconds while the card is on screen.
+ * Its <img> is kept across redraws, or every state change would blank it.
+ *
  * Stop takes two presses, the second within four seconds. A dialog would
  * float over the page (Morph forbids that), and one press on a ten-hour
  * print is the press nobody can take back.
  */
 
-const CARD_VERSION = '0.1.6';
+const CARD_VERSION = '0.2.0';
 const DOMAIN = 'bruh_bambu';
 
 console.info(
@@ -93,6 +98,12 @@ const css = (morph) => `
   button.danger { color: var(--b-bad); }
   button.armed { background: var(--b-bad); border-color: var(--b-bad); color: #fff; }
   .err { color: var(--b-bad); font-size: 13px; }
+  .cam { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #05080b; }
+  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .over { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; }
+  .cam .over span { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: rgba(5,8,11,.6); color: #fff; }
+  .stage { color: var(--b-muted); font-size: 13px; }
+  .tray.active { border-color: var(--b-live); box-shadow: 0 0 0 1px var(--b-live); }
   .empty { color: var(--b-muted); }
 `;
 
@@ -100,7 +111,8 @@ class BruhBambuCard extends HTMLElement {
   static morph = false;
 
   setConfig(config) {
-    this._config = { show_ams: true, show_controls: true, ...(config || {}) };
+    this._config = { show_ams: true, show_controls: true, show_camera: true, ...(config || {}) };
+    this._cams = this._cams || {};
     this._armed = null;
     this._key = '';
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
@@ -128,6 +140,45 @@ class BruhBambuCard extends HTMLElement {
         && hass.states[id].attributes && hass.states[id].attributes.bruh_bambu_printer);
     return ids.map((id) => hass.states[id]).filter(Boolean)
       .map((s) => ({ entity: s.entity_id, state: s.state, attrs: s.attributes }));
+  }
+
+  _cameraOf(p) {
+    const hass = this._hass;
+    const reg = hass.entities || {};
+    const device = reg[p.entity] && reg[p.entity].device_id;
+    if (!device) return null;
+    const id = Object.keys(reg).find((e) => e.startsWith('camera.') && reg[e].device_id === device);
+    return id && hass.states[id] ? id : null;
+  }
+
+  _camImg(id) {
+    let cam = this._cams[id];
+    if (!cam) {
+      const img = document.createElement('img');
+      img.alt = '';
+      cam = this._cams[id] = { img, timer: null };
+    }
+    if (!cam.timer) {
+      // The proxy's token rotates, so the address is read fresh each time.
+      const tick = () => {
+        const state = this._hass && this._hass.states[id];
+        const base = state && state.attributes.entity_picture;
+        if (this.isConnected && base && document.visibilityState === 'visible') {
+          cam.img.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        }
+        cam.timer = setTimeout(tick, 2000);
+      };
+      tick();
+    }
+    return cam.img;
+  }
+
+  disconnectedCallback() {
+    for (const cam of Object.values(this._cams || {})) { clearTimeout(cam.timer); cam.timer = null; }
+  }
+
+  connectedCallback() {
+    if (this._hass) { this._key = ''; this.hass = this._hass; }
   }
 
   _call(service, data) {
@@ -160,8 +211,11 @@ class BruhBambuCard extends HTMLElement {
       const live = a.printing;
       const chipClass = ['offline', 'unknown', 'removed', 'failed'].includes(p.state) ? 'bad' : live ? 'live' : '';
       const pct = a.progress != null && (live || p.state === 'finish') ? `${a.progress}%` : '';
-      const ams = cfg.show_ams && Array.isArray(a.ams) && a.ams.length
-        ? `<div class="ams">${a.ams.map((t) => `<span class="tray" title="${esc(t.type)}"><i style="background:${esc(t.colour || 'transparent')}"></i>${t.slot + 1} ${esc(t.type)}${t.remaining != null ? ` ${t.remaining}%` : ''}</span>`).join('')}</div>` : '';
+      const trays = [...(Array.isArray(a.ams) ? a.ams : []), ...(a.external_spool ? [a.external_spool] : [])];
+      const ams = cfg.show_ams && trays.length
+        ? `<div class="ams">${trays.map((t) => `<span class="tray${a.active_tray === t.slot ? ' active' : ''}" title="${esc(t.name || t.type)}"><i style="background:${esc(t.colour || 'transparent')}"></i>${t.slot === 'external' ? 'Ext' : t.slot + 1} ${esc(t.type)}${t.remaining != null ? ` ${t.remaining}%` : ''}</span>`).join('')}</div>` : '';
+      const camId = cfg.show_camera && p.state !== 'offline' ? this._cameraOf(p) : null;
+      const cam = camId ? `<div class="cam" data-cam="${esc(camId)}"><div class="over"><span>${esc(p.state)}</span>${a.stage && live ? `<span>${esc(a.stage)}</span>` : ''}</div></div>` : '';
       const id = esc(a.bruh_bambu_printer);
       const controls = cfg.show_controls && p.state !== 'offline' ? `<div class="controls">
           ${p.state === 'pause' ? `<button class="primary" data-act="resume_print" data-id="${id}">Resume</button>`
@@ -169,10 +223,13 @@ class BruhBambuCard extends HTMLElement {
           ${live ? `<button class="${this._armed === a.bruh_bambu_printer ? 'armed' : 'danger'}" data-stop="${id}">${this._armed === a.bruh_bambu_printer ? 'Tap again to stop' : 'Stop'}</button>` : ''}
           ${live ? `<select data-speed="${id}" aria-label="Speed">${SPEEDS.map((s) => `<option ${s === a.speed ? 'selected' : ''}>${s}</option>`).join('')}</select>` : ''}
           <button data-light="${id}" data-on="${a.chamber_light ? '0' : '1'}">${a.chamber_light ? 'Light off' : 'Light on'}</button>
-        </div>` : '';
+          <button data-act="refresh" data-id="${id}" title="Ask for a full report (after changing a spool)">Refresh</button>
+        </div>` : cfg.show_controls ? `<div class="controls"><button data-act="reconnect" data-id="${id}">Reconnect</button></div>` : '';
       return `<div class="printer">
         <div class="head"><span class="name">${esc(a.printer_name || a.friendly_name)}</span>
           <span class="chip ${chipClass}">${esc(p.state)}</span></div>
+        ${cam}
+        ${live && a.stage && !cam ? `<div class="stage">${esc(a.stage)}</div>` : ''}
         ${live || pct ? `<div class="row"><span class="pct">${pct}</span>
           <span class="muted">${esc(a.file || '')}${a.remaining_min != null && live ? ` · ${duration(a.remaining_min)} left · done ${finishAt(a.remaining_min)}` : ''}${a.layer != null && a.total_layers ? ` · layer ${a.layer}/${a.total_layers}` : ''}</span></div>
           <div class="bar"><i style="width:${Math.max(0, Math.min(100, a.progress || 0))}%"></i></div>` : ''}
@@ -180,12 +237,13 @@ class BruhBambuCard extends HTMLElement {
           <span>Bed <b>${temp(a.bed_c, a.bed_target_c)}</b></span>
           ${a.chamber_c != null ? `<span>Chamber <b>${Math.round(a.chamber_c)}°</b></span>` : ''}
           ${a.hms_count ? `<span class="err">${a.hms_count} printer message${a.hms_count > 1 ? 's' : ''}</span>` : ''}</div>
-        ${a.connection_error ? `<div class="err">${esc(a.connection_error)}</div>` : ''}
+        ${a.connection_error ? `<div class="err">${esc(a.connection_error)}</div>${cfg.show_controls && p.state !== 'offline' ? `<div class="controls"><button data-act="reconnect" data-id="${id}">Reconnect</button></div>` : ''}` : ''}
         ${ams}${controls}</div>`;
     }).join('') : `<div class="empty">No printers yet. Add one on the BRUH Bambu Studio panel's Printers tab.</div>`;
     const inner = `<div class="wrap">${cfg.title ? `<div class="name">${esc(cfg.title)}</div>` : ''}${body}
       ${this._error ? `<div class="err">${esc(this._error)}</div>` : ''}</div>`;
     this.shadowRoot.innerHTML = `<style>${css(morph)}</style>${morph ? inner : `<ha-card>${inner}</ha-card>`}`;
+    this.shadowRoot.querySelectorAll('[data-cam]').forEach((box) => box.prepend(this._camImg(box.dataset.cam)));
     this.shadowRoot.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () =>
       this._call(b.dataset.act, { printer: b.dataset.id })));
     this.shadowRoot.querySelectorAll('[data-stop]').forEach((b) => b.addEventListener('click', () =>
@@ -212,7 +270,7 @@ if (!window.customCards.some((c) => c.type === 'bruh-bambu-card')) {
   window.customCards.push({
     type: 'bruh-bambu-card',
     name: 'BRUH Bambu printers',
-    description: 'Progress, time left, temperatures and AMS for your Bambu Lab printers, with pause, resume, stop, speed and light.',
+    description: 'Camera, progress, time left, temperatures and AMS for your Bambu Lab printers, with pause, resume, stop, speed, light and refresh.',
     preview: true,
   });
 }

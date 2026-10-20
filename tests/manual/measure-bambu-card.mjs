@@ -30,7 +30,16 @@ const HOUSE = {
     entity_id: 'sensor.a1_mini_status', state: 'idle',
     attributes: { bruh_bambu_printer: '03919c1234', printer_name: 'A1 mini', printing: false,
       nozzle_c: 27, bed_c: 25, chamber_light: false } },
+  'camera.workshop_x1c_camera': { entity_id: 'camera.workshop_x1c_camera', state: 'idle',
+    attributes: { entity_picture: '/api/camera_proxy/camera.workshop_x1c_camera?token=abc' } },
   'light.kitchen': { entity_id: 'light.kitchen', state: 'on', attributes: {} },
+};
+// The entity registry the frontend carries: the camera and the status sensor
+// on one device, which is how the card finds a printer's camera.
+const ENTITIES = {
+  'sensor.workshop_x1c_status': { entity_id: 'sensor.workshop_x1c_status', device_id: 'dev1' },
+  'camera.workshop_x1c_camera': { entity_id: 'camera.workshop_x1c_camera', device_id: 'dev1' },
+  'sensor.a1_mini_status': { entity_id: 'sensor.a1_mini_status', device_id: 'dev2' },
 };
 
 const problems = [];
@@ -47,12 +56,13 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
     customElements.define('ha-card', class extends HTMLElement {});
   });
   await page.addScriptTag({ content: CARD });
+  await page.evaluate((e) => { window.ENTITIES = e; }, ENTITIES);
   await page.evaluate(({ tag, house }) => {
     window.calls = [];
     const card = document.createElement(tag);
     card.setConfig({});
     document.body.append(card);
-    card.hass = { states: house, callService: (d, s, data) => { window.calls.push([d, s, data]); return Promise.resolve(); } };
+    card.hass = { states: house, entities: window.ENTITIES, callService: (d, s, data) => { window.calls.push([d, s, data]); return Promise.resolve(); } };
     window.card = card;
   }, { tag, house: HOUSE });
   const root = page.locator(tag);
@@ -61,6 +71,13 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
     if (!text.includes(want)) problems.push(`${tag}: "${want}" is not on the card`);
   }
   if (text.includes('kitchen')) problems.push(`${tag}: a non-printer entity rendered`);
+  const cams = await root.evaluate((el) => [...el.shadowRoot.querySelectorAll('.cam img')].map((i) => i.getAttribute('src') || ''));
+  if (cams.length !== 1 || !cams[0].startsWith('/api/camera_proxy/camera.workshop_x1c_camera?token=abc')) {
+    problems.push(`${tag}: the printer's camera is not on the card (${JSON.stringify(cams)})`);
+  }
+  if (!(await root.evaluate((el) => !!el.shadowRoot.querySelector('[data-act="refresh"]')))) {
+    problems.push(`${tag}: no Refresh`);
+  }
   const hasCard = await root.evaluate((el) => !!el.shadowRoot.querySelector('ha-card'));
   if (hasCard === morph) problems.push(`${tag}: ha-card ${morph ? 'present in Morph' : 'missing in Lovelace'}`);
 

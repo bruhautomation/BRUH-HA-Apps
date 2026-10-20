@@ -97,6 +97,24 @@ def exit_reason(returncode: int) -> str:
     return EXIT_REASONS.get(code, "")
 
 
+def rejected(lines: list[str]) -> list[str]:
+    """The settings the CLI named when it refused the config (exit -18).
+
+    It prints "Param values in 3mf/config error:" and then one
+    "key: why" line per setting, which is the only place the culprit is
+    named; without it the failure is a number.
+    """
+    out = []
+    for i, line in enumerate(lines):
+        if "Param values in 3mf/config error" in line:
+            for row in lines[i + 1:i + 12]:
+                row = row.strip()
+                if ":" in row and not row.lower().startswith(("[", "error", "warning")):
+                    out.append(row[:200])
+            break
+    return out
+
+
 def slice_env(base: dict | None) -> dict:
     """The window's environment with a home of the command line's own."""
     env = dict(base or os.environ)
@@ -132,8 +150,12 @@ def profile_path(kind: str, name: str) -> Path:
 def command(apprun: str, source: Path, out: Path, *, plate: int = 0,
             machine: Path | None = None, process: Path | None = None,
             filaments: list[Path] | None = None, arrange: bool = False,
-            orient: bool = False) -> list[str]:
-    argv = [apprun, "--slice", str(max(0, int(plate))),
+            orient: bool = False, copies: int = 1) -> list[str]:
+    plate = max(0, int(plate))
+    if copies > 1 and plate == 0:
+        # The CLI repeats one plate's model, never "every plate".
+        plate = 1
+    argv = [apprun, "--slice", str(plate),
             "--export-3mf", out.name, "--outputdir", str(out.parent)]
     settings = [str(p) for p in (machine, process) if p]
     if settings:
@@ -144,6 +166,10 @@ def command(apprun: str, source: Path, out: Path, *, plate: int = 0,
         argv += ["--arrange", "1"]
     if orient:
         argv += ["--orient", "1"]
+    if copies > 1:
+        argv += ["--repetitions", str(int(copies))]
+        if not arrange:
+            argv += ["--arrange", "1"]
     argv.append(str(source))
     return argv
 
@@ -159,7 +185,7 @@ def _output_for(source: Path) -> Path:
 
 def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = "",
           filaments: list[str] | None = None, arrange: bool = False,
-          orient: bool = False, env: dict | None = None) -> dict:
+          orient: bool = False, env: dict | None = None, copies: int = 1) -> dict:
     """Check the request, then slice on a thread. Returns the job."""
     source = library.path_of(source_rel)
     if not source.is_file():
@@ -174,13 +200,13 @@ def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = 
     p = profile_path("process", process) if process else None
     f = [profile_path("filament", name) for name in (filaments or [])]
     return start_paths(source, plate=plate, machine=m, process=p, filaments=f,
-                       arrange=arrange, orient=orient, env=env)
+                       arrange=arrange, orient=orient, env=env, copies=copies)
 
 
 def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
                 process: Path | None = None, filaments: list[Path] | None = None,
                 arrange: bool = False, orient: bool = False, env: dict | None = None,
-                out: Path | None = None) -> dict:
+                out: Path | None = None, copies: int = 1) -> dict:
     """Slice with settings files already chosen (a designed part's own)."""
     run = installer.apprun()
     if run is None:
@@ -190,7 +216,7 @@ def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
            "source": library.relative(source), "output": None, "error": "",
            "started": time.time(), "finished": None, "info": None, "log": []}
     argv = command(str(run), source, out, plate=plate, machine=machine, process=process,
-                   filaments=filaments, arrange=arrange, orient=orient)
+                   filaments=filaments, arrange=arrange, orient=orient, copies=copies)
     with _LOCK:
         JOBS[job["id"]] = job
         for old in sorted(JOBS.values(), key=lambda j: j["started"])[:-MAX_JOBS]:
@@ -217,14 +243,17 @@ def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=TIMEOUT_S, check=False)
         lines = result.stdout.decode(errors="replace").strip().splitlines()
-        job["log"] = job["log"] + [line[:300] for line in lines[-20:]]
+        job["log"] = job["log"] + [line[:300] for line in lines[-40:]]
         if result.returncode != 0 or not out.exists():
             reason = exit_reason(result.returncode) or next(
                 (ln.strip()[:240] for ln in reversed(lines) if "error" in ln.lower()), "")
+            named = rejected(lines)
+            job["rejected"] = named
             job.update(state="failed", error=(
                 f"Bambu Studio could not slice it (exit {result.returncode})"
                 + (f": {reason}." if reason and not reason.endswith(".") else
-                   f": {reason}" if reason else ".")))
+                   f": {reason}" if reason else ".")
+                + (f" It named: {'; '.join(named)}." if named else "")))
             return
         info = threemf.inspect(str(out))
         if not info["sliced"]:

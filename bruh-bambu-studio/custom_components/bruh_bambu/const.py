@@ -11,6 +11,10 @@ SHARED = Path("/config/.bruh_bambu")
 STATE_FILE = SHARED / "state.json"
 REQUEST_DIR = SHARED / "requests"
 RESPONSE_DIR = SHARED / "responses"
+CAMERA_DIR = SHARED / "camera"
+# Written when the integration sets up, so the add-on can tell which copy
+# Home Assistant is running (and whether a restart is still owed).
+RUNNING_FILE = SHARED / "integration.json"
 
 # A print whose file has to be sliced first is minutes of CPU; the panel
 # waits up to 15 minutes for it and this waits a little longer, so a
@@ -37,6 +41,8 @@ SERVICE_GCODE = "send_gcode"
 SERVICE_OPEN = "open_in_studio"
 SERVICE_IMPORT = "import_url"
 SERVICE_FIND = "find_printers"
+SERVICE_RECONNECT = "reconnect"
+SERVICE_REFRESH = "refresh"
 
 # The printer card, where run.sh puts it and the URL Core serves it from.
 # The URL carries a hash of the file because /local is served with a 31-day

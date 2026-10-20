@@ -21,6 +21,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import installer
+from design import options
 
 MACHINE_NAMES = {
     "X1C": "Bambu Lab X1 Carbon", "X1": "Bambu Lab X1", "X1E": "Bambu Lab X1E",
@@ -28,9 +29,6 @@ MACHINE_NAMES = {
     "A1": "Bambu Lab A1", "A1 mini": "Bambu Lab A1 mini", "H2D": "Bambu Lab H2D",
     "H2S": "Bambu Lab H2S",
 }
-PATTERN_KEYS = {"grid": "grid", "gyroid": "gyroid", "cubic": "cubic",
-                "honeycomb": "honeycomb", "line": "line", "triangles": "triangles"}
-BRIM_KEYS = {"none": "no_brim", "auto": "auto_brim", "outer": "outer_only"}
 MAX_DEPTH = 12
 
 
@@ -158,27 +156,9 @@ def filament_for(machine: str, material: str) -> str:
 
 
 def apply(process: dict, settings: dict | None) -> dict:
-    """The part's settings over a flattened process profile."""
-    s = settings or {}
+    """The part's settings over a flattened process profile (design/options.py)."""
     out = dict(process)
-    if "layer_height" in s:
-        out["layer_height"] = f"{s['layer_height']:g}"
-    if "walls" in s:
-        out["wall_loops"] = str(s["walls"])
-    if "infill_percent" in s:
-        out["sparse_infill_density"] = f"{s['infill_percent']}%"
-    if s.get("infill_pattern") in PATTERN_KEYS:
-        out["sparse_infill_pattern"] = PATTERN_KEYS[s["infill_pattern"]]
-    if "supports" in s:
-        out["enable_support"] = "0" if s["supports"] == "none" else "1"
-        if s["supports"] != "none":
-            out["support_type"] = "tree(auto)" if s["supports"] == "tree" else "normal(auto)"
-    if s.get("brim") in BRIM_KEYS:
-        out["brim_type"] = BRIM_KEYS[s["brim"]]
-    if "top_layers" in s:
-        out["top_shell_layers"] = str(s["top_layers"])
-    if "bottom_layers" in s:
-        out["bottom_shell_layers"] = str(s["bottom_layers"])
+    out.update(options.process_values(settings or {}))
     out["name"] = f"{process.get('name', 'process')} (BRUH Bambu)"
     return out
 
@@ -218,7 +198,9 @@ def prepare(model: str, settings: dict | None, outdir: Path,
     paths["filaments"] = []
     for i, (name, f) in enumerate(zip(names, wanted), start=1):
         path = outdir / ("filament.json" if len(names) == 1 else f"filament_{i}.json")
-        path.write_text(json.dumps(coloured(flatten("filament", name), f.get("colour")), indent=1))
+        data = coloured(flatten("filament", name), f.get("colour"))
+        data.update(options.filament_values(settings or {}))
+        path.write_text(json.dumps(data, indent=1))
         paths["filaments"].append(str(path))
     paths["filament"] = paths["filaments"][0]
     return {"machine": machine, "process": process, "filament": " + ".join(dict.fromkeys(names)),

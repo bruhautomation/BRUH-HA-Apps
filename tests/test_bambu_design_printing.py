@@ -170,7 +170,7 @@ class PrintTest(unittest.TestCase):
         run.start()
         self.addCleanup(run.stop)
 
-    def _print_job(self, panel, job, row, client, body, env, prepared, after):
+    def _print_job(self, panel, job, row, client, body, env, prepared, after, notify=None):
         job.update(state="done", phase="started")
         after(job)
         self.sent.append({"body": body, "prepared": prepared})
@@ -219,7 +219,7 @@ class TestStartingAPrint(PrintTest):
         self.assertIn("Logo from AMS 1", sentence)
         record = parts.load(part["id"])
         self.assertEqual(record["prints"][0]["slots"], {"Cube": 1, "Logo": 0})
-        self.assertIn("Printing version 1 on X1C", record["messages"][-1]["text"])
+        self.assertIn("Started version 1 on X1C", record["messages"][-1]["text"])
 
     def test_a_body_nobody_named_takes_the_tray_its_colour_fits(self):
         part = self.part()
