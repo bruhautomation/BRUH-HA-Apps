@@ -202,7 +202,7 @@ jobs:
 
       # 22.13 is the first Node with node:sqlite unflagged, which the app's
       # database and its tests need.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         if: env.RUNS == 'true'
         with:
           node-version: "22"
