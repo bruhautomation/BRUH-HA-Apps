@@ -38,7 +38,7 @@ SLICE = {
         "concentric": "concentric", "aligned rectilinear": "alignedrectilinear"},
         "sparse_infill_pattern",
         "Gyroid is strong in every direction; lightning only holds up top surfaces. "
-        "At 100 % infill only rectilinear, concentric or aligned rectilinear work."),
+        + "At 100 % infill only rectilinear, concentric or aligned rectilinear work."),
     "wall_generator": ("Wall generator", "Quality", "enum", {"classic": "classic", "arachne": "arachne"},
                        "wall_generator", "Arachne varies line width for thin features."),
     "seam": ("Seam", "Quality", "enum", {"aligned": "aligned", "nearest": "nearest", "back": "back",
@@ -182,7 +182,7 @@ def reconcile(process: dict) -> tuple[dict, list[str]]:
             if int(float(out.get(key, 0))) < 0:
                 out[key] = "0"
         except (TypeError, ValueError):
-            pass
+            pass  # not a number: the slicer's own check names it, nothing to make consistent
     return out, notes
 
 
