@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.4.3
+
+### Fixed
+
+- **A Deep review runs on Opus when the account has no usage credits for Fable.** On a subscription without usage credits the CLI refuses Fable, and the press failed in two seconds having read nothing. brAIn now runs the same review on Opus and says so on the review. Any other failure is reported as before. (#466)
+- **The problem report lists every failed run again.** With more than six different failed runs in a day, the list stopped with "brAIn could not work out what is wrong" instead of counting the rest in one row. (#466)
+
 ## 3.4.2
 
 ### Fixed

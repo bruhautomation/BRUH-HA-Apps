@@ -1372,5 +1372,21 @@ class TestARunOfRefusedRunsIsSaid(unittest.TestCase):
         self.assertEqual(health.verdict(payload, {})["state"], "ok")
 
 
+class TestMoreFailedRunsThanTheListShows(unittest.TestCase):
+    """#466: past FAULTS_PER_KIND distinct failed runs the fold-up row
+    unpacked three-item groups as pairs, and the whole fault list came back
+    as "brAIn could not work out what is wrong"."""
+
+    def test_the_rest_are_counted_in_one_row(self):
+        now = int(time.time())
+        failures = [{"ts": now - i, "source": f"job{i}", "outcome": "error",
+                     "ok": False, "error": f"broke {i}"}
+                    for i in range(reports.FAULTS_PER_KIND + 3)]
+        rows = reports.faults({"journal": {"failures": failures}})
+        said = " | ".join(f"{r.get('where')}: {r.get('what')}" for r in rows)
+        self.assertNotIn("could not work out", said)
+        self.assertIn("Runs: 3 more failed runs in the last day", said)
+
+
 if __name__ == "__main__":
     unittest.main()
