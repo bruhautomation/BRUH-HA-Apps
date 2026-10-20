@@ -309,7 +309,6 @@ class TestTheRoutes(PrintTest):
         # not open it as geometry only (test_bambu_slice_rules).
         opened = Path(restart.call_args[0][0])
         self.assertEqual(opened.name, "cube_logo.studio.3mf", body.get("note"))
-        import zipfile
         with zipfile.ZipFile(opened) as z:
             self.assertIn("Metadata/project_settings.config", z.namelist())
         empty = parts.create("Nothing yet")
