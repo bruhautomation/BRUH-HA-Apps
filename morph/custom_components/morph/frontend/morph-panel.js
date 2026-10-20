@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, isDashChange, ASK_CONTEXT } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -75,11 +75,6 @@ const SALIENT = ['lock', 'binary_sensor', 'alarm_control_panel', 'person', 'cove
 const NEEDS_BRAIN = 'Morph needs brAIn. Install it from the add-on store.';
 const agoWords = (ms) => { const m = Math.max(0, Math.round(ms / 60000)); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`; };
 // Uses waiting to be sent when the connection is down; past this the oldest go.
-// The card files this page has imported, by name, and the version each was
-// imported at. Module-level, so a panel element rebuilt by Home Assistant
-// still knows what the page already defined.
-const IMPORTED = new Map();
-const REDEFINED = /already been (used|defined)|already defined/i;
 const USAGE_KEEP = 400;
 
 // Why a change to Morph's own code is paused (the add-on's morphcode.py):
@@ -335,24 +330,23 @@ class MorphPanel extends HTMLElement {
 
   loadModules(mods) {
     const base = (this._panel && this._panel.config && this._panel.config.cards_url) || '/morph_cards';
+    guardDefine();
     mods.forEach((m) => {
       const key = m.name + '@' + m.v;
       if (this.loadedModules.has(key)) return;
       this.loadedModules.add(key);
-      const before = IMPORTED.get(m.name);
-      IMPORTED.set(m.name, m.v);
-      // One dropped fetch is not a broken card: a failed fetch is tried once
-      // more before it is reported (util.importWithRetry).
-      importWithRetry(`${base}/${encodeURIComponent(m.name)}?v=${m.v}`, { load: (u) => import(u) }).then(() => this.schedule()).catch((e) => {
-        // A custom element cannot be defined twice on one page. When a card's
-        // file changes, its new version runs and its define() throws — that
-        // is the browser keeping the old one until the page reloads, not a
-        // fault in the card, so it is said and offered rather than reported.
-        if (before != null && before !== m.v && REDEFINED.test(String((e && e.message) || e))) {
-          this.toast(`${m.name} changed. Reload the page to see the new version.`, null, 'reload');
-          return;
-        }
-        this.report('card', `Card code ${m.name} failed to load: ${e.message || e}`, String(e && e.stack || ''), 'custom');
+      // Once per version per page, an import in flight shared, a dropped
+      // fetch tried once more, and a define the page already has skipped
+      // (util.loadCard / guardDefine).
+      const url = cardUrl(base, m.name, m.v);
+      loadCard(m.name, m.v, url, () => importWithRetry(url, { load: (u) => import(u) })).then((how) => {
+        // A custom element cannot be defined twice on one page. A newer
+        // file whose elements the page already has shows after a reload,
+        // which is said and offered rather than reported.
+        if (how === 'changed') this.toast(`${m.name} changed. Reload the page to see the new version.`, null, 'reload');
+        this.schedule();
+      }).catch((e) => {
+        this.report('card', cardFailure(e), `${m.name}: ${String((e && e.stack) || e || '')}`, 'custom');
       });
     });
   }
@@ -3070,9 +3064,13 @@ ${hist == null ? '<p class="sm">Reading…</p>' : hist.length ? hist.map((h) => 
   }
 
   report(kind, message, detail, cardType) {
+    // Once per page, not per panel element: Home Assistant rebuilds the
+    // element, and Morph's modules run again after an update.
     const key = kind + '|' + message;
-    if (this.reported.has(key) || !this.hass) return;
+    const page = cardPage().reported;
+    if (this.reported.has(key) || page.has(key) || !this.hass) return;
     this.reported.add(key);
+    page.add(key);
     this.hass.callWS({ type: 'morph/report', kind, message: String(message).slice(0, 300), detail: String(detail || '').slice(0, 2000), card_type: String(cardType || '') }).catch(() => {});
   }
 
