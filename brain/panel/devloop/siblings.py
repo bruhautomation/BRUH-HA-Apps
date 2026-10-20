@@ -81,8 +81,8 @@ SIGNATURE_CHARS = 150
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # A line's own clock and level, which make every occurrence look new.
 _STAMP = re.compile(
-    r"^\s*\[?\d{4}-\d\d-\d\d[T ][\d:.,]+(?:Z|[+-]\d\d:?\d\d)?\]?\s*"
-    r"|^\s*\[?\d\d:\d\d:\d\d(?:[.,]\d+)?\]?\s*")
+    r"^\s*\[?(?:\d{4}-\d\d-\d\d[T ][\d:.,]+(?:Z|[+-]\d\d:?\d\d)?"
+    r"|\d\d:\d\d:\d\d(?:[.,]\d+)?)\]?\s*")
 # Upper case only: "Error fetching data" is the message, "ERROR" is the level.
 _LEVEL = re.compile(r"^\s*\[?(?:ERROR|CRITICAL|FATAL|ERR)\]?\s*[:\-]?\s*")
 _HEX = re.compile(r"\b(?:0x)?[0-9a-f]{8,}\b", re.I)
