@@ -36,6 +36,15 @@ import library
 from bambu import threemf
 
 TIMEOUT_S = 1800
+# The command line gets a profile folder of its own. Sharing the window's
+# meant two Bambu Studios reading and writing one BambuStudio.conf and one
+# preset folder at once.
+SLICE_HOME = Path(os.environ.get("BAMBU_SLICE_HOME", "/data/slicer-home"))
+# What a slice of a part needs free before it runs beside the window; less,
+# and the window is closed for the slice (studio.make_room) and reopened.
+SLICE_MEMORY_MB = 1500
+# Set by the panel: Studio.make_room, so a slice can ask for the memory.
+MAKE_ROOM = None
 MAX_JOBS = 30
 JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
@@ -68,9 +77,35 @@ EXIT_REASONS = {
 }
 
 
+SIGNAL_REASONS = {
+    9: "it was killed, most likely because the machine ran out of memory",
+    11: "it crashed",
+    6: "it crashed",
+}
+
+
 def exit_reason(returncode: int) -> str:
+    if returncode < 0:
+        # subprocess reports a signal as a negative code; one it does not
+        # name may be the CLI's own code handed in as written (-17).
+        if -returncode in SIGNAL_REASONS:
+            return SIGNAL_REASONS[-returncode]
+        return EXIT_REASONS.get(returncode, f"it was stopped by signal {-returncode}")
+    if returncode in (137, 139, 134):  # a shell's 128 + signal
+        return SIGNAL_REASONS[returncode - 128]
     code = returncode - 256 if returncode > 127 else returncode
     return EXIT_REASONS.get(code, "")
+
+
+def slice_env(base: dict | None) -> dict:
+    """The window's environment with a home of the command line's own."""
+    env = dict(base or os.environ)
+    try:
+        SLICE_HOME.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = str(SLICE_HOME)
+    except OSError:
+        pass  # the window's home still slices; it only shares the presets
+    return env
 
 
 def profile_names(kind: str) -> list[str]:
@@ -168,12 +203,21 @@ def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
     # The CLI writes beside itself in places; a scratch working directory
     # keeps that out of the library.
     work = Path(tempfile.mkdtemp(prefix="slice-"))
+    resume = None
     try:
-        result = subprocess.run(argv, cwd=work, env=env or os.environ,
+        if MAKE_ROOM is not None:
+            try:
+                resume = MAKE_ROOM(SLICE_MEMORY_MB)
+            except Exception:  # noqa: BLE001 - asking for room must not stop a slice
+                resume = None
+            if resume is not None:
+                job["log"].append("Bambu Studio's window was closed while this sliced, "
+                                  "to free memory; it reopens afterwards.")
+        result = subprocess.run(argv, cwd=work, env=slice_env(env),
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=TIMEOUT_S, check=False)
         lines = result.stdout.decode(errors="replace").strip().splitlines()
-        job["log"] = [line[:300] for line in lines[-20:]]
+        job["log"] = job["log"] + [line[:300] for line in lines[-20:]]
         if result.returncode != 0 or not out.exists():
             reason = exit_reason(result.returncode) or next(
                 (ln.strip()[:240] for ln in reversed(lines) if "error" in ln.lower()), "")
@@ -194,6 +238,11 @@ def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
     finally:
         job["finished"] = time.time()
         shutil.rmtree(work, ignore_errors=True)
+        if resume is not None:
+            try:
+                resume()
+            except Exception:  # noqa: BLE001 - the panel's timer starts it again anyway
+                pass
 
 
 def get(job_id: str) -> dict | None:

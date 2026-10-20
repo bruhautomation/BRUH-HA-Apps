@@ -101,6 +101,8 @@ function renderStudio() {
     text = `Bambu Studio ${s.version || ""} needs system libraries this add-on does not have yet: `
       + `${s.missing_libraries.join(", ")}. Update BRUH Bambu Studio, or pin an older Bambu Studio `
       + "version in the add-on's Configuration tab.";
+  } else if (!s.running && s.paused_for) {
+    text = `Bambu Studio is closed while a print is ${s.paused_for}; it opens again when that is done.`;
   } else if (!s.running) {
     text = s.wanted ? (s.next_start_in ? `Bambu Studio closed; starting it again in ${s.next_start_in} s.`
       : "Starting Bambu Studio…") : "Bambu Studio is stopped.";

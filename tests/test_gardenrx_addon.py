@@ -155,7 +155,7 @@ class TestTheGateway(unittest.TestCase):
         )
         self.assertEqual(
             [
-                "/api/hassio_ingress/tok",
+                "/api/hassio_ingress/tok/",
                 "/api/hassio_ingress/tok/crops?x=1",
                 "/api/hassio_ingress/tok/crops",
                 "/api/hassio_ingress/tok",

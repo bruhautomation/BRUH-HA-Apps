@@ -9,6 +9,15 @@ const basePath = process.env.GARDENRX_BASE_PATH || '';
 
 const nextConfig: NextConfig = {
   basePath: basePath || undefined,
+  // Home Assistant answers an ingress panel only under `<ingress path>/...`:
+  // the path with no slash after the token is a 404 from Core, before it
+  // ever reaches the add-on. With no trailing slash every Link to `/` (the
+  // Today page) pointed at exactly that path. So every page URL Next writes
+  // ends in a slash, and neither form is redirected to the other: `/api/*`
+  // is called without one, by the browser and by the integration, and a
+  // 308 there would be a second round trip on every call.
+  trailingSlash: true,
+  skipTrailingSlashRedirect: true,
   // The add-on runs `node server.js` out of a standalone build rather than
   // carrying node_modules into the image.
   output: 'standalone',
