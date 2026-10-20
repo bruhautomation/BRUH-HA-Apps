@@ -24,7 +24,6 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
-import bambu_env  # noqa: E402,F401
 from test_bambu_design_printing import (  # noqa: E402
     FakeClient, PrintTest, installer, parts, profiles, server, store)
 
