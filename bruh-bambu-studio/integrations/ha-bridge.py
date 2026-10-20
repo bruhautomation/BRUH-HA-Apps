@@ -67,6 +67,8 @@ ROUTES = {
     "send_gcode": _command("gcode"),
     "open_in_studio": lambda p: ("POST", "/api/studio/open", {"file": p.get("file", "")}),
     "import_url": _with_wait("/api/import"),
+    "reconnect": _command("reconnect"),
+    "refresh": _command("refresh"),
     "find_printers": lambda p: ("POST", "/api/printers/scan",
                                 {"subnet": p.get("subnet", ""), "wait": 120}),
 }
@@ -97,10 +99,11 @@ def summarise_state(state: dict) -> dict:
                    "running": studio.get("running"),
                    "install": (studio.get("install") or {}).get("phase")},
         "printers": [{k: p.get(k) for k in (
-            "id", "name", "model", "online", "state", "printing", "progress",
+            "id", "name", "model", "online", "state", "stage", "printing", "progress",
             "remaining_min", "layer", "total_layers", "file", "nozzle_c",
             "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c", "speed",
-            "chamber_light", "ams", "error_code", "hms_count", "connection_error")}
+            "chamber_light", "ams", "ams_units", "active_tray", "external_spool", "error_code",
+            "hms_count", "hms", "fans", "connection_error")}
             for p in state.get("printers") or [] if isinstance(p, dict)],
         "jobs": [{k: j.get(k) for k in ("id", "kind", "state", "phase", "file",
                                         "source", "output", "error", "printer")}

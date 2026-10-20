@@ -31,6 +31,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -41,15 +42,18 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bambu_atomic  # noqa: E402
 import discover  # noqa: E402
+import ha_setup  # noqa: E402
 import importer  # noqa: E402
 import installer  # noqa: E402
 import library  # noqa: E402
 import slicer  # noqa: E402
 import store  # noqa: E402
+import thumbs  # noqa: E402
 import vnc_bridge  # noqa: E402
+from bambu import camera as cameras  # noqa: E402
 from bambu import ftps, protocol, threemf  # noqa: E402
 from bambu.client import PrinterClient  # noqa: E402
-from design import brain_link, designer, painting, parts, profiles, runner  # noqa: E402
+from design import brain_link, designer, options, painting, parts, profiles, runner  # noqa: E402
 from studio import Studio  # noqa: E402
 
 log = logging.getLogger("bruh_bambu")
@@ -71,7 +75,11 @@ MAX_PRINT_JOBS = 30
 MAX_WAIT_S = 900
 
 ACTIONS = ("pause", "resume", "stop", "speed", "light", "gcode",
-           "temperature", "home", "refresh")
+           "temperature", "home", "refresh", "reconnect", "ams_refresh")
+# Home Assistant's camera entity asks for frames by touching a file here,
+# and reads them back from the same folder (there is no port between them).
+CAMERA_DIR = SHARED / "camera"
+HA_WANTS_S = 30
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +91,10 @@ class Panel:
         self.studio = Studio()
         self.clients: dict[str, PrinterClient] = {}
         self.jobs: dict[str, dict] = {}
+        self.cameras: dict[str, cameras.Camera] = {}
+        # What each print job put on each printer, so the printer card can
+        # show the picture of the job it is printing: {printer id: {name: library path}}.
+        self.uploaded: dict[str, dict] = {}
         self.start_clients = start_clients
         self._mirror = ""
         self._mirrored_at = 0.0
@@ -97,6 +109,9 @@ class Panel:
             if row is None or (row["host"], codes.get(pid)) != (client.host, client.code):
                 client.stop()
                 self.clients.pop(pid)
+                camera = self.cameras.pop(pid, None)
+                if camera:
+                    camera.stop()
         for pid, row in rows.items():
             if pid not in self.clients and codes.get(pid):
                 client = PrinterClient(row["host"], row["serial"], codes[pid])
@@ -112,13 +127,54 @@ class Panel:
                               f"on the Printers tab.")
         return row, client
 
+    def reconnect(self, pid: str) -> None:
+        """Drop the printer's session and open a new one."""
+        client = self.clients.pop(pid, None)
+        if client is not None:
+            client.stop()
+        camera = self.cameras.pop(pid, None)
+        if camera is not None:
+            camera.stop()
+        self.sync_clients()
+
+    def camera(self, pid: str) -> cameras.Camera:
+        row, client = self.printer(pid)
+        summary = client.summary()
+        kind = protocol.camera_kind(row.get("model"), summary.get("rtsp_url"))
+        current = self.cameras.get(row["id"])
+        if current is None or current.kind != kind or current.host != row["host"]:
+            if current is not None:
+                current.stop()
+            want = CAMERA_DIR / f"{row['id']}.want"
+
+            def ha_wants(path=want) -> bool:
+                try:
+                    return time.time() - path.stat().st_mtime < HA_WANTS_S
+                except OSError:
+                    return False
+            current = cameras.Camera(row["host"], client.code, kind, summary.get("rtsp_url"),
+                                     mirror=CAMERA_DIR / f"{row['id']}.jpg", mirror_wanted=ha_wants)
+            self.cameras[row["id"]] = current
+        return current
+
     def printers(self) -> list[dict]:
         out = []
         for row in store.load():
             client = self.clients.get(row["id"])
             summary = client.summary() if client else {
                 "online": False, "connection_error": "No access code saved."}
-            out.append({**row, **summary})
+            item = {**row, **summary}
+            camera = self.cameras.get(row["id"])
+            item["camera"] = camera.state() if camera else {
+                "kind": protocol.camera_kind(row.get("model"), summary.get("rtsp_url")),
+                "streaming": False, "frame_age_s": None, "error": ""}
+            item.pop("rtsp_url", None)
+            known = self.uploaded.get(row["id"]) or {}
+            source = known.get(summary.get("file") or "") or known.get(
+                os.path.basename(str(summary.get("gcode_file") or "")))
+            item["job_picture"] = (f"api/thumb?path={urllib.parse.quote(source)}"
+                                   if source else None)
+            out.append(item)
         return out
 
     # -- jobs --------------------------------------------------------------
@@ -143,6 +199,7 @@ class Panel:
             "printers": self.printers(),
             "jobs": sorted([*self.jobs.values(), *slicer.JOBS.values()],
                            key=lambda j: j["started"], reverse=True)[:10],
+            "ha": ha_setup.status(),
         }
 
     # -- the timer ---------------------------------------------------------
@@ -150,7 +207,29 @@ class Panel:
         self.studio.tick()
         for client in list(self.clients.values()):
             client.tick()
+        self._ha_cameras()
         self.publish()
+        try:
+            ha_setup.check()
+        except Exception:  # noqa: BLE001 - asking Home Assistant must not stop the timer
+            log.exception("Checking the Home Assistant integration failed")
+
+    def _ha_cameras(self) -> None:
+        """Start a camera Home Assistant has asked for (its entity touches a file)."""
+        try:
+            wants = list(CAMERA_DIR.glob("*.want"))
+        except OSError:
+            return
+        for path in wants:
+            try:
+                fresh = time.time() - path.stat().st_mtime < HA_WANTS_S
+            except OSError:
+                continue
+            if fresh and path.stem in self.clients:
+                try:
+                    self.camera(path.stem).want()
+                except LookupError:
+                    pass  # a printer removed since its entity asked
 
     def publish(self) -> None:
         """Mirror what Home Assistant reads into the shared folder.
@@ -204,6 +283,14 @@ def run_command(client: PrinterClient, action: str, body: dict) -> dict:
         payload = protocol.gcode("G28")
     elif action == "refresh":
         payload = protocol.pushall()
+    elif action == "ams_refresh":
+        try:
+            slot = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("Name the AMS tray to read again (0 for the first).") from None
+        if not 0 <= slot < 16:
+            raise ValueError("An AMS tray is 0 to 15.")
+        payload = protocol.ams_refresh(slot // 4, slot % 4)
     else:
         raise ValueError(f"Unknown action {action!r}. Known: {', '.join(ACTIONS)}.")
     if action in ("gcode", "temperature", "home") and client.summary().get("state") in (
@@ -213,40 +300,73 @@ def run_command(client: PrinterClient, action: str, body: dict) -> dict:
     return client.send(payload)
 
 
+def describe_slice(info: dict) -> str:
+    """A sliced job in one sentence: how long, how much, of what."""
+    bits = []
+    if info.get("seconds"):
+        minutes = round(info["seconds"] / 60)
+        bits.append(f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min")
+    use = [f for f in info.get("filament_use") or [] if f.get("grams")]
+    if info.get("grams"):
+        total = f"{info['grams']:g} g of filament"
+        if len(use) > 1:
+            total += " (" + ", ".join(
+                f"{f['grams']:g} g {' '.join(x for x in (f.get('colour'), f.get('type')) if x)}"
+                for f in use) + "; colour changes purge into the prime tower or the infill and that is counted here)"
+        bits.append(total)
+    return ", ".join(bits)
+
+
 def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
                body: dict, env: dict, prepared: dict | None = None,
-               after=None) -> None:
+               after=None, notify=None) -> None:
     """Slice if needed, upload, start.
 
-    `prepared` is a designed part's own settings files (design/profiles.py),
-    built here from the part and never taken off a request. `after` is told
-    the finished job.
+    `prepared` is a part's (or a bare model's) own settings files
+    (design/profiles.py), built from what was asked and never taken off a
+    request as paths. `after` is told the finished job; `notify` is told
+    each step in a sentence, so a conversation can say what is happening.
     """
+    start = options.clean_start(body)
+    copies = int(start.get("copies") or 1)
+
+    def say(text: str) -> None:
+        job["note"] = text
+        if notify:
+            try:
+                notify(text)
+            except Exception:  # noqa: BLE001 - a note must not stop a print
+                log.exception("Telling the conversation about the print failed")
+
     try:
         source = library.path_of(body["file"])
         info = threemf.inspect(str(source)) if source.name.lower().endswith(".3mf") else {
             "sliced": False}
-        if not info.get("sliced"):
+        if not info.get("sliced") or copies > 1:
             job["phase"] = "slicing"
             if prepared:
                 paths = prepared["paths"]
                 slice_job = slicer.start_paths(
                     source, machine=Path(paths["machine"]), process=Path(paths["process"]),
                     filaments=[Path(f) for f in paths.get("filaments") or [paths["filament"]]],
-                    arrange=True, env=env)
+                    arrange=True, orient=bool(body.get("orient")), env=env, copies=copies)
             else:
                 slice_job = slicer.start(body["file"], plate=int(body.get("plate") or 0),
                                          machine=body.get("machine") or "",
                                          process=body.get("process") or "",
                                          filaments=body.get("filaments") or None,
-                                         arrange=bool(body.get("arrange")),
-                                         orient=bool(body.get("orient")), env=env)
+                                         arrange=bool(body.get("arrange")) or copies > 1,
+                                         orient=bool(body.get("orient")), env=env,
+                                         copies=copies)
             job["slice_job"] = slice_job["id"]
             done = slicer.wait(slice_job["id"], slicer.TIMEOUT_S + 30)
             if not done or done["state"] != "done":
                 raise RuntimeError((done or {}).get("error") or "Slicing did not finish.")
             source = library.path_of(done["output"])
             info = done["info"]
+            summary_line = describe_slice(info)
+            if summary_line:
+                say(f"Sliced: {summary_line}.")
         plates = info.get("plates") or [1]
         plate = int(body.get("plate") or plates[0])
         if plate not in plates:
@@ -259,6 +379,8 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
         with ftps.Storage(row["host"], client.code) as storage:
             storage.upload(str(source), name,
                            progress=lambda s, t: job.update(progress=round(s / t * 100) if t else None))
+        panel.uploaded.setdefault(row["id"], {})[name] = library.relative(source)
+        panel.uploaded[row["id"]][re.sub(r"(\.gcode)?\.3mf$", "", name)] = library.relative(source)
         job["phase"] = "starting"
         use_ams = body.get("use_ams")
         if use_ams is None:
@@ -266,14 +388,22 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
         mapping = body.get("ams_mapping") or threemf.ams_mapping(info)
         payload = protocol.project_file(
             name, plate, use_ams=bool(use_ams), ams_mapping=[int(x) for x in mapping],
-            timelapse=bool(body.get("timelapse", False)),
-            bed_leveling=bool(body.get("bed_leveling", True)),
-            flow_cali=bool(body.get("flow_cali", False)),
-            vibration_cali=bool(body.get("vibration_cali", True)))
+            timelapse=bool(start.get("timelapse", body.get("timelapse", False))),
+            bed_leveling=bool(start.get("bed_leveling", body.get("bed_leveling", True))),
+            flow_cali=bool(start.get("flow_cali", body.get("flow_cali", False))),
+            vibration_cali=bool(start.get("vibration_cali", body.get("vibration_cali", True))),
+            bed_type=options.mqtt_bed_type(start.get("plate_type")),
+            layer_inspect=bool(start.get("layer_inspect", False)))
         answer = client.send(payload)
+        if start.get("speed") and start["speed"] != "standard":
+            try:
+                client.send(protocol.speed(start["speed"]))
+            except (ConnectionError, RuntimeError, ValueError) as exc:
+                log.info("Setting %s's speed after the start: %s", row["name"], exc)
         job.update(state="done", phase="started", file=library.relative(source),
                    plate=plate, acknowledged=answer.get("acknowledged"),
-                   seconds=info.get("seconds"), grams=info.get("grams"))
+                   seconds=info.get("seconds"), grams=info.get("grams"),
+                   filament_use=info.get("filament_use"))
     except (OSError, ValueError, LookupError, RuntimeError, ConnectionError,
             EOFError) as exc:
         job.update(state="failed", error=str(exc) or exc.__class__.__name__)
@@ -439,6 +569,10 @@ async def h_command(request):
     except LookupError as exc:
         return _err(str(exc), 404)
     action = str(body.get("action") or "").strip().lower()
+    if action == "reconnect":
+        await asyncio.to_thread(_panel(request).reconnect, row["id"])
+        return web.json_response({"ok": True, "printer": row["name"], "action": action,
+                                  "acknowledged": True, "note": ""})
     try:
         answer = await asyncio.to_thread(run_command, client, action, body)
     except ValueError as exc:
@@ -467,7 +601,174 @@ async def h_storage(request):
         files = await asyncio.to_thread(_list)
     except Exception as exc:  # noqa: BLE001 - ftplib raises its own zoo of errors
         return _err(f"Could not read {row['name']}'s storage: {exc}", 502)
-    return web.json_response({"ok": True, "printer": row["name"], "files": files})
+    # Print jobs first, newest name last is how the printer lists them; the
+    # card wants the jobs and nothing else (the logs and caches are folders).
+    jobs = [f for f in files if not f["dir"] and f["name"].lower().endswith((".3mf", ".gcode"))]
+    for f in jobs:
+        f["printable"] = True
+        f["picture"] = (f"api/printer/thumb?printer={urllib.parse.quote(row['id'])}"
+                        f"&name={urllib.parse.quote(f['name'])}&size={f.get('size') or 0}"
+                        if f["name"].lower().endswith(".3mf") else None)
+        source = (_panel(request).uploaded.get(row["id"]) or {}).get(f["name"])
+        f["library"] = source
+    others = [f for f in files if f not in jobs]
+    return web.json_response({"ok": True, "printer": row["name"], "files": jobs + others})
+
+
+STORAGE_NAME = re.compile(r"^[^/\\\x00-\x1f]{1,200}$")
+
+
+def _storage_name(name) -> str:
+    """A file on the printer, as named in its own listing: no folders, nothing hidden."""
+    text = str(name or "")
+    if not STORAGE_NAME.match(text) or text.startswith(".") or ".." in text:
+        raise ValueError("That is not a file on the printer.")
+    return text
+
+
+async def h_printer_thumb(request):
+    try:
+        row, client = _panel(request).printer(request.query.get("printer"))
+        name = _storage_name(request.query.get("name"))
+        size = int(request.query.get("size") or 0)
+    except (LookupError, ValueError) as exc:
+        return _err(str(exc), 404)
+
+    def _read():
+        return thumbs.printer(row["serial"], name, size,
+                              lambda: ftps.Storage(row["host"], client.code))
+
+    try:
+        data = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 - ftplib raises its own zoo of errors
+        return _err(f"Could not read the picture: {exc}", 502)
+    if not data:
+        return _err("No picture in that file.", 404)
+    return web.Response(body=data, content_type="image/png",
+                        headers={"Cache-Control": "private, max-age=86400"})
+
+
+async def h_printer_file_delete(request):
+    try:
+        row, client = _panel(request).printer(request.query.get("printer"))
+        name = _storage_name(request.query.get("name"))
+    except (LookupError, ValueError) as exc:
+        return _err(str(exc), 404)
+
+    def _delete():
+        with ftps.Storage(row["host"], client.code) as storage:
+            storage.ftp.delete(name)
+
+    try:
+        await asyncio.to_thread(_delete)
+    except Exception as exc:  # noqa: BLE001 - ftplib raises its own zoo of errors
+        return _err(f"Could not delete it from {row['name']}: {exc}", 502)
+    return web.json_response({"ok": True})
+
+
+def _start_stored(panel: Panel, row: dict, client: PrinterClient, name: str, body: dict) -> dict:
+    """Start a job that is already on the printer's storage."""
+    if client.summary().get("printing"):
+        raise RuntimeError(f"{row['name']} is already printing.")
+    start = options.clean_start(body)
+    info: dict = {}
+    source = (panel.uploaded.get(row["id"]) or {}).get(name)
+    if source:
+        try:
+            info = threemf.inspect(str(library.path_of(source)))
+        except ValueError:
+            info = {}
+    if not info and name.lower().endswith(".3mf"):
+        size = int(body.get("size") or 0)
+        if size:
+            with ftps.Storage(row["host"], client.code) as storage:
+                info = threemf.inspect(ftps.RemoteFile(storage, name, size))
+    plates = info.get("plates") or [1]
+    plate = int(body.get("plate") or plates[0])
+    if name.lower().endswith(".gcode"):
+        payload = {"print": {"command": "gcode_file", "param": f"/sdcard/{name}"}}
+    else:
+        if plate not in plates:
+            raise ValueError(f"Plate {plate} is not in that file; it has plates "
+                             f"{', '.join(map(str, plates))}.")
+        use_ams = body.get("use_ams")
+        if use_ams is None:
+            use_ams = bool(client.summary().get("ams"))
+        payload = protocol.project_file(
+            name, plate, use_ams=bool(use_ams),
+            ams_mapping=[int(x) for x in body.get("ams_mapping") or threemf.ams_mapping(info)],
+            timelapse=bool(start.get("timelapse", False)),
+            bed_leveling=bool(start.get("bed_leveling", True)),
+            flow_cali=bool(start.get("flow_cali", False)),
+            vibration_cali=bool(start.get("vibration_cali", True)),
+            bed_type=options.mqtt_bed_type(start.get("plate_type")),
+            layer_inspect=bool(start.get("layer_inspect", False)))
+    answer = client.send(payload)
+    return {"acknowledged": answer.get("acknowledged"), "plate": plate}
+
+
+async def h_printer_file_print(request):
+    body = await _body(request)
+    panel = _panel(request)
+    try:
+        row, client = panel.printer(body.get("printer"))
+        name = _storage_name(body.get("name"))
+    except (LookupError, ValueError) as exc:
+        return _err(str(exc), 404)
+    try:
+        answer = await asyncio.to_thread(_start_stored, panel, row, client, name, body)
+    except (ValueError, RuntimeError, ConnectionError) as exc:
+        return _err(f"{row['name']}: {exc}", 409)
+    except Exception as exc:  # noqa: BLE001 - ftplib raises its own zoo of errors
+        return _err(f"Could not read that file on {row['name']}: {exc}", 502)
+    return web.json_response({"ok": True, "printer": row["name"], **answer})
+
+
+async def h_camera(request):
+    """The newest frame from a printer's camera, as a JPEG."""
+    panel = _panel(request)
+    try:
+        camera = panel.camera(request.query.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    frame = await asyncio.to_thread(camera.latest, 8.0)
+    if frame is None:
+        return _err(camera.error or "The camera has not sent a picture yet.", 503)
+    return web.Response(body=frame, content_type="image/jpeg", headers={
+        "Cache-Control": "no-store",
+        "X-Frame-Age": str(round(time.time() - camera.frame_at, 1))})
+
+
+async def h_thumb(request):
+    """A library file's picture (a 3MF's own, or one drawn from the mesh)."""
+    try:
+        path = library.path_of(request.query.get("path"))
+        plate = max(1, int(request.query.get("plate") or 1))
+    except ValueError as exc:
+        return _err(str(exc), 404)
+    if not path.is_file():
+        return _err("No such file.", 404)
+    data = await asyncio.to_thread(thumbs.library, path, plate)
+    if not data:
+        return _err("No picture for that file.", 404)
+    return web.Response(body=data, content_type="image/png",
+                        headers={"Cache-Control": "private, max-age=3600"})
+
+
+async def h_ha_check(_request):
+    return web.json_response({"ok": True, "ha": {
+        **await asyncio.to_thread(ha_setup.check, True), **ha_setup.status()}})
+
+
+async def h_ha_restart(_request):
+    ok, why = await asyncio.to_thread(ha_setup.restart_core)
+    if not ok:
+        return _err(f"Home Assistant did not restart: {why}", 502)
+    return web.json_response({"ok": True})
+
+
+async def h_print_options(_request):
+    return web.json_response({"ok": True, **options.catalog()})
 
 
 def _profiles() -> dict:
@@ -602,7 +903,11 @@ def _bare_model_profiles(body: dict, row: dict, client: PrinterClient) -> dict |
     else:
         body.update(use_ams=False, ams_mapping=[0])
     scratch = Path(tempfile.gettempdir()) / "bruh-bambu-profiles" / row["id"]
-    return profiles.prepare(row.get("model"), {"material": material}, scratch)
+    settings = {**(body.get("settings") if isinstance(body.get("settings"), dict) else {}),
+                "material": material}
+    if body.get("plate_type"):
+        settings["plate_type"] = body["plate_type"]
+    return profiles.prepare(row.get("model"), settings, scratch)
 
 
 async def h_print(request):
@@ -891,6 +1196,22 @@ def _chosen_slots(names: list[str] | None, slots, trays: dict, material: str,
     return chosen
 
 
+def _part_note(part_id: str, text: str, **extra) -> None:
+    """A line in a part's conversation from outside a turn.
+
+    A turn holds the part in memory and saves it when it ends; a note written
+    under it would be lost, so it waits for the turn to finish.
+    """
+    deadline = time.time() + RECORD_WAIT_S
+    while parts.load(part_id).get("state") in TURN_STATES and time.time() < deadline:
+        time.sleep(0.2)
+    fresh = parts.load(part_id)
+    for key, value in extra.items():
+        fresh.setdefault(key, []).append(value)
+    parts.say(fresh, "system", text)
+    parts.save(fresh)
+
+
 def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None,
                        slots=None, settings=None, timelapse=False) -> tuple[dict, dict, str]:
     """Slice a designed part for one printer and send it: (job, prepared, sentence).
@@ -913,6 +1234,8 @@ def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None
     trays = {t["slot"]: t for t in summary.get("ams") or [] if isinstance(t.get("slot"), int)}
     settings = designer.clean_settings({**(part.get("print_settings") or {}),
                                         **(settings or {})}) or {}
+    if timelapse:
+        settings["timelapse"] = True
     names = painting.bodies(source)
     colours = _body_colours(part, row_v, names)
     chosen = _chosen_slots(names, slots, trays, settings.get("material", "PLA"), colours)
@@ -938,35 +1261,40 @@ def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None
             source = target
     except (LookupError, OSError, ValueError, KeyError) as exc:
         raise PrintRefused(str(exc), 409) from None
-    job_body = {"file": library.relative(source), "use_ams": use_ams,
-                "ams_mapping": order if use_ams else [0],
-                "timelapse": bool(timelapse), "bed_leveling": True}
+    job_body = {**options.clean_start(settings), "file": library.relative(source),
+                "use_ams": use_ams, "ams_mapping": order if use_ams else [0]}
     job = panel.new_job("print", printer=row["name"], file=job_body["file"], part=part["id"])
     if names and len(chosen) > 1:
         where = "; ".join(f"{body} from {_slot_word(slot, trays)}" for body, slot in chosen.items())
     else:
         where = f"from {_slot_word(next(iter(chosen.values())), trays)}"
     sentence = f"version {n} on {row['name']}, {where}"
+    extras: list[str] = []
+    if settings.get("print_sequence") == "by object":
+        extras.append("one object at a time")
+    if int(settings.get("copies") or 1) > 1:
+        extras.append(f"{settings['copies']} copies")
+    if settings.get("plate_type") and settings["plate_type"] != "auto":
+        extras.append(options.PLATES[settings["plate_type"]][0])
+    if extras:
+        sentence += " (" + ", ".join(extras) + ")"
 
     def record(finished: dict) -> None:
-        # A turn holds the part in memory and saves it when it ends; a note
-        # written under it would be lost, so it waits for the turn to finish.
-        deadline = time.time() + RECORD_WAIT_S
-        while (parts.load(part["id"]).get("state") in TURN_STATES
-               and time.time() < deadline):
-            time.sleep(0.2)
-        fresh = parts.load(part["id"])
-        fresh.setdefault("prints", []).append({
-            "at": time.time(), "printer": row["name"], "version": n, "job": finished["id"],
-            "state": finished["state"], "error": finished.get("error", ""),
-            "material": settings.get("material"), "slots": chosen})
-        parts.say(fresh, "system", (
-            f"Printing {sentence} ({prepared['filament']}, {prepared['process']})."
-            if finished["state"] == "done" else f"Printing version {n} failed: {finished.get('error')}"))
-        parts.save(fresh)
+        _part_note(part["id"], (
+            f"Started {sentence} ({prepared['filament']}, {prepared['process']}). "
+            "Watch it on the Printers tab."
+            if finished["state"] == "done" else f"Printing version {n} failed: {finished.get('error')}"),
+            prints={"at": time.time(), "printer": row["name"], "version": n,
+                    "job": finished["id"], "state": finished["state"],
+                    "error": finished.get("error", ""), "material": settings.get("material"),
+                    "slots": chosen, "seconds": finished.get("seconds"),
+                    "grams": finished.get("grams")})
+
+    def notify(text: str) -> None:
+        _part_note(part["id"], text)
 
     threading.Thread(target=_print_job, args=(panel, job, row, client, job_body,
-                                              panel.studio.env(), prepared, record),
+                                              panel.studio.env(), prepared, record, notify),
                      daemon=True).start()
     return job, prepared, sentence
 
@@ -1004,6 +1332,13 @@ async def h_design_studio(request):
     return web.json_response({"ok": True, "studio": panel.studio.state()})
 
 
+# Each model's build volume (X, Y, Z in mm), as Bambu Lab publishes it.
+BUILD_VOLUMES = {"X1C": [256, 256, 256], "X1": [256, 256, 256], "X1E": [256, 256, 256],
+                 "P1S": [256, 256, 256], "P1P": [256, 256, 256], "P2S": [256, 256, 256],
+                 "A1": [256, 256, 256], "A1 mini": [180, 180, 180], "H2D": [325, 320, 325],
+                 "H2S": [340, 320, 340]}
+
+
 class DesignPrinting:
     """What the conversation needs from the printers: what is there, and
     starting a print brAIn chose (designer.PRINTING)."""
@@ -1016,8 +1351,17 @@ class DesignPrinting:
         for row in self.panel.printers():
             out.append({
                 "id": row["id"], "name": row["name"], "model": row.get("model") or "",
+                "build_volume_mm": BUILD_VOLUMES.get(row.get("model") or ""),
+                "nozzle_mm": row.get("nozzle_diameter") or "0.4",
                 "online": bool(row.get("online")), "state": row.get("state") or "unknown",
+                "stage": row.get("stage"), "progress": row.get("progress"),
+                "remaining_min": row.get("remaining_min"),
                 "printing": bool(row.get("printing")),
+                "loaded_in_nozzle": row.get("active_tray"),
+                "external_spool": ({"material": row["external_spool"].get("type"),
+                                    "colour": row["external_spool"].get("colour")}
+                                   if row.get("external_spool") else None),
+                "ams_humidity": [u.get("humidity") for u in row.get("ams_units") or []],
                 "trays": [{"slot": t["slot"], "material": t.get("type"), "colour": t.get("colour"),
                            "remaining_percent": t.get("remaining")} for t in row.get("ams") or []],
             })
@@ -1027,7 +1371,8 @@ class DesignPrinting:
         try:
             _job, _prepared, sentence = start_design_print(
                 self.panel, part_id, printer=request.get("printer"),
-                slots=request.get("slots"), timelapse=bool(request.get("timelapse")))
+                slots=request.get("slots"), settings=request.get("settings") or {},
+                timelapse=bool(request.get("timelapse")))
         except (PrintRefused, LookupError, ValueError, OSError) as exc:
             return f"The print did not start: {exc}"
         return f"Slicing and sending {sentence}. Follow it on the Printers tab."
@@ -1059,7 +1404,8 @@ class QuietAccessLogger(AbstractAccessLogger):
     """Successful polls are not news; failures always log."""
 
     QUIET = ("/api/state", "/api/health", "/api/files", "/api/job", "/websockify",
-             "/novnc/", "/vendor/", "/api/design/parts/")
+             "/novnc/", "/vendor/", "/api/design/parts/", "/api/printer/camera",
+             "/api/thumb", "/api/printer/thumb")
 
     def log(self, request, response, time_taken):  # noqa: D102
         status = getattr(response, "status", 0)
@@ -1116,6 +1462,14 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_delete("/api/printers/{id}", h_printer_delete)
     r.add_post("/api/printer/command", h_command)
     r.add_get("/api/printer/storage", h_storage)
+    r.add_delete("/api/printer/storage", h_printer_file_delete)
+    r.add_post("/api/printer/storage/print", h_printer_file_print)
+    r.add_get("/api/printer/thumb", h_printer_thumb)
+    r.add_get("/api/printer/camera", h_camera)
+    r.add_get("/api/thumb", h_thumb)
+    r.add_post("/api/ha/check", h_ha_check)
+    r.add_post("/api/ha/restart", h_ha_restart)
+    r.add_get("/api/print/options", h_print_options)
     r.add_get("/api/files", h_files)
     r.add_post("/api/files", h_upload)
     r.add_post("/api/import", h_import)

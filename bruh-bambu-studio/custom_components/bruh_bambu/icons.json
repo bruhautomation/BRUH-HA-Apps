@@ -14,7 +14,9 @@
     "send_gcode": "mdi:code-braces",
     "open_in_studio": "mdi:open-in-app",
     "import_url": "mdi:link-plus",
-    "find_printers": "mdi:printer-search"
+    "find_printers": "mdi:printer-search",
+    "reconnect": "mdi:lan-connect",
+    "refresh": "mdi:refresh"
   },
   "entity": {
     "sensor": {
@@ -22,7 +24,11 @@
       "progress": {"default": "mdi:progress-clock"},
       "remaining": {"default": "mdi:timer-sand"},
       "nozzle": {"default": "mdi:printer-3d-nozzle-heat"},
-      "bed": {"default": "mdi:radiator"}
+      "bed": {"default": "mdi:radiator"},
+      "stage": {"default": "mdi:list-status"}
+    },
+    "camera": {
+      "camera": {"default": "mdi:cctv"}
     }
   }
 }

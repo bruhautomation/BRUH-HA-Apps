@@ -540,6 +540,13 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-bambu-design.mjs
 
+      # BRUH Bambu Studio's Printers tab: the camera survives redraws, the
+      # status, AMS spools, Refresh and Reconnect, the printer's storage with
+      # pictures, the Home Assistant card, and the print dialogs' options.
+      - name: Measure BRUH Bambu Studio's Printers tab
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-bambu-printers.mjs
+
       # bright: BRight's panel — two static measures, then three on one
       # booted demo panel, in the order the comments below rely on.
 

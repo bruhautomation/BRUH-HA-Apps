@@ -12,8 +12,13 @@
 2. Open **Bambu Studio** in the sidebar. The slicer runs on a virtual screen
    inside the add-on and the page shows it. Sign in to your Bambu account
    there if you want cloud features; nothing below needs it.
-3. Accept the **BRUH Bambu Studio** integration Home Assistant offers under
-   Settings → Devices & services, so the services and sensors appear.
+3. **Restart Home Assistant once.** Home Assistant loads the add-on's
+   integration only when it starts, so until then there are no sensors, no
+   camera, no services and no dashboard card. The **Printers** tab says so and
+   has a **Restart Home Assistant** button, and Home Assistant shows a
+   notification. After the restart the add-on sets the integration up by
+   itself (it is under Settings → Devices & services, with a device per
+   printer); the same happens after an update that changes it.
 
 The add-on is **amd64 only**: Bambu Lab publishes Bambu Studio for Linux as an
 x86-64 AppImage and nothing else.
@@ -131,9 +136,8 @@ in the add-on changes.
      still be on the plate. You can also just say *print it* in the
      conversation — brAIn starts prints from the chat, and the add-on says
      how it went there.
-   - **Manual print** — choose the printer, the tray for each body, and the
-     layer height, walls, infill, supports and brim yourself, starting from
-     what brAIn suggests.
+   - **Manual print** — choose the printer, the tray for each body, and every
+     print option (below) yourself, starting from what brAIn suggests.
    - **Open in Bambu Studio** — opens that version on the Studio tab, to set
      it up and print it from Bambu Studio itself.
 
@@ -144,6 +148,15 @@ in the add-on changes.
    that printer and each tray's filament, puts the settings over them, slices
    with Bambu Studio's command line, uploads and starts. Set the printer's
    **model** on the Printers tab so the right profiles are chosen.
+
+   brAIn can set every print option itself when you ask — *print it by
+   object*, *four copies*, *ironing on top*, *on the textured plate* — and
+   designs around the printer: it keeps parts inside the printer's build
+   volume (and splits one that is too big), lays out copies, and keeps a
+   second colour to a few layers because every colour change purges
+   filament, saying roughly what a wasteful choice costs. It says its plan
+   before it prints, and the conversation shows the sliced time and filament
+   (per colour) and when the print starts.
 
 Every part lives in `/share/bambu/designs/<part>/` — its conversation, each
 version's `design.py`, STEP, 3MF and STL — so you can open the STEP in
@@ -156,6 +169,56 @@ or runs anything itself. The add-on runs the script it writes in a separate
 process with no Home Assistant token and a time limit, after checking it
 imports nothing but CadQuery, cadkit, math and numpy.
 
+## The Printers tab
+
+Each printer is one card:
+
+- **Camera.** The printer's own camera, over your network. A P1 or A1 sends
+  pictures on port 6000; an X1, P2S or H2 streams RTSPS on port 322 and only
+  with **LAN mode live view** switched on in the printer's own settings (the
+  card says so when it is off). The camera runs while somebody is looking and
+  stops a little after. Buttons on the picture switch the chamber light,
+  pause the camera, and show it full screen.
+- **The print.** State and stage (levelling, heating, changing filament…),
+  a progress ring, time left and the clock time it finishes, the layer, and
+  the picture of the job when it was sent from here. Pause/Resume, Stop
+  (press twice) and the speed.
+- **Readings.** Nozzle, bed and chamber temperatures, the fans and the speed.
+- **AMS.** Every tray as a spool showing its colour, material, name and how
+  much is left, the one feeding the nozzle marked *in use*, the AMS humidity
+  (4 or 5 of 5 is worth drying), and the spool on the holder. Press a tray to
+  have the AMS read its tag again.
+- **Refresh** asks the printer for a full report (after changing a spool),
+  and **Reconnect** drops the connection and opens a new one.
+- **Printer messages** link each HMS code to Bambu Lab's page about it.
+- **On the printer** lists the print jobs on its storage with their pictures
+  (read from each file where it lies), to print again or delete.
+
+The **Home Assistant** card under the printers says whether the integration is
+set up, offers the restart when one is owed, and says how to add the dashboard
+cards.
+
+## Print options
+
+Every way of printing offers the same options, from one list: the **Print**
+dialog on the Files tab, **Manual print** for a designed part, the
+`print_file` service, and brAIn in the conversation.
+
+- **When it starts:** the build plate on the printer (textured PEI, smooth
+  PEI, cool, engineering, or whatever is on it), the speed, bed levelling,
+  flow calibration, vibration compensation, first-layer inspection,
+  timelapse, and how many **copies** (arranged on the plate).
+- **Slicer settings** (for a model sliced here): layer height and first
+  layer, walls, top and bottom layers, infill and its pattern, wall generator,
+  seam, ironing, supports (type, overhang angle, from the plate only), brim and
+  its width, skirt, **print order** (*by object* prints each part to the end
+  before the next), prime tower, flush into infill or objects, spiral vase,
+  fuzzy skin and the nozzle temperature. An empty field keeps Bambu Studio's
+  own profile for that printer and filament.
+
+A file that is already sliced prints as it was sliced; more than one copy
+slices it again.
+
 ## The printer card
 
 The add-on installs one card in two places:
@@ -167,8 +230,13 @@ The add-on installs one card in two places:
 - **Morph:** with Morph installed, the same card is in `/config/morph/cards`
   and is used as `type: custom:morph-bambu-printer`, in Morph's own look.
 
-It shows progress, time left and the finish time, the layer, temperatures and
-AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
+It shows the camera, the stage, progress, time left and the finish time, the
+layer, temperatures and AMS trays (the one in use marked), with Pause/Resume,
+Stop (press twice), speed, the chamber light, Refresh, and Reconnect when the
+printer is not answering. `show_camera: false` leaves the camera out.
+
+The card is in the card picker once the integration is set up (see
+*Installing*); Morph picks it up within two minutes of being installed.
 
 ## Services
 
@@ -177,7 +245,7 @@ AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
 | `bruh_bambu.get_status` | Every printer's state, progress, time left, temperatures, speed, light and AMS, plus the latest jobs |
 | `bruh_bambu.list_files` | The files in `/share/bambu` |
 | `bruh_bambu.printer_files` | What is on a printer's own storage |
-| `bruh_bambu.print_file` | Print a file (sliced first if needed; `slot`/`material` choose the filament for a bare model) |
+| `bruh_bambu.print_file` | Print a file (sliced first if needed; `slot`/`material` choose the filament for a bare model; `plate_type`, `speed`, `copies` and `settings` are the print options above) |
 | `bruh_bambu.slice_file` | Slice a project or model |
 | `bruh_bambu.pause_print` / `resume_print` / `stop_print` | Control the current print |
 | `bruh_bambu.set_speed` | silent, standard, sport or ludicrous |
@@ -187,6 +255,8 @@ AMS trays, with Pause/Resume, Stop (press twice), speed and the chamber light.
 | `bruh_bambu.open_in_studio` | Open a file in the sidebar's Bambu Studio |
 | `bruh_bambu.find_printers` | The Bambu Lab printers on the network, and which are added already |
 | `bruh_bambu.import_url` | Import a model from a Printables page or a file link; answers with the new files' paths |
+| `bruh_bambu.refresh` | Ask a printer for a full report now |
+| `bruh_bambu.reconnect` | Drop the connection to a printer and open a new one |
 
 `printer` can be left out when there is only one printer; with two or more it
 is the printer's name or serial number. Every service answers with the
@@ -196,16 +266,24 @@ with its reason, so it shows in the automation trace.
 ```yaml
 action: bruh_bambu.print_file
 data:
-  file: sliced/benchy.gcode.3mf
+  file: imports/rotor.stl
   printer: Workshop X1C
+  plate_type: textured_pei
+  copies: 4
+  settings:
+    layer_height: 0.16
+    walls: 4
+    print_sequence: by object
 ```
 
 ## Sensors
 
-Each printer gets a device with five sensors: **Status** (the printer's own
-word — idle, prepare, running, pause, finish, failed — with everything else as
-attributes, and *offline* when it is not reporting), **Progress**, **Time
-left**, **Nozzle temperature** and **Bed temperature**.
+Each printer gets a device with a **Camera** and six sensors: **Status** (the
+printer's own word — idle, prepare, running, pause, finish, failed — with
+everything else as attributes, and *offline* when it is not reporting),
+**Stage** (what it is doing inside that: levelling, heating, changing
+filament…), **Progress**, **Time left**, **Nozzle temperature** and **Bed
+temperature**.
 
 ## brAIn
 
@@ -230,6 +308,14 @@ misheard sentence there is filament and hours.
 | `log_level` | The add-on's own logging |
 
 ## Troubleshooting
+
+- **No sensors, services or card in Home Assistant.** Restart Home Assistant
+  once (the Printers tab has the button). The add-on sets the integration up
+  by itself after that.
+- **The camera says it was refused.** On an X1, P2S or H2, switch on LAN mode
+  live view in the printer's settings. On a P1 or A1, check LAN mode is on.
+- **A slice fails with "the file carries a setting value it rejects".** The
+  message now ends with the setting Bambu Studio named; please report it.
 
 - **The Studio tab stays black or says Bambu Studio closed.** Its last output
   is under *What it last printed* on that tab. The slicer draws with software

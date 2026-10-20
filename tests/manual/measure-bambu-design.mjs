@@ -29,6 +29,7 @@ import { chromium } from 'playwright';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const PANEL = fileURLToPath(new URL('../../bruh-bambu-studio/panel/', import.meta.url));
 const THREE = { 'three.module.min.js': 'build/three.module.min.js',
@@ -67,7 +68,13 @@ const PART = {
 };
 const PRINTER = { id: 'x1c', name: 'X1C', online: true, state: 'idle',
   ams: [{ slot: 0, type: 'PLA', colour: '#F2F2F2', remaining: 80 }] };
+// The print options come from the panel's own table (design/options.py), so
+// the dialogs are measured with the form they really build.
+const OPTIONS = JSON.parse(execFileSync('python3', ['-c',
+  'import json,sys; sys.path.insert(0, sys.argv[1]); from design import options; '
+  + 'print(json.dumps({"ok": True, **options.catalog()}))', PANEL]).toString());
 const API = {
+  'api/print/options': OPTIONS,
   'api/state': { ok: true, version: 'dev', printers: [PRINTER], jobs: [],
     studio: { installed: true, running: false, wanted: false, install: {} } },
   'api/printers': { ok: true, printers: [PRINTER],
@@ -253,8 +260,8 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
 
   // Files: what was brought in, and the design once, with no Delete.
   await page.locator('.tab[data-view="files"]').click();
-  await page.locator('#fileList .file').first().waitFor();
-  const rows = await page.locator('#fileList .file').allTextContents();
+  await page.locator('#fileList .frow').first().waitFor();
+  const rows = await page.locator('#fileList .frow').allTextContents();
   if (rows.length !== 2) say(`the Files list has ${rows.length} rows, not 2`);
   const design = rows.find((r) => r.includes('Designed with brAIn'));
   if (!design) say('the designed part has no row saying so');

@@ -9,6 +9,10 @@ Registers:
 """
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
+
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
@@ -24,6 +28,7 @@ from .const import (
     CARD_RETRY_SECONDS,
     CARD_RETRY_TRIES,
     DOMAIN,
+    RUNNING_FILE,
     SERVICE_FIND,
     SERVICE_GCODE,
     SERVICE_IMPORT,
@@ -33,6 +38,8 @@ from .const import (
     SERVICE_PAUSE,
     SERVICE_PRINT_FILE,
     SERVICE_PRINTER_FILES,
+    SERVICE_RECONNECT,
+    SERVICE_REFRESH,
     SERVICE_RESUME,
     SERVICE_SLICE_FILE,
     SERVICE_SPEED,
@@ -43,7 +50,8 @@ from .const import (
 )
 from .coordinator import BruhBambuCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.CAMERA]
+PLATE_TYPES = ["auto", "textured_pei", "smooth_pei", "cool", "engineering"]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PRINTER = vol.Optional("printer")
@@ -67,6 +75,11 @@ PRINT_FILE_SCHEMA = vol.Schema({
     vol.Optional("slot"): vol.Any("external", vol.All(vol.Coerce(int), vol.Range(min=0, max=15))),
     vol.Optional("material"): cv.string,
     vol.Optional("colour"): cv.string,
+    vol.Optional("plate_type"): vol.In(PLATE_TYPES),
+    vol.Optional("speed"): vol.In(["silent", "standard", "sport", "ludicrous"]),
+    vol.Optional("layer_inspect"): cv.boolean,
+    vol.Optional("copies"): vol.All(vol.Coerce(int), vol.Range(min=1, max=50)),
+    vol.Optional("settings"): dict,
 })
 
 IMPORT_SCHEMA = vol.Schema({vol.Required("url"): cv.string})
@@ -96,6 +109,8 @@ SERVICES = {
     SERVICE_GCODE: vol.Schema({PRINTER: cv.string, vol.Required("gcode"): cv.string}),
     SERVICE_OPEN: vol.Schema({vol.Required("file"): cv.string}),
     SERVICE_IMPORT: IMPORT_SCHEMA,
+    SERVICE_RECONNECT: PRINTER_ONLY,
+    SERVICE_REFRESH: PRINTER_ONLY,
 }
 # Reads: they answer with data and change nothing.
 READS = {
@@ -116,9 +131,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = BruhBambuCoordinator(hass)
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    await hass.async_add_executor_job(_record_running)
     await _register_card(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+def _record_running() -> None:
+    """Tell the add-on which copy of the integration Home Assistant runs."""
+    try:
+        manifest = json.loads((Path(__file__).parent / "manifest.json").read_text())
+        RUNNING_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RUNNING_FILE.write_text(json.dumps({"version": manifest.get("version"),
+                                            "at": int(time.time())}))
+    except (OSError, ValueError):
+        pass  # the add-on then reads "restart needed" a little longer than it is
 
 
 async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:

@@ -76,12 +76,12 @@ load_config() {
 # `bambu` before anything starts as that user: root can write a bambu-owned
 # file and the reverse does not hold, and the failure is silent.
 prepare_filesystem() {
-    mkdir -p /data/home /data/secrets /data/bambu-studio /data/logs \
-             "${BAMBU_SHARED}/requests" "${BAMBU_SHARED}/responses"
+    mkdir -p /data/home /data/secrets /data/bambu-studio /data/logs /data/thumbs \
+             "${BAMBU_SHARED}/requests" "${BAMBU_SHARED}/responses" "${BAMBU_SHARED}/camera"
     chmod 700 /data/secrets
     # Not recursive over bambu-studio/: the installer already wrote it as
     # bambu, and walking 200 MB of slicer on every boot buys nothing.
-    chown bambu:bambu /data /data/home /data/secrets /data/bambu-studio /data/logs
+    chown bambu:bambu /data /data/home /data/secrets /data/bambu-studio /data/logs /data/thumbs
     find /data -maxdepth 1 -type f -exec chown bambu:bambu {} + 2>/dev/null || true
     chown -R bambu:bambu /data/home /data/secrets "${BAMBU_SHARED}" 2>/dev/null || true
     if mkdir -p "${BAMBU_LIBRARY}/sliced" 2>/dev/null; then
@@ -118,21 +118,39 @@ deploy_custom_integration() {
 # The printer card: one file, two hosts. /config/www is what Core serves as
 # /local (the integration registers it with the frontend); Morph loads every
 # file in /config/morph/cards by itself. Copied on every start, because an
-# old card against a new integration is a dashboard that quietly breaks.
+# old card against a new integration is a dashboard that quietly breaks —
+# and again every two minutes (keep_cards_current), because Morph installed
+# AFTER this add-on started would otherwise not get one until a restart.
+# Only a file that changed is written: Morph reloads a card whose file moved.
 install_cards() {
-    local src="${BAMBU_HOME}/lovelace/bruh-bambu-card.js"
+    local src="${BAMBU_HOME}/lovelace/bruh-bambu-card.js" quiet="${1:-}"
     [ -f "${src}" ] || return 0
     if [ "${INSTALL_LOVELACE_CARD}" = "true" ] && mkdir -p /config/www/bruh_bambu 2>/dev/null; then
-        cp -f "${src}" /config/www/bruh_bambu/bruh-bambu-card.js
-        bashio::log.info "Printer card at /local/bruh_bambu/bruh-bambu-card.js"
+        if ! cmp -s "${src}" /config/www/bruh_bambu/bruh-bambu-card.js; then
+            cp -f "${src}" /config/www/bruh_bambu/bruh-bambu-card.js
+            bashio::log.info "Printer card at /local/bruh_bambu/bruh-bambu-card.js"
+        elif [ -z "${quiet}" ]; then
+            bashio::log.info "Printer card at /local/bruh_bambu/bruh-bambu-card.js (current)"
+        fi
     fi
     if [ "${INSTALL_MORPH_CARD}" = "true" ] && [ -d /config/morph ]; then
         mkdir -p /config/morph/cards
-        cp -f "${src}" /config/morph/cards/bruh-bambu-printer.js
-        # Morph's own user edits these files; hand it over like the rest.
-        chown --reference=/config/morph /config/morph/cards/bruh-bambu-printer.js 2>/dev/null || true
-        bashio::log.info "Morph printer card at /config/morph/cards (custom:morph-bambu-printer)"
+        if ! cmp -s "${src}" /config/morph/cards/bruh-bambu-printer.js; then
+            cp -f "${src}" /config/morph/cards/bruh-bambu-printer.js
+            # Morph's own user edits these files; hand it over like the rest.
+            chown --reference=/config/morph /config/morph/cards/bruh-bambu-printer.js 2>/dev/null || true
+            bashio::log.info "Morph printer card at /config/morph/cards (custom:morph-bambu-printer)"
+        fi
     fi
+}
+
+keep_cards_current() {
+    (
+        while true; do
+            sleep 120
+            install_cards quiet
+        done
+    ) &
 }
 
 announce_ha_discovery() {
@@ -226,6 +244,7 @@ main() {
     prepare_filesystem
     deploy_custom_integration
     install_cards
+    keep_cards_current
     start_screen
     start_ha_bridge
     announce_ha_discovery

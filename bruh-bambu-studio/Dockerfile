@@ -33,7 +33,8 @@ ENV ADDON_VERSION=${ADDON_VERSION} \
 # slow for a big model's preview and perfectly fine for slicing.
 #
 # The panel: aiohttp for the routes, paho-mqtt for the printers' own MQTT
-# (port 8883, TLS), PyYAML for config.yaml.
+# (port 8883, TLS), PyYAML for config.yaml, and ffmpeg to read the RTSPS
+# camera of an X1, P2S or H2 (a P1 or A1 camera is plain JPEG frames).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl jq file xz-utils squashfs-tools \
       xvfb x11vnc openbox x11-utils x11-xserver-utils xdotool dbus-x11 \
@@ -47,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libudev1 libcurl4 libssl3 libfuse2 \
       fonts-dejavu-core fonts-liberation2 \
       python3 python3-aiohttp python3-paho-mqtt python3-yaml python3-venv \
+      ffmpeg \
       locales \
     && rm -rf /var/lib/apt/lists/*
 
@@ -60,13 +62,14 @@ RUN printf '%s.UTF-8 UTF-8\n' \
       > /etc/locale.gen \
     && locale-gen
 
-# The CAD half of Design with brAIn, in its own virtualenv so OpenCascade's
+# The CAD half of Design with brAIn, in its own virtualenv (and Pillow, which
+# cad/thumb.py draws the Files tab's pictures of STL and STEP files with) so OpenCascade's
 # pinned libraries never meet the panel's. A design script is built by
 # /opt/cad/bin/python in a process of its own (panel/design/runner.py).
 RUN python3 -m venv /opt/cad \
     && /opt/cad/bin/pip install --no-cache-dir \
-       cadquery==2.8.0 trimesh==5.1.1 networkx==3.6.1 lxml==6.1.3 \
-    && /opt/cad/bin/python -c "import cadquery, trimesh"
+       cadquery==2.8.0 trimesh==5.1.1 networkx==3.6.1 lxml==6.1.3 pillow==11.3.0 \
+    && /opt/cad/bin/python -c "import cadquery, trimesh, PIL"
 
 # three.js for the Design tab's 3D view, pinned and fetched here so the
 # panel works with no internet at runtime.

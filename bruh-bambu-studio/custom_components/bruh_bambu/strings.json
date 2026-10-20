@@ -30,6 +30,14 @@
       },
       "bed": {
         "name": "Bed temperature"
+      },
+      "stage": {
+        "name": "Stage"
+      }
+    },
+    "camera": {
+      "camera": {
+        "name": "Camera"
       }
     }
   },
@@ -117,6 +125,26 @@
         "colour": {
           "name": "Colour",
           "description": "For a bare model with no tray named: the colour to look for in the AMS."
+        },
+        "plate_type": {
+          "name": "Build plate",
+          "description": "The plate on the printer: auto, textured_pei, smooth_pei, cool or engineering. The slice and the printer's plate check follow it."
+        },
+        "speed": {
+          "name": "Speed",
+          "description": "The speed profile to switch to once it starts."
+        },
+        "layer_inspect": {
+          "name": "First-layer inspection",
+          "description": "X1: let the lidar check the first layer."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "How many of it, arranged on the plate. The file is sliced again for this."
+        },
+        "settings": {
+          "name": "Slicer settings",
+          "description": "For a model that is sliced here: options such as layer_height, walls, infill_percent, supports, brim, print_sequence (by layer or by object), ironing, seam. The panel's Print dialog lists them all."
         }
       }
     },
@@ -271,6 +299,26 @@
         "subnet": {
           "name": "Network",
           "description": "The network to search instead, such as 192.168.2.0/24."
+        }
+      }
+    },
+    "reconnect": {
+      "name": "Reconnect",
+      "description": "Drop the add-on's connection to the printer and open a new one, as after the printer was switched off and on.",
+      "fields": {
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
+        }
+      }
+    },
+    "refresh": {
+      "name": "Refresh",
+      "description": "Ask the printer for a full report now: its state, temperatures and every AMS tray (after a spool was changed).",
+      "fields": {
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
         }
       }
     }

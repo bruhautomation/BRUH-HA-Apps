@@ -25,7 +25,7 @@ def inspect(path: str) -> dict:
     process it is set up for; a 3MF from anywhere else is a bare model and
     has to be given profiles before it can be sliced."""
     out = {"sliced": False, "project": False, "plates": [], "filaments": None,
-           "seconds": None, "grams": None}
+           "seconds": None, "grams": None, "filament_use": [], "picture": False}
     try:
         with zipfile.ZipFile(path) as archive:
             names = archive.namelist()
@@ -36,6 +36,8 @@ def inspect(path: str) -> dict:
             out["plates"] = plates
             out["sliced"] = bool(plates)
             out["project"] = "Metadata/project_settings.config" in names
+            out["picture"] = any(n.startswith("Metadata/plate_") and n.endswith(".png") for n in names) \
+                or "Auxiliaries/.thumbnails/thumbnail_middle.png" in names
             if "Metadata/slice_info.config" in names:
                 _slice_info(archive.read("Metadata/slice_info.config"), out)
             if out["filaments"] is None and plates:
@@ -60,6 +62,7 @@ def _slice_info(raw: bytes, out: dict) -> None:
         return
     seconds = grams = 0.0
     filaments = set()
+    use: dict = {}
     for plate in root.iter("plate"):
         for meta in plate.iter("metadata"):
             key, value = meta.get("key"), meta.get("value")
@@ -72,6 +75,15 @@ def _slice_info(raw: bytes, out: dict) -> None:
                 continue
         for filament in plate.iter("filament"):
             filaments.add(filament.get("id"))
+            try:
+                used = round(float(filament.get("used_g") or 0), 1)
+            except ValueError:
+                used = None
+            use[filament.get("id")] = {
+                "id": filament.get("id"), "type": filament.get("type") or None,
+                "colour": filament.get("color") or None,
+                "grams": round((use.get(filament.get("id"), {}).get("grams") or 0) + (used or 0), 1)}
+    out["filament_use"] = list(use.values())
     out["seconds"] = int(seconds) or None
     out["grams"] = round(grams, 1) or None
     if filaments:

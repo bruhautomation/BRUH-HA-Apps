@@ -42,6 +42,34 @@ GCODE_LINE = re.compile(r"^\s*(;.*|[GMT]\d+(\.\d+)?([ \t]+[A-Z][-+]?[0-9.]*)*\s*
 MAX_GCODE_LINES = 32
 
 ACTIVE_STATES = {"prepare", "running", "pause", "slicing"}
+# project_file's bed_type: what the printer checks the plate against.
+BED_TYPES = ("auto", "textured_plate", "hot_plate", "cool_plate", "eng_plate")
+
+# What the printer is doing inside a state, by `stg_cur` (the same table
+# Bambu Studio and Handy show the words from). A number not here is passed
+# on as "stage N" rather than guessed.
+STAGES = {
+    0: "Printing", 1: "Auto bed levelling", 2: "Heatbed preheating",
+    3: "Vibration compensation", 4: "Changing filament", 5: "M400 pause",
+    6: "Paused: filament ran out", 7: "Heating the nozzle",
+    8: "Calibrating extrusion", 9: "Scanning the bed surface",
+    10: "Inspecting the first layer", 11: "Identifying the build plate",
+    12: "Calibrating the micro lidar", 13: "Homing the toolhead",
+    14: "Cleaning the nozzle tip", 15: "Checking the extruder temperature",
+    16: "Paused by the user", 17: "Paused: the front cover fell",
+    18: "Calibrating the micro lidar", 19: "Calibrating extrusion flow",
+    20: "Paused: nozzle temperature fault", 21: "Paused: bed temperature fault",
+    22: "Unloading filament", 23: "Paused: skipped step",
+    24: "Loading filament", 25: "Calibrating motor noise",
+    26: "Paused: the AMS was lost", 27: "Paused: heat-break fan too slow",
+    28: "Paused: chamber temperature fault", 29: "Cooling the chamber",
+    30: "Paused by G-code", 31: "Motor noise showoff",
+    32: "Paused: filament over the nozzle", 33: "Paused: cutter fault",
+    34: "Paused: first layer fault", 35: "Paused: nozzle clog",
+}
+# The models whose camera is an RTSPS stream on port 322; the rest (P1, A1)
+# send JPEG frames on port 6000. ipcam.rtsp_url in a report overrides this.
+RTSP_MODELS = {"X1C", "X1", "X1E", "P2S", "H2D", "H2S", "H2C"}
 
 
 def deep_merge(base: dict, update: dict) -> dict:
@@ -65,6 +93,11 @@ def request(payload: dict, sequence: int) -> str:
         if isinstance(section, dict):
             section["sequence_id"] = str(sequence)
     return json.dumps(body)
+
+
+def ams_refresh(ams_id: int, slot_id: int) -> dict:
+    """Ask the AMS to read a tray's RFID tag again (a Bambu spool's details)."""
+    return {"print": {"command": "ams_get_rfid", "ams_id": int(ams_id), "slot_id": int(slot_id)}}
 
 
 def pushall() -> dict:
@@ -130,7 +163,8 @@ def temperature(target: str, celsius) -> dict:
 def project_file(name: str, plate: int, *, use_ams: bool,
                  ams_mapping: list[int] | None, timelapse: bool,
                  bed_leveling: bool, flow_cali: bool,
-                 vibration_cali: bool, subtask: str = "") -> dict:
+                 vibration_cali: bool, subtask: str = "", bed_type: str = "auto",
+                 layer_inspect: bool = False) -> dict:
     """Start a sliced .3mf already on the printer's storage.
 
     `param` names the plate's G-code INSIDE the archive; the archive itself
@@ -144,12 +178,12 @@ def project_file(name: str, plate: int, *, use_ams: bool,
         "subtask_name": subtask or re.sub(r"(\.gcode)?\.3mf$", "", name),
         "project_id": "0", "profile_id": "0", "task_id": "0",
         "subtask_id": "0", "md5": "",
-        "bed_type": "auto",
+        "bed_type": bed_type if bed_type in BED_TYPES else "auto",
         "timelapse": bool(timelapse),
         "bed_leveling": bool(bed_leveling),
         "flow_cali": bool(flow_cali),
         "vibration_cali": bool(vibration_cali),
-        "layer_inspect": False,
+        "layer_inspect": bool(layer_inspect),
         "use_ams": bool(use_ams),
         "ams_mapping": list(ams_mapping or [0]),
     }}
@@ -167,6 +201,49 @@ def _tray_colour(raw) -> str:
     return f"#{text[:6]}" if re.fullmatch(r"[0-9A-Fa-f]{6,8}", text) else ""
 
 
+def _int(value):
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _fan(value):
+    """A fan's speed as the printer sends it (0–15) in percent."""
+    n = _int(value)
+    return None if n is None else round(max(0, min(15, n)) / 15 * 100)
+
+
+def _tray(tray: dict, slot: int) -> dict:
+    remain = tray.get("remain")
+    return {
+        "slot": slot,
+        "type": str(tray.get("tray_type")),
+        "name": str(tray.get("tray_sub_brands") or "").strip() or None,
+        "colour": _tray_colour(tray.get("tray_color")),
+        "remaining": remain if isinstance(remain, int) and remain >= 0 else None,
+        "nozzle_min_c": _int(tray.get("nozzle_temp_min")),
+        "nozzle_max_c": _int(tray.get("nozzle_temp_max")),
+    }
+
+
+def hms_code(entry: dict) -> str:
+    """An HMS entry as the code Bambu's wiki is indexed by (XXXX_XXXX_XXXX_XXXX)."""
+    attr, code = _int(entry.get("attr")) or 0, _int(entry.get("code")) or 0
+    text = f"{attr:08X}{code:08X}"
+    return "_".join(text[i:i + 4] for i in range(0, 16, 4))
+
+
+def camera_kind(model: str, rtsp_url) -> str:
+    """"rtsp", "jpeg", or "disabled" (a printer whose LAN live view is off)."""
+    url = str(rtsp_url or "").strip().lower()
+    if url == "disable":
+        return "disabled"
+    if url.startswith("rtsp"):
+        return "rtsp"
+    return "rtsp" if str(model or "") in RTSP_MODELS else "jpeg"
+
+
 def summarise(status: dict) -> dict:
     """The merged report trimmed to what a person, a sensor or brAIn reads.
 
@@ -178,31 +255,44 @@ def summarise(status: dict) -> dict:
     lights = {str(item.get("node")): item.get("mode") == "on"
               for item in p.get("lights_report") or [] if isinstance(item, dict)}
     trays = []
+    units = []
     ams = p.get("ams") if isinstance(p.get("ams"), dict) else {}
     for unit in ams.get("ams") or []:
         if not isinstance(unit, dict):
             continue
+        uid = _int(unit.get("id")) or 0
+        units.append({"id": uid, "humidity": _int(unit.get("humidity")),
+                      "temp_c": _num(unit.get("temp"))})
         for tray in unit.get("tray") or []:
             if not isinstance(tray, dict) or not tray.get("tray_type"):
                 continue
-            trays.append({
-                "slot": int(unit.get("id", 0)) * 4 + int(tray.get("id", 0)),
-                "type": str(tray.get("tray_type")),
-                "colour": _tray_colour(tray.get("tray_color")),
-                "remaining": tray.get("remain") if isinstance(tray.get("remain"), int)
-                and tray.get("remain") >= 0 else None,
-            })
+            trays.append(_tray(tray, uid * 4 + (_int(tray.get("id")) or 0)))
+    # tray_now is the slot feeding the nozzle: 254 the external spool, 255 none.
+    now = _int(ams.get("tray_now"))
+    active = "external" if now == 254 else now if now is not None and now < 64 else None
+    vt = p.get("vt_tray") if isinstance(p.get("vt_tray"), dict) else {}
+    external = _tray(vt, 254) if vt.get("tray_type") else None
+    if external:
+        external["slot"] = "external"
     hms = [h for h in p.get("hms") or [] if isinstance(h, dict)]
     error = p.get("print_error")
     remaining = p.get("mc_remaining_time")
+    stage_n = _int(p.get("stg_cur"))
+    if state in ("idle", "finish", "failed") or stage_n is None or stage_n < 0:
+        stage = None
+    else:
+        stage = STAGES.get(stage_n, f"Stage {stage_n}")
+    ipcam = p.get("ipcam") if isinstance(p.get("ipcam"), dict) else {}
     return {
         "state": state,
         "printing": state in ACTIVE_STATES,
+        "stage": stage,
         "progress": p.get("mc_percent") if isinstance(p.get("mc_percent"), int) else None,
         "remaining_min": remaining if isinstance(remaining, int) else None,
         "layer": p.get("layer_num"),
         "total_layers": p.get("total_layer_num"),
         "file": p.get("subtask_name") or p.get("gcode_file") or None,
+        "gcode_file": p.get("gcode_file") or None,
         "nozzle_c": _num(p.get("nozzle_temper")),
         "nozzle_target_c": _num(p.get("nozzle_target_temper")),
         "bed_c": _num(p.get("bed_temper")),
@@ -211,7 +301,17 @@ def summarise(status: dict) -> dict:
         "speed": SPEED_NAMES.get(p.get("spd_lvl")),
         "chamber_light": lights.get("chamber_light"),
         "ams": trays,
+        "ams_units": units,
+        "active_tray": active,
+        "external_spool": external,
         "error_code": error if isinstance(error, int) and error else None,
         "hms_count": len(hms),
+        "hms": [hms_code(h) for h in hms][:8],
         "wifi": p.get("wifi_signal") or None,
+        "fans": {"part": _fan(p.get("cooling_fan_speed")), "aux": _fan(p.get("big_fan1_speed")),
+                 "chamber": _fan(p.get("big_fan2_speed")),
+                 "heatbreak": _fan(p.get("heatbreak_fan_speed"))},
+        "nozzle_diameter": str(p.get("nozzle_diameter") or "") or None,
+        "rtsp_url": ipcam.get("rtsp_url") or None,
+        "sdcard": p.get("sdcard") if isinstance(p.get("sdcard"), bool) else None,
     }

@@ -16,7 +16,7 @@ import sys
 
 PANEL = os.path.join(os.path.dirname(__file__), "..", "bruh-bambu-studio", "panel")
 SHARED = ("server", "bambu_atomic", "store", "library", "importer", "discover", "installer", "slicer",
-          "studio", "vnc_bridge", "bambu", "design")
+          "studio", "vnc_bridge", "bambu", "design", "thumbs", "ha_setup")
 
 
 def _ours(name: str) -> bool:

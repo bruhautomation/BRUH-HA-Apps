@@ -72,7 +72,8 @@ profile bruh-bambu-studio flags=(attach_disconnected,mediate_deleted) {
   ptrace (trace,read) peer=bruh-bambu-studio,
 
   # The ingress panel, the Supervisor API, the printers (MQTT 8883, FTPS
-  # 990), GitHub for the download, and X11/VNC on unix sockets and loopback.
+  # 990, the camera on 6000 or RTSPS 322), GitHub for the download, and
+  # X11/VNC on unix sockets and loopback.
   network inet stream,
   network inet6 stream,
   network inet dgram,

@@ -97,8 +97,9 @@ class TestReports(unittest.TestCase):
         self.assertEqual((out["nozzle_c"], out["bed_target_c"]), (219.6, 55.0))
         self.assertEqual(out["speed"], "standard")
         self.assertIs(out["chamber_light"], True)
-        self.assertEqual(out["ams"], [{"slot": 0, "type": "PLA", "colour": "#FF0000",
-                                       "remaining": 80}])
+        self.assertEqual(out["ams"], [{"slot": 0, "type": "PLA", "name": None,
+                                       "colour": "#FF0000", "remaining": 80,
+                                       "nozzle_min_c": None, "nozzle_max_c": None}])
         self.assertEqual(out["hms_count"], 1)
 
     def test_a_delta_keeps_everything_it_did_not_mention(self):
