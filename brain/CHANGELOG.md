@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.4.2
+
+### Fixed
+
+- **A washer, dryer or dishwasher drawing power is not reported as something unusual in the house.** A machine's own power and energy readings rise and fall with every cycle. The "unusual reading" and "steady decline" checks now leave them out when the sensor, its device or a status entity on that device says what the machine is. Such a plug is also ranked ahead of the cap, so its cycles get measured.
+- **Findings speak plain English.** The fixed wording in the heat-loss, chore and baseline checks no longer uses British idioms. The heat-loss advice names the room and only the doors and windows brAIn knows are there, not a stock list.
+- **A card's opening verdict has to match its own evidence.** A card no longer opens with "fine" when it has nothing new to read, or with "nothing needs action" over a rise of more than half that its own figures show. A scheduled card whose whole content is that nothing happened keeps the card that was there and says why it was held. The scheduler counts the card's age from that look, so the same run is not queued again a minute later.
+
 ## 3.4.0
 
 ### Added
