@@ -307,6 +307,16 @@ def module_file(root: str, name: str) -> str:
     return full
 
 
+def morph_module(name: str) -> str:
+    """One of Morph's own frontend modules, or ""."""
+    return module_file(MORPH_FRONTEND, name)
+
+
+def morph_card(name: str) -> str:
+    """A card file from the house's /config/morph/cards, or ""."""
+    return module_file(MORPH_CARDS, name)
+
+
 def allowed_ws(msg) -> str:
     """Why a harness WebSocket message is refused, or "" when it may go.
     Only reads go; the id is the proxy's own."""
@@ -323,5 +333,6 @@ def allowed_ws(msg) -> str:
 
 
 __all__ = ["CARD_FILES", "key_for", "HARNESS", "PANELS", "READ_COMMANDS", "allowed_ws",
-           "card_file", "harness_targets", "locate", "module_file", "panel_url",
+           "card_file", "harness_targets", "locate", "module_file", "morph_card",
+           "morph_module", "panel_url",
            "product_for", "screen_script", "target"]

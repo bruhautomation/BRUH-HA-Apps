@@ -142,13 +142,15 @@ def page(name: str) -> str | None:
     entries = PAGES.get(str(name or ""))
     if entries is None:
         return None
-    morph = name == "morph"
+    # Nothing off the URL is written into the page: only which catalog
+    # entry it named, read back from the catalog.
+    morph = entries == PAGES["morph"]
     script = (_SCRIPT.replace("__BASE__", json.dumps(BASE))
               .replace("__CARDS__", json.dumps([] if morph else entries))
               .replace("__MORPH__", "true" if morph else "false"))
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>brAIn preview — {name}</title><style>{_THEME}</style></head>"
+            f"<title>brAIn preview</title><style>{_THEME}</style></head>"
             "<body><div class=\"wrap\" id=\"root\"></div>"
             f"<script type=\"module\">{script}</script></body></html>")
 

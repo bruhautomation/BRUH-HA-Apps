@@ -17492,7 +17492,11 @@ async def h_harness_page(request: web.Request) -> web.Response:
     refused = _harness_refusal(request)
     if refused:
         return refused
-    html = devloop.harness.page(request.match_info["name"])
+    # The catalog's own key, matched by equality, is what is drawn: the
+    # string off the URL never reaches the page.
+    asked = request.match_info["name"]
+    key = next((k for k in devloop.harness.PAGES if k == asked), None)
+    html = devloop.harness.page(key) if key else None
     if html is None:
         return web.json_response({"error": "no such preview"}, status=404)
     return web.Response(text=html, content_type="text/html",
@@ -17514,14 +17518,14 @@ async def h_harness_js(request: web.Request) -> web.StreamResponse:
 
 async def h_harness_morph(request: web.Request) -> web.StreamResponse:
     refused = _harness_refusal(request)
-    return refused or _harness_file(devloop.screen_targets.module_file(
-        devloop.screen_targets.MORPH_FRONTEND, request.match_info["name"]))
+    return refused or _harness_file(
+        devloop.screen_targets.morph_module(request.match_info["name"]))
 
 
 async def h_harness_morph_cards(request: web.Request) -> web.StreamResponse:
     refused = _harness_refusal(request)
-    return refused or _harness_file(devloop.screen_targets.module_file(
-        devloop.screen_targets.MORPH_CARDS, request.match_info["name"]))
+    return refused or _harness_file(
+        devloop.screen_targets.morph_card(request.match_info["name"]))
 
 
 HARNESS_MSG_MAX = 20_000

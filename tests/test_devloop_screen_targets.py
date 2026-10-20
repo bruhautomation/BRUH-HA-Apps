@@ -28,8 +28,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -255,7 +255,7 @@ class TestTheHarnessRoutes(unittest.TestCase):
                 "msg": json.dumps({"id": 9, "type": "get_states"})})
             return r1.status, await r1.json(), r2.status, await r2.json()
 
-        with mock.patch("ha_data._ws_calls", fake):
+        with unittest.mock.patch("ha_data._ws_calls", fake):
             s1, b1, s2, b2 = self._run(go)
         self.assertEqual(s1, 403)
         self.assertIn("only reads", b1["error"])
@@ -267,7 +267,7 @@ class TestTheHarnessRoutes(unittest.TestCase):
         async def go(client):
             r = await client.get("/devloop/harness/print-card")
             return r.status
-        with mock.patch("ownership.from_loopback", lambda request: False):
+        with unittest.mock.patch("ownership.from_loopback", lambda request: False):
             self.assertEqual(self._run(go), 403)
         self.assertEqual(self._run(go), 200)
 
@@ -416,14 +416,14 @@ class TestTheChatCanLook(unittest.TestCase):
         import ha_mcp_server  # noqa: PLC0415
         import base64  # noqa: PLC0415
         png = base64.b64encode(b"\x89PNG small").decode()
-        with mock.patch.object(ha_mcp_server, "_panel_send",
+        with unittest.mock.patch.object(ha_mcp_server, "_panel_send",
                                return_value={"png": png, "addon": "GardenRX",
                                              "screen": "GardenRX › Crops", "problems": []}) as send:
             got = ha_mcp_server.screenshot_panel("GardenRX", "crops", 390, "dark")
         self.assertEqual(got["_mcp_image"], {"data": png, "mimeType": "image/png"})
         self.assertEqual(got["screen"], "GardenRX › Crops")
         self.assertEqual(send.call_args[0][1], "/api/devloop/screenshot")
-        with mock.patch.object(ha_mcp_server, "_panel_send",
+        with unittest.mock.patch.object(ha_mcp_server, "_panel_send",
                                return_value={"error": "nope"}):
             self.assertEqual(ha_mcp_server.screenshot_panel("x"), {"error": "nope"})
 
@@ -515,10 +515,10 @@ class TestTheHarnessDrawsTheRealCode(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         card = BASE_DIR / "bruh-print" / "lovelace" / "bruh-print-card.js"
         try:
-            with mock.patch("ha_data._ws_calls", fake), \
-                 mock.patch.object(st, "MORPH_FRONTEND",
+            with unittest.mock.patch("ha_data._ws_calls", fake), \
+                 unittest.mock.patch.object(st, "MORPH_FRONTEND",
                                    str(BASE_DIR / "morph/custom_components/morph/frontend")), \
-                 mock.patch.dict(st.CARD_FILES, {"bruh-print-card.js": (str(card),)}):
+                 unittest.mock.patch.dict(st.CARD_FILES, {"bruh-print-card.js": (str(card),)}):
                 result = asyncio.run(asyncio.wait_for(run(Path(tmp)), 180))
         finally:
             screens.AFTER_REDACT = old
