@@ -51,30 +51,163 @@ _LOCK = threading.Lock()
 
 
 # What the CLI's exit codes mean (src/libslic3r/Utils.hpp, the cli_errors
-# table in src/BambuStudio.cpp), in words for somebody printing a part. The
-# process exits with the negative code, which the shell reads as 256 + code.
+# table in src/BambuStudio.cpp), in words for somebody printing a part — every
+# code in that table. The process exits with the negative code, which the
+# shell reads as 256 + code.
 EXIT_REASONS = {
+    -1: "it could not set itself up to run (its folders or display)",
+    -2: "it was handed settings it could not use together",
     -3: "an input file was not found",
+    -4: "the files were handed over in the wrong order (a project file has to come first)",
     -5: "a printer, process or filament profile could not be read",
     -6: "the model file could not be read",
+    -7: "the printer is not a filament printer it supports",
+    -8: "it was asked to do something its command line cannot do",
+    -9: "it could not copy the objects",
+    -10: "it could not scale the part to fit the plate",
+    -11: "it could not export an STL",
+    -12: "it could not export an OBJ",
+    -13: "it could not write the sliced file",
     -14: "it ran out of memory; a simpler model would help",
     -15: "the printer is not one it supports",
     -16: "the printer does not match the file",
     -17: "the process profile does not list this printer as compatible",
     -18: "the file carries a setting value it rejects",
+    -19: "the file asks for a post-processing script, which it will not run here",
     -20: "the printer's bed is smaller than the profile's",
     -21: "it could not arrange the part on the plate",
+    -22: "it could not turn the part to a good orientation",
+    -23: "the printer's printable area or height was changed, which it does not allow",
+    -24: "the file was made by a newer Bambu Studio than this one",
+    -25: "the file uses a feature it does not support yet",
     -50: "nothing is fully on the plate",
     -51: "a slicing setting is wrong",
     -52: "part of the model is over the edge of the bed",
+    -53: "it could not make a folder for its cache",
+    -54: "it could not write its cache",
+    -55: "its cache was not found",
+    -56: "its cache could not be read",
+    -57: "it could not load its cache",
+    -58: "slicing took longer than it allows; a simpler model or thicker layers would help",
+    -59: "the model has too many triangles; a simpler model would help",
+    -60: "nothing was left to print after skipping objects",
     -61: "a filament does not suit the build plate",
     -62: "the filaments' temperatures are too far apart to print together",
+    -63: "objects collide when printed one at a time",
     -64: "objects collide",
+    -65: "a setting does not work with spiral vase mode",
     -66: "a filament could not be mapped to the printer",
     -67: "it will not print two TPU filaments together",
+    -68: "a filament cannot be printed by the nozzle it was mapped to",
     -100: "slicing failed",
+    -101: "the sliced paths collide (often the prime tower; moving it further in helps)",
+    -102: "some of the print would be in an area this printer's nozzles cannot reach",
+    -103: "a filament cannot print on the first layer of this plate",
     -104: "some of the print would be outside the printable area",
+    -105: "some of the print would be where the printer checks for filament wrapping",
 }
+
+# What to change, for the codes whose cure is not in the words above. The
+# CLI's own line (cli_error_lines) says which setting, where it names one.
+EXIT_ADVICE = {
+    -2: ("Nothing in the part needs changing; this is the add-on asking the slicer the "
+         "wrong way. Open the part in Bambu Studio and slice it there, and report this "
+         "with the slicer's words."),
+    -5: "Updating Bambu Studio on the Studio tab reinstalls its profiles.",
+    -24: "Update Bambu Studio on the Studio tab.",
+}
+
+# What the CLI's own message means, when it names the condition (the error
+# lines in src/BambuStudio.cpp before each CLI_INVALID_PARAMS).
+_INVALID_HINTS = (
+    (("invalid plate", "plate id"), "it was asked for a plate the file does not have"),
+    (("repetitions",), "copies were asked for in a way it does not take"),
+    (("filament_id", "load_filaments", "uptodate_filaments", "filament config not loaded",
+      "filament_colour"),
+     "the filaments it was handed do not match the part's filaments"),
+    (("nozzle manual", "filament_volume_map", "filament_nozzle_map"),
+     "the filaments were not mapped to the printer's nozzles"),
+    (("clone_objects", "loaded_filament_ids", "assemble"),
+     "it was asked to copy or assemble objects in a way it does not take"),
+    (("metadata_name",), "the file's extra metadata was handed over unpaired"),
+    (("scale ratio",), "the part was scaled by a number it cannot use"),
+)
+
+# Lines the CLI writes that are not the reason: its own sign-off, and progress.
+_NOT_A_REASON = ("found error, return", "found error, exit", "slicer_info_report")
+_CERR_REASONS = ("no such file", "setup params error", "params in command line error",
+                 "error:", "invalid printer_technology", "duplicate machine config",
+                 "duplicate process config", "can not find setting file", "unsupported",
+                 "unknown config type", "failed")
+
+
+def cli_error_lines(lines: list[str]) -> list[str]:
+    """The CLI's own words for why it stopped, in the order it said them.
+
+    Its log lines look like "[time] [thread] [error]   message"; a few
+    messages go to stderr bare ("No such file: …"). The last line it
+    prints, "run found error, return -2, exit...", says only that it stopped,
+    so it is never the reason.
+    """
+    out: list[str] = []
+    for raw in lines:
+        line = raw.strip()
+        low = line.lower()
+        if not line or any(n in low for n in _NOT_A_REASON):
+            continue
+        text = None
+        for tag in ("[error]", "[fatal]"):
+            if tag in low:
+                text = line[low.index(tag) + len(tag):].strip()
+                break
+        if text is None and not line.startswith("[") and low.startswith(_CERR_REASONS):
+            text = line
+        if text is None:
+            continue
+        # BambuStudio logs "run: " / "operator(): " in front of some lines.
+        for prefix in ("run:", "run :", "operator():", "operator() :"):
+            if text.startswith(prefix):
+                text = text[len(prefix):].strip()
+        text = text.replace("%%", "%")
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def invalid_hint(said: list[str]) -> str:
+    """For exit -2: which of its parameter checks the CLI named, in words."""
+    joined = " ".join(said).lower()
+    for words, sentence in _INVALID_HINTS:
+        if any(w in joined for w in words):
+            return sentence
+    return ""
+
+
+def failure_message(returncode: int, lines: list[str]) -> str:
+    """Everything the owner needs from a failed slice, uncut: what the code
+    means, what Bambu Studio itself said, and what to change."""
+    code = returncode - 256 if returncode > 127 else returncode
+    reason = exit_reason(returncode)
+    said = cli_error_lines(lines)
+    if code == -2:
+        hint = invalid_hint(said)
+        if hint:
+            reason = f"{reason}: {hint}"
+    if not reason and said:
+        reason = said[-1]
+    text = f"Bambu Studio could not slice it (exit {returncode})"
+    text += f": {reason}." if reason and not reason.endswith(".") else (f": {reason}" if reason else ".")
+    named = rejected(lines)
+    if named:
+        text += f" It named: {'; '.join(named)}."
+    shown = [s for s in said if s not in named and s != reason]
+    if shown:
+        text += " Bambu Studio said: " + " / ".join(shown)
+        text += "" if text.endswith(".") else "."
+    advice = EXIT_ADVICE.get(code)
+    if advice:
+        text += " " + advice
+    return text
 
 
 SIGNAL_REASONS = {
@@ -244,17 +377,19 @@ def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 timeout=TIMEOUT_S, check=False)
         lines = result.stdout.decode(errors="replace").strip().splitlines()
-        job["log"] = job["log"] + [line[:300] for line in lines[-40:]]
+        # The reason is said before the CLI's long sign-off, so the error
+        # lines are kept whole wherever in the log they were.
+        said = cli_error_lines(lines)
+        job["log"] = job["log"] + [line for line in lines[-40:]]
         if result.returncode != 0 or not out.exists():
-            reason = exit_reason(result.returncode) or next(
-                (ln.strip()[:240] for ln in reversed(lines) if "error" in ln.lower()), "")
-            named = rejected(lines)
-            job["rejected"] = named
-            job.update(state="failed", error=(
-                f"Bambu Studio could not slice it (exit {result.returncode})"
-                + (f": {reason}." if reason and not reason.endswith(".") else
-                   f": {reason}" if reason else ".")
-                + (f" It named: {'; '.join(named)}." if named else "")))
+            job["rejected"] = rejected(lines)
+            job["said"] = said
+            if result.returncode == 0:
+                job.update(state="failed", error=(
+                    "Bambu Studio finished without writing the sliced file"
+                    + (". Bambu Studio said: " + " / ".join(said) if said else "") + "."))
+            else:
+                job.update(state="failed", error=failure_message(result.returncode, lines))
             return
         info = threemf.inspect(str(out))
         if not info["sliced"]:

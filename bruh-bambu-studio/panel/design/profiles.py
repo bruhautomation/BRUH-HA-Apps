@@ -69,7 +69,14 @@ def flatten(kind: str, name: str) -> dict:
             break
     merged: dict = {}
     for data in reversed(chain):
-        merged.update(data)
+        # Since 2.x a system profile keeps its G-code in template files it
+        # names under "include" (Bambu Lab A1 0.4 nozzle template
+        # machine_start_gcode, …). Bambu Studio's preset loader applies them
+        # (PresetBundle.cpp, BBL_JSON_KEY_INCLUDES); the command line's own
+        # loader does not, so a flattened profile has to carry them itself.
+        for included in _includes(data):
+            merged.update(_included(index, kind, included))
+        merged.update({k: v for k, v in data.items() if k != INCLUDE})
     # A "User" profile names the system profile it came from in `inherits`,
     # and the CLI takes that as the system name it checks compatibility
     # with: a process is sliced only if its compatible_printers lists the
@@ -79,6 +86,29 @@ def flatten(kind: str, name: str) -> dict:
     merged["inherits"] = name
     merged["from"] = "User"
     return merged
+
+
+INCLUDE = "include"
+# What a template file says about itself, not settings it brings.
+_TEMPLATE_META = ("name", "instantiation", "inherits", "from", "type", "setting_id")
+
+
+def _includes(data: dict) -> list[str]:
+    value = data.get(INCLUDE)
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        return [str(v) for v in value if isinstance(v, str) and v]
+    return []
+
+
+def _included(index: dict, kind: str, name: str) -> dict:
+    path = index.get(name)
+    if path is None:
+        raise LookupError(f"The {kind} profile needs {name!r}, which Bambu Studio's "
+                          "profiles do not have.")
+    data = json.loads(Path(path).read_text())
+    return {k: v for k, v in data.items() if k not in _TEMPLATE_META and k != INCLUDE}
 
 
 def _leaf(kind: str) -> list[str]:
