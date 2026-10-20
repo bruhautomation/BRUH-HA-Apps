@@ -48,7 +48,7 @@ _LOGGER = logging.getLogger(__name__)
 # asking two different questions on two surfaces is the confusion the
 # feed's redesign was written against. An issue raised by an older
 # add-on carries no list and gets `DEFAULT_ACTIONS`, the classic three.
-FLOW_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
+FLOW_ACTIONS = ("confirm", "todo", "fixed", "wrong", "snooze", "ack")
 DEFAULT_ACTIONS = ("fixed", "wrong", "snooze")
 # The one option that answers nothing, last on every menu: it puts the
 # issue under Repairs' own "ignored" list (Home Assistant's Ignore, the
@@ -160,6 +160,13 @@ class FindingRepairFlow(RepairsFlow):
     ) -> data_entry_flow.FlowResult:
         """"Got it" on a change brAIn made."""
         return await self._answer("ack")
+
+    async def async_step_confirm(
+        self, user_input: dict[str, str] | None = None
+    ) -> data_entry_flow.FlowResult:
+        """"Yes" to a question filed as a finding — one of Morph's
+        suggestions, or a question the Resident asks."""
+        return await self._answer("confirm")
 
     async def async_step_fixed(
         self, user_input: dict[str, str] | None = None

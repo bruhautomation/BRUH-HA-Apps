@@ -143,7 +143,12 @@ async function run(label, viewport, touch) {
   await card.locator('details[data-k="storage"] > summary').click();
   await card.locator('.pfile').first().waitFor().catch(() => say('On the printer listed nothing'));
   if ((await card.locator('.pfile').count()) !== 2) say('On the printer did not list the two jobs');
-  const pic = await card.locator('.pfile img').first().evaluate((i) => i.complete && i.naturalWidth > 0).catch(() => false);
+  // The job's picture loads lazily once the list opens: wait for it rather
+  // than reading it the instant the row appears.
+  const pic = await page.waitForFunction(() => {
+    const i = document.querySelector('.printer[data-id="a1"] .pfile img');
+    return i && i.complete && i.naturalWidth > 0;
+  }, null, { timeout: 5000 }).then(() => true).catch(() => false);
   if (!pic) say("a job on the printer has no picture");
 
   const ha = page.locator('#haCard');

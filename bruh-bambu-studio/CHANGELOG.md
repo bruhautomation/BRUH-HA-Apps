@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+### Fixed
+
+- **The printer card's camera no longer flickers between frames.** 0.2.1 decoded each frame off screen and then gave its address to the picture on show, which still left that picture empty for a moment while it loaded. Each frame now loads into a second picture behind the one on screen, and the two change places only once it is ready, so the picture you see is never part-way through loading.
+
 ## 0.2.1
 
 ### Fixed

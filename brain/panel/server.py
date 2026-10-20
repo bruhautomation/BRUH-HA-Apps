@@ -2485,6 +2485,13 @@ async def _apply_finding_requests() -> list[dict]:
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
+            if (finding and action == "confirm" and answers_mod.as_morph_question(
+                    finding).get("kind") != "question"):
+                # Yes is the answer to a question; on a problem it would file
+                # "Confirmed by the homeowner" over a report nobody asked
+                # about. The panel only ever offers it on a question.
+                spec = None
+                result["why"] = "only a question can be answered yes"
             note = str(req.get("note") or "")
             if finding and spec and action == "wrong" and note.strip() \
                     and req.get("via") == "repairs":
@@ -2983,9 +2990,17 @@ async def _apply_morph_case(req: dict) -> dict:
         result["why"] = "already on the list"
     else:
         claim = req["claim"]
-        row = {"text": claim, "claim": claim, "kind": req["case_kind"],
+        # A suggestion is a yes/no question only the person can answer, so
+        # it is filed as one — Yes · No · Snooze · Doesn't apply, and Yes is
+        # Morph's `accepted` — with Morph's ask as the card's own words
+        # rather than a `fix` line. Filed as an opportunity with the ask in
+        # `fix`, it read as a pair of hands and offered no yes at all. The
+        # suggestion's own sentence stays the `text` it is deduped under.
+        row = {"text": claim,
+               "claim": answers_mod.morph_question(claim, req.get("ask", "")),
+               "kind": "question",
                "detail": req.get("detail", ""),
-               "fix": req.get("ask", ""), "entity_id": req.get("entity_id", ""),
+               "fix": "", "entity_id": req.get("entity_id", ""),
                "severity": "info", "stakes": "low", "fixable": False,
                "source": findings_store.MORPH_SOURCE,
                "source_title": "Morph, your dashboard", "morph_key": key}
@@ -12510,6 +12525,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     case_run = str(case.pop("_run_id", "") or run_id)
     case["run_id"] = case.get("run_id") or case_run
     case["investigation"] = {"run_id": case_run}
+    # The entity the case is about: the signal it was sent to look at, else
+    # the one device its evidence names (`findings_store.case_subject`).
+    subject = findings_store.case_subject(case, str(signal.get("subject") or ""))
+    if subject:
+        case["entity_id"] = subject
 
     if refining is not None:
         row = await asyncio.to_thread(findings_store.refine, refines, case,
@@ -13948,6 +13968,12 @@ async def run_checks(reason: str = "schedule") -> dict:
             cleared = findings_store.clear_resolved(
                 ran_sources,
                 {findings_store.normalize(f["text"]) for f in result["findings"]})
+            # And a Resident case about a device that came back: the states
+            # this pass already read, never a fetch of its own, and only
+            # when the read answered (an empty map clears nothing).
+            if (snapshot.get("available") or {}).get("states"):
+                cleared = cleared + findings_store.clear_returned(
+                    snapshot.get("states") or {}, started)
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and

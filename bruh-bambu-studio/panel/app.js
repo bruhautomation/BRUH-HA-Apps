@@ -215,10 +215,15 @@ const cams = {};
 function cameraNode(p) {
   let cam = cams[p.id];
   if (!cam) {
+    // Two pictures, one in front and one behind: a frame is loaded and
+    // decoded into the one behind, then the two change places, so the one on
+    // screen is never mid-load. Setting src on the visible picture, even to a
+    // URL already decoded elsewhere, leaves it incomplete for a moment.
     const img = el("img", { class: "camimg", alt: `${p.name}'s camera`, decoding: "async" });
+    const back = el("img", { class: "camback", alt: "", "aria-hidden": "true", decoding: "async" });
     const note = el("p", { class: "camnote" }, "Starting the camera…");
-    const node = el("div", { class: "cam" }, img, note);
-    cam = cams[p.id] = { node, img, note, on: true, timer: null, loading: false, failures: 0, url: null };
+    const node = el("div", { class: "cam" }, img, back, note);
+    cam = cams[p.id] = { node, img, back, note, on: true, timer: null, loading: false, failures: 0, url: null };
   }
   cam.printer = p;
   return cam;
@@ -248,11 +253,19 @@ async function nextFrame(id) {
       throw new Error(body.error || "The camera is not answering.");
     }
     url = URL.createObjectURL(await r.blob());
-    const next = new Image();
+    const next = cam.back;
     next.src = url;
     await next.decode();
     const old = cam.url;
-    cam.img.src = url;
+    const front = cam.img;
+    next.className = "camimg";
+    next.alt = front.alt;
+    next.removeAttribute("aria-hidden");
+    front.className = "camback";
+    front.alt = "";
+    front.setAttribute("aria-hidden", "true");
+    cam.img = next;
+    cam.back = front;
     cam.url = url;
     url = null;
     if (old) setTimeout(() => URL.revokeObjectURL(old), 1000);
