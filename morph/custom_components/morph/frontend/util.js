@@ -187,6 +187,73 @@ export function importWithRetry(url, opts) {
   });
 }
 
+// ------------------------------------------------------------- card files
+
+// What this PAGE has loaded, kept on the window rather than in a module:
+// an update serves Morph's modules from a new URL, which runs them again
+// without a reload, and a module-level record starts empty while the
+// browser still holds every element the old one defined. Reading that as
+// "never loaded" is how one card file defined twice was filed as a fault
+// once per card.
+export function cardPage(root = globalThis) {
+  if (!root.__morphCardPage) {
+    root.__morphCardPage = { versions: new Map(), inflight: new Map(), redefined: new Set(), reported: new Set(), guarded: false };
+  }
+  return root.__morphCardPage;
+}
+
+// A custom element is defined once per page, and a card file that runs
+// again (a new version, or Morph's own modules loaded again) asks again.
+// The browser answers that by throwing, which stops the rest of the file:
+// so a second define of a name that is already there is skipped and
+// remembered, and the element already registered goes on drawing.
+export function guardDefine(registry = globalThis.customElements, page = cardPage()) {
+  if (!registry || page.guarded || registry.__morphGuarded) return;
+  const define = registry.define.bind(registry);
+  registry.define = (name, cls, opts) => {
+    if (registry.get(name)) { page.redefined.add(String(name)); return; }
+    return define(name, cls, opts);
+  };
+  registry.__morphGuarded = true;
+  page.guarded = true;
+}
+
+export const REDEFINED = /already been (used|defined)|already defined/i;
+
+// Load one card file (`start()` imports it): once per version per page, sharing an import that is
+// already in flight, and trying a dropped fetch once more. Answers what
+// happened — 'loaded', 'changed' (a newer file whose elements this page
+// already has: it shows after a reload) or 'same' — and throws only for a
+// file that really failed.
+export function cardUrl(base, name, v) {
+  return `${base}/${encodeURIComponent(name)}?v=${v}`;
+}
+
+export function loadCard(name, v, url, start, page = cardPage()) {
+  if (page.inflight.has(url)) return page.inflight.get(url);
+  const before = page.versions.get(name);
+  if (before === v) return Promise.resolve('same');
+  const seen = page.redefined.size;
+  const job = Promise.resolve().then(start).then(
+    () => (before != null && page.redefined.size > seen ? 'changed' : 'loaded'),
+    (e) => {
+      if (REDEFINED.test(String((e && e.message) || e))) return before != null ? 'changed' : 'loaded';
+      throw e;
+    }).then((r) => { page.versions.set(name, v); return r; })
+    .finally(() => page.inflight.delete(url));
+  page.inflight.set(url, job);
+  return job;
+}
+
+// What a failed card file is reported as: the cause, with the file's own
+// name and address taken out, so five cards failing for one reason are
+// one fault rather than five.
+export function cardFailure(e) {
+  if (fetchFailed(e)) return 'Card code could not be fetched';
+  const said = String((e && e.message) || e || '').replace(/\S*\/morph_cards\/\S*/g, '').replace(/\s+/g, ' ').trim();
+  return `Card code failed to load: ${said || 'unknown error'}`;
+}
+
 // ------------------------------------------------------------- the Ask bar
 
 // Words that ask for a change to the DASHBOARD rather than a question or a
