@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.4.1
+
+### Fixed
+
+- **A finding brAIn raised about a device going offline now leaves the list when the device comes back.** These findings were filed without saying which device they were about, so nothing could tie them to its recovery and they stayed open long after the device reported again. They now record their device, and the next check after it comes back clears the card. (#321)
+- **Morph's dashboard suggestions can be answered Yes.** A suggestion that asked "should this change be made?" offered only Add to To Do, Snooze and Ignore. It is now a question card with Yes, No, Snooze and Doesn't apply; Yes asks Morph to make the change. Home Assistant's Repairs dialog and a phone notification offer the Yes too. (#323)
+
 ## 3.4.0
 
 ### Added
