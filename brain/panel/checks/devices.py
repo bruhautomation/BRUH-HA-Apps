@@ -795,7 +795,7 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                           f"it still shows {st.get('state')}%, which is the "
                           "last thing it said, not what it is now."
                           + house.placed(eid, who),
-                "fix": "Check whether the device is still alive; a flat "
+                "fix": "Check whether the device is still alive; a dead "
                        "battery is the usual reason it went quiet.",
                 "severity": "warning",
                 "fixable": False,
@@ -1052,9 +1052,9 @@ def zwave_dead(snap: dict, now: float) -> list[dict]:
                   + ". The controller has stopped getting answers from "
                     "them, so nothing they do reaches Home Assistant.",
         "fix": "Wake a battery node (its button usually does it). For a "
-               "mains node, check it still has power and is in range of "
-               "another mains node — then re-interview it from its device "
-               "page. A node that is really gone should be removed with "
+               "plugged-in node, check it still has power and is in range "
+               "of another plugged-in node — then re-interview it from its "
+               "device page. A node that is really gone should be removed with "
                "'Remove failed node' so the mesh stops routing through it.",
         "severity": "serious",
         "fixable": False,

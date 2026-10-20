@@ -162,6 +162,7 @@ import devloop.verify
 import devloop.siblings
 import devloop_archive
 import card_tags
+import card_verdict
 import cases
 from checks._util import House
 import chat_session
@@ -5376,6 +5377,29 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
+        # The opening verdict read against the card's own evidence
+        # (`card_verdict`): no "fine" over nothing new, no "nothing needs
+        # action" over a rise its own figures show, and a scheduled card
+        # about nothing at all keeps the card that was there. A press is
+        # never held — somebody asked, and the answer is what they get.
+        verdict = card_verdict.review({**obj, "highlights": highlights},
+                                      previous)
+        if verdict["hold"] and job.get("scheduled") and previous:
+            await _keep_previous_card(insight_id, cat, question)
+            REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
+                                         "at": int(time.time())}
+            CARD_FAILURES.pop(insight_id, None)
+            _set_job(insight_id, state="done", error="")
+            log.info("insight %s: %s", insight_id, verdict["hold"])
+            return
+        if verdict["changed"]:
+            log.info("insight %s: lead rewritten (%s)", insight_id,
+                     ", ".join(verdict["changed"]))
+            obj = {**obj, **{k: verdict["obj"][k] for k in
+                             ("title", "summary", "highlights")
+                             if k in verdict["obj"]}}
+            highlights = obj["highlights"] if isinstance(
+                obj.get("highlights"), list) else highlights
         # Hypotheses, not open questions. propose() enforces the cap and the
         # never-twice rule in code — the prompt states the budget, but a model
         # that ignores it must not be able to grow the queue anyway.
@@ -5540,6 +5564,38 @@ async def _generate(insight_id: str) -> None:
         # The scheduler backs off from this card until a run succeeds.
         _note_card_failure(insight_id, str(exc))
         _set_job(insight_id, state="error", error=str(exc)[:500])
+
+
+async def _keep_previous_card(insight_id: str, cat: dict,
+                              question: str | None) -> None:
+    """A run that had nothing to say leaves the stored card as it was, and
+    says when it looked (`checked_at`), so the scheduler counts its age
+    from the look and not from the card — otherwise the next tick would
+    queue the same run again — and takes the fingerprint of now, so
+    `changed` mode waits for something to move. `generated_at` is left
+    alone: the foot's "Updated" is about the card a person reads."""
+    path = _insight_path(insight_id)
+    card = _read_json(path)
+    if not isinstance(card, dict):
+        return
+    card["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if question is None:
+        fingerprint = await _current_inputs(cat["id"], cat)
+        if fingerprint:
+            card["inputs_fingerprint"] = fingerprint
+    try:
+        await asyncio.to_thread(atomic_write.write_json, path, card)
+    except OSError as exc:
+        log.warning("could not stamp %s as checked: %s", insight_id, exc)
+
+
+def _due_stamp(card: dict | None) -> str:
+    """When a stored card was last made OR last looked at and kept,
+    whichever is later — the age the scheduler counts from. Both are the
+    same ISO shape, so the later is the larger string."""
+    card = card or {}
+    return max(str(card.get("generated_at") or ""),
+               str(card.get("checked_at") or ""))
 
 
 def _no_fallback(result: dict) -> bool:
@@ -7662,8 +7718,7 @@ async def _scheduler() -> None:
         for cat in all_categories():
             eff = resolve_category(cat["id"]) or cat
             stored = cards.get(cat["id"]) or {}
-            if not _refresh_due(eff, stored.get("generated_at", ""), now,
-                                mode=mode):
+            if not _refresh_due(eff, _due_stamp(stored), now, mode=mode):
                 continue
             change = {"moved": True, "why": "on its refresh interval",
                       "fingerprint": None}
@@ -7924,7 +7979,8 @@ def _category_status(c: dict, insights: dict) -> dict:
             "enabled": c.get("enabled", True),
             "refresh_hours": c.get("refresh_hours"),
             "schedule": c.get("schedule"),
-            "next_due": _next_due(c, insights.get(c["id"]) or "", now),
+            "next_due": _next_due(c, _card_stamps(c["id"])[1]
+                                  or insights.get(c["id"]) or "", now),
             "refresh_hold": REFRESH_HOLDS.get(c["id"]),
             "user": True,
             "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
@@ -7948,7 +8004,8 @@ def _category_status(c: dict, insights: dict) -> dict:
         # When the scheduler will come for this card — the readback of
         # _refresh_due, so the foot can say "next 7am" instead of leaving
         # "why did this stop updating" to the add-on log.
-        "next_due": _next_due(eff, insights.get(c["id"]) or "", now),
+        "next_due": _next_due(eff, _card_stamps(c["id"])[1]
+                              or insights.get(c["id"]) or "", now),
         # Why the scheduler is waiting rather than when: with
         # `refresh_mode: changed` a card past its interval sits until
         # something it reads moves, and a `next_due` in the past would
@@ -8042,24 +8099,30 @@ async def _today(now: float | None = None) -> dict:
 # runs, and it used to answer by JSON-parsing every stored card — up to
 # 400 KB of HTML each — to read one timestamp out of each. A save rewrites
 # the file and moves its mtime, which is the invalidation.
-_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None, str]] = {}
 
 
-def _generated_at(card_id: str) -> str | None:
+def _card_stamps(card_id: str) -> tuple[str | None, str]:
+    """`(generated_at, the stamp the scheduler counts from)` for one card."""
     path = _insight_path(card_id)
     try:
         st = path.stat()
     except OSError:
         _GENERATED_AT_CACHE.pop(card_id, None)
-        return None
+        return None, ""
     stamp = (st.st_mtime_ns, st.st_size)
     cached = _GENERATED_AT_CACHE.get(card_id)
     if cached is not None and cached[0] == stamp:
-        return cached[1]
+        return cached[1], cached[2]
     obj = _read_json(path)
     value = obj.get("generated_at") if obj else None
-    _GENERATED_AT_CACHE[card_id] = (stamp, value)
-    return value
+    due = _due_stamp(obj) if obj else ""
+    _GENERATED_AT_CACHE[card_id] = (stamp, value, due)
+    return value, due
+
+
+def _generated_at(card_id: str) -> str | None:
+    return _card_stamps(card_id)[0]
 
 
 # The last health verdict the diagnostics payload computed, so the status
@@ -14259,8 +14322,10 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # which is more rows per entity than the baselines read, and
             # is bounded by asking only power sensors and only ten days.
             try:
-                machines = _done("appliances",
-                                 await appliances.build(session, by_id, started))
+                machines = _done("appliances", await appliances.build(
+                    session, by_id, started,
+                    entities=ents if isinstance(ents, list) else None,
+                    devices=devices if isinstance(devices, list) else None))
             except Exception as exc:  # noqa: BLE001
                 _failed("appliances", exc)
             # And the fourth. This one needs the registries as well as the
