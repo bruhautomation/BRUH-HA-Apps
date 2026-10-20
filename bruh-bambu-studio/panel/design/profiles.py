@@ -157,10 +157,17 @@ def filament_for(machine: str, material: str) -> str:
 
 def apply(process: dict, settings: dict | None) -> dict:
     """The part's settings over a flattened process profile (design/options.py)."""
+    out, _notes = reconciled(process, settings)
+    return out
+
+
+def reconciled(process: dict, settings: dict | None) -> tuple[dict, list[str]]:
+    """apply(), with the sentences saying what had to change to slice."""
     out = dict(process)
     out.update(options.process_values(settings or {}))
+    out, notes = options.reconcile(out)
     out["name"] = f"{process.get('name', 'process')} (BRUH Bambu)"
-    return out
+    return out, notes
 
 
 def coloured(filament: dict, colour: str) -> dict:
@@ -190,8 +197,8 @@ def prepare(model: str, settings: dict | None, outdir: Path,
     names = [filament_for(machine, f.get("material") or material) for f in wanted]
     outdir.mkdir(parents=True, exist_ok=True)
     paths = {}
-    for key, data in (("machine", flatten("machine", machine)),
-                      ("process", apply(flatten("process", process), settings))):
+    process_data, adjusted = reconciled(flatten("process", process), settings)
+    for key, data in (("machine", flatten("machine", machine)), ("process", process_data)):
         path = outdir / f"{key}.json"
         path.write_text(json.dumps(data, indent=1))
         paths[key] = str(path)
@@ -205,4 +212,61 @@ def prepare(model: str, settings: dict | None, outdir: Path,
     paths["filament"] = paths["filaments"][0]
     return {"machine": machine, "process": process, "filament": " + ".join(dict.fromkeys(names)),
             "filament_names": names, "material": wanted[0].get("material") or material,
-            "paths": paths, "dir": os.fspath(outdir)}
+            "paths": paths, "dir": os.fspath(outdir), "adjusted": adjusted}
+
+
+# Keys a system profile carries about itself, not settings a project holds.
+_PROFILE_META = ("name", "inherits", "from", "instantiation", "setting_id", "type",
+                 "compatible_printers", "compatible_printers_condition", "compatible_prints",
+                 "compatible_prints_condition", "filament_id", "base_id")
+
+
+def _studio_version() -> str | None:
+    label = str((installer.installed() or {}).get("version") or "").lstrip("vV")
+    parts = label.split(".")
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        return label
+    return None
+
+
+def project_settings(model: str, settings: dict | None,
+                     filaments: list[dict] | None = None) -> dict:
+    """Metadata/project_settings.config for a part opened in Bambu Studio.
+
+    A 3MF with no project config, or one whose `printer_model` is not a
+    Bambu Lab machine, is loaded as geometry only under "The 3mf file has
+    invalid config" (Plater.cpp, is_bbl_vendor_config). This is the config
+    Bambu Studio itself writes: the printer's, the process with the part's
+    settings over it, and one filament per colour, each list key holding
+    one value per filament.
+    """
+    machine = machine_for(model)
+    material = (settings or {}).get("material") or "PLA"
+    wanted = filaments or [{"material": material, "colour": ""}]
+    process = process_for(machine, (settings or {}).get("layer_height"))
+    names = [filament_for(machine, f.get("material") or material) for f in wanted]
+    out: dict = {}
+    out.update(flatten("machine", machine))
+    process_data, _notes = reconciled(flatten("process", process), settings)
+    out.update(process_data)
+    merged: dict = {}
+    for name, f in zip(names, wanted):
+        data = coloured(flatten("filament", name), f.get("colour"))
+        data.update(options.filament_values(settings or {}))
+        for key, value in data.items():
+            if key in _PROFILE_META:
+                continue
+            if isinstance(value, list):
+                merged.setdefault(key, []).extend(value)
+            elif key not in merged:
+                merged[key] = value
+    out.update(merged)
+    for key in _PROFILE_META:
+        out.pop(key, None)
+    out.update(name="project_settings", **{"from": "project"},
+               printer_settings_id=machine, print_settings_id=process,
+               filament_settings_id=names)
+    version = _studio_version()
+    if version:
+        out["version"] = version
+    return out

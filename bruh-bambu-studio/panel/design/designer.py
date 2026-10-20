@@ -103,7 +103,14 @@ objects), special (spiral vase, fuzzy skin), the nozzle temperature, and what
 the printer is told at the start (build plate type, speed, bed levelling,
 flow and vibration calibration, first-layer inspection, timelapse). Set only
 what you have a reason for; anything left out stays at Bambu Studio's own
-profile for that printer and filament. What the person asks for always wins. The panel checks and builds the script and
+profile for that printer and filament. What the person asks for always wins. Bambu Studio refuses a
+slice whose settings disagree, so keep them consistent: at 100 % infill the
+pattern must be rectilinear, concentric or aligned rectilinear (never grid,
+gyroid, cubic, honeycomb, line, triangles or lightning) — a part that must be
+solid is better as more walls and top/bottom layers than as 100 % infill; spiral
+vase means exactly one wall, 0 % infill, no top layers and no supports, and only
+suits a single open-topped body; "by object" needs every part to clear the
+toolhead; supports at an overhang angle of 0 mean the profile's own angle. The panel checks and builds the script and
 shows the person a 3D view with measurements; if the build fails you get the
 error back to fix.
 
