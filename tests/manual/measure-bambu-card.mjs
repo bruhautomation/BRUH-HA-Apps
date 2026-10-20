@@ -42,6 +42,7 @@ const ENTITIES = {
   'sensor.a1_mini_status': { entity_id: 'sensor.a1_mini_status', device_id: 'dev2' },
 };
 
+const FRAME = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 const problems = [];
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -49,9 +50,21 @@ const browser = await chromium.launch(process.env.CHROMIUM_PATH
 for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', true]]) {
   const page = await browser.newPage({ viewport: { width: 420, height: 900 }, hasTouch: true });
   page.on('pageerror', (e) => problems.push(`${tag}: page error ${e.message}`));
-  await page.setContent(`<!doctype html><html><head><style>
+  // A real origin, and a camera proxy that answers with a picture — slowly,
+  // so a card that blanks while a frame loads is caught doing it.
+  let frames = 0;
+  await page.route('http://card.test/**', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/api/camera_proxy/')) {
+      frames += 1;
+      await new Promise((r) => setTimeout(r, 250));
+      return route.fulfill({ body: FRAME, contentType: 'image/png' });
+    }
+    return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head><style>
       :root { --surface:#fff; --sunk:#eee; --text:#111; --muted:#666; --line:#ccc;
-        --sky:#1e9fe0; --lime:#3a3; --rose:#c33; }</style></head><body></body></html>`);
+        --sky:#1e9fe0; --lime:#3a3; --rose:#c33; }</style></head><body></body></html>` });
+  });
+  await page.goto('http://card.test/');
   await page.evaluate(() => {
     customElements.define('ha-card', class extends HTMLElement {});
   });
@@ -71,6 +84,23 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
     if (!text.includes(want)) problems.push(`${tag}: "${want}" is not on the card`);
   }
   if (text.includes('kitchen')) problems.push(`${tag}: a non-printer entity rendered`);
+  await page.waitForFunction((t) => {
+    const img = document.querySelector(t).shadowRoot.querySelector('.cam img');
+    return img && img.getAttribute('src');
+  }, tag, { timeout: 8000 }).catch(() => {});
+  // Every frame after the first: the picture on screen is always a decoded
+  // one. Setting the visible image's src blanked it while the next loaded.
+  const blanks = await page.evaluate(async (t) => {
+    let blank = 0;
+    for (let i = 0; i < 120; i += 1) {
+      const img = document.querySelector(t).shadowRoot.querySelector('.cam img');
+      if (!img || !img.complete || !img.naturalWidth) blank += 1;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return blank;
+  }, tag);
+  if (blanks) problems.push(`${tag}: the camera picture was blank in ${blanks} of 120 samples (it flashes)`);
+  if (frames < 3) problems.push(`${tag}: only ${frames} camera frames were asked for in ~5 s`);
   const cams = await root.evaluate((el) => [...el.shadowRoot.querySelectorAll('.cam img')].map((i) => i.getAttribute('src') || ''));
   if (cams.length !== 1 || !cams[0].startsWith('/api/camera_proxy/camera.workshop_x1c_camera?token=abc')) {
     problems.push(`${tag}: the printer's camera is not on the card (${JSON.stringify(cams)})`);

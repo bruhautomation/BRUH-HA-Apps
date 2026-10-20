@@ -205,8 +205,11 @@ function stateTone(p) {
 }
 
 // The camera: one <img> per printer that outlives every redraw (a redraw
-// every four seconds would otherwise restart it), loading the next frame
-// only once the last one has arrived.
+// every four seconds would otherwise restart it). Each frame is fetched and
+// decoded off screen, and only a frame that decoded is swapped in: setting
+// the visible image's src blanked it while the next frame loaded, which
+// flashed the feed every second or two, and a frame that failed showed a
+// broken image.
 const cams = {};
 
 function cameraNode(p) {
@@ -215,23 +218,7 @@ function cameraNode(p) {
     const img = el("img", { class: "camimg", alt: `${p.name}'s camera`, decoding: "async" });
     const note = el("p", { class: "camnote" }, "Starting the camera…");
     const node = el("div", { class: "cam" }, img, note);
-    cam = cams[p.id] = { node, img, note, on: true, timer: null, loading: false, failures: 0 };
-    img.addEventListener("load", () => {
-      cam.loading = false; cam.failures = 0;
-      node.classList.add("has-frame"); note.hidden = true;
-      scheduleFrame(p.id, 600);
-    });
-    img.addEventListener("error", async () => {
-      cam.loading = false; cam.failures += 1;
-      try {
-        const r = await fetch(`api/printer/camera?printer=${encodeURIComponent(p.id)}`);
-        const body = r.headers.get("content-type")?.includes("json") ? await r.json() : {};
-        note.textContent = body.error || "The camera is not answering.";
-      } catch (_) { note.textContent = "The camera is not answering."; }
-      note.hidden = false;
-      if (!node.classList.contains("has-frame")) node.classList.add("no-frame");
-      scheduleFrame(p.id, Math.min(30000, 3000 * cam.failures));
-    });
+    cam = cams[p.id] = { node, img, note, on: true, timer: null, loading: false, failures: 0, url: null };
   }
   cam.printer = p;
   return cam;
@@ -244,14 +231,50 @@ function scheduleFrame(id, delay) {
   cam.timer = setTimeout(() => nextFrame(id), delay);
 }
 
-function nextFrame(id) {
+async function nextFrame(id) {
   const cam = cams[id];
   if (!cam || cam.loading) return;
   const watching = state.view === "printers" && cam.on && document.visibilityState === "visible"
     && cam.node.isConnected && cam.printer && cam.printer.online;
   if (!watching) { scheduleFrame(id, 2000); return; }
   cam.loading = true;
-  cam.img.src = `api/printer/camera?printer=${encodeURIComponent(id)}&t=${Date.now()}`;
+  let url = null;
+  try {
+    const r = await fetch(`api/printer/camera?printer=${encodeURIComponent(id)}&t=${Date.now()}`,
+      { cache: "no-store" });
+    const type = r.headers.get("content-type") || "";
+    if (!r.ok || !type.startsWith("image/")) {
+      const body = type.includes("json") ? await r.json().catch(() => ({})) : {};
+      throw new Error(body.error || "The camera is not answering.");
+    }
+    url = URL.createObjectURL(await r.blob());
+    const next = new Image();
+    next.src = url;
+    await next.decode();
+    const old = cam.url;
+    cam.img.src = url;
+    cam.url = url;
+    url = null;
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 1000);
+    cam.failures = 0;
+    cam.node.classList.add("has-frame");
+    cam.node.classList.remove("no-frame");
+    if (cam.on) cam.note.hidden = true;
+    cam.loading = false;
+    scheduleFrame(id, 600);
+  } catch (err) {
+    if (url) URL.revokeObjectURL(url);
+    cam.loading = false;
+    cam.failures += 1;
+    // The last good frame stays on screen; a note says why it is not moving.
+    // One slow frame over a moving picture is not worth a note.
+    if (!cam.node.classList.contains("has-frame") || cam.failures > 1) {
+      cam.note.textContent = err.message || "The camera is not answering.";
+      cam.note.hidden = false;
+    }
+    if (!cam.node.classList.contains("has-frame")) cam.node.classList.add("no-frame");
+    scheduleFrame(id, Math.min(30000, 3000 * cam.failures));
+  }
 }
 
 function cameraBlock(p) {

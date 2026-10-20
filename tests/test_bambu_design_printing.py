@@ -305,7 +305,12 @@ class TestTheRoutes(PrintTest):
             status, body = self.call("POST", f"/api/design/parts/{part['id']}/studio",
                                      json={"version": 1})
         self.assertEqual(status, 200, body)
-        self.assertEqual(Path(restart.call_args[0][0]).name, "cube_logo.3mf")
+        # A copy carrying the printer's project settings, so Bambu Studio does
+        # not open it as geometry only (test_bambu_slice_rules).
+        opened = Path(restart.call_args[0][0])
+        self.assertEqual(opened.name, "cube_logo.studio.3mf", body.get("note"))
+        with zipfile.ZipFile(opened) as z:
+            self.assertIn("Metadata/project_settings.config", z.namelist())
         empty = parts.create("Nothing yet")
         status, _ = self.call("POST", f"/api/design/parts/{empty['id']}/studio", json={})
         self.assertEqual(status, 400)

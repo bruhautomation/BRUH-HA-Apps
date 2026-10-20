@@ -23,7 +23,7 @@
  * print is the press nobody can take back.
  */
 
-const CARD_VERSION = '0.2.0';
+const CARD_VERSION = '0.2.1';
 const DOMAIN = 'bruh_bambu';
 
 console.info(
@@ -163,10 +163,21 @@ class BruhBambuCard extends HTMLElement {
       const tick = () => {
         const state = this._hass && this._hass.states[id];
         const base = state && state.attributes.entity_picture;
-        if (this.isConnected && base && document.visibilityState === 'visible') {
-          cam.img.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        if (!(this.isConnected && base && document.visibilityState === 'visible')) {
+          cam.timer = setTimeout(tick, 2000);
+          return;
         }
-        cam.timer = setTimeout(tick, 2000);
+        // Decoded off screen and swapped in whole: setting the visible
+        // image's src blanked it while each frame loaded, so the feed flashed.
+        const next = new Image();
+        next.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        next.decode().then(() => {
+          next.alt = cam.img.alt;
+          next.className = cam.img.className;
+          if (cam.img.isConnected) cam.img.replaceWith(next);
+          cam.img = next;
+        }, () => {})
+          .finally(() => { cam.timer = setTimeout(tick, 2000); });
       };
       tick();
     }

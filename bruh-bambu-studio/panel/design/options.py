@@ -34,8 +34,11 @@ SLICE = {
     "infill_pattern": ("Infill pattern", "Strength", "enum", {
         "grid": "grid", "gyroid": "gyroid", "cubic": "cubic", "honeycomb": "honeycomb",
         "line": "line", "triangles": "triangles", "adaptive cubic": "adaptivecubic",
-        "lightning": "lightning", "zig-zag": "zig-zag"}, "sparse_infill_pattern",
-        "Gyroid is strong in every direction; lightning only holds up top surfaces."),
+        "lightning": "lightning", "zig-zag": "zig-zag", "rectilinear": "zig-zag",
+        "concentric": "concentric", "aligned rectilinear": "alignedrectilinear"},
+        "sparse_infill_pattern",
+        "Gyroid is strong in every direction; lightning only holds up top surfaces. "
+        + "At 100 % infill only rectilinear, concentric or aligned rectilinear work."),
     "wall_generator": ("Wall generator", "Quality", "enum", {"classic": "classic", "arachne": "arachne"},
                        "wall_generator", "Arachne varies line width for thin features."),
     "seam": ("Seam", "Quality", "enum", {"aligned": "aligned", "nearest": "nearest", "back": "back",
@@ -72,6 +75,12 @@ SLICE = {
     "nozzle_temp": ("Nozzle temperature (°C)", "Temperature", "int", (170, 300, 5), "nozzle_temperature",
                     "Overrides the filament profile; 0 or empty keeps it."),
 }
+# The only sparse patterns Bambu Studio slices at 100 % density: its
+# validate() refuses any pattern that is not also a top_surface_pattern
+# value ("grid doesn't work at 100% density", exit -18).
+SOLID_PATTERNS = ("zig-zag", "concentric", "monotonic", "monotonicline", "globalmonotonicline",
+                  "alignedrectilinear", "hilbertcurve", "archimedeanchords", "octagramspiral")
+SOLID_FALLBACK = "zig-zag"
 # Written into the filament profile rather than the process one.
 FILAMENT_KEYS = {"nozzle_temp"}
 
@@ -129,7 +138,52 @@ def clean_slice(raw) -> dict:
                 out[key] = False
     if out.get("nozzle_temp") == 0:
         out.pop("nozzle_temp")
+    if out.get("infill_percent") == 100 and out.get("infill_pattern") and \
+            SLICE["infill_pattern"][3][out["infill_pattern"]] not in SOLID_PATTERNS:
+        out["infill_pattern"] = "rectilinear"
     return out
+
+
+def _percent(value) -> float | None:
+    try:
+        return float(str(value).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _flag(value) -> bool:
+    return str(value).strip().lower() in ("1", "true")
+
+
+def reconcile(process: dict) -> tuple[dict, list[str]]:
+    """The final process profile made consistent the way Bambu Studio's own
+    validate() (PrintConfig.cpp) demands, so a slice never ends on exit -18
+    over a combination: brAIn's settings over the profile's defaults can
+    each be valid and still disagree (100 % infill over the profile's grid).
+
+    Returns the corrected profile and one sentence per change.
+    """
+    out = dict(process)
+    notes: list[str] = []
+    density = _percent(out.get("sparse_infill_density"))
+    pattern = str(out.get("sparse_infill_pattern") or "")
+    if density is not None and abs(density - 100) < 1e-6 and pattern and pattern not in SOLID_PATTERNS:
+        out["sparse_infill_pattern"] = SOLID_FALLBACK
+        notes.append(f"{pattern} infill cannot print at 100 %, so it is rectilinear.")
+    if _flag(out.get("spiral_mode")):
+        wanted = {"wall_loops": "1", "sparse_infill_density": "0%", "top_shell_layers": "0",
+                  "enable_support": "0", "enforce_support_layers": "0"}
+        changed = [k for k, v in wanted.items() if str(out.get(k, v)) != v]
+        out.update(wanted)
+        if changed:
+            notes.append("Spiral vase: one wall, no infill, no top layers, no supports.")
+    for key in ("top_shell_layers", "bottom_shell_layers", "wall_loops"):
+        try:
+            if int(float(out.get(key, 0))) < 0:
+                out[key] = "0"
+        except (TypeError, ValueError):
+            pass  # not a number: the slicer's own check names it, nothing to make consistent
+    return out, notes
 
 
 def clean_start(raw) -> dict:
@@ -187,7 +241,7 @@ def process_values(settings: dict) -> dict:
     if s.get("vase"):
         # The slicer refuses a vase with anything a vase cannot have.
         out.update(wall_loops="1", sparse_infill_density="0%", top_shell_layers="0",
-                   enable_support="0")
+                   enable_support="0", enforce_support_layers="0")
     plate = PLATES.get(str(settings.get("plate_type") or ""))
     if plate and plate[1]:
         out["curr_bed_type"] = plate[1]

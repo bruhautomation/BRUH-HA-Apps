@@ -1278,6 +1278,8 @@ def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None
         extras.append(options.PLATES[settings["plate_type"]][0])
     if extras:
         sentence += " (" + ", ".join(extras) + ")"
+    if prepared.get("adjusted"):
+        sentence += ". Changed to slice: " + " ".join(prepared["adjusted"])
 
     def record(finished: dict) -> None:
         _part_note(part["id"], (
@@ -1328,8 +1330,44 @@ async def h_design_studio(request):
         return _err(str(exc), exc.status)
     if not source.is_file():
         return _err("That version's 3MF is missing.", 404)
-    await asyncio.to_thread(panel.studio.restart, str(source))
-    return web.json_response({"ok": True, "studio": panel.studio.state()})
+    opened, note = await asyncio.to_thread(_studio_copy, panel, part, _row, source, body.get("printer"))
+    await asyncio.to_thread(panel.studio.restart, str(opened))
+    return web.json_response({"ok": True, "studio": panel.studio.state(), "note": note})
+
+
+def _studio_copy(panel: Panel, part: dict, row_v: dict, source: Path, printer=None) -> tuple[Path, str]:
+    """A copy of a version's 3MF that Bambu Studio opens as a project.
+
+    Without Metadata/project_settings.config naming a Bambu Lab printer, the
+    GUI loads it as geometry only, under "The 3mf file has invalid config".
+    The copy carries the real profiles for one of the person's printers (the
+    one asked for, else the first with a model set), the part's settings and
+    one filament per colour. With no printer model known it opens the file
+    as it is, and says why.
+    """
+    rows = [r for r in store.load() if r.get("model")]
+    if printer:
+        rows = [r for r in rows if printer in (r.get("id"), r.get("name"))] or rows
+    if not rows:
+        return source, "Set a printer's model on the Printers tab so Bambu Studio opens it with its settings."
+    row = rows[0]
+    settings = part.get("print_settings") or {}
+    names = painting.bodies(source)
+    colours = _body_colours(part, row_v, names)
+    order: list[str] = []
+    for name in names or ["Part"]:
+        colour = str(colours.get(name) or "").upper()
+        if colour not in order:
+            order.append(colour)
+    filaments = [{"material": settings.get("material") or "PLA", "colour": c} for c in order]
+    try:
+        project = profiles.project_settings(row["model"], settings, filaments)
+        target = source.with_name(source.stem + ".studio.3mf")
+        painting.with_project(source, target, project)
+    except (LookupError, OSError, ValueError, KeyError) as exc:
+        log.warning("Opening %s without project settings: %s", source.name, exc)
+        return source, f"Opened as geometry only: {exc}"
+    return target, f"Opened with {row['name']}'s settings."
 
 
 # Each model's build volume (X, Y, Z in mm), as Bambu Lab publishes it.

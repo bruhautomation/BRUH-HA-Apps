@@ -110,7 +110,8 @@ def rejected(lines: list[str]) -> list[str]:
             for row in lines[i + 1:i + 12]:
                 row = row.strip()
                 if ":" in row and not row.lower().startswith(("[", "error", "warning")):
-                    out.append(row[:200])
+                    # The CLI prints its format string's escaped "%%" as is.
+                    out.append(row.replace("%%", "%")[:200])
             break
     return out
 

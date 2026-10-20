@@ -139,7 +139,9 @@ in the add-on changes.
    - **Manual print** — choose the printer, the tray for each body, and every
      print option (below) yourself, starting from what brAIn suggests.
    - **Open in Bambu Studio** — opens that version on the Studio tab, to set
-     it up and print it from Bambu Studio itself.
+     it up and print it from Bambu Studio itself. It opens as a project with
+     the settings of one of your printers (the first with its model set on the
+     Printers tab), so Bambu Studio does not load it as geometry only.
 
    A part in several colours is several bodies that touch (a logo on a cube
    is two bodies), and each body prints from its own tray, so those colours

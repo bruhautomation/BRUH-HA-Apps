@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+### Fixed
+
+- **A print never stops on settings Bambu Studio refuses.** 100 % infill in a grid (or gyroid, cubic, honeycomb…) pattern ended *grid doesn't work at 100% density*: Bambu Studio fills a solid part only with rectilinear, concentric or aligned rectilinear lines. Before every slice the settings are now checked against Bambu Studio's own rules, the profile's defaults included, and fixed where they disagree (100 % infill prints rectilinear; a spiral vase gets one wall, no infill, no top and no supports). The conversation says what was changed, and brAIn is told the rules so it does not ask for them. The error that did reach you showed `100%%`; it shows `100%` now.
+- **Open in Bambu Studio opens the part as a project.** Bambu Studio loaded a designed part as geometry only, warning *The 3mf file has invalid config*, because the file named no printer. It now opens a copy that carries the printer's, process and filament settings for one of your printers (with the part's settings and one filament per colour), so the plate, the colours and the settings are there when it opens. Set a printer's model on the Printers tab for this.
+- **brAIn's replies in the design conversation render as rich text.** Bold, italics, code, lists and headings show as formatting instead of asterisks and dashes.
+- **The camera no longer flashes.** The printer card and the dashboard card blanked the picture while each new frame loaded, every second or two. A frame is now decoded before it replaces the one on screen, and a frame that fails to arrive leaves the last picture up.
+
 ## 0.2.0
 
 ### Added

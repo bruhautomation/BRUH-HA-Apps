@@ -131,11 +131,71 @@ function renderPart() {
   loadModel(p, v);
 }
 
+// brAIn answers in Markdown. It is drawn as DOM nodes, never innerHTML: the
+// text is a model's, and markup in it must stay text.
+function mdInline(text) {
+  const out = [];
+  const re = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*|_[^_\s][^_]*_|\[[^\]]+\]\((https?:\/\/[^)\s]+)\))/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith("`")) out.push(el("code", {}, t.slice(1, -1)));
+    else if (t.startsWith("**") || t.startsWith("__")) out.push(el("strong", {}, mdInline(t.slice(2, -2))));
+    else if (t.startsWith("[")) {
+      out.push(el("a", { href: m[2], target: "_blank", rel: "noopener noreferrer" }, t.slice(1, t.indexOf("]"))));
+    } else out.push(el("em", {}, mdInline(t.slice(1, -1))));
+    last = m.index + t.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function markdown(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const blocks = [];
+  let para = [];
+  let list = null;
+  const flush = () => {
+    if (para.length) blocks.push(el("p", {}, mdInline(para.join(" "))));
+    para = [];
+  };
+  const endList = () => { if (list) blocks.push(list); list = null; };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flush(); endList();
+      const code = [];
+      for (i++; i < lines.length && !/^\s*```/.test(lines[i]); i++) code.push(lines[i]);
+      blocks.push(el("pre", {}, el("code", {}, code.join("\n"))));
+      continue;
+    }
+    const head = line.match(/^\s*(#{1,6})\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const number = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (!line.trim()) { flush(); endList(); continue; }
+    if (head) { flush(); endList(); blocks.push(el("p", { class: "mdh" }, el("strong", {}, mdInline(head[2])))); continue; }
+    if (bullet || number) {
+      flush();
+      const tag = bullet ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== tag) { endList(); list = el(tag, {}); }
+      list.append(el("li", {}, mdInline((bullet || number)[1])));
+      continue;
+    }
+    endList();
+    para.push(line.trim());
+  }
+  flush(); endList();
+  return el("div", { class: "md" }, blocks);
+}
+
 function renderMessages(p) {
   const box = $("#messages");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   box.replaceChildren(...(p.messages || []).map((m) => {
-    const bubble = el("div", { class: `msg ${m.role}` }, el("p", {}, m.text));
+    const bubble = el("div", { class: `msg ${m.role}` },
+      m.role === "user" ? el("p", {}, m.text) : markdown(m.text));
     if (m.version) {
       bubble.append(el("button", { type: "button", class: "chip", onclick: () => { design.viewing = m.version; renderPart(); } },
         `Version ${m.version}`));
@@ -350,9 +410,9 @@ async function autoPrint() {
 async function openInStudio() {
   $("#printChoice").close();
   try {
-    await api(`api/design/parts/${design.part.id}/studio`, { json: { version: design.viewing } });
+    const r = await api(`api/design/parts/${design.part.id}/studio`, { json: { version: design.viewing } });
     show("studio");
-    toast("Opening it in Bambu Studio.");
+    toast(`Opening it in Bambu Studio. ${r.note || ""}`.trim());
   } catch (err) { toast(err.message, true); }
 }
 

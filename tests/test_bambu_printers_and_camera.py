@@ -169,7 +169,8 @@ class TestOneTableOfOptions(unittest.TestCase):
     def test_every_enum_value_written_is_one_bambu_studio_knows(self):
         # The values Bambu Studio's own key maps hold (PrintConfig.cpp).
         known = {"sparse_infill_pattern": {"grid", "gyroid", "cubic", "honeycomb", "line",
-                                           "triangles", "adaptivecubic", "lightning", "zig-zag"},
+                                           "triangles", "adaptivecubic", "lightning", "zig-zag",
+                                           "concentric", "alignedrectilinear"},
                  "wall_generator": {"classic", "arachne"},
                  "seam_position": {"aligned", "nearest", "back", "random"},
                  "ironing_type": {"no ironing", "top", "topmost", "solid"},

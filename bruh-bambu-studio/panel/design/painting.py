@@ -75,3 +75,23 @@ def retarget(source: Path, target: Path, filament: dict) -> None:
                     with archive.open(item) as src, out.open(item.filename, "w") as dst:
                         shutil.copyfileobj(src, dst)
     scratch.replace(target)
+
+
+PROJECT = "Metadata/project_settings.config"
+
+
+def with_project(source: Path, target: Path, project: dict) -> None:
+    """Copy `source` to `target` carrying `project` as its project settings,
+    so Bambu Studio opens it with a printer, process and filaments instead
+    of as bare geometry."""
+    import json
+    target.parent.mkdir(parents=True, exist_ok=True)
+    scratch = target.with_name(target.name + ".part")
+    with zipfile.ZipFile(source) as archive, zipfile.ZipFile(scratch, "w", zipfile.ZIP_DEFLATED) as out:
+        for item in archive.infolist():
+            if item.filename == PROJECT:
+                continue
+            with archive.open(item) as src, out.open(item.filename, "w") as dst:
+                shutil.copyfileobj(src, dst)
+        out.writestr(PROJECT, json.dumps(project, indent=4))
+    scratch.replace(target)

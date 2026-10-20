@@ -76,7 +76,11 @@ async function run(label, viewport, touch) {
     const url = new URL(route.request().url());
     const path = url.pathname.slice(1);
     const method = route.request().method();
-    if (path === 'api/printer/camera') return route.fulfill({ body: FRAME, contentType: 'image/jpeg' });
+    if (path === 'api/printer/camera') {
+      // Slowly, so a card that blanks while the next frame loads is caught.
+      await new Promise((r) => setTimeout(r, 250));
+      return route.fulfill({ body: FRAME, contentType: 'image/jpeg' });
+    }
     if (path === 'api/thumb' || path === 'api/printer/thumb') return route.fulfill({ body: PICTURE, contentType: 'image/png' });
     if (path === 'api/printer/command') {
       COMMANDS.push({ label, ...route.request().postDataJSON() });
@@ -112,6 +116,17 @@ async function run(label, viewport, touch) {
   if ((await card.locator('.spool').count()) !== 5) say('the card does not show four AMS trays and the spool holder');
   if ((await card.locator('.spool.active').count()) !== 1) say('the tray feeding the nozzle is not marked');
   if (!(await card.locator('.ring').count())) say('no progress ring');
+  // The picture on screen is always a decoded frame: no blank between frames.
+  const blanks = await page.evaluate(async () => {
+    let blank = 0;
+    for (let i = 0; i < 100; i += 1) {
+      const img = document.querySelector('.printer[data-id="a1"] .camimg');
+      if (!img || !img.complete || !img.naturalWidth) blank += 1;
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return blank;
+  });
+  if (blanks) say(`the camera picture was blank in ${blanks} of 100 samples (it flashes)`);
   const before = await card.locator('.camimg').elementHandle();
   await page.evaluate(() => refresh());
   await page.waitForTimeout(300);

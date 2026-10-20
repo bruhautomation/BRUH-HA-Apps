@@ -60,7 +60,7 @@ const PART = {
   id: 'box-a1b2c3', name: 'Two-colour box', state: 'idle', updated: 1, current: 1,
   print_settings: { colour: 'white', material: 'PLA' },
   messages: [{ role: 'user', text: 'A white box with a red lid' },
-    { role: 'assistant', text: 'Here it is.', version: 1 }],
+    { role: 'assistant', text: 'Here it is: **two bodies**, the lid in `red`.\n\n- Base: 2 walls\n- Lid: 15 % infill\n\n<b>not markup</b>', version: 1 }],
   versions: [{ n: 1, ok: true, summary: 'First version', size_mm: [40, 30, 36],
     colors: { Base: '#F4F4F2', Lid: 'red' },
     files: { '3mf': 'box.3mf', step: 'box.step', stl: 'box.stl',
@@ -145,6 +145,19 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   await page.waitForFunction(() => typeof design !== 'undefined' && design.viewer && design.viewer.group.children.length === 2,
     null, { timeout: 15000 }).catch(() => say('the two bodies never loaded'));
   await page.waitForTimeout(600);
+
+  // brAIn answers in Markdown; it is drawn as rich text, and markup in it stays text.
+  const md = await page.evaluate(() => {
+    const m = document.querySelector('#messages .msg.assistant .md');
+    return m && { strong: m.querySelectorAll('strong').length, code: m.querySelectorAll('code').length,
+      li: m.querySelectorAll('li').length, b: m.querySelectorAll('b').length, text: m.textContent };
+  });
+  if (!md) say('the reply is not drawn as Markdown');
+  else {
+    if (md.strong !== 1 || md.code !== 1 || md.li !== 2) say(`Markdown drew ${JSON.stringify(md)}`);
+    if (md.b || !md.text.includes('<b>not markup</b>')) say('HTML in a reply was rendered rather than shown');
+    if (md.text.includes('**')) say('the reply still shows the asterisks');
+  }
 
   // Colour: what the materials say, and what the pixels show.
   const colours = await page.evaluate(() => design.viewer.group.children.map((m) => [m.name, `#${m.material.color.getHexString()}`]));
