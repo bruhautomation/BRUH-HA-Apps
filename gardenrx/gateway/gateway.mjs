@@ -33,7 +33,7 @@ export function upstreamPath(url, base = BASE) {
   if (!raw.startsWith('/') || raw.startsWith('//')) return null;
   if (!base) return raw;
   if (raw === base || raw.startsWith(base + '/') || raw.startsWith(base + '?')) return raw;
-  return raw === '/' ? base : base + raw;
+  return base + raw;
 }
 
 export function createGateway({ base = BASE, upstream = UPSTREAM } = {}) {

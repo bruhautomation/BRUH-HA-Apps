@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- The Today link (the logo and Today in the menu) opened a 404. It went to
+  the panel's address with no slash at the end, which Home Assistant does
+  not answer. Every page link now ends in a slash, and CI follows every link
+  on every page through an ingress stand-in that answers only what Home
+  Assistant answers.
+
 ## 0.1.0
 
 ### Added

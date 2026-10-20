@@ -233,6 +233,14 @@ jobs:
           GARDENRX_DB_PATH: /tmp/gardenrx-build.db
         run: npm run build
 
+      # Home Assistant answers an ingress panel only under `<path>/...`, so a
+      # link to the bare path is a 404 nothing else here can see. This mounts
+      # the build the way run.sh does and follows every link through a proxy
+      # that answers what Core answers.
+      - name: Every link works through ingress
+        if: env.RUNS == 'true'
+        run: node scripts/check-ingress.mjs
+
   tests:
     name: Python tests
     needs: changes
