@@ -145,23 +145,58 @@ def is_power(eid: str, attrs: dict) -> bool:
     return attrs.get("state_class") == "measurement"
 
 
-def _chore_kind(eid: str, st: dict) -> str:
-    """Which of the three chore machines this sensor is named as, or "".
+def _chore_kind(eid: str, st: dict, device: dict | None = None,
+                siblings=()) -> str:
+    """Which of the three chore machines this sensor is, or "".
 
-    `checks.chores.kind_of` and nothing else, read on the friendly name
-    AND the id (a plug called "Utility Plug" with an id of
-    `sensor.washer_power` is a washer), so the cap's ranking and the
-    check's gate cannot disagree about which sensors those are.
+    `checks.chores` and nothing else, read on the friendly name AND the id
+    (a plug called "Utility Plug" with an id of `sensor.washer_power` is a
+    washer), and — when the nightly pass could read the registries — on the
+    device's own name and the status entities beside it on that device
+    (`chores.cycling_kind`). A washer whose plug is named for nothing and
+    whose device is named for its brand was ranked behind an inverter's
+    circuits and never profiled, while its own status said "spinning". So
+    the cap's ranking and the checks cannot disagree about which sensors
+    those are.
     """
     try:
         from checks import chores  # noqa: PLC0415 — panel-local
     except Exception:  # noqa: BLE001 — a ranking, never a reason to fail
         return ""
     name = str(((st or {}).get("attributes") or {}).get("friendly_name") or "")
-    return chores.kind_of(f"{name} {eid}")
+    names = [f"{name} {eid}"]
+    if device:
+        names += [str(device.get("name_by_user") or ""),
+                  str(device.get("name") or "")]
+    return chores.cycling_kind([n for n in names if n.strip()], siblings)
 
 
-def select(states: dict) -> dict:
+def _device_context(states: dict, entities, devices) -> tuple[dict, dict]:
+    """`{eid: device row}` and `{eid: [sibling sensor states]}` off the
+    registries, or two empty maps when they were not handed in."""
+    if not isinstance(entities, list) or not isinstance(devices, list):
+        return {}, {}
+    by_id = {d.get("id"): d for d in devices
+             if isinstance(d, dict) and d.get("id")}
+    device_of: dict = {}
+    on_device: dict = {}
+    for row in entities:
+        if not isinstance(row, dict):
+            continue
+        eid, dev = row.get("entity_id"), row.get("device_id")
+        if not eid or not dev:
+            continue
+        device_of[eid] = dev
+        on_device.setdefault(dev, []).append(eid)
+    devices_out, siblings_out = {}, {}
+    for eid, dev in device_of.items():
+        devices_out[eid] = by_id.get(dev)
+        siblings_out[eid] = [states.get(o) for o in on_device.get(dev, ())
+                             if o != eid and str(o).startswith("sensor.")]
+    return devices_out, siblings_out
+
+
+def select(states: dict, entities=None, devices=None) -> dict:
     """The power sensors to read tonight, and what the cap left out.
 
     `{"ids": [...], "eligible": n, "cut": [...], "offline": [...]}`. A
@@ -178,12 +213,14 @@ def select(states: dict) -> dict:
     """
     out = []
     offline = []
+    device_of, siblings = _device_context(states or {}, entities, devices)
     for eid, st in (states or {}).items():
         if not isinstance(st, dict):
             continue
         if not is_power(eid, st.get("attributes") or {}):
             continue
-        chore = bool(_chore_kind(eid, st))
+        chore = bool(_chore_kind(eid, st, device_of.get(eid),
+                                 siblings.get(eid, ())))
         if st.get("state") in ("unavailable", "unknown", None):
             if not chore:
                 continue
@@ -196,9 +233,9 @@ def select(states: dict) -> dict:
                               if e in ranked[:MAX_ENTITIES])}
 
 
-def candidates(states: dict) -> list[str]:
+def candidates(states: dict, entities=None, devices=None) -> list[str]:
     """The ids `select` reads, in the order it reads them."""
-    return select(states)["ids"]
+    return select(states, entities, devices)["ids"]
 
 
 def _readings(points: list) -> list[tuple[float, float]]:
@@ -535,7 +572,8 @@ async def fetch(session, ids: list[str], start: dt.datetime,
 
 
 async def build(session, states: dict, now: float | None = None,
-                path: str | None = None) -> dict:
+                path: str | None = None, entities=None,
+                devices=None) -> dict:
     """Measure every power sensor's shape and write the store.
 
     A fetch the recorder refused writes nothing and hands back the
@@ -545,7 +583,7 @@ async def build(session, states: dict, now: float | None = None,
     import baselines  # noqa: PLC0415
 
     now = time.time() if now is None else now
-    chosen = select(states)
+    chosen = select(states, entities, devices)
     ids = chosen["ids"]
     payload: dict = {"built_at": int(now), "days": HISTORY_DAYS,
                      "asked": len(ids), "eligible": chosen["eligible"],

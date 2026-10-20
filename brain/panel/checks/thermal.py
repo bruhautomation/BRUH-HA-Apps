@@ -83,7 +83,7 @@ worth waking somebody for.
 """
 from __future__ import annotations
 
-from ._util import House, num
+from ._util import House, join_names, num
 
 # How far under its setpoint a room has to have stayed, all month, before
 # this is a fault rather than a thermostat that is slightly optimistic.
@@ -273,16 +273,53 @@ def underheated(snap: dict, now: float) -> list[dict]:
                 f"is short by roughly {short:g}{unit} whatever the "
                 "thermostat is set to."),
             "fix": (
-                "Something is limiting what reaches this room rather than "
-                "the schedule being short: a radiator valve not opening "
-                "fully, a radiator undersized for the room, a bled system, "
-                "or a zone that never calls. Check the valve first — it is "
-                "the cheapest of the four to rule out."),
+                "Something is limiting the heat that reaches this room, "
+                "rather than the schedule being too short: a valve or vent "
+                "that does not open fully, a heater too small for the room, "
+                "or a zone that never calls for heat. Check the valve or "
+                "vent first — it is the cheapest to rule out."),
             "severity": "warning",
             "fixable": False,
             "entity_id": hit["entity_id"],
         })
     return out
+
+
+# What the snapshot can say about where a room's heat goes: its own door
+# and window sensors. A list of fixtures the data does not show (a mail
+# slot, a flue, an attic hatch) is a guess about somebody's house dressed
+# as advice, so only the openings the house has sensors on are named.
+OPENING_CLASSES = frozenset({"door", "window", "opening", "garage_door"})
+
+
+def _openings_in(house: House, eid: str) -> list[str]:
+    area = house.area_of(eid)
+    if not area:
+        return []
+    names = []
+    for other, st in sorted(house.states.items()):
+        if not other.startswith("binary_sensor."):
+            continue
+        attrs = (st or {}).get("attributes") or {}
+        if str(attrs.get("device_class") or "") not in OPENING_CLASSES:
+            continue
+        if house.area_of(other) != area:
+            continue
+        names.append(house.label(other))
+    return names
+
+
+def _heat_loss_fix(house: House, eid: str, room: str) -> str:
+    area = house.area_of(eid)
+    room = f"the {area}" if area else "this room"
+    openings = _openings_in(house, eid)
+    if openings:
+        return (f"Look for where {room} lets heat out: check that "
+                f"{join_names(openings)} close and seal properly, then the "
+                "gaps around the room's other doors and windows.")
+    return (f"Look for where {room} lets heat out: the gaps around its "
+            "doors and windows are the usual place, and an opening left "
+            "open is the cheapest one to rule out.")
 
 
 def heat_loss(snap: dict, now: float) -> list[dict]:
@@ -326,11 +363,7 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
                 f"this house takes about {house_tau:.1f}. Nothing is wrong "
                 "with the heating — the heat is leaving as fast as it "
                 "arrives."),
-            "fix": (
-                "Look for where it is going: a draught under a door or "
-                "through a letterbox, a window that does not seal, an open "
-                "flue, a loft hatch, or a room with much more glass than "
-                "the others."),
+            "fix": _heat_loss_fix(house, eid, room),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,

@@ -25,7 +25,7 @@ import re
 
 import numfmt
 
-from . import devices
+from . import chores, devices
 from ._util import House, domain_of, join_names, num, parse_ts
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
@@ -227,6 +227,14 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
     profiled = (house.snap.get("appliances") or {}).get("entities")
     if isinstance(profiled, dict) and eid in profiled:
         return "an appliance brAIn measures by its own on/off shape"
+    # And the same machine with no profile yet — a washer the nightly cap
+    # never read, one too new to have run three times — is still a machine
+    # that cycles: a power reading named for a washer, dryer or dishwasher,
+    # or one whose device carries a status saying it runs jobs. The
+    # vocabulary is `chores`', so the two checks cannot disagree about which
+    # machines those are.
+    if chores.is_cycle_reading(attrs) and chores.cycling_machine(house, eid):
+        return "a machine that runs in cycles"
     if platform in PRINTER_PLATFORMS:
         return "a printer's job"
     if str(attrs.get("device_class") or "") in SPAN_CLASSES:
@@ -500,9 +508,11 @@ def related_nearby(house: House, eid: str, st: dict
 
 
 # One action. The card already carries Ignore, and a fix that also told
-# somebody to press it was two errands in one sentence.
-GENERIC_FIX = ("Look at what it is measuring for a change brAIn cannot see "
-               "— a guest, a heatwave, a new appliance.")
+# somebody to press it was two errands in one sentence. No stock list of
+# causes: brAIn does not know this house had a guest, so it does not say so.
+GENERIC_FIX = ("Look at what it is measuring for a change brAIn cannot see, "
+               "such as something added, moved or used differently near "
+               "it.")
 
 
 def _fmt(value: float) -> str:

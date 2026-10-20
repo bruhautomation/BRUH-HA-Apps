@@ -305,6 +305,76 @@ def job_finished_at(rows: list, now: float) -> float | None:
     return None
 
 
+# A power or energy reading of a machine that cycles is bimodal by
+# construction — near nothing, then hundreds of watts for an hour — so an
+# hour-of-the-week band lands between the two where it never is, and a wash
+# reads as "hundreds of spreads out". `checks/baseline.not_a_house_reading`
+# and `appliances.select` both ask this, so the band checks and the nightly
+# cap cannot disagree about which sensors those are. Two kinds of evidence,
+# both this module's own vocabulary and never a second word list: a name
+# (the sensor's or its device's) that `kind_of` reads as a washer, dryer or
+# dishwasher, or a status entity on the same device speaking the job
+# vocabulary (`JOB_RUNNING` / `JOB_FINISHED`), which is a machine saying in
+# words that it runs cycles.
+CYCLE_READING_CLASSES = frozenset({"power", "energy"})
+CYCLE_READING_UNITS = frozenset({"W", "kW", "Wh", "kWh"})
+
+
+def is_cycle_reading(attrs: dict) -> bool:
+    """A power or energy reading — what a machine's cycle moves."""
+    attrs = attrs or {}
+    if str(attrs.get("device_class") or "") in CYCLE_READING_CLASSES:
+        return True
+    return str(attrs.get("unit_of_measurement") or "").strip() in CYCLE_READING_UNITS
+
+
+def says_a_job(st) -> bool:
+    """Whether a status entity's state, or the states it can take, speak the
+    job vocabulary: it is a machine that reports running and finishing."""
+    if not isinstance(st, dict):
+        return False
+    word = job_state(st.get("state"))
+    if word in JOB_FINISHED or _running(word):
+        return True
+    options = (st.get("attributes") or {}).get("options")
+    if isinstance(options, (list, tuple)):
+        return any(_running(job_state(o)) for o in options)
+    return False
+
+
+def cycling_kind(names, sibling_states) -> str:
+    """Which cycling machine this is, `"machine"` for one known only by its
+    status, or "" when nothing says it cycles.
+
+    ``names`` are the sensor's own names and its device's; ``sibling_states``
+    the live states of the `sensor` entities on the same device.
+    """
+    for name in names:
+        kind = kind_of(name)
+        if kind:
+            return kind
+    if any(says_a_job(st) for st in sibling_states or ()):
+        return "machine"
+    return ""
+
+
+def cycling_machine(house: House, eid: str) -> str:
+    """`cycling_kind` over a snapshot: the sensor's names, its device's name
+    and the status entities beside it on that device."""
+    st = house.states.get(eid) or {}
+    reg = house.registry.get(eid) or {}
+    names = [str((st.get("attributes") or {}).get("friendly_name") or ""),
+             str(reg.get("name") or ""), str(reg.get("original_name") or ""),
+             eid]
+    device = house.device_of(eid)
+    if device:
+        names += [str(device.get("name_by_user") or ""),
+                  str(device.get("name") or "")]
+    siblings = [house.states.get(s) for s in house.siblings(eid)
+                if domain_of(s) == "sensor"]
+    return cycling_kind([n for n in names if n], siblings)
+
+
 def _power_owns(house: House, snap: dict, eid: str) -> bool:
     """Does a power-profiled chore on the same device already cover this?
 
@@ -377,7 +447,9 @@ def job_done(snap: dict, now: float) -> list[dict]:
                        f"“{state}” {when}, and has not started "
                        "another job since. Read from the status its own "
                        "integration publishes."),
-            "fix": ("Take it off, then tick it off — brAIn cannot see that "
+            "fix": (("Take the print off" if kind == "printer"
+                     else "Empty it")
+                    + ", then mark it done — brAIn cannot see that "
                     "you have, because the status says the same thing "
                     "either way. It clears itself when the next job "
                     "starts."),
