@@ -29,8 +29,9 @@ schedule and its own **Run** button:
 | **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
 | **Screens** | Pictures of brAIn's own panel, taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per release, rewritten in place, with the pictures attached | no, weekly | nothing |
 | **Morph** | Problems the Morph dashboard add-on found in its own code: a card that failed to draw, sections that overlapped, a request brAIn could not carry out. Morph publishes them; this stream files them labelled `devloop:morph`, and the cloud half fixes them under `morph/`. Nothing is sent unless Morph is installed and its *Report Morph's own problems* switch is on | yes, hourly | nothing |
+| **Other BRUH add-ons** | GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph, read from outside through the Supervisor: an add-on stopped although set to start at boot, each distinct error in its log (with the lines around it), and what Home Assistant logged about its integration. Each report starts with the add-on's name and is labelled `devloop:<slug>`, which is where the cloud half fixes it, and is checked against that add-on's own version when it comes back fixed. An add-on may also publish its own faults to `/config/.bruh/devloop/<slug>.json` in Morph's row shape | yes, hourly | nothing |
 
-**What do you want to fix?** is the tenth: say it the way you would to a
+**What do you want to fix?** is the thirteenth: say it the way you would to a
 person ("the settings page is too crowded", "the brief never mentions the
 boiler") and press **Send**. One read-only Claude run works out what is
 really wrong behind it, and files **one** issue (two if you named two
@@ -39,6 +40,17 @@ separate problems) with your words quoted, the real problem, and what
 tells the cloud half to look at that pane: in the house's own pictures from
 the latest **Screens** issue, and on a test fixture before and after its
 fix.
+
+**From the chat.** Tell brAIn something is broken ("GardenRX's harvest page
+won't load", "the label printer card is blank") and it looks with
+`bruh_addon_status` and the add-on's log, does what can be done on the box
+(restart it, fix its options or your own config), and, when the cause is in
+the add-on's code, files it with `report_bug`: its diagnosis, the log lines
+and your words, as one report in the same queue, under the same review
+setting, caps and redaction. brAIn never patches another add-on's code inside
+its container: the next update would wipe it, and the fix would never reach
+the repository. The fix comes back as an update, and the loop checks it held
+against that add-on's own version.
 
 **Autopilot** (the switch at the top of the section) is the one choice
 for somebody handing brAIn's development to the loop: every stream on, on

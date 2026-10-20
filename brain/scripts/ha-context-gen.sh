@@ -309,6 +309,22 @@ reverts exactly it.
 "
     fi
 
+    # The other BRUH add-ons: what brAIn may do about one that is broken,
+    # and the one thing it may not (patch its code in its container).
+    local bruh_section="
+## The other BRUH add-ons
+
+GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph are
+built in the same repository as brAIn. When one is broken, look first: the
+\`bruh_addon_status\` MCP tool (or \`ha addon logs <slug>\`) gives its state,
+version and the errors in its log. Fix what is fixable here — restart it,
+correct its options or the house's own config. **Never patch its code inside
+its container**: the next update wipes it. When the cause is in its code, file
+it with the \`report_bug\` MCP tool (your diagnosis, the log lines, the owner's
+words); a cloud routine fixes it upstream, it arrives as an update, and brAIn
+checks it held. That needs the development loop on (⚙ › Developer).
+"
+
     dashboard_list=$(python3 - 2>/dev/null <<'PYEOF'
 import sys
 sys.path.insert(0, "/opt/ha-mcp-server")
@@ -474,7 +490,7 @@ Dashboard rules:
 - **Never verify via \`.storage\`**: HA's delayed saves make
   \`/config/.storage\` stale for ~10s after a write. Verify a dashboard edit
   with \`get_dashboard\`, never by reading \`.storage\` content or mtimes.
-${morph_section}
+${morph_section}${bruh_section}
 ${memory_section}
 
 ## Available Directories

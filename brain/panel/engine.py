@@ -844,6 +844,7 @@ ANALYST_TOOLS = [
     f"{MCP}get_findings",      # what is on the Findings tab, so a run can
                                # answer "what needs attention" without guessing
     f"{MCP}get_health",        # whether brAIn itself is working, in its own words
+    f"{MCP}bruh_addon_status", # the other BRUH add-ons: state, log errors
     f"{MCP}explain_decision",  # what brAIn decided NOT to say, and why
     f"{MCP}get_areas",
     f"{MCP}get_registry",
@@ -922,6 +923,8 @@ ANALYST_DENIED = [
     f"{MCP}print_label", f"{MCP}bright_show",
     # 3D printers: starting, stopping, heating, G-code and slicing.
     f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
+    # Filing a bug upstream sends text off the box: a person asks for it.
+    f"{MCP}report_bug",
     # What a device shows as: each one rewrites the entity registry or
     # creates and removes a helper's config entry, which an entity in a
     # dashboard, an automation or a voice assistant then stands on.

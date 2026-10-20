@@ -131,6 +131,15 @@ STREAMS: dict[str, dict] = {
         "label": "Morph: problems the Morph dashboard found in its own code",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
+    # The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print,
+    # BRight, BRUH Minecraft, Morph — watched from outside: each one's
+    # Supervisor state, the errors in its log, what Home Assistant logged
+    # about its integration, and anything it published about itself
+    # (`devloop/siblings.py`). Needs nothing from the add-on it watches.
+    "siblings": {
+        "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft and Morph",
+        "cost": "free", "clears": True, "rolling": False,
+        "default_on": True, "default_hours": 1},
     "look": {
         "label": "What do you want to fix?: your words, turned into an issue (one Claude run each)",
         "cost": "claude", "clears": False, "rolling": False,
@@ -151,7 +160,7 @@ CAP_LIMITS = {"max_issues_per_day": (0, 50), "max_runs_per_day": (0, 24)}
 # open.
 AUTOPILOT_HOURS = {"faults": 1, "scorecard": 24, "wrongs": 24, "outcomes": 24, "unmet": 24,
                    "snapshot": 168, "gaps": 24, "ideas": 168, "design": 24,
-                   "screens": 168, "morph": 1, "look": 0}
+                   "screens": 168, "morph": 1, "siblings": 1, "look": 0}
 AUTOPILOT_CAPS = {"max_issues_per_day": 20, "max_runs_per_day": 8}
 
 DEFAULTS = {

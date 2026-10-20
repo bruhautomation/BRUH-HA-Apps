@@ -23,6 +23,7 @@ import reports
 from textclip import clip
 
 from . import STREAMS
+from .siblings import PRODUCTS
 
 # --------------------------------------------------------------- faults
 
@@ -133,7 +134,7 @@ def scorecard(score_rows: list[dict], diagnostics: dict, version: str,
     held."""
     journal = (diagnostics or {}).get("journal") or {}
     health = (diagnostics or {}).get("health") or {}
-    waiting = [f"#{r['issue']} needs brAIn {r['fixed_in']}"
+    waiting = [f"#{r['issue']} needs {r.get('product') or 'brAIn'} {r['fixed_in']}"
                for r in (awaiting or []) if isinstance(r, dict) and r.get("issue")]
     lines = ["| Producer | Confirmed | Wrong | Share right |", "|---|---|---|---|"]
     rows = sorted(score_rows or [], key=lambda r: -int(r.get("total") or 0))
@@ -196,7 +197,8 @@ def morph(outbox: Path) -> list[dict] | None:
         # shortens one written some other way — on a word.
         item = {"where": where[:80], "what": clip(what, 200),
                 "detail": clip(str(row.get("detail") or ""), 600),
-                "body": str(row.get("body") or "")[:6000]}
+                "body": str(row.get("body") or "")[:6000],
+                "product": "Morph"}
         if isinstance(row.get("impact"), dict):
             item["impact"] = row["impact"]
         # When Morph last saw it: Morph keeps a row for a fortnight after it
@@ -696,9 +698,16 @@ Think like a person who uses brAIn every day, not like a code reviewer:
   the settings page, whether or not any tool can show it to you: file the
   redesign, title it after the screen, and let the developer look.
 
+brAIn is one of seven BRUH add-ons this owner may run, all built in one
+repository: brAIn, GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH
+Minecraft and Morph. The owner may be talking about any of them ("the
+garden app won't load", "the printer card is blank"). Say which in
+"addon", using exactly one of those names: a complaint about another
+add-on is filed for that add-on, never turned into one about brAIn.
+
 Answer with JSON only:
 {"rows": [{"title": "...", "what": "...", "why": "...", "done_when": "...",
-           "impact": "...", "ui": false}]}
+           "impact": "...", "ui": false, "addon": "brAIn"}]}
 with ONE row, two only when the owner named two genuinely separate
 problems. "title" is under 80 characters and names the part of brAIn;
 "what" is one sentence stating the real problem; "why" is up to four
@@ -816,12 +825,16 @@ def reply_schema(stream: str) -> dict:
              "impact": text}
     if stream in ("design", "look"):
         props["ui"] = {"type": "boolean"}
+    if stream == "look":
+        props["addon"] = {"type": "string", "enum": ["brAIn", *PRODUCTS]}
     return {
         "type": "object",
         "properties": {"rows": {
             "type": "array", "maxItems": row_cap(stream),
             "items": {"type": "object", "properties": props,
-                      "required": list(props)}}},
+                      # `addon` is asked for, not required: a reply that
+                      # leaves it out is about brAIn, as every reply was.
+                      "required": [k for k in props if k != "addon"]}}},
         "required": ["rows"],
     }
 
@@ -888,6 +901,12 @@ def parse_reply(reply, stream: str, topic: str = "") -> tuple[list[dict], str]:
             parts.append(f"**Estimated impact:** {impact}")
         row = {"where": f"{where}: {title}", "what": what, "detail": "",
                "body": "\n\n".join(parts)}
+        addon = str(r.get("addon") or "") if stream == "look" else ""
+        if addon in PRODUCTS:
+            # Filed for that add-on: its name leads, which is what the
+            # cloud routes the fix by, and its release is what the fix
+            # is checked against.
+            row.update(where=f"{addon} · {row['where']}", product=addon)
         if stream in ("design", "look"):
             row["ux"] = r.get("ui") is True
         out.append(row)
@@ -919,7 +938,11 @@ def verbatim_rows(topic: str) -> list[dict]:
     if not words:
         return []
     title = words if len(words) <= 70 else words[:69].rsplit(" ", 1)[0] + "…"
-    return [{"where": f"Fix: {title}", "what": words, "detail": "",
+    named = [p for p in PRODUCTS if re.search(rf"\b{re.escape(p)}\b", words, re.I)]
+    extra = {"product": named[0]} if len(named) == 1 else {}
+    return [{**extra,
+             "where": (f"{named[0]} · " if extra else "") + f"Fix: {title}",
+             "what": words, "detail": "",
              "body": "The owner said:\n\n> " + words
                      + "\n\nThe run that should have written this up did not "
                        "answer, so this is their request as they typed it. "
