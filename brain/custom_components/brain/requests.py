@@ -54,8 +54,10 @@ _LOGGER = logging.getLogger(__name__)
 # it until October"), which the panel resolves to the toast's own token.
 # `dismiss` is the panel's own Dismiss: the card leaves brAIn and nothing
 # is recorded, so it comes back only if brAIn sees the problem again.
+# `confirm` is *Yes* on a question filed as a finding (one of Morph's
+# suggestions, a question the Resident asks).
 ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo",
-           "dismiss")
+           "dismiss", "confirm")
 
 # What can be asked of the to-do list from out here. They are the tab's
 # own presses and nothing new: tick one off, take it off the list, put a

@@ -237,6 +237,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: 10px; display: gr
 .cam:fullscreen { background: #000; }
 .camimg { width: 100%; height: 100%; object-fit: contain; display: none; }
 .cam.has-frame .camimg { display: block; }
+.camback { display: none; }
 .camnote { position: absolute; margin: 0; padding: 0 24px; text-align: center; color: #9fb0bf; font-size: 14px; }
 .cam.has-frame .camnote:not([hidden]) { bottom: 44px; padding: 6px 12px; border-radius: 8px;
   background: rgba(5, 8, 11, .7); color: #e8eef3; }

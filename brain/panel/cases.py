@@ -483,6 +483,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     other row takes the `kind` the Resident wrote on it, and `problem`
     when nothing did, which is what a check's row has always been.
     """
+    # One of Morph's suggestions is a yes/no question however it was stored
+    # (`answers.as_morph_question`): an older row carried the question as
+    # its `fix` under an opportunity nobody could say yes to.
+    row = answers_mod.as_morph_question(row)
     status = row.get("status") or "open"
     kind = "change" if status == "fixed" else (
         row["kind"] if row.get("kind") in KINDS else "problem")

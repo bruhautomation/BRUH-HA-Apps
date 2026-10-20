@@ -347,7 +347,7 @@ def login_bans(snap: dict, now: float) -> list[dict]:
                   + join_names(shown)
                   + ". The ban is working — this is so you know somebody "
                     "tried.",
-        "fix": "If you don't recognise the address, check Settings > People "
+        "fix": "If you don't know the address, check Settings > People "
                "for accounts you don't expect and turn on multi-factor "
                "login for the ones that can sign in from outside.",
         "severity": "info",

@@ -162,6 +162,7 @@ import devloop.verify
 import devloop.siblings
 import devloop_archive
 import card_tags
+import card_verdict
 import cases
 from checks._util import House
 import chat_session
@@ -2485,6 +2486,13 @@ async def _apply_finding_requests() -> list[dict]:
         else:
             finding = await asyncio.to_thread(findings_store.get, ts)
             spec = FINDING_VERBS.get(finding_requests.verb_for(action))
+            if (finding and action == "confirm" and answers_mod.as_morph_question(
+                    finding).get("kind") != "question"):
+                # Yes is the answer to a question; on a problem it would file
+                # "Confirmed by the homeowner" over a report nobody asked
+                # about. The panel only ever offers it on a question.
+                spec = None
+                result["why"] = "only a question can be answered yes"
             note = str(req.get("note") or "")
             if finding and spec and action == "wrong" and note.strip() \
                     and req.get("via") == "repairs":
@@ -2983,9 +2991,17 @@ async def _apply_morph_case(req: dict) -> dict:
         result["why"] = "already on the list"
     else:
         claim = req["claim"]
-        row = {"text": claim, "claim": claim, "kind": req["case_kind"],
+        # A suggestion is a yes/no question only the person can answer, so
+        # it is filed as one — Yes · No · Snooze · Doesn't apply, and Yes is
+        # Morph's `accepted` — with Morph's ask as the card's own words
+        # rather than a `fix` line. Filed as an opportunity with the ask in
+        # `fix`, it read as a pair of hands and offered no yes at all. The
+        # suggestion's own sentence stays the `text` it is deduped under.
+        row = {"text": claim,
+               "claim": answers_mod.morph_question(claim, req.get("ask", "")),
+               "kind": "question",
                "detail": req.get("detail", ""),
-               "fix": req.get("ask", ""), "entity_id": req.get("entity_id", ""),
+               "fix": "", "entity_id": req.get("entity_id", ""),
                "severity": "info", "stakes": "low", "fixable": False,
                "source": findings_store.MORPH_SOURCE,
                "source_title": "Morph, your dashboard", "morph_key": key}
@@ -5376,6 +5392,29 @@ async def _generate(insight_id: str) -> None:
         highlights = obj.get("highlights")
         if not isinstance(highlights, list):
             highlights = []
+        # The opening verdict read against the card's own evidence
+        # (`card_verdict`): no "fine" over nothing new, no "nothing needs
+        # action" over a rise its own figures show, and a scheduled card
+        # about nothing at all keeps the card that was there. A press is
+        # never held — somebody asked, and the answer is what they get.
+        verdict = card_verdict.review({**obj, "highlights": highlights},
+                                      previous)
+        if verdict["hold"] and job.get("scheduled") and previous:
+            await _keep_previous_card(insight_id, cat, question)
+            REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
+                                         "at": int(time.time())}
+            CARD_FAILURES.pop(insight_id, None)
+            _set_job(insight_id, state="done", error="")
+            log.info("insight %s: %s", insight_id, verdict["hold"])
+            return
+        if verdict["changed"]:
+            log.info("insight %s: lead rewritten (%s)", insight_id,
+                     ", ".join(verdict["changed"]))
+            obj = {**obj, **{k: verdict["obj"][k] for k in
+                             ("title", "summary", "highlights")
+                             if k in verdict["obj"]}}
+            highlights = obj["highlights"] if isinstance(
+                obj.get("highlights"), list) else highlights
         # Hypotheses, not open questions. propose() enforces the cap and the
         # never-twice rule in code — the prompt states the budget, but a model
         # that ignores it must not be able to grow the queue anyway.
@@ -5540,6 +5579,38 @@ async def _generate(insight_id: str) -> None:
         # The scheduler backs off from this card until a run succeeds.
         _note_card_failure(insight_id, str(exc))
         _set_job(insight_id, state="error", error=str(exc)[:500])
+
+
+async def _keep_previous_card(insight_id: str, cat: dict,
+                              question: str | None) -> None:
+    """A run that had nothing to say leaves the stored card as it was, and
+    says when it looked (`checked_at`), so the scheduler counts its age
+    from the look and not from the card — otherwise the next tick would
+    queue the same run again — and takes the fingerprint of now, so
+    `changed` mode waits for something to move. `generated_at` is left
+    alone: the foot's "Updated" is about the card a person reads."""
+    path = _insight_path(insight_id)
+    card = _read_json(path)
+    if not isinstance(card, dict):
+        return
+    card["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if question is None:
+        fingerprint = await _current_inputs(cat["id"], cat)
+        if fingerprint:
+            card["inputs_fingerprint"] = fingerprint
+    try:
+        await asyncio.to_thread(atomic_write.write_json, path, card)
+    except OSError as exc:
+        log.warning("could not stamp %s as checked: %s", insight_id, exc)
+
+
+def _due_stamp(card: dict | None) -> str:
+    """When a stored card was last made OR last looked at and kept,
+    whichever is later — the age the scheduler counts from. Both are the
+    same ISO shape, so the later is the larger string."""
+    card = card or {}
+    return max(str(card.get("generated_at") or ""),
+               str(card.get("checked_at") or ""))
 
 
 def _no_fallback(result: dict) -> bool:
@@ -7662,8 +7733,7 @@ async def _scheduler() -> None:
         for cat in all_categories():
             eff = resolve_category(cat["id"]) or cat
             stored = cards.get(cat["id"]) or {}
-            if not _refresh_due(eff, stored.get("generated_at", ""), now,
-                                mode=mode):
+            if not _refresh_due(eff, _due_stamp(stored), now, mode=mode):
                 continue
             change = {"moved": True, "why": "on its refresh interval",
                       "fingerprint": None}
@@ -7924,7 +7994,8 @@ def _category_status(c: dict, insights: dict) -> dict:
             "enabled": c.get("enabled", True),
             "refresh_hours": c.get("refresh_hours"),
             "schedule": c.get("schedule"),
-            "next_due": _next_due(c, insights.get(c["id"]) or "", now),
+            "next_due": _next_due(c, _card_stamps(c["id"])[1]
+                                  or insights.get(c["id"]) or "", now),
             "refresh_hold": REFRESH_HOLDS.get(c["id"]),
             "user": True,
             "job": {k: JOBS.get(c["id"], {}).get(k) for k in ("state", "error")},
@@ -7948,7 +8019,8 @@ def _category_status(c: dict, insights: dict) -> dict:
         # When the scheduler will come for this card — the readback of
         # _refresh_due, so the foot can say "next 7am" instead of leaving
         # "why did this stop updating" to the add-on log.
-        "next_due": _next_due(eff, insights.get(c["id"]) or "", now),
+        "next_due": _next_due(eff, _card_stamps(c["id"])[1]
+                              or insights.get(c["id"]) or "", now),
         # Why the scheduler is waiting rather than when: with
         # `refresh_mode: changed` a card past its interval sits until
         # something it reads moves, and a `next_due` in the past would
@@ -8042,24 +8114,30 @@ async def _today(now: float | None = None) -> dict:
 # runs, and it used to answer by JSON-parsing every stored card — up to
 # 400 KB of HTML each — to read one timestamp out of each. A save rewrites
 # the file and moves its mtime, which is the invalidation.
-_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None]] = {}
+_GENERATED_AT_CACHE: dict[str, tuple[tuple[int, int], str | None, str]] = {}
 
 
-def _generated_at(card_id: str) -> str | None:
+def _card_stamps(card_id: str) -> tuple[str | None, str]:
+    """`(generated_at, the stamp the scheduler counts from)` for one card."""
     path = _insight_path(card_id)
     try:
         st = path.stat()
     except OSError:
         _GENERATED_AT_CACHE.pop(card_id, None)
-        return None
+        return None, ""
     stamp = (st.st_mtime_ns, st.st_size)
     cached = _GENERATED_AT_CACHE.get(card_id)
     if cached is not None and cached[0] == stamp:
-        return cached[1]
+        return cached[1], cached[2]
     obj = _read_json(path)
     value = obj.get("generated_at") if obj else None
-    _GENERATED_AT_CACHE[card_id] = (stamp, value)
-    return value
+    due = _due_stamp(obj) if obj else ""
+    _GENERATED_AT_CACHE[card_id] = (stamp, value, due)
+    return value, due
+
+
+def _generated_at(card_id: str) -> str | None:
+    return _card_stamps(card_id)[0]
 
 
 # The last health verdict the diagnostics payload computed, so the status
@@ -12510,6 +12588,11 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
     case_run = str(case.pop("_run_id", "") or run_id)
     case["run_id"] = case.get("run_id") or case_run
     case["investigation"] = {"run_id": case_run}
+    # The entity the case is about: the signal it was sent to look at, else
+    # the one device its evidence names (`findings_store.case_subject`).
+    subject = findings_store.case_subject(case, str(signal.get("subject") or ""))
+    if subject:
+        case["entity_id"] = subject
 
     if refining is not None:
         row = await asyncio.to_thread(findings_store.refine, refines, case,
@@ -13948,6 +14031,12 @@ async def run_checks(reason: str = "schedule") -> dict:
             cleared = findings_store.clear_resolved(
                 ran_sources,
                 {findings_store.normalize(f["text"]) for f in result["findings"]})
+            # And a Resident case about a device that came back: the states
+            # this pass already read, never a fetch of its own, and only
+            # when the read answered (an empty map clears nothing).
+            if (snapshot.get("available") or {}).get("states"):
+                cleared = cleared + findings_store.clear_returned(
+                    snapshot.get("states") or {}, started)
             # And the other store, which nothing renders. Rows from a check
             # being trialled go here instead — a separate file rather than
             # a status, because `add_many` dedupes across every status and
@@ -14259,8 +14348,10 @@ async def build_baselines(reason: str = "schedule") -> dict:
             # which is more rows per entity than the baselines read, and
             # is bounded by asking only power sensors and only ten days.
             try:
-                machines = _done("appliances",
-                                 await appliances.build(session, by_id, started))
+                machines = _done("appliances", await appliances.build(
+                    session, by_id, started,
+                    entities=ents if isinstance(ents, list) else None,
+                    devices=devices if isinstance(devices, list) else None))
             except Exception as exc:  # noqa: BLE001
                 _failed("appliances", exc)
             # And the fourth. This one needs the registries as well as the
