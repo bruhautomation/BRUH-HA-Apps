@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.6
+
+### Fixed
+
+- **Bambu Studio no longer closes when a print starts.** Its built-in web pages (the print and device dialogs are pages) asked the graphics card for their buffers, the container may not open `/dev/dri/card0` (*libEGL warning: failed to open /dev/dri/card0: Permission denied*), and the page's process died and took Bambu Studio with it. They draw in software now.
+- **A print from the panel slices on its own.** The headless slice behind Auto print, Manual print and the conversation keeps its own Bambu Studio settings folder, so it no longer writes to the one the window in the sidebar has open. On a machine short of memory, the window is closed while the slice runs and opens again, on the same file, when it ends; the Studio tab says so meanwhile. Printing stays on your network: the slice runs here, the file goes to the printer over FTPS and the print starts over MQTT, with no Bambu cloud involved.
+- **A slice that was killed says so.** A slice ended by running out of memory or by a crash now names that, instead of only an exit number.
+
 ## 0.1.5
 
 ### Fixed
