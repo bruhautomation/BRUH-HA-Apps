@@ -59,7 +59,7 @@ REQUEST_DIR = Path(os.environ.get(
 # work rather than an answer, and belongs behind the panel where the
 # thing it starts can be watched.
 ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo",
-           "dismiss")
+           "dismiss", "confirm")
 
 # ...and the tab's own verb for each, so the two front doors settle a
 # finding through exactly the same code. "fixed" is the tab's "done" —
@@ -69,7 +69,11 @@ ACTIONS = ("fixed", "wrong", "snooze", "reply", "todo", "ack", "undo",
 # primary press on most problems and is not in this table because it is
 # not a settle-and-clear: the server routes it through the same
 # `_move_finding_to_todo` the panel's own button uses.
-VERBS = {"fixed": "done", "wrong": "wrong", "ack": "ack"}
+VERBS = {"fixed": "done", "wrong": "wrong", "ack": "ack",
+         # "Yes" to a question filed as a finding — the Resident's, or one of
+         # Morph's suggestions — the tab's own Yes (`FINDING_VERBS["confirm"]`).
+         # The drain refuses it on a row that is not a question.
+         "confirm": "confirm"}
 # `reply` and `snooze` are deliberately absent: neither ends a finding.
 # A reply is a turn in the case's conversation and is answered, not
 # applied. `undo` is the Undo on the confirmation a reply is answered with

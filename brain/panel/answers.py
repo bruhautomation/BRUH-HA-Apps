@@ -117,7 +117,59 @@ AUTOMATION_PREFIX = "auto."
 # (`finding_requests.ACTIONS`, minus `reply`, which is a turn and not an
 # ending). Spelled here as well because the mirror is built from this
 # module and the integration reads the mirror.
-REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack")
+REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack", "confirm")
+
+# Morph files its dashboard suggestions here (`server._apply_morph_case`),
+# and a suggestion is a yes/no question only the person can answer. Spelled
+# here because this module is a leaf; `findings_store.MORPH_SOURCE` is the
+# same word and the test holds the two equal.
+MORPH_SOURCE = "morph"
+# What a suggestion asks when it says nothing of its own.
+MORPH_ASK = "Should Morph make this change to the dashboard?"
+# A Morph question's words are Morph's, and Morph is not "I": the ask it
+# sends names the speaker, and the card says who will make the change.
+_MORPH_SPEAKER = "Should I "
+
+
+def morph_question(claim, ask="") -> str:
+    """The card's question for one of Morph's suggestions: the change, and
+    the question it asks — "Move Kitchen above Dining — should Morph make
+    this change to the dashboard?"."""
+    claim = " ".join(str(claim or "").split())
+    ask = " ".join(str(ask or "").split())
+    if not ask.endswith("?"):
+        ask = MORPH_ASK
+    if ask.startswith(_MORPH_SPEAKER):
+        ask = "Should Morph " + ask[len(_MORPH_SPEAKER):]
+    if not claim:
+        return ask
+    if claim.endswith("?"):
+        return claim
+    return f"{claim.rstrip(' .!;:')} — {ask[0].lower()}{ask[1:]}"
+
+
+def as_morph_question(row: dict) -> dict:
+    """``row`` (a store row or a case) read as the question it is, when it
+    is one of Morph's suggestions; any other row unchanged.
+
+    Filed as an `opportunity` with the question in its `fix` and
+    `fixable: False`, a suggestion read as a pair of hands — *Add to To Do ·
+    Snooze · Ignore* — with no way to say yes, and *Add to To Do* told
+    Morph `todo` rather than `accepted`. New rows are filed as questions;
+    this is what makes a row stored the old way read the same, so its card,
+    the mirror's answers and a notification's buttons all carry the Yes.
+    A change brAIn made is not a suggestion any more."""
+    if not isinstance(row, dict) or row.get("source") != MORPH_SOURCE:
+        return row
+    if row.get("status") == "fixed" or row.get("kind") == "change":
+        return row
+    fix = " ".join(str(row.get("fix") or "").split())
+    asked = fix if fix.endswith("?") else ""
+    claim = str(row.get("claim") or row.get("text") or "")
+    if row.get("kind") != "question" or asked:
+        claim = morph_question(claim, asked)
+    return {**row, "kind": "question", "claim": claim,
+            "fix": "" if asked else fix}
 
 # How many presses a card shows before the ⋯. Five, on a problem: the
 # primary, *Check again*, *Dismiss*, then *Snooze · Ignore*. The redesign
@@ -484,6 +536,8 @@ def answers(case: dict) -> list[dict]:
             # translate.
             _answer("yes", "Yes", "That's right. It becomes a plain fact "
                     "in memory.", route=f"/api/case/{cid}/do",
+                    request=("confirm" if (case.get("origin") or {}).get(
+                        "store") == "findings" else None),
                     primary=True, done="Filed into memory"),
             # `request="wrong"`: a question the Resident filed is a finding
             # row, so Home Assistant's Repairs and a notification can carry
@@ -699,6 +753,9 @@ def request_answers(row: dict) -> list[dict]:
     `[{action, label}]` — what the mirror carries and what Repairs and a
     notification render.
 
+    A Morph suggestion stored before it was filed as a question is read as
+    one first (`as_morph_question`), so a phone and Repairs offer its Yes.
+
     Built from a bare store row rather than a case, because the mirror is
     written by the store and the store cannot import `cases`. The
     situation is read the same way; only the presses HA can carry back as
@@ -708,6 +765,7 @@ def request_answers(row: dict) -> list[dict]:
     the end of any row that somehow left it off, because "not this
     minute" is the lock-screen answer.
     """
+    row = as_morph_question(row)
     case = {
         "id": f"f:{int(row.get('ts') or 0)}",
         "kind": "change" if row.get("status") == "fixed" else (
@@ -735,6 +793,7 @@ def request_answers(row: dict) -> list[dict]:
 
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
-           "MAX_MORE", "MAX_VISIBLE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
-           "SITUATIONS", "answers", "chip", "is_security", "feed_key", "group", "more",
-           "plan_is_legacy", "plan_refused", "request_answers", "situation"]
+           "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
+           "SITUATIONS", "answers", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
+           "morph_question", "plan_is_legacy", "plan_refused", "request_answers",
+           "situation"]
