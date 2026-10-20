@@ -16216,6 +16216,7 @@ function renderDeepReview() {
   const r = d.latest;
   if (!r) return;
   box.appendChild(el("div", "kbriefwhen", reviewDate(r.at)));
+  if (r.note) box.appendChild(el("p", "kbrieftext off", String(r.note)));
   if (r.summary) box.appendChild(el("p", "kbrieftext", r.summary));
   if (r.one_thing) {
     const one = el("div", "kreviewone");

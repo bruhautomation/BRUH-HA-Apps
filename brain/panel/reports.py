@@ -681,7 +681,7 @@ def _faults(diag) -> list[dict]:
              + (f": {subject}" if subject else ""),
              sentence=_run_sentence(outcome, n, when, error))
     if len(distinct) > FAULTS_PER_KIND:
-        rest = sum(n for _, n in distinct[FAULTS_PER_KIND:])
+        rest = sum(n for _key, n, _last in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",
              "see the journal below", title="Other background jobs",
              sentence=f"{plain_words.plural(rest, 'more job')} did not "

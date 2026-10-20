@@ -15345,6 +15345,20 @@ async def _run_deep_review() -> None:
             deep_review.TIMEOUT_S, deep_review.MAX_TURNS, "deep_review",
             job=deep_review.JOB, effort=effort, schema=deep_review.SCHEMA,
             priority=run_queue.PRESS)
+        note = ""
+        fallback = (deep_review.credit_fallback(model, result.get("error"))
+                    if not result.get("ok") else "")
+        if fallback:
+            # Fable refused for usage credits: the same press, one tier down,
+            # and the review says so rather than failing having read nothing.
+            log.info("deep review: %s needs usage credits; running on %s",
+                     model, fallback)
+            model, note = fallback, deep_review.CREDITS_NOTE
+            result = await _claude(
+                engine.run_analyst, prompt, deep_review.SYSTEM, model,
+                deep_review.TIMEOUT_S, deep_review.MAX_TURNS, "deep_review",
+                job=deep_review.JOB, effort=effort, schema=deep_review.SCHEMA,
+                priority=run_queue.PRESS)
         cost = _record_usage(result, "deep-review")
         if not result.get("ok"):
             DEEP_REVIEW_STATE["last_error"] = str(
@@ -15359,6 +15373,8 @@ async def _run_deep_review() -> None:
             return
         review["tokens"] = int(cost.get("total") or 0)
         review["model"] = str(model or "")
+        if note:
+            review["note"] = note
         await asyncio.to_thread(deep_review.save, review)
         DEEP_REVIEW_STATE["last_error"] = ""
         DEEP_REVIEW_STATE["last_at"] = time.time()

@@ -34,11 +34,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import statistics
 import time
 from pathlib import Path
 
 import atomic_write
+import model_plan
 import prompt_kit
 import textclip
 
@@ -133,6 +135,33 @@ def frame(*, findings: str = "", house: str = "", memory: str = "",
 
 def _clean(text, cap: int) -> str:
     return textclip.clip(" ".join(str(text or "").split()), cap)
+
+
+# The CLI's refusal when the account has no usage credits for the model:
+# "Fable 5.1 requires usage credits. Switch to another model, or manage
+# usage credits at …". Read off the words because nothing structured comes
+# back, and matched loosely so a reworded version still reads as one.
+_CREDITS_RE = re.compile(r"requires?\s+(?:usage\s+)?credits", re.I)
+FALLBACK_TIER = "opus"
+CREDITS_NOTE = ("Fable needs usage credits on this Claude account, so this "
+                "review ran on Opus.")
+
+
+def credit_fallback(model: str, error: str) -> str:
+    """The model to run the same press on when Fable was refused for credits.
+
+    A deep review is planned on Fable, and on a subscription without usage
+    credits the CLI refuses Fable outright: the press then failed in two
+    seconds having read nothing (#466). The next tier down is what the
+    account can run, so the press is answered on it and says which. Only a
+    Fable run refused for credits steps down; any other failure, or a
+    model somebody typed that is not Fable, is reported as it was.
+    """
+    if model_plan.tier_of(model) != "fable":
+        return ""
+    if not _CREDITS_RE.search(str(error or "")):
+        return ""
+    return FALLBACK_TIER
 
 
 def parse(answer: dict | None) -> dict | None:

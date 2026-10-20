@@ -315,6 +315,38 @@ class TestThePressDriven(unittest.TestCase):
         self.assertEqual(got["latest"]["summary"], "The house is mostly well set up.")
         self.assertEqual(got["history"], [])
 
+    def test_fable_refused_for_credits_runs_the_same_press_on_opus(self):
+        # #466: "Fable 5.1 requires usage credits" failed the press outright.
+        good = self.reply
+        refused = {"ok": False, "meta": {},
+                   "error": "Fable 5.1 requires usage credits. Switch to another "
+                            "model, or manage usage credits at "
+                            "https://claude.ai/settings/usage, to continue."}
+        replies = [refused, good]
+        import engine
+        calls = self.calls
+
+        def run_analyst(prompt, system, *a, **k):
+            calls.append({"prompt": prompt, "args": a, **k})
+            return replies.pop(0)
+
+        engine.run_analyst = run_analyst
+        self.press()
+        self.assertEqual([c["args"][0] for c in calls], ["fable", "opus"])
+        got = json.loads(asyncio.run(self.server.h_deep_review(None)).body)
+        self.assertEqual(got["last_error"], "")
+        self.assertEqual(got["latest"]["model"], "opus")
+        self.assertIn("usage credits", got["latest"]["note"])
+
+    def test_any_other_failure_is_not_retried_on_another_model(self):
+        self.reply = {"ok": False, "error": "529 Overloaded", "meta": {}}
+        self.press()
+        self.assertEqual([c["args"][0] for c in self.calls], ["fable"])
+        self.assertEqual(deep_review.credit_fallback("opus", "requires usage credits"), "")
+        self.assertEqual(deep_review.credit_fallback("claude-fable-5-1",
+                                                     "Fable requires usage credits"),
+                         "opus")
+
     def test_the_routes_are_mounted(self):
         paths = set()
         for route in self.server.make_app().router.routes():
