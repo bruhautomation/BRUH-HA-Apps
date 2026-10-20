@@ -195,7 +195,10 @@ function renderMessages(p) {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   box.replaceChildren(...(p.messages || []).map((m) => {
     const bubble = el("div", { class: `msg ${m.role}` },
-      m.role === "user" ? el("p", {}, m.text) : markdown(m.text));
+      // A system note (a print's outcome) quotes Bambu Studio's own words,
+      // whose setting names have underscores that Markdown would read as
+      // italics and drop, so it is drawn as the words it is.
+      m.role === "system" ? el("p", {}, m.text) : markdown(m.text));
     if (m.version) {
       bubble.append(el("button", { type: "button", class: "chip", onclick: () => { design.viewing = m.version; renderPart(); } },
         `Version ${m.version}`));

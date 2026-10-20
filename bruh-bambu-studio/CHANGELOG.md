@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3
+
+### Fixed
+
+- **Printed designs get the printer's start and filament-change G-code.** Bambu Studio 2.x printer profiles keep their start, end and filament-change G-code in template files they include by name, and the profiles brAIn's designs were sliced with left those out for every printer model. They are now merged in, and a profile whose template is missing is refused with its name rather than sliced without its start-up G-code. (#328)
+- **When Bambu Studio refuses to slice a design, you see why.** The message used to end at "run found error, return -2, exit…", which is Bambu Studio signing off, not the reason. The design conversation and the jobs list now show Bambu Studio's own error lines in full, every exit code the slicer can return is explained in plain words, and an "invalid parameters" refusal says which check failed (a plate number, the filament count, the nozzle mapping) and what to change. (#328)
+
 ## 0.2.2
 
 ### Fixed
