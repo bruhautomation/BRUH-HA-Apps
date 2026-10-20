@@ -63,6 +63,7 @@ Stdlib only, so the test suite can import it without the add-on runtime.
 from __future__ import annotations
 
 
+import datetime as dt
 import functools
 import json
 import logging
@@ -1912,6 +1913,45 @@ RESIDENT_TITLE = "brAIn, watching the house"
 _OLD_RESIDENT_TITLES = frozenset({"The Resident"})
 
 
+# An entity id a case may be filed under: a Home Assistant domain, a dot, an
+# object id. "the front lock" and "automations.yaml" are not one.
+_SUBJECT_RE = re.compile(r"^([a-z_]+)\.([a-z0-9_]+)$")
+
+
+def _entity_shaped(value) -> str:
+    """``value`` when it is an entity id of a domain Home Assistant has,
+    else "". A file name or a version number has the shape and no domain."""
+    eid = str(value or "").strip()
+    m = _SUBJECT_RE.match(eid)
+    if not m:
+        return ""
+    from checks._util import _CORE_DOMAINS  # noqa: PLC0415 — leaf, lazy
+    return eid if m.group(1) in _CORE_DOMAINS else ""
+
+
+def case_subject(row: dict, signal_subject: str = "") -> str:
+    """The one entity a case is about, or "" — never invented.
+
+    In order: the case's own ``entity_id``; the subject of the signal the
+    investigation was sent to look at; the single device its evidence
+    names (two readings of one lock are one device, a lock and a hub are
+    two and name nobody). A Resident case was stored with no entity at all,
+    so nothing tied "the front lock has been offline since 10:20" to the
+    lock coming back, and the row outlived the fault by a day.
+    """
+    row = row if isinstance(row, dict) else {}
+    own = _entity_shaped(row.get("entity_id"))
+    if own:
+        return own
+    subject = _entity_shaped(signal_subject)
+    if subject:
+        return subject
+    named = {_entity_shaped(ev.get("entity")) for ev in row.get("evidence") or []
+             if isinstance(ev, dict)}
+    named.discard("")
+    return named.pop() if len(named) == 1 else ""
+
+
 @_mutates
 def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict | None:
     """File a case an investigation wrote. Returns the row, or None.
@@ -3297,6 +3337,107 @@ def expire_cases(now: float | None = None,
         if (src in sources and entry.get("status") in CASE_EXPIRES
                 and not is_snoozed(_shape(entry), now)
                 and now - float(entry.get("ts") or now) > ttl):
+            gone.append(_shape(entry))
+            continue
+        kept.append(entry)
+    if gone:
+        _write(kept)
+    return gone
+
+
+# The states that are no reading at all, as a case's evidence records them:
+# Home Assistant's two, and the word a device's own integration may report.
+NO_READING = frozenset({"unavailable", "unknown", "offline"})
+# Where a returned device ends a row. `fixing` and `fixed` are a run in
+# flight and a change brAIn made, and a person's; `planned` is a plan about a
+# fault that is over, which is a plan about nothing.
+RETURN_CLEARS = ("open", "needs_you", "planned", "triaging", "held", "failed")
+
+
+def _no_reading(value) -> bool:
+    words = str(value or "").strip().lower().split()
+    return bool(words) and words[0].strip(".,;:") in NO_READING
+
+
+def _reported_missing(entry: dict) -> str:
+    """The entity this row reports as giving no reading, or "".
+
+    Read off the row's EVIDENCE — the values the run read — never off the
+    claim's words: a sentence saying "offline" is prose, and a gate over
+    prose is a name gate. The row's own entity, and an evidence row about
+    that entity whose value was no reading."""
+    eid = str(entry.get("entity_id") or "").strip()
+    if not eid and str(entry.get("source") or "") == RESIDENT_SOURCE:
+        # A case filed before its subject was recorded: the one device its
+        # own evidence names (`case_subject`), never a guess past that.
+        eid = case_subject(entry)
+    if not eid:
+        return ""
+    for ev in entry.get("evidence") or []:
+        if (isinstance(ev, dict) and str(ev.get("entity") or "") == eid
+                and _no_reading(ev.get("value"))):
+            return eid
+    return ""
+
+
+def _person_touched(entry: dict, now: float) -> bool:
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if record.get("elevated_by_person"):
+        return True
+    if float(entry.get("snoozed_until") or 0) > now:
+        return True
+    if entry.get("fix_by") == "chat":
+        return True
+    return any(isinstance(t, dict) and t.get("who") == "you"
+               for t in entry.get("thread") or [])
+
+
+def _changed_at(value) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    text = str(value or "").strip()
+    if not text:
+        return 0.0
+    try:
+        stamp = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=dt.timezone.utc)
+    return stamp.timestamp()
+
+
+@_mutates
+def clear_returned(states, now: float | None = None,
+                   sources: tuple[str, ...] = (RESIDENT_SOURCE,)) -> list[dict]:
+    """Take off the list a Resident case about a device that came back.
+
+    ``states`` is ``{entity_id: {state, last_changed}}`` — the snapshot a
+    checks pass already fetched, never a read of its own. A row whose
+    evidence says its entity gave no reading is cleared once that entity
+    reports a real state that CHANGED after the row was filed:
+    `clear_resolved`'s ending, so no memory line and no ledger entry, and
+    if it goes again the next look says so in today's words. A state that
+    has not moved since the filing proves nothing, an entity the states do
+    not hold was not looked at, and a row a person touched (put back,
+    snoozed, a chat's advice, a reply on its thread) is theirs. Never
+    `fixing`/`fixed`, never another producer's row.
+    """
+    if not isinstance(states, dict) or not states:
+        return []
+    now = time.time() if now is None else now
+    items = _load()
+    kept, gone = [], []
+    for entry in items:
+        eid = (_reported_missing(entry)
+               if str(entry.get("source") or "") in sources
+               and entry.get("status") in RETURN_CLEARS
+               and not _person_touched(entry, now) else "")
+        live = states.get(eid) if eid else None
+        if (isinstance(live, dict) and live.get("state") not in (None, "")
+                and not _no_reading(live.get("state"))
+                and _changed_at(live.get("last_changed"))
+                > float(entry.get("ts") or now)):
             gone.append(_shape(entry))
             continue
         kept.append(entry)
