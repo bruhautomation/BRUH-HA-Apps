@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.5
+
+### Fixed
+
+- **A custom card no longer shows an error after a redraw, a reload or an update.** A card file that runs a second time on the same page (because its file changed, or because Morph's own code was served again after an update) asked the browser to define its element again, which the browser refuses; Morph now skips that second define, so the card already on the page goes on drawing, and offers a reload when there is a newer version to see. A card file that is already loading is not loaded twice. When card files fail for one reason, that is reported once with the reason, not once per card. (#319)
+
 ## 1.0.4
 
 ### Fixed
