@@ -186,6 +186,7 @@ class Camera:
 
     def _jpeg(self) -> None:
         context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         raw = socket.create_connection((self.host, JPEG_PORT), timeout=CONNECT_TIMEOUT)

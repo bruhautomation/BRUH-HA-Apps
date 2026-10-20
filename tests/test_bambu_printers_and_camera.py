@@ -11,9 +11,9 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock as mock
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 from bambu_env import load  # noqa: E402
@@ -100,6 +100,7 @@ class TestTheCameraProtocol(unittest.TestCase):
 
         def printer():
             ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.load_cert_chain(crt, key)
             conn, _ = listener.accept()
             with ctx.wrap_socket(conn, server_side=True) as tls:

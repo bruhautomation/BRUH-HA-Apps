@@ -43,7 +43,7 @@ TIMEOUT = 15
 
 STATE: dict = {"checked_at": None, "deployed": None, "running": None, "entry": None,
                "restart_needed": False, "reason": "", "error": ""}
-_last = 0.0
+_CHECKED = {"at": 0.0}
 
 
 def _token() -> str:
@@ -133,10 +133,9 @@ def notify_restart(version: str) -> None:
 
 def check(force: bool = False) -> dict:
     """Run on the panel's timer: at most once a minute unless forced."""
-    global _last
-    if not force and time.time() - _last < CHECK_EVERY_S:
+    if not force and time.time() - _CHECKED["at"] < CHECK_EVERY_S:
         return STATE
-    _last = time.time()
+    _CHECKED["at"] = time.time()
     deployed, running = deployed_version(), running_version()
     STATE.update(checked_at=int(time.time()), deployed=deployed, running=running, error="")
     if os.environ.get("ENABLE_HA_INTEGRATION", "true") != "true":
