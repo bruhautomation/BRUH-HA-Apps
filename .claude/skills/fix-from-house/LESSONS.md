@@ -5,7 +5,7 @@ adds to it. Each bullet is dated, short, and says what failed and why.
 A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
-Last retro: 2026-10-13
+Last retro: 2026-10-20
 Last UX audit: 2026-10-18
 
 ## Lessons
@@ -66,6 +66,10 @@ Last UX audit: 2026-10-18
 - 2026-10-18: `merge_pull_request` with no `commit_message` squashes every commit message on the branch, so the message of a change dropped later in review (the history-cutoff change in #437) landed on main. Always pass `commit_title` and `commit_message`.
 - 2026-10-18: CI's Python tests job hung for six hours after an xdist worker died ("node down: Not properly terminated"). The full suite passed locally in two minutes and the one re-run passed. Read a cancelled job's log for "node down" before looking for a code cause.
 - 2026-10-18: Reports filed against a version older than the fix are not current. Check the `brAIn` row of the report's table before fixing anything, and close a report that a release since then already fixed as a duplicate of the issue that fixed it.
+- 2026-10-20: "run found error, return N, exit…" in a Bambu Studio slice log is the CLI's `flush_and_exit` signing off, not the reason. The reason is the `[error]` lines before it. A fix written to that line could not have been aimed (#328), so read what comes before a sign-off before naming a cause, and say in the PR when the cause is still unproven.
+- 2026-10-20: A picture whose `src` is swapped blanks for a frame even when the new URL is already decoded somewhere else. A live feed needs a second element behind it, swapped once it is decoded. A measure that samples an image has to wait for `complete && naturalWidth > 0`, because a lazily loaded one reads as blank.
+- 2026-10-20: Two fixes (#327 late ignore, #322 unattributed rhythm) were blocked by existing assertions that pin the old behaviour (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110). They were handed to a person with the test lines named, not worked around. When the fix the owner wants contradicts a pinned test, the person decides which one is right.
+- 2026-10-20: `test_bruh_print_atomic_write`'s race test asserts that the OLD recipe loses a write. Under a loaded `-n 4` run the two threads may not interleave, so it can fail on a branch that never touches BRUH Print. It passes alone; treat it as scheduling, not a regression.
 
 ## Loop health
 
@@ -81,3 +85,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-13 11:00: ~5h, about 50 issue closures: 14 fixed (PRs #425, #426, #427, #428 and this Morph batch), 2 handed to a person (#242, #243) plus #246 filed for the re-stamp bug and #82/#227 earlier, the rest duplicates, not-brAIn and re-stamped faults re-closed after each update. Retro done. Slowest step: the Opus subagents (9-17 min) and one CI cycle lost to devloop-guard on a person's file.
 - 2026-10-18/19: ~8h wall clock, including ~6h with a CI job hung on a dead worker. About 95 issue closures: about 35 fixed in PRs #437–#441 and this batch (3 filed by the UX audit), about 35 re-stamped reopens re-closed, 14 duplicates, 4 declined, 2 not brAIn, 5 handed to a person (#252, #272, #293's step path, #318, #82 again). Slowest step: the hung CI job, then the Opus subagents (8–16 min).
 - 2026-10-19: one person-requested session, ~3h, 42 open reports: all closed (about 30 version-update re-stamps re-closed for the last time, 9 scorecards superseded, 2 Morph ideas built, 4 Morph debug traces filtered at the source), with the reopen rules fixed in brain/panel/devloop/. Slowest step: reading the reopen histories.
+- 2026-10-20: ~5h, 9 open reports closed: 7 fixed in PRs #464 (Bambu camera), #465 (brAIn 3.4.2 checks and card verdicts) and #467 (Bambu slicing), including #319 in Morph 1.0.5; 2 handed to a person because the fix contradicts a pinned test (#327, #322); #326 partly fixed. UX audit not run this run. Held vs came back: not yet reported for these fixes. Slowest step: CI on #464 (a camera measure that sampled a lazily loaded picture), then the full local suite.
