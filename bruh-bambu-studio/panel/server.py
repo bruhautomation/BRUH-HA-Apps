@@ -1095,6 +1095,9 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     app[PANEL_KEY] = panel or Panel()
     # The conversation reads the printers and starts the prints brAIn chose.
     designer.PRINTING = DesignPrinting(app[PANEL_KEY])
+    # A headless slice may close the window for its memory (studio.make_room).
+    studio_ = getattr(app[PANEL_KEY], "studio", None)
+    slicer.MAKE_ROOM = getattr(studio_, "make_room", None)
     r = app.router
     r.add_get("/", _asset("index.html", "text/html"))
     r.add_get("/app.js", _asset("app.js", "application/javascript"))
