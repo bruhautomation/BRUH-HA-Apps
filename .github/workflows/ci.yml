@@ -658,7 +658,7 @@ jobs:
           cp -r gardenrx/custom_components/gardenrx custom_components/gardenrx
 
       - name: Run hassfest
-        uses: home-assistant/actions/hassfest@50baf3a307f87100cf550d4ae127746595030d5d  # master @ 2026-08-03
+        uses: home-assistant/actions/hassfest@cd6f3635a740c84d8a14f6121a90068b8ece6bf6  # master @ 2026-08-03
 
   apparmor:
     name: AppArmor profiles
