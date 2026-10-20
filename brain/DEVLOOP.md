@@ -27,7 +27,7 @@ schedule and its own **Run** button:
 | **Gaps** | Where brAIn falls short on this house, found by a read-only Claude run that reads the fault list, the scorecard and the reasons you typed when you marked a finding Wrong | no | one run |
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
 | **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
-| **Screens** | Pictures of brAIn's own panel, taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per release, rewritten in place, with the pictures attached | no, weekly | nothing |
+| **Screens** | Pictures of brAIn's own panel and of every other BRUH add-on's — GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft's panels, Morph's dashboard and the add-ons' Lovelace cards, drawn on your house's real data — taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per add-on per release, rewritten in place, with the pictures attached and labelled for that add-on | no, weekly | nothing |
 | **Morph** | Problems the Morph dashboard add-on found in its own code: a card that failed to draw, sections that overlapped, a request brAIn could not carry out. Morph publishes them; this stream files them labelled `devloop:morph`, and the cloud half fixes them under `morph/`. Nothing is sent unless Morph is installed and its *Report Morph's own problems* switch is on | yes, hourly | nothing |
 | **Other BRUH add-ons** | GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph, read from outside through the Supervisor: an add-on stopped although set to start at boot, each distinct error in its log (with the lines around it), and what Home Assistant logged about its integration. Each report starts with the add-on's name and is labelled `devloop:<slug>`, which is where the cloud half fixes it, and is checked against that add-on's own version when it comes back fixed. An add-on may also publish its own faults to `/config/.bruh/devloop/<slug>.json` in Morph's row shape | yes, hourly | nothing |
 
@@ -51,6 +51,16 @@ setting, caps and redaction. brAIn never patches another add-on's code inside
 its container: the next update would wipe it, and the fix would never reach
 the repository. The fix comes back as an update, and the loop checks it held
 against that add-on's own version.
+
+When the problem is how something looks ("the GardenRX table runs off my
+phone", "the print card is cramped"), brAIn **looks at it**:
+`screenshot_panel` photographs any screen of brAIn or another BRUH add-on,
+Morph's dashboard or a Lovelace card, at a phone's width or a laptop's, in
+light or dark, redacted and guarded exactly as the Screens stream is, and
+hands the picture to the chat with the layout faults measured beside it.
+Nothing is kept or sent, so it works with the loop switched off; a report
+it files from what it saw carries `ui: true`. The *What do you want to
+fix?* run can use it too.
 
 **Autopilot** (the switch at the top of the section) is the one choice
 for somebody handing brAIn's development to the loop: every stream on, on
@@ -172,10 +182,23 @@ The same controls are in the terminal as `brain devloop status`,
 - for **Screens**, pictures of the panel, uploaded as files to the same
   private repository and shown in its issue.
 
-**What a picture shows, and what is taken out first.** brAIn opens its own
-panel in a browser on your box (on loopback; nothing outside the box is
-loaded), and before each picture is taken it rewrites every piece of text
-on the page, in every frame it can reach, including the values in fields:
+**Taking a picture changes nothing.** The other add-ons' panels are opened
+the way Home Assistant's own ingress opens them, at their address on the
+add-ons' internal network, and while one is photographed every request
+that is not a read is stopped in the browser and no WebSocket may open: a
+tab is pressed, a label is never printed and a show never starts. The
+issue lists what was held back, so a part that says it could not save or
+connect is read as the guard and not as a bug. Morph and the Lovelace
+cards live inside Home Assistant's own pages, which a browser here cannot
+sign into, so brAIn draws them in a preview page of its own, handing them
+your house's states through a proxy that answers reads only; a Lovelace
+card Morph hosts is drawn as a labelled box there.
+
+**What a picture shows, and what is taken out first.** brAIn opens the
+panels in a browser on your box (nothing outside the box and your
+add-ons is loaded), and before each picture is taken it rewrites every piece of text
+on the page, in every frame it can reach and inside every card's own
+shadow DOM, including the values in fields:
 
 - anything containing one of your **calendar events** (an event's title,
   description or location, and the occasions brAIn read off the calendar)

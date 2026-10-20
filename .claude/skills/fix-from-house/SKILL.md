@@ -179,6 +179,20 @@ pictures, then take your own:
   bar or a grey *not captured* box is the redaction, never a bug. Comment
   once on that issue saying what you filed, and close it as fixed if
   everything in it was handled.
+- Read the other add-ons' Screens issues the same way (`[<add-on> · Screens]
+  UI audit on GardenRX …`, labelled `devloop:<key>` and `devloop:ux`, the
+  pictures under `screens/<add-on>-<version>/`): GardenRX, BRUH Bambu
+  Studio, BRUH Print, BRight and BRUH Minecraft are their own panels opened
+  over the hassio network, and Morph's dashboard and the Lovelace cards
+  are drawn on the house's real data in brAIn's preview page. Every write
+  was held back while they were photographed, so a part that says it could
+  not connect or save is the guard, not a bug; the issue lists the requests
+  it held. A fix lands in that add-on's directory, judged against its own
+  measures (`measure-gardenrx-cards`, `measure-print-panel`,
+  `measure-print-card`, `measure-bambu-card`, `measure-bambu-design`,
+  `measure-lightmap`/`measure-effects`/`measure-showeditor`,
+  `measure-morph`; a panel without one gets one) and its own CLAUDE.md
+  section.
 - Read the `[House shape]` issue if there is one: what a realistic panel
   holds.
 - Drive the panel with the manual measures (`tests/manual/*.mjs`) and the

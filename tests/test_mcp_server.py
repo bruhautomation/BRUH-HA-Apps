@@ -531,7 +531,7 @@ class TestMCPProtocol(unittest.TestCase):
             # Activity — what caused a change
             "explain_change", "get_activity",
             # The panel's own list and its own verdict
-            "get_findings", "get_health", "bruh_addon_status", "report_bug",
+            "get_findings", "get_health", "bruh_addon_status", "report_bug", "screenshot_panel",
             # Baselines — what is normal here
             "get_baseline",
             # And what has been measured at all, so a silence can be read

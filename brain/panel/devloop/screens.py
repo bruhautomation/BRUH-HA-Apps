@@ -103,7 +103,7 @@ AFTER_REDACT = None
 
 # A file name the panel may serve back for the review preview. Made here,
 # checked again where it is read, because the route takes it off a URL.
-SHOT_RE = re.compile(r"^[a-z0-9-]{1,40}-\d{3,4}-(?:light|dark)\.png$")
+SHOT_RE = re.compile(r"^[a-z0-9-]{1,60}-\d{3,4}-(?:light|dark)\.png$")
 CAPTURE_RE = re.compile(r"^\d{10}$")
 
 BLOCK = "▇"
@@ -228,10 +228,30 @@ def confidential_strings(states: list | None, occasions_store: dict | None
 # What runs in the page
 # ---------------------------------------------------------------------------
 
+# Every element in a frame, open shadow roots included: Lovelace cards and
+# Morph draw inside shadow DOM, and a field, a canvas or a word that a
+# plain querySelectorAll cannot see is one that is neither redacted,
+# covered nor measured. `up` is the parent across a shadow boundary.
+_DEEP_JS = r"""
+const deepAll = (root) => {
+  const out = [];
+  const visit = (r) => {
+    for (const el of r.querySelectorAll("*")) {
+      out.push(el);
+      if (el.shadowRoot) visit(el.shadowRoot);
+    }
+  };
+  visit(root);
+  return out;
+};
+const up = (el) => el.parentElement || (el.getRootNode && el.getRootNode().host) || null;
+"""
+
 # Collect every rendered string in this frame. Kept on `window` so the
 # apply step writes back to exactly the nodes that were read.
 _COLLECT_JS = r"""
 (() => {
+""" + _DEEP_JS + r"""
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"]);
   const nodes = [], strings = new Set();
   const walk = (root) => {
@@ -245,7 +265,7 @@ _COLLECT_JS = r"""
     root.querySelectorAll("*").forEach((el) => { if (el.shadowRoot) walk(el.shadowRoot); });
   };
   if (document.body) walk(document.body);
-  const fields = [...document.querySelectorAll("input, textarea")];
+  const fields = document.body ? deepAll(document.body).filter((el) => el.matches("input, textarea")) : [];
   for (const f of fields) {
     if (f.value) strings.add(f.value);
     if (f.placeholder) strings.add(f.placeholder);
@@ -278,6 +298,7 @@ _APPLY_JS = r"""
 # frame nobody marked as redacted.
 _COVER_JS = r"""
 (() => {
+""" + _DEEP_JS + r"""
   const own = (img) => {
     const src = img.currentSrc || img.src || "";
     if (!src || src.startsWith("data:") || src.startsWith("blob:")) return false;
@@ -287,7 +308,7 @@ _COVER_JS = r"""
         && /\.(svg|png|ico|webp)$/i.test(u.pathname);
     } catch (e) { return false; }
   };
-  const targets = [...document.querySelectorAll("canvas, video, object, embed, iframe, frame, img")]
+  const targets = deepAll(document.documentElement).filter((el) => el.matches("canvas, video, object, embed, iframe, frame, img"))
     .filter((el) => (el.tagName === "IFRAME" || el.tagName === "FRAME")
       ? el.dataset.brainRedacted !== "1"
       : el.tagName === "IMG" ? !own(el) : true);
@@ -311,9 +332,24 @@ _COVER_JS = r"""
 })()
 """
 
+# A guarded page may open no WebSocket: the constructor refuses, the way a
+# network that is down refuses, and the attempt is counted for the report.
+_NO_SOCKETS_JS = r"""
+(() => {
+  const refuse = function () {
+    (window.__brainHeldSockets = window.__brainHeldSockets || []).push(String(arguments[0] || ""));
+    throw new DOMException("brAIn's screenshots open no WebSocket", "SecurityError");
+  };
+  refuse.CONNECTING = 0; refuse.OPEN = 1; refuse.CLOSING = 2; refuse.CLOSED = 3;
+  try { Object.defineProperty(window, "WebSocket", { value: refuse, configurable: false, writable: false }); }
+  catch (e) { window.WebSocket = refuse; }
+})();
+"""
+
 # The layout faults a script can see, measured in the main frame.
 _AUDIT_JS = r"""
 ((coarse, width) => {
+""" + _DEEP_JS + r"""
   // The window's width as set, not innerWidth: a phone's browser zooms a
   // page that is too wide out to fit, and innerWidth then says it fits.
   const W = width || innerWidth, out = [];
@@ -338,7 +374,7 @@ _AUDIT_JS = r"""
     return cs.visibility !== "hidden" && cs.display !== "none" && +cs.opacity > 0.05;
   };
   const scrollerX = (el) => {
-    for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    for (let p = up(el); p && p !== document.body; p = up(p)) {
       const ox = getComputedStyle(p).overflowX;
       if (ox === "auto" || ox === "scroll" || ox === "hidden" || ox === "clip") return true;
     }
@@ -349,14 +385,14 @@ _AUDIT_JS = r"""
   if (doc.scrollWidth > W + 1)
     out.push({ kind: "page_scrolls_sideways", el: "html", text: "",
                detail: `the page is ${doc.scrollWidth}px wide in a ${W}px window` });
-  const all = [...document.body.querySelectorAll("*")].filter(shown);
+  const all = deepAll(document.body).filter(shown);
   const offscreen = all.filter((el) => {
     const r = el.getBoundingClientRect();
     return (r.right > W + 1 || r.left < -1) && getComputedStyle(el).position !== "fixed"
       && !scrollerX(el);
   });
   for (const el of offscreen) {
-    if (offscreen.includes(el.parentElement)) continue;
+    if (offscreen.includes(up(el))) continue;
     const r = el.getBoundingClientRect();
     add("off_the_edge", el, `spans ${Math.round(r.left)}–${Math.round(r.right)}px in a ${W}px window`);
   }
@@ -386,7 +422,7 @@ _AUDIT_JS = r"""
   // A bar pinned to the window sits over whatever scrolls under it; that
   // is what it is for, and not two controls fighting for one spot.
   const pinned = (el) => {
-    for (let p = el; p && p !== document.body; p = p.parentElement) {
+    for (let p = el; p && p !== document.body; p = up(p)) {
       const pos = getComputedStyle(p).position;
       if (pos === "fixed" || pos === "sticky") return true;
     }
@@ -410,7 +446,7 @@ _AUDIT_JS = r"""
   const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
   const bgOf = (el) => {
-    for (let p = el; p; p = p.parentElement) {
+    for (let p = el; p; p = up(p)) {
       const c = rgb(getComputedStyle(p).backgroundColor);
       if (c && (c.length < 4 || c[3] > 0.5)) return c;
     }
@@ -452,6 +488,43 @@ def find_browser() -> str:
     return ""
 
 
+def _path_of(url: str) -> str:
+    """A URL's path, never its query or host: what the report may say
+    about a request the guard held back."""
+    from urllib.parse import urlsplit  # noqa: PLC0415
+    try:
+        return urlsplit(str(url or "")).path[:100] or "/"
+    except ValueError:
+        return "?"
+
+
+def request_allowed(method: str, url: str, post_data, reads) -> bool:
+    """Whether the write guard lets a request through.
+
+    A GET, a HEAD and an OPTIONS go; anything else goes only when its path
+    matches one of ``reads`` — ``{"path": regex}``, optionally with
+    ``"field"``/``"equals"``: the JSON body's field must hold exactly that
+    value (GardenRX's one data route carries reads and writes alike). A
+    body that is not JSON, or not there, does not satisfy a field."""
+    verb = str(method or "").upper()
+    if verb in ("GET", "HEAD", "OPTIONS"):
+        return True
+    path = _path_of(url)
+    for rule in reads or []:
+        if not isinstance(rule, dict) or not re.search(str(rule.get("path") or "$^"), path):
+            continue
+        field = rule.get("field")
+        if not field:
+            return True
+        try:
+            body = json.loads(post_data) if isinstance(post_data, str) else None
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get(field) == rule.get("equals"):
+            return True
+    return False
+
+
 class CDP:
     """The few DevTools calls this needs, over one WebSocket."""
 
@@ -461,6 +534,11 @@ class CDP:
         self.pending: dict[int, asyncio.Future] = {}
         self.inflight: set[str] = set()
         self.last_net = time.monotonic()
+        # The write guard, per tab: the reads it lets through, and what it
+        # held back. A tab with no entry is not guarded.
+        self.guards: dict[str, list] = {}
+        self.held: dict[str, list[str]] = {}
+        self._tasks: set[asyncio.Task] = set()
         self.reader = asyncio.create_task(self._read())
 
     async def _read(self) -> None:
@@ -476,6 +554,13 @@ class CDP:
                 continue
             method = data.get("method", "")
             params = data.get("params") or {}
+            if method == "Fetch.requestPaused":
+                # Answered off the reader: the answer is itself a call
+                # whose reply this loop has to read.
+                task = asyncio.create_task(self._paused(params, data.get("sessionId")))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
+                continue
             if method == "Network.requestWillBeSent":
                 self.inflight.add(params.get("requestId", ""))
                 self.last_net = time.monotonic()
@@ -489,6 +574,24 @@ class CDP:
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_exception(ConnectionError("the browser went away"))
+
+    async def _paused(self, params: dict, session: str | None) -> None:
+        """A request the write guard stopped: let a read through, fail
+        anything else. Never raises — a tab that is closing is fine."""
+        req = params.get("request") or {}
+        rid = params.get("requestId", "")
+        reads = self.guards.get(session or "")
+        try:
+            if reads is None or request_allowed(req.get("method", ""), req.get("url", ""),
+                                                req.get("postData"), reads):
+                await self.call("Fetch.continueRequest", {"requestId": rid}, session)
+                return
+            self.held.setdefault(session or "", []).append(
+                f"{req.get('method', '?')} {_path_of(req.get('url', ''))}"[:120])
+            await self.call("Fetch.failRequest", {"requestId": rid,
+                                                  "errorReason": "BlockedByClient"}, session)
+        except Exception:  # noqa: BLE001 — the tab went away mid-answer
+            pass
 
     async def call(self, method: str, params: dict | None = None,
                    session: str | None = None, timeout: float = 20) -> dict:
@@ -626,11 +729,23 @@ async def _redact_page(cdp: CDP, session: str, confidential: list[str], aliases)
         raise RuntimeError("could not cover the page's images")
 
 
+def own_target(url: str = PANEL_URL, screens=None) -> dict:
+    """brAIn's own panel as a capture target. Not guarded: it is brAIn's
+    own page on loopback, and the screens are opened by its own functions."""
+    return {"key": "brain", "product": "brAIn", "url": url, "guard": False,
+            "reads": [], "screens": [
+                {"slug": slug, "label": label, "url": url, "script": script}
+                for slug, label, script in (screens or SCREENS)]}
+
+
 async def capture(out_dir: Path, *, confidential: list[str], aliases,
-                  url: str = PANEL_URL, screens=None, views=None) -> dict:
-    """Photograph every screen at every view into ``out_dir``. Answers
-    ``{"shots": [...], "problems": [...], "errors": [...]}``; a screen that
-    could not be redacted is in ``errors`` and has no picture."""
+                  url: str = PANEL_URL, screens=None, views=None,
+                  targets=None, own: bool = True) -> dict:
+    """Photograph every screen of every target at every view into
+    ``out_dir``. Answers ``{"shots": [...], "problems": [...], "errors":
+    [...]}``; a screen that could not be redacted is in ``errors`` and has
+    no picture. brAIn's own panel is the first target unless ``own`` is
+    false; ``targets`` are the others (`screen_targets.py`)."""
     import aiohttp  # noqa: PLC0415
 
     binary = find_browser()
@@ -652,17 +767,26 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
             async with http.ws_connect(f"ws://127.0.0.1:{port}{ws_path}",
                                        max_msg_size=64 * 1024 * 1024) as ws:
                 cdp = CDP(ws)
+                work = ([own_target(url, screens)] if own else []) + list(targets or [])
                 for width, height, touch, scheme in (views or VIEWS):
-                    for slug, label, script in (screens or SCREENS):
-                        try:
-                            shot = await _one(cdp, url, slug, label, script, width,
-                                              height, touch, scheme, out_dir,
-                                              confidential, aliases)
-                        except Exception as exc:  # noqa: BLE001 — one screen
-                            errors.append(f"{label} at {width}px {scheme}: {exc}"[:200])
-                            continue
-                        problems += shot.pop("problems")
-                        shots.append(shot)
+                    for tgt in work:
+                        guard = list(tgt.get("reads") or []) if tgt.get("guard") else None
+                        for scr in tgt.get("screens") or []:
+                            label = scr["label"]
+                            try:
+                                shot = await _one(
+                                    cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
+                                    width, height, touch, scheme, out_dir, confidential,
+                                    aliases, guard=guard)
+                            except Exception as exc:  # noqa: BLE001 — one screen
+                                errors.append({"product": tgt.get("product", "brAIn"), "text":
+                                               f"{label} at {width}px {scheme}: {exc}"[:200]})
+                                continue
+                            shot["product"] = tgt.get("product", "brAIn")
+                            for p in shot["problems"]:
+                                p["product"] = shot["product"]
+                            problems += shot.pop("problems")
+                            shots.append(shot)
                 try:
                     await cdp.call("Browser.close", timeout=5)
                 except Exception:  # noqa: BLE001 — it is killed below if it did not go
@@ -677,9 +801,12 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
 
 async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                width: int, height: int, touch: bool, scheme: str,
-               out_dir: Path, confidential: list[str], aliases) -> dict:
+               out_dir: Path, confidential: list[str], aliases, *,
+               guard: list | None = None) -> dict:
     """One screen in its own tab, so nothing a previous screen left open
-    (a dialog, a scroll position) is in this picture."""
+    (a dialog, a scroll position) is in this picture. With ``guard`` (the
+    reads it lets through) every other write is failed in the browser and
+    every WebSocket is blocked, before the page is loaded."""
     target = await cdp.call("Target.createTarget", {"url": "about:blank"})
     tid = target["targetId"]
     session = (await cdp.call("Target.attachToTarget",
@@ -687,6 +814,17 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
     try:
         await cdp.call("Page.enable", {}, session)
         await cdp.call("Network.enable", {}, session)
+        if guard is not None:
+            cdp.guards[session] = guard
+            # A WebSocket is not a request the Fetch domain sees, and
+            # Chromium's blocked-URL list does not reach its handshake
+            # either (the test proved it), so the constructor is replaced
+            # in every frame before any of the page's own script runs.
+            await cdp.call("Page.addScriptToEvaluateOnNewDocument",
+                           {"source": _NO_SOCKETS_JS}, session)
+            await cdp.call("Network.setBlockedURLs", {"urls": ["ws://*", "wss://*"]}, session)
+            await cdp.call("Fetch.enable", {"patterns": [
+                {"urlPattern": "*", "requestStage": "Request"}]}, session)
         await cdp.call("Emulation.setDeviceMetricsOverride", {
             "width": width, "height": height, "deviceScaleFactor": 1,
             "mobile": touch}, session)
@@ -699,13 +837,14 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
         cdp.last_net = time.monotonic()
         await cdp.call("Page.navigate", {"url": url}, session, timeout=NAV_TIMEOUT_S)
         await cdp.settle()
-        res = await cdp.call("Runtime.evaluate", {
-            "expression": f"Promise.resolve({script})", "awaitPromise": True},
-            session, timeout=NAV_TIMEOUT_S)
-        if res.get("exceptionDetails"):
-            raise RuntimeError("the screen could not be opened")
-        cdp.last_net = time.monotonic()
-        await cdp.settle()
+        if script:
+            res = await cdp.call("Runtime.evaluate", {
+                "expression": f"Promise.resolve({script})", "awaitPromise": True},
+                session, timeout=NAV_TIMEOUT_S)
+            if res.get("exceptionDetails"):
+                raise RuntimeError("the screen could not be opened")
+            cdp.last_net = time.monotonic()
+            await cdp.settle()
         await cdp.call("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"}, session)
         await _redact_page(cdp, session, confidential, aliases)
         if AFTER_REDACT is not None:
@@ -741,10 +880,19 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                 "text": redact(str(p.get("text") or "")[:60],
                                confidential=confidential, aliases=aliases),
                 "detail": str(p.get("detail") or "")[:160]})
+        if guard is not None:
+            res = await cdp.call("Runtime.evaluate", {
+                "expression": "(window.__brainHeldSockets || []).slice(0, 6)",
+                "returnByValue": True}, session)
+            for url_ in (res.get("result") or {}).get("value") or []:
+                cdp.held.setdefault(session, []).append(f"WebSocket {_path_of(url_)}")
+        held = sorted(set(cdp.held.pop(session, [])))[:MAX_PROBLEMS_PER_KIND]
         return {"name": name, "screen": label, "width": width, "scheme": scheme,
                 "sha": hashlib.sha256(data).hexdigest(), "bytes": len(data),
-                "problems": problems}
+                "problems": problems, "held": held}
     finally:
+        cdp.guards.pop(session, None)
+        cdp.held.pop(session, None)
         try:
             await cdp.call("Target.closeTarget", {"targetId": tid})
         except Exception:  # noqa: BLE001 — a tab that will not close dies with the browser
@@ -800,21 +948,61 @@ KIND_WORDS = {
 }
 
 
-def rows(result: dict, version: str, capture: str, now: float | None = None) -> list[dict]:
-    """The one rolling issue for this release, or nothing when no screen
-    could be kept."""
+HARNESS_NOTE = ("The cards and the dashboard were drawn in brAIn's own preview page, "
+                "handed this house's real states through a read-only proxy: anything "
+                "they would have read from Home Assistant's frontend itself (its theme, "
+                "a hosted Lovelace card) is a stand-in there, and a hosted card is "
+                "drawn as a labelled box.")
+
+
+def rows(result: dict, version: str, capture: str, now: float | None = None,
+         versions: dict | None = None, unreached: dict | None = None) -> list[dict]:
+    """One rolling issue per product per release: brAIn's own panel, and
+    each other BRUH add-on whose screens were captured. Nothing for a
+    product with no picture kept. ``versions`` is product → installed
+    version for the other add-ons; ``unreached`` is product → why it was
+    not photographed, said in brAIn's own issue."""
     shots = result.get("shots") or []
-    if not shots:
-        return []
-    problems = result.get("problems") or []
+    by_product: dict[str, list[dict]] = {}
+    for s in shots:
+        by_product.setdefault(s.get("product") or "brAIn", []).append(s)
+    out = []
+    for product, pics in by_product.items():
+        problems = [p for p in result.get("problems") or []
+                    if (p.get("product") or "brAIn") == product]
+        errors = [e for e in result.get("errors") or []
+                  if (e.get("product") if isinstance(e, dict) else "brAIn") == product]
+        held = sorted({h for s in pics for h in s.get("held") or []})
+        own = product == "brAIn"
+        ver = version if own else str((versions or {}).get(product) or "?")
+        out.append(_product_row(product, ver, pics, problems, errors, held, capture, now,
+                                unreached if own else None))
+    return out
+
+
+def _product_row(product: str, version: str, shots: list[dict], problems: list[dict],
+                 errors: list, held: list[str], capture: str, now: float | None,
+                 unreached: dict | None) -> dict:
+    own = product == "brAIn"
     screens = len({s["screen"] for s in shots})
+    subject = "its own panel" if own else f"{product}'s screens"
     lines = [
-        ("brAIn photographed its own panel on this house and measured the "
+        (f"brAIn photographed {subject} on this house and measured the "
          + "layout. Every string on screen was redacted before the picture "
          + "was taken (calendar events, addresses, credentials and anything "
          + "key-shaped blanked; names aliased); images, canvases and frames "
          + "that could not be read are covered."),
         "",
+    ]
+    if not own:
+        lines += [("Nothing photographed could change anything: every request "
+                   + "that was not a read was failed in the browser and every "
+                   + "WebSocket was blocked, so a part of a screen that needs "
+                   + "one may look empty or say it could not connect."), ""]
+        if any(s["screen"].endswith(("Lovelace card", "Lovelace cards", "Dashboard"))
+               for s in shots):
+            lines += [HARNESS_NOTE, ""]
+    lines += [
         ("**For the developer:** the measured problems below are what a "
          + "script can see. Look at the pictures for what it cannot: spacing, "
          + "hierarchy, alignment, consistency, and whether each screen looks "
@@ -838,30 +1026,43 @@ def rows(result: dict, version: str, capture: str, now: float | None = None) -> 
             lines.append("")
     else:
         lines += ["## Measured problems", "", "None on any screen.", ""]
-    if result.get("errors"):
+    if held:
+        lines += ["## Requests held back while photographing", ""]
+        lines += [f"- `{h}`" for h in held[:12]]
+        lines.append("")
+    if errors:
         lines += ["## Screens not captured", ""]
-        lines += [f"- {e}" for e in result["errors"][:12]]
+        lines += [f"- {e['text'] if isinstance(e, dict) else e}" for e in errors[:12]]
+        lines.append("")
+    if unreached:
+        lines += ["## Other BRUH add-ons not photographed", ""]
+        lines += [f"- {name}: {why}" for name, why in sorted(unreached.items())]
         lines.append("")
     gallery = [{"name": s["name"], "screen": s["screen"], "width": s["width"],
                 "scheme": s["scheme"], "sha": s["sha"]} for s in shots]
-    return [{
-        "key": f"screens:{version}",
-        "where": "Panel screens",
-        "what": (f"UI audit on brAIn {version}: {len(problems)} measured "
+    row = {
+        "key": f"screens:{version}" if own else f"screens:{product}:{version}",
+        "where": "Panel screens" if own else f"{product} · Screens",
+        "what": (f"UI audit on {product} {version}: {len(problems)} measured "
                  f"problem{'s' if len(problems) != 1 else ''} across {screens} screens"),
         "body": "\n".join(lines),
         "gallery": gallery,
         "capture": capture,
         "ux": True,
-    }]
+    }
+    if not own:
+        row["product"] = product
+        row["product_version"] = version
+    return row
 
 
-def repo_path(version: str, name: str) -> str:
+def repo_path(version: str, name: str, product: str = "brAIn") -> str:
     safe = re.sub(r"[^0-9A-Za-z.-]", "-", str(version or "dev"))[:40] or "dev"
-    return f"screens/brain-{safe}/{name}"
+    who = re.sub(r"[^0-9a-z-]", "-", str(product or "brAIn").lower())[:40] or "brain"
+    return f"screens/{who}-{safe}/{name}"
 
 
 __all__ = [
     "SCREENS", "VIEWS", "capture", "confidential_strings", "find_browser",
-    "local_file", "new_capture_dir", "prune", "redact", "repo_path", "rows",
+    "own_target", "request_allowed", "local_file", "new_capture_dir", "prune", "redact", "repo_path", "rows",
 ]

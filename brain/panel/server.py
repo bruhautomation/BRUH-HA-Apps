@@ -122,6 +122,7 @@ import contextlib
 import fcntl
 import functools
 import hashlib
+import base64
 import json
 import logging
 import os
@@ -131,6 +132,7 @@ import secrets
 import shutil
 import html as html_lib
 import subprocess
+import tempfile
 import threading
 import traceback
 import time
@@ -151,6 +153,8 @@ import brief
 import capture
 import devloop
 import devloop.github
+import devloop.harness
+import devloop.screen_targets
 import devloop.screens
 import devloop.streams
 import devloop.upstream
@@ -17336,25 +17340,229 @@ async def _devloop_screens(payload: dict, names: dict, version: str) -> dict:
     aliases.learn(names)
     base = devloop.data_dir()
     out_dir = screens.new_capture_dir(base)
+    located = await _screen_catalog()
     try:
         result = await asyncio.wait_for(
             screens.capture(out_dir, confidential=confidential, aliases=aliases,
-                            url=f"http://127.0.0.1:{BIND_PORT}/"),
+                            url=_own_panel_url(), targets=located["targets"]),
             DEVLOOP_SCREENS_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — a capture that failed sends nothing
         shutil.rmtree(out_dir, ignore_errors=True)
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": f"the screens could not be captured: {exc}"[:200]}
     await asyncio.to_thread(screens.prune, base, out_dir.name)
-    rows = screens.rows(result, version, out_dir.name)
+    rows = screens.rows(result, version, out_dir.name,
+                        versions=located["versions"], unreached=located["unreached"])
     if not rows:
         await asyncio.to_thread(devloop.upstream.mark_run, "screens")
         return {"error": "no screen could be captured and redacted: "
-                         + "; ".join(result.get("errors") or [])[:160]}
+                         + "; ".join(_error_text(e) for e in result.get("errors") or [])[:160]}
     out = await asyncio.to_thread(devloop.upstream.ingest, "screens", rows,
-                                  payload, names)
+                                  payload, names, products=located["versions"])
     return {**out, "shots": len(result.get("shots") or []),
             "problems": len(result.get("problems") or [])}
+
+
+def _own_panel_url() -> str:
+    return f"http://127.0.0.1:{BIND_PORT}/"
+
+
+def _error_text(err) -> str:
+    return str(err.get("text") if isinstance(err, dict) else err)
+
+
+async def _screen_catalog() -> dict:
+    """Every screen brAIn can photograph besides its own: the other BRUH
+    add-ons' panels over the hassio network, and their cards and Morph in
+    brAIn's harness page. ``{"targets", "versions", "unreached"}``; never
+    raises — a Supervisor that will not answer leaves brAIn's own panel."""
+    located = await asyncio.to_thread(devloop.screen_targets.locate,
+                                      devloop.siblings._get)
+    located["targets"] += devloop.screen_targets.harness_targets(
+        _own_panel_url(), located["versions"])
+    return located
+
+
+SCREENSHOT_LOCK: asyncio.Lock | None = None
+SCREENSHOT_TIMEOUT_S = 120
+
+
+async def h_devloop_screenshot(request: web.Request) -> web.Response:
+    """One screen of brAIn or another BRUH add-on, photographed now and
+    handed back — the chat's `screenshot` tool, so brAIn can look at a
+    screen while somebody is talking to it about it.
+
+    Loopback only: the MCP server asks here. Redacted exactly as the
+    Screens stream redacts (the picture goes to the model, as a camera
+    snapshot does), guarded exactly as it guards, and kept nowhere: the
+    picture is written to a scratch folder and deleted with it. It needs
+    no development loop switched on, because nothing leaves the box but
+    the answer to the tool call. With no ``screen`` it lists the screens.
+    """
+    global SCREENSHOT_LOCK
+    if not ownership.from_loopback(request):
+        return web.json_response({"error": ownership.LOOPBACK_ONLY}, status=403)
+    body = await _json_body(request)
+    screens = devloop.screens
+    if not screens.find_browser():
+        return web.json_response({"error": "Chromium is not installed on this box"},
+                                 status=503)
+    located = await _screen_catalog()
+    targets = [screens.own_target(_own_panel_url())] + located["targets"]
+    want_addon = str(body.get("addon") or "brAIn").strip().lower()
+    target = next((t for t in targets if t["product"].lower() == want_addon), None)
+    if target is None:
+        why = next((w for n, w in located["unreached"].items()
+                    if n.lower() == want_addon), "")
+        return web.json_response({
+            "error": (f"{body.get('addon')} cannot be photographed: {why}" if why
+                      else f"no BRUH add-on called {body.get('addon')!r} is here"),
+            "addons": sorted({t["product"] for t in targets})}, status=404)
+    listing = [{"screen": scr["slug"], "label": scr["label"]} for scr in target["screens"]]
+    want = str(body.get("screen") or "").strip().lower()
+    if not want:
+        return web.json_response({"addon": target["product"], "screens": listing})
+    scr = next((x for x in target["screens"]
+                if want in (x["slug"].lower(), x["label"].lower())
+                or x["slug"].lower().endswith("-" + want)
+                or x["label"].lower().endswith("› " + want)), None)
+    if scr is None:
+        return web.json_response({"error": f"{target['product']} has no screen {want!r}",
+                                  "screens": listing}, status=404)
+    try:
+        width = max(320, min(1920, int(body.get("width") or 390)))
+    except (TypeError, ValueError):
+        width = 390
+    scheme = "dark" if body.get("scheme") == "dark" else "light"
+    view = (width, 844 if width < 700 else 800, width < 700, scheme)
+    try:
+        import aiohttp
+
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            states = await ha_data._rest_get(session, "/states", timeout=60)
+    except Exception:  # noqa: BLE001
+        states = None
+    if not isinstance(states, list):
+        return web.json_response({"error": ("could not read the house's calendars and "
+                                            "addresses to blank them, so nothing was "
+                                            "photographed")}, status=503)
+    confidential = screens.confidential_strings(
+        states, await asyncio.to_thread(occasions.load))
+    one = {**target, "screens": [scr]}
+    if SCREENSHOT_LOCK is None:
+        SCREENSHOT_LOCK = asyncio.Lock()
+    if SCREENSHOT_LOCK.locked():
+        return web.json_response({"error": "another screenshot is being taken"},
+                                 status=409)
+    tmp = Path(tempfile.mkdtemp(prefix="brain-screenshot-"))
+    try:
+        async with SCREENSHOT_LOCK:
+            result = await asyncio.wait_for(
+                screens.capture(tmp, confidential=confidential, aliases=None,
+                                views=[view], targets=[one], own=False),
+                SCREENSHOT_TIMEOUT_S)
+        shots = result.get("shots") or []
+        if not shots:
+            return web.json_response({"error": "; ".join(
+                _error_text(e) for e in result.get("errors") or [])[:300]
+                or "the screen could not be photographed"}, status=502)
+        shot = shots[0]
+        data = (tmp / shot["name"]).read_bytes()
+    except Exception as exc:  # noqa: BLE001 — a sentence, never a 500
+        return web.json_response({"error": f"the screen could not be photographed: {exc}"[:300]},
+                                 status=502)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return web.json_response({
+        "addon": target["product"], "screen": scr["label"], "width": width,
+        "scheme": scheme, "png": base64.b64encode(data).decode(),
+        "problems": result.get("problems") or [], "held": shot.get("held") or []})
+
+
+def _harness_refusal(request: web.Request) -> web.Response | None:
+    if not ownership.from_loopback(request):
+        return web.json_response({"error": ownership.LOOPBACK_ONLY}, status=403)
+    return None
+
+
+async def h_harness_page(request: web.Request) -> web.Response:
+    """The page the BRUH cards and Morph are photographed in
+    (`devloop/harness.py`). Loopback only."""
+    refused = _harness_refusal(request)
+    if refused:
+        return refused
+    # The catalog's own key, matched by equality, is what is drawn: the
+    # string off the URL never reaches the page.
+    asked = request.match_info["name"]
+    key = next((k for k in devloop.harness.PAGES if k == asked), None)
+    html = devloop.harness.page(key) if key else None
+    if html is None:
+        return web.json_response({"error": "no such preview"}, status=404)
+    return web.Response(text=html, content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
+
+
+def _harness_file(path: str) -> web.StreamResponse:
+    if not path:
+        return web.json_response({"error": "not on this box"}, status=404)
+    return web.FileResponse(path, headers={"Content-Type": "text/javascript",
+                                           "Cache-Control": "no-store"})
+
+
+async def h_harness_js(request: web.Request) -> web.StreamResponse:
+    refused = _harness_refusal(request)
+    return refused or _harness_file(
+        devloop.screen_targets.card_file(request.match_info["name"]))
+
+
+async def h_harness_morph(request: web.Request) -> web.StreamResponse:
+    refused = _harness_refusal(request)
+    return refused or _harness_file(
+        devloop.screen_targets.morph_module(request.match_info["name"]))
+
+
+async def h_harness_morph_cards(request: web.Request) -> web.StreamResponse:
+    refused = _harness_refusal(request)
+    return refused or _harness_file(
+        devloop.screen_targets.morph_card(request.match_info["name"]))
+
+
+HARNESS_MSG_MAX = 20_000
+
+
+async def h_harness_ws(request: web.Request) -> web.Response:
+    """The harness page's WebSocket, for reads only: one question to Core
+    through the Supervisor, refused unless `screen_targets.allowed_ws`
+    lets it through."""
+    refused = _harness_refusal(request)
+    if refused:
+        return refused
+    raw = request.query.get("msg", "")
+    if len(raw) > HARNESS_MSG_MAX:
+        return web.json_response({"error": "too long"}, status=413)
+    try:
+        msg = json.loads(raw)
+    except ValueError:
+        return web.json_response({"error": "not JSON"}, status=400)
+    why = devloop.screen_targets.allowed_ws(msg)
+    if why:
+        return web.json_response({"error": why}, status=403)
+    msg = {k: v for k, v in msg.items() if k != "id"}
+    try:
+        import aiohttp
+
+        import ha_data
+        async with aiohttp.ClientSession() as session:
+            calls = await ha_data._ws_calls(session, [msg])
+    except Exception as exc:  # noqa: BLE001
+        return web.json_response({"error": f"Home Assistant did not answer: {exc}"[:200]},
+                                 status=502)
+    first = calls[0] if calls else {}
+    if not first.get("ok"):
+        return web.json_response({"error": str(first.get("error") or "refused")[:200]},
+                                 status=502)
+    return web.json_response({"result": first.get("result")})
 
 
 async def h_devloop_screen(request: web.Request) -> web.Response:
@@ -23149,7 +23357,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, Morph), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, Morph), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
 
 Protected entities and the household's house rules hold whatever route you take. A refusal is their decision: tell them, and never route around it."""
 
@@ -24186,6 +24394,12 @@ def make_app() -> web.Application:
     app.router.add_post("/api/devloop/stream/{name}/unslow", h_devloop_unslow)
     app.router.add_get("/api/devloop/item/{fp}", h_devloop_item)
     app.router.add_get("/api/devloop/screen/{capture}/{name}", h_devloop_screen)
+    app.router.add_post("/api/devloop/screenshot", h_devloop_screenshot)
+    app.router.add_get("/devloop/harness/js/{name}", h_harness_js)
+    app.router.add_get("/devloop/harness/morph/{name}", h_harness_morph)
+    app.router.add_get("/devloop/harness/morph_cards/{name}", h_harness_morph_cards)
+    app.router.add_get("/devloop/harness/ws", h_harness_ws)
+    app.router.add_get("/devloop/harness/{name}", h_harness_page)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
     app.router.add_post("/api/devloop/archive", h_devloop_archive)
     app.router.add_post("/api/devloop/send", h_devloop_send_many)

@@ -323,6 +323,13 @@ its container**: the next update wipes it. When the cause is in its code, file
 it with the \`report_bug\` MCP tool (your diagnosis, the log lines, the owner's
 words); a cloud routine fixes it upstream, it arrives as an update, and brAIn
 checks it held. That needs the development loop on (⚙ › Developer).
+
+When the problem is how a screen looks — brAIn's own, another add-on's panel,
+Morph's dashboard or a Lovelace card — **look at it**: the \`screenshot_panel\`
+MCP tool photographs any of them (390px is a phone, 1200 a laptop; light or
+dark), redacted and unable to change anything, with the layout problems it can
+measure beside the picture. Look before and after a change, and file what you
+saw with \`report_bug\` and \`ui: true\`.
 "
 
     dashboard_list=$(python3 - 2>/dev/null <<'PYEOF'
