@@ -507,6 +507,50 @@ def eff_skip_permissions() -> bool:
     return permission_mode.startup()
 
 
+def person_acts() -> bool:
+    """Whether a run a PERSON asked for, from any surface, may act.
+
+    "Let brAIn act without asking" was a switch for the terminal and the
+    chat, and every other place a person types to brAIn — a reply under a
+    notification, a reply under a card in Morph, a task Morph or Design
+    with brAIn hands over — answered read-only whatever it said. So the
+    same words got "done" in the chat and "I can't change anything here"
+    one screen over. This is the one answer every such surface asks: the
+    switch, exactly as the chat reads it. Unattended runs (cards, the
+    Resident, the brief) never ask it and stay read-only.
+    """
+    return eff_skip_permissions() is True
+
+
+async def _person_run(prompt: str, read_system: str, act_system: str,
+                      timeout: int, max_turns: int, source: str,
+                      **kwargs) -> dict:
+    """Run a person's question read-only, or — with the switch on — with
+    the chat's reach on the chat's channel, so the action gate's switch path,
+    the protected list, house rules and the tripwire are what stand in front
+    of it, exactly as they do in the chat."""
+    if person_acts():
+        return await _claude(
+            engine.run_agent, prompt, act_system, eff_model(),
+            max(timeout, PERSON_ACT_TIMEOUT_S), max_turns, source,
+            env={"BRAIN_CHANNEL": "chat"}, **kwargs)
+    return await _claude(engine.run_analyst, prompt, read_system, eff_model(),
+                         timeout, max_turns, source, **kwargs)
+
+
+# A change takes longer than an answer: a reply that edits an automation,
+# checks it and reloads is several minutes, not one.
+PERSON_ACT_TIMEOUT_S = 600
+
+# The sentence an acting reply is told in place of "you can change nothing".
+PERSON_ACT_TOOLS = (
+    "You have the same reach as the brAIn chat: every Home Assistant tool, "
+    "shell commands and file edits under /config. Read before you answer. "
+    "If they ask you to change something, make the change, check it, and "
+    "say in one sentence what changed. Protected entities and house rules "
+    "still hold; if one refuses, say so.")
+
+
 def _publish_permission_mode() -> None:
     """Write the switch where a terminal session reads it when it starts.
 
@@ -2709,7 +2753,8 @@ MORPH_SWEEP_EVERY_S = 600
 # Person-facing: read under the card in Morph, as the next turn of the
 # conversation on it. The person's words are fenced in the prompt
 # (`_morph_answer`), and named here as data.
-MORPH_REPLY_SYSTEM = prompt_kit.assemble(
+def _morph_reply_system(tools: str) -> str:
+    return prompt_kit.assemble(
     "You answer a message somebody typed under a report brAIn raised in "
     "their home, on their dashboard (Morph). Your answer is shown under "
     "the report as the next turn of a short conversation about it.",
@@ -2717,10 +2762,7 @@ MORPH_REPLY_SYSTEM = prompt_kit.assemble(
         "You are given the report, what was read about it, the "
         "conversation on it so far, and their message between the REPLY "
         "markers."),
-    tools=(
-        "You have Home Assistant's reading tools; you can change nothing. "
-        "Read the current state and the history of what they asked about "
-        "before you answer."),
+    tools=tools,
     good=(
         "The first sentence answers their question with what you read just "
         "now. If their message does not make clear what they want done "
@@ -2732,7 +2774,15 @@ MORPH_REPLY_SYSTEM = prompt_kit.assemble(
         "48%.\""),
     rules="- Under 80 words, plain text, no markdown, no greeting.",
     output="Answer with the reply and nothing else.",
-)
+    )
+
+
+READ_ONLY_TOOLS = (
+    "You have Home Assistant's reading tools; you can change nothing. "
+    "Read the current state and the history of what they asked about "
+    "before you answer.")
+MORPH_REPLY_SYSTEM = _morph_reply_system(READ_ONLY_TOOLS)
+MORPH_REPLY_ACT_SYSTEM = _morph_reply_system(PERSON_ACT_TOOLS)
 MORPH_REPLY_TIMEOUT_S = 180
 MORPH_REPLY_MAX_TURNS = 24
 MORPH_SAY_MAX = 600
@@ -3056,8 +3106,8 @@ async def _morph_answer(case: dict, finding: dict | None, text: str) -> str:
               "Answer that.")
     started = time.time()
     try:
-        result = await _claude(
-            engine.run_analyst, prompt, MORPH_REPLY_SYSTEM, eff_model(),
+        result = await _person_run(
+            prompt, MORPH_REPLY_SYSTEM, MORPH_REPLY_ACT_SYSTEM,
             MORPH_REPLY_TIMEOUT_S, MORPH_REPLY_MAX_TURNS, "resident",
             job="explain", priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001
@@ -20562,17 +20612,15 @@ def _discuss_prompt(finding: dict, offer: bool = True) -> str:
 # of brAIn does not have; the identity block puts it in the third person.
 # The person's message is fenced in the prompt (`_reply_conversation`) and
 # named here as data, because it is the one input nobody vetted.
-REPLY_SYSTEM = prompt_kit.assemble(
+def _reply_system(tools: str) -> str:
+    return prompt_kit.assemble(
     "You answer a message somebody typed into a notification on their "
     "phone, under a problem brAIn raised in their home. The answer is sent "
     "back as the next notification.",
     inputs=(
         "You are given the problem, what was read about it, and their "
         "message between the REPLY markers."),
-    tools=(
-        "You have Home Assistant's reading tools; you can change nothing. "
-        "Read the current state and the history of what they asked about "
-        "before you answer."),
+    tools=tools,
     good=(
         "The first sentence answers their question with what you read just "
         "now. If they told you something about their house rather than "
@@ -20583,8 +20631,11 @@ REPLY_SYSTEM = prompt_kit.assemble(
         "usual is -18. Check the door seal.\""),
     rules="- Under 80 words, plain text, no markdown, no greeting.",
     output="Answer with the reply and nothing else.",
-)
+    )
 
+
+REPLY_SYSTEM = _reply_system(READ_ONLY_TOOLS)
+REPLY_ACT_SYSTEM = _reply_system(PERSON_ACT_TOOLS)
 REPLY_TIMEOUT_S = 180
 REPLY_MAX_TURNS = 24
 REPLY_MAX_CHARS = 600
@@ -20688,8 +20739,8 @@ async def _reply_conversation(finding: dict, text: str) -> tuple[bool, str]:
         # `explain`, not `investigate`: an eighty-word answer to a question
         # somebody typed is the explain job's size, and the investigation
         # tier is for filing cases.
-        result = await _claude(
-            engine.run_analyst, prompt, REPLY_SYSTEM, eff_model(),
+        result = await _person_run(
+            prompt, REPLY_SYSTEM, REPLY_ACT_SYSTEM,
             REPLY_TIMEOUT_S, REPLY_MAX_TURNS, "resident", job="explain",
             priority=run_queue.PRESS)
     except Exception as exc:  # noqa: BLE001

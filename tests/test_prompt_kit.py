@@ -67,6 +67,9 @@ PROMPTS = [
     ("weekly", "SYSTEM", True, False),
     ("world_model", "SYSTEM", False, True),
     ("server", "REPLY_SYSTEM", True, False),
+    ("server", "REPLY_ACT_SYSTEM", True, False),
+    ("server", "MORPH_REPLY_SYSTEM", True, False),
+    ("server", "MORPH_REPLY_ACT_SYSTEM", True, False),
 ]
 
 

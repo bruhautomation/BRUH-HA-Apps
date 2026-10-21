@@ -98,8 +98,9 @@ class TestATellIsAConversation(unittest.TestCase):
         st = asyncio.run(from_the_wire())
         self.assertEqual("ui", st["scope"], "a target cannot claim the house scope over the wire")
         prompt = fake.seen[-1]["prompt"]
-        self.assertIn("MORPH ONLY — the dashboard and Morph itself", prompt)
-        self.assertIn("change the entity ID", prompt)
+        self.assertIn("Scope: everything the request needs", prompt)
+        self.assertIn("Never stop at the dashboard half", prompt)
+        self.assertNotIn("MORPH ONLY", prompt)
         self.assertIn("remember_fact", prompt, "a house fact goes to brAIn's memory, not LEARNED.md")
 
         env = self.env
