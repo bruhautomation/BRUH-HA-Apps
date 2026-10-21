@@ -535,8 +535,8 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
             "Home Assistant to change too (a template sensor the card reads, an automation or script a",
             "button runs, a helper, a renamed entity), make those changes as well, check them, and list each",
             "in home_assistant so Undo can hand it back. Never stop at the dashboard half. Leave alone",
-            "anything the request does not need. protected_entities still holds for acting on an entity;",
-            "showing one on the dashboard is fine.",
+            "anything the request does not need. protected_entities still holds. Showing a protected entity on the",
+            "dashboard is fine; acting on one is not.",
             "",
         ]
 
