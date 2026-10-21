@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+### Changed
+
+- **A Tell does the whole thing.** Asking for a card that needs a template sensor, an automation or a helper now gets all of it made, checked and listed so Undo can put it back, instead of the dashboard half and a note saying what you would have to do by hand. A number a card works out from other sensors becomes a template sensor rather than a question. Ask can change the dashboard too. With brAIn's "Let brAIn act without asking" on, both run with the chat's reach. Needs brAIn 3.5.0.
+
 ## 1.0.5
 
 ### Fixed

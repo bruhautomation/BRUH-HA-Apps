@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.5.0
+
+### Changed
+
+- **One brAIn, wherever you type to it.** "Let brAIn act without asking" used to reach only the chat and the terminal, so the same request got done in the chat and "I can't change anything here" one screen over. With it on, a reply typed under a notification on your phone, a reply under a card in Morph, and every task Morph or Design with brAIn hands over (Tell, Ask, the design chat) now have the chat's reach: every Home Assistant tool, shell commands and file edits, with no prompts. Turned off, they read only, as before. Runs nobody typed (cards, the overnight checks, the brief, an automation's `brain.run_task`) stay read-only either way, and protected entities, house rules and the tripwire still hold everywhere.
+
 ## 3.4.3
 
 ### Fixed
