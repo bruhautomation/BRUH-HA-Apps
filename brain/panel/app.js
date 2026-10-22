@@ -16546,7 +16546,10 @@ document.addEventListener("pointerdown", (e) => {
   clearTimeout(hold.timer);
   hold.x = e.clientX; hold.y = e.clientY; hold.target = e.target;
   hold.timer = setTimeout(() => {
-    const el = askableAt(hold.target);
+    // A poll can redraw the list under a still finger; ask what is there now.
+    const under = hold.target && hold.target.isConnected
+      ? hold.target : document.elementFromPoint(hold.x, hold.y);
+    const el = askableAt(under);
     if (!el) return;
     hold.fired = Date.now();
     openAskAbout(el, hold.x, hold.y);

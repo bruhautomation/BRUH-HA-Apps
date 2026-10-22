@@ -30,6 +30,8 @@ for (const { width, touch } of [{ width: 1200, touch: false }, { width: 390, tou
   const card = page.locator('#findList .qcard, #findList .case, #findList article').first();
   if (!(await card.count())) { note(where, 'no card on Today to press'); continue; }
   await card.scrollIntoViewIfNeeded();
+  // A scroll still settling cancels a hold, as it should; let it settle.
+  await page.waitForTimeout(300);
   const box = await card.boundingBox();
   const cx = box.x + Math.min(40, box.width / 2), cy = box.y + 20;
 
@@ -39,8 +41,8 @@ for (const { width, touch } of [{ width: 1200, touch: false }, { width: 390, tou
       const t = document.elementFromPoint(x, y);
       t.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, pointerType: 'touch' }));
     }, [cx, cy]);
-    await page.waitForTimeout(800);
-    if (!(await page.locator('#askAbout').count())) note(where, 'a press held still opened nothing');
+    const opened = await page.waitForSelector('#askAbout', { timeout: 3000 }).then(() => true, () => false);
+    if (!opened) note(where, 'a press held still opened nothing');
     await page.evaluate(() => document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })));
     await page.keyboard.press('Escape');
     // Moved: opens nothing.
