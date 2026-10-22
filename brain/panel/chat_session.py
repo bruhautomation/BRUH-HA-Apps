@@ -50,6 +50,7 @@ Design notes worth keeping:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import re
@@ -2383,7 +2384,12 @@ TERMINAL_START = os.environ.get("BRAIN_TERMINAL_START",
                                 "/usr/local/bin/brain-terminal-start")
 
 
-def _open_in_terminal(session_id: str) -> bool:
+# The longest first message a window may be opened with. A card's context is
+# a few hundred characters; this keeps a pasted log from becoming an argv.
+TERMINAL_PROMPT_MAX = 6000
+
+
+def _open_in_terminal(session_id: str = "", prompt: str = "") -> bool:
     """Leave the conversation where the terminal will pick it up, and — if
     the terminal is already running — open it there now.
 
@@ -2398,9 +2404,19 @@ def _open_in_terminal(session_id: str) -> bool:
     the file alone is enough to be correct, just not instant.
     """
     stamp = int(time.time())
-    payload = json.dumps({"session_id": session_id, "ts": stamp})
+    record = {"ts": stamp}
+    if session_id:
+        record["session_id"] = session_id
+    if prompt:
+        # Base64 so the words survive the shell's reading of the file: the
+        # terminal hands them to the CLI as its first message, never runs them.
+        text = str(prompt)[:TERMINAL_PROMPT_MAX]
+        record["prompt_b64"] = base64.b64encode(
+            text.encode("utf-8")).decode("ascii")
+    payload = json.dumps(record)
     _LAST_HANDOFF.clear()
-    _LAST_HANDOFF.update({"session_id": session_id, "ts": stamp})
+    if session_id:
+        _LAST_HANDOFF.update({"session_id": session_id, "ts": stamp})
     try:
         path = Path(HANDOFF_FILE)
         atomic_write.write_text(path, payload, mode=0o600)

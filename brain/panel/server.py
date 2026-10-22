@@ -21358,6 +21358,15 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
     is spawned asking before it acts, not respawned into it.
     """
     finding = _finding_or_404(request)
+    if settings_store.load().get("terminal_ui") == "classic":
+        # Ask is Claude Code's own terminal: the finding opens there as a new
+        # conversation whose first message is the card. It names no
+        # resolution tool, because the buttons it would offer belong to the
+        # chat renderer; the card's own presses stay on the card.
+        prompt = await asyncio.to_thread(_discuss_prompt, finding, False)
+        out = await _open_terminal("", prompt)
+        return web.json_response({**out, "finding": finding,
+                                  "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
     registry = _chat_registry()
     try:
@@ -23572,6 +23581,55 @@ def _chat_system_prompt(session) -> str:
 
 chat_session.PROMPT_PROVIDER = _chat_system_prompt
 
+# The terminal is the Ask tab's face now, and it is the SAME Claude Code the
+# chat ran: so it gets the same appended prompt. brain-terminal-start reads
+# this file as the session starts and passes it as --append-system-prompt,
+# which is how one identity reaches the terminal, a card's conversation and
+# a window opened by pressing and holding anything in the panel.
+TERMINAL_PROMPT_FILE = Path(os.environ.get(
+    "BRAIN_TERMINAL_PROMPT_FILE", "/data/brain-terminal-prompt.md"))
+
+
+def _write_terminal_prompt() -> bool:
+    """Write the terminal's appended prompt. Never raises."""
+    try:
+        text = _chat_system_prompt(None)
+        if not TERMINAL_PROMPT_FILE.parent.is_dir():
+            return False
+        atomic_write.write_text(TERMINAL_PROMPT_FILE, text, mode=0o644)
+        return True
+    except Exception as exc:  # noqa: BLE001 — a terminal without the
+        # appended prompt still has /config/CLAUDE.md; a refusal here must
+        # not stop the window opening.
+        log.warning("could not write the terminal prompt: %s", exc)
+        return False
+
+
+async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
+    """Open a Claude Code window in the terminal: on a conversation, with a
+    first message, or both. The window is a new tmux window, so whatever
+    the terminal is already doing is left where it is."""
+    if session_id and not chat_session.safe_id(session_id):
+        raise web.HTTPBadRequest(text="that is not a conversation id")
+    await asyncio.to_thread(_write_terminal_prompt)
+    opened = await asyncio.to_thread(
+        chat_session._open_in_terminal, session_id, prompt)
+    return {"ok": True, "opened": bool(opened), "session_id": session_id}
+
+
+async def h_terminal_open(request: web.Request) -> web.Response:
+    """POST {session_id?, prompt?}: open the terminal on a conversation, or
+    on a new one that starts with these words."""
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    session_id = str(body.get("session_id") or "").strip()
+    prompt = str(body.get("prompt") or "").strip()
+    return web.json_response(await _open_terminal(session_id, prompt))
+
 # What the context hook may hand one message, and how hard it looks.
 CHAT_CONTEXT_CHARS = 1500
 CHAT_CONTEXT_ENTITIES = 12
@@ -24708,6 +24766,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/stop", h_chat_stop)
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
+    app.router.add_post("/api/terminal/open", h_terminal_open)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/context", h_chat_context)

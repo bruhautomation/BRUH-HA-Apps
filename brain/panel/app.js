@@ -5858,13 +5858,19 @@ function openSnoozePop(anchor, f, btns) {
 async function discussFinding(f, btns) {
   btns.forEach((b) => { b.disabled = true; });
   try {
-    if (chatState.session === "classic") applyTermMode("chat");
     switchView("terminal");
     // Ask on a card opens the conversation about it, not the list.
     askShow("chat");
-    chatConnect();
-    await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
-    setChatFinding(f);
+    if (chatState.session !== "classic") chatConnect();
+    const out = await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
+    if (out && out.face === "terminal") {
+      // Claude Code's own terminal: the server opened a window whose first
+      // message is the card. The card's presses stay on the card.
+      showTerminalFrame();
+      toast("Opened in the terminal");
+    } else {
+      setChatFinding(f);
+    }
   } catch (e) {
     toast(e.message);
   } finally {
@@ -11691,6 +11697,7 @@ function switchView(name) {
       const frame = $("#termFrame");
       // Lazy: don't start a shell session for someone who never opens the tab.
       if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+      refreshChatRail();
     } else {
       chatConnect();
       restoreChatFinding();
@@ -12962,6 +12969,7 @@ $("#chatStop").addEventListener("click", async () => {
 });
 
 $("#chatNew").addEventListener("click", async () => {
+  if (chatState.session === "classic") { openInTerminal({}); return; }
   // Not "this is cleared and Claude forgets": Claude Code keeps the
   // conversation on disk and it stays in the list, so the honest cost is
   // that the next thing you say starts a separate one.
@@ -13697,6 +13705,10 @@ function renderChatRail() {
     if (c.view_only) {
       // A card or fix run: a record to read, never a place to type.
       btn.addEventListener("click", () => viewConversation(c));
+    } else if (chatState.session === "classic") {
+      // Claude Code's own terminal: the conversation opens in a new window
+      // there, resumed, and whatever the terminal was doing stays put.
+      btn.addEventListener("click", () => openInTerminal({ session_id: c.id }));
     } else if (here) {
       btn.addEventListener("click", () => askShow("chat"));
     } else {
@@ -13731,7 +13743,7 @@ function askOnList() {
 }
 
 function askShow(page) {
-  const list = page === "list" && askNarrow() && chatState.session !== "classic";
+  const list = page === "list" && askNarrow();
   document.body.classList.toggle("ask-list", list);
   if (list) refreshChatRail();
   renderChatHead();
@@ -14272,6 +14284,34 @@ document.addEventListener("click", (ev) => {
 // that happened to open it — and because ⚙ Settings is where someone will
 // go looking for it after switching by accident.
 
+// The terminal frame, loaded on first need. ttyd attaches to the one tmux
+// session, so a window the server just opened is what it shows.
+function showTerminalFrame() {
+  const frame = $("#termFrame");
+  if (frame && frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  document.body.classList.remove("ask-list");
+}
+
+// Open Claude Code in the terminal: on a conversation, with a first message,
+// or both. Every way into a conversation from the panel ends here — a row,
+// New, Discuss on a card, and pressing and holding anything.
+async function openInTerminal(body) {
+  if (chatState.session !== "classic") applyTermMode("classic");
+  switchView("terminal");
+  showTerminalFrame();
+  try {
+    const out = await api("api/terminal/open", {
+      method: "POST", body: JSON.stringify(body || {}) });
+    if (out && out.opened === false && body && (body.prompt || body.session_id)) {
+      // No tmux yet: the handoff file is read when the terminal first
+      // starts, which the frame above is doing now.
+      toast("Starting the terminal…");
+    }
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
 function applyTermMode(mode) {
   const classic = mode === "classic";
   chatState.session = classic ? "classic" : "chat";
@@ -14286,12 +14326,10 @@ function applyTermMode(mode) {
   const onTab = currentView === "terminal";
   if (classic) {
     chatDisconnect();
-    // One shell, no list: the list page is the chat face's alone.
-    document.body.classList.remove("ask-list");
-    const frame = $("#termFrame");
     // Lazy in both directions: no shell for someone who never opens the tab,
     // and no stream for a chat nobody is looking at.
-    if (onTab && frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+    if (onTab) showTerminalFrame();
+    refreshChatRail();
   } else if (onTab) {
     chatConnect();
   }
@@ -14301,7 +14339,7 @@ function applyTermMode(mode) {
 
 function syncTermMode() {
   const s = state.status;
-  const mode = (s && s.settings && s.settings.terminal_ui) || "chat";
+  const mode = (s && s.settings && s.settings.terminal_ui) || "classic";
   if (mode !== chatState.session) applyTermMode(mode);
 }
 
@@ -16347,3 +16385,189 @@ async function saveCameras() {
     picked.length ? `brAIn may look at ${picked.length} camera${picked.length > 1 ? "s" : ""}`
       : "brAIn will not look at any camera on its own");
 }
+
+// ------------------------------------------------- ask brAIn about anything
+//
+// Right-click, or press and hold on a touch screen, anywhere in the panel and
+// brAIn is asked about that thing: a card, a to-do, a fact, a setting, a row
+// of history. It opens a Claude Code conversation in the terminal whose first
+// message is what was pressed, so "you do this" works whether or not the
+// panel has a button for it — and when brAIn cannot, the conversation is
+// where it says whether that is a gap in brAIn (and offers to report it) or
+// something outside what it can reach.
+//
+// What it leaves alone: a text box (its own menu is the one wanted there), a
+// selection (copying it is), the terminal itself, a link, and shift+right
+// click, which is always the browser's.
+const HOLD_MS = 550;
+const HOLD_SLOP = 10;
+const ASK_TEXT_MAX = 1500;
+
+function askableAt(node) {
+  if (!(node instanceof Element)) return null;
+  if (node.closest("input, textarea, select, [contenteditable], iframe, a[href], #askAbout, .modal.open")) return null;
+  if (node.closest("#viewTerminal")) return null;
+  // A thing the panel draws as one: a card, a row of a list, a setting.
+  const known = node.closest("article, .card, .qcard, .todorow, .crrow, li, tr, "
+    + "label, .setgroup > *, .factrow, .hbentry, .histrow, details");
+  if (known && !known.matches(".view, main") && (known.innerText || "").trim().length >= 12) {
+    return known;
+  }
+  // Otherwise the smallest block that says something: walk up until there
+  // is enough text to be a thing, and stop before a whole page.
+  let el = node;
+  while (el && el !== document.body) {
+    if (el.matches(".view, main, .wrap, #app")) break;
+    const text = (el.innerText || "").trim();
+    const disp = getComputedStyle(el).display;
+    const block = disp !== "inline" && disp !== "contents";
+    if (block && text.length >= 40) return el;
+    el = el.parentElement;
+  }
+  return null;
+}
+
+function askContext(el) {
+  const text = (el.innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+  const ids = [];
+  for (let n = el; n && n !== document.body; n = n.parentElement) {
+    for (const [k, v] of Object.entries(n.dataset || {})) {
+      if (v && v.length < 80 && /^(ts|id|entity|case|view|kind|key|source|tab)/.test(k)) {
+        ids.push(`${k}=${v}`);
+      }
+    }
+    if (n.id && !/^(app|main)$/.test(n.id)) ids.push(`#${n.id}`);
+  }
+  const tab = document.querySelector(".viewtab.active");
+  const where = [tab && tab.innerText.trim(), currentView].filter(Boolean).join(" › ");
+  return {
+    where,
+    text: text.length > ASK_TEXT_MAX ? text.slice(0, ASK_TEXT_MAX) + "…" : text,
+    ids: [...new Set(ids)].slice(0, 12),
+  };
+}
+
+function askPrompt(ctx, words) {
+  const lines = [
+    `I'm in the brAIn panel (${ctx.where || "somewhere"}) and pointed at this:`,
+    "",
+    ctx.text.split("\n").map((l) => "> " + l).join("\n"),
+  ];
+  if (ctx.ids.length) lines.push("", `(on the page: ${ctx.ids.join(", ")})`);
+  lines.push("",
+    words ? words
+      : "Talk with me about it: what it is, what it means for the house, and what could be done.",
+    "",
+    "If I ask you to do something with it, do it, whether or not the panel "
+    + "has a button for it. If brAIn cannot do it, say whether that is a gap "
+    + "in brAIn itself (and offer to file it with report_bug) or something "
+    + "outside what brAIn can reach.");
+  return lines.join("\n");
+}
+
+function closeAskAbout() {
+  const box = $("#askAbout");
+  if (box) box.remove();
+}
+
+function openAskAbout(el, x, y) {
+  closeAskAbout();
+  const ctx = askContext(el);
+  if (!ctx.text) return;
+  el.classList.add("askflash");
+  setTimeout(() => el.classList.remove("askflash"), 900);
+  const box = el.ownerDocument.createElement("div");
+  box.id = "askAbout";
+  box.className = "askabout";
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-label", "Ask brAIn about this");
+  const head = el.ownerDocument.createElement("div");
+  head.className = "aahead";
+  head.textContent = "Ask brAIn about this";
+  const snippet = el.ownerDocument.createElement("div");
+  snippet.className = "aasnip";
+  const heading = el.querySelector("h1, h2, h3, h4, .qtitle, .title, .todotitle, .ctitle");
+  const firstLong = ctx.text.split("\n").map((l) => l.trim()).find((l) => l.length >= 16);
+  snippet.textContent = ((heading && heading.innerText.trim()) || firstLong
+    || ctx.text.split("\n")[0]).slice(0, 120);
+  const input = el.ownerDocument.createElement("textarea");
+  input.className = "aain";
+  input.rows = 2;
+  input.placeholder = "What do you want? (optional)";
+  const row = el.ownerDocument.createElement("div");
+  row.className = "aaacts";
+  const cancel = el.ownerDocument.createElement("button");
+  cancel.type = "button";
+  cancel.className = "btn small";
+  cancel.textContent = "Cancel";
+  const go = el.ownerDocument.createElement("button");
+  go.type = "button";
+  go.className = "btn small primary";
+  go.textContent = "Ask";
+  const send = () => {
+    const prompt = askPrompt(ctx, input.value.trim());
+    closeAskAbout();
+    openInTerminal({ prompt });
+  };
+  go.addEventListener("click", send);
+  cancel.addEventListener("click", closeAskAbout);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+    if (e.key === "Escape") closeAskAbout();
+  });
+  row.append(cancel, go);
+  box.append(head, snippet, input, row);
+  document.body.appendChild(box);
+  // Placed at the press, kept on the screen.
+  const r = box.getBoundingClientRect();
+  const left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+  const top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+  box.style.left = `${left}px`;
+  box.style.top = `${top}px`;
+  input.focus({ preventScroll: true });
+}
+
+document.addEventListener("contextmenu", (e) => {
+  if (e.shiftKey) return;
+  if (hold.fired && Date.now() - hold.fired < 1000) { e.preventDefault(); return; }
+  const sel = window.getSelection && String(window.getSelection() || "");
+  if (sel.trim()) return;
+  const el = askableAt(e.target);
+  if (!el) return;
+  e.preventDefault();
+  openAskAbout(el, e.clientX, e.clientY);
+});
+
+const hold = { timer: 0, x: 0, y: 0, fired: 0, target: null };
+document.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse") return;
+  clearTimeout(hold.timer);
+  hold.x = e.clientX; hold.y = e.clientY; hold.target = e.target;
+  hold.timer = setTimeout(() => {
+    const el = askableAt(hold.target);
+    if (!el) return;
+    hold.fired = Date.now();
+    openAskAbout(el, hold.x, hold.y);
+  }, HOLD_MS);
+}, { passive: true });
+for (const type of ["pointerup", "pointercancel"]) {
+  document.addEventListener(type, () => clearTimeout(hold.timer), { passive: true });
+}
+document.addEventListener("pointermove", (e) => {
+  if (Math.abs(e.clientX - hold.x) > HOLD_SLOP || Math.abs(e.clientY - hold.y) > HOLD_SLOP) {
+    clearTimeout(hold.timer);
+  }
+}, { passive: true });
+window.addEventListener("scroll", () => clearTimeout(hold.timer), { passive: true, capture: true });
+// The release after a hold is not a tap on whatever was held.
+document.addEventListener("click", (e) => {
+  if (hold.fired && Date.now() - hold.fired < 800 && !e.target.closest("#askAbout")) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true);
+document.addEventListener("pointerdown", (e) => {
+  const box = $("#askAbout");
+  if (box && !box.contains(e.target) && Date.now() - hold.fired > 800) closeAskAbout();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAskAbout(); });

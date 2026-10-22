@@ -816,7 +816,7 @@ class TestChatTerminalPanel(unittest.TestCase):
         self.assertIn("terminal_ui", self.js)
         store = (PANEL / "settings_store.py").read_text()
         self.assertIn('TERMINAL_UIS = ("chat", "classic")', store)
-        self.assertIn('"terminal_ui": "chat"', store)
+        self.assertIn('"terminal_ui": "classic"', store)
 
     def test_the_switch_is_also_where_the_terminal_is(self):
         """Nobody goes to Settings to change what they are looking at."""

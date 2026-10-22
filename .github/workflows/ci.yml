@@ -356,12 +356,17 @@ jobs:
 
       # ubuntu-latest ships a current Node; the scripts resolve Playwright
       # from the repo-root node_modules exactly as the README describes.
-      - name: Install Playwright
+      - name: Install Playwright (the runner's Chrome)
         if: env.GROUP_RUNS == 'true'
         run: |
           # Pinned: an unpinned install takes whatever npm published a minute ago, and a tarball the registry cannot serve yet fails this job before a single measure runs.
-          npm install playwright@1.62.1 --no-fund --no-audit
-          npx playwright install --with-deps chromium
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright@1.62.1 --no-fund --no-audit
+          # The runner image ships Google Chrome with every library it
+          # needs. Downloading Playwright's own Chromium with --with-deps
+          # ran apt on every group and was the slowest step in the job
+          # (up to eight minutes on a cold mirror); every measure honours
+          # CHROMIUM_PATH, so the browser that is already there is used.
+          echo "CHROMIUM_PATH=$(command -v google-chrome || command -v chromium)" >> "$GITHUB_ENV"
 
       # static-a: brAIn's static-fixture measures, first half (~65s).
 
@@ -392,6 +397,13 @@ jobs:
       - name: Measure the tooltips
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-tooltips.mjs
+
+      # Right-click or press and hold anything: the box opens at the press,
+      # Ask sends what was pressed to the terminal, and a text box or a
+      # shift+right-click keeps the browser's own menu.
+      - name: Measure Ask brAIn about this
+        if: matrix.group == 'static-a'
+        run: node tests/manual/measure-askabout.mjs
 
       - name: Measure the activity tab
         if: matrix.group == 'static-a'
@@ -652,7 +664,15 @@ jobs:
       # opened card that keeps its column — which only a browser can check.
       - name: Measure Morph's panel
         if: matrix.group == 'morph' && env.GROUP_RUNS == 'true'
-        run: node tests/manual/measure-morph.mjs
+        # Two processes, one width each: the fixture's house is module
+        # state, so the widths cannot share one process concurrently.
+        run: |
+          MORPH_ONLY=wide node tests/manual/measure-morph.mjs & wide=$!
+          MORPH_ONLY=phone node tests/manual/measure-morph.mjs & phone=$!
+          status=0
+          wait $wide || status=1
+          wait $phone || status=1
+          exit $status
 
       # taskmanager: BRUH Task Manager's real panel, twice — at Level 2 and at
       # Level 1 with Protection mode on — against a fake Supervisor and a

@@ -6736,3 +6736,69 @@ button.kfactsubj:hover { color: var(--accent-2);
 .kunmeasured { margin-top: var(--sp-3); }
 .kunmeasuredlist { margin: var(--sp-1) 0 0; padding-left: var(--sp-5);
   font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
+
+/* Ask is Claude Code's own terminal (terminal_ui: classic, the default from
+   4.0). Your conversations sit beside it on a wide screen, and a row opens
+   that conversation in a new terminal window; below the breakpoint ⋯ → Your
+   chats is the list page, as it is for the chat face. The chat face's own
+   menu items (its session details and model picker) and the switch back to
+   it are not offered: the terminal has /model and /status itself. */
+@media (min-width: 900px) {
+  body.term-classic:not(.term-immersive) #viewTerminal.active { display: flex; }
+  body.term-classic:not(.term-immersive) #viewTerminal.active .chatrail { display: flex; }
+  body.term-classic #viewTerminal.active #termFrame { flex: 1; min-width: 0; }
+}
+@media (max-width: 899px) {
+  body.term-classic.ask-list #viewTerminal.active .chatrail {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    border-right: 0;
+  }
+  body.term-classic.ask-list #viewTerminal.active #termFrame { display: none; }
+  body.term-classic.ask-list .crhead { padding-right: 108px; }
+}
+body.term-classic #termMode,
+body.term-classic #chatInfo,
+body.term-classic #chatModelPick { display: none; }
+
+/* Ask brAIn about this: right-click or press and hold anything. */
+.askabout {
+  position: fixed;
+  z-index: 1000;
+  width: min(360px, calc(100vw - 16px));
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.askabout .aahead { font-weight: 600; font-size: var(--fs-body); }
+.askabout .aasnip {
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.askabout .aain {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--plane);
+  color: var(--ink);
+  resize: vertical;
+}
+.askabout .aaacts { display: flex; justify-content: flex-end; gap: 8px; }
+.askabout .btn { min-height: 44px; }
+.askflash { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* A press-and-hold is brAIn's, not the phone's callout. */
+#app, .view { -webkit-touch-callout: none; }

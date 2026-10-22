@@ -505,6 +505,7 @@ class TestTheTerminalStartsWithTheCurrentValue(unittest.TestCase):
             "BRAIN_PERMS_ENV_FILE": str(root / "no-env"),
             "BRAIN_PERMS_LIB": str(LIB),
             "BRAIN_TERMINAL_HANDOFF": str(root / "no-handoff.json"),
+            "BRAIN_TERMINAL_PROMPT_FILE": str(root / "no-prompt.md"),
             "BRAIN_TASK_DIR": str(root / "tasks"),
             "CLAUDE_PROJECT_DIR": str(root),
         }
