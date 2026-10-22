@@ -5,9 +5,8 @@ The fixer's instructions say all of this too; this is the half that does
 not depend on a model reading them. It runs on pull requests whose head
 branch starts with `devloop/` and fails on any of:
 
-* a changed file under one of `.claude/devloop.json`'s `needs_human_paths`
-  (the base branch's copy is read, so a PR cannot loosen its own guard);
-* a change to a `version_only_files` file other than its version line;
+* a change to a `version_only_files` file other than its version line (the base
+  branch's `.claude/devloop.json` is read, so a PR cannot loosen it);
 * a deleted test file, or a line that skips or deletes a test;
 * a change to the add-ons' code (Python, shell, the integrations) with no
   change under `tests/`: the skill says "failing test first", and this is
@@ -33,7 +32,7 @@ CODE_RE = re.compile(
     r"^(?:brain/panel/.*\.py|brain/scripts/.*|brain/integrations/.*|"
     r"brain/custom_components/.*\.py|brain/ha-mcp-server/.*|"
     r"morph/service/.*\.py|morph/custom_components/.*\.py|"
-    r"bruh-print/.*\.py|bruh-bambu-studio/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py|"
+    r"bruh-print/.*\.py|bruh-bambu-studio/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py|bruh-task-manager/.*\.py|"
     r"gardenrx/(?:app/src|gateway)/.*\.(?:ts|tsx|mjs|js)|gardenrx/custom_components/.*\.py)$")
 
 
@@ -44,7 +43,6 @@ def git(*args: str) -> str:
 
 def main(base: str) -> int:
     config = json.loads(git("show", f"{base}:.claude/devloop.json"))
-    protected = config.get("needs_human_paths") or []
     version_only = set(config.get("version_only_files") or [])
     problems: list[str] = []
     code_changed: list[str] = []
@@ -53,9 +51,6 @@ def main(base: str) -> int:
         parts = line.split("\t")
         status, paths = parts[0], parts[1:]
         for path in paths:
-            if any(path == p or (p.endswith("/") and path.startswith(p))
-                   for p in protected):
-                problems.append(f"{path} is on needs_human_paths")
             if status.startswith("D") and path.startswith("tests/"):
                 problems.append(f"{path}: a test file was deleted")
             if path.startswith("tests/"):
@@ -87,7 +82,7 @@ def main(base: str) -> int:
     for p in problems:
         print(f"devloop-guard: {p}")
     if problems:
-        print("devloop-guard: this PR needs a person. Label it needs-human.")
+        print("devloop-guard: fix the rule this PR broke, then push again.")
         return 1
     print("devloop-guard: ok")
     return 0

@@ -1199,6 +1199,28 @@ simply because you prefer it.
 - **Built for a phone**, not merely tolerable on one: a key toolbar that stays above
   the software keyboard, working copy/paste, swipe-scroll, an iOS dictation fix, and
   a top bar that folds away while you're typing so the terminal gets the screen.
+- **Talk instead of typing.** On a phone, the classic terminal's toolbar has a
+  **🎤 Talk** button. Tap it, speak, and tap **■ Send**: what you said goes to
+  Claude Code's own voice mode (`/voice`), so it is transcribed the way it is
+  on a computer. The add-on has no microphone of its own, so the button sends
+  your phone's microphone to it while the button is red, and only then.
+  - The first press turns on voice mode in its **tap** setting (`/voice tap`)
+    if it is not on yet; press Talk again once Claude Code says it is enabled.
+    Tap mode is used because a phone cannot hold a key down. It also changes
+    the desktop terminal: there, tapping space with an empty prompt starts a
+    recording, which is how Claude Code's tap mode works. `/voice hold` or
+    `/voice off` puts it back, and the Talk button turns tap mode on again
+    when you next press it.
+  - Claude's prompt has to be empty when you press Talk, as it does for
+    voice mode on a computer.
+  - It needs Home Assistant over **https** (Nabu Casa, or your own
+    certificate): browsers only give a microphone to a secure page. In the
+    Companion app, Home Assistant needs the phone's microphone permission.
+  - Voice mode needs a **Claude account sign-in** (⚙ → Claude account). It
+    does not work with an API key. If the press does nothing, run `/voice` in
+    the terminal and Claude Code will say why.
+  - It is in the classic terminal only. The chat face is not Claude Code's
+    own screen, so it has no `/voice`.
 - **Sessions survive.** tmux underneath, so a dropped connection doesn't kill your
   work, and the environment persists across restarts.
 

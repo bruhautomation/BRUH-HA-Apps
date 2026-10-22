@@ -200,8 +200,23 @@ def unreachable(chan: str, why: str) -> int:
                         "here to ask, the action is refused", chan)
 
 
+# YOLO mode: the owner's opt-in to no restrictions. The panel writes "on"
+# here; this file is spelled the same in the panel and the MCP server.
+YOLO_FILE = os.environ.get("BRAIN_YOLO_FILE", "/config/.brain/yolo")
+
+
+def yolo_mode() -> bool:
+    try:
+        with open(YOLO_FILE, "r", encoding="utf-8") as fh:
+            return fh.read().strip() == "on"
+    except OSError:
+        return False
+
+
 def main(stdin=None) -> int:
     chan = channel()
+    if yolo_mode():
+        return 0      # YOLO mode: nothing is gated
     try:
         payload = json.load(stdin or sys.stdin)
     except (ValueError, OSError):

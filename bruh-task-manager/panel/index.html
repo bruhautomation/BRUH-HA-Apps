@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Manager</title>
+<!-- Every URL here is RELATIVE: ingress serves this page under
+     /api/hassio_ingress/<token>/, and an absolute /style.css is a request
+     to Home Assistant's own root. -->
+<link rel="icon" href="favicon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brandrow">
+    <h1>Task Manager</h1>
+    <span class="ver">v{{VERSION}}</span>
+    <span id="levelBadge" class="badge">Level 1</span>
+  </div>
+  <div id="machine" class="machine" aria-live="polite">
+    <div class="meter"><span class="mlabel">CPU</span><span id="mCpu" class="mval">–</span><svg id="mCpuSpark" class="spark" viewBox="0 0 60 20" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+    <div class="meter"><span class="mlabel">Memory</span><span id="mMem" class="mval">–</span><span id="mMemSub" class="msub"></span></div>
+    <div class="meter"><span class="mlabel">Load</span><span id="mLoad" class="mval">–</span><span id="mCpus" class="msub"></span></div>
+    <div class="meter"><span class="mlabel">Up</span><span id="mUp" class="mval">–</span></div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-view="apps" aria-selected="true">Apps</button>
+    <button class="tab" role="tab" data-view="processes" aria-selected="false">Processes</button>
+    <button class="tab" role="tab" data-view="settings" aria-selected="false">Settings</button>
+  </nav>
+</header>
+
+<main>
+  <div id="runawayBanner" class="banner warn" hidden></div>
+  <div id="errorBanner" class="banner" hidden></div>
+
+  <section id="viewApps" class="view">
+    <div class="toolbar">
+      <input id="appSearch" type="search" placeholder="Search apps" aria-label="Search apps">
+      <label class="sortlbl">Sort
+        <select id="appSort" aria-label="Sort apps">
+          <option value="cpu">CPU</option>
+          <option value="mem">Memory</option>
+          <option value="name">Name</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint">CPU is a share of the whole machine, measured by the Supervisor every few seconds. Stopped apps use nothing.</p>
+    <div id="appList" class="list"></div>
+  </section>
+
+  <section id="viewProcesses" class="view" hidden>
+    <div id="procOff" class="card" hidden>
+      <h2>Processes are Level 2</h2>
+      <p id="procOffSentence"></p>
+      <button class="btn primary" data-goto="settings">Open Level 2 settings</button>
+    </div>
+    <div id="procOn" hidden>
+      <div class="toolbar">
+        <input id="procSearch" type="search" placeholder="Search processes or apps" aria-label="Search processes">
+        <label class="check"><input id="showKernel" type="checkbox"> Kernel threads</label>
+      </div>
+      <p id="procHint" class="hint"></p>
+      <div id="procList" class="list"></div>
+    </div>
+  </section>
+
+  <section id="viewSettings" class="view" hidden>
+    <div class="card level2">
+      <h2>Level 2: show every process</h2>
+      <p id="l2Sentence" class="lead"></p>
+      <label class="switchrow">
+        <span><strong>Show every process</strong><span class="sub">Off by default. Read the list of every process on this machine and show each one's CPU and memory, grouped by the app it belongs to.</span></span>
+        <input id="optProcessView" type="checkbox" role="switch">
+      </label>
+      <ol class="steps" id="l2Steps">
+        <li data-step="option"><span class="tick"></span><span>Switched on here.</span></li>
+        <li data-step="protection_off"><span class="tick"></span><span>Protection mode turned <strong>off</strong> on this add-on's Info page. Only you can do this; the add-on cannot change it.</span></li>
+        <li data-step="visible"><span class="tick"></span><span>The add-on restarted since, so the change took effect.</span></li>
+      </ol>
+      <p><a id="infoLink" class="btn" target="_top" href="#">Open the add-on's Info page</a></p>
+      <details class="explain" open>
+        <summary>What turning Protection mode off does</summary>
+        <ul>
+          <li><strong>It lets this one add-on see every process</strong> on the machine and its command line: Home Assistant, the Supervisor, every app and the operating system. Command lines occasionally contain a password someone typed into a setting.</li>
+          <li><strong>It lets this add-on send signals to processes in other apps</strong>, which is how End process works. Ending the wrong thing can stop an app; ending part of the operating system can make the machine unreachable until it is switched off and on again. That is why End process is a separate switch, off by default, and is never offered for Home Assistant, the Supervisor or the operating system.</li>
+          <li><strong>It does not let it read other apps' passwords or tokens.</strong> Its security profile blocks reading another process's environment and memory, whatever Protection mode says.</li>
+          <li><strong>It does not open any network port</strong> and changes nothing about your other apps.</li>
+          <li>The Supervisor shows this add-on's security rating as 5 instead of 6, because it asked for the process list at all.</li>
+        </ul>
+        <p>When you are finished, switch Level 2 off here and turn Protection mode back on.</p>
+      </details>
+      <label class="switchrow" id="endRow">
+        <span><strong>Allow ending processes</strong><span class="sub">Offers End process on processes inside apps. It asks the process to stop first and offers Force end only if it is still running a few seconds later. Never offered for Home Assistant, the Supervisor, Supervisor plugins or the operating system; use Restart on the app for those.</span></span>
+        <input id="optEnding" type="checkbox" role="switch">
+      </label>
+      <label class="field">
+        <span>Never end these <span class="sub">One per line: a process name or an app slug. Wildcards work, for example mosquitto or *_frigate.</span></span>
+        <textarea id="optProtected" rows="3" spellcheck="false"></textarea>
+      </label>
+      <button id="saveProtected" class="btn">Save the list</button>
+    </div>
+
+    <div class="card">
+      <h2>Runaway apps</h2>
+      <p class="sub">An app using at least this share of the whole machine's CPU for this long is marked as running away, and the Home Assistant sensor turns on. Nothing is stopped automatically.</p>
+      <div class="row3">
+        <label class="field"><span>Threshold (% of CPU)</span><input id="optThreshold" type="number" min="10" max="100" inputmode="numeric"></label>
+        <label class="field"><span>For at least (minutes)</span><input id="optMinutes" type="number" min="1" max="240" inputmode="numeric"></label>
+        <label class="field"><span>Measure every (seconds)</span><input id="optSample" type="number" min="2" max="60" inputmode="numeric"></label>
+      </div>
+      <button id="saveRunaway" class="btn">Save</button>
+    </div>
+    <p id="settingsSource" class="hint"></p>
+  </section>
+</main>
+
+<dialog id="confirm" class="dialog">
+  <form method="dialog">
+    <h2 id="confirmTitle"></h2>
+    <ul id="confirmLines"></ul>
+    <div class="dialogbtns">
+      <button class="btn" value="cancel">Cancel</button>
+      <button id="confirmGo" class="btn danger" value="go">Go</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -153,6 +153,27 @@ tank-mix planner, and harvests — in the sidebar.
 
 📖 [add-on README](gardenrx/) · [full documentation](gardenrx/DOCS.md)
 
+### [BRUH Task Manager](bruh-task-manager/)
+
+> ⚠️ **Experimental.**
+
+**What is using your Home Assistant machine, and a way to stop it.** Task
+Manager for Home Assistant OS, in the sidebar.
+
+- **Every app** — CPU, memory, network and disk for each app, Home Assistant,
+  the Supervisor and its plugins, with Restart, Stop and Start that say what
+  they will cost before you press them
+- **Every process, if you choose** — Level 2 is off by default; switch it on
+  and turn the add-on's Protection mode off, and every process on the machine
+  is listed under the app it belongs to
+- **End process, carefully** — a separate switch, only for processes inside
+  apps, never Home Assistant or the operating system; it asks first and
+  offers Force end only if asking did not work
+- **Runaway apps** — an app pinned above a CPU threshold for too long is
+  marked, and a Home Assistant sensor turns on for your automations
+
+📖 [add-on README](bruh-task-manager/) · [full documentation](bruh-task-manager/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):

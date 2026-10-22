@@ -68,6 +68,8 @@ const EXTRA = `
       const body = await r.json();
       body.authenticated = true;
       body.auth_check = { state: 'failed', error: 'expired' };
+      // The Ask pane's list is the chat face's; the terminal face has none.
+      body.settings = Object.assign({}, body.settings, { terminal_ui: 'chat' });
       return answer(body);
     }
     return inner(url, opts);

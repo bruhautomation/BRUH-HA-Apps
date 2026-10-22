@@ -200,6 +200,7 @@ class RouteCase(unittest.IsolatedAsyncioTestCase):
 
 class TestDiscussLeavesABusyChatAnswering(RouteCase):
     async def test_discuss_opens_beside_an_answer_rather_than_over_it(self):
+        self.settings_store.save({"terminal_ui": "chat"})  # the chat face's Discuss
         os.environ["FAKE_CHAT_MODE"] = "slow"
         os.environ["FAKE_CHAT_DELAY"] = "2.5"
         busy = self.registry().attached()
@@ -229,6 +230,7 @@ class TestDiscussLeavesABusyChatAnswering(RouteCase):
                             for e in discussion.events))
 
     async def test_an_empty_chat_on_screen_is_reused_rather_than_spending_a_slot(self):
+        self.settings_store.save({"terminal_ui": "chat"})  # the chat face's Discuss
         before = self.registry().attached()
         entry, _ = findings_store.add("Freezer drifting warm",
                                       source="check:base.unusual")

@@ -49,9 +49,18 @@ if [ -r "$perms_lib" ]; then
         args=("$perms_flag" ${args[@]+"${args[@]}"})
     fi
 fi
+# brAIn's identity, the same appended prompt the panel's chat ran with
+# (server.TERMINAL_PROMPT_FILE, rewritten every time the panel opens a
+# window). A file that is not there is a terminal with /config/CLAUDE.md
+# alone, which is what it was before.
+prompt_file="${BRAIN_TERMINAL_PROMPT_FILE:-/data/brain-terminal-prompt.md}"
+if [ -s "$prompt_file" ] && [ -r "$prompt_file" ]; then
+    args+=(--append-system-prompt "$(cat "$prompt_file")")
+fi
 set -- ${args[@]+"${args[@]}"}
 
 resume_id=""
+first_prompt=""
 
 if [ -r "$HANDOFF_FILE" ]; then
     # Consume it first, whatever happens next: a handoff that fails to
@@ -68,17 +77,36 @@ if [ -r "$HANDOFF_FILE" ]; then
     candidate=$(printf '%s' "$handoff" \
         | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]*\)".*/\1/p')
 
-    if [ -n "$candidate" ] && [ "$age" -ge 0 ] && [ "$age" -le "$HANDOFF_MAX_AGE" ]; then
-        resume_id="$candidate"
-        echo "Picking up the conversation from the chat tab…"
+    # What to say first, when the panel opened this window to talk about
+    # something (a card pressed and held, Discuss on a finding). Base64 so
+    # the words survive any quote or newline they carry; it is handed to
+    # the CLI as its first message, never run as a command.
+    prompt_b64=$(printf '%s' "$handoff" \
+        | sed -n 's/.*"prompt_b64"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9+\/=]*\)".*/\1/p')
+
+    if [ "$age" -ge 0 ] && [ "$age" -le "$HANDOFF_MAX_AGE" ]; then
+        if [ -n "$candidate" ]; then
+            resume_id="$candidate"
+            echo "Opening that conversation…"
+        fi
+        if [ -n "$prompt_b64" ]; then
+            first_prompt=$(printf '%s' "$prompt_b64" | base64 -d 2>/dev/null)
+        fi
     fi
+fi
+
+if [ -n "$first_prompt" ]; then
+    # A message opening with "-" would be read as a flag; a leading space
+    # keeps it a message and costs the conversation nothing.
+    case "$first_prompt" in -*) first_prompt=" $first_prompt" ;; esac
+    set -- "$@" "$first_prompt"
 fi
 
 if [ -n "$resume_id" ]; then
     # --resume can fail (the CLI pruned it, or it is from an incompatible
     # version). Falling through to a normal session beats a terminal that
     # exits on open.
-    "$CLAUDE_RUN" "$@" --resume "$resume_id" && exit 0
+    "$CLAUDE_RUN" --resume "$resume_id" "$@" && exit 0
     echo "That conversation could not be resumed — starting a new session."
 fi
 

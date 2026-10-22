@@ -33,6 +33,7 @@ ADDONS = {
     "bruh-bambu-studio": os.path.join(BASE_DIR, "bruh-bambu-studio"),
     "morph": os.path.join(BASE_DIR, "morph"),
     "gardenrx": os.path.join(BASE_DIR, "gardenrx"),
+    "bruh-task-manager": os.path.join(BASE_DIR, "bruh-task-manager"),
 }
 
 
@@ -485,6 +486,8 @@ class TestWatchdog(unittest.TestCase):
             # GardenRX is a Next.js app: the route is a file under app/api.
             "gardenrx": os.path.join(ADDONS["gardenrx"], "app", "src", "app",
                                      "api", "health", "route.ts"),
+            "bruh-task-manager": os.path.join(
+                ADDONS["bruh-task-manager"], "panel", "server.py"),
         }
         for slug, path in panels.items():
             with self.subTest(addon=slug):
@@ -564,6 +567,9 @@ class TestIntegrationManifests(unittest.TestCase):
             "manifest.json"),
         "morph": os.path.join(
             ADDONS["morph"], "custom_components", "morph", "manifest.json"),
+        "bruh_task_manager": os.path.join(
+            ADDONS["bruh-task-manager"], "custom_components",
+            "bruh_task_manager", "manifest.json"),
     }
 
     def _load(self, path):
@@ -646,15 +652,26 @@ class TestSecurityRating(unittest.TestCase):
             score -= 2
         return max(1, min(6, score))
 
+    # The add-ons that rate below 6 ON PURPOSE, and why. Anything not listed
+    # must rate 6; a listed one must rate exactly what is written here, so a
+    # further drop is still a failure rather than something this excuses.
+    #
+    # BRUH Task Manager asks for `host_pid` (-2), which the Supervisor scores
+    # on the manifest whether or not Protection mode lets it take effect, and
+    # for the manager role (-1), the narrowest role that may restart another
+    # app. Level 2 is the feature; its Settings page says the rating is 5.
+    EXPECTED_BELOW_SIX = {"bruh-task-manager": 5}
+
     def test_both_addons_rate_six(self):
         for slug, addon_dir in ADDONS.items():
             with self.subTest(addon=slug):
                 config = load_config(addon_dir)
                 has_profile = os.path.isfile(
                     os.path.join(addon_dir, "apparmor.txt"))
+                expected = self.EXPECTED_BELOW_SIX.get(slug, 6)
                 self.assertEqual(
-                    6, self.rating(config, has_profile),
-                    f"{slug} no longer rates 6/6 in the add-on store",
+                    expected, self.rating(config, has_profile),
+                    f"{slug} no longer rates {expected} in the add-on store",
                 )
 
 

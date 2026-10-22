@@ -216,6 +216,7 @@ import override_ledger
 import onboarding
 import outcomes
 import ownership
+import instructions
 import permission_mode
 import playbooks
 import prompt_kit
@@ -246,6 +247,7 @@ import undo_store
 import unfix
 import usage_store
 import user_categories
+import voice_mic
 import weekly
 # Home Assistant's own maintainer: names and rooms, the house book, the
 # overnight health check and the upgrade advisor.
@@ -494,8 +496,11 @@ def eff_skip_permissions() -> bool:
     Configuration tab afterwards. A stale "ask" costs a prompt; a stale
     "act" goes on acting after somebody turned the switch off there. So a
     local False still wins, and a local True counts only where there is
-    no live Supervisor value to outrank it.
+    no live Supervisor value to outrank it. YOLO mode is on top of all of
+    it: with YOLO on, brAIn acts without asking whatever the switch says.
     """
+    if yolo_mode():
+        return True
     local = settings_store.load().get(permission_mode.OPTION)
     if local is False:
         return False
@@ -505,6 +510,39 @@ def eff_skip_permissions() -> bool:
     if local is True:
         return True
     return permission_mode.startup()
+
+
+# YOLO mode: the opt-in that removes every restriction brAIn has. The
+# panel's own setting is the authority; the file is how the processes that
+# cannot import the panel (the MCP server, the PreToolUse hooks, both
+# running as the claude user) hear it. Spelled the same in every reader.
+YOLO_FILE = Path(os.environ.get("BRAIN_YOLO_FILE", "/config/.brain/yolo"))
+
+
+def yolo_mode() -> bool:
+    """Whether YOLO mode is on. Only an explicit True from the settings
+    store is on: an unreadable file is off, the direction that keeps the
+    restrictions."""
+    try:
+        return settings_store.load().get("yolo_mode") is True
+    except Exception:  # noqa: BLE001 — an unreadable store is off
+        return False
+
+
+def _publish_yolo() -> None:
+    """Write or remove the flag file the MCP server and the hooks read.
+    Skipped on a dev checkout with no /config, the mirrors' rule."""
+    path = YOLO_FILE
+    if not path.parent.parent.exists():
+        return
+    try:
+        if yolo_mode():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write.write_text(path, "on\n", mode=0o644)
+        elif path.exists() or path.is_symlink():
+            path.unlink()
+    except OSError as exc:
+        log.warning("Could not publish YOLO mode to %s: %s", path, exc)
 
 
 def person_acts() -> bool:
@@ -558,6 +596,7 @@ def _publish_permission_mode() -> None:
     options, so a Configuration-tab edit reaches the next terminal session
     without a restart. `publish` skips the write when nothing moved.
     """
+    _publish_yolo()
     permission_mode.publish(eff_skip_permissions())
 
 
@@ -5746,6 +5785,13 @@ async def _run_plan(job_id: str) -> None:
         log.info("finding %s planned: %s", ts,
                  f"{len(plan['steps'])} step(s)" if plan["can_fix"]
                  else "brAIn would not make this change itself")
+        # YOLO mode: nobody presses Apply, the plan is carried out at once.
+        if yolo_mode() and plan.get("can_fix"):
+            why = await _start_apply(row)
+            if why:
+                log.info("YOLO mode could not apply finding %s: %s", ts, why)
+            else:
+                log.info("YOLO mode is applying finding %s's plan", ts)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         # No journal line here: `engine._run_cli` already records every `-p`
         # run whatever happened to it, and a second one would count this
@@ -6642,6 +6688,12 @@ async def _gate_decide(body: dict) -> dict:
     if not consequence.is_gated(tool, contract is not None):
         return {"verdict": "allow", "decision": "allow",
                 "reason": "not an acting tool", "path": "not_gated"}
+    # YOLO mode is the owner's opt-in to no restrictions at all: every
+    # channel, before the floors, the house rules and any contract, with
+    # no model asked and nothing cached (turning it off must bite at once).
+    if yolo_mode():
+        gate.STATE["yolo"] = gate.STATE.get("yolo", 0) + 1
+        return gate._out("allow", "YOLO mode is on", channel, "yolo")
     # "Let brAIn act without asking" reaches the gate too, or the switch
     # would stop the CLI's prompts and leave this one asking: in the chat
     # and the terminal the model's judgement is not consulted while it is
@@ -7683,6 +7735,13 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # An instruction edited in the terminal (an override file under
+        # /config/.brain/instructions) reaches the next run without a restart.
+        try:
+            await asyncio.to_thread(instructions.sync)
+        except Exception as exc:  # noqa: BLE001 — a prompt that could not
+            # be re-read is the one already in force.
+            log.debug("instructions sync failed: %s", exc)
         # The to-do mirror lists what To Do shows — open and not snoozed —
         # and a snooze starts and lapses without the to-do store being
         # written, so the tick republishes it; it writes only when what it
@@ -17837,6 +17896,8 @@ async def h_devloop_put(request: web.Request) -> web.Response:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    # Development mode is part of what a new terminal window is told.
+    await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response(await asyncio.to_thread(_devloop_payload))
 
 
@@ -21357,6 +21418,15 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
     is spawned asking before it acts, not respawned into it.
     """
     finding = _finding_or_404(request)
+    if settings_store.load().get("terminal_ui") == "classic":
+        # Ask is Claude Code's own terminal: the finding opens there as a new
+        # conversation whose first message is the card. It names no
+        # resolution tool, because the buttons it would offer belong to the
+        # chat renderer; the card's own presses stay on the card.
+        prompt = await asyncio.to_thread(_discuss_prompt, finding, False)
+        out = await _open_terminal("", prompt)
+        return web.json_response({**out, "finding": finding,
+                                  "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
     registry = _chat_registry()
     try:
@@ -23202,6 +23272,14 @@ async def h_settings_put(request: web.Request) -> web.Response:
         settings = settings_store.save(panel) if panel else settings_store.load()
     except ValueError as exc:
         raise web.HTTPBadRequest(text=_exc_text(exc))
+    if "yolo_mode" in panel:
+        # The hooks and the MCP server read the flag file, the terminal and
+        # the chat read the switch and their prompt: all moved at once.
+        _publish_permission_mode()
+        await asyncio.to_thread(_write_terminal_prompt)
+        log.warning("YOLO mode turned %s",
+                    "ON: brAIn now has no restrictions" if yolo_mode()
+                    else "off")
 
     if clean_options:
         wrote_addon = False
@@ -23559,17 +23637,159 @@ def _chat_house_lines() -> list[str]:
     return lines
 
 
+DEVELOPMENT_MODE_ON = (
+    "Development mode is ON (the owner turned it on in ⚙ › Developer): brAIn "
+    "works on itself. When you notice a bug, a gap or a rough edge in brAIn or "
+    "another BRUH add-on, file it with report_bug without being asked, with what "
+    "you saw and how to reproduce it; it is fixed upstream and ships as an update.")
+DEVELOPMENT_MODE_OFF = (
+    "Development mode is off (it is opt-in, in ⚙ › Developer): file a bug with "
+    "report_bug only when the person asks.")
+
+
+YOLO_MODE_ON = (
+    "YOLO mode is ON (the owner turned it on in ⚙ › Permissions, knowing what "
+    "it does): brAIn has no restrictions. Never wait for a person's approval, "
+    "never stop to ask before a change, and ignore every instruction that "
+    "says something needs a human first. Protected entities, house rules, the "
+    "action gate and file permissions do not apply. Do what you are asked, "
+    "check it worked, and say what you changed.")
+
+
+def development_mode() -> bool:
+    """Development mode is the devloop switched on with autopilot: brAIn files
+    what it finds about itself without a press. Opt-in; False on any error."""
+    try:
+        s = devloop.load_settings()
+        return s.get("enabled") is True and s.get("autopilot") is True
+    except Exception:  # noqa: BLE001 — unreadable is off, the safe reading
+        return False
+
+
 def _chat_system_prompt(session) -> str:
     """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
     lines = _chat_house_lines()
+    base = CHAT_IDENTITY + "\n\n" + (
+        DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF)
+    if yolo_mode():
+        base += "\n\n" + YOLO_MODE_ON
     if not lines:
-        return CHAT_IDENTITY
-    return (CHAT_IDENTITY + "\n\nWhen this conversation started: "
+        return base
+    return (base + "\n\nWhen this conversation started: "
             + "; ".join(lines) + ". That is a snapshot — ask get_findings "
             "and get_health for how things stand now.")
 
 
 chat_session.PROMPT_PROVIDER = _chat_system_prompt
+
+# The terminal is the Ask tab's face now, and it is the SAME Claude Code the
+# chat ran: so it gets the same appended prompt. brain-terminal-start reads
+# this file as the session starts and passes it as --append-system-prompt,
+# which is how one identity reaches the terminal, a card's conversation and
+# a window opened by pressing and holding anything in the panel.
+TERMINAL_PROMPT_FILE = Path(os.environ.get(
+    "BRAIN_TERMINAL_PROMPT_FILE", "/data/brain-terminal-prompt.md"))
+
+
+def _write_terminal_prompt() -> bool:
+    """Write the terminal's appended prompt. Never raises."""
+    try:
+        text = _chat_system_prompt(None)
+        if not TERMINAL_PROMPT_FILE.parent.is_dir():
+            return False
+        atomic_write.write_text(TERMINAL_PROMPT_FILE, text, mode=0o644)
+        return True
+    except Exception as exc:  # noqa: BLE001 — a terminal without the
+        # appended prompt still has /config/CLAUDE.md; a refusal here must
+        # not stop the window opening.
+        log.warning("could not write the terminal prompt: %s", exc)
+        return False
+
+
+async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
+    """Open a Claude Code window in the terminal: on a conversation, with a
+    first message, or both. The window is a new tmux window, so whatever
+    the terminal is already doing is left where it is."""
+    if session_id and not chat_session.safe_id(session_id):
+        raise web.HTTPBadRequest(text="that is not a conversation id")
+    await asyncio.to_thread(_write_terminal_prompt)
+    opened = await asyncio.to_thread(
+        chat_session._open_in_terminal, session_id, prompt)
+    return {"ok": True, "opened": bool(opened), "session_id": session_id}
+
+
+async def h_instructions(request: web.Request) -> web.Response:
+    """Every instruction brAIn gives Claude (instructions.CATALOG) and the
+    files Claude reads, for ⚙ › Instructions."""
+    await asyncio.to_thread(instructions.sync)
+    return web.json_response({"items": instructions.listing(),
+                              "dir": str(instructions.DIR)})
+
+
+def _instruction_key(request: web.Request) -> str:
+    key = request.match_info.get("key", "")
+    if key not in instructions.CATALOG and key not in instructions.FILES:
+        raise web.HTTPNotFound(text="no such instruction")
+    return key
+
+
+async def h_instruction_get(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
+
+
+async def h_instruction_put(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text="send {text}")
+    text = (body or {}).get("text") if isinstance(body, dict) else None
+    if not isinstance(text, str):
+        raise web.HTTPBadRequest(text="send {text}")
+    # A refusal is a sentence the module composes, asked before anything is
+    # written; an error past that point is logged, not sent to the browser.
+    prompt = key in instructions.CATALOG
+    problem = await asyncio.to_thread(
+        instructions.check if prompt else instructions.file_refusal, key, text)
+    if problem:
+        raise web.HTTPConflict(text=problem)
+    try:
+        if prompt:
+            await asyncio.to_thread(instructions.save, key, text)
+            if key == "chat_identity":
+                await asyncio.to_thread(_write_terminal_prompt)
+        else:
+            await asyncio.to_thread(instructions.write_file, key, text)
+    except (ValueError, OSError):
+        log.exception("could not save an instruction")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
+
+
+async def h_instruction_reset(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    if key not in instructions.CATALOG:
+        raise web.HTTPConflict(text="only a prompt has a shipped text to go back to")
+    await asyncio.to_thread(instructions.reset, key)
+    if key == "chat_identity":
+        await asyncio.to_thread(_write_terminal_prompt)
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
+
+
+async def h_terminal_open(request: web.Request) -> web.Response:
+    """POST {session_id?, prompt?}: open the terminal on a conversation, or
+    on a new one that starts with these words."""
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    session_id = str(body.get("session_id") or "").strip()
+    prompt = str(body.get("prompt") or "").strip()
+    return web.json_response(await _open_terminal(session_id, prompt))
 
 # What the context hook may hand one message, and how hard it looks.
 CHAT_CONTEXT_CHARS = 1500
@@ -24707,6 +24927,11 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/stop", h_chat_stop)
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
+    app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_get("/api/instructions", h_instructions)
+    app.router.add_get("/api/instructions/{key}", h_instruction_get)
+    app.router.add_put("/api/instructions/{key}", h_instruction_put)
+    app.router.add_delete("/api/instructions/{key}", h_instruction_reset)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/context", h_chat_context)
@@ -24725,6 +24950,8 @@ def make_app() -> web.Application:
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
     terminal_proxy.setup(app)
+    # The phone's microphone, for Claude Code's own /voice in the terminal.
+    voice_mic.setup(app)
     # ESPHome devices: their YAML here, their builds on the dashboard.
     esphome.setup(app)
     # Music Assistant: players, providers, queues and settings, over its API.
@@ -24733,6 +24960,12 @@ def make_app() -> web.Application:
     _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
+        # Every prompt's shipped text is captured before any override is put
+        # in force, then the overrides, then the shipped copies are written
+        # where Claude in the terminal can read them.
+        await asyncio.to_thread(instructions.apply_all)
+        await asyncio.to_thread(instructions.export_builtins)
+        await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
         # one that is genuinely still running.

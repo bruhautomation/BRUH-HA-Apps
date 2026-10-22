@@ -1,0 +1,114 @@
+#include <tunables/global>
+
+# AppArmor profile for BRUH Task Manager.
+#
+# What this add-on reaches for
+# ----------------------------
+# 1. /proc, read. That is how it measures every process when Level 2 is on
+#    (and the machine's CPU, memory and load at every level).
+# 2. Signals, sent. That is how End process works. AppArmor also asks the
+#    RECEIVING process's profile, so an app whose own profile refuses signals
+#    from other profiles cannot be ended from here — the panel reports that
+#    refusal in words and offers Restart app instead.
+#
+# What it must never reach for
+# ----------------------------
+# Another process's environment and memory. With Level 2 on this container
+# shares the host's process list, and /proc/<pid>/environ is where every
+# other app keeps its Supervisor token and API keys. The panel never opens
+# those files; the denials below make that a property of the kernel rather
+# than a promise in the code.
+
+profile bruh-task-manager flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Other processes' secrets — denied outright
+  # ------------------------------------------------------------------
+  deny @{PROC}/*/environ rwklx,
+  deny @{PROC}/*/task/*/environ rwklx,
+  deny @{PROC}/*/mem rwklx,
+  deny @{PROC}/*/task/*/mem rwklx,
+  deny @{PROC}/*/root/** rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # `kill` is the one this add-on exists for. No sys_ptrace: reading a
+  # process's numbers needs ordinary read access to /proc, and tracing one is
+  # not something a task manager does.
+  capability kill,
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability setgid,
+  capability setuid,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # /proc and /sys, read. Named even though `file,` covers them, because
+  # this is the permission that distinguishes this add-on.
+  @{PROC}/** r,
+  /sys/fs/cgroup/** r,
+
+  # /config (integration deploy, the state mirror) and /data.
+  file,
+
+  # Signals: send to any process (End process), receive from our own.
+  signal (send),
+  signal (receive) peer=bruh-task-manager,
+
+  # Reading smaps_rollup (proportional memory) needs ptrace READ access,
+  # which the TARGET's profile must also grant. Most will not, and the panel
+  # falls back to resident memory, which needs nothing.
+  ptrace (read),
+  ptrace (trace,read) peer=bruh-task-manager,
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  /** ix,
+}

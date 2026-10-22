@@ -2,6 +2,42 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.0
+
+### Added
+
+- **YOLO mode: brAIn with no restrictions at all.** ⚙ › Permissions › **YOLO mode** is off by default and asks once before it turns on. While it is on, brAIn may do anything, anywhere, without asking:
+  - every channel is allowed by the action gate, before the protected list, the tripwire, house rules or a fix's contract are checked;
+  - the MCP server stops refusing (protected entities, voice limits, events, cameras);
+  - the shell guard stops refusing;
+  - the terminal and the chat stop asking;
+  - a fix plan is applied as soon as it is written, with nobody pressing Apply;
+  - every Claude session is told never to wait for a person's approval.
+
+  Turning it off brings every restriction back at once. Edits are still snapshotted, so `brain undo` still works.
+
+### Changed
+
+- **The development loop has no files a person must approve.** `needs_human_paths` is gone from `.claude/devloop.json`, the guard and the fix-from-house skill; the cloud fixer may change any file, and an issue it cannot fix is closed declined with the plan.
+
+## 3.7.0
+
+### Added
+
+- **Every instruction brAIn gives Claude, in one place you can read and change.** ⚙ › **Instructions** lists every prompt brAIn sends (the chat's identity, how cards are written, the first look and the investigation, the fix plan, the brief, the weekly report and the rest) and the files Claude reads (CLAUDE.md and your notes block in it, memory, Morph's AGENTS.md and LEARNED.md). Open one to read it in full, change it and **Save**: every later run of that kind is sent your version, and **Restore** puts brAIn's own back. A change that drops a placeholder brAIn fills in is refused with the placeholder named. **Ask** opens Claude Code on that instruction, so you can ask what it makes brAIn do or have Claude change it for you. Your versions live in `/config/.brain/instructions`, brAIn's own beside them in `builtin/`, and an edit made there in the terminal is picked up within a minute.
+- **Right-click, or press and hold, anything in brAIn to ask about it.** A box asks what you want, and a Claude Code window opens quoting what you pressed. Claude is told to do it whether or not there is a button for it, and to say when it is something brAIn cannot do yet.
+
+### Changed
+
+- **Ask is Claude Code's own terminal.** The Ask tab opens the real interactive Claude Code by default, with your conversations listed beside it; a row opens that conversation in a new window and New starts a fresh one. Every window is told the same things the chat was, so it is one brAIn. Discussing a card opens a window whose first message is the card. You can switch back to the chat view under ⚙ › Permissions › Ask tab.
+- **Development mode.** The devloop's Autopilot switch is now **Development mode** (⚙ › Developer, off by default). While it is on, brAIn works on itself: it looks over its own code and how it behaves in your house, files what it finds as issues without waiting for Send, and every Claude Code session here is told to report bugs it notices without being asked. CLAUDE.md says near the top whether it is on.
+
+## 3.6.0
+
+### Added
+
+- **Talk to Claude from your phone, with Claude Code's own voice mode.** The classic terminal's phone toolbar has a **🎤 Talk** button next to ESC. Tap it, speak, and tap **■ Send**: your phone's microphone goes to Claude Code's built-in `/voice` dictation, and the transcription is Claude Code's own. Claude Code records the machine it runs on and the add-on has no microphone, so the button streams the phone's mic to the panel, and an `arecord` stand-in inside the add-on hands it to the CLI. The first press turns on voice mode in its tap setting (`/voice tap`) if it isn't on already. It needs Home Assistant over https (Nabu Casa, or your own certificate), microphone permission for Home Assistant (in the Companion app, the app's microphone permission), and a Claude account sign-in, because voice mode does not work with an API key.
+
 ## 3.5.0
 
 ### Changed

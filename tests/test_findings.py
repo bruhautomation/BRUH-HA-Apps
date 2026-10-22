@@ -1972,6 +1972,7 @@ class TestSnoozeAndDiscussRoutes(ServerCase):
                            fix="Invert the condition", entity_id="light.porch")
         ts = findings_store.list_all()[0]["ts"]
         sent = []
+        settings_store.save({"terminal_ui": "chat"})  # the chat face's Discuss
 
         async def run():
             import chat_session

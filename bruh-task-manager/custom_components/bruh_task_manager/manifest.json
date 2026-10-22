@@ -1,0 +1,13 @@
+{
+  "domain": "bruh_task_manager",
+  "name": "BRUH Task Manager",
+  "codeowners": ["@bruhautomation"],
+  "config_flow": true,
+  "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-task-manager",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.1"
+}

@@ -87,7 +87,7 @@ window.fetch = async (url, opts = {}) => {
     return answer({
       version: 'test', authenticated: true, auth_type: 'oauth',
       auth_source: 'panel', auth_check: { state: 'ok', error: '' },
-      model: 'default', settings: {}, usage: {}, auto: {},
+      model: 'default', settings: { terminal_ui: 'chat' }, usage: {}, auto: {},
       categories: [], jobs: {}, queue_size: 0, findings_open: 0,
     });
   }

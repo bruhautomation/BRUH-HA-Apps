@@ -112,6 +112,25 @@ time limit and a cap on what it may write. That check is a guard against a
 model wandering, not a sandbox against an adversary: the words that drive it
 come from an admin, in a panel only an admin can open.
 
+**BRUH Task Manager** asks for `hassio_role: manager`, the narrowest role
+that can restart or stop another app, and for `host_pid: true`. The
+Supervisor only applies `host_pid` while the user has switched the add-on's
+**Protection mode off**; with it on (the default) the container has its own
+process list like any other. Its own `process_view` option is off by
+default too, so nothing reads the host's processes until a person has
+turned both switches. With both on it can see every process on the machine
+and its command line, and send signals; its AppArmor profile denies reading
+any other process's environment or memory (`/proc/*/environ`, `/proc/*/mem`,
+`/proc/*/root`), so other apps' tokens stay out of reach, and the kernel
+also asks the receiving app's profile before a signal is delivered. End
+process is a third switch, off by default, and is refused in code for Home
+Assistant, the Supervisor, its plugins, the operating system, the kernel,
+any container it cannot name, and each app's own init. The panel runs as
+root so a signal can reach root processes; no port is published, ingress is
+authenticated and the panel is `panel_admin: true`. The add-on rates 5 in
+the store rather than 6, which is `host_pid`'s cost and is said on its
+Settings page.
+
 Things we consider vulnerabilities:
 
 - Any management endpoint answering a caller who has not authenticated to
@@ -150,6 +169,11 @@ Things that are working as intended, and are documented rather than fixed:
   why it is worth reporting.
 - BRUH Print writes to whatever DYMO printer is on the USB bus. It has no
   way to authenticate to one; USB printers do not offer that.
+- BRUH Task Manager with Level 2 on and Protection mode off can see every
+  process's command line, which occasionally carries a password somebody
+  typed into an app's setting. That is what showing a process means; the
+  Settings page says so before the switch is turned on, and the environment
+  and memory, where secrets usually live, stay denied.
 
 ## Hardening we already apply
 

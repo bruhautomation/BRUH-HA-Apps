@@ -50,6 +50,7 @@ jobs:
       print: ${{ steps.scope.outputs.print }}
       morph: ${{ steps.scope.outputs.morph }}
       gardenrx: ${{ steps.scope.outputs.gardenrx }}
+      taskmanager: ${{ steps.scope.outputs.taskmanager }}
     steps:
       - uses: actions/checkout@v7
 
@@ -78,6 +79,7 @@ jobs:
               echo "print=true"
               echo "morph=true"
               echo "gardenrx=true"
+              echo "taskmanager=true"
             } >> "$out"
             echo "Everything runs: $1" >> "$summary"
             exit 0
@@ -146,6 +148,7 @@ jobs:
           narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
           narrow "Morph" morph test_morph_
           narrow "GardenRX" gardenrx test_gardenrx_
+          narrow "BRUH Task Manager" bruh-task-manager test_task_manager_
 
           # The two layout groups that boot an add-on's panel run when that
           # add-on or one of the files only that group reads changed. The
@@ -166,8 +169,12 @@ jobs:
           if grep -qE '^(gardenrx/|tests/manual/measure-gardenrx-cards\.mjs)' <<<"$changed"; then
             gardenrx=true
           fi
-          echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph gardenrx=$gardenrx"
-          echo "Layout: bright=$bright print=$print morph=$morph gardenrx=$gardenrx" >> "$summary"
+          taskmanager=false
+          if grep -qE '^(bruh-task-manager/|tests/(task_manager_fake\.py|manual/(task_manager_demo_panel\.py|measure-task-manager\.mjs)))' <<<"$changed"; then
+            taskmanager=true
+          fi
+          echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph gardenrx=$gardenrx taskmanager=$taskmanager"
+          echo "Layout: bright=$bright print=$print morph=$morph gardenrx=$gardenrx taskmanager=$taskmanager" >> "$summary"
 
           {
             echo "pytest_args=${args# }"
@@ -175,6 +182,7 @@ jobs:
             echo "print=$print"
             echo "morph=$morph"
             echo "gardenrx=$gardenrx"
+            echo "taskmanager=$taskmanager"
           } >> "$out"
 
   gardenrx-app:
@@ -334,9 +342,9 @@ jobs:
       # the first red group hides the second until the next push.
       fail-fast: false
       matrix:
-        group: [static-a, static-b, bright, print, morph, gardenrx]
+        group: [static-a, static-b, bright, print, morph, gardenrx, taskmanager]
     env:
-      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || (matrix.group == 'morph' && needs.changes.outputs.morph) || (matrix.group == 'gardenrx' && needs.changes.outputs.gardenrx) || 'true' }}
+      GROUP_RUNS: ${{ (matrix.group == 'bright' && needs.changes.outputs.bright) || (matrix.group == 'print' && needs.changes.outputs.print) || (matrix.group == 'morph' && needs.changes.outputs.morph) || (matrix.group == 'gardenrx' && needs.changes.outputs.gardenrx) || (matrix.group == 'taskmanager' && needs.changes.outputs.taskmanager) || 'true' }}
     steps:
       - name: Say why this group has nothing to do
         if: env.GROUP_RUNS != 'true'
@@ -348,12 +356,17 @@ jobs:
 
       # ubuntu-latest ships a current Node; the scripts resolve Playwright
       # from the repo-root node_modules exactly as the README describes.
-      - name: Install Playwright
+      - name: Install Playwright (the runner's Chrome)
         if: env.GROUP_RUNS == 'true'
         run: |
           # Pinned: an unpinned install takes whatever npm published a minute ago, and a tarball the registry cannot serve yet fails this job before a single measure runs.
-          npm install playwright@1.62.1 --no-fund --no-audit
-          npx playwright install --with-deps chromium
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install playwright@1.62.1 --no-fund --no-audit
+          # The runner image ships Google Chrome with every library it
+          # needs. Downloading Playwright's own Chromium with --with-deps
+          # ran apt on every group and was the slowest step in the job
+          # (up to eight minutes on a cold mirror); every measure honours
+          # CHROMIUM_PATH, so the browser that is already there is used.
+          echo "CHROMIUM_PATH=$(command -v google-chrome || command -v chromium)" >> "$GITHUB_ENV"
 
       # static-a: brAIn's static-fixture measures, first half (~65s).
 
@@ -373,9 +386,24 @@ jobs:
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-terminal-mobile.mjs
 
+      # The Talk button drives the real voice routes and the real arecord
+      # stand-in, so this one needs the panel's aiohttp.
+      - name: Measure the terminal's Talk button
+        if: matrix.group == 'static-a'
+        run: |
+          pip install --quiet aiohttp
+          node tests/manual/measure-terminal-voice.mjs
+
       - name: Measure the tooltips
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-tooltips.mjs
+
+      # Right-click or press and hold anything: the box opens at the press,
+      # Ask sends what was pressed to the terminal, and a text box or a
+      # shift+right-click keeps the browser's own menu.
+      - name: Measure Ask brAIn about this
+        if: matrix.group == 'static-a'
+        run: node tests/manual/measure-askabout.mjs
 
       - name: Measure the activity tab
         if: matrix.group == 'static-a'
@@ -636,7 +664,33 @@ jobs:
       # opened card that keeps its column — which only a browser can check.
       - name: Measure Morph's panel
         if: matrix.group == 'morph' && env.GROUP_RUNS == 'true'
-        run: node tests/manual/measure-morph.mjs
+        # Two processes, one width each: the fixture's house is module
+        # state, so the widths cannot share one process concurrently.
+        run: |
+          MORPH_ONLY=wide node tests/manual/measure-morph.mjs & wide=$!
+          MORPH_ONLY=phone node tests/manual/measure-morph.mjs & phone=$!
+          status=0
+          wait $wide || status=1
+          wait $phone || status=1
+          exit $status
+
+      # taskmanager: BRUH Task Manager's real panel, twice — at Level 2 and at
+      # Level 1 with Protection mode on — against a fake Supervisor and a
+      # fake /proc, both under an ingress-shaped prefix. It drives End process
+      # through its ask-then-force flow and switches Level 2 on from Settings.
+      - name: Measure BRUH Task Manager's panel
+        if: matrix.group == 'taskmanager' && env.GROUP_RUNS == 'true'
+        run: |
+          pip install --quiet aiohttp
+          python3 tests/manual/task_manager_demo_panel.py /tmp/tm-l2 8103 --level2 &
+          python3 tests/manual/task_manager_demo_panel.py /tmp/tm-l1 8105 &
+          for port in 8103 8105; do
+            for _ in $(seq 1 40); do
+              curl -sf -o /dev/null "http://127.0.0.1:$port/api/health" && break
+              sleep 0.5
+            done
+          done
+          node tests/manual/measure-task-manager.mjs
 
   hassfest:
     name: HA integration validation
@@ -663,6 +717,8 @@ jobs:
           cp -r bright/custom_components/bright custom_components/bright
           cp -r morph/custom_components/morph custom_components/morph
           cp -r gardenrx/custom_components/gardenrx custom_components/gardenrx
+          cp -r bruh-task-manager/custom_components/bruh_task_manager \
+                custom_components/bruh_task_manager
 
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@cd6f3635a740c84d8a14f6121a90068b8ece6bf6  # master @ 2026-08-03
@@ -684,7 +740,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt gardenrx/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -723,7 +779,10 @@ jobs:
             morph/translations/en.yaml \
             gardenrx/config.yaml \
             gardenrx/build.yaml \
-            gardenrx/translations/en.yaml
+            gardenrx/translations/en.yaml \
+            bruh-task-manager/config.yaml \
+            bruh-task-manager/build.yaml \
+            bruh-task-manager/translations/en.yaml
 
   shellcheck:
     name: Shellcheck
@@ -776,6 +835,17 @@ jobs:
             gardenrx/app
             gardenrx/custom_components
             gardenrx/gateway
+
+      - name: Run shellcheck (task manager)
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./bruh-task-manager
+          severity: error
+          ignore_paths: >-
+            bruh-task-manager/custom_components
+            bruh-task-manager/panel
 
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -835,6 +905,12 @@ jobs:
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: gardenrx/Dockerfile
+          failure-threshold: error
+
+      - name: Lint BRUH Task Manager Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
+        with:
+          dockerfile: bruh-task-manager/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -949,6 +1025,20 @@ jobs:
       - name: Check GardenRX changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh gardenrx
 
+      - name: Check BRUH Task Manager version parity
+        run: |
+          addon_version=$(grep -E '^version:' bruh-task-manager/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-task-manager/custom_components/bruh_task_manager/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::BRUH Task Manager add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check BRUH Task Manager changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-task-manager
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -980,3 +1070,6 @@ jobs:
 
       - name: Verify GardenRX version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" gardenrx
+
+      - name: Verify BRUH Task Manager version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-task-manager

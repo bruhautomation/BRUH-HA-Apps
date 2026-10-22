@@ -179,13 +179,26 @@ def make_writable(payload) -> None:
         pass
 
 
+# YOLO mode: the owner's opt-in to no restrictions. The panel writes "on"
+# here; this file is spelled the same in the panel and the MCP server.
+YOLO_FILE = os.environ.get("BRAIN_YOLO_FILE", "/config/.brain/yolo")
+
+
+def yolo_mode() -> bool:
+    try:
+        with open(YOLO_FILE, "r", encoding="utf-8") as fh:
+            return fh.read().strip() == "on"
+    except OSError:
+        return False
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except (ValueError, OSError):
         return 0
     try:
-        reason = decide(payload, patterns())
+        reason = None if yolo_mode() else decide(payload, patterns())
     except Exception:  # noqa: BLE001 — a hook may not cost the call over a bug
         reason = None
     if reason:

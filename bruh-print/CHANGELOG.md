@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.3
+
+### Changed
+
+- Marked **experimental** in the add-on store, like every BRUH add-on.
+
 ## 0.14.2
 
 ### Added

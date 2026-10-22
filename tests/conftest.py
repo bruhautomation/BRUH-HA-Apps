@@ -15,6 +15,7 @@ wants a CLI still sets the variable itself; this only fills it when empty.
 """
 
 import os
+import tempfile
 from pathlib import Path
 
 import warnings
@@ -22,6 +23,16 @@ import warnings
 import pytest
 
 NO_CLI = "/nonexistent/claude-not-installed-in-tests"
+
+# Files the panel writes for the terminal, pointed somewhere that is not the
+# machine's own /data before any panel module is imported: a cloud session
+# has a real /data, and a test that opened a window wrote the next real
+# terminal's first message into it.
+_SANDBOX = tempfile.mkdtemp(prefix="brain-tests-")
+os.environ.setdefault("BRAIN_TERMINAL_PROMPT_FILE",
+                      os.path.join(_SANDBOX, "brain-terminal-prompt.md"))
+os.environ.setdefault("BRAIN_TERMINAL_HANDOFF",
+                      os.path.join(_SANDBOX, "terminal-handoff.json"))
 
 
 @pytest.fixture(autouse=True)

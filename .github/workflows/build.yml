@@ -33,6 +33,7 @@ on:
       - "bruh-bambu-studio/**"
       - "morph/**"
       - "gardenrx/**"
+      - "bruh-task-manager/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
     inputs:
@@ -54,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [brain, bruh-minecraft-server, bright, bruh-print, bruh-bambu-studio, morph, gardenrx]
+        addon: [brain, bruh-minecraft-server, bright, bruh-print, bruh-bambu-studio, morph, gardenrx, bruh-task-manager]
         arch: [aarch64, amd64]
         # Bambu Lab publishes Bambu Studio for Linux on x86-64 only, so the
         # add-on's config.yaml lists amd64 alone and there is no aarch64

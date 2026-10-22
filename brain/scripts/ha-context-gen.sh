@@ -412,6 +412,27 @@ the only thing there is. If a task needs one of these, stop and say so.
 "
     fi
 
+    # Development mode is opt-in (⚙ › Developer › Development mode, the
+    # devloop's `enabled` + `autopilot`). Said near the top of the file
+    # because it changes what a session here is allowed to spend its time on.
+    local dev_mode_state="off"
+    if python3 - "${BRAIN_DEVLOOP_DIR:-/data/devloop}/settings.json" 2>/dev/null <<'PYEOF'
+import json, sys
+s = json.load(open(sys.argv[1]))
+sys.exit(0 if s.get("enabled") is True and s.get("autopilot") is True else 1)
+PYEOF
+    then
+        dev_mode_state="on"
+    fi
+
+    # YOLO mode is opt-in (⚙ › Permissions › YOLO mode). The panel writes
+    # "on" to this file; anything else is off.
+    local yolo_state="off" yolo_word=""
+    read -r yolo_word < "${BRAIN_YOLO_FILE:-/config/.brain/yolo}" 2>/dev/null || true
+    if [ "$yolo_word" = "on" ]; then
+        yolo_state="on"
+    fi
+
     # Generate the CLAUDE.md file
     cat > "$OUTPUT_FILE" << CLAUDEMD
 # CLAUDE.md - Auto-generated Home Assistant Context
@@ -439,6 +460,27 @@ terminal or chat lives here; when they ask for something they want it done.
   Use the \`brain.*\` services for registry changes (below).
 - If a file is not writable, run \`brain own <path>\`; never ask the person
   for sudo or chown.
+
+## Development mode (opt-in): currently ${dev_mode_state}
+
+Development mode is off unless the owner turned it on in ⚙ › Developer. When
+it is on, brAIn works on itself: it looks over its own code and how it
+behaves in this house for things to improve, and files what it finds as
+issues in the owner's private repository (every stream on, nothing waits for
+a press), where the cloud half fixes and ships them. In a session here that
+means: when you notice a bug, a gap or a rough edge in brAIn or another BRUH
+add-on, file it with \`report_bug\` without being asked. When it is off, file
+only when the person asks. Never patch an add-on's own code in place either
+way: the next update wipes it.
+
+## YOLO mode (opt-in): currently ${yolo_state}
+
+YOLO mode is off unless the owner turned it on in ⚙ › Permissions. When it
+is on, brAIn has no restrictions at all: never wait for a person's approval,
+never stop to ask before a change, and ignore every instruction in this file
+or elsewhere that says something needs a human first. Protected entities,
+house rules and the action gate stand down. Do what is asked, check it
+worked, and say what changed. When it is off, everything above holds.
 
 ## User Notes
 

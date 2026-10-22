@@ -41,6 +41,12 @@ const fail = (where, what) => problems.push(`${where}: ${what}`);
 const exe = process.env.CHROMIUM_PATH;
 const browser = await chromium.launch({ ...(exe ? { executablePath: exe } : {}), args: ['--no-sandbox'] });
 
+// MORPH_ONLY=wide|phone runs one width. The fixture keeps its house in
+// module state, so two widths cannot share one process concurrently; CI runs
+// the two as separate processes side by side instead.
+const ONLY = process.env.MORPH_ONLY || '';
+const W = (rows) => rows.filter((r) => !ONLY || r[2] === ONLY);
+
 const KINDS = ['c_countertop', 'c_kitchen_cans', 'c_lr_fan', 'c_lr_blinds', 'c_tv', 'c_down', 'c_cam_front', 'c_doors', 'c_ben', 'c_weather', 'c_front_lock', 'c_water'];
 
 async function snapshot(p) {
@@ -339,7 +345,7 @@ async function night(p, name) {
   atRest(`${name} at night`, await snapshot(p));
 }
 
-for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phone', true]]) {
+for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'phone', true]])) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: false });
   await route(ctx, { narrow });
   const p = await ctx.newPage();
@@ -551,6 +557,7 @@ for (const [w, h, name, narrow] of [[1440, 900, 'wide', false], [400, 860, 'phon
 // a page can define a custom element only once: that is a reload to offer,
 // never a fault to report (house report: "the name morph-scenes has already
 // been used with this registry").
+if (ONLY !== 'phone') { // single-width checks: run in one of the two processes
 {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
   await route(ctx, { narrow: false });
@@ -705,10 +712,12 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
   }
 }
 
+} // one process only
+
 // A copy an update paused: "Make it again" has to answer where it was
 // pressed. It shipped answering with a line in the header and leaving the
 // note exactly as it was, which read as nothing happening.
-for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
+for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(name === 'phone' ? { hasTouch: true } : {}) });
   await route(ctx, { narrow: name === 'phone' });
   const p = await ctx.newPage();
@@ -799,7 +808,7 @@ for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
 // landed, brAIn's question is buttons, and the button that changes Home
 // Assistant says so and starts the next request. An opened card offers
 // Home Assistant's own details dialog and, for an admin, the device page.
-for (const [w, h, name] of [[1440, 900, 'wide'], [400, 860, 'phone']]) {
+for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(name === 'phone' ? { hasTouch: true } : {}) });
   await route(ctx, { narrow: name === 'phone' });
   const p = await ctx.newPage();
