@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.2
+
+### Security
+
+- Updated `proxy-addr` to 2.0.8 (CVE-2026-90711: an IPv4 address could be
+  trusted through a mapped IPv6 subnet with a short prefix) and
+  `@modelcontextprotocol/sdk` to 1.32.1 (bounded request bodies, same-origin
+  redirects only).
+- Updated Next.js to 16.4.2, which closes an unauthenticated remote code
+  execution in its image optimizer when SVG files are served, and a denial
+  of service in Server Actions.
+- Updated the test tools (Vitest 4.1.12, Vite 8.3.5) and `ip-address`
+  10.7.4. None of them ships in the add-on's image.
+
 ## 0.1.1
 
 ### Fixed
