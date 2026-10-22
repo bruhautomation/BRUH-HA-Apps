@@ -2644,6 +2644,9 @@ class TestChatRoutes(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_terminal_ui_setting_round_trips(self):
         resp = await self.client.get("/api/settings")
+        self.assertEqual((await resp.json())["settings"]["terminal_ui"], "classic")
+        resp = await self.client.put("/api/settings", json={"terminal_ui": "chat"})
+        self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["settings"]["terminal_ui"], "chat")
         resp = await self.client.put("/api/settings", json={"terminal_ui": "classic"})
         self.assertEqual(resp.status, 200)

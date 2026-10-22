@@ -83,7 +83,8 @@ window.fetch = async (url, options) => {
 const failures = [];
 const note = (width, message) => failures.push(`${width}px: ${message}`);
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(
+  process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 for (const width of WIDTHS) {
   const context = await browser.newContext({ viewport: { width, height: 900 } });
   const page = await context.newPage();

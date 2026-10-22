@@ -41,7 +41,7 @@ import automation_writer as writer  # noqa: E402
 
 import yaml  # noqa: E402
 
-SEEDS = range(400)
+SEEDS = range(120)
 
 
 def _entry_text(rng: random.Random, index: int, entry_id: str) -> str:

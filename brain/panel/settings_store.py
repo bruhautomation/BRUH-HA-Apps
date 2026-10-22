@@ -93,6 +93,7 @@ PLANS = ("pro", "max5", "max20")
 # one that works on the device most people open the panel on; the grid is
 # still there, one press away, for everything a grid is actually for.
 TERMINAL_UIS = ("chat", "classic")
+TERMINAL_UI_VERSION = 2
 
 # How a run gets its data. "search" is the default because posting five
 # hundred entities to answer a question about one room is the expensive
@@ -180,7 +181,8 @@ DEFAULTS = {
     "plan": "pro",
     "budget_percent": 25,
     "budget_no_limit": False,
-    "terminal_ui": "chat",
+    "terminal_ui": "classic",
+    "terminal_ui_v": 2,
     "refresh_hours": None,
     "history_days": None,
     "history_keep_runs": None,
@@ -319,8 +321,13 @@ def load() -> dict:
         out["upgrade_advice_auto"] = data["upgrade_advice_auto"]
     if data.get("plan") in PLANS:
         out["plan"] = data["plan"]
-    if data.get("terminal_ui") in TERMINAL_UIS:
+    # The Ask tab is Claude Code's own terminal from 4.0. Every save before
+    # then wrote the old default ("chat") back, so a stored value counts only
+    # once it carries the version it was chosen under.
+    if (data.get("terminal_ui") in TERMINAL_UIS
+            and data.get("terminal_ui_v") == TERMINAL_UI_VERSION):
         out["terminal_ui"] = data["terminal_ui"]
+    out["terminal_ui_v"] = TERMINAL_UI_VERSION
     if data.get("gather_mode") in GATHER_MODES:
         out["gather_mode"] = data["gather_mode"]
     if data.get("refresh_mode") in REFRESH_MODES:
