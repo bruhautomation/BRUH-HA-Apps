@@ -373,6 +373,14 @@ jobs:
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-terminal-mobile.mjs
 
+      # The Talk button drives the real voice routes and the real arecord
+      # stand-in, so this one needs the panel's aiohttp.
+      - name: Measure the terminal's Talk button
+        if: matrix.group == 'static-a'
+        run: |
+          pip install --quiet aiohttp
+          node tests/manual/measure-terminal-voice.mjs
+
       - name: Measure the tooltips
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-tooltips.mjs

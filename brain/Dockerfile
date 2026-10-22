@@ -134,5 +134,11 @@ RUN chmod +x /run.sh \
     && find /opt/integrations -name "*.sh" -exec chmod +x {} \; \
     && chmod +x /opt/panel/server.py
 
+# Claude Code's /voice records with `arecord` when there is no sound card,
+# and this container has none: the microphone is the phone's, reached
+# through the terminal page's mic button (panel/voice_mic.py). This
+# stand-in answers the CLI's calls with that stream.
+RUN install -m 0755 /opt/scripts/brain-arecord.py /usr/local/bin/arecord
+
 # Use exec form for better signal handling
 CMD ["/run.sh"]

@@ -346,9 +346,14 @@ def test_toolbar_canonical_buttons(script_block: str):
     `^C/^D/^L/^U` group so mobile users can scroll Claude Code chat
     history (the desktop wheel→PgUp/PgDn handler in section 3 covers
     desktop).
+
+    3.6.0 added `mic` second: Talk is Claude Code's own /voice with the
+    phone's microphone, and it is the one key a phone user reaches for
+    first, so it sits beside ESC rather than at the far end of the row.
     """
     expected = [
         "esc",
+        "mic",
         "kbdown",
         "tab",
         "shtab",
