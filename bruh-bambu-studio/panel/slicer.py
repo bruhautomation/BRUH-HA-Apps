@@ -308,7 +308,7 @@ def _root_model(archive: zipfile.ZipFile) -> str:
         if found and found.group(1) in archive.namelist():
             return found.group(1)
     except KeyError:
-        pass
+        pass  # no relationships part: the 3MF default name below is the answer
     return "3D/3dmodel.model"
 
 
