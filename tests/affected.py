@@ -143,7 +143,7 @@ REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
 ADDONS = ("brain", "bright", "bruh-print", "bruh-bambu-studio",
-          "bruh-minecraft-server", "morph", "gardenrx")
+          "bruh-minecraft-server", "morph", "gardenrx", "bruh-task-manager")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
@@ -153,6 +153,7 @@ ADDON_TEST_PREFIX = {
     "bruh-minecraft-server": "test_minecraft_",
     "morph": "test_morph_",
     "gardenrx": "test_gardenrx_",
+    "bruh-task-manager": "test_task_manager_",
 }
 # What a test writes when it means the add-on: its directory, and the
 # underscore spelling its integration domain uses.
@@ -164,6 +165,7 @@ ADDON_NAMES = {
     "bruh-minecraft-server": ("bruh-minecraft-server", "bruh_minecraft"),
     "morph": ("morph",),
     "gardenrx": ("gardenrx",),
+    "bruh-task-manager": ("bruh-task-manager", "bruh_task_manager"),
 }
 ADDON_WIDE_FILES = {"run.sh", "config.yaml", "build.yaml", "Dockerfile",
                     "apparmor.txt"}
@@ -179,13 +181,16 @@ ADDON_WIDE_TESTS = {
     "morph": ("tests/test_addon_hardening.py", "tests/test_morph_addon.py"),
     "gardenrx": ("tests/test_addon_hardening.py",
                  "tests/test_gardenrx_addon.py"),
+    "bruh-task-manager": ("tests/test_addon_hardening.py",
+                          "tests/test_task_manager_addon.py"),
 }
 # The demo panel a browser measure boots, where it drives the real server
 # rather than loading the page's files: a change to that add-on's panel
 # Python reaches those measures too. brAIn's own demo_panel.py serves the
 # screenshot pipeline, not a measure.
 DEMO_SERVERS = {"bright": "bright_demo_panel",
-                "bruh-print": "bruh_print_demo_panel"}
+                "bruh-print": "bruh_print_demo_panel",
+                "bruh-task-manager": "task_manager_demo_panel"}
 # Packages under brain/panel whose submodules are imported through them.
 PANEL_PACKAGES = ("checks", "devloop")
 SCRIPT_DIRS = ("brain/scripts", "brain/integrations", "brain/ha-mcp-server")
@@ -211,10 +216,11 @@ _SWEEP = re.compile(
 # A measure says which panel it loads in one of three ways: the panel's
 # path (as a string or a path.join), or the demo panel it boots.
 _MEASURE_PANEL = re.compile(
-    r"""(brain|bright|bruh-print)['"]?\s*[,/]\s*['"]?panel\b""")
+    r"""(brain|bright|bruh-print|bruh-task-manager)['"]?\s*[,/]\s*['"]?panel\b""")
 _MEASURE_DEMO = (
     (re.compile(r"bright_demo_panel"), "bright"),
     (re.compile(r"bruh_print_demo_panel"), "bruh-print"),
+    (re.compile(r"task_manager_demo_panel"), "bruh-task-manager"),
     (re.compile(r"morph-fixture"), "morph"),
     (re.compile(r"(?<![\w])demo_panel"), "brain"),
 )

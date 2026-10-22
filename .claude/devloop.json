@@ -58,7 +58,12 @@
     "bright/Dockerfile",
     "bruh-minecraft-server/apparmor.txt",
     "bruh-minecraft-server/run.sh",
-    "bruh-minecraft-server/Dockerfile"
+    "bruh-minecraft-server/Dockerfile",
+    "bruh-task-manager/apparmor.txt",
+    "bruh-task-manager/run.sh",
+    "bruh-task-manager/Dockerfile",
+    "bruh-task-manager/panel/ending.py",
+    "bruh-task-manager/panel/policy.py"
   ],
   "version_only_files": [
     "brain/config.yaml",
@@ -74,6 +79,8 @@
     "bright/config.yaml",
     "bright/custom_components/bright/manifest.json",
     "bruh-minecraft-server/config.yaml",
-    "bruh-minecraft-server/custom_components/bruh_minecraft/manifest.json"
+    "bruh-minecraft-server/custom_components/bruh_minecraft/manifest.json",
+    "bruh-task-manager/config.yaml",
+    "bruh-task-manager/custom_components/bruh_task_manager/manifest.json"
   ]
 }

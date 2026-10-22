@@ -1,0 +1,59 @@
+---
+# Option labels and help text for BRUH Task Manager's configuration UI.
+configuration:
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the companion integration: sensors for the machine's CPU and
+      memory, the busiest app, and a "Runaway app" sensor that turns on when
+      an app has used too much CPU for too long, so an automation can react.
+  process_view:
+    name: "Level 2: show every process"
+    description: >-
+      Off by default. When on, BRUH Task Manager reads the list of every
+      process on the machine (Home Assistant, the Supervisor, every app and
+      the operating system) and shows each one's CPU and memory, grouped by
+      the app it belongs to. It only takes effect once you also turn
+      Protection mode OFF on this add-on's Info page and restart it; until
+      then you get Level 1 (every app, but not the processes inside it).
+      Turning Protection mode off lets this one add-on see every process and
+      its command line, and send signals to processes in other apps. It still
+      cannot read other apps' passwords or tokens, which its security profile
+      blocks. Turn this off and Protection mode back on when you are done.
+  allow_ending_processes:
+    name: "Level 2: allow ending processes"
+    description: >-
+      Off by default. With Level 2 on, offers End process on processes that
+      belong to an app. It asks the process to stop first, and offers Force
+      end only if it is still running a few seconds later. Never offered for
+      Home Assistant, the Supervisor, Supervisor plugins or the operating
+      system (ending those can make the machine unreachable); for those, use
+      Restart on the app instead.
+  protected_processes:
+    name: Never end these
+    description: >-
+      Process names or app slugs that are never offered End process, whatever
+      else is set. Wildcards work, for example "mosquitto" or "*_frigate".
+  runaway_cpu_percent:
+    name: Runaway threshold (% of CPU)
+    description: >-
+      An app using at least this share of the whole machine's CPU, for at
+      least the number of minutes below, is marked as running away. Nothing
+      is stopped automatically.
+  runaway_minutes:
+    name: Runaway time (minutes)
+    description: >-
+      How long an app has to stay above the threshold before it is marked as
+      running away. A short burst, like an update or a backup, should not
+      count.
+  sample_seconds:
+    name: Measure every (seconds)
+    description: >-
+      How often CPU and memory are measured. CPU is the difference between
+      two readings, so this is also the window each figure covers. Five is
+      right for most machines; raise it on a slow Raspberry Pi.
+  log_level:
+    name: Log level
+    description: >-
+      Verbosity of the add-on's own logging. "info" is normal; every process
+      ended and every app restarted is logged at "warning" whatever this says.
