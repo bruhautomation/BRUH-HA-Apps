@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+### Security
+
+- Updated `proxy-addr` to 2.0.8 (CVE-2026-90711: an IPv4 address could be
+  trusted through a mapped IPv6 subnet with a short prefix) and
+  `@modelcontextprotocol/sdk` to 1.32.1 (bounded request bodies, same-origin
+  redirects only).
+
 ## 0.1.1
 
 ### Fixed
