@@ -1,0 +1,122 @@
+---
+name: "BRUH Task Manager"
+description: "See what is using your Home Assistant machine's CPU and memory, app by app — and, if you choose, process by process — and restart or stop what is running too hard"
+version: "0.1.0"
+slug: "bruh-task-manager"
+init: false
+
+# Pull the prebuilt image, like every other add-on here. The image name
+# follows the FOLDER (build.yml names it after the matrix entry).
+image: "ghcr.io/bruhautomation/{arch}-bruh-task-manager"
+
+arch:
+  - aarch64
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-task-manager"
+
+# AppArmor profile — see apparmor.txt. Besides the usual host-escape denials
+# it says the two things this add-on is about: it may READ /proc (that is the
+# whole point) and it may SEND signals (that is how a process is ended), and
+# it may never read another process's environment or memory, which is where
+# other apps keep their tokens.
+apparmor: true
+
+boot: auto
+startup: services
+stage: experimental
+
+watchdog: "http://[HOST]:[PORT:8103]/api/health"
+
+homeassistant: "2023.6.0"
+
+ingress: true
+ingress_port: 8103
+panel_icon: mdi:chart-box-outline
+panel_title: "Task Manager"
+panel_admin: true
+
+# ----------------------------------------------------------------------------
+# Level 2 — every process on the machine.
+#
+# `host_pid: true` asks for the HOST's process list instead of this
+# container's own. The Supervisor only grants it while the user has switched
+# Protection mode OFF on this add-on's page: with Protection mode on, the
+# container runs in its own PID namespace exactly like any other add-on
+# (supervisor/docker/app.py, `pid_mode`: "host" only when `not protected and
+# host_pid`). So this line costs nothing until a person decides it should,
+# and that decision is theirs, on a page the add-on cannot change.
+#
+# What it does cost, always, is the security rating: the Supervisor scores
+# the manifest, not the running container, and host_pid is -2 whatever the
+# switch says. With the manager role (-1) this add-on rates 5, not 6 — see
+# TestSecurityRating, which says so rather than exempting it quietly.
+#
+# The add-on's own `process_view` option is the second half of the switch:
+# with it off, nothing reads the host's processes even when the container can
+# see them, and the panel says to turn Protection mode back on.
+# ----------------------------------------------------------------------------
+host_pid: true
+
+# Level 1 — every app, Home Assistant and the Supervisor, through the
+# Supervisor's own API. Stats are readable at the default role; restarting or
+# stopping ANOTHER app is not, and `manager` is the narrowest role that can.
+hassio_api: true
+hassio_role: manager
+homeassistant_api: false
+auth_api: false
+
+options:
+  # enable_ha_integration: deploy the companion `bruh_task_manager`
+  # integration — sensors for the machine's CPU and memory, the busiest app,
+  # and a "runaway app" binary sensor automations can act on.
+  enable_ha_integration: true
+
+  # process_view: Level 2. Read the host's process list and show every
+  # process, grouped by the app it belongs to. Only takes effect once
+  # Protection mode is off on this add-on's page (see host_pid above).
+  process_view: false
+
+  # allow_ending_processes: with Level 2 on, offer End process on processes
+  # inside apps. Never for Home Assistant, the Supervisor or the operating
+  # system — those get Restart, or nothing. Off by default: Level 2 is a
+  # view first.
+  allow_ending_processes: false
+
+  # protected_processes: names (or app slugs) that are never offered End
+  # process, whatever else is true. Shell-style wildcards.
+  protected_processes: []
+
+  # runaway_cpu_percent / runaway_minutes: an app above this share of the
+  # whole machine's CPU for this long is reported as running away (the panel
+  # marks it and the binary sensor turns on). Nothing is stopped by this —
+  # what to do about it is an automation's decision, or yours.
+  runaway_cpu_percent: 80
+  runaway_minutes: 10
+
+  # sample_seconds: how often the add-on measures. CPU is a difference
+  # between two readings, so this is also the window each figure covers.
+  sample_seconds: 5
+
+  log_level: info
+schema:
+  enable_ha_integration: bool
+  process_view: bool
+  allow_ending_processes: bool
+  protected_processes:
+    - "str?"
+  runaway_cpu_percent: "int(10,100)"
+  runaway_minutes: "int(1,240)"
+  sample_seconds: "int(2,60)"
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config carries the custom integration deploy and the state mirror its
+# sensors read. Nothing else is mapped.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+
+# Auto-discovery: a one-click setup tile for the companion integration.
+discovery:
+  - bruh_task_manager

@@ -33,7 +33,7 @@ CODE_RE = re.compile(
     r"^(?:brain/panel/.*\.py|brain/scripts/.*|brain/integrations/.*|"
     r"brain/custom_components/.*\.py|brain/ha-mcp-server/.*|"
     r"morph/service/.*\.py|morph/custom_components/.*\.py|"
-    r"bruh-print/.*\.py|bruh-bambu-studio/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py|"
+    r"bruh-print/.*\.py|bruh-bambu-studio/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py|bruh-task-manager/.*\.py|"
     r"gardenrx/(?:app/src|gateway)/.*\.(?:ts|tsx|mjs|js)|gardenrx/custom_components/.*\.py)$")
 
 

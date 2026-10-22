@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BRUH Task Manager",
+        "description": "Connect Home Assistant to the BRUH Task Manager add-on. The add-on must be installed and running — it is what measures your apps."
+      },
+      "hassio_confirm": {
+        "title": "BRUH Task Manager",
+        "description": "Set up BRUH Task Manager so Home Assistant gets sensors for the machine's CPU and memory, the busiest app, and a runaway-app sensor?"
+      }
+    },
+    "abort": {
+      "already_configured": "BRUH Task Manager is already set up."
+    }
+  }
+}

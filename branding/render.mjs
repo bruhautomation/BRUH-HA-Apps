@@ -177,6 +177,25 @@ const APPS = [
 			['brands/custom_integrations/gardenrx/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'BRUH Task Manager',
+		tile: 'taskmanager/bruh-task-manager-tile-dark.svg',
+		logo: 'taskmanager/bruh-task-manager-logo-ondark.svg',
+		squares: [
+			['bruh-task-manager/icon.png', 256],
+			['bruh-task-manager/custom_components/bruh_task_manager/brand/icon.png', 256],
+			['bruh-task-manager/custom_components/bruh_task_manager/brand/icon@2x.png', 512],
+			['brands/custom_integrations/bruh_task_manager/icon.png', 256],
+			['brands/custom_integrations/bruh_task_manager/icon@2x.png', 512],
+		],
+		lockups: [
+			['bruh-task-manager/logo.png', 512, 384],
+			['bruh-task-manager/custom_components/bruh_task_manager/brand/logo.png', 341, 256],
+			['bruh-task-manager/custom_components/bruh_task_manager/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/bruh_task_manager/logo.png', 341, 256],
+			['brands/custom_integrations/bruh_task_manager/logo@2x.png', 682, 512],
+		],
+	},
 ];
 
 const browser = await chromium.launch(

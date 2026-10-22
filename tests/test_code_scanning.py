@@ -71,7 +71,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # the tracked trees rather than the root, and a directory that does not exist
 # in a partial checkout is simply skipped.
 PYTHON_TREES = ("brain", "bright", "bruh-minecraft-server", "bruh-print",
-                "bruh-bambu-studio", "gardenrx",
+                "bruh-bambu-studio", "gardenrx", "bruh-task-manager",
                 "tests", "branding")
 
 
