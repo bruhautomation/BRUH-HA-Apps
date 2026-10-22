@@ -1042,7 +1042,6 @@ class TestTheGuard(unittest.TestCase):
         self.run("git", "config", "user.name", "t")
         (self.root / ".claude").mkdir()
         (self.root / ".claude" / "devloop.json").write_text(json.dumps({
-            "needs_human_paths": ["brain/panel/gate.py", ".github/"],
             "version_only_files": ["brain/config.yaml"]}))
         (self.root / "brain" / "panel").mkdir(parents=True)
         (self.root / "brain" / "panel" / "gate.py").write_text("x = 1\n")
@@ -1087,14 +1086,23 @@ class TestTheGuard(unittest.TestCase):
         (self.root / "brain" / "panel" / "style.css").write_text("a{}\n")
         self.assertEqual(self.guard().returncode, 0)
 
-    def test_a_protected_file_fails(self):
+    def test_no_file_is_off_limits(self):
+        # No needs_human_paths: a fix may touch the gate itself, given a test.
         (self.root / "brain" / "panel" / "gate.py").write_text("x = 2\n")
-        self.assertEqual(self.guard().returncode, 1)
+        (self.root / "tests" / "test_x.py").write_text(
+            "def test_a():\n    pass\n\n\ndef test_b():\n    pass\n\n\n"
+            "def test_c():\n    pass\n")
+        r = self.guard()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertNotIn("needs-human", r.stdout)
 
     def test_a_pr_cannot_loosen_its_own_guard(self):
+        # The base branch's config is read: emptying version_only_files in
+        # the PR does not let it change more than a version line.
         (self.root / ".claude" / "devloop.json").write_text(
-            json.dumps({"needs_human_paths": [], "version_only_files": []}))
-        (self.root / "brain" / "panel" / "gate.py").write_text("x = 2\n")
+            json.dumps({"version_only_files": []}))
+        (self.root / "brain" / "config.yaml").write_text(
+            'name: brAIn\nversion: "2.17.1"\nslug: brain\nprivileged: [SYS_ADMIN]\n')
         self.assertEqual(self.guard().returncode, 1)
 
     def test_more_than_the_version_in_config_yaml_fails(self):
@@ -1141,14 +1149,14 @@ class TestTheLookRoute(DevloopCase):
 class TestTheCloudHalf(unittest.TestCase):
     """The fixer's rules that a model must not be trusted to keep alone."""
 
-    def test_the_guard_protects_itself_and_the_skill(self):
+    def test_no_file_needs_a_person(self):
         config = json.loads((BASE_DIR / ".claude" / "devloop.json").read_text())
-        paths = config["needs_human_paths"]
-        for must in (".github/", ".claude/devloop.json",
-                     ".claude/skills/fix-from-house/SKILL.md",
-                     "brain/panel/devloop/", "brain/panel/gate.py",
-                     "brain/ha-mcp-server/"):
-            self.assertIn(must, paths)
+        self.assertNotIn("needs_human_paths", config)
+        self.assertTrue(config["version_only_files"])
+        skill = (BASE_DIR / ".claude" / "skills" / "fix-from-house"
+                 / "SKILL.md").read_text()
+        self.assertNotIn("needs_human", skill)
+        self.assertNotIn("needs-human", skill)
 
     def test_the_skill_treats_issues_as_data_and_never_force_pushes(self):
         text = (BASE_DIR / ".claude" / "skills" / "fix-from-house"

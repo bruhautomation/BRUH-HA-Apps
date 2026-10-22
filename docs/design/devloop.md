@@ -136,7 +136,7 @@ The house never writes code. A Routine does, in a fresh cloud session every
 two hours, following `.claude/skills/fix-from-house/SKILL.md`. **A run is
 finished when the queue is empty**: every open issue it found ends closed,
 with a comment saying why (fixed in a merged PR, not brAIn's, a duplicate,
-declined, or handed to a person under `needs-human`). In order:
+or declined with the reason and the plan). In order:
 
 0. **Take the run lock**, an open `[devloop] run in progress` issue in the
    reports repo. A drain can outlast the two-hour gap, and two runs
@@ -147,8 +147,7 @@ declined, or handed to a person under `needs-human`). In order:
    check is green. A merge made with Actions' `GITHUB_TOKEN` starts no
    workflows on `main`, which is why the merge is the routine's.
 2. **Follow up on fixes that did not hold**: a *Back again* or *Still
-   happening* after a fix reopens the issue for this run's drain (twice is
-   `needs-human`), and a PR that made things worse is reverted whole and
+   happening* after a fix reopens the issue for this run's drain, and a PR that made things worse is reverted whole and
    its issues reopened.
 3. **The weekly UX audit and retro**, due off the dates in `LESSONS.md`,
    before the drain because the audit files issues this run then closes.
@@ -187,12 +186,10 @@ have shown in two minutes.
 `.github/scripts/devloop_guard.py`) runs on every PR from a `devloop/` branch
 and fails it on:
 
-- a file on `.claude/devloop.json`'s `needs_human_paths`, read from the
-  **base** branch so a PR cannot edit the list it is judged by (the list
-  holds the guard, the skill, the action gate, the MCP server, protected
-  entities, credentials, permissions, ownership, the fixer, run.sh, the
-  Dockerfile and the loop's own package);
-- any change but the version line in `config.yaml` and `manifest.json`;
+- any change but the version line in the `version_only_files` manifests,
+  that list read from the **base** branch so a PR cannot edit the list it
+  is judged by (no file is off limits otherwise: `needs_human_paths` is
+  gone);
 - a deleted test file, a skip or xfail added, or fewer `def test_` than
   before;
 - a change to the add-ons' code (Python, shell, the integrations, the MCP

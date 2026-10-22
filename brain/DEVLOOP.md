@@ -294,13 +294,13 @@ This repository ships the cloud half:
   merges each when CI is green. An issue it should not fix is closed with
   the reason. It also watches the house's *Back again* comments and reverts
   a fix that did not hold.
-- `.claude/devloop.json`: names the reports repository, and the files an
-  automated pull request may never touch (the action gate, protected
-  entities, credentials, permissions, the MCP server, and the loop itself).
+- `.claude/devloop.json`: names the reports repository and the manifests
+  an automated pull request may change only the version line of. No file
+  is off limits to the fixer, the loop's own included.
 - `devloop-guard`: a CI check that fails any `devloop/` pull request that
-  touches one of those files, loosens its own list, changes more than the
-  version in `config.yaml`, or skips or deletes a test. A refused pull
-  request is labelled `needs-human` and left for a person.
+  changes more than the version in `config.yaml`, skips or deletes a test,
+  or changes code with no test change. The fixer reads the failure and
+  fixes it; nothing waits for a person.
 
 With the add-on's **Auto update** on in Home Assistant, a merged fix reaches
 the house that reported it. The house's next *Not seen since* or *Back
