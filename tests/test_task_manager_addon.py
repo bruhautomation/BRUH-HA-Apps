@@ -86,8 +86,45 @@ class TestRunScript(unittest.TestCase):
     def test_it_deploys_the_integration_and_names_the_level(self):
         body = read("run.sh")
         self.assertIn("custom_components/bruh_task_manager", body)
-        self.assertIn("bashio::addon.protected", body)
+        self.assertIn("protection_mode", body)
         self.assertIn('python3 -u "${PANEL_DIR}/server.py"', body)
+
+
+class TestItStartsWithProtectionModeOff(unittest.TestCase):
+    """Level 2 means the HOST's PID namespace, where this container is not PID 1.
+
+    s6-overlay (the base image's /init) refuses to run anywhere but PID 1, so
+    an add-on started through it dies the moment Protection mode is turned
+    off: "s6-overlay-suexec: fatal: can only run as pid 1", seen on a real
+    install. run.sh is the entrypoint, and nothing in it may need s6.
+    """
+
+    def test_the_entrypoint_is_run_sh_not_s6(self):
+        lines = [line.strip() for line in read("Dockerfile").splitlines()
+                 if line.strip() and not line.strip().startswith("#")]
+        self.assertIn('ENTRYPOINT ["/run.sh"]', lines)
+        self.assertEqual(False, config()["init"])
+
+    def test_run_sh_does_not_need_s6s_environment(self):
+        first = read("run.sh").splitlines()[0]
+        self.assertEqual("#!/usr/bin/env bashio", first)
+        self.assertNotIn("with-contenv", read("run.sh"))
+
+    def _protection(self, *, new_name: bool, answer: str) -> str:
+        import re
+        import subprocess
+        body = read("run.sh")
+        fn = re.search(r"^protection_mode\(\) \{.*?^\}", body, re.S | re.M).group(0)
+        name = "bashio::app.protected" if new_name else "bashio::addon.protected"
+        script = f"{name}() {{ echo {answer}; }}\n{fn}\nprotection_mode\n"
+        return subprocess.run(["bash", "-c", script], capture_output=True,
+                              text=True, check=True).stdout.strip()
+
+    def test_protection_is_read_by_the_new_name_where_bashio_has_it(self):
+        self.assertEqual("false", self._protection(new_name=True, answer="false"))
+
+    def test_an_older_bashio_is_asked_by_the_old_name(self):
+        self.assertEqual("true", self._protection(new_name=False, answer="true"))
 
 
 class TestTheMirrorReader(unittest.TestCase):
