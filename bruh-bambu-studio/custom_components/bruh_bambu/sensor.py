@@ -30,7 +30,7 @@ from .coordinator import BruhBambuCoordinator
 # entity per printer and reads one state rather than five.
 ATTRS = ("file", "stage", "progress", "remaining_min", "layer", "total_layers", "speed",
          "chamber_light", "ams", "ams_units", "active_tray", "external_spool",
-         "error_code", "hms_count", "hms", "fans", "nozzle_c",
+         "error_code", "hms_count", "hms", "hms_notes", "fans", "nozzle_c",
          "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c", "nozzle_diameter",
          "connection_error", "host", "serial", "model", "printing")
 
