@@ -246,6 +246,7 @@ import undo_store
 import unfix
 import usage_store
 import user_categories
+import voice_mic
 import weekly
 # Home Assistant's own maintainer: names and rooms, the house book, the
 # overnight health check and the upgrade advisor.
@@ -24725,6 +24726,8 @@ def make_app() -> web.Application:
     # The terminal tab: /terminal/ is reverse-proxied through to ttyd
     # so the whole add-on lives behind one ingress port.
     terminal_proxy.setup(app)
+    # The phone's microphone, for Claude Code's own /voice in the terminal.
+    voice_mic.setup(app)
     # ESPHome devices: their YAML here, their builds on the dashboard.
     esphome.setup(app)
     # Music Assistant: players, providers, queues and settings, over its API.

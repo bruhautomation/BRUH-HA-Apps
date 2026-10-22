@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.6.0
+
+### Added
+
+- **Talk to Claude from your phone, with Claude Code's own voice mode.** The classic terminal's phone toolbar has a **🎤 Talk** button next to ESC. Tap it, speak, and tap **■ Send**: your phone's microphone goes to Claude Code's built-in `/voice` dictation, and the transcription is Claude Code's own. Claude Code records the machine it runs on and the add-on has no microphone, so the button streams the phone's mic to the panel, and an `arecord` stand-in inside the add-on hands it to the CLI. The first press turns on voice mode in its tap setting (`/voice tap`) if it isn't on already. It needs Home Assistant over https (Nabu Casa, or your own certificate), microphone permission for Home Assistant (in the Companion app, the app's microphone permission), and a Claude account sign-in, because voice mode does not work with an API key.
+
 ## 3.5.0
 
 ### Changed
