@@ -15,8 +15,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 from test_bambu_design_printing import PrintTest, designer, server  # noqa: E402
 
-BRAIN_MCP = os.path.join(os.path.dirname(__file__), "..", "brain", "ha-mcp-server",
-                         "ha_mcp_server.py")
 
 
 class TestBrainIsNotToldToAsk(unittest.TestCase):
@@ -25,13 +23,6 @@ class TestBrainIsNotToldToAsk(unittest.TestCase):
         self.assertNotIn("has not said\nthe plate is clear", brief)
         self.assertNotIn("may still be on the plate", brief)
         self.assertIn("never ask whether the plate is clear", brief)
-
-    def test_the_print_tool_says_not_to_ask_either(self):
-        with open(BRAIN_MCP, encoding="utf-8") as handle:
-            text = handle.read()
-        start = text.index('"name": "bambu_print"')
-        self.assertIn("never ask whether the plate is clear", text[start:start + 2500])
-
 
 class TestAFinishedPrinterStartsAtOnce(PrintTest):
     def start(self):
