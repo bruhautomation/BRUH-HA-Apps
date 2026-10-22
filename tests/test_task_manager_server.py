@@ -144,6 +144,9 @@ class TestLevelTwo(PanelCase):
         self.assertNotIn("addon:local_bruh-task-manager", [t["key"] for t in mirror["top"]])
         self.assertEqual(2, mirror["level"])
         self.assertGreaterEqual(mirror["stale_after_s"], 60)
+        # Owner-only: Core reads it as root, and nobody else needs the list.
+        mode = os.stat(os.path.join(self.shared, "state.json")).st_mode & 0o777
+        self.assertEqual(0o600, mode)
 
     async def test_static_files_are_bound_to_their_routes_under_a_prefix(self):
         # Mounted under a prefix (ingress-shaped), app.js must still be JS.

@@ -83,8 +83,12 @@ class QuietAccessLogger(AbstractAccessLogger):
                         request.path, response.status, time_taken * 1000)
 
 
-def write_json_atomic(path: str, data, mode: int = 0o644) -> None:
-    """mkstemp beside the target, fsync, rename — never a shared scratch name."""
+def write_json_atomic(path: str, data, mode: int = 0o600) -> None:
+    """mkstemp beside the target, fsync, rename — never a shared scratch name.
+
+    Owner-only: the one reader is Home Assistant Core, which runs as root, and
+    the process list it mirrors is nobody else's business.
+    """
     directory = os.path.dirname(path)
     fd, scratch = tempfile.mkstemp(prefix=".tmp-", dir=directory)
     try:
@@ -359,7 +363,11 @@ async def h_action(request):
     for job in monitor.jobs.values():
         if job["key"] == key and job["status"] == "running":
             return web.json_response(job)
-    return web.json_response(monitor.start_job(key, action, row["name"]))
+    # From here on the key and the verb are the snapshot's and the table's own
+    # strings, never the request's: they are logged, and a log line must not
+    # carry what somebody typed into a URL.
+    verb = ACTIONS[ACTIONS.index(action)]
+    return web.json_response(monitor.start_job(row["key"], verb, row["name"]))
 
 
 async def h_job(request):
@@ -402,7 +410,8 @@ async def h_settings_post(request):
         await monitor.options.update(changes)
     except RuntimeError as exc:
         return web.json_response({"error": str(exc)}, status=409)
-    _LOG.warning("Settings changed from the panel: %s", ", ".join(sorted(changes)))
+    named = [key for key in settings_mod.EDITABLE if key in changes]
+    _LOG.warning("Settings changed from the panel: %s", ", ".join(named))
     return web.json_response(monitor.settings_payload())
 
 
