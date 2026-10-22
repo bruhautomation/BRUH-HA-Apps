@@ -6802,3 +6802,46 @@ body.term-classic #chatModelPick { display: none; }
 .askflash { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
 /* A press-and-hold is brAIn's, not the phone's callout. */
 #app, .view { -webkit-touch-callout: none; }
+
+/* ⚙ › Instructions: a list of everything brAIn tells Claude, and an editor. */
+.instrgroup { padding: 0; }
+.instrrow {
+  display: flex; flex-direction: column; gap: 2px;
+  width: 100%; min-height: 44px; padding: 10px 14px;
+  border: 0; border-bottom: 1px solid var(--hairline);
+  background: none; color: var(--ink); text-align: left; cursor: pointer;
+  font: inherit;
+}
+.instrrow:last-child { border-bottom: 0; }
+.instrrow:hover { background: var(--surface-2); }
+.instrrowtop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.instrname { font-size: 14px; font-weight: 600; }
+.instrwhat { font-size: 12px; color: var(--ink-3); line-height: 1.4; }
+.instrpill {
+  font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  background: var(--accent); color: #fff;
+}
+.instrpill.file { background: var(--surface-2); color: var(--ink-3); }
+.instrpill.warn { background: var(--warn, #c77700); }
+.instreditor { display: flex; flex-direction: column; gap: 8px; }
+.instrback {
+  align-self: flex-start; min-height: 44px; padding: 0 4px;
+  border: 0; background: none; color: var(--accent-ink, var(--accent));
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.instrtitle { margin: 0; font-size: 16px; }
+.instrpath {
+  margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere;
+}
+.instrnote { margin: 0; font-size: 12px; color: var(--ink-2, var(--ink)); }
+.instrtext {
+  width: 100%; box-sizing: border-box; min-height: 420px; resize: vertical;
+  padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 10px;
+  background: var(--plane); color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px; line-height: 1.55; tab-size: 2;
+}
+.instrtext[readonly] { opacity: .85; }
+@media (pointer: coarse) { .instrtext { font-size: 16px; } }
+.instracts { gap: 8px; }

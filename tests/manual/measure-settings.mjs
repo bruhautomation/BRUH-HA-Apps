@@ -9,14 +9,14 @@
 // "Diagnostics › Developer": the owner's words were "really bulky, hard to
 // navigate sections, stuff is buried under collapsible sections".
 //
-// So ⚙ is a LIST of nine sections — Account, Model & usage, Permissions,
+// So ⚙ is a LIST of ten sections — Account, Model & usage, Permissions,
 // Notifications, Cameras & calendars, Memory, Diagnostics, Developer, Guide —
 // each row saying what it is set to now, beside the section in front on a
 // wide screen and as the page itself on a phone. The checks:
 //
 //   * the page's height at OPEN time is under a budget per width (the list
 //     on a phone, the list beside Account on a desktop).
-//   * there are exactly nine sections, named and ordered as above, one row
+//   * there are exactly ten sections (Instructions after Memory), named and ordered as above, one row
 //     each on the list, every row clearing the touch floor and carrying a
 //     second line; the list's lines say what the weekly answers ARE at open
 //     time — signed in, the model, whether brAIn asks — with no press.
@@ -134,6 +134,7 @@ const SECTIONS = [
   { sec: 'notifications', name: 'Notifications', open: false },
   { sec: 'sources', name: 'Cameras & calendars', open: false },
   { sec: 'memory', name: 'Memory', open: false },
+  { sec: 'instructions', name: 'Instructions', open: false },
   { sec: 'diagnostics', name: 'Diagnostics', open: false },
   { sec: 'developer', name: 'Developer', open: false },
   { sec: 'guide', name: 'Guide', open: false },
@@ -155,7 +156,7 @@ const WEEKLY = [
 const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/doctor/deep',
                    'api/sre', 'api/access', 'api/knowledge/house'];
 const DEV_URLS = ['api/capture', 'api/doctor/rehearse'];
-const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS];
+const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS, 'api/instructions'];
 
 const CUT = ['Copy selected', 'Copy all', 'Write a report now',
              'Copy for a bug report', 'File into memory now', 'Check it now',
@@ -427,7 +428,8 @@ window.__visibleButtons = () => [...document.querySelectorAll(
   '#setModal button, #setModal a.btn')]
   .filter((b) => b.offsetParent !== null && !b.hidden && !b.classList.contains('krow')
     && !b.classList.contains('setnavbtn') && !b.classList.contains('setback')
-    && !b.classList.contains('setresult'))
+    && !b.classList.contains('setresult') && !b.classList.contains('instrrow')
+    && !b.classList.contains('instrback'))
   .map((b) => b.textContent.replace(/\\s+/g, ' ').trim());
 `;
 

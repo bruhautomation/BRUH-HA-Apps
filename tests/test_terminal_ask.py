@@ -205,3 +205,28 @@ class TestDiscussOpensTheTerminal(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Porch light never comes on", opened[0][1])
         self.assertTrue((Path(self.tmp.name) / "prompt.md").read_text().startswith(
             "You are brAIn"))
+
+
+class TestDevelopmentModeIsSaidToEverySession(unittest.TestCase):
+    """Development mode is opt-in, and the appended prompt says which it is."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        import importlib
+        self.server = importlib.import_module("server")
+        self.devloop = self.server.devloop
+        self.patch = mock.patch.object(self.devloop, "DATA_DIR", Path(self.tmp.name))
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def test_off_by_default_and_on_only_with_both_switches(self):
+        self.assertFalse(self.server.development_mode())
+        self.assertIn(self.server.DEVELOPMENT_MODE_OFF, self.server._chat_system_prompt(None))
+        self.devloop.save_settings({"enabled": True})
+        self.assertFalse(self.server.development_mode())
+        self.devloop.save_settings({"autopilot": True})
+        self.assertTrue(self.server.development_mode())
+        self.assertIn(self.server.DEVELOPMENT_MODE_ON, self.server._chat_system_prompt(None))

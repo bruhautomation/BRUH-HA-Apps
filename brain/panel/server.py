@@ -216,6 +216,7 @@ import override_ledger
 import onboarding
 import outcomes
 import ownership
+import instructions
 import permission_mode
 import playbooks
 import prompt_kit
@@ -7684,6 +7685,13 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # An instruction edited in the terminal (an override file under
+        # /config/.brain/instructions) reaches the next run without a restart.
+        try:
+            await asyncio.to_thread(instructions.sync)
+        except Exception as exc:  # noqa: BLE001 — a prompt that could not
+            # be re-read is the one already in force.
+            log.debug("instructions sync failed: %s", exc)
         # The to-do mirror lists what To Do shows — open and not snoozed —
         # and a snooze starts and lapses without the to-do store being
         # written, so the tick republishes it; it writes only when what it
@@ -17838,6 +17846,8 @@ async def h_devloop_put(request: web.Request) -> web.Response:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    # Development mode is part of what a new terminal window is told.
+    await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response(await asyncio.to_thread(_devloop_payload))
 
 
@@ -23569,12 +23579,34 @@ def _chat_house_lines() -> list[str]:
     return lines
 
 
+DEVELOPMENT_MODE_ON = (
+    "Development mode is ON (the owner turned it on in ⚙ › Developer): brAIn "
+    "works on itself. When you notice a bug, a gap or a rough edge in brAIn or "
+    "another BRUH add-on, file it with report_bug without being asked, with what "
+    "you saw and how to reproduce it; it is fixed upstream and ships as an update.")
+DEVELOPMENT_MODE_OFF = (
+    "Development mode is off (it is opt-in, in ⚙ › Developer): file a bug with "
+    "report_bug only when the person asks.")
+
+
+def development_mode() -> bool:
+    """Development mode is the devloop switched on with autopilot: brAIn files
+    what it finds about itself without a press. Opt-in; False on any error."""
+    try:
+        s = devloop.load_settings()
+        return s.get("enabled") is True and s.get("autopilot") is True
+    except Exception:  # noqa: BLE001 — unreadable is off, the safe reading
+        return False
+
+
 def _chat_system_prompt(session) -> str:
     """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
     lines = _chat_house_lines()
+    base = CHAT_IDENTITY + "\n\n" + (
+        DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF)
     if not lines:
-        return CHAT_IDENTITY
-    return (CHAT_IDENTITY + "\n\nWhen this conversation started: "
+        return base
+    return (base + "\n\nWhen this conversation started: "
             + "; ".join(lines) + ". That is a snapshot — ask get_findings "
             "and get_health for how things stand now.")
 
@@ -23615,6 +23647,59 @@ async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
     opened = await asyncio.to_thread(
         chat_session._open_in_terminal, session_id, prompt)
     return {"ok": True, "opened": bool(opened), "session_id": session_id}
+
+
+async def h_instructions(request: web.Request) -> web.Response:
+    """Every instruction brAIn gives Claude (instructions.CATALOG) and the
+    files Claude reads, for ⚙ › Instructions."""
+    await asyncio.to_thread(instructions.sync)
+    return web.json_response({"items": instructions.listing(),
+                              "dir": str(instructions.DIR)})
+
+
+def _instruction_key(request: web.Request) -> str:
+    key = request.match_info.get("key", "")
+    if key not in instructions.CATALOG and key not in instructions.FILES:
+        raise web.HTTPNotFound(text="no such instruction")
+    return key
+
+
+async def h_instruction_get(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
+
+
+async def h_instruction_put(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text="send {text}")
+    text = (body or {}).get("text") if isinstance(body, dict) else None
+    if not isinstance(text, str):
+        raise web.HTTPBadRequest(text="send {text}")
+    try:
+        if key in instructions.CATALOG:
+            await asyncio.to_thread(instructions.save, key, text)
+            if key == "chat_identity":
+                await asyncio.to_thread(_write_terminal_prompt)
+        else:
+            await asyncio.to_thread(instructions.write_file, key, text)
+    except ValueError as exc:
+        raise web.HTTPConflict(text=str(exc))
+    except OSError as exc:
+        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
+
+
+async def h_instruction_reset(request: web.Request) -> web.Response:
+    key = _instruction_key(request)
+    if key not in instructions.CATALOG:
+        raise web.HTTPConflict(text="only a prompt has a shipped text to go back to")
+    await asyncio.to_thread(instructions.reset, key)
+    if key == "chat_identity":
+        await asyncio.to_thread(_write_terminal_prompt)
+    return web.json_response(await asyncio.to_thread(instructions.detail, key))
 
 
 async def h_terminal_open(request: web.Request) -> web.Response:
@@ -24767,6 +24852,10 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_get("/api/instructions", h_instructions)
+    app.router.add_get("/api/instructions/{key}", h_instruction_get)
+    app.router.add_put("/api/instructions/{key}", h_instruction_put)
+    app.router.add_delete("/api/instructions/{key}", h_instruction_reset)
     app.router.add_get("/api/chat/conversations", h_chat_conversations)
     app.router.add_post("/api/chat/adopt", h_chat_adopt)
     app.router.add_post("/api/chat/context", h_chat_context)
@@ -24795,6 +24884,12 @@ def make_app() -> web.Application:
     _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
+        # Every prompt's shipped text is captured before any override is put
+        # in force, then the overrides, then the shipped copies are written
+        # where Claude in the terminal can read them.
+        await asyncio.to_thread(instructions.apply_all)
+        await asyncio.to_thread(instructions.export_builtins)
+        await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
         # one that is genuinely still running.

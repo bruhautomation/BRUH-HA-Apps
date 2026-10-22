@@ -945,6 +945,8 @@
         <span class="setnavname">Cameras &amp; calendars</span><span class="setnavsum" id="setSumSources">What brAIn may look at</span></button>
       <button type="button" class="setnavbtn" data-sec="memory" role="tab" aria-controls="setsecMemory">
         <span class="setnavname">Memory</span><span class="setnavsum" id="setSumMemory">What brAIn knows about your home</span></button>
+      <button type="button" class="setnavbtn" data-sec="instructions" role="tab" aria-controls="setsecInstructions">
+        <span class="setnavname">Instructions</span><span class="setnavsum" id="setSumInstructions">What brAIn tells Claude</span></button>
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
         <span class="setnavname">Diagnostics</span><span class="setnavsum" id="setSumDiagnostics">Run all tests, and what is wrong</span></button>
       <button type="button" class="setnavbtn" data-sec="developer" role="tab" aria-controls="setsecDeveloper">
@@ -1240,6 +1242,35 @@
         </div>
       </section>
 
+      <!-- Every prompt brAIn sends Claude and every file Claude reads, in
+           one list (instructions.py). A prompt's change is an override
+           file under /config/.brain/instructions that every later run is
+           sent; Restore deletes it. Ask opens Claude Code on the file, so
+           brAIn can be asked to change its own instructions. -->
+      <section class="setsec" id="setsecInstructions" data-sec="instructions" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Instructions</h2>
+        </header>
+        <div class="setsecbody">
+          <p class="hint">Everything brAIn tells Claude, and the files it reads. Change one here, or ask brAIn to change it for you.</p>
+          <div id="instrList" class="instrlist" aria-label="Instructions">Loading…</div>
+          <div id="instrEditor" class="instreditor" hidden>
+            <button type="button" id="instrBack" class="instrback">‹ All instructions</button>
+            <h3 id="instrTitle" class="instrtitle"></h3>
+            <p id="instrWhat" class="hint"></p>
+            <p id="instrPath" class="instrpath"></p>
+            <p id="instrNote" class="instrnote" hidden></p>
+            <textarea id="instrText" class="instrtext" spellcheck="false" aria-label="Instruction text"></textarea>
+            <div class="row instracts">
+              <button type="button" id="instrSave" class="btn primary">Save</button>
+              <button type="button" id="instrReset" class="btn">Restore</button>
+              <button type="button" id="instrAsk" class="btn">Ask</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- "Is brAIn working", answered by a press first: one run of every
            self-test with a pass, fail or skip per stage. Then the readings
            that say what is wrong right now. Its loaders do not run until it
@@ -1378,9 +1409,10 @@
             <div class="setgroup">
               <div class="setrow top">
                 <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
-                  <span><b>Autopilot: let brAIn develop itself</b>
-                  <span class="subtext">Every stream on, nothing waits for you to press Send,
-                    and the cloud fixes and ships what it finds.</span></span></label>
+                  <span><b>Development mode: brAIn works on itself</b>
+                  <span class="subtext">Off by default. brAIn looks over its own code and how it
+                    behaves here, files what it finds without waiting for Send, and the cloud
+                    fixes and ships it.</span></span></label>
               </div>
               <div class="setrow top">
                 <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">

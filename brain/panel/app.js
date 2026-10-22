@@ -3103,7 +3103,8 @@ function renderSettingsForm(data) {
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
 const SET_SECTIONS = ["account", "usage", "permissions", "notifications",
-                      "sources", "memory", "diagnostics", "developer", "guide"];
+                      "sources", "memory", "instructions", "diagnostics",
+                      "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
 // Where the list sits beside the section rather than in front of it. The
 // stylesheet's breakpoint for `.setlayout` is the same number.
@@ -3119,6 +3120,7 @@ const SET_LOADERS = {
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
   memory: () => loadSetMemory(),
+  instructions: () => loadInstructions(),
   diagnostics: () => loadAdvanced(),
   developer: () => loadDeveloper(),
   guide: () => renderSetGuide(),
@@ -16571,3 +16573,135 @@ document.addEventListener("pointerdown", (e) => {
   if (box && !box.contains(e.target) && Date.now() - hold.fired > 800) closeAskAbout();
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAskAbout(); });
+
+
+// ------------------------------------------------- ⚙ › Instructions
+//
+// Every prompt brAIn sends Claude and the files Claude reads (panel/
+// instructions.py). Picking one opens it in an editor; Save writes an
+// override every later run is sent, Restore puts the shipped text back, and
+// Ask opens Claude Code in the terminal on that file — so brAIn can be asked
+// what an instruction does, or to change it, in its own words.
+const instrState = { items: [], key: "", detail: null };
+
+async function loadInstructions() {
+  const list = $("#instrList");
+  if (!list) return;
+  try {
+    const data = await api("api/instructions");
+    instrState.items = data.items || [];
+    instrState.dir = data.dir || "";
+  } catch (e) {
+    list.textContent = `Could not read brAIn's instructions: ${e.message}`;
+    return;
+  }
+  renderInstructions();
+}
+
+function renderInstructions() {
+  const list = $("#instrList");
+  list.textContent = "";
+  let group = "";
+  let box = null;
+  instrState.items.forEach((it) => {
+    if (it.group !== group) {
+      group = it.group;
+      list.appendChild(el("h4", "sethead", group));
+      box = el("div", "setgroup instrgroup");
+      list.appendChild(box);
+    }
+    const row = el("button", "instrrow");
+    row.type = "button";
+    const top = el("span", "instrrowtop");
+    top.appendChild(el("span", "instrname", it.title));
+    if (it.overridden) top.appendChild(el("span", "instrpill", "Changed"));
+    else if (it.kind === "file") top.appendChild(el("span", "instrpill file", "File"));
+    if (it.error) top.appendChild(el("span", "instrpill warn", "Not in force"));
+    row.appendChild(top);
+    row.appendChild(el("span", "instrwhat", it.what));
+    row.addEventListener("click", () => openInstruction(it.key));
+    box.appendChild(row);
+  });
+}
+
+async function openInstruction(key) {
+  const it = instrState.items.find((x) => x.key === key);
+  if (!it) return;
+  let d;
+  try { d = await api(`api/instructions/${encodeURIComponent(key)}`); }
+  catch (e) { toast(e.message); return; }
+  instrState.key = key;
+  instrState.detail = d;
+  $("#instrList").hidden = true;
+  $("#instrEditor").hidden = false;
+  $("#instrTitle").textContent = it.title;
+  $("#instrWhat").textContent = it.what;
+  $("#instrPath").textContent = d.kind === "prompt"
+    ? (d.overridden ? `Your version: ${d.path}` : `Shipped with brAIn · a change is saved to ${d.path}`)
+    : d.path;
+  const note = $("#instrNote");
+  const notes = [];
+  if (d.error) notes.push(d.error);
+  if (d.placeholders && d.placeholders.length) {
+    notes.push(`Keep ${d.placeholders.join(", ")}: they are filled in when it is sent.`);
+  }
+  if (d.kind === "file" && !d.editable) notes.push("brAIn writes this file; it is shown here to read.");
+  note.textContent = notes.join(" ");
+  note.hidden = !notes.length;
+  const text = $("#instrText");
+  text.value = d.text || "";
+  text.readOnly = !d.editable;
+  $("#instrSave").hidden = !d.editable;
+  $("#instrReset").hidden = !(d.kind === "prompt" && d.overridden);
+  text.focus({ preventScroll: true });
+  $("#instrEditor").scrollIntoView({ block: "nearest" });
+}
+
+function closeInstruction() {
+  instrState.key = "";
+  $("#instrEditor").hidden = true;
+  $("#instrList").hidden = false;
+}
+
+$("#instrBack").addEventListener("click", () => { closeInstruction(); loadInstructions(); });
+$("#instrSave").addEventListener("click", async () => {
+  const key = instrState.key;
+  if (!key) return;
+  try {
+    await api(`api/instructions/${encodeURIComponent(key)}`, {
+      method: "PUT", body: JSON.stringify({ text: $("#instrText").value }) });
+    toast("Saved. The next run of this kind is sent your version.");
+    await loadInstructions();
+    openInstruction(key);
+  } catch (e) { toast(e.message); }
+});
+$("#instrReset").addEventListener("click", async () => {
+  const key = instrState.key;
+  if (!key || !window.confirm("Put brAIn's own text back? Your version is deleted.")) return;
+  try {
+    await api(`api/instructions/${encodeURIComponent(key)}`, { method: "DELETE" });
+    toast("Restored brAIn's own text.");
+    await loadInstructions();
+    openInstruction(key);
+  } catch (e) { toast(e.message); }
+});
+$("#instrAsk").addEventListener("click", () => {
+  const it = instrState.items.find((x) => x.key === instrState.key);
+  if (!it) return;
+  const d = instrState.detail || {};
+  const lines = [`I want to talk about one of brAIn's instructions: "${it.title}".`,
+    it.what];
+  if (it.kind === "prompt") {
+    lines.push(
+      `What brAIn ships is ${it.builtin_path}; a change goes in ${it.path} `
+      + "(copy the shipped file there and edit it — every later run of this kind "
+      + "is sent it, and deleting it puts the shipped text back).",
+      "Keep every placeholder in {braces} or %(this)s form.");
+  } else {
+    lines.push(`The file is ${it.path}.`
+      + (d.editable ? "" : " brAIn writes it, so say where the change belongs instead."));
+  }
+  lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
+  leaveSettings();
+  openInTerminal({ prompt: lines.join("\n") });
+});
