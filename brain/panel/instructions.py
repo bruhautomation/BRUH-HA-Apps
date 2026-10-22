@@ -402,30 +402,44 @@ def read_file(key: str) -> dict:
     return {"text": text, "exists": exists}
 
 
-def write_file(key: str, text: str) -> None:
+def file_refusal(key: str, text: str) -> str | None:
+    """Why `text` cannot be written to file `key`, in a sentence, or None."""
     title, group, what, where, editable = FILES[key]
     if not editable:
-        raise ValueError(f"{title} is written by brAIn; {what}")
+        return f"{title} is written by brAIn; {what}"
     if not isinstance(text, str) or len(text) > MAX_CHARS:
-        raise ValueError("That is too long to save here.")
+        return "That is too long to save here."
     path = Path(where.split("#")[0])
     if where.endswith("#notes"):
         try:
             whole = path.read_text(encoding="utf-8")
-        except OSError as exc:
-            raise ValueError(f"could not read {path}: {exc}") from exc
+        except OSError:
+            return f"{path} could not be read."
         start = whole.find(NOTES_START)
         end = whole.find(NOTES_END)
         if start < 0 or end < start:
-            raise ValueError("CLAUDE.md has no notes block yet; restart brAIn "
-                             "to have it written.")
+            return "CLAUDE.md has no notes block yet; restart brAIn to have it written."
+        return None
+    if not path.parent.is_dir():
+        return f"{path.parent} does not exist on this house."
+    return None
+
+
+def write_file(key: str, text: str) -> None:
+    problem = file_refusal(key, text)
+    if problem:
+        raise ValueError(problem)
+    where = FILES[key][3]
+    path = Path(where.split("#")[0])
+    if where.endswith("#notes"):
+        whole = path.read_text(encoding="utf-8")
+        start = whole.find(NOTES_START)
+        end = whole.find(NOTES_END)
         body = text.strip("\n")
         whole = (whole[:start + len(NOTES_START)] + "\n"
                  + (body + "\n" if body else "") + whole[end:])
         atomic_write.write_text(path, whole)
         return
-    if not path.parent.is_dir():
-        raise ValueError(f"{path.parent} does not exist on this house.")
     atomic_write.write_text(path, text)
 
 

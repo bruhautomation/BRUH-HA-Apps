@@ -18,8 +18,8 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SCRIPTS = BASE_DIR / "brain" / "scripts"
@@ -70,10 +70,10 @@ class TestTheWindowOpensWithTheWords(unittest.TestCase):
         return json.loads(self.log.read_text())
 
     def _write_handoff(self, session_id="", prompt=""):
-        with mock.patch.object(chat_session, "HANDOFF_FILE", str(self.handoff)), \
-                mock.patch.object(chat_session, "_tmux_argv",
+        with unittest.mock.patch.object(chat_session, "HANDOFF_FILE", str(self.handoff)), \
+                unittest.mock.patch.object(chat_session, "_tmux_argv",
                                   return_value=["false"]), \
-                mock.patch.object(os, "chown"):
+                unittest.mock.patch.object(os, "chown"):
             chat_session._open_in_terminal(session_id, prompt)
 
     def test_the_first_message_is_one_argument_with_its_quotes_and_lines(self):
@@ -125,7 +125,7 @@ class TestTheFaceIsTheTerminal(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = Path(self.tmp.name) / "settings.json"
-        self.patch = mock.patch.object(settings_store, "SETTINGS_FILE", self.path)
+        self.patch = unittest.mock.patch.object(settings_store, "SETTINGS_FILE", self.path)
         self.patch.start()
 
     def tearDown(self):
@@ -159,7 +159,7 @@ class TestDiscussOpensTheTerminal(unittest.IsolatedAsyncioTestCase):
             "BRAIN_SETTINGS_FILE": str(root / "settings.json"),
             "BRAIN_FINDINGS_FILE": str(root / "findings.json"),
         }
-        self.env = mock.patch.dict(os.environ, env)
+        self.env = unittest.mock.patch.dict(os.environ, env)
         self.env.start()
         import importlib
         import findings_store
@@ -167,9 +167,9 @@ class TestDiscussOpensTheTerminal(unittest.IsolatedAsyncioTestCase):
         self.findings_store = findings_store
         self.server = importlib.import_module("server")
         self.patches = [
-            mock.patch.object(settings_store, "SETTINGS_FILE", str(root / "settings.json")),
-            mock.patch.object(findings_store, "FINDINGS_FILE", root / "findings.json"),
-            mock.patch.object(self.server, "TERMINAL_PROMPT_FILE", root / "prompt.md"),
+            unittest.mock.patch.object(settings_store, "SETTINGS_FILE", str(root / "settings.json")),
+            unittest.mock.patch.object(findings_store, "FINDINGS_FILE", root / "findings.json"),
+            unittest.mock.patch.object(self.server, "TERMINAL_PROMPT_FILE", root / "prompt.md"),
         ]
         for p in self.patches:
             p.start()
@@ -193,8 +193,8 @@ class TestDiscussOpensTheTerminal(unittest.IsolatedAsyncioTestCase):
         from aiohttp.test_utils import make_mocked_request
         req = make_mocked_request("POST", f"/api/finding/{entry['ts']}/discuss",
                                   match_info={"ts": str(entry["ts"])})
-        with mock.patch.object(chat_session, "_open_in_terminal", fake_open), \
-                mock.patch.object(self.server, "_chat_registry",
+        with unittest.mock.patch.object(chat_session, "_open_in_terminal", fake_open), \
+                unittest.mock.patch.object(self.server, "_chat_registry",
                                   side_effect=AssertionError("no chat spawned")):
             res = await self.server.h_finding_discuss(req)
         self.assertEqual(res.status, 200)
@@ -215,7 +215,7 @@ class TestDevelopmentModeIsSaidToEverySession(unittest.TestCase):
         import importlib
         self.server = importlib.import_module("server")
         self.devloop = self.server.devloop
-        self.patch = mock.patch.object(self.devloop, "DATA_DIR", Path(self.tmp.name))
+        self.patch = unittest.mock.patch.object(self.devloop, "DATA_DIR", Path(self.tmp.name))
         self.patch.start()
 
     def tearDown(self):

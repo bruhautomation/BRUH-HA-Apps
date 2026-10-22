@@ -12,8 +12,8 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 PANEL = Path(__file__).resolve().parent.parent / "brain" / "panel"
 sys.path.insert(0, str(PANEL))
@@ -28,9 +28,9 @@ class InstructionsCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.patches = [
-            mock.patch.object(instructions, "DIR", self.dir),
-            mock.patch.dict(instructions._APPLIED, {}, clear=True),
-            mock.patch.dict(instructions._ERRORS, {}, clear=True),
+            unittest.mock.patch.object(instructions, "DIR", self.dir),
+            unittest.mock.patch.dict(instructions._APPLIED, {}, clear=True),
+            unittest.mock.patch.dict(instructions._ERRORS, {}, clear=True),
         ]
         for p in self.patches:
             p.start()
@@ -75,7 +75,7 @@ class TestSaveApplyRestore(InstructionsCase):
 
     def test_a_dropped_placeholder_is_refused(self):
         base = "Read {findings} and write %(budget)s words."
-        with mock.patch.dict(instructions._SHIPPED, {"brief": base}):
+        with unittest.mock.patch.dict(instructions._SHIPPED, {"brief": base}):
             for gone in ("{findings}", "%(budget)s"):
                 with self.assertRaises(ValueError) as ctx:
                     instructions.save("brief", base.replace(gone, ""))
@@ -108,7 +108,7 @@ class TestFiles(InstructionsCase):
         md.write_text("# generated\n" + instructions.NOTES_START + "\nold\n"
                       + instructions.NOTES_END + "\n# more generated\n")
         entry = instructions.FILES["claude_md_notes"]
-        with mock.patch.dict(instructions.FILES, {
+        with unittest.mock.patch.dict(instructions.FILES, {
                 "claude_md_notes": entry[:3] + (f"{md}#notes", True)}):
             self.assertEqual(instructions.read_file("claude_md_notes")["text"], "old")
             instructions.write_file("claude_md_notes", "the porch light is on a timer")

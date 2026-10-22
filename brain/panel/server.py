@@ -23678,17 +23678,24 @@ async def h_instruction_put(request: web.Request) -> web.Response:
     text = (body or {}).get("text") if isinstance(body, dict) else None
     if not isinstance(text, str):
         raise web.HTTPBadRequest(text="send {text}")
+    # A refusal is a sentence the module composes, asked before anything is
+    # written; an error past that point is logged, not sent to the browser.
+    prompt = key in instructions.CATALOG
+    problem = await asyncio.to_thread(
+        instructions.check if prompt else instructions.file_refusal, key, text)
+    if problem:
+        raise web.HTTPConflict(text=problem)
     try:
-        if key in instructions.CATALOG:
+        if prompt:
             await asyncio.to_thread(instructions.save, key, text)
             if key == "chat_identity":
                 await asyncio.to_thread(_write_terminal_prompt)
         else:
             await asyncio.to_thread(instructions.write_file, key, text)
-    except ValueError as exc:
-        raise web.HTTPConflict(text=str(exc))
-    except OSError as exc:
-        raise web.HTTPInternalServerError(text=f"could not save: {exc}")
+    except (ValueError, OSError):
+        log.exception("could not save instruction %s", key)
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
     return web.json_response(await asyncio.to_thread(instructions.detail, key))
 
 
