@@ -35,6 +35,15 @@ COPY config.yaml /opt/bruh-task-manager/config.yaml
 
 RUN chmod +x /run.sh
 
-# s6-overlay is /init in the HA base image; overriding ENTRYPOINT would
-# bypass it and break bashio.
-CMD ["/run.sh"]
+# NOT s6-overlay. The base image's ENTRYPOINT is /init, and s6-overlay
+# refuses to run unless it is PID 1 ("s6-overlay-suexec: fatal: can only run
+# as pid 1"). With Protection mode off the Supervisor starts this container
+# in the HOST's PID namespace (host_pid in config.yaml), where PID 1 is the
+# host's own init — so under /init, Level 2 could never start. run.sh is the
+# entrypoint instead, run by bashio directly rather than through with-contenv:
+# the Supervisor's token reaches it as an ordinary environment variable, so
+# nothing here needs s6's copy of the environment. config.yaml's `init:
+# false` keeps Docker from putting tini in front of it, and run.sh traps TERM
+# itself.
+ENTRYPOINT ["/run.sh"]
+CMD []

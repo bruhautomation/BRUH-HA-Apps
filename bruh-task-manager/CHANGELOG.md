@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1
+
+### Fixed
+
+- **Level 2 could not start.** With Protection mode off, the add-on stopped
+  at boot with `s6-overlay-suexec: fatal: can only run as pid 1`. Level 2
+  shares the machine's process list, so the add-on is no longer process 1,
+  and the base image's start-up program (s6-overlay) refuses to run
+  anywhere else. The add-on now starts its own script directly.
+- The Protection mode check uses bashio's new name, so the log no longer
+  warns that `bashio::addon.protected` is deprecated.
+- Start-up warnings no longer have doubled spaces where the text wrapped.
+
 ## 0.1.0
 
 ### Added

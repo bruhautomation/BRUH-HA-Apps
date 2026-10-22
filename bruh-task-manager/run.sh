@@ -1,4 +1,4 @@
-#!/usr/bin/with-contenv bashio
+#!/usr/bin/env bashio
 # ============================================================================
 # BRUH Task Manager — CPU and memory per app, and (Level 2) per process
 #
@@ -51,19 +51,29 @@ prepare_filesystem() {
 }
 
 # ----------------------------------------------------------------------------
+# Protection mode, as true/false/unknown. bashio renamed addon.* to app.* and
+# warns on every call to the old name, so the new one is used where this
+# bashio has it.
+# ----------------------------------------------------------------------------
+protection_mode() {
+    if declare -F bashio::app.protected >/dev/null; then
+        bashio::app.protected 2>/dev/null || echo "unknown"
+    else
+        bashio::addon.protected 2>/dev/null || echo "unknown"
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # Say at boot which level this run can offer. "Why do I only see apps?" is
 # the question this add-on will be asked most, and the answer is one line.
 # ----------------------------------------------------------------------------
 report_level() {
     local process_view protected
     process_view=$(bashio::config 'process_view' 'false')
-    protected=$(bashio::addon.protected 2>/dev/null || echo "unknown")
+    protected=$(protection_mode)
     if [ "${process_view}" != "true" ]; then
         if [ "${protected}" = "false" ]; then
-            bashio::log.warning \
-                "Protection mode is OFF but Level 2 is switched off, so nothing " \
-                "reads the other processes. Turn Protection mode back on unless " \
-                "you are about to use Level 2."
+            bashio::log.warning "Protection mode is OFF but Level 2 is switched off, so nothing reads the other processes. Turn Protection mode back on unless you are about to use Level 2."
         else
             bashio::log.info "Level 1: every app, through the Supervisor's API"
         fi
@@ -72,10 +82,7 @@ report_level() {
     if [ "${protected}" = "false" ]; then
         bashio::log.info "Level 2: every process on the machine"
     else
-        bashio::log.warning \
-            "Level 2 is switched on, but Protection mode is still ON, so this " \
-            "add-on can only see its own processes. Turn Protection mode off on " \
-            "the add-on's Info page and restart it."
+        bashio::log.warning "Level 2 is switched on, but Protection mode is still ON, so this add-on can only see its own processes. Turn Protection mode off on the add-on's Info page and restart it."
     fi
 }
 
