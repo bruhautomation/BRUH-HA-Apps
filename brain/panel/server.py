@@ -23693,7 +23693,7 @@ async def h_instruction_put(request: web.Request) -> web.Response:
         else:
             await asyncio.to_thread(instructions.write_file, key, text)
     except (ValueError, OSError):
-        log.exception("could not save instruction %s", key)
+        log.exception("could not save an instruction")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
     return web.json_response(await asyncio.to_thread(instructions.detail, key))
