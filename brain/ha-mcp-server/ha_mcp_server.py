@@ -1565,24 +1565,25 @@ def get_all_states(domain=None, name_filter=None):
     return result
 
 
-def call_service(domain, service, data=None, return_response=False):
-    """Call a Home Assistant service.
+YOLO_FILE = os.environ.get("BRAIN_YOLO_FILE", "/config/.brain/yolo")
 
-    Single chokepoint: every control_* tool, activate_scene, run_script,
-    send_notification, and reload_config funnel through here, so the
-    deny-list check covers all of them, not just direct call_service use.
 
-    With return_response the call goes over the WebSocket API, which is the
-    only transport that returns service response data (e.g. the area_id
-    from brain.create_area, or the orphan list from
-    brain.delete_orphaned_entities).
-    """
-    domain, service = str(domain or ""), str(service or "")
-    # `script.<object_id>` runs that script exactly as `script.turn_on` on it
-    # does, with no entity id anywhere in the payload — so every check below
-    # was looking at an empty target. It is checked as the script it runs.
-    script = _script_service_target(domain, service)
-    extra = [script] if script else []
+def yolo_mode():
+    """Whether the panel's YOLO mode is on: the file holding exactly "on".
+    Read at call time, so the switch reaches a running server; anything
+    else, a missing file included, is off."""
+    try:
+        with open(YOLO_FILE, "r", encoding="utf-8") as fh:
+            return fh.read().strip() == "on"
+    except OSError:
+        return False
+
+
+def _call_refusal(domain, service, data, script, extra):
+    """Every rule call_service applies before a call, in order: the
+    tripwire, the deny-list, the meta-services, the protected list, the
+    switch_as_x pair, voice's limits, members and the change contract.
+    Returns the error a refused call answers with, or None."""
     # The tripwire before any other rule: an attempt is the signal, whether
     # or not something else would also have refused it.
     trip = _tripwire_refusal(domain, service, data, extra)
@@ -1650,6 +1651,33 @@ def call_service(domain, service, data=None, return_response=False):
     if off_contract:
         return {"error": CONTRACT_REFUSAL.format(what=f"{domain}.{service}",
                                                  why=off_contract)}
+    return None
+
+
+def call_service(domain, service, data=None, return_response=False):
+    """Call a Home Assistant service.
+
+    Single chokepoint: every control_* tool, activate_scene, run_script,
+    send_notification, and reload_config funnel through here, so the
+    deny-list check covers all of them, not just direct call_service use.
+
+    With return_response the call goes over the WebSocket API, which is the
+    only transport that returns service response data (e.g. the area_id
+    from brain.create_area, or the orphan list from
+    brain.delete_orphaned_entities).
+    """
+    domain, service = str(domain or ""), str(service or "")
+    # `script.<object_id>` runs that script exactly as `script.turn_on` on it
+    # does, with no entity id anywhere in the payload — so every check below
+    # was looking at an empty target. It is checked as the script it runs.
+    script = _script_service_target(domain, service)
+    extra = [script] if script else []
+    # YOLO mode (the panel's opt-in switch, a file brAIn writes) stands
+    # every rule down: the call goes to Home Assistant as asked.
+    if not yolo_mode():
+        refusal = _call_refusal(domain, service, data, script, extra)
+        if refusal:
+            return refusal
     payload = data or {}
     # What each named entity was doing before the call, for the ledger row
     # and the restorer behind a fix's undo. Read here rather than inside
@@ -3118,7 +3146,7 @@ def bright_status():
 
 def _entity_arg_refusal(entity_id):
     """An entity named in a field other than entity_id still has to be allowed."""
-    if not entity_id:
+    if not entity_id or yolo_mode():
         return None
     if _entity_protected(entity_id):
         return {"error": f"{entity_id} is on brAIn's protected list; nothing brAIn does may act on it."}
@@ -3600,6 +3628,8 @@ def _camera_refusal(entity_id):
     nobody can count is no cap, and a frame is the one read here a wrong
     yes cannot take back.
     """
+    if yolo_mode():
+        return ""
     grant = os.environ.get(CAMERA_GRANT_ENV, "").strip()
     channel = _channel()
     if not grant and channel not in CAMERA_GOVERNED_CHANNELS:
@@ -5205,9 +5235,9 @@ def fire_event(event_type, event_data=None):
     can trigger any automation — including one that does exactly what the
     deny-list forbids — and an event name is not a service name, so there
     is nothing to match the patterns against. Fail closed, same rule as
-    the meta-services above.
+    the meta-services above. YOLO mode stands both refusals down.
     """
-    if DENIED_SERVICES:
+    if DENIED_SERVICES and not yolo_mode():
         return {"error": (
             "fire_event is not permitted for this assistant: its service "
             "restrictions cannot be enforced on events, which can trigger "
@@ -5221,7 +5251,7 @@ def fire_event(event_type, event_data=None):
     # to see which. That is the label/floor rule in `_protected_target`:
     # a target this process cannot resolve is refused while the list is
     # non-empty, not waved through because it could not be checked.
-    if PROTECTED_ENTITIES:
+    if PROTECTED_ENTITIES and not yolo_mode():
         return {"error": (
             "fire_event is refused while brAIn has protected entities: an "
             "event can reach a protected entity through any automation "

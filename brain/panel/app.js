@@ -3071,6 +3071,7 @@ function renderSettingsForm(data) {
   // Only an explicit true ticks it: a value that arrived missing or
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
+  $("#setYolo").checked = data.settings.yolo_mode === true;
   renderSkipPermsNote(data);
   $("#setGatherMode").value = data.settings.gather_mode || "search";
   $("#setRefreshMode").value = data.settings.refresh_mode || "changed";
@@ -3342,8 +3343,10 @@ function renderSetSummaries(data) {
     const model = st.model ? (d.model_label || st.model) : "Chosen per job";
     setSummary("setSumUsage", model
       + (Number.isFinite(used) ? ` · ${Math.round(used)}% of this session` : ""));
-    setSummary("setSumPermissions", st.dangerously_skip_permissions === true
-      ? "Acts without asking" : "Asks before it acts");
+    setSummary("setSumPermissions", st.yolo_mode === true
+      ? "YOLO mode: no restrictions"
+      : st.dangerously_skip_permissions === true
+        ? "Acts without asking" : "Asks before it acts");
     const policy = String(st.notify_policy || "").trim();
     setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
       + (st.speak_first === true ? " · said aloud" : ""));
@@ -5335,6 +5338,23 @@ $("#setSkipPerms").addEventListener("change", async () => {
   const data = await saveSettings({ dangerously_skip_permissions: on },
     (saved) => skipPermsToast(on, saved));
   // A refused save leaves the switch where it was, and so does the box.
+  if (!data) box.checked = !on;
+});
+// YOLO mode removes every restriction brAIn has, so turning it on is
+// confirmed once in words; turning it off is never asked about.
+$("#setYolo").addEventListener("change", async () => {
+  const box = $("#setYolo");
+  const on = box.checked;
+  if (on && !window.confirm(
+      "Turn on YOLO mode? brAIn will have no restrictions: it can do " +
+      "anything in your home and Home Assistant without asking, protected " +
+      "entities and house rules included.")) {
+    box.checked = false;
+    return;
+  }
+  const data = await saveSettings({ yolo_mode: on },
+    on ? "YOLO mode is on: brAIn has no restrictions"
+       : "YOLO mode is off: the restrictions are back");
   if (!data) box.checked = !on;
 });
 // Applied straight away rather than on the next status poll, so the Terminal

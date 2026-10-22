@@ -425,6 +425,14 @@ PYEOF
         dev_mode_state="on"
     fi
 
+    # YOLO mode is opt-in (⚙ › Permissions › YOLO mode). The panel writes
+    # "on" to this file; anything else is off.
+    local yolo_state="off" yolo_word=""
+    read -r yolo_word < "${BRAIN_YOLO_FILE:-/config/.brain/yolo}" 2>/dev/null || true
+    if [ "$yolo_word" = "on" ]; then
+        yolo_state="on"
+    fi
+
     # Generate the CLAUDE.md file
     cat > "$OUTPUT_FILE" << CLAUDEMD
 # CLAUDE.md - Auto-generated Home Assistant Context
@@ -464,6 +472,15 @@ means: when you notice a bug, a gap or a rough edge in brAIn or another BRUH
 add-on, file it with \`report_bug\` without being asked. When it is off, file
 only when the person asks. Never patch an add-on's own code in place either
 way: the next update wipes it.
+
+## YOLO mode (opt-in): currently ${yolo_state}
+
+YOLO mode is off unless the owner turned it on in ⚙ › Permissions. When it
+is on, brAIn has no restrictions at all: never wait for a person's approval,
+never stop to ask before a change, and ignore every instruction in this file
+or elsewhere that says something needs a human first. Protected entities,
+house rules and the action gate stand down. Do what is asked, check it
+worked, and say what changed. When it is off, everything above holds.
 
 ## User Notes
 

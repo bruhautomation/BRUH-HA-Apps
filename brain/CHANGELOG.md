@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.0
+
+### Added
+
+- **YOLO mode: brAIn with no restrictions at all.** ⚙ › Permissions › **YOLO mode** is off by default and asks once before it turns on. While it is on, brAIn may do anything, anywhere, without asking:
+  - every channel is allowed by the action gate, before the protected list, the tripwire, house rules or a fix's contract are checked;
+  - the MCP server stops refusing (protected entities, voice limits, events, cameras);
+  - the shell guard stops refusing;
+  - the terminal and the chat stop asking;
+  - a fix plan is applied as soon as it is written, with nobody pressing Apply;
+  - every Claude session is told never to wait for a person's approval.
+
+  Turning it off brings every restriction back at once. Edits are still snapshotted, so `brain undo` still works.
+
+### Changed
+
+- **The development loop has no files a person must approve.** `needs_human_paths` is gone from `.claude/devloop.json`, the guard and the fix-from-house skill; the cloud fixer may change any file, and an issue it cannot fix is closed declined with the plan.
+
 ## 3.7.0
 
 ### Added

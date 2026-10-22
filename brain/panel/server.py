@@ -496,8 +496,11 @@ def eff_skip_permissions() -> bool:
     Configuration tab afterwards. A stale "ask" costs a prompt; a stale
     "act" goes on acting after somebody turned the switch off there. So a
     local False still wins, and a local True counts only where there is
-    no live Supervisor value to outrank it.
+    no live Supervisor value to outrank it. YOLO mode is on top of all of
+    it: with YOLO on, brAIn acts without asking whatever the switch says.
     """
+    if yolo_mode():
+        return True
     local = settings_store.load().get(permission_mode.OPTION)
     if local is False:
         return False
@@ -507,6 +510,39 @@ def eff_skip_permissions() -> bool:
     if local is True:
         return True
     return permission_mode.startup()
+
+
+# YOLO mode: the opt-in that removes every restriction brAIn has. The
+# panel's own setting is the authority; the file is how the processes that
+# cannot import the panel (the MCP server, the PreToolUse hooks, both
+# running as the claude user) hear it. Spelled the same in every reader.
+YOLO_FILE = Path(os.environ.get("BRAIN_YOLO_FILE", "/config/.brain/yolo"))
+
+
+def yolo_mode() -> bool:
+    """Whether YOLO mode is on. Only an explicit True from the settings
+    store is on: an unreadable file is off, the direction that keeps the
+    restrictions."""
+    try:
+        return settings_store.load().get("yolo_mode") is True
+    except Exception:  # noqa: BLE001 — an unreadable store is off
+        return False
+
+
+def _publish_yolo() -> None:
+    """Write or remove the flag file the MCP server and the hooks read.
+    Skipped on a dev checkout with no /config, the mirrors' rule."""
+    path = YOLO_FILE
+    if not path.parent.parent.exists():
+        return
+    try:
+        if yolo_mode():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write.write_text(path, "on\n", mode=0o644)
+        elif path.exists() or path.is_symlink():
+            path.unlink()
+    except OSError as exc:
+        log.warning("Could not publish YOLO mode to %s: %s", path, exc)
 
 
 def person_acts() -> bool:
@@ -560,6 +596,7 @@ def _publish_permission_mode() -> None:
     options, so a Configuration-tab edit reaches the next terminal session
     without a restart. `publish` skips the write when nothing moved.
     """
+    _publish_yolo()
     permission_mode.publish(eff_skip_permissions())
 
 
@@ -5748,6 +5785,13 @@ async def _run_plan(job_id: str) -> None:
         log.info("finding %s planned: %s", ts,
                  f"{len(plan['steps'])} step(s)" if plan["can_fix"]
                  else "brAIn would not make this change itself")
+        # YOLO mode: nobody presses Apply, the plan is carried out at once.
+        if yolo_mode() and plan.get("can_fix"):
+            why = await _start_apply(row)
+            if why:
+                log.info("YOLO mode could not apply finding %s: %s", ts, why)
+            else:
+                log.info("YOLO mode is applying finding %s's plan", ts)
     except Exception as exc:  # noqa: BLE001 — job errors surface in the UI
         # No journal line here: `engine._run_cli` already records every `-p`
         # run whatever happened to it, and a second one would count this
@@ -6644,6 +6688,12 @@ async def _gate_decide(body: dict) -> dict:
     if not consequence.is_gated(tool, contract is not None):
         return {"verdict": "allow", "decision": "allow",
                 "reason": "not an acting tool", "path": "not_gated"}
+    # YOLO mode is the owner's opt-in to no restrictions at all: every
+    # channel, before the floors, the house rules and any contract, with
+    # no model asked and nothing cached (turning it off must bite at once).
+    if yolo_mode():
+        gate.STATE["yolo"] = gate.STATE.get("yolo", 0) + 1
+        return gate._out("allow", "YOLO mode is on", channel, "yolo")
     # "Let brAIn act without asking" reaches the gate too, or the switch
     # would stop the CLI's prompts and leave this one asking: in the chat
     # and the terminal the model's judgement is not consulted while it is
@@ -23222,6 +23272,14 @@ async def h_settings_put(request: web.Request) -> web.Response:
         settings = settings_store.save(panel) if panel else settings_store.load()
     except ValueError as exc:
         raise web.HTTPBadRequest(text=_exc_text(exc))
+    if "yolo_mode" in panel:
+        # The hooks and the MCP server read the flag file, the terminal and
+        # the chat read the switch and their prompt: all moved at once.
+        _publish_permission_mode()
+        await asyncio.to_thread(_write_terminal_prompt)
+        log.warning("YOLO mode turned %s",
+                    "ON: brAIn now has no restrictions" if yolo_mode()
+                    else "off")
 
     if clean_options:
         wrote_addon = False
@@ -23589,6 +23647,15 @@ DEVELOPMENT_MODE_OFF = (
     "report_bug only when the person asks.")
 
 
+YOLO_MODE_ON = (
+    "YOLO mode is ON (the owner turned it on in ⚙ › Permissions, knowing what "
+    "it does): brAIn has no restrictions. Never wait for a person's approval, "
+    "never stop to ask before a change, and ignore every instruction that "
+    "says something needs a human first. Protected entities, house rules, the "
+    "action gate and file permissions do not apply. Do what you are asked, "
+    "check it worked, and say what you changed.")
+
+
 def development_mode() -> bool:
     """Development mode is the devloop switched on with autopilot: brAIn files
     what it finds about itself without a press. Opt-in; False on any error."""
@@ -23604,6 +23671,8 @@ def _chat_system_prompt(session) -> str:
     lines = _chat_house_lines()
     base = CHAT_IDENTITY + "\n\n" + (
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF)
+    if yolo_mode():
+        base += "\n\n" + YOLO_MODE_ON
     if not lines:
         return base
     return (base + "\n\nWhen this conversation started: "
