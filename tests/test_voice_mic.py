@@ -17,8 +17,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 import pytest
 from aiohttp import web
@@ -136,7 +136,7 @@ class TestThePhoneReachesTheCli(unittest.IsolatedAsyncioTestCase):
         await ws.close()
 
     async def test_no_page_means_the_recording_ends_and_says_why(self):
-        with mock.patch.object(voice_mic, "WAIT_FOR_SOURCE_S", 0.2):
+        with unittest.mock.patch.object(voice_mic, "WAIT_FOR_SOURCE_S", 0.2):
             code, out, err = await asyncio.to_thread(
                 _run_arecord, CLI_ARGV, self.url)
         self.assertEqual(code, 1)
@@ -167,7 +167,7 @@ class TestOnlyTheContainerCanListen(unittest.IsolatedAsyncioTestCase):
         client = TestClient(TestServer(_app(), host="127.0.0.1"))
         await client.start_server()
         try:
-            with mock.patch.object(voice_mic.ownership, "from_loopback",
+            with unittest.mock.patch.object(voice_mic.ownership, "from_loopback",
                                    return_value=False):
                 resp = await client.get("/api/voice/listen")
             self.assertEqual(resp.status, 403)
@@ -178,7 +178,7 @@ class TestOnlyTheContainerCanListen(unittest.IsolatedAsyncioTestCase):
         client = TestClient(TestServer(_app(), host="127.0.0.1"))
         await client.start_server()
         try:
-            with mock.patch.dict(os.environ, {"BRAIN_ENABLE_TERMINAL": "false"}):
+            with unittest.mock.patch.dict(os.environ, {"BRAIN_ENABLE_TERMINAL": "false"}):
                 resp = await client.get("/api/voice/mic")
             self.assertEqual(resp.status, 404)
         finally:
