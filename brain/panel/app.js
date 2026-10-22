@@ -15393,7 +15393,13 @@ function bookEntryNode(entry) {
     });
     row.append(save, cancel);
     li.appendChild(row);
-    setTimeout(() => { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }, 0);
+    // Caret to the end on open, unless somebody is already in the box: moving
+    // their selection would turn a replace into an append.
+    setTimeout(() => {
+      if (document.activeElement === box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    }, 0);
     return li;
   }
   li.appendChild(el("span", "booktext", entry.text));
