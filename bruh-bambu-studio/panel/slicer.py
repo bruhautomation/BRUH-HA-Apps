@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import installer
@@ -281,14 +283,89 @@ def profile_path(kind: str, name: str) -> Path:
     return installer.resources() / "profiles" / "BBL" / kind / f"{name}.json"
 
 
+# How copies reach the CLI. `--repetitions N` repeats one plate's model, and
+# src/BambuStudio.cpp keeps the plate asked for only for a 3MF Bambu Studio
+# wrote itself — any other input is reset to plate 0 ("not support to slice
+# plate"), and then `--repetitions` is refused ("can not set repetitions when
+# slice all", exit 254). Its importer (bbs_3mf.cpp) knows its own 3MF by the
+# model's Application metadata starting "BambuStudio-". So:
+#   repetitions - Bambu Studio's own project: --slice <plate> --repetitions N
+#   instances   - any other 3MF (a designed part is one): a copy whose build
+#                 lists each item N times, which the importer reads as N
+#                 instances of the object (_handle_start_item)
+#   files       - a bare model: the file handed over N times
+# and the last two are laid out with --arrange 1.
+COPIES_WAYS = ("repetitions", "instances", "files")
+_APPLICATION = re.compile(
+    rb'<metadata\s[^>]*name\s*=\s*"Application"[^>]*>\s*BambuStudio-', re.I)
+
+
+def _root_model(archive: zipfile.ZipFile) -> str:
+    """The 3MF's root model part, as its relationships name it."""
+    try:
+        rels = archive.read("_rels/.rels").decode(errors="replace")
+        found = re.search(r'Target="/?([^"]+\.model)"', rels)
+        if found and found.group(1) in archive.namelist():
+            return found.group(1)
+    except KeyError:
+        pass
+    return "3D/3dmodel.model"
+
+
+def copies_way(source: Path) -> str:
+    """Which of COPIES_WAYS `source` takes its copies by."""
+    if not source.name.lower().endswith(".3mf"):
+        return "files"
+    try:
+        with zipfile.ZipFile(source) as archive:
+            model = archive.read(_root_model(archive))
+    except (OSError, KeyError, zipfile.BadZipFile):
+        # Unreadable: the CLI will say so itself; ask it Bambu's own way.
+        return "repetitions"
+    return "repetitions" if _APPLICATION.search(model) else "instances"
+
+
+_BUILD = re.compile(rb"(<build\b[^>]*>)(.*?)(</build>)", re.S)
+_ITEM = re.compile(rb"<item\b[^>]*?(?:/>|>.*?</item>)", re.S)
+
+
+def with_copies(source: Path, target: Path, copies: int) -> None:
+    """Copy the 3MF `source` to `target` with every build item listed
+    `copies` times. Everything else in the file is copied byte for byte."""
+    with zipfile.ZipFile(source) as archive:
+        name = _root_model(archive)
+        model = archive.read(name)
+        build = _BUILD.search(model)
+        items = _ITEM.findall(build.group(2)) if build else []
+        if not items:
+            raise ValueError(f"{source.name} has nothing in its build to make copies of.")
+        repeated = b"".join(items) * int(copies)
+        model = model[:build.start(2)] + repeated + model[build.end(2):]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as out:
+            for item in archive.infolist():
+                if item.filename == name:
+                    out.writestr(name, model)
+                else:
+                    with archive.open(item) as src, out.open(item.filename, "w") as dst:
+                        shutil.copyfileobj(src, dst)
+
+
 def command(apprun: str, source: Path, out: Path, *, plate: int = 0,
             machine: Path | None = None, process: Path | None = None,
             filaments: list[Path] | None = None, arrange: bool = False,
-            orient: bool = False, copies: int = 1) -> list[str]:
+            orient: bool = False, copies: int = 1, copies_as: str | None = None) -> list[str]:
+    """The CLI's argv. With copies, `source` is already the file for the way
+    they are taken (with_copies for "instances")."""
     plate = max(0, int(plate))
-    if copies > 1 and plate == 0:
+    copies = max(1, int(copies))
+    way = (copies_as or copies_way(source)) if copies > 1 else None
+    if way == "repetitions" and plate == 0:
         # The CLI repeats one plate's model, never "every plate".
         plate = 1
+    elif way in ("instances", "files"):
+        # The CLI would reset any other plate to 0 for these anyway.
+        plate = 0
     argv = [apprun, "--slice", str(plate),
             "--export-3mf", out.name, "--outputdir", str(out.parent)]
     settings = [str(p) for p in (machine, process) if p]
@@ -296,15 +373,13 @@ def command(apprun: str, source: Path, out: Path, *, plate: int = 0,
         argv += ["--load-settings", ";".join(settings)]
     if filaments:
         argv += ["--load-filaments", ";".join(str(p) for p in filaments)]
-    if arrange:
+    if arrange or way:
         argv += ["--arrange", "1"]
     if orient:
         argv += ["--orient", "1"]
-    if copies > 1:
-        argv += ["--repetitions", str(int(copies))]
-        if not arrange:
-            argv += ["--arrange", "1"]
-    argv.append(str(source))
+    if way == "repetitions":
+        argv += ["--repetitions", str(copies)]
+    argv += [str(source)] * (copies if way == "files" else 1)
     return argv
 
 
@@ -349,20 +424,35 @@ def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
     job = {"id": uuid.uuid4().hex[:12], "kind": "slice", "state": "running",
            "source": library.relative(source), "output": None, "error": "",
            "started": time.time(), "finished": None, "info": None, "log": []}
-    argv = command(str(run), source, out, plate=plate, machine=machine, process=process,
-                   filaments=filaments, arrange=arrange, orient=orient, copies=copies)
+    work = Path(tempfile.mkdtemp(prefix="slice-"))
+    handed, way = source, None
+    if int(copies) > 1:
+        way = copies_way(source)
+        if way == "instances":
+            # Same name, so Bambu Studio names the object as before.
+            handed = work / "copies" / source.name
+            try:
+                with_copies(source, handed, copies)
+            except (OSError, KeyError, ValueError, zipfile.BadZipFile) as exc:
+                shutil.rmtree(work, ignore_errors=True)
+                raise ValueError(f"Could not lay out {copies} copies of {source.name}: "
+                                 f"{exc}") from None
+    argv = command(str(run), handed, out, plate=plate, machine=machine, process=process,
+                   filaments=filaments, arrange=arrange, orient=orient, copies=copies,
+                   copies_as=way)
     with _LOCK:
         JOBS[job["id"]] = job
         for old in sorted(JOBS.values(), key=lambda j: j["started"])[:-MAX_JOBS]:
             JOBS.pop(old["id"], None)
-    threading.Thread(target=_run, args=(job, argv, out, env), daemon=True).start()
+    threading.Thread(target=_run, args=(job, argv, out, env, work), daemon=True).start()
     return job
 
 
-def _run(job: dict, argv: list[str], out: Path, env: dict | None) -> None:
+def _run(job: dict, argv: list[str], out: Path, env: dict | None,
+         work: Path | None = None) -> None:
     # The CLI writes beside itself in places; a scratch working directory
-    # keeps that out of the library.
-    work = Path(tempfile.mkdtemp(prefix="slice-"))
+    # keeps that out of the library (and holds a copies file, removed after).
+    work = work or Path(tempfile.mkdtemp(prefix="slice-"))
     resume = None
     try:
         if MAKE_ROOM is not None:
