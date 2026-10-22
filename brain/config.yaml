@@ -102,7 +102,7 @@ backup_exclude:
   - deliveries.jsonl
 
 # Lifecycle stage, declared rather than inherited from the default.
-stage: stable
+stage: experimental
 boot: auto
 
 # The panel writes options back through the Supervisor and reads the
