@@ -33,11 +33,42 @@
       },
       "stage": {
         "name": "Stage"
+      },
+      "failure_detection": {
+        "name": "Failure detection",
+        "state": {
+          "off": "Off",
+          "idle": "Waiting for a print",
+          "watching": "Watching",
+          "looking": "Looking",
+          "basic": "Watching (without brAIn)",
+          "warning": "Warning",
+          "failure": "Failure",
+          "covered": "Camera covered",
+          "dark": "Too dark",
+          "frozen": "Camera frozen",
+          "no_camera": "No camera",
+          "unknown": "Unknown"
+        }
       }
     },
     "camera": {
       "camera": {
         "name": "Camera"
+      },
+      "last_check": {
+        "name": "Last print check"
+      }
+    },
+    "binary_sensor": {
+      "print_problem": {
+        "name": "Print problem"
+      },
+      "plate_clear": {
+        "name": "Plate clear"
+      },
+      "camera_covered": {
+        "name": "Camera covered"
       }
     }
   },
@@ -385,6 +416,68 @@
         "settings": {
           "name": "Settings",
           "description": "Print settings over the part's own, as the Design tab's print options name them (layer_height, infill_density, wall_loops, supports...)."
+        }
+      }
+    },
+    "check_print": {
+      "name": "Check the print now",
+      "description": "Have brAIn look at the print through the camera now, whatever the plan says. Needs failure detection on for the printer, the camera able to see, and brAIn.",
+      "fields": {
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
+        }
+      }
+    },
+    "print_alert_action": {
+      "name": "Answer a print alert",
+      "description": "Answer what failure detection raised: ignore it for the rest of the print, pause, resume after a false alarm (the same problem then only warns), or stop. Also says the plate is clear, or that something is on it.",
+      "fields": {
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
+        },
+        "action": {
+          "name": "Action",
+          "description": "ignore, pause, resume, stop, plate_clear or plate_occupied."
+        },
+        "alert": {
+          "name": "Alert",
+          "description": "The alert's id, so an answer to an old alert is refused rather than applied to a new one. Left out, the open alert."
+        }
+      }
+    },
+    "set_failure_detection": {
+      "name": "Set print failure detection",
+      "description": "Switch print failure detection on or off for a printer, and choose whether a failed print is paused or only warned about, how careful it is, whether it may turn the chamber light on to see, whether it watches for the plate being cleared, and which phone gets the alerts.",
+      "fields": {
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
+        },
+        "enabled": {
+          "name": "On",
+          "description": "Watch this printer's prints."
+        },
+        "mode": {
+          "name": "When a print fails",
+          "description": "pause: warn, and pause a print that has failed. warn: only warn."
+        },
+        "sensitivity": {
+          "name": "Sensitivity",
+          "description": "low looks less often and needs to be surer; high looks more and raises doubts sooner."
+        },
+        "light": {
+          "name": "Turn the light on",
+          "description": "Turn the chamber light on when it is too dark to see the print."
+        },
+        "plate": {
+          "name": "Watch the plate",
+          "description": "After a print, watch for the plate being cleared (the Plate clear sensor)."
+        },
+        "notify": {
+          "name": "Notify",
+          "description": "The notify service alerts go to, such as notify.mobile_app_pixel; empty for Home Assistant's own notifications only. One setting for every printer."
         }
       }
     }

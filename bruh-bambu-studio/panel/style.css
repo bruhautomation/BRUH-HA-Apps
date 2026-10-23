@@ -433,3 +433,72 @@ label[hidden], [hidden] { display: none !important; }
   .viewhelp { width: 44px; height: 44px; }
   .viewhelp-pop { top: 62px; max-height: calc(100% - 72px); }
 }
+/* ---- Print failure detection ------------------------------------------ */
+.watch { display: grid; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface)); }
+.watch.off { background: var(--surface); }
+.watch.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line)); }
+.watch.bad { border-color: color-mix(in srgb, var(--bad) 60%, var(--line)); }
+.whead { display: flex; align-items: center; gap: 10px; }
+.whead .hint { margin: 2px 0 0; }
+.wicon { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 10px;
+  background: var(--sunk); color: var(--accent); }
+.watch.warn .wicon { color: var(--warn); }
+.watch.bad .wicon { color: var(--bad); }
+/* A 44px target around a 46×28 track. */
+.switch { position: relative; display: inline-block; width: 52px; height: 44px; flex: none; cursor: pointer; }
+.switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; min-height: 0; margin: 0; cursor: pointer; }
+.switch i { position: absolute; left: 3px; top: 8px; width: 46px; height: 28px; border-radius: 999px; background: color-mix(in srgb, var(--muted) 35%, var(--sunk));
+  transition: background .2s; pointer-events: none; }
+.switch i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: transform .2s; }
+.switch input:checked + i { background: var(--live); }
+.switch input:checked + i::after { transform: translateX(18px); }
+.switch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+.walert { display: grid; gap: 8px; padding: 12px; border-radius: 12px; background: var(--warn-bg); color: var(--warn-ink); }
+.walert.bad { background: color-mix(in srgb, var(--bad) 14%, var(--surface)); color: var(--ink); }
+.walerthead { display: flex; align-items: center; gap: 8px; }
+.walert.bad .walerthead .ic { color: var(--bad); }
+.walert .hint { color: inherit; opacity: .8; margin: 0; }
+.wsummary { margin: 0; font-size: 15px; font-weight: 600; }
+.wpics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.wpics figure { margin: 0; display: grid; gap: 4px; }
+.wpics img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 10px; background: #05080b; }
+.wpics figure + figure img { object-fit: contain; background: var(--surface); }
+.wpics figcaption { font-size: 12px; opacity: .8; }
+.wplan { display: grid; gap: 8px; }
+.wplanhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.wplanhead .hint { margin: 0; }
+.wline { position: relative; height: 18px; margin: 4px 8px; }
+.wline::before { content: ""; position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 2px;
+  background: color-mix(in srgb, var(--muted) 22%, transparent); }
+.wfill { position: absolute; left: 0; top: 7px; height: 4px; border-radius: 2px; background: var(--accent); }
+.wtick { position: absolute; top: 2px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--accent); box-sizing: border-box; }
+.wtick.looking { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+.wtick.live { background: var(--live); border-color: var(--live); }
+.wtick.warn { background: var(--warn); border-color: var(--warn); }
+.wtick.bad { background: var(--bad); border-color: var(--bad); }
+.wtick.missed, .wtick.skipped { border-color: var(--muted); border-style: dashed; }
+.wnow { position: absolute; top: -2px; width: 2px; height: 22px; margin-left: -1px; background: var(--ink); border-radius: 1px; }
+.wnext { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.wnext li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.wnext .hint { margin: 0; flex: 1 1 200px; }
+.wkind { padding: 1px 8px; border-radius: 999px; background: var(--sunk); font-size: 12px; font-weight: 600; }
+.wlast, .wcheck { display: flex; gap: 10px; align-items: flex-start; }
+.wlast img, .wcheck img, .wcheck .nopic { width: 96px; height: 72px; flex: none; object-fit: cover; border-radius: 8px;
+  background: #05080b; aspect-ratio: auto; }
+.wlast p, .wcheck p { margin: 4px 0 0; font-size: 14px; }
+.wcheck p.hint { font-size: 12px; }
+.wcheckhead { margin-top: 0; flex-wrap: wrap; }
+.whist { display: grid; gap: 12px; margin-top: 10px; }
+.wset { display: grid; gap: 4px; margin-top: 10px; }
+.wset .seg { justify-self: start; max-width: 100%; }
+.wcheck .nopic { background: var(--sunk); }
+.wsetlabel { font-size: 13px; color: var(--muted); }
+.wcheckbox { margin-top: 10px; align-items: flex-start; }
+.wcheckbox small { display: block; margin: 0; }
+.wbadge .ic { width: 14px; height: 14px; }
+@media (prefers-reduced-motion: reduce) { .wtick.looking { animation: none; } }
+/* On a phone the sentence under the title says what the pill would. */
+@media (max-width: 560px) { .whead .pill { display: none; } }

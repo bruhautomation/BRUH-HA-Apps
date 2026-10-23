@@ -18,12 +18,17 @@
  * camera proxy and refreshed every two seconds while the card is on screen.
  * Its <img> is kept across redraws, or every state change would blank it.
  *
+ * Print failure detection is its own sensor on the same device (marked
+ * `bruh_bambu_detection`); when it is on the card shows what it is doing
+ * and, while an alert is open, what brAIn saw with the buttons that answer
+ * it — Ignore and Pause for a warning, Resume and Stop for a paused print.
+ *
  * Stop takes two presses, the second within four seconds. A dialog would
  * float over the page (Morph forbids that), and one press on a ten-hour
  * print is the press nobody can take back.
  */
 
-const CARD_VERSION = '0.2.6';
+const CARD_VERSION = '0.3.0';
 const DOMAIN = 'bruh_bambu';
 
 console.info(
@@ -105,7 +110,20 @@ const css = (morph) => `
   .stage { color: var(--b-muted); font-size: 13px; }
   .tray.active { border-color: var(--b-live); box-shadow: 0 0 0 1px var(--b-live); }
   .empty { color: var(--b-muted); }
+  .watch { display: grid; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--b-sunk); font-size: 13px; }
+  .watch.warn { background: color-mix(in srgb, #f0a63c 20%, var(--b-surface)); }
+  .watch.bad { background: color-mix(in srgb, var(--b-bad) 18%, var(--b-surface)); }
+  .watch .line { display: flex; align-items: center; gap: 6px; }
+  .watch svg { width: 16px; height: 16px; fill: currentColor; flex: none; }
+  .watch.bad svg { color: var(--b-bad); }
+  .watch b { font-weight: 700; }
+  .watch .say { font-size: 14px; font-weight: 600; }
 `;
+
+const SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M11,7H13V13H11V7M11,15H13V17H11V15Z"/></svg>';
+const WATCH_WORDS = { idle: 'Ready for the next print', watching: 'Watching', looking: 'brAIn is looking',
+  basic: 'Watching (without brAIn)', warning: 'Warning', failure: 'Print failed', covered: 'Camera covered — not checking',
+  dark: 'Too dark to see — not checking', frozen: 'Camera frozen — not checking', no_camera: 'No camera — not checking' };
 
 class BruhBambuCard extends HTMLElement {
   static morph = false;
@@ -125,7 +143,10 @@ class BruhBambuCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     const printers = this._printers();
-    const key = JSON.stringify(printers.map((p) => [p.entity, p.state, p.attrs])) + this._armed;
+    const key = JSON.stringify(printers.map((p) => {
+      const d = this._detectionOf(p);
+      return [p.entity, p.state, p.attrs, d && d.state, d && d.attributes];
+    })) + this._armed;
     if (key === this._key) return;
     this._key = key;
     this._render(printers);
@@ -142,12 +163,41 @@ class BruhBambuCard extends HTMLElement {
       .map((s) => ({ entity: s.entity_id, state: s.state, attrs: s.attributes }));
   }
 
+  _detectionOf(p) {
+    const hass = this._hass;
+    const pid = p.attrs.bruh_bambu_printer;
+    const id = Object.keys(hass.states).find((e) => e.startsWith('sensor.')
+      && hass.states[e].attributes && hass.states[e].attributes.bruh_bambu_detection === pid);
+    return id ? hass.states[id] : null;
+  }
+
+  _watchHtml(p, id) {
+    const d = this._detectionOf(p);
+    if (!d || ['off', 'unknown', 'unavailable'].includes(d.state) || this._config.show_detection === false) return '';
+    const a = d.attributes;
+    const tone = d.state === 'failure' ? 'bad' : ['warning', 'covered', 'dark', 'frozen', 'no_camera'].includes(d.state) ? 'warn' : '';
+    let extra = '';
+    if (a.alert_id) {
+      const buttons = d.state === 'failure' && a.alert_paused
+        ? `<button class="primary" data-alert="resume" data-id="${id}" data-a="${esc(a.alert_id)}">Resume — not a failure</button>
+           <button class="${this._armed === `alert:${a.alert_id}` ? 'armed' : 'danger'}" data-alert="stop" data-id="${id}" data-a="${esc(a.alert_id)}">${this._armed === `alert:${a.alert_id}` ? 'Tap again to stop' : 'Stop print'}</button>`
+        : `<button data-alert="pause" data-id="${id}" data-a="${esc(a.alert_id)}">Pause print</button>
+           <button data-alert="ignore" data-id="${id}" data-a="${esc(a.alert_id)}">Ignore</button>`;
+      extra = `<div class="say">${esc(a.alert)}</div><div class="controls">${buttons}</div>`;
+    } else if (d.state === 'watching' && a.next_look_layer) {
+      extra = `<div class="muted">Next look at layer ${esc(a.next_look_layer)}${a.last_look ? ` · last: ${esc(a.last_look)}` : ''}</div>`;
+    }
+    return `<div class="watch ${tone}"><div class="line">${SHIELD}<b>Failure detection</b><span>${esc(WATCH_WORDS[d.state] || d.state)}</span></div>${extra}</div>`;
+  }
+
   _cameraOf(p) {
     const hass = this._hass;
     const reg = hass.entities || {};
     const device = reg[p.entity] && reg[p.entity].device_id;
     if (!device) return null;
-    const id = Object.keys(reg).find((e) => e.startsWith('camera.') && reg[e].device_id === device);
+    // The live camera, not the Last print check one on the same device.
+    const id = Object.keys(reg).find((e) => e.startsWith('camera.') && reg[e].device_id === device
+      && !(reg[e].translation_key === 'last_check' || /_last_print_check$/.test(e)));
     return id && hass.states[id] ? id : null;
   }
 
@@ -240,6 +290,7 @@ class BruhBambuCard extends HTMLElement {
         <div class="head"><span class="name">${esc(a.printer_name || a.friendly_name)}</span>
           <span class="chip ${chipClass}">${esc(p.state)}</span></div>
         ${cam}
+        ${this._watchHtml(p, id)}
         ${live && a.stage && !cam ? `<div class="stage">${esc(a.stage)}</div>` : ''}
         ${live || pct ? `<div class="row"><span class="pct">${pct}</span>
           <span class="muted">${esc(a.file || '')}${a.remaining_min != null && live ? ` · ${duration(a.remaining_min)} left · done ${finishAt(a.remaining_min)}` : ''}${a.layer != null && a.total_layers ? ` · layer ${a.layer}/${a.total_layers}` : ''}</span></div>
@@ -257,6 +308,19 @@ class BruhBambuCard extends HTMLElement {
     this.shadowRoot.querySelectorAll('[data-cam]').forEach((box) => box.prepend(this._camImg(box.dataset.cam)));
     this.shadowRoot.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () =>
       this._call(b.dataset.act, { printer: b.dataset.id })));
+    this.shadowRoot.querySelectorAll('[data-alert]').forEach((b) => b.addEventListener('click', () => {
+      // Stop takes two presses here too (no dialog: Morph forbids floating ones).
+      if (b.dataset.alert === 'stop' && this._armed !== `alert:${b.dataset.a}`) {
+        this._armed = `alert:${b.dataset.a}`;
+        this._key = '';
+        this.hass = this._hass;
+        clearTimeout(this._disarm);
+        this._disarm = setTimeout(() => { this._armed = null; this._key = ''; this.hass = this._hass; }, 4000);
+        return;
+      }
+      this._armed = null;
+      this._call('print_alert_action', { printer: b.dataset.id, action: b.dataset.alert, alert: b.dataset.a });
+    }));
     this.shadowRoot.querySelectorAll('[data-stop]').forEach((b) => b.addEventListener('click', () =>
       this._stop(printers.find((p) => p.attrs.bruh_bambu_printer === b.dataset.stop))));
     this.shadowRoot.querySelectorAll('[data-speed]').forEach((s) => s.addEventListener('change', () =>
@@ -281,7 +345,7 @@ if (!window.customCards.some((c) => c.type === 'bruh-bambu-card')) {
   window.customCards.push({
     type: 'bruh-bambu-card',
     name: 'BRUH Bambu printers',
-    description: 'Camera, progress, time left, temperatures and AMS for your Bambu Lab printers, with pause, resume, stop, speed, light and refresh.',
+    description: 'Camera, progress, time left, temperatures, AMS and print failure detection for your Bambu Lab printers, with pause, resume, stop, speed, light and refresh.',
     preview: true,
   });
 }

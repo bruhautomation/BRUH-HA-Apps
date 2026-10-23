@@ -55,6 +55,7 @@ from bambu import ftps, protocol, threemf  # noqa: E402
 from bambu.client import PrinterClient  # noqa: E402
 from design import brain_link, designer, options, painting, parts, profiles, runner  # noqa: E402
 from studio import Studio  # noqa: E402
+from watch.watcher import Watcher  # noqa: E402
 
 log = logging.getLogger("bruh_bambu")
 
@@ -96,6 +97,8 @@ class Panel:
         # show the picture of the job it is printing: {printer id: {name: library path}}.
         self.uploaded: dict[str, dict] = {}
         self.start_clients = start_clients
+        # Print failure detection: a thread per printer it is on for.
+        self.watch = Watcher(self, start_threads=start_clients)
         self._mirror = ""
         self._mirrored_at = 0.0
         self._lock = threading.Lock()
@@ -174,6 +177,7 @@ class Panel:
                 os.path.basename(str(summary.get("gcode_file") or "")))
             item["job_picture"] = (f"api/thumb?path={urllib.parse.quote(source)}"
                                    if source else None)
+            item["failure_detection"] = self.watch.summary(row["id"], summary.get("state"))
             out.append(item)
         return out
 
@@ -200,6 +204,7 @@ class Panel:
             "jobs": sorted([*self.jobs.values(), *slicer.JOBS.values()],
                            key=lambda j: j["started"], reverse=True)[:10],
             "ha": ha_setup.status(),
+            "watch_notify": self.watch.notify_target(),
         }
 
     # -- the timer ---------------------------------------------------------
@@ -207,6 +212,7 @@ class Panel:
         self.studio.tick()
         for client in list(self.clients.values()):
             client.tick()
+        self.watch.tick()
         self._ha_cameras()
         self.publish()
         try:
@@ -231,6 +237,15 @@ class Panel:
                 except LookupError:
                     pass  # a printer removed since its entity asked
 
+    def watch_changed(self) -> None:
+        """Failure detection moved on: rewrite the mirror on the next tick
+        rather than in up to a minute, and now if it can."""
+        self._mirror = ""
+        try:
+            self.publish()
+        except Exception:  # noqa: BLE001 - a mirror that could not be written waits for the tick
+            log.exception("Publishing the state after a print look failed")
+
     def publish(self) -> None:
         """Mirror what Home Assistant reads into the shared folder.
 
@@ -244,6 +259,7 @@ class Panel:
             "version": state["version"],
             "studio": {k: state["studio"][k] for k in ("installed", "version", "running")},
             "printers": state["printers"],
+            "watch": {"notify": self.watch.notify_target()},
             "generated_at": int(time.time()),
         }
         text = json.dumps({**mirror, "generated_at": 0}, sort_keys=True)
@@ -755,6 +771,105 @@ async def h_camera(request):
         "X-Frame-Age": str(round(time.time() - camera.frame_at, 1))})
 
 
+async def h_watch(request):
+    """A printer's failure detection: its summary and every look this print."""
+    panel = _panel(request)
+    try:
+        row, client = panel.printer(request.query.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    watch = panel.watch.watch(row["id"])
+    state = (client.summary() or {}).get("state")
+    return web.json_response({"ok": True, "printer": row["name"],
+                              "summary": await asyncio.to_thread(watch.summary, state),
+                              **await asyncio.to_thread(watch.history),
+                              "notify": panel.watch.notify_target()})
+
+
+async def h_watch_settings(request):
+    """Switch detection on or off for a printer, or change how it behaves."""
+    body = await _body(request)
+    panel = _panel(request)
+    pid = None
+    if body.get("printer"):
+        try:
+            pid = panel.printer(body.get("printer"))[0]["id"]
+        except LookupError as exc:
+            return _err(str(exc), 404)
+    changes = {k: body[k] for k in ("enabled", "mode", "sensitivity", "light", "plate", "notify")
+               if k in body}
+    if not changes:
+        return _err("Nothing to change: send enabled, mode, sensitivity, light, plate or notify.")
+    try:
+        settings = await asyncio.to_thread(panel.watch.update_settings, pid, changes)
+    except ValueError as exc:
+        return _err(str(exc))
+    panel.watch_changed()
+    return web.json_response({"ok": True, "settings": settings})
+
+
+WATCH_ACTIONS = ("check", "ignore", "pause", "resume", "stop", "plate_clear", "plate_occupied")
+
+
+async def h_watch_action(request):
+    """Answer an alert (ignore, pause, resume, stop), ask for a look, or say the plate is clear."""
+    body = await _body(request)
+    panel = _panel(request)
+    try:
+        row, _client = panel.printer(body.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    action = str(body.get("action") or "").strip().lower()
+    if action not in WATCH_ACTIONS:
+        return _err(f"Unknown action {action!r}. Known: {', '.join(WATCH_ACTIONS)}.")
+    if not panel.watch.settings_for(row["id"])["enabled"] and action == "check":
+        return _err(f"Print failure detection is off for {row['name']}. Turn it on on the "
+                    f"Printers tab first.", 409)
+    try:
+        said = await asyncio.to_thread(panel.watch.watch(row["id"]).act, action,
+                                       str(body.get("alert") or ""))
+    except ValueError as exc:
+        return _err(str(exc), 409)
+    panel.watch_changed()
+    return web.json_response({"ok": True, "printer": row["name"], "action": action, "note": said})
+
+
+async def h_watch_image(request):
+    """A frame brAIn looked at, or the picture of what the print should be."""
+    panel = _panel(request)
+    try:
+        row, _client = panel.printer(request.query.get("printer"))
+    except LookupError as exc:
+        return _err(str(exc), 404)
+    path = panel.watch.watch(row["id"]).image(request.query.get("name"))
+    if path is None:
+        return _err("No such picture.", 404)
+    return web.FileResponse(path, headers={
+        "Content-Type": "image/png" if path.suffix == ".png" else "image/jpeg",
+        "Cache-Control": "private, max-age=86400"})
+
+
+async def h_watch_targets(_request):
+    """The notify services Home Assistant has, for the alert's phone."""
+    def _read():
+        status, body = ha_setup._call("GET", "/core/api/services")
+        if status != 200 or not isinstance(body, list):
+            return None
+        for domain in body:
+            if isinstance(domain, dict) and domain.get("domain") == "notify":
+                return sorted(f"notify.{name}" for name in (domain.get("services") or {})
+                              if name not in ("send_message", "persistent_notification"))
+        return []
+    try:
+        targets = await asyncio.to_thread(_read)
+    except OSError:
+        targets = None
+    if targets is None:
+        return web.json_response({"ok": True, "targets": [], "note":
+                                  "Home Assistant's notify services could not be read."})
+    return web.json_response({"ok": True, "targets": targets})
+
+
 async def h_thumb(request):
     """A library file's picture (a 3MF's own, or one drawn from the mesh)."""
     try:
@@ -1174,7 +1289,34 @@ async def h_design_file(request):
         path = parts.file_in(part["id"], n, request.query.get("path") or "")
     except (ValueError, LookupError):
         return _err("No such file.", 404)
-    return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+    name = download_name(part.get("name") or "part", n, path.suffix)
+    return web.FileResponse(path, headers={
+        "Cache-Control": "no-cache",
+        "Content-Type": DOWNLOAD_TYPES.get(path.suffix.lower(), "application/octet-stream"),
+        "Content-Disposition": content_disposition(name)})
+
+
+DOWNLOAD_TYPES = {".3mf": "model/3mf", ".stl": "model/stl", ".step": "model/step",
+                  ".stp": "model/step"}
+
+
+def download_name(part_name: str, version: int, suffix: str) -> str:
+    """What a downloaded file is called: the part's name, its version, its kind.
+
+    The route ends in `/file?v=…`, which is all a browser (or Home
+    Assistant's app) has to name the download by when nothing says
+    otherwise — a file called `file` with no extension that nothing opens.
+    """
+    stem = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", " ", str(part_name)).strip(" .")[:80] or "part"
+    tail = f" v{version}" if version else ""
+    return f"{stem}{tail}{suffix.lower()}"
+
+
+def content_disposition(name: str) -> str:
+    """An attachment header both old and new browsers read, for any name."""
+    ascii_name = re.sub(r"[^A-Za-z0-9 ._()-]", "_", name) or "download"
+    return (f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{urllib.parse.quote(name, safe='')}")
 
 
 async def h_design_thumb(request):
@@ -1610,6 +1752,11 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_get("/api/printer/thumb", h_printer_thumb)
     r.add_get("/api/printer/camera", h_camera)
     r.add_get("/api/thumb", h_thumb)
+    r.add_get("/api/watch", h_watch)
+    r.add_post("/api/watch/settings", h_watch_settings)
+    r.add_post("/api/watch/action", h_watch_action)
+    r.add_get("/api/watch/image", h_watch_image)
+    r.add_get("/api/watch/targets", h_watch_targets)
     r.add_post("/api/ha/check", h_ha_check)
     r.add_post("/api/ha/restart", h_ha_restart)
     r.add_get("/api/print/options", h_print_options)

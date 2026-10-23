@@ -48,6 +48,14 @@ SERVICE_REFRESH = "refresh"
 SERVICE_DESIGN = "design_part"
 SERVICE_DESIGN_STATUS = "design_status"
 SERVICE_PRINT_PART = "print_part"
+# Print failure detection.
+SERVICE_CHECK_PRINT = "check_print"
+SERVICE_ALERT_ACTION = "print_alert_action"
+SERVICE_SET_DETECTION = "set_failure_detection"
+ALERT_ACTIONS = ["ignore", "pause", "resume", "stop", "plate_clear", "plate_occupied"]
+# The tag on a phone's alert, and the prefix on the buttons it carries.
+ALERT_TAG = "bruh_bambu_watch_"
+ALERT_ACTION_PREFIX = "BRUH_BAMBU_WATCH"
 
 # The printer card, where run.sh puts it and the URL Core serves it from.
 # The URL carries a hash of the file because /local is served with a 31-day

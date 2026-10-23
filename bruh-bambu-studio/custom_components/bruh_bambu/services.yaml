@@ -476,3 +476,97 @@ print_part:
       example: '{"infill_density": 25}'
       selector:
         object: {}
+check_print:
+  name: Check the print now
+  description: Have brAIn look at the print through the camera now, whatever the plan says.
+    Needs failure detection on for the printer, the camera able to see, and brAIn.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+print_alert_action:
+  name: Answer a print alert
+  description: Answer what failure detection raised — ignore it for the rest of the print,
+    pause, resume after a false alarm, or stop — or say the plate is clear.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    action:
+      name: Action
+      description: What to do.
+      required: true
+      example: ignore
+      selector:
+        select:
+          options:
+            - ignore
+            - pause
+            - resume
+            - stop
+            - plate_clear
+            - plate_occupied
+    alert:
+      name: Alert
+      description: The alert's id; left out, the open alert.
+      selector:
+        text: {}
+set_failure_detection:
+  name: Set print failure detection
+  description: Switch print failure detection on or off for a printer and choose how it
+    behaves.
+  fields:
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    enabled:
+      name: On
+      description: Watch this printer's prints.
+      selector:
+        boolean: {}
+    mode:
+      name: When a print fails
+      description: pause warns and pauses a failed print; warn only warns.
+      selector:
+        select:
+          options:
+            - pause
+            - warn
+    sensitivity:
+      name: Sensitivity
+      description: How often it looks and how sure it must be.
+      selector:
+        select:
+          options:
+            - low
+            - medium
+            - high
+    light:
+      name: Turn the light on
+      description: Turn the chamber light on when it is too dark to see the print.
+      selector:
+        boolean: {}
+    plate:
+      name: Watch the plate
+      description: After a print, watch for the plate being cleared.
+      selector:
+        boolean: {}
+    notify:
+      name: Notify
+      description: The notify service alerts go to (one for every printer); empty for Home
+        Assistant's own notifications only.
+      example: notify.mobile_app_pixel
+      selector:
+        text: {}

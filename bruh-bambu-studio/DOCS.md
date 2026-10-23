@@ -200,6 +200,79 @@ The **Home Assistant** card under the printers says whether the integration is
 set up, offers the restart when one is owed, and says how to add the dashboard
 cards.
 
+## Print failure detection
+
+Turn on **Print failure detection** on a printer's card on the Printers tab.
+While that printer prints, the add-on watches its camera and brAIn looks at
+the print at the moments it is most likely to go wrong.
+
+**Where it looks.** When a print starts, its G-code is read (from the library
+when the print was sent from here, from the printer's storage otherwise), and
+the looks are planned layer by layer:
+
+- the first layer, once it is down — most failed prints fail here;
+- a couple of millimetres up, where a part that is going to come loose has;
+- the layer where the part narrows sharply (a wide base becoming a thin column);
+- the first bridges and overhangs, and where supports start;
+- a colour or filament change;
+- the height where a part gets tall for its base and could wobble or be knocked over;
+- the last layers;
+- and one routine look in any long stretch with nothing else planned.
+
+Relaxed plans 5 looks a print, Balanced 8 and Careful 13, never two within a
+few minutes. The card shows the plan as dots along the print's layers —
+filled once looked at, coloured by what was found — and the next few with
+the reason for each. When the file cannot be read the looks are spread by
+layer instead, and the card says so.
+
+**What brAIn is shown.** The camera now, Bambu Studio's picture of the
+finished plate (what the print should become), and the frame from its last
+look, with the layer, the height the part should have reached and why this
+moment was chosen. Its run is read-only.
+
+**What happens.**
+
+- *Looks fine* — nothing.
+- *Unsure* — nobody is told; brAIn looks again a few minutes later.
+- *Warning* (something looks wrong but the print may still be fine) — you are
+  told, with **Ignore** (no more warnings about that problem for the rest of
+  the print) and **Pause print**. It looks again soon, and closes the warning
+  itself if the print looks fine.
+- *Failure* (spaghetti, a part come loose or knocked over, a blob on the
+  nozzle, nothing coming out) — the printer is **paused** and you are told,
+  with **Resume — not a failure** (the same problem then only warns for the
+  rest of the print) and **Stop print**. With *Only warn* chosen it is never
+  paused. Stringing and warping only ever warn.
+
+**Free checks, all the time.** These need no brAIn and cost nothing:
+
+- **A covered lens or a dark chamber.** A flat picture, or a black one with
+  the chamber light on, is a covered lens; a black one with the light off is a
+  dark chamber. Either way nothing is checked until it can see again, and the
+  card says why. *Turn the chamber light on to see* (on by default) turns the
+  light on once per print when it is dark.
+- **A frozen camera** — a picture that has stopped changing is not judged.
+- **A sudden change on the plate** — the toolhead is taken out of the picture
+  and a jump far beyond this print's usual change asks brAIn to look now.
+- **The printer's own camera** — an HMS message from the printer's camera
+  asks brAIn to look now; without brAIn it is raised as a warning.
+
+Without brAIn the free checks still run and the card says *Watching (basic)*.
+brAIn's own pause and usage budget apply to every look nobody pressed for;
+**Check now** always asks.
+
+**Plate clear.** After a print it keeps watching (for up to 12 hours) for the
+plate being cleared: it compares the plate with the empty plate it saw
+before the first layer, or asks brAIn once when the plate changes. **It's
+clear** on the card says so by hand. *Watch for the plate being cleared* turns
+this off.
+
+**Alerts.** Every warning and failure is a Home Assistant notification and a
+`bruh_bambu_print_alert` event. Choose a phone under **Detection settings ›
+Alerts go to** and it is also sent to the phone, with the frame brAIn judged
+and buttons that answer it. An alert that is answered or clears takes its
+notification with it.
+
 ## Print options
 
 Every way of printing offers the same options, from one list: the **Print**
@@ -235,7 +308,10 @@ The add-on installs one card in two places:
 It shows the camera, the stage, progress, time left and the finish time, the
 layer, temperatures and AMS trays (the one in use marked), with Pause/Resume,
 Stop (press twice), speed, the chamber light, Refresh, and Reconnect when the
-printer is not answering. `show_camera: false` leaves the camera out.
+printer is not answering. `show_camera: false` leaves the camera out. With
+print failure detection on it shows what detection is doing and, during an
+alert, what brAIn saw with Ignore and Pause (or Resume and Stop);
+`show_detection: false` leaves that out.
 
 The card is in the card picker once the integration is set up (see
 *Installing*); Morph picks it up within two minutes of being installed.
@@ -262,6 +338,9 @@ The card is in the card picker once the integration is set up (see
 | `bruh_bambu.design_part` | Describe a part and brAIn designs it (or name a part in `part` and say what to change in `message`); answers as soon as brAIn has started, with the part's id and name. Needs brAIn |
 | `bruh_bambu.design_status` | A designed part's latest version, whether brAIn is still on it, its last reply, whether it built and any print of it; every part when none is named |
 | `bruh_bambu.print_part` | Print a designed part — the Design tab's Slice and print — on a printer, with `copies`, `slot` and print `settings` |
+| `bruh_bambu.check_print` | Have brAIn look at the print now (failure detection on, the camera able to see) |
+| `bruh_bambu.print_alert_action` | Answer an alert: `ignore`, `pause`, `resume` (a false alarm), `stop`; or `plate_clear` / `plate_occupied`. `alert` names the alert so an old answer is refused |
+| `bruh_bambu.set_failure_detection` | Turn detection on or off for a printer, and set `mode` (pause or warn), `sensitivity` (low, medium, high), `light`, `plate` and the `notify` service alerts go to |
 
 `printer` can be left out when there is only one printer; with two or more it
 is the printer's name or serial number. Every service answers with the
@@ -292,6 +371,25 @@ everything else as attributes, and *offline* when it is not reporting),
 **Stage** (what it is doing inside that: levelling, heating, changing
 filament…), **Progress**, **Time left**, **Nozzle temperature** and **Bed
 temperature**.
+
+With print failure detection on, the device also has **Failure detection**
+(off, idle, watching, looking, basic, warning, failure, covered, dark, frozen,
+no_camera — with the last look, the next one and any open alert as
+attributes), **Print problem** (on while an alert is open; `level` says
+warning or failure), **Plate clear**, **Camera covered**, and a **Last print
+check** camera showing the frame brAIn last judged.
+
+```yaml
+# Flash the office light when a print has a problem.
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.workshop_x1c_print_problem
+    to: "on"
+actions:
+  - action: light.turn_on
+    target: { entity_id: light.office }
+    data: { flash: long }
+```
 
 ## brAIn
 

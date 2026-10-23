@@ -189,6 +189,9 @@ const ICONS = {
   fan: "M12,11A1,1 0 0,0 11,12A1,1 0 0,0 12,13A1,1 0 0,0 13,12A1,1 0 0,0 12,11M12.5,2C17,2 17.11,5.57 14.75,6.75C13.76,7.24 13.32,8.29 13.13,9.22C13.61,9.42 14.03,9.73 14.35,10.13C18.05,8.13 22.03,8.92 22.03,12.5C22.03,17 18.46,17.1 17.28,14.73C16.78,13.74 15.72,13.3 14.79,13.11C14.59,13.59 14.28,14 13.88,14.34C15.87,18.03 15.08,22 11.5,22C7,22 6.91,18.42 9.27,17.24C10.25,16.75 10.69,15.71 10.89,14.79C10.4,14.59 9.97,14.27 9.65,13.87C5.96,15.85 2,15.07 2,11.5C2,7 5.56,6.89 6.74,9.26C7.24,10.25 8.29,10.68 9.22,10.87C9.41,10.39 9.73,9.97 10.14,9.65C8.15,5.96 8.94,2 12.5,2Z",
   speed: "M12,16A3,3 0 0,1 9,13C9,11.88 9.61,10.9 10.5,10.39L20.21,4.77L14.68,14.35C14.18,15.33 13.17,16 12,16M12,3C13.81,3 15.5,3.5 16.97,4.32L14.87,5.53C14,5.19 13,5 12,5A8,8 0 0,0 4,13C4,15.21 4.89,17.21 6.34,18.65H6.35C6.74,19.04 6.74,19.67 6.35,20.06C5.96,20.45 5.32,20.45 4.93,20.07V20.07C3.12,18.26 2,15.76 2,13A10,10 0 0,1 12,3M22,13C22,15.76 20.88,18.26 19.07,20.07V20.07C18.68,20.45 18.05,20.45 17.66,20.06C17.27,19.67 17.27,19.04 17.66,18.65V18.65C19.11,17.2 20,15.21 20,13C20,12 19.81,11 19.46,10.1L20.67,8C21.5,9.5 22,11.18 22,13Z",
   drop: "M12,20A6,6 0 0,1 6,14C6,10 12,3.25 12,3.25C12,3.25 18,10 18,14A6,6 0 0,1 12,20Z",
+  shield: "M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z",
+  shieldAlert: "M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M11,7H13V13H11V7M11,15H13V17H11V15Z",
+  eye: "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z",
   link: "M3.9,12C3.9,10.29 5.29,8.9 7,8.9H11V7H7A5,5 0 0,0 2,12A5,5 0 0,0 7,17H11V15.1H7C5.29,15.1 3.9,13.71 3.9,12M8,13H16V11H8V13M17,7H13V8.9H17C18.71,8.9 20.1,10.29 20.1,12C20.1,13.71 18.71,15.1 17,15.1H13V17H17A5,5 0 0,0 22,12A5,5 0 0,0 17,7Z",
 };
 
@@ -319,6 +322,7 @@ function cameraBlock(p) {
   const overlay = el("div", { class: "camover" },
     el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word),
     p.stage && p.printing ? el("span", { class: "pill ghost" }, p.stage) : null,
+    watchBadge(p),
     el("span", { class: "grow" }),
     el("button", { type: "button", class: "iconbtn", title: p.chamber_light ? "Light off" : "Light on",
       "aria-label": p.chamber_light ? "Turn the chamber light off" : "Turn the chamber light on",
@@ -526,6 +530,236 @@ function manualBlock(p) {
   return box;
 }
 
+// ------------------------------------------------- failure detection ---
+// Print failure detection's section of the printer card: whether it is on,
+// what it is doing, the open alert with the frame brAIn judged beside the
+// picture of what the print should be, the plan of looks over the print's
+// layers, and the history. Everything it shows comes from the server's
+// summary (`failure_detection`); the history is fetched when opened.
+const WATCH_STATUS = {
+  off: ["Off", ""], idle: ["Ready", "done"], watching: ["Watching", "live"], looking: ["Looking", "live"],
+  basic: ["Watching (basic)", "live"], warning: ["Warning", "warn"], failure: ["Failure", "bad"],
+  covered: ["Camera covered", "warn"], dark: ["Too dark", "warn"], frozen: ["Camera frozen", "warn"],
+  no_camera: ["No camera", "warn"],
+};
+const PROBLEM_WORDS = { none: "Nothing wrong", spaghetti: "Spaghetti", detached: "Part came loose",
+  not_sticking: "First layer not sticking", blob: "Blob on the nozzle", no_extrusion: "Nothing extruding",
+  layer_shift: "Layer shift", warping: "Warping", knocked_over: "Part knocked over", stringing: "Stringing",
+  other: "Problem" };
+const DECISION_TONE = { ok: "live", watch: "warn", warning: "warn", failure: "bad", ignored: "", blind: "" };
+const DECISION_WORDS = { ok: "Looks fine", watch: "Unsure — looking again soon", warning: "Warning",
+  failure: "Failure", ignored: "Ignored", blind: "Could not see" };
+const KIND_WORDS = { first_layer: "First layer", early: "Early adhesion", narrowing: "Narrows",
+  bridge: "Bridges", overhang: "Overhangs", support: "Supports", colour: "Colour change", tall: "Tall and thin",
+  taller: "Taller", last: "Last layers", fill: "Routine", spread: "Routine" };
+const watchHist = {};
+const watchTargets = { list: null };
+
+function ago(ts) {
+  if (!ts) return "";
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min ago`;
+  return new Date(ts * 1000).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+}
+
+function watchBadge(p) {
+  const w = p.failure_detection;
+  if (!w || !w.enabled || !["warning", "failure", "covered", "dark", "looking"].includes(w.status)) return null;
+  const [word, tone] = WATCH_STATUS[w.status];
+  return el("span", { class: `pill ${tone} wbadge`, title: w.sentence },
+    icon(w.status === "warning" || w.status === "failure" ? "shieldAlert" : "shield"), word);
+}
+
+async function watchAct(p, action, extra = {}) {
+  const key = `${p.id}:watch:${action}`;
+  if (state.busy.has(key)) return;
+  state.busy.add(key);
+  try {
+    const r = await api("api/watch/action", { json: { printer: p.id, action, ...extra } });
+    toast(r.note || "Done.");
+    delete watchHist[p.id];
+    refresh();
+  } catch (e) { toast(e.message, true); } finally { state.busy.delete(key); }
+}
+
+async function watchSet(p, changes) {
+  // A focused control keeps the card from redrawing (renderPrinters), and
+  // the card has to show the setting that was just changed.
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  try {
+    await api("api/watch/settings", { json: { printer: p ? p.id : undefined, ...changes } });
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+
+function watchTimeline(p, w) {
+  const points = (w.plan && w.plan.checkpoints) || [];
+  const total = (w.plan && w.plan.total_layers) || p.total_layers;
+  if (!points.length || !total) return null;
+  const line = el("div", { class: "wline", role: "img",
+    "aria-label": `${points.length} planned looks over ${total} layers` });
+  line.append(el("i", { class: "wfill", style: `width:${Math.min(100, ((p.layer || 0) / total) * 100)}%` }));
+  for (const c of points) {
+    const tone = c.state === "done" ? (DECISION_TONE[c.decision] || "") : c.state;
+    line.append(el("span", { class: `wtick ${tone}`, style: `left:${Math.min(100, (c.layer / total) * 100)}%`,
+      title: `Layer ${c.layer} · ${KIND_WORDS[c.kind] || c.kind}: ${c.reason}`
+        + (c.state === "done" ? ` — ${DECISION_WORDS[c.decision] || c.decision}` : c.state === "missed" ? " — missed" : "") }));
+  }
+  if (p.printing && p.layer) line.append(el("span", { class: "wnow", style: `left:${Math.min(100, (p.layer / total) * 100)}%` }));
+  const upcoming = points.filter((c) => c.state === "planned").slice(0, 3);
+  return el("div", { class: "wplan" },
+    el("div", { class: "wplanhead" }, el("b", {}, "Where it looks"),
+      el("span", { class: "hint" }, w.plan.source === "gcode" ? "Planned from the print's G-code"
+        : "Spread by layer (the print's file could not be read)"),
+      el("span", { class: "grow" }),
+      el("span", { class: "hint" }, `${w.looks.used}/${w.looks.budget} looks`)),
+    line,
+    upcoming.length ? el("ul", { class: "wnext" }, upcoming.map((c) => el("li", {},
+      el("b", {}, `Layer ${c.layer}`), el("span", { class: "wkind" }, KIND_WORDS[c.kind] || c.kind),
+      el("span", { class: "hint" }, c.reason)))) : null);
+}
+
+function watchAlert(p, w) {
+  const a = w.alert;
+  if (!a || !a.open) return null;
+  const failure = a.level === "failure";
+  const buttons = failure && a.paused
+    ? [el("button", { class: "primary", onclick: () => watchAct(p, "resume", { alert: a.id }) }, icon("play"), "Resume — not a failure"),
+       el("button", { class: "danger", onclick: () => { if (confirm(`Stop the print on ${p.name}?`)) watchAct(p, "stop", { alert: a.id }); } }, icon("stop"), "Stop print")]
+    : [el("button", { class: failure ? "primary" : "", onclick: () => watchAct(p, "pause", { alert: a.id }) }, icon("pause"), "Pause print"),
+       el("button", { onclick: () => watchAct(p, "ignore", { alert: a.id }) }, "Ignore")];
+  const pics = el("div", { class: "wpics" },
+    a.image_url ? el("figure", {}, el("img", { src: a.image_url, alt: "What the camera saw" }), el("figcaption", {}, "What brAIn saw")) : null,
+    w.expected_url ? el("figure", {}, el("img", { src: w.expected_url, alt: "What the print should look like" }), el("figcaption", {}, "What it should be")) : null);
+  return el("div", { class: `walert ${failure ? "bad" : "warn"}` },
+    el("div", { class: "walerthead" }, icon("shieldAlert"),
+      el("b", {}, failure ? (a.paused ? "Print paused — it looks failed" : "The print looks failed")
+        : "The print may be going wrong"),
+      el("span", { class: "grow" }), el("span", { class: "hint" }, ago(a.at))),
+    el("p", { class: "wsummary" }, a.summary),
+    el("p", { class: "hint" }, [PROBLEM_WORDS[a.problem] || a.problem,
+      a.confidence != null ? `${Math.round(a.confidence * 100)}% sure` : null].filter(Boolean).join(" · ")),
+    a.pause_error ? el("p", { class: "warn" }, a.pause_error) : null,
+    pics.childNodes.length ? pics : null,
+    el("div", { class: "row wrap" }, buttons),
+    el("p", { class: "hint" }, failure && a.paused
+      ? "Resume if it is a false alarm: the same problem will then only be warned about on this print."
+      : "Ignore stops warnings about this problem for the rest of the print."));
+}
+
+function watchHistory(p) {
+  const box = el("details", { class: "more", "data-k": "watchhist" }, el("summary", {}, "Looks this print"));
+  const list = el("div", { class: "whist" }, el("p", { class: "hint" }, "Loading…"));
+  box.append(list);
+  const fill = (h) => {
+    if (!h.checks.length) { list.replaceChildren(el("p", { class: "hint" }, "No looks yet this print.")); return; }
+    list.replaceChildren(...h.checks.map((c) => el("div", { class: "wcheck" },
+      c.image_url ? el("a", { href: c.image_url, target: "_blank", rel: "noopener" },
+        el("img", { src: c.image_url, alt: "", loading: "lazy" })) : el("div", { class: "nopic" }),
+      el("div", { class: "grow" },
+        el("div", { class: "row wcheckhead" },
+          el("span", { class: `pill ${DECISION_TONE[c.decision] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[c.decision] || c.decision),
+          el("b", {}, c.layer != null ? `Layer ${c.layer}` : "Finished"),
+          el("span", { class: "hint" }, ago(c.at))),
+        el("p", {}, c.summary),
+        el("p", { class: "hint" }, [c.why, c.confidence != null ? `${Math.round(c.confidence * 100)}% sure` : null,
+          c.expected ? "compared with the plate's picture" : null].filter(Boolean).join(" · "))))));
+  };
+  const load = async () => {
+    try {
+      const h = await api(`api/watch?printer=${encodeURIComponent(p.id)}`);
+      watchHist[p.id] = h;
+      fill(h);
+    } catch (e) { list.replaceChildren(el("p", { class: "warn" }, e.message)); }
+  };
+  if (watchHist[p.id]) fill(watchHist[p.id]);
+  box.addEventListener("toggle", () => { if (box.open) load(); });
+  return box;
+}
+
+function watchSettings(p, w) {
+  const box = el("details", { class: "more", "data-k": "watchset" }, el("summary", {}, "Detection settings"));
+  const notify = el("select", { class: "sel", "aria-label": "Phone for alerts",
+    onchange: (e) => watchSet(null, { notify: e.target.value }) },
+  el("option", { value: "" }, "Home Assistant notifications only"));
+  const fillTargets = () => {
+    const current = (state.data && state.data.watch_notify) || w.notify || "";
+    const list = watchTargets.list || [];
+    notify.replaceChildren(el("option", { value: "" }, "Home Assistant notifications only"),
+      ...[...new Set([...list, ...(current ? [current] : [])])].map((t) => el("option", { value: t, selected: t === current }, t.replace(/^notify\./, ""))));
+  };
+  box.addEventListener("toggle", async () => {
+    if (!box.open) return;
+    if (watchTargets.list === null) {
+      try { watchTargets.list = (await api("api/watch/targets")).targets; } catch (_) { watchTargets.list = []; }
+    }
+    fillTargets();
+  });
+  fillTargets();
+  const seg = (label, key, options) => el("div", { class: "wset" }, el("span", { class: "wsetlabel" }, label),
+    el("div", { class: "seg", role: "group", "aria-label": label }, options.map(([value, word, title]) =>
+      el("button", { type: "button", title, "aria-pressed": String(w[key] === value),
+        onclick: () => watchSet(p, { [key]: value }) }, word))));
+  const toggle = (label, key, hint) => el("label", { class: "check wcheckbox" },
+    el("input", { type: "checkbox", checked: Boolean(w[key === "plate" ? "plate_watch" : key]),
+      onchange: (e) => watchSet(p, { [key]: e.target.checked }) }),
+    el("span", {}, label, el("small", { class: "hint" }, hint)));
+  box.append(
+    seg("When a print fails", "mode", [["pause", "Warn and pause", "Pause a print brAIn is sure has failed"],
+      ["warn", "Only warn", "Never pause; only tell you"]]),
+    seg("Sensitivity", "sensitivity", [["low", "Relaxed", "Fewer looks, and only sure things"],
+      ["medium", "Balanced", ""], ["high", "Careful", "More looks, and doubts raised sooner"]]),
+    toggle("Turn the chamber light on to see", "light", "Only when it is too dark, once per print."),
+    toggle("Watch for the plate being cleared", "plate", "After a print, for the Plate clear sensor."),
+    el("label", {}, "Alerts go to", notify),
+    el("p", { class: "hint" }, "Each look is a brAIn run, so it looks at the moments a print is most likely to fail — the first layer, where the part narrows, bridges, colour changes, a part getting tall — and after anything doubtful, not every few seconds. A covered lens or a dark chamber stands everything down."));
+  return box;
+}
+
+function watchBlock(p) {
+  const w = p.failure_detection;
+  if (!w) return null;
+  const [word, tone] = WATCH_STATUS[w.status] || [w.status, ""];
+  const head = el("div", { class: "whead" },
+    el("span", { class: "wicon" }, icon(w.status === "warning" || w.status === "failure" ? "shieldAlert" : "shield")),
+    el("div", { class: "grow" }, el("b", {}, "Print failure detection"),
+      w.enabled ? el("p", { class: "hint" }, w.sentence) : null),
+    w.enabled ? el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word) : null,
+    el("label", { class: "switch", title: w.enabled ? "Turn print failure detection off" : "Turn print failure detection on" },
+      el("input", { type: "checkbox", role: "switch", checked: w.enabled, "aria-label": "Print failure detection",
+        onchange: (e) => watchSet(p, { enabled: e.target.checked }) }), el("i", {})));
+  if (!w.enabled) {
+    return el("section", { class: "watch off" }, head,
+      el("p", { class: "hint" }, "Watches the camera while it prints. brAIn looks at the moments a print is most likely to fail — read from the print's own file — compares what it sees with what it should be, warns you, and pauses a print that has failed. Free checks run all the time: a covered lens, a sudden change on the plate, the printer's own alerts, and whether the plate has been cleared."));
+  }
+  const last = w.last;
+  const plate = w.plate || {};
+  const plateWords = { clear: "Plate clear", occupied: "Print on the plate", printing: "Printing", unknown: "Plate: not sure" };
+  // The last look is the alert's own while one is open: said once, not twice.
+  const repeats = last && w.alert && w.alert.open && w.alert.check === last.n;
+  const lastRow = last && !repeats ? el("div", { class: "wlast" },
+    last.image_url ? el("img", { src: last.image_url, alt: "", loading: "lazy" }) : null,
+    el("div", { class: "grow" },
+      el("div", { class: "row wcheckhead" },
+        el("span", { class: `pill ${DECISION_TONE[last.decision] || ""}` }, el("i", { class: "dot" }), DECISION_WORDS[last.decision] || last.decision),
+        el("span", { class: "hint" }, [last.layer != null ? `layer ${last.layer}` : null, ago(last.at)].filter(Boolean).join(" · "))),
+      el("p", {}, last.summary))) : null;
+  return el("section", { class: `watch ${tone}` }, head,
+    watchAlert(p, w),
+    watchTimeline(p, w),
+    lastRow,
+    el("div", { class: "row wrap" },
+      el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
+        title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now"),
+      w.plate_watch && !p.printing ? el("span", { class: `pill ${plate.state === "clear" ? "done" : ""}`, title: plate.why || "" },
+        el("i", { class: "dot" }), plateWords[plate.state] || "Plate") : null,
+      w.plate_watch && plate.state !== "clear" && !p.printing
+        ? el("button", { type: "button", onclick: () => watchAct(p, "plate_clear") }, "It's clear") : null),
+    watchHistory(p), watchSettings(p, w));
+}
+
 function printerCard(p) {
   const meta = [p.model, p.nozzle_diameter ? `${p.nozzle_diameter} mm nozzle` : null, p.host,
     p.wifi ? `Wi-Fi ${p.wifi}` : null].filter(Boolean).join(" · ");
@@ -544,7 +778,7 @@ function printerCard(p) {
   const body = el("div", { class: "pbody" }, head,
     p.connection_error ? el("p", { class: "warn" }, p.connection_error,
       el("button", { type: "button", onclick: () => command(p, "reconnect") }, "Reconnect")) : null,
-    jobBlock(p), hmsBlock(p), controlsBlock(p), readings(p), amsBlock(p),
+    jobBlock(p), watchBlock(p), hmsBlock(p), controlsBlock(p), readings(p), amsBlock(p),
     storageBlock(p), manualBlock(p));
   return el("article", { class: `printer ${stateTone(p)}`, "data-id": p.id }, cameraBlock(p), body);
 }
