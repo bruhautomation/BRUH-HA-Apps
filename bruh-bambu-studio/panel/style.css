@@ -387,6 +387,41 @@ label[hidden], [hidden] { display: none !important; }
   .phead > .grow { flex-basis: 100%; }
   .phead > button:last-child { margin-left: auto; }
 }
+/* The Studio tab on a touch screen (touchscreen.js): noVNC hosted on this
+   page, sized by its zoom and moved by a translate inside a clipped port,
+   with a layer over it that turns fingers into a mouse. */
+.touchscreen { display: flex; flex-direction: column; min-width: 0; }
+.touchscreen[hidden] { display: none; }
+.tsbar, .tskeys {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 8px; background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.tskeys[hidden] { display: none; }
+.tsbar button, .tskeys button { padding: 0 10px; }
+.tsbar .seg button { padding: 0 10px; font-size: 15px; }
+.tszoom { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+#tsKeys[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+#tsType { flex: 1 1 120px; min-width: 0; min-height: 44px; font-size: 16px; }
+.tshint { margin: 0; padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.tsport { position: relative; overflow: hidden; background: #000; height: 60vh; touch-action: none; }
+.tsvnc { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.tslayer {
+  position: absolute; inset: 0; touch-action: none; user-select: none;
+  -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.tsstate {
+  position: absolute; left: 12px; right: 12px; top: 40%; margin: 0;
+  text-align: center; color: #e8eef3; pointer-events: none;
+}
+.tsmark {
+  position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px;
+  border: 2px solid #5ac4f2; border-radius: 50%; pointer-events: none;
+  animation: tsmark .45s ease-out forwards;
+}
+.tsmark.right { border-color: #f0a63c; }
+@keyframes tsmark { from { transform: scale(.5); opacity: 1; } to { transform: scale(1.3); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .tsmark { animation-duration: 0s; } }
+
 /* The text floor: iOS zooms an ingress iframe in on focus below 16px and
    never back out. Last, so it outranks everything above. */
 @media (pointer: coarse) {

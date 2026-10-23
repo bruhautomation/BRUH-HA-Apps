@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.5
+
+### Added
+
+- **Bambu Studio works on a phone.** On a touch screen the Studio tab has controls like a remote desktop app: tap to click, hold to right-click, two fingers to zoom and move around. A toolbar switches one finger between moving the view, dragging (for sliders and the 3D view) and scrolling, Fit goes back to the whole screen, and Keyboard opens the phone's keyboard with Backspace and Enter beside it. With a mouse the tab is unchanged. (#374)
+
 ## 0.2.4
 
 ### Changed

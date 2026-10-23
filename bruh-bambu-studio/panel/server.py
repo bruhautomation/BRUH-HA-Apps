@@ -1502,6 +1502,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r = app.router
     r.add_get("/", _asset("index.html", "text/html"))
     r.add_get("/app.js", _asset("app.js", "application/javascript"))
+    r.add_get("/touchscreen.js", _asset("touchscreen.js", "application/javascript"))
     r.add_get("/style.css", _asset("style.css", "text/css"))
     r.add_get("/favicon.svg", _asset("favicon.svg", "image/svg+xml"))
     r.add_get("/websockify", vnc_bridge.handle)
