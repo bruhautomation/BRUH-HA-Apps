@@ -41,6 +41,14 @@ PUSHALL_EVERY_S = 300
 # hearing the printer even though the socket is up.
 STALE_AFTER_S = 120
 ECHO_WAIT_S = 8
+# Firmware with Bambu's authorization echoes an unsigned command like any
+# other and then raises protocol.COMMAND_REFUSED_HMS in its next report, so
+# a command is not called done until this long after it was sent.
+REFUSAL_WAIT_S = 4
+
+
+class CommandRefused(RuntimeError):
+    """The printer said no to a command (its echo, or the verification HMS)."""
 
 
 def _make_client(client_id: str):
@@ -61,6 +69,8 @@ class PrinterClient:
         self._lock = threading.Lock()
         self._seq = int(time.time()) % 100000
         self._echoes: dict[str, dict] = {}
+        # When a report last carried the command-refused HMS entry.
+        self._refused_at = 0.0
         self._last_pushall = 0.0
         self._client = None
 
@@ -130,6 +140,11 @@ class PrinterClient:
         with self._lock:
             protocol.deep_merge(self.status, report)
             self.last_report = time.time()
+            section = report.get("print")
+            if isinstance(section, dict) and isinstance(section.get("hms"), list) and any(
+                    isinstance(h, dict) and protocol.hms_code(h) == protocol.COMMAND_REFUSED_HMS
+                    for h in section["hms"]):
+                self._refused_at = time.time()
             for section in report.values():
                 if isinstance(section, dict) and "sequence_id" in section:
                     self._echoes[str(section["sequence_id"])] = section
@@ -154,23 +169,32 @@ class PrinterClient:
         """Publish one request and wait briefly for the printer's echo.
 
         The echo carries `result` ("success"/"fail") and sometimes `reason`.
-        No echo is reported as such — not as a success.
+        No echo is reported as such — not as a success. An echo is not the
+        last word: the verification HMS raised after it (REFUSAL_WAIT_S) is
+        a refusal, raised as CommandRefused naming Developer Mode.
         """
         if not self.connected:
             raise ConnectionError(self.last_error or "Not connected to the printer.")
+        sent = time.time()
         seq = self._publish(payload)
-        deadline = time.time() + ECHO_WAIT_S
-        while time.time() < deadline:
+        echo = None
+        while True:
             with self._lock:
-                echo = self._echoes.pop(seq, None)
-            if echo is not None:
-                result = str(echo.get("result") or "").lower()
-                if result == "fail":
-                    reason = echo.get("reason") or echo.get("err_code") or "no reason given"
-                    raise RuntimeError(f"The printer refused it: {reason}")
-                return {"acknowledged": True, "result": result or "ok"}
-            time.sleep(0.2)
-        return {"acknowledged": False}
+                if echo is None:
+                    echo = self._echoes.pop(seq, None)
+                refused = self._refused_at >= sent
+            if refused:
+                raise CommandRefused(protocol.COMMAND_REFUSED)
+            if echo is not None and str(echo.get("result") or "").lower() == "fail":
+                reason = echo.get("reason") or echo.get("err_code") or "no reason given"
+                raise CommandRefused(f"The printer refused it: {reason}")
+            now = time.time()
+            if echo is not None and now - sent >= min(REFUSAL_WAIT_S, ECHO_WAIT_S):
+                return {"acknowledged": True,
+                        "result": str(echo.get("result") or "").lower() or "ok"}
+            if now - sent >= ECHO_WAIT_S:
+                return {"acknowledged": False}
+            time.sleep(0.1)
 
     def tick(self) -> None:
         """Called on the panel's timer: an occasional full report."""

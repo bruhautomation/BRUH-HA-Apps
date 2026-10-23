@@ -326,3 +326,7 @@ misheard sentence there is filament and hours.
   switched off and on; read it from the printer again.
 - **Commands do nothing.** Switch on LAN-only mode and Developer mode on the
   printer.
+- **"The printer refused the command" / HMS 0500-0500-0001-0007.** Firmware with
+  Bambu's authorization refuses commands from Home Assistant unless Developer
+  Mode is on (Settings › LAN only mode › Developer mode). The printer's own
+  message says to update Bambu Studio or Bambu Handy; that does not apply here.

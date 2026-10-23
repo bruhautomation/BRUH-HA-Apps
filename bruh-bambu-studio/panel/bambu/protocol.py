@@ -227,6 +227,21 @@ def _tray(tray: dict, slot: int) -> dict:
     }
 
 
+# 0500-0500-0001-0007, "MQTT Command verification failed": firmware with
+# Bambu's authorization refuses an unsigned command from a LAN client unless
+# Developer Mode is on. Its own text tells people to update Bambu Studio or
+# Bambu Handy, which does nothing for a command from Home Assistant.
+COMMAND_REFUSED_HMS = "0500_0500_0001_0007"
+COMMAND_REFUSED = ("The printer refused the command: it takes commands from Home Assistant "
+                   "only with Developer Mode on. Turn it on on the printer, under Settings › "
+                   "LAN only mode › Developer mode, then try again.")
+# Codes the panel can say more about than Bambu's own page does.
+HMS_NOTES = {
+    COMMAND_REFUSED_HMS: COMMAND_REFUSED + " The printer's own message about updating Bambu "
+                         "Studio or Bambu Handy does not apply to this add-on.",
+}
+
+
 def hms_code(entry: dict) -> str:
     """An HMS entry as the code Bambu's wiki is indexed by (XXXX_XXXX_XXXX_XXXX)."""
     attr, code = _int(entry.get("attr")) or 0, _int(entry.get("code")) or 0
@@ -307,6 +322,7 @@ def summarise(status: dict) -> dict:
         "error_code": error if isinstance(error, int) and error else None,
         "hms_count": len(hms),
         "hms": [hms_code(h) for h in hms][:8],
+        "hms_notes": {code: HMS_NOTES[code] for code in map(hms_code, hms) if code in HMS_NOTES},
         "wifi": p.get("wifi_signal") or None,
         "fans": {"part": _fan(p.get("cooling_fan_speed")), "aux": _fan(p.get("big_fan1_speed")),
                  "chamber": _fan(p.get("big_fan2_speed")),

@@ -317,6 +317,20 @@ def describe_slice(info: dict) -> str:
     return ", ".join(bits)
 
 
+def busy_reason(name: str, summary: dict) -> str:
+    """Why a print cannot start on this printer now, or "" when it can.
+
+    Only a print in progress or paused stops one: a finished or failed job
+    is taken to be off the plate, so nobody is asked whether it is clear.
+    """
+    if summary.get("state") == "pause":
+        return (f"{name} has a paused print; resume it or stop it before "
+                "starting another.")
+    if summary.get("printing"):
+        return f"{name} is already printing."
+    return ""
+
+
 def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
                body: dict, env: dict, prepared: dict | None = None,
                after=None, notify=None) -> None:
@@ -372,8 +386,9 @@ def _print_job(panel: Panel, job: dict, row: dict, client: PrinterClient,
         if plate not in plates:
             raise ValueError(f"Plate {plate} is not in that file; it has plates "
                              f"{', '.join(map(str, plates))}.")
-        if client.summary().get("printing"):
-            raise RuntimeError(f"{row['name']} is already printing.")
+        busy = busy_reason(row["name"], client.summary())
+        if busy:
+            raise RuntimeError(busy)
         name = ftps.safe_name(re.sub(r"\s+", "_", source.name))
         job["phase"] = "uploading"
         with ftps.Storage(row["host"], client.code) as storage:
@@ -668,8 +683,9 @@ async def h_printer_file_delete(request):
 
 def _start_stored(panel: Panel, row: dict, client: PrinterClient, name: str, body: dict) -> dict:
     """Start a job that is already on the printer's storage."""
-    if client.summary().get("printing"):
-        raise RuntimeError(f"{row['name']} is already printing.")
+    busy = busy_reason(row["name"], client.summary())
+    if busy:
+        raise RuntimeError(busy)
     start = options.clean_start(body)
     info: dict = {}
     source = (panel.uploaded.get(row["id"]) or {}).get(name)
@@ -1229,8 +1245,9 @@ def start_design_print(panel: Panel, part_id: str, *, version=None, printer=None
         raise PrintRefused(f"{row['name']} is not connected: "
                            f"{client.last_error or 'still connecting'}.", 409)
     summary = client.summary()
-    if summary.get("printing"):
-        raise PrintRefused(f"{row['name']} is already printing.", 409)
+    busy = busy_reason(row["name"], summary)
+    if busy:
+        raise PrintRefused(busy, 409)
     trays = {t["slot"]: t for t in summary.get("ams") or [] if isinstance(t.get("slot"), int)}
     settings = designer.clean_settings({**(part.get("print_settings") or {}),
                                         **(settings or {})}) or {}
