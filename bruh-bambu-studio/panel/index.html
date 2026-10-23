@@ -23,6 +23,30 @@
   <section id="viewStudio" class="view" data-view="studio">
     <div id="studioStatus" class="notice" hidden></div>
     <iframe id="screen" title="Bambu Studio" allow="clipboard-read; clipboard-write"></iframe>
+    <div id="touchScreen" class="touchscreen" hidden>
+      <div class="tsbar" role="toolbar" aria-label="Screen controls">
+        <div class="seg" id="tsModes" role="group" aria-label="What one finger does">
+          <button type="button" data-mode="pan" aria-pressed="true">Move</button>
+          <button type="button" data-mode="drag" aria-pressed="false">Drag</button>
+          <button type="button" data-mode="scroll" aria-pressed="false">Scroll</button>
+        </div>
+        <button type="button" id="tsFit" aria-label="Fit the screen to the width">Fit <span id="tsZoom" class="tszoom"></span></button>
+        <button type="button" id="tsKeys" aria-pressed="false">Keyboard</button>
+      </div>
+      <div class="tskeys" id="tsKeyRow" hidden>
+        <input id="tsType" type="text" autocomplete="off" autocapitalize="off" autocorrect="off"
+               spellcheck="false" enterkeyhint="enter" aria-label="Type into Bambu Studio">
+        <button type="button" id="tsBack">Backspace</button>
+        <button type="button" id="tsEnter">Enter</button>
+        <button type="button" id="tsDone">Done</button>
+      </div>
+      <p class="tshint">Tap to click, hold to right-click, two fingers to zoom and move.</p>
+      <div class="tsport" id="tsPort">
+        <div class="tsvnc" id="tsVnc"></div>
+        <div class="tslayer" id="tsLayer" role="application" aria-label="Bambu Studio screen"></div>
+        <p class="tsstate" id="tsState" hidden></p>
+      </div>
+    </div>
   </section>
 
   <section id="viewPrinters" class="view" data-view="printers" hidden>
@@ -205,6 +229,7 @@
 </dialog>
 
 <div id="toast" class="toast" hidden></div>
+<script src="touchscreen.js"></script>
 <script src="app.js"></script>
 <script src="design.js"></script>
 </body>

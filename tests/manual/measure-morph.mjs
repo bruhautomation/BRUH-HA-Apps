@@ -343,6 +343,23 @@ async function night(p, name) {
   if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
   if (n.now.length !== 1 || n.now[0] !== 'c_front_lock') fail(where, `the night page does not hold exactly the unlocked door: ${n.now.join(', ')}`);
   atRest(`${name} at night`, await snapshot(p));
+  // Night does not dim the page unless the dashboard asks (#343), and a
+  // room's title marks go with `room_marks: false` (#347).
+  const look = () => p.evaluate(() => {
+    const r = window.__panel.shadowRoot;
+    const sec = r.querySelector('section.sec:not(.nowband)');
+    return { filter: sec ? getComputedStyle(sec).filter : '', chips: r.querySelectorAll('.sechead .chip').length, cls: r.querySelector('[data-morph-root]').className };
+  });
+  const plain = await look();
+  if (plain.filter !== 'none') fail(where, `night dims the rooms with no night_dim set (${plain.filter})`);
+  if (!plain.chips) fail(where, 'no room title carries a mark to take away, so room_marks is not measured');
+  await p.evaluate(() => { const P = window.__panel; P.dash = { ...P.dash, night_dim: true, room_marks: false }; P.render(); });
+  await settle(p, 400);
+  const asked = await look();
+  if (!/brightness/.test(asked.filter) || !/night-dim/.test(asked.cls)) fail(where, `night_dim: true does not dim the rooms (${asked.filter})`);
+  if (asked.chips) fail(where, `room_marks: false leaves ${asked.chips} mark(s) in the room titles`);
+  await p.evaluate(() => { const P = window.__panel; const d = { ...P.dash }; delete d.night_dim; delete d.room_marks; P.dash = d; P.render(); });
+  await settle(p, 400);
 }
 
 for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'phone', true]])) {
@@ -708,6 +725,43 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
     if (!broken && got.color !== 'rgb(1, 2, 3)') fail('own code', `${label} was not served in place of Morph's own (${got.color})`);
     if (broken && !got.fallback) fail('own code', `${label}: Morph did not fall back to its own copy`);
     if (broken && !got.note) fail('own code', `${label}: the page does not say a change did not load`);
+    await ctx.close();
+  }
+}
+
+// A copy that LOADS and then throws while drawing one room (house report
+// #344: a ReferenceError in one room's state left only the clock and the
+// header). That room is a line saying it could not be drawn, every other
+// room draws, and the fault is reported rather than swallowed.
+{
+  const { readFileSync } = await import('node:fs');
+  const own = readFileSync(new URL('../../morph/custom_components/morph/frontend/morph-panel.js', import.meta.url), 'utf8');
+  for (const [label, hook, body] of [
+    ['its state', '  roomStateOf(sec) {\n', "    if (sec.id === 's_kitchen') roomGlowNotDefined.x = 1;\n"],
+    ['its drawing', '  paintSection(el, sec, ms) {\n', "    if (sec.id === 's_kitchen') roomPaintNotDefined.x = 1;\n"],
+  ]) {
+    if (!own.includes(hook)) { fail('room fault', `${label}: the hook ${JSON.stringify(hook)} is not in morph-panel.js`); continue; }
+    const ctx = await browser.newContext({ viewport: { width: 1200, height: 900 } });
+    await route(ctx, { narrow: false, overrides: { 'morph-panel.js': own.replace(hook, hook + body) } });
+    const p = await ctx.newPage();
+    const errors = [];
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.goto(ORIGIN + '/');
+    await settle(p, 2500);
+    const got = await p.evaluate(() => {
+      const root = window.__panel && window.__panel.shadowRoot;
+      const sec = (id) => root && root.querySelector(`[data-sec="${id}"]`);
+      return {
+        kitchen: (sec('s_kitchen') || {}).textContent || '',
+        living: !!(sec('s_living') && sec('s_living').querySelector('[data-tile]')),
+        porch: !!sec('s_porch'),
+        reports: window.__ws.filter((m) => m.type === 'morph/report').map((m) => m.message),
+      };
+    });
+    if (!/could not draw this room/i.test(got.kitchen)) fail('room fault', `${label}: the room that threw does not say so (${got.kitchen.slice(0, 120)})`);
+    if (!got.living || !got.porch) fail('room fault', `${label}: the other rooms did not draw`);
+    if (!got.reports.some((m) => /NotDefined/.test(m))) fail('room fault', `${label}: the fault was not reported (${got.reports.join(' | ')})`);
+    if (errors.length) fail('room fault', `${label}: page errors: ${errors.slice(0, 2).join(' | ')}`);
     await ctx.close();
   }
 }

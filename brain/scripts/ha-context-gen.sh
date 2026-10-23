@@ -658,7 +658,13 @@ asked.
   \`files: true\` for what is in /share/bambu), then \`bambu_print\` (start,
   pause, resume, stop — confirm before stop; start takes \`url\` for a
   Printables page or a link to an .stl/.3mf), \`bambu_control\` (speed,
-  light, temperatures, G-code) and \`bambu_slice\`.
+  light, temperatures, G-code) and \`bambu_slice\`. To make a part, use
+  \`bambu_design\`: \`create\` with a description and sizes (add "and print
+  it" when they asked for a print, and the design conversation prints it once
+  it has built), \`status\` to see whether it has built (minutes), \`print\`
+  to print it afterwards — the Design tab's own conversation and Slice and
+  print. These tools are listed only
+  when BRUH Bambu Studio's integration is in Home Assistant.
 
 ## Registry Management — BRUH Power Tools
 

@@ -225,6 +225,13 @@ export const REDEFINED = /already been (used|defined)|already defined/i;
 // happened — 'loaded', 'changed' (a newer file whose elements this page
 // already has: it shows after a reload) or 'same' — and throws only for a
 // file that really failed.
+// A registry row by id, read only off the object's OWN keys: an id is
+// somebody's text, and "constructor" or "toString" otherwise reads one of
+// Object.prototype's functions back as the row (#332).
+export function own(obj, key) {
+  return obj && key != null && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined;
+}
+
 export function cardUrl(base, name, v) {
   return `${base}/${encodeURIComponent(name)}?v=${v}`;
 }

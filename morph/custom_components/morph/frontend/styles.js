@@ -47,9 +47,9 @@ export const CSS = `
 .form-still section.sec:not(.nowband),.form-still .flh{opacity:.35;transition:opacity .4s ease}
 .form-still h1.hello{font-size:clamp(44px,6vw,64px)}
 .form-still .story{font-size:clamp(24px,2.8vw,32px)}
-.form-night section.sec:not(.nowband),.form-night .flh,.form-night [data-region="scenes"],.form-night [data-region="upcoming"],.form-night [data-region="rooms"]{filter:brightness(.4);transition:filter 2s ease}
-.form-night,.form-night .scroll{background:var(--bg)}
-.t-light.form-night{--bg:var(--sunk)}
+.form-night.night-dim section.sec:not(.nowband),.form-night.night-dim .flh,.form-night.night-dim [data-region="scenes"],.form-night.night-dim [data-region="upcoming"],.form-night.night-dim [data-region="rooms"]{filter:brightness(.8);transition:filter 2s ease}
+.form-night.night-dim,.form-night.night-dim .scroll{background:var(--bg)}
+.t-light.form-night.night-dim{--bg:var(--sunk)}
 .form-away section.sec:not(.nowband){opacity:.6}
 /* The Now layer: the page's largest cards, on the surface at full
    opacity, no heading, no border. */

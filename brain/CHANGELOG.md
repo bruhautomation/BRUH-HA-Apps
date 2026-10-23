@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.2
+
+### Added
+
+- **brAIn designs a part and prints it, from the chat, the terminal and voice.** A new `bambu_design` tool starts a design in BRUH Bambu Studio from a description, changes one, says how it is going and prints it, through the Design tab's own conversation and print path. "Design a 4 cm wall hook and print it" ends with the part on the printer. It needs BRUH Bambu Studio 0.2.6. (#375)
+
+### Changed
+
+- **Voice may design and start a 3D print.** A voice assistant may now design a part, start a print of it or of a file, and pause or resume one. It still may not stop a print, slice, send G-code, open Bambu Studio or download a model from a link, and it prints at most 4 copies at once. (#375)
+- **brAIn's Bambu tools appear only when BRUH Bambu Studio is installed.** On a house without it none of them are offered, so no conversation spends its time on a printer that is not there. (#375)
+
 ## 3.8.1
 
 ### Changed

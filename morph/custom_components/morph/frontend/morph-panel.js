@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -344,6 +344,12 @@ class MorphPanel extends HTMLElement {
         // file whose elements the page already has shows after a reload,
         // which is said and offered rather than reported.
         if (how === 'changed') this.toast(`${m.name} changed. Reload the page to see the new version.`, null, 'reload');
+        // A file brAIn was asked to fix that now loads: its suggestion
+        // closes itself (learning.house_card_loaded). Said only then, so a
+        // clean load is not a line per card per page.
+        if (how === 'loaded' && ((this.data && this.data.state && this.data.state.suggestions) || []).some((g) => g.card_file === m.name)) {
+          this.report('loaded', m.name, '');
+        }
         this.schedule();
       }).catch((e) => {
         this.report('card', cardFailure(e), `${m.name}: ${String((e && e.stack) || e || '')}`, 'custom');
@@ -363,6 +369,7 @@ class MorphPanel extends HTMLElement {
 
   render() {
     if (!this.engine || !this.hass) return;
+    this._roomFaults = new Map();
     const set = this.settings();
     const theme = set.theme && set.theme !== 'auto' ? set.theme : (this.hass.themes && this.hass.themes.darkMode === false ? 'light' : 'dark');
     // boot.js draws its outline in the theme this page last used.
@@ -375,7 +382,11 @@ class MorphPanel extends HTMLElement {
     this.form_ = form;
     // The root class is set only when it changes: a class written on every
     // frame restarts every transition keyed to it.
-    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${this.s.thenAt ? ' then' : ''}`;
+    // Night dims the page only where the dashboard asks for it
+    // (`night_dim: true`): at 40 % for everybody, a household found it
+    // unreadable and had no way to turn it off (#343).
+    const dim = form === 'night' && this.dash && this.dash.night_dim === true;
+    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${dim ? ' night-dim' : ''}${this.s.thenAt ? ' then' : ''}`;
     if (this.rootEl.className !== cls) this.rootEl.className = cls;
     this.region('thenrule', this.s.thenAt ? `<div class="thenrule" style="width:${(Math.min(1, (Date.now() - this.s.thenAt) / 86400000) * 100).toFixed(1)}%"></div>` : '');
     this.region('bar', this.barHtml());
@@ -958,7 +969,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const now = Date.now() / 1000;
     return (Array.isArray(b.todo) ? b.todo : []).filter((t) => t && t.id != null && !(t.snoozed_until && t.snoozed_until > now)).map((t) => {
       let area = '';
-      if (t.area_id && this.hass.areas && this.hass.areas[t.area_id]) area = this.hass.areas[t.area_id].name;
+      if (own(this.hass.areas, t.area_id)) area = own(this.hass.areas, t.area_id).name;
       return { ...t, area_name: area };
     });
   }
@@ -970,12 +981,12 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     let found = null;
     if (eid) this.eachSection((sec) => { if (!found && !sec.hidden && this.sectionEntities(sec).includes(eid)) found = sec.id; });
     if (found) return found;
-    const reg = eid && H.entities && H.entities[eid];
-    const a = area || (reg && (reg.area_id || (reg.device_id && H.devices && H.devices[reg.device_id] && H.devices[reg.device_id].area_id)));
+    const reg = eid && own(H.entities, eid);
+    const a = area || (reg && (reg.area_id || (reg.device_id && own(H.devices, reg.device_id) && own(H.devices, reg.device_id).area_id)));
     if (a) this.eachSection((sec) => { if (!found && !sec.hidden && sec.area === a) found = sec.id; });
     // A section with no `area` set is matched by its title against the
     // area's name, which is how most rooms are written by hand.
-    const an = a && H.areas && H.areas[a] && String(H.areas[a].name || '').trim().toLowerCase();
+    const an = a && own(H.areas, a) && String(own(H.areas, a).name || '').trim().toLowerCase();
     if (!found && an) this.eachSection((sec) => { if (!found && !sec.hidden && !sec.area && String(sec.title || '').trim().toLowerCase() === an) found = sec.id; });
     return found;
   }
@@ -1205,15 +1216,20 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const H = this.hass;
     if (!sec || !sec.area || !H.entities) return [];
     if (!this._areaEnts || this._areaEntsKey !== H.entities || this._areaEntsDev !== H.devices) {
-      const by = {};
+      // A Map, never an object: an area id is somebody's text, and one
+      // called "constructor" or "toString" read Object.prototype's function
+      // back and took salience down (#332).
+      const by = new Map();
       Object.values(H.entities).forEach((r) => {
         if (!r || !r.entity_id || r.hidden || r.disabled_by) return;
-        const a = r.area_id || (r.device_id && H.devices && H.devices[r.device_id] && H.devices[r.device_id].area_id);
-        if (a) (by[a] = by[a] || []).push(r.entity_id);
+        const a = r.area_id || (r.device_id && own(H.devices, r.device_id) && own(H.devices, r.device_id).area_id);
+        if (typeof a !== 'string' || !a) return;
+        if (!by.has(a)) by.set(a, []);
+        by.get(a).push(r.entity_id);
       });
       this._areaEnts = by; this._areaEntsKey = H.entities; this._areaEntsDev = H.devices;
     }
-    return this._areaEnts[sec.area] || [];
+    return this._areaEnts.get(String(sec.area)) || [];
   }
 
   // Somebody in the room, read off its motion, occupancy and presence
@@ -1228,7 +1244,25 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
   // A room's state (§6): attention, asleep, occupied, active, or idle
   // (folded to a line). Edit never folds; a room unfolded by hand stays
   // open until two minutes after it was last touched.
+  // A room's state, and a room whose state throws (a copy of this file
+  // with a mistake in it, a card's data no code expected) is drawn as a
+  // line saying so rather than taking the page down with it (#344).
   roomState(sec) {
+    try { return this.roomStateOf(sec); } catch (e) { this.roomFault(sec, e); return 'active'; }
+  }
+
+  // One room that could not be built or drawn: remembered for this render
+  // so the room says so, and reported through Morph's fault ledger once
+  // per page (`report` → errors.jsonl → devloop.note_fault).
+  roomFault(sec, e) {
+    const id = sec && sec.id != null ? String(sec.id) : '';
+    if (!this._roomFaults) this._roomFaults = new Map();
+    if (!this._roomFaults.has(id)) this._roomFaults.set(id, String((e && e.message) || e || 'unknown error'));
+    const said = `${(e && e.name) || 'Error'}: ${String((e && e.message) || e || 'unknown error')}`;
+    this.report('panel', `A room could not be drawn: ${said}`, `${id}: ${String((e && e.stack) || said)}`);
+  }
+
+  roomStateOf(sec) {
     if (this.s.edit) return 'active';
     const res = this.salApplied;
     const items = res ? Object.values(res.items).filter((x) => x.sec === sec.id) : [];
@@ -1327,42 +1361,51 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       }
       F.secs.forEach((sec) => {
         if (sec.hidden && !this.s.edit) return;
-        const groups = [];
-        const state = this.roomState(sec);
-        const ks = placed.filter((k) => k._sec === sec.id && !lifted.has('k:' + k.id));
-        if (state === 'idle') { sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups: [], folded: true }); return; }
-        if (state === 'asleep') {
-          const c = this.nightControl(sec);
-          sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups: c && !lifted.has(c.id) ? [{ key: sec.id + ':night', label: '', items: [this.itemOf(c)] }] : [], folded: true });
-          return;
+        try { this.modelSection(sec, fl, rank, lifted, placed, res, sections); } catch (e) {
+          this.roomFault(sec, e);
+          sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups: [] });
         }
-        (sec.groups || []).forEach((g, gi) => {
-          let cards = (g.cards || []).filter((c) => !lifted.has(c.id));
-          // An item the list says leads its room goes first in its group.
-          // An anchor keeps its slot whatever its score (§4.4): the
-          // others are ordered around it.
-          if (res && !this.s.edit) {
-            const lead = (c) => (res.items[c.id] && res.items[c.id].band === 'lead' ? 1 : 0);
-            const fixed = cards.map((c) => this.anchored(c.id));
-            const free = cards.map((c, i) => ({ c, i })).filter((x) => !fixed[x.i]).sort((a, b) => lead(b.c) - lead(a.c) || a.i - b.i).map((x) => x.c);
-            cards = cards.map((c, i) => (fixed[i] ? c : free.shift()));
-          }
-          // A card that leads its room carries a because line, so it is a
-          // row of its own kind: beside plain strips of its type it was a
-          // row of two heights (the engine's §5 rule).
-          const items = cards.map((c) => { const it = this.itemOf(c); return this.leadsWithReason(c.id) ? { ...it, hk: it.hk + ':lead' } : it; });
-          if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' });
-          if (items.length || g.label) groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
-        });
-        if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' }] });
-        // A case follows the room's own things (§13.2: "under the
-        // hallway's lights, after its things").
-        if (ks.length && !this.s.edit) groups.push({ key: sec.id + ':cases', label: '', items: ks.map((k) => ({ id: 'k:' + k.id, span: 2, grow: 4, dir: 'down', want: 3, hk: 'x:k' })) });
-        sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups });
       });
       if (this.s.edit) sections.push({ id: '__new@' + rank, w: 2, floor: rank, floorId: fl.id, groups: [] });
     });
     return { sections };
+  }
+
+  // One room's part of the model. Its own function so a room that throws
+  // is caught by itself (buildModel) and the rest of the house still draws.
+  modelSection(sec, fl, rank, lifted, placed, res, sections) {
+    const groups = [];
+    const state = this.roomState(sec);
+    const ks = placed.filter((k) => k._sec === sec.id && !lifted.has('k:' + k.id));
+    if (state === 'idle') { sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups: [], folded: true }); return; }
+    if (state === 'asleep') {
+      const c = this.nightControl(sec);
+      sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups: c && !lifted.has(c.id) ? [{ key: sec.id + ':night', label: '', items: [this.itemOf(c)] }] : [], folded: true });
+      return;
+    }
+    (sec.groups || []).forEach((g, gi) => {
+      let cards = (g.cards || []).filter((c) => !lifted.has(c.id));
+      // An item the list says leads its room goes first in its group.
+      // An anchor keeps its slot whatever its score (§4.4): the
+      // others are ordered around it.
+      if (res && !this.s.edit) {
+        const lead = (c) => (res.items[c.id] && res.items[c.id].band === 'lead' ? 1 : 0);
+        const fixed = cards.map((c) => this.anchored(c.id));
+        const free = cards.map((c, i) => ({ c, i })).filter((x) => !fixed[x.i]).sort((a, b) => lead(b.c) - lead(a.c) || a.i - b.i).map((x) => x.c);
+        cards = cards.map((c, i) => (fixed[i] ? c : free.shift()));
+      }
+      // A card that leads its room carries a because line, so it is a
+      // row of its own kind: beside plain strips of its type it was a
+      // row of two heights (the engine's §5 rule).
+      const items = cards.map((c) => { const it = this.itemOf(c); return this.leadsWithReason(c.id) ? { ...it, hk: it.hk + ':lead' } : it; });
+      if (this.s.edit && gi === sec.groups.length - 1) items.push({ id: `add@${sec.id}@${gi}`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' });
+      if (items.length || g.label) groups.push({ key: sec.id + ':' + gi, label: g.label || '', items });
+    });
+    if (this.s.edit && !(sec.groups || []).length) groups.push({ key: sec.id + ':new', label: '', items: [{ id: `add@${sec.id}@0`, span: 1, grow: 1, dir: 'down', want: 3, hk: 'x:add' }] });
+    // A case follows the room's own things (§13.2: "under the
+    // hallway's lights, after its things").
+    if (ks.length && !this.s.edit) groups.push({ key: sec.id + ':cases', label: '', items: ks.map((k) => ({ id: 'k:' + k.id, span: 2, grow: 4, dir: 'down', want: 3, hk: 'x:k' })) });
+    sections.push({ id: sec.id, w: sec.width || 2, floor: rank, floorId: fl.id, groups });
   }
 
   renderBoard(dash) {
@@ -1415,22 +1458,37 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
         headEl.classList.remove('nohead');
         this.setHtml(headEl, `<button type="button" class="go" data-act="add-section" data-v="${esc(ms.floorId)}" style="display:inline-flex;align-items:center;gap:8px;font-size:16px;color:var(--muted)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add section</button>`);
         el.setAttribute('aria-label', 'Add section');
+      } else if (this._roomFaults && this._roomFaults.has(String(sec.id))) {
+        this.paintBroken(el, sec, ms);
+        return;
       } else {
         headEl.classList.remove('nohead');
-        this.paintSection(el, sec, ms);
+        try {
+          this.paintSection(el, sec, ms);
+        } catch (e) {
+          this.roomFault(sec, e);
+          this.paintBroken(el, sec, ms);
+          return;
+        }
       }
       // groups
-      ms.groups.forEach((g) => {
-        const gk = g.key; want.add('g:' + gk);
-        let gl = el.querySelector(`[data-glab="${CSS.escape(gk)}"]`);
-        if (g.label && sec) {
-          if (!gl) { gl = document.createElement('div'); gl.className = 'glab'; gl.setAttribute('data-glab', gk); gl.dataset.key = 'g:' + gk; el.appendChild(gl); }
-          gl.style.color = mix(hue(sec.color), 55, 'var(--quiet)');
-          const grp = (sec.groups || [])[Number(gk.split(':').pop())];
-          this.setHtml(gl, `<span>${esc(g.label)}</span>${grp && grp.note ? `<i>${esc(grp.note)}</i>` : ''}`);
-        } else if (gl) gl.remove();
-        g.items.forEach((it) => { want.add('t:' + it.id); this.renderTile(el, it, sec, ms); });
-      });
+      try {
+        ms.groups.forEach((g) => {
+          const gk = g.key; want.add('g:' + gk);
+          let gl = el.querySelector(`[data-glab="${CSS.escape(gk)}"]`);
+          if (g.label && sec) {
+            if (!gl) { gl = document.createElement('div'); gl.className = 'glab'; gl.setAttribute('data-glab', gk); gl.dataset.key = 'g:' + gk; el.appendChild(gl); }
+            gl.style.color = mix(hue(sec.color), 55, 'var(--quiet)');
+            const grp = (sec.groups || [])[Number(gk.split(':').pop())];
+            this.setHtml(gl, `<span>${esc(g.label)}</span>${grp && grp.note ? `<i>${esc(grp.note)}</i>` : ''}`);
+          } else if (gl) gl.remove();
+          g.items.forEach((it) => { want.add('t:' + it.id); this.renderTile(el, it, sec, ms); });
+        });
+      } catch (e) {
+        if (!sec) throw e;
+        this.roomFault(sec, e);
+        this.paintBroken(el, sec, ms);
+      }
     });
     // remove what is no longer there
     // Only the board's own bookkeeping keys: a control inside a card may
@@ -1469,6 +1527,26 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     this.setHtml(head, this.secHeadHtml(sec, state));
   }
 
+  // A room that threw while it was built or drawn (#344): its title and one
+  // line saying so, its tiles taken away, so it lays out as an empty room
+  // and every other room draws as usual. The fault went to the ledger in
+  // roomFault.
+  paintBroken(el, sec, ms) {
+    ms.groups = [];
+    el.querySelectorAll('[data-key]').forEach((t) => {
+      if (/^(g|t):/.test(t.dataset.key)) {
+        if (t.dataset.key.startsWith('t:')) this.llCards.delete(t.dataset.key.slice(2));
+        t.remove();
+      }
+    });
+    el.classList.remove('folded');
+    el.setAttribute('aria-label', String(sec.title || ''));
+    el.querySelector('.secbg').style.cssText = 'background:var(--surface)';
+    const head = el.querySelector('.sechead');
+    head.classList.remove('nohead');
+    this.setHtml(head, `<div class="secbroken" style="flex:1;min-width:0"><h2>${esc(sec.title || '')}</h2><p class="sm" style="margin:2px 0 0;color:var(--muted)">Morph could not draw this room. The fault has been reported.</p></div>`);
+  }
+
   sectionById(id) { let hit = null; this.eachSection((s) => { if (s.id === id) hit = s; }); return hit; }
 
   // A morph, not a replacement: only what differs changes, so an animation
@@ -1496,7 +1574,9 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
 
   // Door and motion chips for a room's title line: a word only while open
   // or moving.
+  // `room_marks: false` in dashboard.yaml takes them off every room (#347).
   chipsHtml(sec) {
+    if (this.dash && this.dash.room_marks === false) return '';
     const H = this.hass; const out = [];
     this.sectionEntities(sec).forEach((e) => {
       const st = H.states[e]; if (!st || domainOf(e) !== 'binary_sensor') return;

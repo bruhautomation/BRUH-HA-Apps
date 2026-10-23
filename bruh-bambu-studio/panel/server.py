@@ -1005,10 +1005,75 @@ def recommend_tray(trays: list[dict], material: str, colour: str) -> int | None:
 
 def _part_or_404(request) -> dict:
     try:
-        return parts.load(request.match_info["id"])
+        return parts.find(request.match_info["id"])
     except (ValueError, LookupError):
         raise web.HTTPNotFound(text=json.dumps({"ok": False, "error": "No such part."}),
                                content_type="application/json") from None
+
+
+def _first_sentence(text: str, limit: int = 300) -> str:
+    """The first sentence of brAIn's reply, for a status read aloud."""
+    text = " ".join(str(text or "").split())
+    for i, ch in enumerate(text):
+        if ch in ".!?" and (i + 1 == len(text) or text[i + 1] == " "):
+            return text[:i + 1][:limit]
+    return text[:limit]
+
+
+def _design_summary(panel: Panel, part: dict) -> dict:
+    """One part as a service call or a voice turn reads it.
+
+    Home Assistant's `design_status` and `design_part` answer with this, so
+    it says what somebody asking "is my hook ready" needs and nothing more.
+    """
+    current = parts.version(part, part.get("current")) or {}
+    built = bool(current.get("ok"))
+    working = part.get("state") in TURN_STATES
+    reply, questions = "", []
+    for message in reversed(part.get("messages") or []):
+        if message.get("role") == "brain":
+            reply = _first_sentence(message.get("text"))
+            questions = list(message.get("questions") or [])[:4]
+            break
+    file = ""
+    if built and (current.get("files") or {}).get("3mf"):
+        try:
+            file = library.relative(parts.file_in(part["id"], current["n"], current["files"]["3mf"]))
+        except (LookupError, ValueError):
+            file = ""
+    running = sorted((j for j in list(panel.jobs.values())
+                      if j.get("part") == part["id"] and j.get("kind") == "print"
+                      and j.get("state") == "running"),
+                     key=lambda j: j.get("started") or 0, reverse=True)
+    if running:
+        job = running[0]
+        printing = {"job": job["id"], "printer": job.get("printer"), "state": "running",
+                    "phase": job.get("phase") or "", "error": ""}
+    elif part.get("prints"):
+        last = part["prints"][-1]
+        printing = {"job": last.get("job"), "printer": last.get("printer"),
+                    "state": last.get("state"), "version": last.get("version"),
+                    "error": last.get("error") or "", "at": last.get("at")}
+    else:
+        printing = None
+    if working:
+        sentence = part.get("state_detail") or "brAIn is working on it."
+    elif part.get("state") == "failed":
+        sentence = f"The last turn failed: {part.get('error') or 'no reason given'}"
+    elif built:
+        size = current.get("size_mm") or []
+        sentence = (f"Version {current['n']} of {part.get('name')} is built"
+                    + (f", {' × '.join(f'{v:g}' for v in size)} mm" if size else "") + ".")
+    else:
+        sentence = f"{part.get('name')} has no built version yet."
+    return {"part": part["id"], "name": part.get("name"), "state": part.get("state"),
+            "working": working, "sentence": sentence,
+            "version": part.get("current"), "built": built,
+            "versions": len(part.get("versions") or []), "size_mm": current.get("size_mm"),
+            # `problem`, never `error`: a caller reads an `error` key as the
+            # call having failed, and this is a successful read of a part.
+            "reply": reply, "questions": questions, "problem": part.get("error") or "",
+            "file": file, "print": printing}
 
 
 async def h_design_status(_request):
@@ -1017,25 +1082,42 @@ async def h_design_status(_request):
                               "viewer": (VENDOR_DIR / "three.module.min.js").is_file()})
 
 
-async def h_design_parts(_request):
-    return web.json_response({"ok": True, "parts": await asyncio.to_thread(parts.listing)})
+async def h_design_parts(request):
+    listing = await asyncio.to_thread(parts.listing)
+    if request.query.get("brief"):
+        # Home Assistant's design_status: every part as a sentence's worth.
+        panel = _panel(request)
+        rows = []
+        for row in listing:
+            try:
+                rows.append(_design_summary(panel, parts.load(row["id"])))
+            except (ValueError, LookupError):
+                continue
+        return web.json_response({"ok": True, "brain": brain_link.status(), "parts": rows})
+    return web.json_response({"ok": True, "parts": listing})
 
 
 async def h_design_create(request):
     body = await _body(request)
+    message = str(body.get("message") or "").strip()
+    # Asked before the part exists, so a design nobody can work on leaves no
+    # empty part behind.
+    if message and brain_link.status()["state"] != "ok":
+        return _err(brain_link.status()["sentence"], 409)
     await asyncio.to_thread(library.ensure)
     part = await asyncio.to_thread(parts.create, body.get("name") or "New part")
     started = False
-    if str(body.get("message") or "").strip():
-        if brain_link.status()["state"] != "ok":
-            return _err(brain_link.status()["sentence"], 409)
-        started = await asyncio.to_thread(designer.start_turn, part["id"], body["message"])
+    if message:
+        started = await asyncio.to_thread(designer.start_turn, part["id"], message)
         part = parts.load(part["id"])
-    return web.json_response({"ok": True, "part": part, "started": started})
+    return web.json_response({"ok": True, "part": part, "started": started,
+                              "summary": _design_summary(_panel(request), part)})
 
 
 async def h_design_part(request):
-    return web.json_response({"ok": True, "part": _part_or_404(request)})
+    part = _part_or_404(request)
+    return web.json_response({"ok": True, "part": part, "brain": brain_link.status(),
+                              "summary": _design_summary(_panel(request), part)})
 
 
 async def h_design_delete(request):
@@ -1059,7 +1141,9 @@ async def h_design_message(request):
         return _err(str(exc))
     if not started:
         return _err("brAIn is still working on the last message.", 409)
-    return web.json_response({"ok": True, "part": parts.load(part["id"])})
+    part = parts.load(part["id"])
+    return web.json_response({"ok": True, "part": part, "started": True,
+                              "summary": _design_summary(_panel(request), part)})
 
 
 async def h_design_update(request):
@@ -1324,15 +1408,18 @@ async def h_design_print(request):
     body = await _body(request)
     slots = body.get("slots") if isinstance(body.get("slots"), dict) else body.get("slot")
     try:
-        job, prepared, _sentence = await asyncio.to_thread(
+        job, prepared, sentence = await asyncio.to_thread(
             start_design_print, panel, part["id"], version=body.get("version"),
             printer=body.get("printer"), slots=slots,
             settings=body.get("print_settings") or {}, timelapse=bool(body.get("timelapse")))
     except PrintRefused as exc:
         return _err(str(exc), exc.status)
+    except (TypeError, ValueError) as exc:
+        return _err(f"That print could not be read: {exc}")
     job = await _wait_for(panel, job, body.get("wait"))
     return web.json_response({"ok": job["state"] != "failed", "job": job, "plan": {
         k: prepared[k] for k in ("machine", "process", "filament", "material")},
+        "sentence": f"Slicing and sending {sentence}.",
         **({"error": job["error"]} if job["state"] == "failed" else {})})
 
 
@@ -1502,6 +1589,7 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r = app.router
     r.add_get("/", _asset("index.html", "text/html"))
     r.add_get("/app.js", _asset("app.js", "application/javascript"))
+    r.add_get("/touchscreen.js", _asset("touchscreen.js", "application/javascript"))
     r.add_get("/style.css", _asset("style.css", "text/css"))
     r.add_get("/favicon.svg", _asset("favicon.svg", "image/svg+xml"))
     r.add_get("/websockify", vnc_bridge.handle)
