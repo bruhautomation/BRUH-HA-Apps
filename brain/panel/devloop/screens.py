@@ -632,32 +632,61 @@ async def _launch(binary: str, profile: str):
         "--disable-features=IsolateSandboxedIframes,site-per-process,Translate",
         "--remote-debugging-port=0", f"--user-data-dir={profile}", "about:blank",
     ]
+    # Its own session, so the browser and every helper it starts are one
+    # process group the panel can end together (report #355: a browser
+    # left running costs CPU for as long as the add-on runs).
     proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True)
     port_file = Path(profile) / "DevToolsActivePort"
-    for _ in range(150):
-        if port_file.exists():
-            lines = port_file.read_text().splitlines()
-            if lines and lines[0].isdigit():
-                return proc, int(lines[0]), lines[1] if len(lines) > 1 else ""
-        if proc.returncode is not None:
-            break
-        await asyncio.sleep(0.1)
-    proc.kill()
+    try:
+        for _ in range(150):
+            if port_file.exists():
+                lines = port_file.read_text().splitlines()
+                if lines and lines[0].isdigit():
+                    return proc, int(lines[0]), lines[1] if len(lines) > 1 else ""
+            if proc.returncode is not None:
+                break
+            await asyncio.sleep(0.1)
+    except BaseException:
+        # Cancelled, or the port file could not be read: the caller never
+        # learns about this process, so it is ended here.
+        _kill_group(proc)
+        raise
+    _kill_group(proc)
     raise RuntimeError("Chromium did not start")
 
 
+def _kill_group(proc) -> None:
+    """SIGKILL the browser's whole process group, synchronously (it may be
+    called while a task is being cancelled). Never raises."""
+    import signal  # noqa: PLC0415
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass  # already gone: there is nothing left to end
+
+
 async def _stop(proc) -> None:
-    """Wait for the browser to exit, and kill it if it will not."""
+    """Wait for the browser to exit, and kill its group if it will not. A
+    cancellation during the wait still kills it before propagating."""
     try:
-        await asyncio.wait_for(proc.wait(), 5)
-        return
-    except asyncio.TimeoutError:
-        proc.kill()
-    try:
-        await asyncio.wait_for(proc.wait(), 5)
-    except asyncio.TimeoutError:
-        log.warning("devloop screens: Chromium did not exit after it was killed")
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+            _kill_group(proc)  # helpers that outlived the browser
+            return
+        except asyncio.TimeoutError:
+            _kill_group(proc)
+        try:
+            await asyncio.wait_for(proc.wait(), 5)
+        except asyncio.TimeoutError:
+            log.warning("devloop screens: Chromium did not exit after it was killed")
+    except BaseException:
+        _kill_group(proc)
+        raise
 
 
 async def _redact_frame(cdp: CDP, session: str, frame_id: str, context: int | None,
