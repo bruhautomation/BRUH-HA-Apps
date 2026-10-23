@@ -322,22 +322,22 @@ ENTRY_REASONS = (
                          r"no response|unavailable at|ssl|certificate", re.I),
      "Can't reach the device at its address",
      "check it is powered on and on the network at the address Home "
-     "Assistant has for it, then reload it in Settings > Devices & services."),
+     + "Assistant has for it, then reload it in Settings > Devices & services."),
     ("server", re.compile(r"\b5\d\d\b|server error|service unavailable|"
                           r"bad gateway|rate limit|too many requests|\b429\b",
                           re.I),
      "The service it talks to answered with an error",
      "that is the service's side and Home Assistant keeps retrying it; "
-     "reload it if it has not loaded by tomorrow."),
+     + "reload it if it has not loaded by tomorrow."),
     ("other", None, "Failed for another reason",
      "fix what its error names, then reload it in Settings > Devices & "
-     "services."),
+     + "services."),
     ("retry", None, "Still retrying, with no reason given",
-     "Home Assistant keeps trying; turn on whatever it depends on if that is "
-     "off, or reload it in Settings > Devices & services."),
+     "Home Assistant keeps trying; turn on whatever it depends on if that "
+     + "is off, or reload it in Settings > Devices & services."),
     ("silent", None, "Failed with no reason given",
-     "reload it in Settings > Devices & services; if it fails again, remove "
-     "and add it again."),
+     "reload it in Settings > Devices & services; if it fails again, "
+     + "remove and add it again."),
 )
 
 
