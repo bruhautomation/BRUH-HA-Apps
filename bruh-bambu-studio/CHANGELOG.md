@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.4
+
+### Changed
+
+- **A print starts without asking whether the plate is clear.** A printer that is idle, finished or failed is taken to be ready, and brAIn starts on it straight away. A printer that is printing or paused is still refused, and the refusal says which. (#371)
+
+### Fixed
+
+- **Printing more than one copy works.** Asking for two or more copies of a designed part failed with "can not set repetitions when slice all". Bambu Studio only repeats a plate for its own project files, so copies of anything else are now laid out as copies on the plate before slicing, and arranged by Bambu Studio. A print-in-place part stays in one piece. (#367, #328)
+- **A command the printer refuses is reported as refused.** Printers with Bambu's newer authorization firmware turn down commands unless Developer Mode is on, and raise "MQTT Command verification failed, please update Studio or Handy". The add-on used to report those commands as done. It now says the printer refused, and that Developer Mode needs turning on under Settings › LAN only mode › Developer mode on the printer. The Printers tab and the status sensor explain the code too, and say that updating Bambu Studio will not help. (#368)
+
 ## 0.2.3
 
 ### Fixed

@@ -105,7 +105,7 @@ window.fetch = async (url, opts = {}) => {
     return answer({
       version: 'test', authenticated: true, auth_type: 'oauth',
       auth_source: 'panel', auth_check: { state: 'ok', error: '' },
-      model: 'default', settings: { terminal_ui: 'chat' }, usage: {}, auto: {},
+      model: 'default', settings: { terminal_ui: window.__classic ? 'classic' : 'chat' }, usage: {}, auto: {},
       categories: [], jobs: {}, queue_size: 0, findings_open: 1,
     });
   }
@@ -529,6 +529,45 @@ for (const { width, touch } of CASES) {
       if (f.shown && !f.said) note(where, `the ${name} control floats there unnamed`);
     }
   }
+  await context.close();
+}
+
+// The classic face (terminal_ui: classic, the default): ⋯ used to open an
+// empty box, because every item in it was hidden for that face. It has to
+// hold something to press at both widths: a new terminal window always,
+// and Your chats below the rail's breakpoint.
+for (const { width, touch } of CASES) {
+  const where = `${width}px classic`;
+  const context = await browser.newContext({
+    viewport: { width, height: 860 }, hasTouch: touch, isMobile: touch });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.addInitScript('window.__classic = true;');
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForTimeout(600);
+  if (!(await page.evaluate(() => document.body.classList.contains('term-classic')))) {
+    note(where, 'the stub did not put the panel in the classic face');
+  }
+  await page.evaluate(() => document.body.classList.remove('ask-list'));
+  const menu = page.locator('#termMenu');
+  if (!(await menu.isVisible())) { note(where, '⋯ is not on screen'); await context.close(); continue; }
+  await menu.click();
+  await page.waitForTimeout(150);
+  const items = await page.evaluate(() => [...document.querySelectorAll('#termMenuPop .tmitem')]
+    .filter((n) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+    .map((n) => ({ id: n.id, said: (n.innerText || '').trim(), h: n.getBoundingClientRect().height })));
+  if (!items.length) note(where, '⋯ opens an empty menu');
+  for (const it of items) {
+    if (!it.said) note(where, `#${it.id} has no visible name`);
+    if (touch && it.h < MIN_TARGET) note(where, `#${it.id} is ${it.h}px tall`);
+  }
+  const ids = items.map((i) => i.id);
+  if (!ids.includes('chatNew')) note(where, '⋯ offers no new terminal window');
+  if (width < 900 && !ids.includes('chatOpen')) note(where, '⋯ offers no way to your chats');
+  const said = (items.find((i) => i.id === 'chatNew') || {}).said || '';
+  if (said && !/terminal window/i.test(said)) note(where, `the new-window item says "${said}"`);
   await context.close();
 }
 
