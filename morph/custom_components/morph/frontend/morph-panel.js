@@ -382,7 +382,11 @@ class MorphPanel extends HTMLElement {
     this.form_ = form;
     // The root class is set only when it changes: a class written on every
     // frame restarts every transition keyed to it.
-    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${this.s.thenAt ? ' then' : ''}`;
+    // Night dims the page only where the dashboard asks for it
+    // (`night_dim: true`): at 40 % for everybody, a household found it
+    // unreadable and had no way to turn it off (#343).
+    const dim = form === 'night' && this.dash && this.dash.night_dim === true;
+    const cls = `morph t-${theme}${set.reduce_motion ? ' reduce' : ''}${form ? ' form-' + form : ''}${dim ? ' night-dim' : ''}${this.s.thenAt ? ' then' : ''}`;
     if (this.rootEl.className !== cls) this.rootEl.className = cls;
     this.region('thenrule', this.s.thenAt ? `<div class="thenrule" style="width:${(Math.min(1, (Date.now() - this.s.thenAt) / 86400000) * 100).toFixed(1)}%"></div>` : '');
     this.region('bar', this.barHtml());
@@ -1570,7 +1574,9 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
 
   // Door and motion chips for a room's title line: a word only while open
   // or moving.
+  // `room_marks: false` in dashboard.yaml takes them off every room (#347).
   chipsHtml(sec) {
+    if (this.dash && this.dash.room_marks === false) return '';
     const H = this.hass; const out = [];
     this.sectionEntities(sec).forEach((e) => {
       const st = H.states[e]; if (!st || domainOf(e) !== 'binary_sensor') return;

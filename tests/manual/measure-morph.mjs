@@ -343,6 +343,23 @@ async function night(p, name) {
   if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
   if (n.now.length !== 1 || n.now[0] !== 'c_front_lock') fail(where, `the night page does not hold exactly the unlocked door: ${n.now.join(', ')}`);
   atRest(`${name} at night`, await snapshot(p));
+  // Night does not dim the page unless the dashboard asks (#343), and a
+  // room's title marks go with `room_marks: false` (#347).
+  const look = () => p.evaluate(() => {
+    const r = window.__panel.shadowRoot;
+    const sec = r.querySelector('section.sec:not(.nowband)');
+    return { filter: sec ? getComputedStyle(sec).filter : '', chips: r.querySelectorAll('.sechead .chip').length, cls: r.querySelector('[data-morph-root]').className };
+  });
+  const plain = await look();
+  if (plain.filter !== 'none') fail(where, `night dims the rooms with no night_dim set (${plain.filter})`);
+  if (!plain.chips) fail(where, 'no room title carries a mark to take away, so room_marks is not measured');
+  await p.evaluate(() => { const P = window.__panel; P.dash = { ...P.dash, night_dim: true, room_marks: false }; P.render(); });
+  await settle(p, 400);
+  const asked = await look();
+  if (!/brightness/.test(asked.filter) || !/night-dim/.test(asked.cls)) fail(where, `night_dim: true does not dim the rooms (${asked.filter})`);
+  if (asked.chips) fail(where, `room_marks: false leaves ${asked.chips} mark(s) in the room titles`);
+  await p.evaluate(() => { const P = window.__panel; const d = { ...P.dash }; delete d.night_dim; delete d.room_marks; P.dash = d; P.render(); });
+  await settle(p, 400);
 }
 
 for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'phone', true]])) {
