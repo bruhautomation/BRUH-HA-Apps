@@ -575,6 +575,15 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-bambu-printers.mjs
 
+      # BRUH Bambu Studio's Studio tab on a phone: noVNC on the page with a
+      # stand-in RFB, pinch to zoom about the fingers, a tap landing on the
+      # pixel under it after zooming, long press as a right click, Move,
+      # Drag and Scroll, the keyboard, 44px controls — and at 1200 the stock
+      # noVNC page as before.
+      - name: Measure BRUH Bambu Studio's Studio tab on a phone
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-bambu-studio-mobile.mjs
+
       # bright: BRight's panel — two static measures, then three on one
       # booted demo panel, in the order the comments below rely on.
 

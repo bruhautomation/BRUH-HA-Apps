@@ -3580,11 +3580,13 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
 .tmitem .ico { width: 17px; height: 17px; flex: none; color: var(--ink-3); }
 .tmitem .tmlabel { display: flex; flex-direction: column; gap: 1px; padding: 5px 0; }
 .tmitem .tmsub { font-size: var(--fs-meta); color: var(--ink-3); }
-/* Chat-only entries: in the classic terminal there is no chat to start, no
-   transcript to list and no chat session to describe. */
-body.term-classic #chatNew,
-body.term-classic #chatOpen,
+/* In the classic terminal there is no chat session to describe, so ⋯
+   holds a new terminal window and, below the rail's breakpoint, the list of
+   your chats. Hiding every item left ⋯ opening an empty box. */
 body.term-classic #chatInfo { display: none; }
+.tmitem .tm-classic { display: none; }
+body.term-classic .tmitem .tm-chat { display: none; }
+body.term-classic .tmitem .tm-classic { display: inline; }
 #viewTerminal.active .termfabs { display: flex; }
 /* These are NEVER hidden.
    

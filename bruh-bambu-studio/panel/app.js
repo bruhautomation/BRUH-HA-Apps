@@ -75,9 +75,21 @@ function screenUrl() {
   return `novnc/vnc.html?${q}`;
 }
 
+// A touch screen gets noVNC on this page with zoom, pan and a keyboard
+// (touchscreen.js); a mouse keeps the stock noVNC page in the frame.
+function touchScreen() {
+  return window.TouchScreen && window.TouchScreen.wantedHere() ? window.TouchScreen : null;
+}
+
 function connectScreen() {
   const frame = $("#screen");
   const s = state.data && state.data.studio;
+  const touch = touchScreen();
+  if (touch) {
+    frame.hidden = true;
+    if (s && s.running) touch.connect();
+    return;
+  }
   if (s && s.running && !frame.getAttribute("src")) frame.src = screenUrl();
 }
 
@@ -120,8 +132,11 @@ function renderStudio() {
   }
   // No frame while there is nothing to show: a black rectangle under the
   // install notice reads as a broken screen.
-  $("#screen").hidden = !s.running;
-  if (!s.running) $("#screen").removeAttribute("src");
+  $("#screen").hidden = !s.running || !!touchScreen();
+  if (!s.running) {
+    $("#screen").removeAttribute("src");
+    if (touchScreen()) touchScreen().hide();
+  }
   if (state.view === "studio") connectScreen();
 }
 
@@ -137,6 +152,7 @@ async function studio(action, file) {
   try {
     await api(`api/studio/${action}`, { json: file ? { file } : {} });
     $("#screen").removeAttribute("src");
+    if (touchScreen()) touchScreen().disconnect();
     if (action === "open") { show("studio"); toast("Opening it in Bambu Studio…"); }
     setTimeout(refresh, 1500);
   } catch (e) { toast(e.message, true); }
