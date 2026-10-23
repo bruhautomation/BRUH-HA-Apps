@@ -15,6 +15,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - **Every finding says what to do.** The overnight log check could file a finding with an empty "what to do"; it now always gives one for the record's own source, and a test runs every check and fails on an empty one. (#342)
 - **Log findings name the integration the way Home Assistant shows it**, and the device when it is known, instead of its internal name (bambu_lab, forecast_solar). The offline check's leftover-entity finding does the same. (#340)
 
+## 3.8.2
 
 ### Added
 
