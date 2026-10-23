@@ -1642,25 +1642,31 @@ function makeCard(catInfo, insight, fallbackId) {
     });
     actions.appendChild(enable);
   }
-  // Two controls on a report: Ask, and ⋯ for the rest. Ask is the one
-  // thing people want from a report they are reading — say what should be
-  // different, or ask about it — and it opens the card's own dialog, which
-  // also holds what a card's definition can change (its schedule and
-  // prompt, making an asked one recurring, turning it into an automation).
+  // Two controls on a report: Ask, and ⋯ for the rest. Ask is a
+  // conversation with brAIn about this report, with the report as its first
+  // message ("ask should become chat — talk about it with brAIn", the
+  // owner): a form asking what should change was a second, narrower way of
+  // talking to brAIn. What a card's definition can change (say what should
+  // be different next run, its schedule and prompt, making an asked one
+  // recurring, turning it into an automation) is ⋯ › Edit.
   // Expanding is the card itself: pressing it opens it full size.
   if ((catInfo || insight) && !view) {
     const ask = el("button", "btn small cardask", "Ask");
     ask.type = "button";
-    tip(ask, "Ask about this report, or say what should change");
+    tip(ask, "Talk about this report with brAIn");
     ask.disabled = active;
     ask.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      openRefine(id, catInfo, insight);
+      askAboutReport(id, catInfo, shown || insight);
     });
     actions.appendChild(ask);
   }
 
   const menu = [];
+  if ((catInfo || insight) && !view && !active) {
+    menu.push(["", "Edit", "Say what should change next time, or change its schedule and prompt",
+      () => openRefine(id, catInfo, insight)]);
+  }
   if (shown) {
     menu.push(["", "Share", "Copy it as a picture, or put it on a dashboard",
       () => openShare(shown)]);
@@ -5466,6 +5472,20 @@ async function renderRefineKept() {
   });
 }
 
+// Ask on a report: a conversation with brAIn, the report as its first
+// message — the same handoff a right-click "Ask brAIn about this" makes
+// (`askPrompt`, `openInTerminal`), so there is one way a thing on screen
+// becomes a conversation.
+function askAboutReport(id, catInfo, insight) {
+  const name = (insight && insight.title) || (catInfo && catInfo.title) || "this report";
+  const about = (catInfo && catInfo.title) || (insight && insight.eyebrow) || "";
+  const text = [about && about !== name ? `${about}: ${name}` : name,
+    insight && insight.summary ? String(insight.summary) : ""]
+    .filter(Boolean).join("\n").slice(0, ASK_TEXT_MAX);
+  openInTerminal({ prompt: askPrompt(
+    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, "") });
+}
+
 function openRefine(id, catInfo, insight) {
   refineState.id = id;
   refineState.catInfo = catInfo;
@@ -6393,7 +6413,110 @@ function makeCase(row) {
   const menu = caseOverflow(row, btns, folded);
   if (menu) { btns.push(menu); actions.appendChild(menu); }
   card.appendChild(actions);
+  if (!gap) addRespond(card, row.id, row.thread, btns);
   return card;
+}
+
+// ---- Respond: one line to brAIn under a card ---------------------------
+//
+// "These buttons don't cover what needs to happen here … maybe the button
+// is like Respond and I just type one quick instruction or response to
+// brAIn and it either does that to fix it, write it to memory, or
+// whatever" — the owner. Under every card's buttons, a one-line box; what
+// is typed goes to `/api/case/<id>/respond`, which reads it the way Morph's
+// reply line is read (`server._morph_reply`): a fix is PLANNED with the
+// words as the change (Apply is still its own press), "it's off on
+// purpose, remember that" ends the card as Wrong with the reason, done, To
+// Do, snooze, or an answer in words. The answer is a held task on the
+// server, so the card polls; what brAIn said is the toast, with Undo when
+// an ending was taken, and the last turns stay on the card if it stays.
+// What is typed survives a repaint of Today (`respondDrafts`), and a reply
+// still being answered keeps its line through one (`respondPending`).
+const respondDrafts = {};
+const respondPending = {};
+const RESPOND_POLL_MS = 1500;
+const RESPOND_WAIT_MS = 5 * 60 * 1000;
+
+function respondThread(thread) {
+  const turns = (thread || []).filter((t) => t && t.text).slice(-2);
+  if (!turns.length) return null;
+  const box = el("div", "qthread");
+  turns.forEach((t) => {
+    const p = el("p", "qturn" + (t.who === "brain" ? " brain" : " you"));
+    p.appendChild(el("span", "qturnwho", t.who === "brain" ? "brAIn" : "You"));
+    p.appendChild(el("span", null, prettyText(t.text)));
+    box.appendChild(p);
+  });
+  return box;
+}
+
+function addRespond(card, id, thread, btns) {
+  if (!id) return;
+  const said = respondThread(thread);
+  if (said) card.appendChild(said);
+  const form = el("form", "qrespond");
+  form.dataset.caseId = id;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "qrespondin";
+  input.maxLength = 500;
+  input.placeholder = "Respond to brAIn — a fix, a reason, a question";
+  input.setAttribute("aria-label", "Respond to brAIn about this");
+  input.setAttribute("enterkeyhint", "send");
+  input.value = respondDrafts[id] || "";
+  const send = el("button", "btn-secondary qrespondgo", "Send");
+  send.type = "submit";
+  const empty = () => !input.value.trim();
+  send.disabled = empty() || !!respondPending[id];
+  input.disabled = !!respondPending[id];
+  form.append(input, send);
+  card.appendChild(form);
+  if (respondPending[id]) form.appendChild(phaseLine("brAIn is reading that…"));
+  input.addEventListener("input", () => {
+    respondDrafts[id] = input.value;
+    send.disabled = empty();
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    if (!empty() && !respondPending[id]) sendRespond(id, input.value.trim(), form, btns);
+  });
+}
+
+async function sendRespond(id, text, form, btns) {
+  const all = (btns || []).concat([...form.querySelectorAll("input, button")]);
+  all.forEach((b) => { b.disabled = true; });
+  try {
+    await api(`api/case/${encodeURIComponent(id)}/respond`, {
+      method: "POST", body: JSON.stringify({ text }) });
+  } catch (e) {
+    toast(e.message || "brAIn could not take that just now");
+    all.forEach((b) => { b.disabled = false; });
+    return;
+  }
+  delete respondDrafts[id];
+  respondPending[id] = Date.now();
+  form.appendChild(phaseLine("brAIn is reading that…"));
+  let result = null;
+  while (Date.now() - respondPending[id] < RESPOND_WAIT_MS) {
+    await new Promise((r) => setTimeout(r, RESPOND_POLL_MS));
+    try {
+      result = await api(`api/case/${encodeURIComponent(id)}/respond`);
+    } catch (e) {
+      result = null;
+    }
+    if (result && result.state !== "running") break;
+  }
+  delete respondPending[id];
+  await refreshToday();
+  renderFindings();
+  if (!result || result.state === "running") {
+    toast("brAIn is still working on that — the card will show its answer");
+  } else {
+    toast(result.say || "Done", result.undo || undefined);
+    if ((result.routes || []).includes("case_ending")) {
+      refreshStatus().catch(() => {}); fastPoll();
+    }
+  }
 }
 
 // ---- presses on a case -------------------------------------------------------
@@ -6738,6 +6861,7 @@ function makeLooseFinding(f) {
     actions.appendChild(menu);
   }
   card.appendChild(actions);
+  if (!gap) addRespond(card, `f:${f.ts}`, f.thread, btns);
   return card;
 }
 

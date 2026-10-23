@@ -130,7 +130,8 @@ class TestThePanelsRepliesAreTheChat(unittest.TestCase):
     def test_the_act_prompts_do_not_say_change_nothing(self):
         s = self.server
         for read, act in ((s.REPLY_SYSTEM, s.REPLY_ACT_SYSTEM),
-                          (s.MORPH_REPLY_SYSTEM, s.MORPH_REPLY_ACT_SYSTEM)):
+                          (s.MORPH_REPLY_SYSTEM, s.MORPH_REPLY_ACT_SYSTEM),
+                          (s.PANEL_REPLY_SYSTEM, s.PANEL_REPLY_ACT_SYSTEM)):
             self.assertIn("you can change nothing", read)
             self.assertNotIn("change nothing", act)
             self.assertIn("same reach as the brAIn chat", act)

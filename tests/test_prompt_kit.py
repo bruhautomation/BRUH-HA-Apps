@@ -70,6 +70,8 @@ PROMPTS = [
     ("server", "REPLY_ACT_SYSTEM", True, False),
     ("server", "MORPH_REPLY_SYSTEM", True, False),
     ("server", "MORPH_REPLY_ACT_SYSTEM", True, False),
+    ("server", "PANEL_REPLY_SYSTEM", True, False),
+    ("server", "PANEL_REPLY_ACT_SYSTEM", True, False),
 ]
 
 

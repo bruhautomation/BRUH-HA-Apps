@@ -63,7 +63,7 @@ KINDS = ("card_question", "one_off", "standing_rule", "automation_edit",
          "case_ending", "defer", "remember", "study", "explain", "scenes",
          "chat")
 ENDINGS = ("wrong", "done", "todo", "not_now")
-SURFACES = ("ask_bar", "reply", "repairs", "service", "morph")
+SURFACES = ("ask_bar", "reply", "repairs", "service", "morph", "panel")
 
 # Morph, the dashboard (`morph/`), is the fifth box and the one that is
 # also a Tell: what it carries is the ask bar's vocabulary and every case
@@ -78,6 +78,13 @@ SURFACES = ("ask_bar", "reply", "repairs", "service", "morph")
 MORPH_KINDS = KINDS + ("dashboard", "code")
 MORPH_ENDINGS = ENDINGS + ("consent", "not_applicable")
 MAX_CHANGE = 300
+
+# The panel's Respond box (`panel`) is the sixth: one line typed under a
+# card on Today, read exactly the way Morph's reply line is — every case
+# ending, `consent` and `not_applicable` included, and the words that
+# carry a fix's instruction — but never `dashboard` or `code`, which only
+# Morph can make. Its run is validated against `PANEL_SCHEMA`.
+CASE_SURFACES = frozenset({"morph", "panel"})
 
 # What each surface can carry. A case ending needs a case, which only a
 # reply and a Repairs dialog have; a card needs a screen to land on.
@@ -99,6 +106,11 @@ ALLOWED = {
                         "automation_edit", "remember", "study", "explain",
                         "scenes", "chat", "case_ending", "defer",
                         "dashboard", "code"}),
+    # Morph's reply line without the Tell: there is no dashboard under a
+    # card in the panel.
+    "panel": frozenset({"card_question", "one_off", "standing_rule",
+                        "automation_edit", "remember", "study", "explain",
+                        "scenes", "chat", "case_ending", "defer"}),
 }
 # The endings a surface's words may give. The Repairs reason box sits under
 # "Not a problem", and the same dialog's own step for "I've fixed it" is
@@ -113,9 +125,10 @@ ALLOWED = {
 SURFACE_ENDINGS = {
     "repairs": frozenset({"wrong", "todo", "not_now"}),
     "morph": frozenset(MORPH_ENDINGS),
+    "panel": frozenset(MORPH_ENDINGS),
 }
 # A person is waiting on these: the budget does not stop them.
-PRESSED = frozenset({"ask_bar", "reply", "repairs", "morph"})
+PRESSED = frozenset({"ask_bar", "reply", "repairs", "morph", "panel"})
 
 MAX_ROUTES = 3
 MAX_WORDS = 500
@@ -179,11 +192,18 @@ Routes (use only these words):
 - scenes: design lighting moods for a room; subject is the room.
 - chat: anything else — a conversation, or a question back about the
   report ("which sensor is that?", "why?").
-Only when they typed it into Morph, the dashboard:
+Under a report, saying it is intentional, expected or normal here, or
+asking brAIn to remember why it is so ("it's off on purpose for the Task
+Manager, remember that"), is case_ending "wrong" with their reason as note
+— that is how brAIn keeps the reason and stops raising it. Never only
+remember.
+Only when they typed it under a report in Morph, the dashboard, or into
+the Respond box under a report in brAIn's panel:
 - case_ending may also be "consent" (yes, ok, do it, sure — agreeing to
   what the report asks; an instruction that comes with it, "yes, but call
-  it Sump Pump Current", goes in change) or "not_applicable" (the question
-  does not fit this house).
+  it Sump Pump Current" or "fix it by turning the schedule off", goes in
+  change) or "not_applicable" (the question does not fit this house).
+Only when they typed it into Morph, the dashboard:
 - dashboard: a change to how the dashboard looks or is laid out ("move
   the kitchen above the dining room", "make the kitchen warmer-looking").
 - code: a change to Morph itself ("the kitchen header is too tall").
@@ -257,9 +277,36 @@ MORPH_SCHEMA = {
 }
 
 
+# The panel's Respond box: Morph's endings and `change`, the shared kinds.
+PANEL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "routes": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_ROUTES,
+            "items": {
+                "type": "object",
+                "properties": {
+                    **MORPH_SCHEMA["properties"]["routes"]["items"][
+                        "properties"],
+                    "kind": {"type": "string", "enum": list(KINDS)},
+                },
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["routes"],
+    "additionalProperties": False,
+}
+
+
 def schema_for(surface: str) -> dict:
     """The schema a surface's run is validated against."""
-    return MORPH_SCHEMA if surface == "morph" else SCHEMA
+    if surface == "morph":
+        return MORPH_SCHEMA
+    return PANEL_SCHEMA if surface == "panel" else SCHEMA
 
 
 def _day(now: float) -> str:
@@ -315,6 +362,8 @@ def prompt(words: str, surface: str, case: dict | None = None) -> str:
         "morph": ("They typed this into Morph, their dashboard — under the "
                   "report below when there is one, otherwise into its Ask "
                   "line."),
+        "panel": ("They typed this into the Respond box under the report "
+                  "below, in brAIn's panel."),
     }.get(surface, "They typed this.")]
     if case:
         lines.append("The report they are looking at: “"
@@ -342,7 +391,7 @@ def _clean_route(item, surface: str, words: str) -> dict | None:
             return None
         route["ending"] = ending
         route["note"] = " ".join(str(item.get("note") or "").split())[:MAX_NOTE]
-        if surface == "morph" and ending == "consent":
+        if surface in CASE_SURFACES and ending == "consent":
             # The instruction that came with the yes, which the fix route
             # takes as the agreed change (`_run_plan`'s `change`).
             change = " ".join(str(item.get("change") or "").split())
@@ -517,7 +566,7 @@ def summary() -> dict:
             "last": int(STATE["last"]), "routed": dict(STATE["routed"])}
 
 
-__all__ = ["ALLOWED", "ENDINGS", "MORPH_ENDINGS", "MORPH_KINDS",
+__all__ = ["ALLOWED", "CASE_SURFACES", "PANEL_SCHEMA", "ENDINGS", "MORPH_ENDINGS", "MORPH_KINDS",
            "MORPH_SCHEMA", "schema_for", "EXPLAIN_KINDS", "EXPLAIN_SCHEMA",
            "EXPLAIN_SYSTEM", "KINDS", "MAX_PER_DAY", "MAX_ROUTES", "PRESSED",
            "SCHEMA", "STATE", "SURFACES", "SURFACE_ENDINGS", "SYSTEM",

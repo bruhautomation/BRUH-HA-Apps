@@ -557,6 +557,12 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     })
     if isinstance(row.get("confidence"), (int, float)):
         case["confidence"] = row["confidence"]
+    # What was said about it — a reply typed under the card (the panel's
+    # Respond box, Morph's reply line) and brAIn's account of what it did.
+    # Absent rather than empty, so a row nobody replied to is the case it
+    # always was.
+    if row.get("thread"):
+        case["thread"] = list(row["thread"])[-4:]
     # The run that can be opened as a record. A Resident case names its
     # investigation; a triaged row names the conversation that judged it,
     # which is the same offer — "here is what looked at this" — and the

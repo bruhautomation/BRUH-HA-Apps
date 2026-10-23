@@ -138,17 +138,22 @@ for (const width of WIDTHS) {
 //     the renderer every one of those so their absence is a claim, not a
 //     fixture that never had them.
 //   * the head carries Ask and ⋯ and nothing else (✎ ↗ ⤢ and the ‹ Latest ▾
-//     steppers are cut), ⋯ holds exactly Share · Past versions · Run ·
+//     steppers are cut), ⋯ holds exactly Edit · Share · Past versions · Run ·
 //     Delete, and a press on the card opens it full size.
-//   * Ask opens the card's dialog, whose links still reach "Make this an
-//     automation" (drafted into the Ask tab's composer, never sent) and
-//     "See the automation it suggested" (Today, where suggestions are queued).
+//   * Ask opens a conversation with brAIn about the card, the card as its
+//     first message (the owner: "ask should become chat — talk about it
+//     with brAIn"); the card's dialog is ⋯ › Edit, whose links still reach
+//     "Make this an automation" (drafted into the Ask tab's composer, never
+//     sent) and "See the automation it suggested" (Today, where suggestions
+//     are queued). Structural change: the menu was exactly the four below
+//     and Ask opened the dialog; Edit leads the menu now so the dialog keeps
+//     a way in, and Ask's own press is asserted to open the conversation.
 const NOW_ISO = new Date().toISOString();
 const FOOT_STUB = `
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
 };
-window.fetch = async (url) => {
+window.fetch = async (url, opts) => {
   const p = String(url);
   const answer = (body) => new Response(JSON.stringify(body), {
     status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -200,6 +205,10 @@ window.fetch = async (url) => {
         meta: { duration_ms: 22000, cost: { total: 18000, input: 17000,
                                             output: 1000, cached: 0 } } },
     ] });
+  }
+  if (p.includes('api/terminal/open')) {
+    window.__opened = (window.__opened || []).concat([JSON.parse(opts.body || '{}')]);
+    return answer({ opened: true });
   }
   if (p.includes('api/onboarding')) return answer({ onboarded: true });
   if (p.includes('api/findings')) {
@@ -282,7 +291,7 @@ for (const width of [390, 768, 1200]) {
     problems.push(`page scrolls sideways (${f.docWidth}px)`);
   }
 
-  // ⋯ holds exactly the four, in the doc's order.
+  // ⋯ holds exactly Edit and the four, in the doc's order.
   const menu = await page2.evaluate(async () => {
     const card = document.querySelector('.card[data-id="held"]');
     const more = [...card.querySelectorAll('.actions button')]
@@ -294,7 +303,7 @@ for (const width of [390, 768, 1200]) {
     document.body.click();
     return rows;
   });
-  if (JSON.stringify(menu) !== JSON.stringify(['Share', 'Past versions', 'Run', 'Delete'])) {
+  if (JSON.stringify(menu) !== JSON.stringify(['Edit', 'Share', 'Past versions', 'Run', 'Delete'])) {
     problems.push(`⋯ holds ${JSON.stringify(menu)}`);
   }
 
@@ -309,11 +318,38 @@ for (const width of [390, 768, 1200]) {
   });
   if (!opened) problems.push('pressing the card does not open it');
 
-  // Ask: the card's dialog, and the automation links inside it.
+  // Ask: a conversation about the card, with the card as its first message.
+  const talk = await page2.evaluate(async () => {
+    window.__opened = [];
+    const card = document.querySelector('.card[data-id="held"]');
+    [...card.querySelectorAll('.actions button')]
+      .find((b) => b.textContent.trim() === 'Ask').click();
+    await new Promise((r) => setTimeout(r, 120));
+    const out = {
+      opened: window.__opened,
+      dialog: document.getElementById('refineModal').classList.contains('open'),
+      ask: !!document.querySelector('#viewTerminal.active'),
+    };
+    document.querySelector('.viewtab[data-group="insights"]').click();
+    const b = document.querySelector('#segNav .segbtn[data-view="insights"]');
+    if (b) b.click();
+    return out;
+  });
+  const first = (talk.opened[0] || {}).prompt || '';
+  if (talk.dialog) problems.push('Ask opens a form, not a conversation');
+  if (!talk.ask) problems.push('Ask does not open the Ask tab');
+  if (!/What the house used this week/.test(first) || !/Down 8% on last week/.test(first)) {
+    problems.push(`Ask's conversation does not open on the card (${JSON.stringify(talk.opened)})`);
+  }
+
+  // ⋯ › Edit: the card's dialog, and the automation links inside it.
   const ask = (id) => page2.evaluate(async (cardId) => {
     const card = document.querySelector(`.card[data-id="${cardId}"]`);
     [...card.querySelectorAll('.actions button')]
-      .find((b) => b.textContent.trim() === 'Ask').click();
+      .find((b) => b.textContent.trim() === '⋯').click();
+    await new Promise((r) => setTimeout(r, 50));
+    [...document.querySelectorAll('#chipPop .cardmenuitem')]
+      .find((b) => b.querySelector('b')?.textContent === 'Edit').click();
     await new Promise((r) => setTimeout(r, 60));
     return {
       open: document.getElementById('refineModal').classList.contains('open'),
@@ -338,7 +374,7 @@ for (const width of [390, 768, 1200]) {
   }, label);
 
   const heldAsk = await ask('held');
-  if (!heldAsk.open) problems.push('Ask does not open the card\'s dialog');
+  if (!heldAsk.open) problems.push('⋯ › Edit does not open the card\'s dialog');
   if (heldAsk.send !== 'Send') problems.push(`the dialog's button reads "${heldAsk.send}"`);
   if (!heldAsk.links.includes('Make this an automation')) {
     problems.push(`the dialog does not offer the automation (${JSON.stringify(heldAsk.links)})`);
@@ -367,7 +403,7 @@ for (const width of [390, 768, 1200]) {
   }
 
   console.log(`${problems.length ? 'FAIL' : 'ok  '} ${String(width).padStart(4)}px  `
-    + 'foot: one age; head: Ask · ⋯; menu: four');
+    + 'foot: one age; head: Ask · ⋯; menu: Edit and four');
   for (const p of problems) { console.log(`        - ${p}`); failures++; }
   await context.close();
 }
