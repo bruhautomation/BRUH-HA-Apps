@@ -453,24 +453,24 @@ def confirmation(the_plan: dict, *, entity_name: str = "",
                  area_name: str = "", check_title: str = "") -> str:
     """The one sentence a person is told, built by code and never a model.
 
-    "Got it — I'll stop flagging it until October." A wide scope is a
+    "Got it — brAIn will stop flagging it until October." A wide scope is a
     question rather than a promise, so its sentence asks.
     """
     until = the_plan.get("until") or ""
     what = _friendly_scope(the_plan, entity_name=entity_name,
                            area_name=area_name, check_title=check_title)
     if the_plan.get("offer"):
-        return (f"Got it — I'll stop flagging it for "
+        return (f"Got it — brAIn will stop flagging it for "
                 f"{entity_name or 'this one'}"
                 + (f" {until}" if until else "")
-                + f". Want me to stop flagging {what} too? It's on your "
+                + f". Should brAIn stop flagging {what} too? It's on your "
                 "Findings list to answer.")
     if the_plan.get("scope") == "entity":
-        return (f"Got it — I'll stop flagging {what}"
+        return (f"Got it — brAIn will stop flagging {what}"
                 + (f" {until}." if until else "."))
     if until:
-        return f"Got it — I'll stop flagging it {until}."
-    return "Got it — I won't flag that again."
+        return f"Got it — brAIn will stop flagging it {until}."
+    return "Got it — brAIn won't flag that again."
 
 
 # ---------------------------------------------------------------------------

@@ -1267,7 +1267,7 @@ Set both to the same value (or leave both empty) to notify at any hour.
     body: `
 # Replying from your phone
 
-The **Reply** button on a notification does more than ask a question now. "It's always like that in winter" marks the report Not a problem and stops it until spring; "remind me tomorrow" snoozes it; "I already replaced it" marks it fixed; anything else is a question, and brAIn answers it. When a reply ends a report you get one line back — for example **"Got it — I'll stop flagging it until March."** — with an **Undo** button that puts everything back for five minutes.
+The **Reply** button on a notification does more than ask a question now. "It's always like that in winter" marks the report Not a problem and stops it until spring; "remind me tomorrow" snoozes it; "I already replaced it" marks it fixed; anything else is a question, and brAIn answers it. When a reply ends a report you get one line back — for example **"Got it — brAIn will stop flagging it until March."** — with an **Undo** button that puts everything back for five minutes.
 `,
   },
   {

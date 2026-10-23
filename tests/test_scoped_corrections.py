@@ -131,16 +131,16 @@ class TestPlan(unittest.TestCase):
         got = self.plan({"scope": "entity_check", "lifetime": "month",
                          "until_month": 10})
         self.assertEqual(corrections.confirmation(got),
-                         "Got it — I'll stop flagging it until October.")
+                         "Got it — brAIn will stop flagging it until October.")
         forever = self.plan({"scope": "entity_check", "lifetime": "permanent"})
         self.assertEqual(corrections.confirmation(forever),
-                         "Got it — I won't flag that again.")
+                         "Got it — brAIn won't flag that again.")
         wide = self.plan({"scope": "check_area", "lifetime": "permanent"},
                          area_id="garage")
         said = corrections.confirmation(wide, entity_name="Cupboard door",
                                         area_name="Garage",
                                         check_title="Sensors frozen")
-        self.assertIn("Want me to stop flagging", said)
+        self.assertIn("Should brAIn stop flagging", said)
         self.assertIn("Garage", said)
 
 

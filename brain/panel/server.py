@@ -1695,7 +1695,7 @@ async def _send_notification(rows: list[dict], held: bool = False,
     # Buttons, but only where they can be answered and only when the
     # message is about one finding — see `notify_router.actions_for`.
     # A caller with its own (a confirmation's Undo) replaces them: the
-    # card's answers under "Got it — I'll stop flagging it" would offer to
+    # card's answers under "Got it — brAIn will stop flagging it" would offer to
     # end a case that has just been ended. Gated the same way.
     if buttons is None:
         buttons = notify_router.actions_for(rows, service)
