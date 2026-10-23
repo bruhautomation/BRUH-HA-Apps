@@ -667,7 +667,7 @@ def _kill_group(proc) -> None:
         try:
             proc.kill()
         except (ProcessLookupError, OSError):
-            pass
+            pass  # already gone: there is nothing left to end
 
 
 async def _stop(proc) -> None:

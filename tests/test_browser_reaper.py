@@ -196,7 +196,7 @@ class TestTheSchedulerTickReaps(unittest.TestCase):
                 try:
                     await server._scheduler()
                 except asyncio.CancelledError:
-                    pass
+                    pass  # the second sleep ends the loop; that is the exit
 
         with unittest.mock.patch.dict(os.environ, {"BRAIN_ENABLE_INSIGHTS": "false"}):
             asyncio.run(one_tick())
