@@ -17,7 +17,7 @@ import subprocess
 import textwrap
 import time
 import unittest
-from unittest import mock
+import unittest.mock
 
 from morph_env import FRONTEND, MorphEnv
 
@@ -51,7 +51,7 @@ class TestEverySuggestionHasItsOwnId(_Env):
         L = self.env.learning
         L.add_suggestions(self.rows(3), DASH)
         frozen = time.time()
-        with mock.patch.object(L.time, "time", return_value=frozen):
+        with unittest.mock.patch.object(L.time, "time", return_value=frozen):
             L.house_card_broken("a.js", "boom")
             L.house_card_broken("b.js", "boom")
         ids = [it["id"] for it in L.all_items()]
