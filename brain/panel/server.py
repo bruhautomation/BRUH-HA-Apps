@@ -8386,6 +8386,17 @@ findings_store.QUEUE_COUNT = _queue_count
 # house's zone, handed in because the store imports neither.
 findings_store.DISPLAY_NAMES = lambda: _NAMES
 findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
+
+
+def _hypothesis_known_answer(text: str) -> bool:
+    """Whether a guess is already settled by a fact a person stands behind
+    or by the rooms the registry gives what it names (`hypotheses.
+    known_answer`) — asked by `hypotheses.propose` before anything is
+    filed, so no producer can float a question the house answers."""
+    return hypotheses.known_answer(text, facts_store._load(), _NAMES)
+
+
+hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # The to-do mirror hides a snoozed chore the way To Do does; the snoozes
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
