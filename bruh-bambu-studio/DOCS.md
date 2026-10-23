@@ -259,11 +259,17 @@ The card is in the card picker once the integration is set up (see
 | `bruh_bambu.import_url` | Import a model from a Printables page or a file link; answers with the new files' paths |
 | `bruh_bambu.refresh` | Ask a printer for a full report now |
 | `bruh_bambu.reconnect` | Drop the connection to a printer and open a new one |
+| `bruh_bambu.design_part` | Describe a part and brAIn designs it (or name a part in `part` and say what to change in `message`); answers as soon as brAIn has started, with the part's id and name. Needs brAIn |
+| `bruh_bambu.design_status` | A designed part's latest version, whether brAIn is still on it, its last reply, whether it built and any print of it; every part when none is named |
+| `bruh_bambu.print_part` | Print a designed part — the Design tab's Slice and print — on a printer, with `copies`, `slot` and print `settings` |
 
 `printer` can be left out when there is only one printer; with two or more it
 is the printer's name or serial number. Every service answers with the
 add-on's reply, and a refusal ("Workshop X1C is already printing") is raised
-with its reason, so it shows in the automation trace.
+with its reason, so it shows in the automation trace. The three design
+services answer with data only (`response_variable:`), and a part is named
+by its id or its name. Designing takes minutes, so `design_part` answers when
+brAIn has started and `design_status` says when the version has built.
 
 ```yaml
 action: bruh_bambu.print_file
@@ -296,6 +302,11 @@ benchy on the X1C" work from the chat, the terminal and voice. A voice agent
 may check on a print, pause, resume, change the speed and the light; starting
 or stopping a print, slicing and raw G-code are refused by voice, because a
 misheard sentence there is filament and hours.
+
+The design services are how brAIn designs and prints a part from anywhere
+it is asked — "design a 4 cm wall hook and print it" — through the same
+Design tab conversation and the same Slice and print, so the part, its
+versions and its print are on the Design tab afterwards.
 
 ## Options
 
