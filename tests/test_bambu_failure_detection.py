@@ -20,9 +20,9 @@ import tempfile
 import threading
 import types
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import bambu_env  # noqa: E402
@@ -244,7 +244,7 @@ class Harness(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         for name, value in (("SETTINGS_FILE", self.tmp / "settings.json"),
                             ("SHARED", self.tmp / "shared")):
-            p = mock.patch.object(watcher, name, value)
+            p = unittest.mock.patch.object(watcher, name, value)
             p.start()
             self.addCleanup(p.stop)
         self.client = FakeClient()
@@ -493,7 +493,7 @@ class TestBrainGetsPictures(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         (self.tmp / "tasks").mkdir()
         (self.tmp / "task_results").mkdir()
-        p = mock.patch.object(brain_link, "BRAIN_SHARED", self.tmp)
+        p = unittest.mock.patch.object(brain_link, "BRAIN_SHARED", self.tmp)
         p.start()
         self.addCleanup(p.stop)
 
@@ -565,7 +565,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         from aiohttp.test_utils import TestClient, TestServer
         self.tmp = Path(tempfile.mkdtemp())
-        p = mock.patch.object(watcher, "SETTINGS_FILE", self.tmp / "s.json")
+        p = unittest.mock.patch.object(watcher, "SETTINGS_FILE", self.tmp / "s.json")
         p.start()
         self.addCleanup(p.stop)
         self.panel = server.Panel(start_clients=False)
@@ -574,7 +574,7 @@ class TestRoutes(unittest.IsolatedAsyncioTestCase):
         self.panel.clients["p1"] = FakeClient()
         for target, attr, value in ((server.store, "resolve", lambda rows, wanted: self.row),
                                     (server.store, "load", lambda: [self.row])):
-            p = mock.patch.object(target, attr, value)
+            p = unittest.mock.patch.object(target, attr, value)
             p.start()
             self.addCleanup(p.stop)
         self.client = TestClient(TestServer(server.build_app(self.panel, ticker=False)))

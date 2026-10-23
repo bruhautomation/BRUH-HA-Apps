@@ -619,11 +619,12 @@ class PrinterWatch:
             self.owner.changed()
 
     def _record_look(self, trigger: dict, summary: dict, frame: bytes, answer: dict | None,
-                     error: str, plate_only: bool, extra: dict) -> None:
+                     error: str, plate_only: bool, extra: dict) -> str | None:
+        """Write one look down; the alert's id when the printer is to be paused."""
         rec = self.record
         now = self.owner.clock()
         if rec is None:
-            return
+            return None
         if answer is None:
             self.brain = {"state": "error", "sentence": error or "brAIn did not answer."}
             if trigger["kind"] == "checkpoint":
@@ -636,7 +637,7 @@ class PrinterWatch:
             rec.setdefault("errors", []).append({"at": now, "error": error[:300]})
             rec["errors"] = rec["errors"][-10:]
             self._save()
-            return
+            return None
         self.brain = {"state": "ok", "sentence": "brAIn is looking at the print."}
         if plate_only:
             if answer["plate"] == "empty" and answer["confidence"] >= 0.7:
@@ -645,7 +646,7 @@ class PrinterWatch:
                 self.plate = {"state": "occupied", "since": self.plate.get("since") or now,
                               "why": answer["summary"]}
                 self._save_plate()
-            return
+            return None
         settings = self.owner.settings_for(self.pid)
         decision = judge.decide(answer, sensitivity=settings["sensitivity"], mode=settings["mode"],
                                 ignored=rec["ignored"], no_pause=rec["no_pause"])
