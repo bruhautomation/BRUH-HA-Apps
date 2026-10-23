@@ -14,6 +14,11 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - **Insight cards agree with the open findings about the same device.** A card no longer calls a device fine while a finding says it is not, and links the finding instead. (#354)
 - **Insight cards compare numbers a person knows.** Comparisons are like with like, in everyday units, with the real value beside them. (#351)
 - **A device a card names as offline is on the list too.** When a card says something has been unavailable for an hour or more and nothing filed it, a finding is filed with the card's own. (#339)
+## 3.8.4
+
+### Fixed
+
+- **A headless browser left running after the session that started it has ended is closed.** A Chromium a terminal or chat session opened for a screenshot (or brAIn's own panel pictures) went on using several percent of CPU after its session ended. One with no parent left is ended once it is five minutes old, checked at start and every two minutes; a browser whose session is still running is never touched, and a launch that fails or is cancelled closes the browser it started. (#355)
 
 ## 3.8.3
 

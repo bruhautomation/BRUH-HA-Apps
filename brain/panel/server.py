@@ -216,6 +216,7 @@ import override_ledger
 import onboarding
 import outcomes
 import ownership
+import browser_reaper
 import instructions
 import permission_mode
 import playbooks
@@ -7739,6 +7740,12 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # A headless browser a Claude session started (Playwright from a
+        # Bash tool) and left behind when the session ended is reparented
+        # to PID 1 and goes on spending CPU for ever (report #355). End an
+        # orphaned one past its grace period; one whose parent is alive is
+        # somebody's run. Gated, inside the add-on only, never raises.
+        await asyncio.to_thread(browser_reaper.maybe_reap)
         # An instruction edited in the terminal (an override file under
         # /config/.brain/instructions) reaches the next run without a restart.
         try:
@@ -25146,6 +25153,8 @@ def make_app() -> web.Application:
         # where Claude in the terminal can read them.
         await asyncio.to_thread(instructions.apply_all)
         await asyncio.to_thread(instructions.export_builtins)
+        # A browser left over from before the restart (report #355).
+        await asyncio.to_thread(browser_reaper.maybe_reap)
         await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
