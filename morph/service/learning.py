@@ -136,6 +136,42 @@ def usage(since: float = 0.0) -> list[dict]:
     return [r for r in rows if float(r.get("ts") or 0) >= since]
 
 
+LOG_SENTENCES = {
+    "never": ("Morph has no record of use yet: the panel has not logged a single tap, so the zero "
+              "counts are not evidence that nobody uses the dashboard."),
+    "unreadable": ("The use log could not be read, so the counts are missing, not zero: they are not "
+                   "evidence that nobody uses the dashboard."),
+    "quiet": "The use log is there and holds nothing from the last 30 days: nobody used the dashboard.",
+    "ok": "",
+}
+
+
+def usage_log(since: float) -> dict:
+    """What the use log can say, apart from its counts (#361). A digest of
+    0 events over 0 days read the same whether nothing had ever been
+    logged, the file could not be read, or the household really did not
+    touch the page for a month — and only the last is evidence about the
+    dashboard. ``state`` is never | unreadable | quiet | ok."""
+    try:
+        size = paths.USAGE.stat().st_size
+    except FileNotFoundError:
+        return {"state": "never", "newest_at": None}
+    except OSError:
+        return {"state": "unreadable", "newest_at": None}
+    if not paths.USAGE.is_file():
+        return {"state": "unreadable", "newest_at": None}
+    try:
+        with open(paths.USAGE, encoding="utf-8") as f:
+            f.read(1)
+    except OSError:
+        return {"state": "unreadable", "newest_at": None}
+    rows = paths.read_jsonl(paths.USAGE, limit=50000) if size else []
+    newest = max((float(r.get("ts") or 0) for r in rows), default=0.0) or None
+    if not rows:
+        return {"state": "never", "newest_at": None}
+    return {"state": "ok" if newest and newest >= since else "quiet", "newest_at": newest}
+
+
 def prune_usage(max_age_s: int = 60 * 86400) -> None:
     rows = usage(time.time() - max_age_s)
     try:
@@ -767,10 +803,12 @@ def digest(dash: dict, now: float | None = None, states: dict | None = None) -> 
             row["rejected"] = rejected_change(t.get("base") or "", t["commit"])
         shown.append(row)
     sugg = [o for o in out if o.get("kind") == "suggestion"]
+    log = usage_log(now - WINDOW_S)
+    log["sentence"] = LOG_SENTENCES[log["state"]]
     return {
-        "days_with_use": len(days), "events": len(rows), "by_kind": dict(kinds),
+        "days_with_use": len(days), "events": len(rows), "by_kind": dict(kinds), "log": log,
         "sections": order, "cards": cards,
-        "never_used": [c["id"] for c in cards if not c["uses"]] if len(days) >= 7 else [],
+        "never_used": [c["id"] for c in cards if not c["uses"]] if len(days) >= 7 and log["state"] == "ok" else [],
         "dead": [c["id"] for c in cards if c["unavailable"]],
         "tells": shown,
         "suggestions": [{"title": o.get("title"), "verb": o.get("verb"), "note": o.get("note", "")}
@@ -882,6 +920,9 @@ def build_prompt(d: dict, dash_text: str, lessons, declined: dict,
         *design_rules(),
         "Usage over the last 30 days (counts only):",
         json.dumps({k: d[k] for k in ("days_with_use", "events", "by_kind")}),
+        *([(d.get("log") or {}).get("sentence")] if (d.get("log") or {}).get("sentence") else []),
+        *(["Do not suggest moving, hiding or removing anything because of how little it was used."]
+          if (d.get("log") or {}).get("state") in ("never", "unreadable") else []),
         "",
         "Sections in dashboard order, with how often each was used and when:",
         fit(d["sections"], 6000, "sections"),
