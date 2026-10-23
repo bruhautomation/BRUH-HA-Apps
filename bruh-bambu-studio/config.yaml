@@ -1,7 +1,7 @@
 ---
 name: "BRUH Bambu Studio"
 description: "Bambu Studio in your Home Assistant sidebar, plus full control of your Bambu Lab printers — slice, upload, start, pause and watch prints from Home Assistant and brAIn"
-version: "0.2.5"
+version: "0.2.6"
 slug: "bruh-bambu-studio"
 init: false
 

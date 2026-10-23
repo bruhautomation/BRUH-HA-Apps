@@ -52,6 +52,8 @@ greeting: true       # "Good evening." at the top of the page
 story: true          # the story line: what is going on right now, at the top
 ask: true            # "Ask or tell the house…"
 coming_up: true      # the Coming up strip: timers, sun, calendars, what usually happens
+night_dim: false     # true: at night the rooms are dimmed a little (optional; off by default)
+room_marks: true     # false: no door and motion marks at the right of a room's title (optional)
 theme: auto          # auto | dark | light | medium (optional)
 scenes: [scene.morning, scene.evening]   # house-wide scenes, shown as words
 floors:

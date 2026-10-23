@@ -924,6 +924,8 @@ ANALYST_DENIED = [
     f"{MCP}print_label", f"{MCP}bright_show",
     # 3D printers: starting, stopping, heating, G-code and slicing.
     f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
+    # Designing a part starts a brAIn run and a build; printing it is a print.
+    f"{MCP}bambu_design",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
     # What a device shows as: each one rewrites the entity registry or
