@@ -50,7 +50,7 @@ _LOGGER = logging.getLogger(__name__)
 # `todo` (the feed's *Add to to-do*) and `ack` (*Got it* on a change
 # brAIn made) are the panel's own presses carried out here, so Repairs
 # and a notification offer what the card offers. `undo` is the Undo on
-# the confirmation a reply is answered with ("Got it — I'll stop flagging
+# the confirmation a reply is answered with ("Got it — brAIn will stop flagging
 # it until October"), which the panel resolves to the toast's own token.
 # `dismiss` is the panel's own Dismiss: the card leaves brAIn and nothing
 # is recorded, so it comes back only if brAIn sees the problem again.

@@ -49,8 +49,8 @@
 import { chromium } from 'playwright';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything, FEED, LOOSE, kase, A, posts }
-  from './today-fixture.mjs';
+import { stub, COUNTED, VOCAB, CUT, INSIGHTS, openEverything, FEED, LOOSE, kase, A, posts,
+  openToday } from './today-fixture.mjs';
 import { controlOverlaps } from './tabs.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -821,6 +821,108 @@ for (const width of [390, 1190]) {
   if (order.join('|') !== 'f:1100|f:1401|f:1101') {
     note(where, `problems read ${order.join(', ')}, not urgent, security, then the rest`);
   }
+  await context.close();
+}
+
+// Respond: one line to brAIn under every finding card ("these buttons
+// don't cover what needs to happen here", the owner). The box is under the
+// answer row — never a fourth button — on every case card and the loose
+// finding, 16px on a finger (iOS zooms the ingress frame below that) with a
+// 44px Send; what is typed is POSTed to /api/case/<id>/respond, the card
+// polls the answer, and what brAIn said is painted: in the toast, with
+// Undo when an ending was taken, and on the card as its last turn.
+const RESPOND_ANSWER = `
+(() => {
+  const inner = window.fetch;
+  window.fetch = async (url, opts) => {
+    const p = String(url);
+    if (p.includes('api/case/') && p.endsWith('/respond')) {
+      const ok = (b) => new Response(JSON.stringify(b), {
+        status: 200, headers: { 'Content-Type': 'application/json' } });
+      if (opts && opts.method === 'POST') {
+        window.__posts.push({ url: p, method: 'POST', body: opts.body || '' });
+        return ok({ started: true });
+      }
+      return ok({ state: 'done', say: "Noted — brAIn will remember why and won't raise this again.",
+                  undo: 'tok-respond', routes: ['case_ending'], ended: false });
+    }
+    return inner(url, opts);
+  };
+})();`;
+for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
+  const where = `${width}px (respond)`;
+  const { page, context } = await openToday(browser, PANEL, {
+    width, touch, extra: RESPOND_ANSWER,
+    onError: (m) => note(where, `page error: ${m}`) });
+  await page.waitForTimeout(300);
+  const boxes = await page.evaluate(() => [...document.querySelectorAll('#findList .qcard')]
+    .filter((c) => /^f:/.test(c.dataset.caseId || '') && c.dataset.situation !== 'gap')
+    .map((c) => {
+      const form = c.querySelector(':scope > .qrespond');
+      const input = form && form.querySelector('input');
+      const go = form && form.querySelector('button');
+      const actions = c.querySelector(':scope > .card-actions');
+      const r = c.getBoundingClientRect();
+      const fr = form && form.getBoundingClientRect();
+      return {
+        id: c.dataset.caseId, has: !!form,
+        font: input ? parseFloat(getComputedStyle(input).fontSize) : 0,
+        inH: input ? Math.round(input.getBoundingClientRect().height) : 0,
+        goH: go ? Math.round(go.getBoundingClientRect().height) : 0,
+        goLabel: go ? go.textContent.trim() : '',
+        under: !!(form && actions && fr.top >= actions.getBoundingClientRect().bottom - 1),
+        inside: !!(fr && fr.left >= r.left - 1 && fr.right <= r.right + 1),
+        rowButtons: actions ? actions.querySelectorAll(':scope > button').length : 0,
+      };
+    }));
+  if (!boxes.length) note(where, 'no finding card was drawn');
+  for (const b of boxes) {
+    if (!b.has) { note(where, `${b.id} has no Respond box`); continue; }
+    if (!b.under) note(where, `${b.id}: the Respond box is not under the answer row`);
+    if (!b.inside) note(where, `${b.id}: the Respond box spills out of its card`);
+    if (b.goLabel !== 'Send') note(where, `${b.id}: the Respond button reads "${b.goLabel}"`);
+    if (touch && b.font < 16) note(where, `${b.id}: the Respond box is ${b.font}px on a finger`);
+    if (touch && (b.goH < MIN_TARGET || b.inH < MIN_TARGET)) {
+      note(where, `${b.id}: the Respond box is ${b.inH}px and Send ${b.goH}px on a finger`);
+    }
+  }
+  // Send, and the answer is painted.
+  const target = boxes.find((b) => b.has);
+  if (target) {
+    // The answer lands on the card as its turns once the queue is re-read.
+    await page.evaluate((id) => {
+      const d = window.__today;
+      const words = "It's off on purpose for the Task Manager. Remember that.";
+      const thread = [{ who: 'you', text: words, at: 1 },
+        { who: 'brain', text: "Noted — brAIn will remember why and won't raise this again.", at: 2 }];
+      d.cases = d.cases.map((c) => (c.id === id ? { ...c, thread } : c));
+      d.loose = d.loose.map((f) => (`f:${f.ts}` === id ? { ...f, thread } : f));
+    }, target.id);
+    const sel = `#findList .qcard[data-case-id="${target.id}"] .qrespond`;
+    await page.fill(`${sel} input`, "It's off on purpose for the Task Manager. Remember that.");
+    await page.click(`${sel} button`);
+    await page.waitForFunction(() => /won't raise this again/.test(
+      document.getElementById('toast')?.textContent || ''), null, { timeout: 8000 })
+      .catch(() => note(where, 'the answer never reached the toast'));
+    const after = await page.evaluate((id) => {
+      const t = document.getElementById('toast');
+      const card = document.querySelector(`#findList .qcard[data-case-id="${id}"]`);
+      return {
+        undo: !!(t && [...t.querySelectorAll('button')].some((b) => b.textContent === 'Undo')),
+        turn: card ? (card.querySelector('.qthread')?.textContent || '') : '',
+      };
+    }, target.id);
+    if (!after.undo) note(where, 'the answer\'s toast carries no Undo');
+    if (!/brAIn.*won't raise this again/.test(after.turn)) {
+      note(where, `the card does not show what brAIn said (${after.turn || 'nothing'})`);
+    }
+    const sent = (await posts(page)).filter((x) => /\/respond$/.test(x.url));
+    if (sent.length !== 1 || !/Task Manager/.test((sent[0].body || {}).text || '')) {
+      note(where, `the press sent ${JSON.stringify(sent)}`);
+    }
+  }
+  const wide = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  if (wide > 1) note(where, `page scrolls sideways (${wide}px)`);
   await context.close();
 }
 

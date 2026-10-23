@@ -298,7 +298,7 @@ class TestAReplyCanEndTheCase(PhoneCase):
         self.assertTrue(rules[0]["expires"])
         sent = self.sent[-1]
         self.assertIn("until", sent["body"])
-        self.assertIn("I'll stop flagging it", sent["body"])
+        self.assertIn("brAIn will stop flagging it", sent["body"])
         buttons = sent["data"]["actions"]
         self.assertEqual([b["title"] for b in buttons], ["Undo"])
         self.assertEqual(buttons[0]["action"], f"brain.undo.{row['ts']}")

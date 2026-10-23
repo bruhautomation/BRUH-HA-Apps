@@ -6142,6 +6142,31 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 }
 .qcard .findnote { margin-top: 0; }
 
+/* Respond: one line to brAIn under a card's buttons, and the last two
+   turns of what was said about it. A line, never a fourth button, so the
+   answer row keeps its three. The box is class-qualified, so it restates
+   the 16px touch floor itself (a class rule outranks the bare one), and
+   Send takes the button's own 44px on touch. */
+.qthread { display: grid; gap: var(--sp-1); }
+.qturn { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
+.qturn.brain { color: var(--ink); }
+.qturnwho { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); margin-right: var(--sp-2); }
+.qrespond { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); min-width: 0; }
+.qrespondin {
+  flex: 1 1 180px; min-width: 0; box-sizing: border-box;
+  min-height: var(--btn-h); padding: 0 var(--sp-3);
+  font: inherit; font-size: var(--fs-body); color: var(--ink);
+  background: var(--plane); border: 1px solid var(--hairline);
+  border-radius: var(--control-radius); outline: none;
+}
+.qrespondin:focus { border-color: var(--accent); }
+.qrespondgo { flex: none; }
+.qrespond .phase { flex-basis: 100%; margin: 0; padding: 0; border: 0; background: none; }
+@media (pointer: coarse) {
+  .qrespondin { font-size: 16px; min-height: 44px; }
+  .qrespondgo { min-height: 44px; }
+}
+
 /* To Do: rows to tick, not cards to weigh. */
 .todaysec { display: grid; gap: var(--sp-3); }
 .todaysec .todoadd { margin: 0; }

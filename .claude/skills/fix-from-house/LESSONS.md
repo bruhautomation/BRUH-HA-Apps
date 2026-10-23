@@ -71,6 +71,12 @@ Last UX audit: 2026-10-18
 - 2026-10-20: Two fixes (#327 late ignore, #322 unattributed rhythm) were blocked by existing assertions that pin the old behaviour (test_resident_unjudged.py:63, test_open_row_look_reason.py:60, test_rhythm.py:110). They were handed to a person with the test lines named, not worked around. When the fix the owner wants contradicts a pinned test, the person decides which one is right.
 - 2026-10-20: `test_bruh_print_atomic_write`'s race test asserts that the OLD recipe loses a write. Under a loaded `-n 4` run the two threads may not interleave, so it can fail on a branch that never touches BRUH Print. It passes alone; treat it as scheduling, not a regression.
 
+- 2026-10-23: A test that reads or writes under `/data` passes alone and fails beside another that left files there (two `test_usage_tracker` renewal tests). Before reading a local-only failure as a regression, run the file alone; a fix for it isolates the path, never skips the test.
+- 2026-10-23: `devloop-guard` refuses a new `skipIf`. A test that depends on an optional library (zoneinfo data) needs a fallback that keeps it running, such as a fixed-offset timezone, not a skip.
+- 2026-10-23: CodeQL comments land on a pull request after it merged (import cycles, mixed import styles, a statement with no effect). Check the last merged PR's threads at the start of each batch and fix them in it.
+- 2026-10-23: After a squash merge, merging `main` into a follow-up branch conflicts on the branch's own earlier changes. Take the branch's side for those files and confirm `git diff origin/main` shows only the new work.
+- 2026-10-23: The house filed two issues under what looked like one fault (#358, #365); worth checking whether its fingerprint splits a fault whose wording moves.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
@@ -86,3 +92,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-18/19: ~8h wall clock, including ~6h with a CI job hung on a dead worker. About 95 issue closures: about 35 fixed in PRs #437–#441 and this batch (3 filed by the UX audit), about 35 re-stamped reopens re-closed, 14 duplicates, 4 declined, 2 not brAIn, 5 handed to a person (#252, #272, #293's step path, #318, #82 again). Slowest step: the hung CI job, then the Opus subagents (8–16 min).
 - 2026-10-19: one person-requested session, ~3h, 42 open reports: all closed (about 30 version-update re-stamps re-closed for the last time, 9 scorecards superseded, 2 Morph ideas built, 4 Morph debug traces filtered at the source), with the reopen rules fixed in brain/panel/devloop/. Slowest step: reading the reopen histories.
 - 2026-10-20: ~5h, 10 open reports closed: 7 fixed in PRs #464 (Bambu camera), #465 (brAIn 3.4.2 checks and card verdicts) and #467 (Bambu slicing), including #319 in Morph 1.0.5; 3 handed to a person: 2 whose fix contradicts a pinned test (#327, #322) and #330, the release webhook firing before sibling images are pushed, which lives in `.github/`; #326 partly fixed. UX audit not run this run. Held vs came back: not yet reported for these fixes. Slowest step: CI on #464 (a camera measure that sampled a lazily loaded picture), then the full local suite.
+- 2026-10-23: ~10 h; PRs #471, #477–#487; about 37 reports closed fixed, 7 already fixed or duplicate, 1 declined; held/came-back not counted this run; UX audit and retro not run; slowest step: Opus subagents (8–16 min a batch) and the full suite for the UI batch.

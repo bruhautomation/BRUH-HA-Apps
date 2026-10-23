@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.7
+
+### Added
+
+- **Respond under every finding.** Each card in Insights › Needs you has a line to type a reply into. Tell brAIn how to fix it and brAIn plans that fix for you to Apply; say it is intentional and why, and brAIn ends the card, remembers the reason and stops raising it; or ask a question and brAIn answers on the card. When the reply ended the card, the toast offers Undo. (#376)
+
+### Changed
+
+- **Ask on an insight card starts a conversation with brAIn about it**, with the card as the first message. Changing what the card covers is **Edit** in its ⋯ menu. (#376)
+- **brAIn's replies to a correction speak as brAIn** ("Got it — brAIn will stop flagging it until March"), not "I".
+
 ## 3.8.6
 
 ### Fixed
