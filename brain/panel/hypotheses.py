@@ -309,6 +309,89 @@ def is_known(text: str) -> bool:
     return any(normalize(e["text"]) == key for e in list_all())
 
 
+# What settles a guess before anybody is asked (`known_answer`). Set by
+# the panel to a callable over its facts and its names map, the way
+# `findings_store.QUEUE_COUNT` is: this module may not import the panel.
+KNOWN_ANSWER = None
+# The facts a person stands behind: a guess confirmed, a correction, a
+# sentence they typed. A run's own discovery settles nothing.
+SETTLING_SOURCES = frozenset({"confirmed", "correction", "person"})
+# Of a guess's own words, the share a fact has to say for the fact to be
+# the answer to it.
+FACT_COVERAGE = 0.85
+_FILLER = frozenset("""
+a an the is are was were be been being do does did in on at of to for
+it its this that there their they them you your we our and or so too
+right really still just has have had any some
+""".split())
+_WHERE = re.compile(r"\b(?:in|inside|located|where)\b", re.I)
+
+
+def _words(text: str) -> list[str]:
+    return normalize(text).split()
+
+
+def _content(text: str) -> set[str]:
+    return {w for w in _words(text) if w not in _FILLER}
+
+
+def _contains(words: list[str], phrase: list[str]) -> bool:
+    n = len(phrase)
+    return n > 0 and any(words[i:i + n] == phrase
+                         for i in range(len(words) - n + 1))
+
+
+def known_answer(text: str, facts, names) -> bool:
+    """Whether the house already answers this guess, so nobody is asked.
+
+    Two answers count. A fact a person stands behind (`SETTLING_SOURCES`)
+    that says what the guess asks — `FACT_COVERAGE` of its own words, "not"
+    or otherwise, because a no is an answer too. And the registry, for a
+    guess about where something is: when the guess names a room and the
+    things it names (by the words their names start with, two or more)
+    are all assigned to that room, the registry has said so — the house
+    book's "where is it" rule. A room the registry does NOT give them is
+    still asked: a sensor can sit in one room and be named for another.
+    """
+    words = _words(text)
+    if not words:
+        return False
+    asked = _content(text)
+    for fact in facts or ():
+        if not isinstance(fact, dict):
+            continue
+        if str(fact.get("source") or "") not in SETTLING_SOURCES:
+            continue
+        if len(asked) >= 2 and len(asked & _content(fact.get("text") or "")) \
+                >= FACT_COVERAGE * len(asked):
+            return True
+    if not _WHERE.search(text):
+        return False
+    rows = [(eid, row) for eid, row in (names or {}).items()
+            if isinstance(row, dict)]
+    areas = sorted({str(r.get("area") or "") for _e, r in rows} - {""},
+                   key=len, reverse=True)
+    room = next((a for a in areas if _contains(words, _words(a))), "")
+    if not room:
+        return False
+    room_words = set(_words(room))
+    best, about = 0, []
+    for eid, row in rows:
+        name = _words(row.get("name") or "")
+        size = 0
+        for n in range(len(name), 1, -1):
+            if (_contains(words, name[:n])
+                    and set(name[:n]) - room_words - _FILLER):
+                size = n
+                break
+        if size > best:
+            best, about = size, [row]
+        elif size and size == best:
+            about.append(row)
+    placed = [str(r.get("area") or "") for r in about if r.get("area")]
+    return bool(placed) and all(a == room for a in placed)
+
+
 def propose(text: str, topic: str = "", *, subject: str = "",
             fact: str = "") -> dict | None:
     """Queue a new guess, or return None if it is known or the queue is full.
@@ -334,6 +417,12 @@ def propose(text: str, topic: str = "", *, subject: str = "",
     key = normalize(text)
     if not text or not key:
         return None
+    if KNOWN_ANSWER is not None:
+        try:
+            if KNOWN_ANSWER(text):
+                return None     # the house already answers it
+        except Exception:  # noqa: BLE001 — could not tell is "ask"
+            pass
     with _locked():
         entries = _read()
         _expire(entries)

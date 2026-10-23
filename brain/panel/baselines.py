@@ -818,18 +818,19 @@ def _without_impossible(series: list, attrs: dict, eid: str,
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
-                entities: list | None = None,
-                device_rows: list | None = None) -> dict:
+                entities: list | None = None, ranges=None,
+                house=None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
     with no candidates still writes, because a fresh install with no
     sensors must not keep a stale store forever. `entities` is the entity
     registry, for `select`'s category filter; a pass whose registry did
-    not answer measures without it rather than not at all. `device_rows`
-    is the device registry: with the entity registry it tells the range
-    check which readings are a printer's or a computer's, so a print bed
-    at 65 °C is learned rather than dropped as impossible.
+    not answer measures without it rather than not at all. `ranges` is the
+    device checks' range table and `house` their view of the registries
+    (`checks._util.House`), both handed in by the caller: with them the
+    range check knows which readings are a printer's or a computer's, so a
+    print bed at 65 °C is learned rather than dropped as impossible.
     """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
@@ -854,16 +855,15 @@ async def build(session, states: dict, now: float | None = None,
         return refused("baselines", load(path),
                        "the recorder did not answer for any of the "
                        f"{len(ids)} sensors asked about")
-    try:
-        from checks import devices as _devices  # noqa: PLC0415 — one range table
-    except Exception:  # noqa: BLE001 — without it every reading is kept
-        _devices = None
-    try:
-        from checks._util import House  # noqa: PLC0415 — the same lookups
-        _house = House({"entities": entities or [],
-                        "devices": device_rows or []})
-    except Exception:  # noqa: BLE001 — no context is the old answer
-        _house = None
+    # The range table is the device checks' (`checks.devices`), handed in
+    # by the caller rather than imported: the checks read this module for
+    # the house's clock, and importing them back is a cycle. Without it
+    # every reading is kept.
+    _devices = ranges
+    # The house's registries as the checks read them (`checks._util.House`),
+    # also handed in, for the same reason: a printer's bed at 65 °C is
+    # learned rather than dropped as impossible.
+    _house = house
     for eid, series in rows.items():
         attrs = ((states.get(eid) or {}).get("attributes") or {})
         series, impossible = _without_impossible(series, attrs, eid, _devices,

@@ -306,6 +306,60 @@ def clean_reason(text: str) -> str:
     return " ".join(_TAG.sub("", text).split())[:REASON_MAX]
 
 
+# Why an entry did not load, read off the reason Core reports, as the
+# sentence a person reads and the one action that fits it. Order is the
+# order they are said in. The patterns are the words integrations put in
+# `ConfigEntryNotReady`/`ConfigEntryAuthFailed`; a reason none of them
+# matches is said in the integration's own words under "another reason".
+ENTRY_REASONS = (
+    ("auth", re.compile(r"auth|credential|password|token|unauthori[sz]ed|"
+                        r"forbidden|\b40[13]\b|log ?in|sign.?in|api key|"
+                        r"expired", re.I),
+     "Sign-in rejected",
+     "sign in again from its entry in Settings > Devices & services."),
+    ("reach", re.compile(r"connect|timed? ?out|unreachable|no route|refused|"
+                         r"host|network|resolve|dns|offline|not respond|"
+                         r"no response|unavailable at|ssl|certificate", re.I),
+     "Can't reach the device at its address",
+     "check it is powered on and on the network at the address Home "
+     + "Assistant has for it, then reload it in Settings > Devices & services."),
+    ("server", re.compile(r"\b5\d\d\b|server error|service unavailable|"
+                          r"bad gateway|rate limit|too many requests|\b429\b",
+                          re.I),
+     "The service it talks to answered with an error",
+     "that is the service's side and Home Assistant keeps retrying it; "
+     + "reload it if it has not loaded by tomorrow."),
+    ("other", None, "Failed for another reason",
+     "fix what its error names, then reload it in Settings > Devices & "
+     + "services."),
+    ("retry", None, "Still retrying, with no reason given",
+     "Home Assistant keeps trying; turn on whatever it depends on if that "
+     + "is off, or reload it in Settings > Devices & services."),
+    ("silent", None, "Failed with no reason given",
+     "reload it in Settings > Devices & services; if it fails again, "
+     + "remove and add it again."),
+)
+
+
+def _and(names: list[str]) -> str:
+    """"A", "A and B", "A, B and C" — past six, `join_names`' count."""
+    if len(names) > 6:
+        return join_names(names)
+    return (", ".join(names[:-1]) + " and " + names[-1]
+            if len(names) > 1 else (names[0] if names else ""))
+
+
+def entry_reason(entry: dict) -> str:
+    """The kind of failure an entry reports (`ENTRY_REASONS`' first field)."""
+    reason = clean_reason(entry.get("reason") or "")
+    if not reason:
+        return "retry" if entry.get("state") == "setup_retry" else "silent"
+    for kind, pattern, _said, _do in ENTRY_REASONS:
+        if pattern is not None and pattern.search(reason):
+            return kind
+    return "other"
+
+
 def entry_failed(snap: dict, now: float) -> list[dict]:
     """Nothing errors and no entity is unavailable — the entities are gone.
 
@@ -313,28 +367,39 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
     the house at once. There is no state to look wrong because there are
     no states, which is why nothing else on this page can see it.
 
-    Each error is said beside the entry it belongs to: "Cloud thing
-    (cloudthing): HTTP 403" rather than a list of names and then a list
-    of errors nobody can pair up.
+    Each entry is said under its own reason ("Sign-in rejected: Cloud
+    thing"), entries failing for the same reason together, and each reason
+    gets the one action that fits it — never one list of remedies for
+    every entry. The integration's own words follow, paired with the entry
+    they belong to. A count is never the first word.
     """
     rows = failed_entries(snap)
     if not rows:
         return []
-    named = sorted(((entry_name(e), clean_reason(e.get("reason") or ""))
-                    for e in rows), key=lambda r: r[0])
-    names = [n for n, _r in named]
-    detail = (f"{len(names)}: " + join_names(names)
-              + ". Everything they provide — entities, services, devices — "
-                "is missing from Home Assistant until they load.")
-    said = [f"{n}: {r}" for n, r in named if r][:3]
+    groups: dict[str, list[str]] = {}
+    said = []
+    for e in sorted(rows, key=entry_name):
+        groups.setdefault(entry_reason(e), []).append(entry_name(e))
+        reason = clean_reason(e.get("reason") or "")
+        if reason:
+            said.append(f"{entry_name(e)}: {reason}")
+    parts, actions = [], []
+    for kind, _pattern, label, action in ENTRY_REASONS:
+        if kind in groups:
+            names = _and(groups[kind])
+            parts.append(f"{label}: {names}.")
+            actions.append(f"{names}: {action}")
+    many = len(rows) > 1
+    detail = (" ".join(parts) + " Everything " + ("they provide" if many
+                                                  else "it provides")
+              + " — entities, services, devices — is missing from Home "
+                "Assistant until " + ("they load." if many else "it loads."))
     if said:
-        detail += " Home Assistant says — " + "; ".join(said) + "."
+        detail += " Home Assistant says — " + "; ".join(said[:5]) + "."
     return [{
         "text": ENTRY_FAILED_TEXT,
         "detail": detail,
-        "fix": "Settings > Devices & services — the entry shows the error. "
-               "Reload it once whatever it needs is back (a hub powered on, "
-               "a network share mounted, a password re-entered).",
+        "fix": " ".join(actions),
         "severity": "serious",
         "fixable": False,
         "entity_id": "",

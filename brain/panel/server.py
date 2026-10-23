@@ -216,6 +216,7 @@ import override_ledger
 import onboarding
 import outcomes
 import ownership
+import browser_reaper
 import instructions
 import permission_mode
 import playbooks
@@ -5428,7 +5429,8 @@ async def _generate(insight_id: str) -> None:
                        pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block(
-                           own=own, figures=True),
+                           own=own, figures=True,
+                           covers=_card_covers(cat, previous)),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
@@ -5487,7 +5489,8 @@ async def _generate(insight_id: str) -> None:
         # about nothing at all keeps the card that was there. A press is
         # never held — somebody asked, and the answer is what they get.
         verdict = card_verdict.review({**obj, "highlights": highlights},
-                                      previous)
+                                      previous,
+                                      open_rows=_open_rows_for_verdict(cat["id"]))
         if verdict["hold"] and job.get("scheduled") and previous:
             await _keep_previous_card(insight_id, cat, question)
             REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
@@ -5533,6 +5536,8 @@ async def _generate(insight_id: str) -> None:
         # no id here, and nothing downstream pretends otherwise.
         run_id = capture.run_id_from(result.get("meta") or {})
         model_findings = _model_findings(obj.get("findings"))
+        # A device the card names as offline is a finding too, or links one.
+        model_findings += await _card_device_faults(obj, model_findings)
         # Gated like every other producer. This run read the house — and
         # it was asked to write a card, not to decide whether what it
         # noticed on the way past belongs on a list of decisions, which
@@ -7735,6 +7740,12 @@ async def _scheduler() -> None:
         # about once a minute so the next edit never meets a permission
         # error. `maybe_sweep` gates itself and never raises.
         await asyncio.to_thread(ownership.maybe_sweep)
+        # A headless browser a Claude session started (Playwright from a
+        # Bash tool) and left behind when the session ended is reparented
+        # to PID 1 and goes on spending CPU for ever (report #355). End an
+        # orphaned one past its grace period; one whose parent is alive is
+        # somebody's run. Gated, inside the add-on only, never raises.
+        await asyncio.to_thread(browser_reaper.maybe_reap)
         # An instruction edited in the terminal (an override file under
         # /config/.brain/instructions) reaches the next run without a restart.
         try:
@@ -8386,6 +8397,17 @@ findings_store.QUEUE_COUNT = _queue_count
 # house's zone, handed in because the store imports neither.
 findings_store.DISPLAY_NAMES = lambda: _NAMES
 findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
+
+
+def _hypothesis_known_answer(text: str) -> bool:
+    """Whether a guess is already settled by a fact a person stands behind
+    or by the rooms the registry gives what it names (`hypotheses.
+    known_answer`) — asked by `hypotheses.propose` before anything is
+    filed, so no producer can float a question the house answers."""
+    return hypotheses.known_answer(text, facts_store._load(), _NAMES)
+
+
+hypotheses.KNOWN_ANSWER = _hypothesis_known_answer
 # The to-do mirror hides a snoozed chore the way To Do does; the snoozes
 # are the cases' sidecar, and `cases` reads `todo_store`, so the store is
 # handed the reader rather than importing it.
@@ -8651,6 +8673,130 @@ async def h_status(request: web.Request) -> web.Response:
     })
 
 
+def _open_rows_for_verdict(source: str) -> list[dict]:
+    """Every live finding another producer filed, with its device's name:
+    what `card_verdict` reads a card's "fine" against."""
+    out = []
+    for f in findings_store.list_all("live"):
+        if f.get("source") == source or not f.get("entity_id"):
+            continue
+        eid = str(f["entity_id"])
+        out.append({"text": f.get("text") or "", "entity_id": eid,
+                    "name": (_NAMES.get(eid) or {}).get("name") or ""})
+    return out
+
+
+_NAMED_PATTERN: list = [None, None, {}]
+
+
+def _named_entities(texts: list[str]) -> list[str]:
+    """The entities ``texts`` name by the name they go by (`_NAMES`): names
+    of two words or more, whole words, longest first, so "Hall light" is
+    not read inside "Hall light switch" and a room's one word names
+    nothing."""
+    key = (len(_NAMES), tuple(list(_NAMES)[:8]))
+    if _NAMED_PATTERN[0] != key:
+        by_name: dict[str, str] = {}
+        for eid, row in _NAMES.items():
+            name = str((row or {}).get("name") or "").strip()
+            if len(name.split()) >= 2 and len(name) >= 6:
+                by_name.setdefault(name.lower(), eid)
+        names = sorted(by_name, key=len, reverse=True)
+        _NAMED_PATTERN[:] = [key, re.compile(
+            r"(?<![\w])(" + "|".join(re.escape(n) for n in names) + r")(?![\w])",
+            re.I) if names else None, by_name]
+    pattern, by_name = _NAMED_PATTERN[1], _NAMED_PATTERN[2]
+    out: list[str] = []
+    if pattern is None:
+        return out
+    for text in texts:
+        for m in pattern.finditer(text or ""):
+            eid = by_name.get(m.group(1).lower())
+            if eid and eid not in out:
+                out.append(eid)
+    return out
+
+
+async def _card_states() -> dict:
+    """Home Assistant's states now, ``{}`` when it does not answer: what
+    `_card_device_faults` reads a card's devices against."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001 — could not look files nothing
+        log.debug("card states unread: %s", exc)
+        return {}
+    return {s["entity_id"]: s for s in raw or []
+            if isinstance(s, dict) and s.get("entity_id")}
+
+
+# How long a device the card names has to have been unavailable before the
+# card files it: a reboot is not a fault.
+CARD_FAULT_MIN_S = 3600
+CARD_FAULT_FIX = ("Check that it has power and is within reach of the hub "
+                  "or Wi-Fi it uses, then reload its integration in Settings "
+                  "> Devices & services.")
+
+
+async def _card_device_faults(obj: dict, filed: list[dict]) -> list[dict]:
+    """Findings for the devices a card names that are offline and on no
+    list yet.
+
+    A card that says a lock has been offline since Saturday is a card
+    about a fault the Findings tab never heard of. Every entity the card
+    names (by id or by name) that Home Assistant reports unavailable for
+    at least `CARD_FAULT_MIN_S` either has a live finding already — the
+    card links it, `_card_entities` — or gets one here, filed with the
+    card's own findings through `triage.gate`. Never a reading, never
+    something the card's reply already filed.
+    """
+    texts = [str(obj.get("title") or ""), str(obj.get("summary") or "")]
+    for h in obj.get("highlights") or []:
+        if isinstance(h, dict):
+            texts += [str(h.get(k) or "") for k in ("label", "value", "delta")]
+    named = _card_entities({"title": texts[0], "summary": " ".join(texts[1:])})
+    if not named:
+        return []
+    states = await _card_states()
+    if not states:
+        return []
+    covered = {str(f.get("entity_id") or "") for f in filed}
+    covered |= {str(f.get("entity_id") or "")
+                for f in findings_store.list_all("live")}
+    now = time.time()
+    out = []
+    for eid in named:
+        st = states.get(eid) or {}
+        if eid in covered or st.get("state") != "unavailable":
+            continue
+        since = checks._util.parse_ts(st.get("last_changed"))
+        if since is None or now - since < CARD_FAULT_MIN_S:
+            continue
+        name = (_NAMES.get(eid) or {}).get("name") or eid
+        day = now - since >= 86400
+        out.append({
+            "text": (f"{name} has been unavailable for more than a day" if day
+                     else f"{name} is unavailable"),
+            "detail": ("Unavailable since "
+                       + time.strftime("%a %d %b %H:%M", time.localtime(since))
+                       + "."),
+            "fix": CARD_FAULT_FIX, "severity": "serious", "fixable": False,
+            "entity_id": eid})
+    return out
+
+
+def _card_covers(cat: dict, previous: dict | None) -> dict:
+    """What a card is about, for the live rows its prompt shows first
+    (`findings_store.prompt_block`'s ``covers``): its domains, its device
+    classes, and the entities its last version named. An asked card has no
+    domains, which covers everything."""
+    return {"domains": list(cat.get("domains") or ()),
+            "classes": list(cat.get("device_classes") or ()),
+            "entities": _card_entities(previous or {})}
+
+
 def _card_entities(insight: dict) -> list[str]:
     """The entity ids a stored card NAMES: its live list, and every id in
     the words it shows (title, summary, tiles, what it learned).
@@ -8671,6 +8817,11 @@ def _card_entities(insight: dict) -> list[str]:
     # The live list was validated when the card was written; it stands.
     out = [e for e in insight.get("live") or []
            if isinstance(e, str) and facts_store.entity_shaped(e)]
+    # And what it names by name, which is how a card is told to name
+    # things: a lock the card calls "Front door lock" is the lock.
+    for eid in _named_entities(texts):
+        if eid not in out:
+            out.append(eid)
     known = _NAMES
     for text in texts:
         for m in _ENTITY_IN_TEXT_RE.finditer(text):
@@ -9169,7 +9320,8 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
                    findings=findings_store.prompt_block(
-                       own=findings_store.own_reports(cat_id), figures=True),
+                       own=findings_store.own_reports(cat_id), figures=True,
+                       covers=_card_covers(cat, previous)),
                    house=await _house_prompt_block(),
                    clock=await asyncio.to_thread(_clock_style),
                    others=await asyncio.to_thread(_other_cards_block, cat_id))
@@ -10046,12 +10198,47 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 
 # -- the overnight health check (SRE) -----------------------------------------
 
+# The checks whose answer about a device the overnight pass honours: the
+# offline checks. A device somebody set aside there is not reported again
+# in the log's words.
+SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen")
+
+
+def _sre_set_aside(now: float) -> set[str]:
+    """The entities the owner set aside on an offline check: a rule they
+    wrote by answering Wrong (an exception for that check or for the whole
+    entity), a row of it they snoozed, or one they ignored."""
+    out: set[str] = set()
+    checks_ = set(SRE_SET_ASIDE_CHECKS) | {"*"}
+    try:
+        for eid, rules in facts_store.exception_map(now).items():
+            if set(rules) & checks_:
+                out.add(eid)
+    except Exception as exc:  # noqa: BLE001 — could not tell holds nothing
+        log.debug("sre: exceptions unread: %s", exc)
+    sources = {f"check:{c}" for c in SRE_SET_ASIDE_CHECKS}
+    try:
+        for row in findings_store.list_all():
+            if (row.get("source") in sources and row.get("entity_id")
+                    and float(row.get("snoozed_until") or 0) > now):
+                out.add(str(row["entity_id"]))
+        for entry in findings_store.settled_listing():
+            if (entry.get("kind") == "ignored"
+                    and entry.get("source") in sources
+                    and entry.get("entity_id")):
+                out.add(str(entry["entity_id"]))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("sre: findings unread: %s", exc)
+    return out
+
+
 async def _run_sre(reason: str = "schedule") -> None:
     import aiohttp  # noqa: PLC0415
     now = time.time()
     async with aiohttp.ClientSession() as session:
         collected = await sre.collect(session)
-    dig = sre.digest(collected, now)
+    dig = sre.digest(collected, now,
+                     set_aside=await asyncio.to_thread(_sre_set_aside, now))
     state = await asyncio.to_thread(sre.load)
     summary = {"at": int(now), "reason": reason,
                "records": len(dig["records"]), "available": dig["available"],
@@ -14440,8 +14627,11 @@ async def build_baselines(reason: str = "schedule") -> dict:
                 payload = _done("baselines", await baselines.build(
                     session, by_id, started,
                     entities=ents if isinstance(ents, list) else None,
-                    device_rows=devices if isinstance(devices, list)
-                    else None))
+                    ranges=checks.devices,
+                    house=House({
+                        "entities": ents if isinstance(ents, list) else [],
+                        "devices": devices if isinstance(devices, list)
+                        else []})))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same
@@ -24967,6 +25157,8 @@ def make_app() -> web.Application:
         # where Claude in the terminal can read them.
         await asyncio.to_thread(instructions.apply_all)
         await asyncio.to_thread(instructions.export_builtins)
+        # A browser left over from before the restart (report #355).
+        await asyncio.to_thread(browser_reaper.maybe_reap)
         await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
