@@ -234,7 +234,7 @@ class TestTheScreenshotBrowserIsNeverLeftBehind(unittest.TestCase):
                             break
                     task.cancel()
                     with self.assertRaises(asyncio.CancelledError):
-                        await task
+                        await asyncio.wait_for(task, 5)
                     await asyncio.wait_for(seen["proc"].wait(), 5)
             asyncio.run(go())
             child = int(Path(f"{fake}.child").read_text())
