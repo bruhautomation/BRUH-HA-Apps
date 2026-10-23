@@ -166,3 +166,108 @@ class TestARoomNamedLikeAnObjectKey(unittest.TestCase):
         self.assertEqual({"constructor": ["light.a"], "toString": ["light.c"], "valueOf": [],
                           "__proto__": [], "hasOwnProperty": [], "kitchen": ["light.b"],
                           "nowhere": [], "42": []}, got)
+
+
+class TestNightDimAndRoomMarksAreDashboardKeys(_Env):
+
+    def test_absent_means_the_default_and_no_new_key(self):
+        dash, problems = self.env.store.normalize({"title": "Home", "floors": []})
+        self.assertEqual([], problems)
+        self.assertNotIn("night_dim", dash, "a house that never set it gets no new line in its file")
+        self.assertNotIn("room_marks", dash)
+
+    def test_set_keys_are_kept_as_booleans_through_a_round_trip(self):
+        S = self.env.store
+        dash, _ = S.normalize({"night_dim": True, "room_marks": False, "floors": []})
+        self.assertIs(True, dash["night_dim"])
+        self.assertIs(False, dash["room_marks"])
+        again, _ = S.normalize(S.yaml.safe_load(S.dump(dash)))
+        self.assertEqual(dash, again)
+
+    def test_the_guide_brain_reads_names_both(self):
+        guide = (FRONTEND.parents[2] / "defaults" / "AGENTS.md").read_text()
+        self.assertRegex(guide, r"(?m)^night_dim: false\s+#")
+        self.assertRegex(guide, r"(?m)^room_marks: true\s+#")
+
+    def test_the_panel_reads_them_and_the_style_no_longer_dims_by_default(self):
+        panel = (FRONTEND / "morph-panel.js").read_text()
+        self.assertIn("this.dash.night_dim === true", panel)
+        self.assertIn("room_marks === false", panel)
+        styles = (FRONTEND / "styles.js").read_text()
+        self.assertNotIn("brightness(.4)", styles)
+        self.assertIn(".form-night.night-dim", styles)
+
+
+class TestTheDigestSaysWhatTheUseLogIs(_Env):
+    """#361: a digest of 0 events over 0 days read as "nobody used
+    anything" whether nothing had been logged, the log could not be read,
+    or the household really had not touched the page. The path from a tap
+    to the digest is driven end to end in test_morph_usage_and_names; what
+    this holds is that the three answers are told apart."""
+
+    def digest(self):
+        dash, _ = self.env.store.normalize({"floors": [{"title": "F", "sections": [
+            {"id": "s", "title": "Kitchen", "groups": [{"cards": [{"id": "c", "entity": "light.k"}]}]}]}]})
+        return self.env.learning.digest(dash)
+
+    def prompt(self, d):
+        return self.env.learning.build_prompt(d, "", [], {}, [])
+
+    def test_no_log_at_all_is_not_nobody_using_it(self):
+        d = self.digest()
+        self.assertEqual("never", d["log"]["state"])
+        self.assertIn("Morph has no record of use yet", self.prompt(d))
+        self.assertIn("not evidence that nobody", self.prompt(d))
+
+    def test_a_log_that_cannot_be_read_says_so(self):
+        self.env.paths.USAGE.mkdir(parents=True)
+        d = self.digest()
+        self.assertEqual("unreadable", d["log"]["state"])
+        self.assertIn("could not be read", self.prompt(d))
+
+    def test_a_log_with_nothing_this_month_is_a_quiet_month(self):
+        old = time.time() - 40 * 86400
+        self.env.paths.USAGE.write_text(json.dumps({"ts": old, "kind": "toggle", "card": "c"}) + "\n")
+        d = self.digest()
+        self.assertEqual("quiet", d["log"]["state"])
+        self.assertEqual(0, d["events"])
+        self.assertIn("nobody used the dashboard", self.prompt(d))
+
+    def test_a_used_dashboard_is_counted(self):
+        self.env.paths.USAGE.write_text(json.dumps({"ts": time.time() - 60, "kind": "toggle", "card": "c_c",
+                                                    "section": "s_s", "hour": 9}) + "\n")
+        d = self.digest()
+        self.assertEqual("ok", d["log"]["state"])
+        self.assertEqual(1, d["events"])
+        self.assertEqual(1, d["cards"][0]["uses"])
+
+
+class TestNamesInARoom(_Env):
+    """#364 and #357 were fixed in the generator in Morph 0.2.1 and are held
+    by test_morph_usage_and_names (TestRoomPrefixes,
+    TestNamesInASectionDoNotCollide). Two more cases from the same houses:
+    a dashboard generated before that release still carries the dangling
+    separator, and a separator other than a hyphen."""
+
+    def test_a_card_named_by_an_old_cut_reads_right(self):
+        for raw, want in (("- Bread Stretch", "Bread Stretch"), ("– Kettle", "Kettle"),
+                          (": Lamp", "Lamp"), ("| Fan", "Fan"), ("Bread - Stretch", "Bread - Stretch"),
+                          ("-", "-")):
+            dash, _ = self.env.store.normalize({"floors": [{"title": "F", "sections": [{"title": "Kitchen", "groups": [
+                {"cards": [{"entity": "script.kitchen_bread_stretch", "name": raw}]}]}]}]})
+            card = dash["floors"][0]["sections"][0]["groups"][0]["cards"][0]
+            self.assertEqual(want, card["name"], raw)
+
+    def test_every_separator_goes_with_the_room(self):
+        G = self.env.generator
+        for name in ("Kitchen - Bread Stretch", "Kitchen – Bread Stretch", "Kitchen — Bread Stretch",
+                     "Kitchen: Bread Stretch", "Kitchen | Bread Stretch", "Kitchen  -  Bread Stretch"):
+            self.assertEqual("Bread Stretch", G._short(name, "Kitchen"), name)
+
+    def test_two_minis_in_one_room_keep_what_tells_them_apart(self):
+        G = self.env.generator
+        cards = [{"entity": "media_player.kitchen_mini", "name": "Mini"},
+                 {"entity": "media_player.kitchen_mini_2", "name": "Mini"}]
+        G._distinct(cards, {"media_player.kitchen_mini": "Kitchen Mini",
+                            "media_player.kitchen_mini_2": "Kitchen Mini MA"})
+        self.assertEqual(["Kitchen Mini", "Kitchen Mini MA"], [c["name"] for c in cards])
