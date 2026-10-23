@@ -208,7 +208,6 @@ _MISSING_RE = re.compile(
 _CALLER_LOGGER = re.compile(
     r"^homeassistant\.components\.(automation|script|scene)\.([a-z0-9_]+)$")
 CALLER_WINDOW_S = 48 * 3600
-_CALLER_KINDS = ("automation", "script", "scene")
 
 
 def _missing_targets(rows: list) -> set[str]:
