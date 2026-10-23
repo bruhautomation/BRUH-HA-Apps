@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.6
+
+### Added
+
+- **Design and print a part from Home Assistant.** Three new services, `bruh_bambu.design_part` (a new part from a description, or a change to one), `bruh_bambu.design_status` (how a part is doing: built, still working, brAIn's reply, any print) and `bruh_bambu.print_part` (print a part on a printer), run the Design tab's own conversation and its own Slice and print. brAIn's chat and voice use them to make a part and send it to the printer when asked. Without brAIn, `design_part` says brAIn is needed. (#375)
+
+### Fixed
+
+- **Starting a design without brAIn no longer leaves an empty part behind.** The Design tab now checks for brAIn before it makes the part.
+
+## 0.2.5
+
+### Added
+
+- **Bambu Studio works on a phone.** On a touch screen the Studio tab has controls like a remote desktop app: tap to click, hold to right-click, two fingers to zoom and move around. A toolbar switches one finger between moving the view, dragging (for sliders and the 3D view) and scrolling, Fit goes back to the whole screen, and Keyboard opens the phone's keyboard with Backspace and Enter beside it. With a mouse the tab is unchanged. (#374)
+
 ## 0.2.4
 
 ### Changed

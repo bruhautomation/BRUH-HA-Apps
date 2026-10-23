@@ -375,3 +375,104 @@ refresh:
       example: Workshop X1C
       selector:
         text: {}
+design_part:
+  name: Design a part with brAIn
+  description: Describe a part and brAIn designs it, builds it and keeps it as a version on
+    the Design tab; or name a part and say what to change. Answers as soon as brAIn has
+    started, with the part's id and name; designing takes minutes, so ask design_status
+    afterwards. Needs brAIn with its Automation integration on.
+  fields:
+    description:
+      name: Description
+      description: What the part is, with any sizes that matter.
+      example: A wall hook 4 cm long for a coat, two screw holes
+      selector:
+        text:
+          multiline: true
+    name:
+      name: Name
+      description: What to call a new part. Left out, brAIn names it.
+      example: Coat hook
+      selector:
+        text: {}
+    part:
+      name: Part
+      description: A part already designed, by its id or its name, to change instead of
+        starting a new one.
+      example: Coat hook
+      selector:
+        text: {}
+    message:
+      name: Message
+      description: What to change about that part.
+      example: Make it 6 cm long
+      selector:
+        text:
+          multiline: true
+design_status:
+  name: Design status
+  description: How a designed part is doing — its latest version, whether brAIn is still
+    working on it, brAIn's last reply, whether it built, and any print of it — or every
+    part when none is named. Changes nothing.
+  fields:
+    part:
+      name: Part
+      description: The part, by its id or its name. Left out, every part.
+      example: Coat hook
+      selector:
+        text: {}
+print_part:
+  name: Print a designed part
+  description: Slice a designed part with Bambu Studio's own profiles for the printer and
+    the filament in the tray, and send it — the Design tab's Slice and print. Answers
+    once it has started; design_status says how the print is going.
+  fields:
+    part:
+      name: Part
+      description: The part, by its id or its name.
+      required: true
+      example: Coat hook
+      selector:
+        text: {}
+    version:
+      name: Version
+      description: Which version to print. Left out, the current one.
+      selector:
+        number:
+          min: 1
+          max: 999
+          mode: box
+    printer:
+      name: Printer
+      description: Which printer, by its name or serial number. Left out when there is only
+        one.
+      example: Workshop X1C
+      selector:
+        text: {}
+    slot:
+      name: AMS tray
+      description: Which AMS tray (0-based) to print from, or external. Left out, the tray
+        whose filament best fits the part.
+      example: 0
+      selector:
+        text: {}
+    copies:
+      name: Copies
+      description: How many of it, arranged on the plate.
+      selector:
+        number:
+          min: 1
+          max: 50
+          mode: box
+    timelapse:
+      name: Timelapse
+      description: Timelapse.
+      selector:
+        boolean: {}
+    settings:
+      name: Settings
+      description: Print settings over the part's own, as the Design tab's print options
+        name them (layer_height, infill_density, wall_loops, supports...).
+      example: '{"infill_density": 25}'
+      selector:
+        object: {}

@@ -43,6 +43,11 @@ SERVICE_IMPORT = "import_url"
 SERVICE_FIND = "find_printers"
 SERVICE_RECONNECT = "reconnect"
 SERVICE_REFRESH = "refresh"
+# Design with brAIn, from outside the panel. Answered at once: a design
+# turn takes minutes, so design_part starts it and design_status reads it.
+SERVICE_DESIGN = "design_part"
+SERVICE_DESIGN_STATUS = "design_status"
+SERVICE_PRINT_PART = "print_part"
 
 # The printer card, where run.sh puts it and the URL Core serves it from.
 # The URL carries a hash of the file because /local is served with a 31-day

@@ -58,6 +58,28 @@ def load(part_id: str) -> dict:
     return data
 
 
+def find(ref) -> dict:
+    """A part by its id, or by its name as somebody says it.
+
+    Home Assistant's services and brAIn's voice name a part the way a person
+    does ("the wall hook"), so a name is matched with case and spacing
+    ignored; two parts with one name are the most recently changed one.
+    LookupError when nothing matches.
+    """
+    ref = str(ref or "").strip()
+    if ID.match(ref):
+        try:
+            return load(ref)
+        except (ValueError, LookupError):
+            pass  # an id-shaped word that names no part may still be a name
+    wanted = " ".join(ref.lower().split())
+    if wanted:
+        for row in listing():  # newest first
+            if " ".join(str(row.get("name") or "").lower().split()) == wanted:
+                return load(row["id"])
+    raise LookupError("No such part.")
+
+
 def save(part: dict) -> dict:
     with _LOCK:
         part["updated"] = time.time()
