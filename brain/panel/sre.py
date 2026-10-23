@@ -122,13 +122,15 @@ async def collect(session) -> dict:
                  "states": {}, "entities": [], "devices": [],
                  "automations": []}
     try:
-        log_rows, zha, entities, devices, areas = await ha_data._ws_calls(
+        (log_rows, zha, entities, devices, areas,
+         manifests) = await ha_data._ws_calls(
             session, [
                 {"type": "system_log/list"},
                 {"type": "zha/devices"},
                 {"type": "config/entity_registry/list"},
                 {"type": "config/device_registry/list"},
                 {"type": "config/area_registry/list"},
+                {"type": "manifest/list"},
             ])
     except Exception as exc:  # noqa: BLE001 — every source is best effort
         out["errors"]["ws"] = str(exc)[:200]
@@ -151,6 +153,10 @@ async def collect(session) -> dict:
     arows = areas.get("result") if areas.get("ok") else None
     out["areas"] = {str(a.get("area_id")): str(a.get("name") or "")
                     for a in arows or [] if isinstance(a, dict)}
+    # Which loggers each integration declares: a library's logger
+    # (`pywemo.…`) names no integration by itself.
+    mrows = manifests.get("result") if manifests.get("ok") else None
+    out["manifests"] = mrows if isinstance(mrows, list) else []
     try:
         raw = await ha_data._rest_get(session, "/states", timeout=60)
         out["states"] = {s["entity_id"]: s for s in raw or []
@@ -161,12 +167,142 @@ async def collect(session) -> dict:
         out["errors"]["states"] = str(exc)[:200]
     cfg = load_configs()
     out["automations"] = cfg.get("automations") or []
+    out["scripts"] = cfg.get("scripts") or {}
+    out["scenes"] = cfg.get("scenes") or []
+    # How often each automation, script and scene that calls an entity a
+    # log line says was unavailable ran since that line first appeared:
+    # the calls it made (`called_by`).
+    try:
+        out["caller_runs"] = await _caller_runs(session, out, ha_data)
+    except Exception as exc:  # noqa: BLE001 — counts are best effort
+        out["errors"]["caller_runs"] = str(exc)[:200]
+        out["caller_runs"] = {}
     # What the owner wrote, read off the files Home Assistant loads them
     # from: a log line about an entity nothing of theirs refers to is the
     # integration's to answer for, not a template of theirs to edit.
     out["user_text"] = read_user_text()
     out["available"]["configs"] = out["user_text"] is not None
     return out
+
+
+# A call to an entity that is not there. Core's own sentence, from the
+# service helper or from the automation or script that made the call.
+_MISSING_RE = re.compile(
+    r"Referenced (?:entities|devices|areas)?\s*(.+?) (?:are|is) missing or "
+    r"not currently available", re.I)
+# The logger an automation, script or scene logs its own failures under.
+_CALLER_LOGGER = re.compile(
+    r"^homeassistant\.components\.(automation|script|scene)\.([a-z0-9_]+)$")
+CALLER_WINDOW_S = 48 * 3600
+_CALLER_KINDS = ("automation", "script", "scene")
+
+
+def _missing_targets(rows: list) -> set[str]:
+    out: set[str] = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        message = row.get("message")
+        first = message[0] if isinstance(message, list) and message else message
+        m = _MISSING_RE.search(str(first or ""))
+        if m:
+            out |= {x.group(1) for x in _ID_IN_TEXT.finditer(m.group(1))}
+    return out
+
+
+def _callers_of(target: str, collected: dict) -> list[tuple[str, str, str]]:
+    """``[(entity id, kind, name)]`` — every automation, script and scene
+    whose config names ``target``, as Home Assistant knows it."""
+    states = collected.get("states") or {}
+
+    def by_config_id(domain: str, cid) -> str:
+        for eid, st in states.items():
+            if (eid.startswith(domain + ".") and isinstance(st, dict)
+                    and str((st.get("attributes") or {}).get("id")) == str(cid)):
+                return eid
+        return ""
+
+    def name_of(eid: str, given) -> str:
+        st = states.get(eid) or {}
+        friendly = str((st.get("attributes") or {}).get("friendly_name") or "")
+        return friendly or str(given or "") or eid.split(".", 1)[-1].replace("_", " ")
+
+    out = []
+    for item in collected.get("automations") or []:
+        if isinstance(item, dict) and _refers(json.dumps(item), target):
+            eid = by_config_id("automation", item.get("id"))
+            out.append((eid, "automation", name_of(eid, item.get("alias"))))
+    scripts = collected.get("scripts") or {}
+    for key, item in (scripts.items() if isinstance(scripts, dict) else ()):
+        if isinstance(item, dict) and _refers(json.dumps(item), target):
+            eid = f"script.{key}"
+            out.append((eid, "script", name_of(eid, item.get("alias"))))
+    for item in collected.get("scenes") or []:
+        if isinstance(item, dict) and _refers(json.dumps(item), target):
+            eid = by_config_id("scene", item.get("id"))
+            out.append((eid, "scene", name_of(eid, item.get("name"))))
+    return out
+
+
+async def _caller_runs(session, collected: dict, ha_data) -> dict:
+    """``{entity id: runs}`` since the earliest missing-entity line, at most
+    `CALLER_WINDOW_S` back, off the logbook: an automation's "triggered",
+    a script's "started", a scene's activation — each run is one call."""
+    import datetime as dt  # noqa: PLC0415
+    targets = _missing_targets(collected.get("log") or [])
+    callers = sorted({eid for t in targets for eid, _k, _n in
+                      _callers_of(t, collected) if eid})
+    if not callers:
+        return {}
+    firsts = [float(r.get("first_occurred") or r.get("timestamp") or 0)
+              for r in collected.get("log") or [] if isinstance(r, dict)]
+    import time as _time  # noqa: PLC0415
+    now = _time.time()
+    start = max(min([f for f in firsts if f] or [now]), now - CALLER_WINDOW_S)
+    [answer] = await ha_data._ws_calls(session, [{
+        "type": "logbook/get_events",
+        "start_time": dt.datetime.fromtimestamp(start, dt.timezone.utc).isoformat(),
+        "entity_ids": callers}])
+    rows = answer.get("result") if answer.get("ok") else None
+    runs: dict[str, int] = {}
+    for row in rows if isinstance(rows, list) else []:
+        eid = str((row or {}).get("entity_id") or "")
+        if eid not in callers:
+            continue
+        message = str(row.get("message") or "")
+        if eid.startswith("automation.") and not message.startswith("triggered"):
+            continue
+        if eid.startswith("script.") and not message.startswith("started"):
+            continue
+        runs[eid] = runs.get(eid, 0) + 1
+    return runs
+
+
+def called_by(rec: dict, collected: dict) -> list[dict]:
+    """What made the failed calls a missing-entity log line counts, and how
+    many each: the automation or script the line's own logger names (with
+    the line's count), or else every one whose config names the entity
+    (with its runs since the line first appeared, None where the logbook
+    did not say)."""
+    m = _CALLER_LOGGER.match(str(rec.get("logger") or ""))
+    states = collected.get("states") or {}
+    if m:
+        eid = f"{m.group(1)}.{m.group(2)}"
+        st = states.get(eid) or {}
+        name = str((st.get("attributes") or {}).get("friendly_name") or "") \
+            or m.group(2).replace("_", " ")
+        return [{"name": name, "kind": m.group(1), "calls": rec["count"]}]
+    runs = collected.get("caller_runs") or {}
+    out, seen = [], set()
+    for target in rec.get("entities") or []:
+        for eid, kind, name in _callers_of(target, collected):
+            key = eid or f"{kind}:{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"name": name, "kind": kind,
+                        "calls": runs.get(eid) if eid else None})
+    return out[:8]
 
 
 # Bounds on reading the owner's config: a house with a thousand package
@@ -268,6 +404,19 @@ _ID_IN_TEXT = re.compile(r"(?=(?<![a-z0-9_])([a-z_]+\.[a-z0-9_]+))")
 MIN_DEVICE_NAME = 6
 
 
+_ADDRESS_RE = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
+
+
+def _host_of(url) -> str:
+    """The host of a device's configuration URL, or "" — how a log line
+    that names only an address is traced to the device at it."""
+    from urllib.parse import urlparse  # noqa: PLC0415
+    try:
+        return str(urlparse(str(url or "")).hostname or "")
+    except ValueError:
+        return ""
+
+
 def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]:
     """``(entity ids, device ids)`` a log message names: ids the house has,
     and registry devices whose own name appears as whole words."""
@@ -275,8 +424,13 @@ def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]
     ents = sorted({m.group(1) for m in _ID_IN_TEXT.finditer(text)
                    if m.group(1) in known})
     devs = []
+    addresses = set(_ADDRESS_RE.findall(text))
     for d in devices or []:
         if not isinstance(d, dict) or not d.get("id"):
+            continue
+        host = _host_of(d.get("configuration_url"))
+        if host and host in addresses:
+            devs.append(str(d["id"]))
             continue
         for name in {str(d.get("name_by_user") or ""), str(d.get("name") or "")}:
             if len(name) >= MIN_DEVICE_NAME and re.search(
@@ -300,7 +454,8 @@ def _refers(user_text: str, eid: str) -> bool:
 
 def _log_records(rows: list, now: float, known: set[str] | None = None,
                  devices: list | None = None, user_text: str | None = None,
-                 platforms: dict | None = None) -> list[dict]:
+                 platforms: dict | None = None,
+                 manifests: list | None = None) -> list[dict]:
     out = []
     for row in rows:
         if not isinstance(row, dict) or row.get("level") not in LOG_LEVELS:
@@ -317,7 +472,7 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
         rec = {
             "id": _rid("log", logger, where, str(first or "")[:80]),
             "kind": "log", "level": row.get("level"), "logger": logger[:80],
-            "integration": integration_of(logger),
+            "integration": integration_of(logger, manifests),
             "where": where[:120], "message": _redact(first or ""),
             "count": count,
             "last_hours_ago": round(max(0.0, now - float(
@@ -355,9 +510,21 @@ _LOGGER_RE = re.compile(
     r"^(?:homeassistant\.components|custom_components)\.([a-z0-9_]+)")
 
 
-def integration_of(logger: str) -> str:
-    """The integration a log line came from, off its logger name, or ""."""
-    match = _LOGGER_RE.match(str(logger or ""))
+def integration_of(logger: str, manifests: list | None = None) -> str:
+    """The integration a log line came from, off its logger name, or "".
+
+    Core's and a custom integration's own loggers carry the domain; a
+    library's (`pywemo.ouimeaux_device`) is matched against the loggers
+    each integration's manifest declares."""
+    name = str(logger or "")
+    for m in manifests or []:
+        if not isinstance(m, dict) or not m.get("domain"):
+            continue
+        for prefix in m.get("loggers") or []:
+            prefix = str(prefix or "")
+            if prefix and (name == prefix or name.startswith(prefix + ".")):
+                return str(m["domain"])
+    match = _LOGGER_RE.match(name)
     return match.group(1) if match else ""
 
 
@@ -575,7 +742,14 @@ def subject_of(records: list[str], dig: dict) -> str:
     return ""
 
 
-def digest(collected: dict, now: float) -> dict:
+def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
+    """The records a pass reasons over, with ids.
+
+    ``set_aside`` is the entities the owner set aside on the offline check
+    (answered Wrong, snoozed): a log line about one of them — by an entity
+    it names, or the device it is on — is held back the way that check
+    holds its row, so the overnight pass does not file the same device
+    under a new name."""
     zha = _zha_records(collected.get("zha") or [], now,
                        collected.get("areas") or {})
     # What each mesh device carries, so a cause about a router can name
@@ -592,9 +766,30 @@ def digest(collected: dict, now: float) -> dict:
     known = ({str(e["entity_id"]) for e in reg}
              | set((collected.get("states") or {}).keys()))
     platforms = {str(e["entity_id"]): str(e.get("platform") or "") for e in reg}
+    manifests = collected.get("manifests") or []
     logs = _log_records(collected.get("log") or [], now, known,
                         collected.get("devices") or [],
-                        collected.get("user_text"), platforms)
+                        collected.get("user_text"), platforms, manifests)
+    integration_names = {str(m.get("domain")): str(m.get("name") or "")
+                         for m in manifests if isinstance(m, dict)
+                         and m.get("domain") and m.get("name")}
+    aside = {str(e) for e in set_aside or ()}
+    aside_devices = {str(e.get("device_id")) for e in reg
+                     if str(e["entity_id"]) in aside and e.get("device_id")}
+    kept = []
+    for rec in logs:
+        ents = set(rec.get("entities") or [])
+        devs = set(rec.get("devices") or [])
+        if (ents or devs) and ents <= aside and devs <= aside_devices:
+            continue
+        if rec.get("integration") in integration_names:
+            rec["integration_name"] = integration_names[rec["integration"]]
+        if _MISSING_RE.search(rec.get("message") or ""):
+            callers = called_by(rec, collected)
+            if callers:
+                rec["called_by"] = callers
+        kept.append(rec)
+    logs = kept
     records = (logs + zha
                + _zwave_records(collected.get("states") or {},
                                 collected.get("entities") or [],
@@ -694,6 +889,12 @@ SYSTEM = prompt_kit.assemble(
   theirs) refers to: the line comes from the integration, so never tell
   them to edit a template, automation or script for it — name that
   integration as the source.
+- A log record carrying "called_by" is a call to an unavailable entity:
+  name the automations, scripts and scenes it lists and how many calls
+  each made — never "something you set up".
+- Name where a log line came from: its "integration_name" (or
+  integration) and the device it names. Never blame a dashboard, a card
+  or the browser unless the record's logger is the frontend.
 - Severity: info — worth knowing, nothing breaks; warning — something is
   degraded or will break if left; serious — something in the house has
   stopped working or a safety device cannot be relied on.
@@ -746,7 +947,8 @@ def frame(dig: dict) -> str:
 
 def _record_label(rec: dict) -> str:
     if rec["kind"] == "log":
-        return (f"{rec['level'].title()} ×{rec['count']}: "
+        who = f" from {rec['logger']}" if rec.get("logger") else ""
+        return (f"{rec['level'].title()} ×{rec['count']}{who}: "
                 f"{textclip.clip(rec['message'], 90)}")
     if rec["kind"] == "zigbee":
         bits = [rec["type"] or "device"]
@@ -824,6 +1026,63 @@ def _without(text: str, names: set[str]) -> str:
 
 
 _TEMPLATE_WORDS = re.compile(r"\btemplates?\b", re.I)
+
+
+def _without_words(text: str, pattern) -> str:
+    """``text`` less every sentence ``pattern`` matches."""
+    if not text:
+        return text
+    return " ".join(x for x in _SENTENCES.split(text)
+                    if not pattern.search(x)).strip()
+
+
+def _name_the_callers(recs: list[dict], dig: dict, title: str, detail: str,
+                      fix: str) -> tuple[str, str, str]:
+    """A cause citing a line about calls to an unavailable entity names the
+    automations, scripts and scenes that made them, with how many each —
+    never "something you set up", which is what a model writes when it
+    was not told."""
+    callers, seen, target = [], set(), ""
+    names = dig.get("names") or {}
+    for rec in recs:
+        for c in rec.get("called_by") or []:
+            if c["name"] not in seen:
+                seen.add(c["name"])
+                callers.append(c)
+        if rec.get("called_by") and not target and rec.get("entities"):
+            eid = rec["entities"][0]
+            target = names.get(eid) or eid
+    if not callers:
+        return title, detail, fix
+    listing = ", ".join(f"{c['name']} ({c['kind']}, {_calls_said(c['calls'])})"
+                        for c in callers)
+    said = (f"{target} is unavailable, and these still try to control it: "
+            f"{listing}.")
+    rest = _without_words(detail, _VAGUE_RE)
+    detail = f"{said} {rest}".strip()
+    who = _and([c["name"] for c in callers])
+    fix = (f"Bring {target} back online, or take it out of {who} if it is "
+           "gone for good.")
+    if _VAGUE_RE.search(title) or target.lower() not in title.lower():
+        title = textclip.clip(f"{who} still control {target}, which is "
+                              "unavailable", MAX_TITLE)
+    return title, detail, fix
+
+
+def _with_source(logs: list[dict], dig: dict, detail: str) -> str:
+    """The detail says what the lines came from — the integration and the
+    device — when it does not already."""
+    rec = logs[0]
+    thing, where = _thing_of(rec, dig), _source_of(rec)
+    low = detail.lower()
+    if (not thing or thing.lower() in low) and (not where or where.lower() in low):
+        return detail
+    bits = []
+    if where:
+        bits.append(f"the {where} integration")
+    if thing:
+        bits.append(f"about {thing}")
+    return f"{detail} The lines come from {' '.join(bits)}.".strip()
 
 
 def _not_your_template_fix(logs: list[dict]) -> str:
@@ -937,12 +1196,81 @@ def _plain_title(rec: dict, dig: dict) -> str:
     if rec["kind"] == "automation":
         return f"{rec.get('automation') or 'An automation'} switches off a Zigbee router"
     ents = rec.get("entities") or []
-    if ents:
-        who = names.get(ents[0]) or ents[0]
-        return f"Errors in the log about {who}"
-    where = rec.get("owner") or rec.get("integration")
+    if rec.get("called_by") and ents:
+        target = names.get(ents[0]) or ents[0]
+        return (f"{_and([c['name'] for c in rec['called_by']])} still "
+                f"control {target}, which is unavailable")
+    thing = _thing_of(rec, dig)
+    where = _source_of(rec)
+    if thing and where:
+        return f"Errors in the log from the {where} integration about {thing}"
+    if thing:
+        return f"Errors in the log about {thing}"
     return (f"Errors in the log from the {where} integration" if where
-            else "Errors keep appearing in the log")
+            else f"Errors in the log from {rec.get('logger') or 'Home Assistant'}")
+
+
+def _and(names: list[str]) -> str:
+    names = [n for n in names if n]
+    return (", ".join(names[:-1]) + " and " + names[-1]
+            if len(names) > 1 else (names[0] if names else ""))
+
+
+def _source_of(rec: dict) -> str:
+    """The integration a log record came from, as a person knows it."""
+    return str(rec.get("integration_name") or rec.get("owner")
+               or rec.get("integration") or "")
+
+
+def _thing_of(rec: dict, dig: dict) -> str:
+    """The device or entity a log record is about, by name, or ""."""
+    for dev in rec.get("devices") or []:
+        named = (dig.get("device_names") or {}).get(dev) or []
+        if named:
+            return sorted(named)[0]
+    for eid in rec.get("entities") or []:
+        return (dig.get("names") or {}).get(eid) or eid
+    return ""
+
+
+def _source_fix(logs: list[dict], dig: dict) -> str:
+    """A fix for what the log lines came from, when the run's own fix was
+    about something else."""
+    rec = logs[0]
+    thing, where = _thing_of(rec, dig), _source_of(rec)
+    if thing:
+        return (f"Check that {thing} is powered on and reachable on the "
+                "network, or remove it from "
+                + (f"the {where} integration" if where else "its integration")
+                + " if it is gone for good.")
+    if where:
+        return (f"Check the {where} integration in Settings > Devices & "
+                "services, then reload it.")
+    return ""
+
+
+# Prose that blames a thing without naming it. A cause citing a line that
+# says what made the calls names them instead.
+_VAGUE_RE = re.compile(
+    r"\bsomething (?:you|the household|the homeowner|they|somebody) "
+    r"(?:have |has )?set up\b|\bwhatever (?:still )?controls?\b", re.I)
+# The frontend's words. A cause may use them only when it cites a line the
+# frontend (the browser, a dashboard, a card) wrote.
+_FRONTEND_WORDS = re.compile(
+    r"\b(?:dashboards?|morph|browsers?|frontend|lovelace|custom cards?)\b",
+    re.I)
+
+
+def _from_frontend(rec: dict) -> bool:
+    return rec["kind"] == "log" and (
+        _is_frontend(rec.get("logger") or "")
+        or rec.get("integration") in ("morph", "frontend", "lovelace"))
+
+
+def _calls_said(calls) -> str:
+    if calls is None:
+        return "runs not counted"
+    return f"{calls} call" + ("" if calls == 1 else "s")
 
 
 def parse_causes(answer: dict | None, dig: dict) -> dict:
@@ -1056,8 +1384,25 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         if _unrelated(title, pattern, own):
             title = textclip.clip(_plain_title(by_id[real[0]], dig), MAX_TITLE)
             touched = True
+        if not any(_from_frontend(by_id[r]) for r in real):
+            # The dashboard, a card, the browser: the frontend's own
+            # words, about a cause none of whose lines the frontend wrote.
+            detail = _without_words(detail, _FRONTEND_WORDS)
+            kept_fix = _without_words(fix, _FRONTEND_WORDS)
+            touched = touched or kept_fix != fix
+            fix = kept_fix
+            if _FRONTEND_WORDS.search(title):
+                title = textclip.clip(_plain_title(by_id[real[0]], dig),
+                                      MAX_TITLE)
+                touched = True
         if touched:
             unrelated += 1
+        title, detail, fix = _name_the_callers(
+            [by_id[r] for r in real], dig, title, detail, fix)
+        if logs and not fix:
+            fix = _source_fix(logs, dig)
+        if logs:
+            detail = _with_source(logs, dig, detail)
         causes.append({
             "title": title,
             "detail": textclip.clip(detail, MAX_DETAIL),

@@ -10057,12 +10057,47 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 
 # -- the overnight health check (SRE) -----------------------------------------
 
+# The checks whose answer about a device the overnight pass honours: the
+# offline checks. A device somebody set aside there is not reported again
+# in the log's words.
+SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen")
+
+
+def _sre_set_aside(now: float) -> set[str]:
+    """The entities the owner set aside on an offline check: a rule they
+    wrote by answering Wrong (an exception for that check or for the whole
+    entity), a row of it they snoozed, or one they ignored."""
+    out: set[str] = set()
+    checks_ = set(SRE_SET_ASIDE_CHECKS) | {"*"}
+    try:
+        for eid, rules in facts_store.exception_map(now).items():
+            if set(rules) & checks_:
+                out.add(eid)
+    except Exception as exc:  # noqa: BLE001 — could not tell holds nothing
+        log.debug("sre: exceptions unread: %s", exc)
+    sources = {f"check:{c}" for c in SRE_SET_ASIDE_CHECKS}
+    try:
+        for row in findings_store.list_all():
+            if (row.get("source") in sources and row.get("entity_id")
+                    and float(row.get("snoozed_until") or 0) > now):
+                out.add(str(row["entity_id"]))
+        for entry in findings_store.settled_listing():
+            if (entry.get("kind") == "ignored"
+                    and entry.get("source") in sources
+                    and entry.get("entity_id")):
+                out.add(str(entry["entity_id"]))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("sre: findings unread: %s", exc)
+    return out
+
+
 async def _run_sre(reason: str = "schedule") -> None:
     import aiohttp  # noqa: PLC0415
     now = time.time()
     async with aiohttp.ClientSession() as session:
         collected = await sre.collect(session)
-    dig = sre.digest(collected, now)
+    dig = sre.digest(collected, now,
+                     set_aside=await asyncio.to_thread(_sre_set_aside, now))
     state = await asyncio.to_thread(sre.load)
     summary = {"at": int(now), "reason": reason,
                "records": len(dig["records"]), "available": dig["available"],
