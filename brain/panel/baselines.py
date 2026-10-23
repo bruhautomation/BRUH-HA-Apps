@@ -817,7 +817,7 @@ def _without_impossible(series: list, attrs: dict, eid: str,
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
-                entities: list | None = None) -> dict:
+                entities: list | None = None, ranges=None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
@@ -849,10 +849,11 @@ async def build(session, states: dict, now: float | None = None,
         return refused("baselines", load(path),
                        "the recorder did not answer for any of the "
                        f"{len(ids)} sensors asked about")
-    try:
-        from checks import devices as _devices  # noqa: PLC0415 — one range table
-    except Exception:  # noqa: BLE001 — without it every reading is kept
-        _devices = None
+    # The range table is the device checks' (`checks.devices`), handed in
+    # by the caller rather than imported: the checks read this module for
+    # the house's clock, and importing them back is a cycle. Without it
+    # every reading is kept.
+    _devices = ranges
     for eid, series in rows.items():
         attrs = ((states.get(eid) or {}).get("attributes") or {})
         series, impossible = _without_impossible(series, attrs, eid, _devices)

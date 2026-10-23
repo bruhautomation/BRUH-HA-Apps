@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.5
+
+### Fixed
+
+- **A house whose weekdays start at different times gets a wake time.** Each day of the week is measured on its own, so the morning brief stops falling back to 07:00 when Mondays and Thursdays keep different hours. (#338)
+- **brAIn does not ask what the house already knows.** A guess whose answer is already a fact you stand behind, or that the registry settles (where a device is), is not asked. (#348)
+- **A failed integration setup says why, for each one.** Integrations that failed for the same reason are grouped under it (cannot reach the device, sign-in rejected, the service answering with an error), each with the one action that fits, and the integration's own words beside it. (#353)
+- **The overnight check names who still calls a missing device.** A finding about calls to an unavailable device lists the automations, scripts and scenes making them, with how many each, instead of "something you set up". (#352)
+- **The overnight check blames the right source.** A log line from a library is traced to the integration that uses it, and a line naming an address to the device at that address; a dashboard or the browser is blamed only for lines they wrote. (#350)
+- **Insight cards agree with the open findings about the same device.** A card no longer calls a device fine while a finding says it is not, and links the finding instead. (#354)
+- **Insight cards compare numbers a person knows.** Comparisons are like with like, in everyday units, with the real value beside them. (#351)
+- **A device a card names as offline is on the list too.** When a card says something has been unavailable for an hour or more and nothing filed it, a finding is filed with the card's own. (#339)
+
 ## 3.8.4
 
 ### Fixed

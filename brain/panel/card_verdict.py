@@ -36,7 +36,7 @@ import re
 _FINE = re.compile(
     r"\b(?:fine|ok|okay|healthy|all good|all clear|all normal|"
     r"(?:is|are|looks|look|seems|remains|stays|running|runs|reads?) normal(?:ly)?|"
-    r"nothing (?:needs|requires|to) (?:action|attention|doing|do|worry about)|"
+    r"nothing (?:new )?(?:needs|requires|to) (?:action|attention|doing|do|worry about)|"
     r"no action (?:is )?(?:needed|required)|nothing points to|"
     r"no (?:issues|problems|concerns|faults))\b", re.I)
 _NEGATED = re.compile(r"\b(?:not|isn'?t|aren'?t|never|no longer)\s+(?:\w+\s+)?"
@@ -204,7 +204,28 @@ def strip_verdict(text: str) -> tuple[str, bool]:
     return rest.strip(), stripped
 
 
-def review(obj: dict, previous: dict | None = None) -> dict:
+def _names_row(texts: list[str], row: dict) -> bool:
+    """Whether the card's words name the device an open row is about."""
+    words = " ".join(texts)
+    for name in (row.get("name"), row.get("entity_id")):
+        name = str(name or "").strip()
+        if len(name) >= 4 and re.search(r"(?<![\w.])" + re.escape(name)
+                                         + r"(?![\w])", words, re.I):
+            return True
+    return False
+
+
+def open_row_named(obj: dict, open_rows) -> dict | None:
+    """The first open finding about a device the card names, or None."""
+    texts = _texts(obj)
+    for row in open_rows or ():
+        if isinstance(row, dict) and row.get("text") and _names_row(texts, row):
+            return row
+    return None
+
+
+def review(obj: dict, previous: dict | None = None,
+           open_rows=()) -> dict:
     """What to do with one parsed card.
 
     `{"obj": the card to store, "hold": "" or why it should not be stored,
@@ -218,6 +239,18 @@ def review(obj: dict, previous: dict | None = None) -> dict:
     title = str(out.get("title") or "")
     body, fine = strip_verdict(summary)
     title_fine = says_fine(title)
+    row = open_row_named(out, open_rows) if (fine or title_fine) else None
+    if row is not None:
+        # A fine verdict about a device an open finding says is not: the
+        # finding is the verdict, and the card points to it.
+        lead = f"Open finding: {str(row['text']).rstrip('.')}."
+        rest = body if fine else summary
+        out["summary"] = f"{lead} {_capital(rest)}".strip()
+        subject, stripped = _strip_title(title)
+        if stripped and subject:
+            out["title"] = subject[:120]
+        changed.append("no fine verdict over an open finding")
+        return {"obj": out, "hold": "", "changed": changed}
     if (fine or title_fine) and nothing_new(out):
         when = when_said((previous or {}).get("generated_at"))
         since = f"Nothing new since {when}" if when else \
@@ -246,5 +279,6 @@ def review(obj: dict, previous: dict | None = None) -> dict:
     return {"obj": out, "hold": "", "changed": changed}
 
 
-__all__ = ["HOLD_WHY", "RISE", "lead_clause", "nothing_new", "quiet",
+__all__ = ["HOLD_WHY", "RISE", "lead_clause", "nothing_new", "open_row_named",
+           "quiet",
            "review", "rises", "says_fine", "strip_verdict", "when_said"]
