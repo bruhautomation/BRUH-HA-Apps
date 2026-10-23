@@ -13,7 +13,7 @@ import numfmt
 
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
                     counted_names, domain_of, evidence_for, join_names, num,
-                    parse_ts, when)
+                    parse_ts, spell_integration, when)
 
 UNAVAILABLE_DAYS = 1.0
 BATTERY_LOW_PCT = 15
@@ -1102,8 +1102,8 @@ def restored(snap: dict, now: float) -> list[dict]:
         if not eids:
             continue
         out.append({
-            "text": f"Entities from the '{platform}' integration are left "
-                    "over with nothing providing them",
+            "text": f"Entities from the {spell_integration(platform)} "
+                    "integration are left over with nothing providing them",
             "detail": f"{len(eids)} restored entit{'y' if len(eids) == 1 else 'ies'}: "
                       + join_names([house.label(e) for e in eids])
                       + ". They show as unavailable and clutter every picker.",

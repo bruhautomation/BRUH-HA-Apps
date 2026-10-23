@@ -736,6 +736,28 @@ def counted_names(names: Iterable[str], limit: int = 6) -> str:
     return f"{len(names)}: " + join_names(names, limit)
 
 
+# Integrations whose domain does not spell their name.
+_KNOWN_INTEGRATION_NAMES = {
+    "zha": "Zigbee (ZHA)", "zwave_js": "Z-Wave", "mqtt": "MQTT",
+    "esphome": "ESPHome", "hassio": "Supervisor",
+    "homekit_controller": "HomeKit Device", "unifiprotect": "UniFi Protect",
+    "hue": "Philips Hue", "tplink": "TP-Link", "mobile_app": "Mobile App",
+    "github": "GitHub", "upnp": "UPnP", "dlna_dmr": "DLNA",
+    "ibeacon": "iBeacon",
+}
+
+
+def spell_integration(domain: str) -> str:
+    """An integration's domain as the words a person knows it by, where
+    nothing better is to hand: `bambu_lab` → `Bambu Lab`. A domain is a
+    registry key, and a finding titled with one names nothing a person sees
+    (#340)."""
+    domain = str(domain or "")
+    if domain in _KNOWN_INTEGRATION_NAMES:
+        return _KNOWN_INTEGRATION_NAMES[domain]
+    return " ".join(w[:1].upper() + w[1:] for w in domain.split("_") if w)
+
+
 def join_names(names: Iterable[str], limit: int = 6) -> str:
     names = list(names)
     if len(names) <= limit:

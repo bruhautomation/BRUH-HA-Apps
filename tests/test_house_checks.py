@@ -863,7 +863,7 @@ class TestDeviceChecks(unittest.TestCase):
             snap["entities"].append({"entity_id": eid, "platform": "gone_integration"})
         found = devices.restored(snap, NOW)
         self.assertEqual(len(found), 1)
-        self.assertIn("gone_integration", found[0]["text"])
+        self.assertIn("Gone Integration", found[0]["text"])  # #340: not its domain
         self.assertEqual([e["entity"] for e in found[0]["evidence"]],
                          ["sensor.old_a", "sensor.old_b"])
 
@@ -897,7 +897,8 @@ class TestDeviceChecks(unittest.TestCase):
         # An entity whose entry is gone IS left over, beside them.
         self._restored(snap, "sensor.old_a", "gone_integration", "e-deleted")
         [found] = devices.restored(snap, NOW)
-        self.assertIn("gone_integration", found["text"])
+        # Named as words, never by its domain (#340).
+        self.assertIn("Gone Integration", found["text"])
         self.assertEqual(found["entity_id"], "sensor.old_a")
 
     def test_restored_stands_down_when_the_config_entries_could_not_be_read(self):
