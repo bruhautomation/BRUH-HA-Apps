@@ -921,7 +921,9 @@ class TestDashboardCheck(unittest.TestCase):
         result = checks.run_all(snap, NOW, only=["org.dashboard_dead_ref"])
         self.assertEqual(len(result["findings"]), 1)
         self.assertIn("switch.vanished", [e["entity"] for e in result["findings"][0]["evidence"]])
-        self.assertIn("Dashboard 'Home'", result["findings"][0]["text"])
+        # One row per missing entity since #341: the dashboard is named in
+        # the detail, and the text (the dedupe key) never moves with it.
+        self.assertIn("'Home'", result["findings"][0]["detail"])
 
 
 class TestForecasts(unittest.TestCase):
