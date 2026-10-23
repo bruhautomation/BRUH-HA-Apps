@@ -344,6 +344,12 @@ class MorphPanel extends HTMLElement {
         // file whose elements the page already has shows after a reload,
         // which is said and offered rather than reported.
         if (how === 'changed') this.toast(`${m.name} changed. Reload the page to see the new version.`, null, 'reload');
+        // A file brAIn was asked to fix that now loads: its suggestion
+        // closes itself (learning.house_card_loaded). Said only then, so a
+        // clean load is not a line per card per page.
+        if (how === 'loaded' && ((this.data && this.data.state && this.data.state.suggestions) || []).some((g) => g.card_file === m.name)) {
+          this.report('loaded', m.name, '');
+        }
         this.schedule();
       }).catch((e) => {
         this.report('card', cardFailure(e), `${m.name}: ${String((e && e.stack) || e || '')}`, 'custom');

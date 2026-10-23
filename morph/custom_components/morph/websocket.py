@@ -283,7 +283,7 @@ async def ws_usage(hass: HomeAssistant, connection, msg) -> None:
 
 @websocket_api.websocket_command({
     vol.Required("type"): "morph/report",
-    vol.Required("kind"): vol.In(("card", "layout", "panel", "history")),
+    vol.Required("kind"): vol.In(("card", "layout", "panel", "history", "loaded")),
     vol.Required("message"): str,
     vol.Optional("detail", default=""): str,
     vol.Optional("card_type", default=""): str,

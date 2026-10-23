@@ -169,13 +169,53 @@ def outcomes(since: float = 0.0) -> list[dict]:
 
 # ------------------------------------------------------------- suggestions
 
+def _mint_id(taken: set, now: float) -> str:
+    """An id no other suggestion has. It was a millisecond stamp plus one
+    character, and a pass that made several in one millisecond (or two
+    broken card files reported together) gave them one id between them, so
+    an answer to one changed whichever came first. Minted past what is
+    taken, the way brAIn's proposals and to-do ids are."""
+    n = int(float(now or 0) * 1000)
+    while f"g{n}" in taken:
+        n += 1
+    taken.add(f"g{n}")
+    return f"g{n}"
+
+
+def _repair_ids(items: list) -> bool:
+    """Give every suggestion after the first that shares an id one of its
+    own. The first keeps its id, and with it the brAIn case filed under it;
+    the others are filed again under their new ids."""
+    taken = {str(it.get("id") or "") for it in items if isinstance(it, dict)}
+    seen: set = set()
+    changed = False
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        iid = str(it.get("id") or "")
+        if not iid or iid in seen:
+            it["id"] = _mint_id(taken, float(it.get("created") or 0) or time.time())
+            it.pop("filed", None)
+            it.pop("withdrawn", None)
+            changed = True
+        seen.add(it["id"])
+    return changed
+
+
 def _load() -> dict:
     data = paths.read_json(paths.SUGGESTIONS, {}) or {}
     if not isinstance(data, dict):
         data = {}
     data.setdefault("items", [])
     data.setdefault("declined", {})
+    data["items"] = [it for it in data["items"] if isinstance(it, dict)]
+    if _repair_ids(data["items"]):
+        _save(data)
     return data
+
+
+def _taken(data: dict) -> set:
+    return {str(it.get("id") or "") for it in data["items"]}
 
 
 def _save(data: dict) -> None:
@@ -207,6 +247,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
     seen_words = [_words(it["title"]) for it in data["items"]] + \
         [_words(v.get("title")) for v in data["declined"].values()]
     added = 0
+    taken = _taken(data)
     for row in rows or []:
         if not isinstance(row, dict) or open_now >= MAX_OPEN:
             continue
@@ -222,7 +263,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
             continue
         known.add(key)
         seen_words.append(words)
-        item = {"id": f"g{int(time.time() * 1000)}{added}", "key": key, "title": title,
+        item = {"id": _mint_id(taken, time.time()), "key": key, "title": title,
                 "why": str(row.get("why") or "").strip()[:400], "change": change,
                 "kind": "code" if row.get("kind") == "code" else "dashboard",
                 "status": "open", "created": time.time()}
@@ -281,14 +322,34 @@ def house_card_broken(name: str, error: str, now: float | None = None) -> bool:
               "It is this house's card code, not Morph's.")
     item = next((it for it in data["items"] if it.get("key") == key), None)
     if item and item.get("status") in ("open", "doing"):
-        item.update(why=why, change=change)
+        item.update(why=why, change=change, card_file=name)
     elif item:
-        item.update(status="open", why=why, change=change, created=now)
-        item.pop("snoozed_until", None)
+        item.update(status="open", why=why, change=change, created=now, card_file=name)
+        for gone in ("snoozed_until", "filed", "withdrawn"):
+            item.pop(gone, None)
     else:
-        data["items"].append({"id": f"g{int(now * 1000)}c", "key": key, "title": title, "why": why,
-                              "change": change, "kind": "dashboard", "status": "open", "created": now})
+        data["items"].append({"id": _mint_id(_taken(data), now), "key": key, "title": title, "why": why,
+                              "change": change, "kind": "dashboard", "status": "open", "created": now,
+                              "card_file": name})
     _save(data)
+    return True
+
+
+def house_card_loaded(name: str, now: float | None = None) -> bool:
+    """The panel loaded a card file cleanly that had a "Fix the card code"
+    suggestion open: the file is fixed, however it was fixed, so the
+    suggestion closes itself rather than asking somebody to fix a working
+    card. Answers whether one closed."""
+    now = now or time.time()
+    key = _key(HOUSE_CARD_TITLE.format(name=str(name or "")[:80]))
+    data = _load()
+    item = next((it for it in data["items"] if it.get("key") == key
+                 and it.get("status") in ("open", "doing")), None)
+    if not item or float(item.get("created") or 0) > now:
+        return False
+    item.update(status="done", decided=now)
+    _save(data)
+    record_outcome({"kind": "suggestion", "id": item["id"], "verb": "fixed", "title": item["title"], "at": now})
     return True
 
 
@@ -364,6 +425,8 @@ def settle_doing(read_tell) -> None:
         elif st.get("phase") == "failed":
             it["status"] = "open"
             it["last_error"] = st.get("say") or ""
+            it.pop("filed", None)
+            it.pop("withdrawn", None)
             changed = True
     if changed:
         _save(data)
@@ -379,6 +442,7 @@ def settle_doing(read_tell) -> None:
 # what it filed and what it was told, as an index (it is what stops the
 # next pass proposing the same thing), never as something drawn.
 MORPH_SOURCE = "morph"
+ENDED = ("declined", "sent", "doing", "done")
 _SEQ = 0
 
 
@@ -424,14 +488,23 @@ def sync_brain(start_tell=None) -> dict:
     filed = withdrawn = applied = 0
     now = time.time()
     for it in data["items"]:
-        if it.get("status") == "open" and not it.get("filed") and float(it.get("snoozed_until") or 0) <= now:
+        snoozed = float(it.get("snoozed_until") or 0) > now
+        if it.get("status") == "open" and not it.get("filed") and not snoozed:
             if _drop_request(case_body(it)):
                 it["filed"] = now
                 filed += 1
-        elif it.get("filed") and it.get("status") in ("declined", "sent") and not it.get("withdrawn"):
+        elif it.get("filed") and not it.get("withdrawn") and (
+                it.get("status") in ENDED or (it.get("status") == "open" and snoozed)):
+            # Answered here — No, Send, Do it, a card that loads again — or
+            # snoozed: brAIn's case goes, or it goes on asking about a
+            # suggestion the page no longer shows. A snoozed one is filed
+            # again when its date comes round.
             if _drop_request({"kind": "morph_case", "action": "withdraw", "key": it["id"], "via": MORPH_SOURCE}):
-                it["withdrawn"] = now
                 withdrawn += 1
+                if it.get("status") == "open":
+                    it.pop("filed", None)
+                else:
+                    it["withdrawn"] = now
     feed = paths.read_json(paths.BRAIN_SHARED / "morph" / "cases.json", {}) or {}
     ended = feed.get("ended_morph") if isinstance(feed, dict) else None
     seen = set(data.setdefault("ended_seen", []))
@@ -451,10 +524,10 @@ def sync_brain(start_tell=None) -> dict:
         if how == "accepted" and start_tell:
             tid = start_tell(it)
             if tid:
-                it.update(status="doing", tell=tid, decided=now)
+                it.update(status="doing", tell=tid, decided=now, withdrawn=now)
                 record_outcome({"kind": "suggestion", "id": key, "verb": "do", "title": it["title"], "tell": tid, "at": now})
         elif how == "declined":
-            it.update(status="declined", note=note, decided=now)
+            it.update(status="declined", note=note, decided=now, withdrawn=now)
             data["declined"][it["key"]] = {"title": it["title"], "note": note, "at": now}
             record_outcome({"kind": "suggestion", "id": key, "verb": "no", "title": it["title"], "note": note, "at": now})
         else:
