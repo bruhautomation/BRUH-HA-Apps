@@ -569,6 +569,8 @@ class TestMCPProtocol(unittest.TestCase):
             "set_sensor_display",
             # 3.2: BRUH Bambu Studio's 3D printers
             "bambu_status", "bambu_print", "bambu_control", "bambu_slice",
+            # 3.9: designing a part with brAIn and printing it
+            "bambu_design",
         }
         self.assertEqual(tool_names, expected_tools)
 
