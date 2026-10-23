@@ -24,6 +24,14 @@ from the panel, a dashboard, an automation, or brAIn.
   with measuring, keep every version, and say *print it*: brAIn picks the
   printer, a tray for each colour and the settings, and starts the print. Or
   print it yourself, or open it in Bambu Studio.
+- **Print failure detection.** brAIn looks at the camera at the moments a
+  print is most likely to fail — planned from the print's own G-code: the
+  first layer, where the part narrows, bridges, colour changes, a part
+  getting tall — compares it with what the print should look like, warns you
+  (Ignore or Pause) and pauses a print that has failed. Free checks catch a
+  covered lens, a frozen camera, a sudden change on the plate, and when the
+  plate has been cleared. Sensors, a Last print check camera and phone alerts
+  with buttons in Home Assistant.
 - **brAIn drives it.** Ask brAIn to start the print, pause it, or tell you how
   long is left.
 - **Printer cards** for Lovelace and for Morph: the camera, progress, time

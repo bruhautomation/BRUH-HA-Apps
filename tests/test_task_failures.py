@@ -41,7 +41,8 @@ FAKE_CLAUDE = Path(__file__).resolve().parent / "fake_claude.py"
 
 LIFTED = ("extract_claude_result", "claim_task_session", "task_tool_flags",
           "write_task_result", "task_gate", "task_memory_block",
-          "journal_task", "extract_claude_data", "process_task")
+          "journal_task", "extract_claude_data", "task_images_message", "task_feed",
+          "task_envelope_from_stream", "process_task")
 
 
 def lift(name: str) -> str:
@@ -94,6 +95,7 @@ class ListenerCase(unittest.TestCase):
             + ' echo >> "$CURL_LOG"; }',
             f'TASKS_DIR="{self.tmp}/tasks"', f'RESULTS_DIR="{self.tmp}/results"',
             f'LOG_DIR="{self.tmp}/logs"', f'SHARED_DIR="{self.tmp}"',
+            f'TASK_IMAGE_DIR="{self.tmp}/task_images"',
             'MAX_TURNS=200', 'CLAUDE_TIMEOUT=300', 'TIMEOUT_MARGIN=15',
             'SUPERVISOR_TOKEN=""',
             f'CLAUDE_BIN="{sys.executable} {FAKE_CLAUDE}"',
@@ -240,6 +242,31 @@ class TestTheInsightPromptCarriesWhatBrainKnows(ListenerCase):
         self.memory.write_text("- The beer fridge is the garage plug.\n")
         result = self.run_task({"prompt": "Morning report"})
         self.assertNotIn("beer fridge", result["result"])
+
+
+class TestATaskHandsBrainPictures(ListenerCase):
+    """BRUH Bambu Studio's print check hands brAIn the camera frame."""
+
+    def test_the_pictures_reach_the_run_as_pictures_and_are_deleted(self):
+        folder = self.tmp / "task_images"
+        folder.mkdir()
+        (folder / "t1-0.jpg").write_bytes(b"\xff\xd8\xff\xe0frame")
+        (folder / "t1-1.png").write_bytes(b"\x89PNG\r\n\x1a\nplate")
+        result = self.run_task({"prompt": "Is the print failing?", "tools": "read_only",
+                                "images": [str(folder / "t1-0.jpg"), str(folder / "t1-1.png")]})
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("Is the print failing?", result["result"])
+        self.assertIn("[pictures: image/jpeg, image/png]", result["result"])
+        self.assertEqual(list(folder.iterdir()), [])
+        argv = self.argv_log.read_text()
+        self.assertIn("--input-format", argv)
+        self.assertIn("Read", argv)  # still denied: the run sees, it cannot open
+
+    def test_a_task_without_usable_pictures_runs_as_text(self):
+        result = self.run_task({"prompt": "Morning report", "images": ["/etc/passwd"]})
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("ONESHOT", result["result"])
+        self.assertNotIn("pictures", result["result"])
 
 
 # ---------------------------------------------------------------------------

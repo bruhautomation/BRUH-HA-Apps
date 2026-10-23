@@ -114,6 +114,15 @@ ROUTES = {
     "design_part": _design_part,
     "design_status": _design_status,
     "print_part": _print_part,
+    # Print failure detection.
+    "check_print": lambda p: ("POST", "/api/watch/action",
+                              {"printer": p.get("printer", ""), "action": "check"}),
+    "print_alert_action": lambda p: ("POST", "/api/watch/action", {
+        "printer": p.get("printer", ""), "action": p.get("action", ""),
+        "alert": p.get("alert", "")}),
+    "set_failure_detection": lambda p: ("POST", "/api/watch/settings", {
+        k: p[k] for k in ("printer", "enabled", "mode", "sensitivity", "light", "plate", "notify")
+        if k in p}),
 }
 
 # The fields a service call carries under the names people use, renamed to
@@ -133,6 +142,24 @@ def _write_response(request_id: str, payload: dict) -> None:
     tmp.replace(RES_DIR / f"{request_id}.json")
 
 
+def _detection(watch) -> dict | None:
+    """Failure detection, trimmed to what a caller deciding what to do reads."""
+    if not isinstance(watch, dict):
+        return None
+    alert = watch.get("alert") if isinstance(watch.get("alert"), dict) else None
+    last = watch.get("last") if isinstance(watch.get("last"), dict) else None
+    return {
+        "enabled": watch.get("enabled"), "status": watch.get("status"),
+        "sentence": watch.get("sentence"),
+        "plate": (watch.get("plate") or {}).get("state"),
+        "alert": ({k: alert.get(k) for k in ("id", "level", "problem", "summary", "paused",
+                                              "pause_error", "open")} if alert else None),
+        "last_look": ({k: last.get(k) for k in ("layer", "decision", "problem", "summary",
+                                                 "confidence")} if last else None),
+        "next_look": (watch.get("next") or {}).get("layer") if watch.get("next") else None,
+    }
+
+
 def summarise_state(state: dict) -> dict:
     """The panel's state trimmed to what a caller deciding what to do needs."""
     studio = state.get("studio") or {}
@@ -147,6 +174,7 @@ def summarise_state(state: dict) -> dict:
             "nozzle_target_c", "bed_c", "bed_target_c", "chamber_c", "speed",
             "chamber_light", "ams", "ams_units", "active_tray", "external_spool", "error_code",
             "hms_count", "hms", "fans", "connection_error")}
+            | {"failure_detection": _detection(p.get("failure_detection"))}
             for p in state.get("printers") or [] if isinstance(p, dict)],
         "jobs": [{k: j.get(k) for k in ("id", "kind", "state", "phase", "file",
                                         "source", "output", "error", "printer")}

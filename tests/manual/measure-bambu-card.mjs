@@ -6,7 +6,9 @@
  * Loads the real card file into a real browser against a stubbed `hass`
  * whose sensors carry the attributes sensor.py publishes, and drives it:
  * the Lovelace card inside an <ha-card>, the Morph card with Morph's
- * variables and no ha-card. Fails on a printer not rendered, a control
+ * variables and no ha-card. Fails on a printer not rendered, print failure
+ * detection's warning not shown or its Ignore not answering that alert, the
+ * Last print check camera shown as the live one, a control
  * that does not call the service it says, a Stop that stops on one press,
  * a control under 40 px, or a page error.
  */
@@ -33,12 +35,20 @@ const HOUSE = {
   'camera.workshop_x1c_camera': { entity_id: 'camera.workshop_x1c_camera', state: 'idle',
     attributes: { entity_picture: '/api/camera_proxy/camera.workshop_x1c_camera?token=abc' } },
   'light.kitchen': { entity_id: 'light.kitchen', state: 'on', attributes: {} },
+  'camera.workshop_x1c_last_print_check': { entity_id: 'camera.workshop_x1c_last_print_check', state: 'idle',
+    attributes: { entity_picture: '/api/camera_proxy/camera.workshop_x1c_last_print_check?token=zzz' } },
+  'sensor.workshop_x1c_failure_detection': { entity_id: 'sensor.workshop_x1c_failure_detection', state: 'warning',
+    attributes: { bruh_bambu_detection: '00m00a2b0123456', alert_id: '68f1-2', alert_level: 'warning',
+      alert: 'A corner of the left part is lifting.', sentence: 'Something may be wrong with the print.' } },
 };
 // The entity registry the frontend carries: the camera and the status sensor
 // on one device, which is how the card finds a printer's camera.
 const ENTITIES = {
   'sensor.workshop_x1c_status': { entity_id: 'sensor.workshop_x1c_status', device_id: 'dev1' },
+  'camera.workshop_x1c_last_print_check': { entity_id: 'camera.workshop_x1c_last_print_check', device_id: 'dev1',
+    translation_key: 'last_check' },
   'camera.workshop_x1c_camera': { entity_id: 'camera.workshop_x1c_camera', device_id: 'dev1' },
+  'sensor.workshop_x1c_failure_detection': { entity_id: 'sensor.workshop_x1c_failure_detection', device_id: 'dev1' },
   'sensor.a1_mini_status': { entity_id: 'sensor.a1_mini_status', device_id: 'dev2' },
 };
 
@@ -80,7 +90,8 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
   }, { tag, house: HOUSE });
   const root = page.locator(tag);
   const text = await root.evaluate((el) => el.shadowRoot.textContent);
-  for (const want of ['Workshop X1C', 'A1 mini', '42%', 'layer 112/260', '1 PLA', '220°']) {
+  for (const want of ['Workshop X1C', 'A1 mini', '42%', 'layer 112/260', '1 PLA', '220°',
+    'Failure detection', 'A corner of the left part is lifting.', 'Ignore', 'Pause print']) {
     if (!text.includes(want)) problems.push(`${tag}: "${want}" is not on the card`);
   }
   if (text.includes('kitchen')) problems.push(`${tag}: a non-printer entity rendered`);
@@ -126,6 +137,15 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
     ['bruh_bambu', 'set_light', { printer: '03919c1234', on: true }]];
   if (JSON.stringify(calls) !== JSON.stringify(want)) {
     problems.push(`${tag}: calls were ${JSON.stringify(calls)}`);
+  }
+  await click('[data-alert="ignore"]');
+  calls = await page.evaluate(() => window.calls);
+  if (JSON.stringify(calls.at(-1)) !== JSON.stringify(['bruh_bambu', 'print_alert_action',
+    { printer: '00m00a2b0123456', action: 'ignore', alert: '68f1-2' }])) {
+    problems.push(`${tag}: Ignore sent ${JSON.stringify(calls.at(-1))}`);
+  }
+  if ((await root.evaluate((el) => el.shadowRoot.querySelectorAll('.printer').length)) !== 2) {
+    problems.push(`${tag}: the failure detection sensor was drawn as a printer`);
   }
   const small = await root.evaluate((el) => [...el.shadowRoot.querySelectorAll('button, select')]
     .map((b) => b.getBoundingClientRect().height).filter((h) => h < 40));

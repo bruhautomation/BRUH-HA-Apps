@@ -38,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
             if pid and pid not in known:
                 known.add(pid)
                 new.append(PrinterCamera(coordinator, entry, printer))
+                new.append(LastCheckCamera(coordinator, entry, printer))
         if new:
             add_entities(new)
 
@@ -99,3 +100,49 @@ class PrinterCamera(CoordinatorEntity[BruhBambuCoordinator], Camera):
             if data or time.monotonic() > deadline:
                 return data
             await asyncio.sleep(0.5)
+
+
+class LastCheckCamera(CoordinatorEntity[BruhBambuCoordinator], Camera):
+    """The frame print failure detection last showed brAIn.
+
+    Not live, and not asked for: the add-on writes `<printer>.check.jpg`
+    after every look, so this is the picture behind the Print problem
+    sensor and the phone's alert. No frame yet is no picture, not an error.
+    """
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_check"
+
+    def __init__(self, coordinator, entry: ConfigEntry, printer: dict) -> None:
+        CoordinatorEntity.__init__(self, coordinator)
+        Camera.__init__(self)
+        self._pid = printer["id"]
+        self._attr_unique_id = f"{entry.entry_id}_{self._pid}_last_check"
+        self._attr_device_info = {"identifiers": {(DOMAIN, self._pid)}}
+
+    def _watch(self) -> dict:
+        for printer in (self.coordinator.data or {}).get("printers") or []:
+            if printer.get("id") == self._pid:
+                return printer.get("failure_detection") or {}
+        return {}
+
+    @property
+    def available(self) -> bool:
+        return bool((self.coordinator.data or {}).get("available") and self._watch().get("enabled"))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        last = self._watch().get("last") or {}
+        return {k: last.get(k) for k in ("layer", "decision", "summary", "confidence")
+                if last.get(k) is not None}
+
+    async def async_camera_image(self, width: int | None = None,
+                                 height: int | None = None) -> bytes | None:
+        frame = CAMERA_DIR / f"{self._pid}.check.jpg"
+
+        def _read() -> bytes | None:
+            try:
+                return frame.read_bytes()
+            except OSError:
+                return None
+
+        return await self.hass.async_add_executor_job(_read)

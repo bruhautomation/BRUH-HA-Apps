@@ -385,7 +385,7 @@ class TestTheListenerAsksForTheShape(unittest.TestCase):
         # Every claude invocation the listener makes carries the array,
         # which is empty for a task with no schema.
         runs = [line for line in src.splitlines()
-                if "${CLAUDE_BIN} -p --output-format json" in line]
+                if re.search(r"\$\{CLAUDE_BIN\} -p (--output-format json|\"\$\{format_flags\[@\]\}\")", line)]
         self.assertGreaterEqual(len(runs), 3)
         for line in runs:
             self.assertIn('"${schema_flags[@]}"', line)

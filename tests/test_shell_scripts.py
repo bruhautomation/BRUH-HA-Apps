@@ -356,9 +356,14 @@ class TestIntegrationListeners(unittest.TestCase):
         content = read_file(os.path.join(INTEGRATIONS_DIR, "automation-listener.sh"))
         # The pipe chain may include `timeout` between the pipe and the claude
         # binary, so we verify the prompt is piped in and is not an argument.
+        # `task_feed` is what every run is piped from: the prompt, or the
+        # stream-json message carrying the task's pictures and the prompt.
+        self.assertRegex(content, r"task_feed\s*\|\s*timeout",
+                         "automation-listener.sh should pipe each run's input via task_feed")
+        feed = re.search(r"^task_feed\(\) \{.*?^\}$", content, re.S | re.M).group(0)
         self.assertRegex(
-            content, r"printf\s+'%s'\s+\"\$prompt\"\s*\|",
-            "automation-listener.sh should pipe prompt via stdin (printf '%s' \"$prompt\" | ...)"
+            feed, r"printf\s+'%s'\s+\"\$prompt\"",
+            "task_feed should hand the prompt over on stdin (printf '%s' \"$prompt\")"
         )
         self.assertNotRegex(
             content,

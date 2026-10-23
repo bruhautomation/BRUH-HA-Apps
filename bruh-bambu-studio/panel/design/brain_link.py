@@ -53,13 +53,57 @@ class NotListening(RuntimeError):
     """The task sat unclaimed: nothing is running brAIn's listener."""
 
 
-def submit(prompt: str, *, schema: dict, session_id: str = "", timeout: int = 600) -> str:
+def images_dir() -> Path:
+    return BRAIN_SHARED / "task_images"
+
+
+# What brAIn's listener takes as a picture: a JPEG or a PNG it reads once,
+# hands to the run as a picture (never a path the run could open), and
+# deletes. The check is the listener's; this only refuses to hand it more.
+MAX_IMAGES = 4
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+
+
+def _image_ext(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    return None
+
+
+def submit(prompt: str, *, schema: dict, session_id: str = "", timeout: int = 600,
+           kind: str = "conversation", images: list[bytes] | None = None,
+           scheduled: bool = False) -> str:
+    """Hand brAIn a task. `kind="conversation"` is a design conversation (the
+    person's own, resumable); anything else is a one-off look. `images` are
+    pictures handed to the run as pictures. `scheduled` makes brAIn's own
+    pause and usage budget apply, for a look nobody pressed for."""
     task_id = f"bambu-{uuid.uuid4().hex[:12]}"
     task = {"id": task_id, "prompt": prompt, "ts": int(time.time()),
             "timeout": int(timeout), "source": "bruh_bambu", "tools": "read_only",
-            "schema": schema, "kind": "conversation", "person_words": ""}
+            "schema": schema}
+    if kind == "conversation":
+        task.update(kind="conversation", person_words="")
+    if scheduled:
+        task["scheduled"] = True
     if session_id:
         task["session_id"] = str(session_id)[:80]
+    if images:
+        paths = []
+        folder = images_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        for n, data in enumerate(images[:MAX_IMAGES]):
+            ext = _image_ext(data or b"")
+            if ext is None or len(data) > MAX_IMAGE_BYTES:
+                continue
+            path = folder / f"{task_id}-{n}.{ext}"
+            scratch = folder / f".{task_id}-{n}.tmp"
+            scratch.write_bytes(data)
+            scratch.replace(path)
+            paths.append(str(path))
+        if paths:
+            task["images"] = paths
     folder = tasks_dir()
     scratch = folder / f".{task_id}.tmp"
     scratch.write_text(json.dumps(task), encoding="utf-8")
@@ -80,13 +124,25 @@ def wait(task_id: str, timeout: int) -> dict:
                 time.sleep(POLL_S)  # caught mid-write; the next read gets it whole
                 continue
             result_file.unlink(missing_ok=True)
+            _drop_images(task_id)
             return data if isinstance(data, dict) else {}
         elapsed = time.time() - start
         if task_file.exists() and elapsed > CLAIM_GRACE_S:
             task_file.unlink(missing_ok=True)
+            _drop_images(task_id)
             raise NotListening(
                 "brAIn did not pick the request up. Is brAIn running with its "
                 "Automation integration turned on?")
         if elapsed > timeout + 60:
+            _drop_images(task_id)
             raise TimeoutError("brAIn did not answer in time.")
         time.sleep(POLL_S)
+
+
+def _drop_images(task_id: str) -> None:
+    """The pictures a task carried, once it is over (brAIn deletes what it read)."""
+    try:
+        for path in images_dir().glob(f"{task_id}-*"):
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass  # brAIn deletes what it read; a leftover is swept by its listener

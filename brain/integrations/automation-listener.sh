@@ -77,6 +77,9 @@ LOG_DIR="$SHARED_DIR/logs"
 # One line per tool call a task makes (scripts/brain-task-progress.sh, a hook
 # in headless_settings.json), read by whoever handed the task over.
 PROGRESS_DIR="$SHARED_DIR/task_progress"
+# Pictures a task hands in (BRUH Bambu Studio's print failure check): read
+# once, given to the run as image blocks, and deleted. Only this folder.
+TASK_IMAGE_DIR="${BRAIN_TASK_IMAGE_DIR:-$SHARED_DIR/task_images}"
 
 # The runaway guard on one task — not a budget, and not an add-on option:
 # the task's own timeout is what bounds it, and a multi-step config edit
@@ -242,6 +245,7 @@ cleanup_stale_files() {
     find "$RESULTS_DIR" -name '*.tmp' -mmin +120 -delete 2>/dev/null || true
     find "$TASKS_DIR" -name '*.work.*' -mmin +120 -delete 2>/dev/null || true
     find "$PROGRESS_DIR" -name '*.jsonl' -mmin +1440 -delete 2>/dev/null || true
+    find "$TASK_IMAGE_DIR" -type f -mmin +60 -delete 2>/dev/null || true
     # Debug logs hold full task prompts: age them out (default 7 days,
     # BRAIN_LOG_RETENTION_DAYS overrides) and keep them owner-only — they
     # live under /config and would otherwise ride into every HA full backup.
@@ -561,6 +565,87 @@ extract_claude_data() {
     jq -c 'if (type == "object" and (.structured_output | type) == "object") then .structured_output else empty end' "$out_file" 2>/dev/null || true
 }
 
+# A task that carries pictures (`images`: paths in TASK_IMAGE_DIR) is run
+# with the pictures in its first message, as image blocks — the way the chat
+# hands a pasted screenshot over. It is NOT given a path to open: a narrow
+# scope denies Read, and a picture is the one thing such a run should see
+# without being able to reach /config. So the listener reads each file
+# itself, and only one that is:
+#   * a plain name directly inside TASK_IMAGE_DIR (resolved, no link out);
+#   * a regular file under 5 MB;
+#   * a JPEG, PNG, GIF or WebP by its first bytes, never by its name;
+# at most four, and deletes what it read. Anything else is skipped, and a
+# task left with none runs as text, exactly as before.
+#
+# Prints the stream-json user message on stdout, or nothing.
+# Args: the task's `images` as JSON, the file holding the prompt.
+task_images_message() {
+    python3 - "$1" "$2" "$TASK_IMAGE_DIR" <<'PYIMAGES' 2>/dev/null
+import base64, json, os, sys
+try:
+    wanted = json.loads(sys.argv[1])
+except ValueError:
+    raise SystemExit(0)
+prompt = open(sys.argv[2], encoding="utf-8", errors="replace").read()
+root = os.path.realpath(sys.argv[3])
+if not isinstance(wanted, list) or not os.path.isdir(root):
+    raise SystemExit(0)
+KINDS = ((b"\xff\xd8\xff", "image/jpeg"), (b"\x89PNG\r\n\x1a\n", "image/png"),
+         (b"GIF87a", "image/gif"), (b"GIF89a", "image/gif"))
+blocks = []
+for item in wanted[:4]:
+    if not isinstance(item, str):
+        continue
+    path = os.path.realpath(item)
+    if os.path.dirname(path) != root or not os.path.isfile(path):
+        continue
+    try:
+        if os.path.getsize(path) > 5 * 1024 * 1024:
+            continue
+        with open(path, "rb") as handle:
+            data = handle.read()
+    except OSError:
+        continue
+    kind = next((t for magic, t in KINDS if data.startswith(magic)), None)
+    if kind is None and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        kind = "image/webp"
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    if kind is None:
+        continue
+    blocks.append({"type": "image", "source": {"type": "base64", "media_type": kind,
+                                               "data": base64.b64encode(data).decode()}})
+if not blocks:
+    raise SystemExit(0)
+blocks.append({"type": "text", "text": prompt})
+print(json.dumps({"type": "user", "message": {"role": "user", "content": blocks}}))
+PYIMAGES
+}
+
+# What a run is fed: the stream-json message when the task brought pictures,
+# the prompt otherwise. Reads process_task's locals.
+task_feed() {
+    if [ -n "${task_input_file:-}" ]; then
+        cat "$task_input_file"
+    else
+        printf '%s' "$prompt"
+    fi
+}
+
+# A stream-json run writes one event per line; the last `result` event is
+# the envelope a json run writes whole, so it is moved into the output file
+# and everything after (journal, landing, extraction) reads it as before.
+task_envelope_from_stream() {
+    local out_file="$1" last
+    [ -n "${task_input_file:-}" ] || return 0
+    last=$(jq -c 'select(type == "object" and .type == "result")' "$out_file" 2>/dev/null | tail -n 1)
+    if [ -n "$last" ]; then
+        printf '%s\n' "$last" > "$out_file"
+    fi
+}
+
 # Process an automation task file
 process_task() {
     local task_file="$1"
@@ -591,6 +676,8 @@ process_task() {
     task_memory=$(jq -r 'if .memory == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_scheduled=$(jq -r 'if .scheduled == true then "true" else "" end' "$work_file" 2>/dev/null)
     task_cameras=$(jq -r 'if .cameras == true then "true" else "" end' "$work_file" 2>/dev/null)
+    local task_images task_input_file=""
+    task_images=$(jq -c 'if (.images | type) == "array" and (.images | length) > 0 then .images else empty end' "$work_file" 2>/dev/null)
     # A conversation (Morph's Ask): brAIn's chat, by task. The session id is
     # a CLI session uuid or nothing — it becomes an argv entry, so anything
     # that is not plainly one is dropped and the run starts fresh.
@@ -728,6 +815,24 @@ ${prompt}"
         fi
     fi
 
+    # Pictures, read now (and deleted) so every attempt below hands the same
+    # ones over: the retry after an MCP failure included.
+    local format_flags=(--output-format json)
+    if [ -n "$task_images" ]; then
+        local prompt_file image_message
+        prompt_file=$(mktemp)
+        printf '%s' "$prompt" > "$prompt_file"
+        image_message=$(task_images_message "$task_images" "$prompt_file")
+        rm -f "$prompt_file"
+        if [ -n "$image_message" ]; then
+            task_input_file=$(mktemp)
+            printf '%s\n' "$image_message" > "$task_input_file"
+            format_flags=(--input-format stream-json --output-format stream-json --verbose)
+        else
+            bashio::log.warning "Task [$task_id] named pictures and none could be used; running it as text"
+        fi
+    fi
+
     cleanup_stale_files
     task_progress_on "$task_id"
 
@@ -780,7 +885,8 @@ ${prompt}"
     # instead of scraping verbose stdout (which now carries MCP/diagnostic
     # lines). See extract_claude_result().
     # shellcheck disable=SC2086
-    (cd /config && printf '%s' "$prompt" | timeout "$claude_limit" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+    (cd /config && task_feed | timeout "$claude_limit" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+    task_envelope_from_stream "$output_file"
 
     # A conversation whose session the CLI no longer holds (pruned, or
     # started on another machine) is begun again rather than failed, and
@@ -794,7 +900,8 @@ ${prompt}"
         if [ "$fresh_left" -ge 30 ]; then
             task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$fresh_left" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            (cd /config && task_feed | timeout "$fresh_left" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            task_envelope_from_stream "$output_file"
         fi
     fi
 
@@ -854,7 +961,8 @@ ${prompt}"
 
             task_rc=0
             # shellcheck disable=SC2086
-            (cd /config && printf '%s' "$prompt" | timeout "$remaining" ${CLAUDE_BIN} -p --output-format json --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            (cd /config && task_feed | timeout "$remaining" ${CLAUDE_BIN} -p "${format_flags[@]}" --max-turns "$MAX_TURNS" ${model_flag} "${resume_flags[@]}" "${tool_flags[@]}" "${schema_flags[@]}" > "$output_file" 2>"$stderr_file") || task_rc=$?
+            task_envelope_from_stream "$output_file"
 
             end_time=$(date +%s)
             duration=$((end_time - start_time))
@@ -882,6 +990,11 @@ ${prompt}"
         else
             bashio::log.warning "No time budget left to retry task [$task_id] (${remaining}s remaining)"
         fi
+    fi
+
+    # Every attempt has run: the pictures' message goes now.
+    if [ -n "$task_input_file" ]; then
+        rm -f "$task_input_file"
     fi
 
     # Whether this run FAILED, as a closed word, decided here once and

@@ -16,6 +16,10 @@
  *  - a print dialog without the build plate, the start options and the
  *    slicer settings grouped, or Print by object;
  *  - the print choice's three texts not starting at one left edge;
+ *  - print failure detection without its status, the open alert with what
+ *    brAIn saw beside what the print should be, the plan of looks over the
+ *    layers, the history, or Resume not answering that alert;
+ *  - a printer with detection off not offering the switch that turns it on;
  *  - a control under the touch floor, sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -45,11 +49,31 @@ const A1 = { id: 'a1', name: 'Workshop A1', model: 'A1', host: '192.168.1.60', s
   external_spool: { slot: 'external', type: 'TPU', colour: '#FFA500', remaining: null },
   hms: ['0700_2000_0002_0001'], hms_count: 1, error_code: null,
   camera: { kind: 'jpeg', streaming: true, frame_age_s: 0.4, error: '' },
-  job_picture: 'api/thumb?path=sliced%2Frotor.gcode.3mf', connection_error: '' };
+  job_picture: 'api/thumb?path=sliced%2Frotor.gcode.3mf', connection_error: '',
+  failure_detection: { enabled: true, mode: 'pause', sensitivity: 'medium', light: true, plate_watch: true,
+    status: 'failure', sentence: 'The print failed and was paused.', view: 'ok',
+    brain: { state: 'ok', sentence: 'ok' }, plate: { state: 'printing', why: '' }, print_id: '68f1a2b3',
+    alert: { id: '68f1a2b3-1', level: 'failure', problem: 'spaghetti', open: true, paused: true, check: 3,
+      summary: 'Spaghetti is building up behind the left part.', confidence: 0.91, at: Date.now() / 1000 - 90,
+      image_url: 'api/watch/image?printer=a1&name=68f1a2b3%2F3.jpg' },
+    last: { n: 3, layer: 84, decision: 'failure', summary: 'Spaghetti is building up behind the left part.',
+      confidence: 0.91, at: Date.now() / 1000 - 90, image_url: 'api/watch/image?printer=a1&name=68f1a2b3%2F3.jpg' },
+    next: { layer: 120, kind: 'bridge', reason: 'Bridges start at layer 118.' },
+    expected_url: 'api/watch/image?printer=a1&name=68f1a2b3%2Fexpected.png',
+    plan: { source: 'gcode', total_layers: 200, checkpoints: [
+      { layer: 2, kind: 'first_layer', reason: 'The first layer is down.', state: 'done', decision: 'ok' },
+      { layer: 9, kind: 'early', reason: 'A couple of millimetres up.', state: 'done', decision: 'ok' },
+      { layer: 84, kind: 'colour', reason: 'Filament changes at layer 83.', state: 'done', decision: 'failure' },
+      { layer: 120, kind: 'bridge', reason: 'Bridges start at layer 118.', state: 'planned' },
+      { layer: 200, kind: 'last', reason: 'The last layers.', state: 'planned' }] },
+    looks: { used: 3, budget: 8, checks: 3 }, ignored: [] } };
 const X1 = { id: 'x1', name: 'X1C', model: 'X1C', host: '192.168.1.61', serial: 'X1SERIAL',
   online: true, state: 'finish', printing: false, progress: 100, file: 'Benchy', speed: 'standard',
   nozzle_c: 32, bed_c: 30, chamber_c: 28, chamber_light: false, ams: [], ams_units: [],
-  hms: [], camera: { kind: 'disabled', streaming: false, error: '' }, connection_error: '' };
+  hms: [], camera: { kind: 'disabled', streaming: false, error: '' }, connection_error: '',
+  failure_detection: { enabled: false, mode: 'pause', sensitivity: 'medium', light: true, plate_watch: true,
+    status: 'off', sentence: 'Print failure detection is off.', view: 'unknown', plate: { state: 'unknown' },
+    alert: null, last: null, next: null, plan: { checkpoints: [] }, looks: { used: 0, budget: 8 } } };
 const STATE = { ok: true, version: 'dev', printers: [A1, X1], jobs: [],
   studio: { installed: true, running: false, wanted: false, install: {} },
   ha: { reason: 'not_loaded', restart_needed: true, deployed: '0.2.0', running: null,
@@ -61,6 +85,14 @@ const STORAGE = { ok: true, printer: 'Workshop A1', files: [
   { name: 'timelapse', dir: true, size: 0 }] };
 const FILES = { ok: true, root: '/share/bambu', files: [
   { path: 'imports/rotor.stl', name: 'rotor.stl', size: 3e6, modified: 1760000000, sliced: false, project: false }] };
+
+const HISTORY = { ok: true, checks: [
+  { n: 3, layer: 84, decision: 'failure', summary: 'Spaghetti is building up behind the left part.', confidence: 0.91,
+    why: 'Filament changes at layer 83.', at: Date.now() / 1000 - 90, expected: true,
+    image_url: 'api/watch/image?printer=a1&name=68f1a2b3%2F3.jpg' },
+  { n: 1, layer: 2, decision: 'ok', summary: 'The first layer is down evenly.', confidence: 0.88,
+    why: 'The first layer is down.', at: Date.now() / 1000 - 4000, image_url: null }], alerts: [], errors: [] };
+const WATCH = [];
 
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -81,6 +113,11 @@ async function run(label, viewport, touch) {
       await new Promise((r) => setTimeout(r, 250));
       return route.fulfill({ body: FRAME, contentType: 'image/jpeg' });
     }
+    if (path === 'api/watch/action' || path === 'api/watch/settings') {
+      WATCH.push({ label, path, ...route.request().postDataJSON() });
+      return route.fulfill({ json: { ok: true, note: 'Done.' } });
+    }
+    if (path === 'api/watch/image') return route.fulfill({ body: PICTURE, contentType: 'image/png' });
     if (path === 'api/thumb' || path === 'api/printer/thumb') return route.fulfill({ body: PICTURE, contentType: 'image/png' });
     if (path === 'api/printer/command') {
       COMMANDS.push({ label, ...route.request().postDataJSON() });
@@ -88,7 +125,8 @@ async function run(label, viewport, touch) {
     }
     const stubs = { 'api/state': STATE, 'api/print/options': OPTIONS, 'api/printer/storage': STORAGE,
       'api/files': FILES, 'api/design/status': { ok: true, brain: { state: 'ok' }, cad: true, viewer: true },
-      'api/design/parts': { ok: true, parts: [] },
+      'api/design/parts': { ok: true, parts: [] }, 'api/watch': HISTORY,
+      'api/watch/targets': { ok: true, targets: ['notify.mobile_app_pixel'] },
       'api/printers': { ok: true, printers: STATE.printers, models: ['A1', 'X1C'] } };
     if (path.startsWith('api/')) {
       if (method === 'GET' && stubs[path]) return route.fulfill({ json: stubs[path] });
@@ -151,6 +189,41 @@ async function run(label, viewport, touch) {
   }, null, { timeout: 5000 }).then(() => true).catch(() => false);
   if (!pic) say("a job on the printer has no picture");
 
+  // Print failure detection.
+  const watch = card.locator('section.watch');
+  const wtext = await watch.innerText();
+  for (const want of ['Print failure detection', 'Print paused', 'Spaghetti is building up', '91% sure',
+    'What brAIn saw', 'What it should be', 'Where it looks', 'Planned from the print', 'Layer 120',
+    'Resume — not a failure', 'Stop print', 'Check now']) {
+    if (!wtext.includes(want)) say(`failure detection does not show “${want}”`);
+  }
+  if ((await watch.locator('.wtick').count()) !== 5) say('the plan does not show its five looks on the layer line');
+  if ((await watch.locator('.wtick.bad').count()) !== 1) say('the failed look is not marked on the layer line');
+  const pics = await page.waitForFunction(() => [...document.querySelectorAll('.printer[data-id="a1"] .wpics img')]
+    .every((i) => i.complete && i.naturalWidth > 0), null, { timeout: 5000 }).then(() => true).catch(() => false);
+  if (!pics) say("the alert's pictures did not load");
+  await watch.getByRole('button', { name: 'Resume — not a failure' }).click();
+  await page.waitForTimeout(200);
+  const resumed = WATCH.find((c) => c.label === label && c.action === 'resume');
+  if (!resumed || resumed.alert !== '68f1a2b3-1' || resumed.printer !== 'a1') say('Resume did not answer the alert it is on');
+  await card.locator('details[data-k="watchhist"] > summary').click();
+  await card.locator('.wcheck').first().waitFor().catch(() => say('the looks this print are not listed'));
+  if ((await card.locator('.wcheck').count()) !== 2) say('the history does not list both looks');
+  await card.locator('details[data-k="watchset"] > summary').click();
+  const set = await card.locator('details[data-k="watchset"]').innerText();
+  for (const want of ['Warn and pause', 'Only warn', 'Relaxed', 'Balanced', 'Careful', 'Alerts go to']) {
+    if (!set.includes(want)) say(`the detection settings have no “${want}”`);
+  }
+  const x1 = page.locator('.printer[data-id="x1"] section.watch');
+  if (!(await x1.innerText()).includes('moments a print is most likely to fail')) say('detection off does not say what it does');
+  await x1.locator('.switch input').click();
+  await page.waitForTimeout(200);
+  if (!WATCH.some((c) => c.label === label && c.path === 'api/watch/settings' && c.printer === 'x1' && c.enabled === true)) {
+    say('the switch did not turn detection on');
+  }
+  const wideWatch = await watch.evaluate((el) => el.scrollWidth - el.clientWidth);
+  if (wideWatch > 1) say(`failure detection scrolls sideways by ${wideWatch} px`);
+
   const ha = page.locator('#haCard');
   if (!(await ha.getByRole('button', { name: 'Restart Home Assistant' }).count())) {
     say('the Home Assistant card does not offer the restart it needs');
@@ -160,7 +233,7 @@ async function run(label, viewport, touch) {
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Printers tab scrolls sideways by ${wide} px`);
   if (touch) {
-    const small = await page.evaluate(() => [...document.querySelectorAll('#viewPrinters button, #viewPrinters summary')]
+    const small = await page.evaluate(() => [...document.querySelectorAll('#viewPrinters button, #viewPrinters summary, #viewPrinters .switch')]
       .filter((b) => b.offsetParent && b.getBoundingClientRect().height < 40)
       .map((b) => (b.getAttribute('aria-label') || b.textContent).trim().slice(0, 30)));
     if (small.length) say(`under the touch floor: ${small.join(', ')}`);

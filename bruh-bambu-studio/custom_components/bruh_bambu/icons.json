@@ -19,19 +19,65 @@
     "refresh": "mdi:refresh",
     "design_part": "mdi:cube-outline",
     "design_status": "mdi:cube-scan",
-    "print_part": "mdi:printer-3d-nozzle-outline"
+    "print_part": "mdi:printer-3d-nozzle-outline",
+    "check_print": "mdi:shield-search",
+    "print_alert_action": "mdi:shield-check",
+    "set_failure_detection": "mdi:shield-cog"
   },
   "entity": {
     "sensor": {
-      "status": {"default": "mdi:printer-3d"},
-      "progress": {"default": "mdi:progress-clock"},
-      "remaining": {"default": "mdi:timer-sand"},
-      "nozzle": {"default": "mdi:printer-3d-nozzle-heat"},
-      "bed": {"default": "mdi:radiator"},
-      "stage": {"default": "mdi:list-status"}
+      "status": {
+        "default": "mdi:printer-3d"
+      },
+      "progress": {
+        "default": "mdi:progress-clock"
+      },
+      "remaining": {
+        "default": "mdi:timer-sand"
+      },
+      "nozzle": {
+        "default": "mdi:printer-3d-nozzle-heat"
+      },
+      "bed": {
+        "default": "mdi:radiator"
+      },
+      "stage": {
+        "default": "mdi:list-status"
+      },
+      "failure_detection": {
+        "default": "mdi:shield-check",
+        "state": {
+          "warning": "mdi:shield-alert",
+          "failure": "mdi:shield-off",
+          "off": "mdi:shield-off-outline",
+          "covered": "mdi:camera-off",
+          "dark": "mdi:weather-night",
+          "looking": "mdi:shield-search"
+        }
+      }
     },
     "camera": {
-      "camera": {"default": "mdi:cctv"}
+      "camera": {
+        "default": "mdi:cctv"
+      },
+      "last_check": {
+        "default": "mdi:camera-iris"
+      }
+    },
+    "binary_sensor": {
+      "print_problem": {
+        "default": "mdi:shield-alert"
+      },
+      "plate_clear": {
+        "default": "mdi:tray-remove",
+        "state": {
+          "on": "mdi:tray",
+          "off": "mdi:tray-full"
+        }
+      },
+      "camera_covered": {
+        "default": "mdi:camera-off"
+      }
     }
   }
 }

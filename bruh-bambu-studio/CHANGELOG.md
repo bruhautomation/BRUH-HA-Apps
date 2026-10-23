@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- **Print failure detection.** A switch on each printer's card on the Printers tab. While a print runs, brAIn looks at the camera at the moments a print is most likely to fail and compares what it sees with Bambu Studio's picture of the finished plate and with its previous look. When something may be wrong it tells you, with **Ignore** and **Pause print**; when the print has clearly failed (spaghetti, a part come loose, a blob on the nozzle, nothing coming out) it pauses the printer and tells you, with **Resume — not a failure** and **Stop print**. Choose *Only warn* if it should never pause, and Relaxed, Balanced or Careful for how often it looks and how sure it must be.
+- **It looks where prints fail, not every few seconds.** The print's own G-code is read when it starts, and the looks are planned for the first layer, a few millimetres up, the layer where the part narrows sharply, the first bridges and overhangs, supports, a colour change, a part getting tall and thin, the last layers, and once in any long stretch with nothing else. A print of 8 looks on Balanced; anything doubtful gets a second look a few minutes later, and a doubt the second look clears closes itself. The card shows the plan as dots along the print's layers.
+- **Free checks run all the time, without brAIn:** a covered lens or a dark chamber (everything stands down and says so, and the chamber light can be turned on to see), a camera picture that has stopped changing, a sudden change on the plate (which asks brAIn to look now), and the printer's own camera alerts.
+- **Plate clear.** After a print it watches for the plate being cleared, comparing it with the empty plate it saw before the first layer, or asking brAIn once when it changes. **It's clear** on the card says so by hand.
+- **In Home Assistant:** per printer a **Failure detection** sensor, **Print problem**, **Plate clear** and **Camera covered** binary sensors, and a **Last print check** camera with the frame brAIn judged. A notification goes to Home Assistant and, if you choose a phone in the detection settings, to the phone with the picture and the buttons that answer it. Services `bruh_bambu.check_print`, `print_alert_action` and `set_failure_detection`, and a `bruh_bambu_print_alert` event. The dashboard card shows detection too.
+- brAIn's looks need **brAIn 3.8.8 or later**, which hands it the pictures; with an older brAIn the free checks run and brAIn's looks answer that they could not see.
+
+### Fixed
+
+- **Downloaded 3MF and STEP files have their names.** A part downloaded from the Design tab was saved as `file` with no extension; it is now saved as the part's name, its version and its kind, such as `Wall hook v3.3mf`.
+
 ## 0.2.6
 
 ### Added

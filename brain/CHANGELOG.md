@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.8
+
+### Added
+
+- **A task can hand brAIn pictures.** A task in brAIn's task folder may name up to four pictures in `/config/.brain/task_images`; brAIn reads each one, checks that it is a JPEG, PNG, GIF or WebP, deletes it and gives it to the run as a picture. The run's tools stay what the task asked for, so a read-only task sees the picture without being able to open files. BRUH Bambu Studio's print failure detection uses this to show brAIn the camera.
+
 ## 3.8.7
 
 ### Added

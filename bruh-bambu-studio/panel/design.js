@@ -116,7 +116,12 @@ function renderPart() {
   for (const [id, key] of [["#dl3mf", "3mf"], ["#dlStep", "step"]]) {
     const a = $(id);
     a.hidden = !(files && files[key]);
-    if (files && files[key]) a.href = `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(files[key])}`;
+    if (files && files[key]) {
+      a.href = `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(files[key])}`;
+      // The name the download is saved under (the server says it too, for
+      // the browsers and apps that ignore this attribute inside ingress).
+      a.download = `${(p.name || "part").replace(/[\\/:*?"<>|]+/g, " ").trim() || "part"} v${v.n}.${key}`;
+    }
   }
   $("#partPrint").disabled = !(v && v.ok);
   renderMessages(p);

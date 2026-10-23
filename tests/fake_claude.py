@@ -125,7 +125,12 @@ if "--input-format" in argv:
         if not line:
             continue
         msg = json.loads(line)
-        text = msg["message"]["content"][0]["text"]
+        content = msg["message"]["content"]
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        # A task's pictures come first as image blocks, the words last.
+        text = next((b.get("text", "") for b in reversed(content) if b.get("type") == "text"), "")
+        pictures = [b for b in content if b.get("type") == "image"]
         if mode == "hang":
             time.sleep(60)
             continue
@@ -168,6 +173,9 @@ if "--input-format" in argv:
             }), flush=True)
             continue
         result = f"OK[{os.getpid()}]: {text}"
+        if pictures:
+            result += " [pictures: " + ", ".join(
+                b["source"]["media_type"] for b in pictures) + "]"
         if "--include-partial-messages" in argv:
             # Mirror the real CLI: token-level stream_event deltas, then an
             # assistant message event with the full text, then the result.

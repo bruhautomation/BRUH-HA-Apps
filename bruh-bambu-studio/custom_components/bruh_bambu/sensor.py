@@ -164,4 +164,57 @@ class StageSensor(_PrinterSensor):
         return printer.get("stage") or ("Printing" if printer.get("printing") else "Idle")
 
 
-SENSORS = (StatusSensor, StageSensor, ProgressSensor, RemainingSensor, NozzleSensor, BedSensor)
+class FailureDetectionSensor(_PrinterSensor):
+    """Print failure detection in a word, with what it last saw.
+
+    off, idle, watching, looking, basic (no brAIn: the free checks only),
+    warning, failure, covered, dark, frozen, no_camera. Never unavailable,
+    for StatusSensor's reason: why it is not watching is the attribute.
+    """
+    key = "failure_detection"
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def _watch(self) -> dict:
+        return (self._printer() or {}).get("failure_detection") or {}
+
+    @property
+    def native_value(self):
+        if not (self.coordinator.data or {}).get("available"):
+            return "unknown"
+        return self._watch().get("status") or "off"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        watch = self._watch()
+        alert = watch.get("alert") or {}
+        last = watch.get("last") or {}
+        nxt = watch.get("next") or {}
+        attrs = {
+            "sentence": watch.get("sentence"),
+            "mode": watch.get("mode"), "sensitivity": watch.get("sensitivity"),
+            "plate": (watch.get("plate") or {}).get("state"),
+            "camera_view": watch.get("view"),
+            "brain": (watch.get("brain") or {}).get("sentence"),
+            "looks_used": (watch.get("looks") or {}).get("used"),
+            "looks_budget": (watch.get("looks") or {}).get("budget"),
+            "next_look_layer": nxt.get("layer"), "next_look_reason": nxt.get("reason"),
+            "plan_source": (watch.get("plan") or {}).get("source"),
+            "last_look_layer": last.get("layer"), "last_look": last.get("summary"),
+            "last_look_decision": last.get("decision"),
+            "last_look_confidence": last.get("confidence"),
+            "alert_id": alert.get("id") if alert.get("open") else None,
+            "alert_level": alert.get("level") if alert.get("open") else None,
+            "alert": alert.get("summary") if alert.get("open") else None,
+            "alert_paused": alert.get("paused") if alert.get("open") else None,
+            # Not `bruh_bambu_printer`: that is the mark the cards find a
+            # printer's Status sensor by, and this is not one.
+            "bruh_bambu_detection": self._pid,
+        }
+        return {k: v for k, v in attrs.items() if v is not None}
+
+
+SENSORS = (StatusSensor, StageSensor, ProgressSensor, RemainingSensor, NozzleSensor, BedSensor,
+           FailureDetectionSensor)

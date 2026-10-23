@@ -29,6 +29,9 @@ from .const import (
     CARD_RETRY_TRIES,
     DOMAIN,
     RUNNING_FILE,
+    ALERT_ACTIONS,
+    SERVICE_ALERT_ACTION,
+    SERVICE_CHECK_PRINT,
     SERVICE_DESIGN,
     SERVICE_DESIGN_STATUS,
     SERVICE_FIND,
@@ -44,6 +47,7 @@ from .const import (
     SERVICE_RECONNECT,
     SERVICE_REFRESH,
     SERVICE_RESUME,
+    SERVICE_SET_DETECTION,
     SERVICE_SLICE_FILE,
     SERVICE_SPEED,
     SERVICE_STATUS,
@@ -51,9 +55,10 @@ from .const import (
     SERVICE_TEMPERATURE,
     card_url,
 )
+from .alerts import AlertNotifier
 from .coordinator import BruhBambuCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.CAMERA]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.CAMERA]
 PLATE_TYPES = ["auto", "textured_pei", "smooth_pei", "cool", "engineering"]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -114,6 +119,18 @@ SERVICES = {
     SERVICE_IMPORT: IMPORT_SCHEMA,
     SERVICE_RECONNECT: PRINTER_ONLY,
     SERVICE_REFRESH: PRINTER_ONLY,
+    SERVICE_CHECK_PRINT: PRINTER_ONLY,
+    SERVICE_ALERT_ACTION: vol.Schema({
+        PRINTER: cv.string, vol.Required("action"): vol.In(ALERT_ACTIONS),
+        vol.Optional("alert"): cv.string}),
+    SERVICE_SET_DETECTION: vol.Schema({
+        PRINTER: cv.string,
+        vol.Optional("enabled"): cv.boolean,
+        vol.Optional("mode"): vol.In(["pause", "warn"]),
+        vol.Optional("sensitivity"): vol.In(["low", "medium", "high"]),
+        vol.Optional("light"): cv.boolean,
+        vol.Optional("plate"): cv.boolean,
+        vol.Optional("notify"): cv.string}),
 }
 DESIGN_SCHEMA = vol.Schema({
     vol.Optional("description"): cv.string,
@@ -159,6 +176,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = BruhBambuCoordinator(hass)
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    notifier = AlertNotifier(hass, entry, coordinator, _forward)
+    entry.async_on_unload(notifier.start())
     await hass.async_add_executor_job(_record_running)
     await _register_card(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
