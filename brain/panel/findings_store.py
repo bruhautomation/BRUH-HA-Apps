@@ -256,6 +256,10 @@ UNSETTLED_STATUSES = ("open", "planned", "fixed", "failed", "needs_you")
 # What goes back into the analyst's prompt. Ignored findings are the point of
 # the block — capped so it can never grow into a wall.
 PROMPT_OPEN = 12
+# The live rows about what a card covers (`prompt_block`'s ``covers``) go
+# first, and up to this many of them, whatever else is on the list: the row
+# about a card's own device is the one it must agree with.
+PROMPT_COVERED = 24
 # How much of a live row's detail a card is shown: its figures and window,
 # not its whole evidence.
 PROMPT_DETAIL = 240
@@ -3838,7 +3842,32 @@ def clear_unreported(source: str, shown, keep_keys,
     return gone
 
 
-def prompt_block(exclude_sources=(), own=None, figures: bool = False) -> str:
+def _covered(row: dict, covers: dict, names: dict) -> bool:
+    """Whether a live row is about something a card covers: an entity the
+    card named, one of its domains, or one of its device classes. A card
+    with no domains (the overview, an asked question) covers everything."""
+    eids = {str(row.get("entity_id") or "")}
+    for ev in row.get("evidence") or []:
+        if isinstance(ev, dict) and ev.get("entity"):
+            eids.add(str(ev["entity"]))
+    eids.discard("")
+    if eids & set(covers.get("entities") or ()):
+        return True
+    domains = set(covers.get("domains") or ())
+    if not domains:
+        return True
+    classes = set(covers.get("classes") or ())
+    for eid in eids:
+        if eid.split(".", 1)[0] in domains:
+            return True
+        row_name = names.get(eid)
+        if isinstance(row_name, dict) and row_name.get("class") in classes:
+            return True
+    return False
+
+
+def prompt_block(exclude_sources=(), own=None, figures: bool = False,
+                 covers: dict | None = None) -> str:
     """What the analyst needs to know about findings before it reports more.
 
     ``exclude_sources`` leaves a producer's own live rows out, and exists
@@ -3868,7 +3897,17 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False) -> str:
     own_ts = {int(r.get("ts") or 0) for r in own}
     live = [f for f in everything if f["status"] in LIVE_STATUSES
             and f.get("source") not in skip
-            and int(f.get("ts") or 0) not in own_ts][:PROMPT_OPEN]
+            and int(f.get("ts") or 0) not in own_ts]
+    if covers is not None:
+        # A card's own subject first: the newest twelve of a busy list
+        # left out the row about the dehumidifier the climate card then
+        # called fine.
+        names = _names_now()
+        mine = [f for f in live if _covered(f, covers, names)][:PROMPT_COVERED]
+        rest = [f for f in live if f not in mine]
+        live = mine + rest[:max(0, PROMPT_OPEN - len(mine))]
+    else:
+        live = live[:PROMPT_OPEN]
 
     def _settled(kind: str, limit: int) -> list[tuple[str, str]]:
         seen: set[str] = set()

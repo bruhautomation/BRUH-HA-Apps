@@ -5428,7 +5428,8 @@ async def _generate(insight_id: str) -> None:
                        pending=hypotheses.prompt_block(),
                        knowledge=knowledge, previous=previous,
                        findings=findings_store.prompt_block(
-                           own=own, figures=True),
+                           own=own, figures=True,
+                           covers=_card_covers(cat, previous)),
                        # What brAIn measured. Its own budget (HOUSE_CHARS),
                        # taken from nothing else, and empty on a house
                        # where nothing is ready yet.
@@ -5487,7 +5488,8 @@ async def _generate(insight_id: str) -> None:
         # about nothing at all keeps the card that was there. A press is
         # never held — somebody asked, and the answer is what they get.
         verdict = card_verdict.review({**obj, "highlights": highlights},
-                                      previous)
+                                      previous,
+                                      open_rows=_open_rows_for_verdict(cat["id"]))
         if verdict["hold"] and job.get("scheduled") and previous:
             await _keep_previous_card(insight_id, cat, question)
             REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
@@ -8662,6 +8664,29 @@ async def h_status(request: web.Request) -> web.Response:
     })
 
 
+def _open_rows_for_verdict(source: str) -> list[dict]:
+    """Every live finding another producer filed, with its device's name:
+    what `card_verdict` reads a card's "fine" against."""
+    out = []
+    for f in findings_store.list_all("live"):
+        if f.get("source") == source or not f.get("entity_id"):
+            continue
+        eid = str(f["entity_id"])
+        out.append({"text": f.get("text") or "", "entity_id": eid,
+                    "name": (_NAMES.get(eid) or {}).get("name") or ""})
+    return out
+
+
+def _card_covers(cat: dict, previous: dict | None) -> dict:
+    """What a card is about, for the live rows its prompt shows first
+    (`findings_store.prompt_block`'s ``covers``): its domains, its device
+    classes, and the entities its last version named. An asked card has no
+    domains, which covers everything."""
+    return {"domains": list(cat.get("domains") or ()),
+            "classes": list(cat.get("device_classes") or ()),
+            "entities": _card_entities(previous or {})}
+
+
 def _card_entities(insight: dict) -> list[str]:
     """The entity ids a stored card NAMES: its live list, and every id in
     the words it shows (title, summary, tiles, what it learned).
@@ -9180,7 +9205,8 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                    knowledge=knowledge_store.prompt_block(),
                    previous=previous,
                    findings=findings_store.prompt_block(
-                       own=findings_store.own_reports(cat_id), figures=True),
+                       own=findings_store.own_reports(cat_id), figures=True,
+                       covers=_card_covers(cat, previous)),
                    house=await _house_prompt_block(),
                    clock=await asyncio.to_thread(_clock_style),
                    others=await asyncio.to_thread(_other_cards_block, cat_id))
