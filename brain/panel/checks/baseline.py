@@ -99,10 +99,7 @@ SPAN_CLASSES = frozenset({"duration", "timestamp", "date", "enum"})
 SPAN_UNITS = frozenset({"ms", "s", "min", "h", "d", "w"})
 # A print job's numbers are the job's, and so are a printer's heaters
 # (unusual every time it prints).
-PRINTER_PLATFORMS = frozenset({
-    "octoprint", "prusalink", "bambu_lab", "moonraker", "klipper",
-    "elegoo_printer", "anycubic_cloud", "creality_cloud", "duet3d",
-})
+PRINTER_PLATFORMS = devices.PRINTER_PLATFORMS
 JOB_WORDS = frozenset({"progress", "layer", "layers", "remaining",
                        "elapsed", "eta", "job"})
 # A setpoint is what somebody asked for, and it moves when they change it.
@@ -315,7 +312,7 @@ def eligible(house: House, eid: str, st: dict) -> bool:
     # one sensor under two different fixes is how a list stops being
     # read — the same rule `dev.unavailable` follows for a dead Z-Wave
     # node, and they share the question so they cannot disagree about it.
-    if devices.out_of_range(st, eid, house.world):
+    if devices.out_of_range(st, eid, house.world, house):
         return False
     if domain_of(eid) != "sensor":
         return False

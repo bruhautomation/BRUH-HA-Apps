@@ -784,7 +784,7 @@ def refused(kind: str, prev: dict, reason: str) -> dict:
 
 
 def _without_impossible(series: list, attrs: dict, eid: str,
-                        devices) -> tuple[list, dict | None]:
+                        devices, house=None) -> tuple[list, dict | None]:
     """The rows a baseline may learn from, and what was thrown away.
 
     A thermometer that read −150 °F overnight is broken, not cold, and a
@@ -800,7 +800,8 @@ def _without_impossible(series: list, attrs: dict, eid: str,
     for row in series:
         value = row.get("mean") if isinstance(row, dict) else None
         if (isinstance(value, (int, float)) and not isinstance(value, bool)
-                and devices.impossible_value(float(value), attrs, eid)):
+                and devices.impossible_value(float(value), attrs, eid,
+                                             house=house)):
             dropped.append(row)
         else:
             kept.append(row)
@@ -817,14 +818,18 @@ def _without_impossible(series: list, attrs: dict, eid: str,
 
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
-                entities: list | None = None) -> dict:
+                entities: list | None = None,
+                device_rows: list | None = None) -> dict:
     """Measure the house and write the store. Returns the payload.
 
     A fetch the recorder refused writes nothing: see `refused`. A house
     with no candidates still writes, because a fresh install with no
     sensors must not keep a stale store forever. `entities` is the entity
     registry, for `select`'s category filter; a pass whose registry did
-    not answer measures without it rather than not at all.
+    not answer measures without it rather than not at all. `device_rows`
+    is the device registry: with the entity registry it tells the range
+    check which readings are a printer's or a computer's, so a print bed
+    at 65 °C is learned rather than dropped as impossible.
     """
     now = time.time() if now is None else now
     tz, tz_name = house_timezone()
@@ -853,9 +858,16 @@ async def build(session, states: dict, now: float | None = None,
         from checks import devices as _devices  # noqa: PLC0415 — one range table
     except Exception:  # noqa: BLE001 — without it every reading is kept
         _devices = None
+    try:
+        from checks._util import House  # noqa: PLC0415 — the same lookups
+        _house = House({"entities": entities or [],
+                        "devices": device_rows or []})
+    except Exception:  # noqa: BLE001 — no context is the old answer
+        _house = None
     for eid, series in rows.items():
         attrs = ((states.get(eid) or {}).get("attributes") or {})
-        series, impossible = _without_impossible(series, attrs, eid, _devices)
+        series, impossible = _without_impossible(series, attrs, eid, _devices,
+                                                 _house)
         built = build_buckets(series, tz)
         if not built:
             continue
