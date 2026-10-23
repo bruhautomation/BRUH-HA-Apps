@@ -75,8 +75,9 @@ class TestTheIntegrationIsNamedAsTheHouseSeesIt(unittest.TestCase):
             entries=[]), NOW)
         rec = next(r for r in dig["records"] if r["kind"] == "log")
         rec["devices"] = ["dev-p1s"]
-        self.assertEqual(sre._plain_title(rec, dig),
-                         "Errors in the log about P1S printer")
+        self.assertEqual(
+            sre._plain_title(rec, dig),
+            "Errors in the log from the Bambu Lab integration about P1S printer")
         rec["devices"] = []
         self.assertEqual(sre._plain_title(rec, dig),
                          "Errors in the log from the Bambu Lab integration")

@@ -2,6 +2,32 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.6
+
+### Fixed
+
+- **A 3D printer's nozzle and bed, and a computer's processor, are no longer reported as impossible temperatures.** brAIn now reads which integration provides a sensor and the name of the device it is on, not only the sensor's own name, so a printer bed at 65 °C, a nozzle at 220 °C or a processor at 85 °C is a hot thing working normally. A room thermometer at 99 °C is still reported, and a hot printer bed is kept in its usual range rather than thrown away. (#373)
+- **BRUH Task Manager is not flagged for running with Protection mode off.** Its process view needs Protection mode off, and its own page says so before you turn it off, so brAIn no longer raises it as a problem. Every other add-on with Protection mode off now gets a finding of its own, so saying one is fine never hides another. (#377)
+
+## 3.8.5
+
+### Fixed
+
+- **A house whose weekdays start at different times gets a wake time.** Each day of the week is measured on its own, so the morning brief stops falling back to 07:00 when Mondays and Thursdays keep different hours. (#338)
+- **brAIn does not ask what the house already knows.** A guess whose answer is already a fact you stand behind, or that the registry settles (where a device is), is not asked. (#348)
+- **A failed integration setup says why, for each one.** Integrations that failed for the same reason are grouped under it (cannot reach the device, sign-in rejected, the service answering with an error), each with the one action that fits, and the integration's own words beside it. (#353)
+- **The overnight check names who still calls a missing device.** A finding about calls to an unavailable device lists the automations, scripts and scenes making them, with how many each, instead of "something you set up". (#352)
+- **The overnight check blames the right source.** A log line from a library is traced to the integration that uses it, and a line naming an address to the device at that address; a dashboard or the browser is blamed only for lines they wrote. (#350)
+- **Insight cards agree with the open findings about the same device.** A card no longer calls a device fine while a finding says it is not, and links the finding instead. (#354)
+- **Insight cards compare numbers a person knows.** Comparisons are like with like, in everyday units, with the real value beside them. (#351)
+- **A device a card names as offline is on the list too.** When a card says something has been unavailable for an hour or more and nothing filed it, a finding is filed with the card's own. (#339)
+
+## 3.8.4
+
+### Fixed
+
+- **A headless browser left running after the session that started it has ended is closed.** A Chromium a terminal or chat session opened for a screenshot (or brAIn's own panel pictures) went on using several percent of CPU after its session ended. One with no parent left is ended once it is five minutes old, checked at start and every two minutes; a browser whose session is still running is never touched, and a launch that fails or is cancelled closes the browser it started. (#355)
+
 ## 3.8.3
 
 ### Fixed

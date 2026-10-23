@@ -105,6 +105,17 @@ HIGH_CONFIDENCE_SHARE = 0.75
 
 WEEKDAY = "weekday"
 WEEKEND = "weekend"
+# One day of the week measured on its own (`_dow_shape`): a consistent
+# Tuesday is a Tuesday, whatever Mondays do. A day of the week accrues one
+# sample a week, so its floor is four of them, and with so few it has to
+# agree tightly — EVERY day of it within DOW_HALF_MIN of its middle, not a
+# median deviation: a median of five deviations calls a usual time in a
+# third of houses that stir anywhere between 05:00 and 11:00, where every
+# day within half an hour calls one in about one in a hundred.
+BY_DOW = "by_dow"
+MIN_DOW_DAYS = 4
+DOW_HALF_MIN = 30.0
+DOW_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 # Where one house day ends and the next begins, in minutes after local
 # midnight. See the module docstring for why it is a fixed hour.
@@ -324,6 +335,28 @@ def _shape(rows: list[dict], field: str) -> dict | None:
                            else "low")}
 
 
+def _dow_shape(rows: list[dict], field: str) -> dict | None:
+    """One day of the week's usual minute, or None.
+
+    Every day of it has to sit within `DOW_HALF_MIN` of the circular
+    median, because four or five days leave no room to trim odd ones the
+    way `_shape` does: a house that stirs anywhere gives no Tuesday either.
+    """
+    minutes = [int(r[field]) for r in rows if isinstance(r.get(field), int)]
+    if len(minutes) < MIN_DOW_DAYS:
+        return None
+    centre = circular_median(minutes)
+    if centre is None:
+        return None
+    widest = max(circular_distance(m, centre) for m in minutes)
+    if widest > DOW_HALF_MIN:
+        return None
+    return {"minute": round(centre, 1), "at": clock(centre),
+            "spread_min": round(circular_spread(minutes, centre), 1),
+            "days": len(minutes),
+            "usual_days": len(minutes), "confidence": "low"}
+
+
 def profile(payload: dict | None = None, path: str | None = None) -> dict:
     """When this house usually stirs and settles, weekdays and weekends apart.
 
@@ -340,7 +373,30 @@ def profile(payload: dict | None = None, path: str | None = None) -> dict:
                 if isinstance(r.get("dow"), int) and keep(r["dow"])]
         out[name] = {"wakes": _shape(part, "first"),
                      "settles": _shape(part, "last")}
+    by_dow = {}
+    for dow in range(7):
+        part = [r for r in rows if r.get("dow") == dow]
+        shape = {"wakes": _dow_shape(part, "first"),
+                 "settles": _dow_shape(part, "last")}
+        if shape["wakes"] or shape["settles"]:
+            by_dow[str(dow)] = shape
+    out[BY_DOW] = by_dow
     return out
+
+
+def _minute_for(payload: dict, day: dt.date, key: str) -> float | None:
+    """The usual minute for the kind of day ``day`` is: its own day of the
+    week where that is measured and the half of the week has no time or
+    one far from it (a Tuesday that is not like the other weekdays), else
+    the half's."""
+    part = payload.get(WEEKEND if day.weekday() >= 5 else WEEKDAY) or {}
+    half = (part.get(key) or {}).get("minute")
+    own = (((payload.get(BY_DOW) or {}).get(str(day.weekday())) or {})
+           .get(key) or {}).get("minute")
+    if own is not None and (half is None
+                            or circular_distance(own, half) > CORE_HALF_MIN):
+        return own
+    return half
 
 
 # A weekday arrives five times in seven, which is the whole reason the
@@ -410,6 +466,16 @@ def progress(payload: dict | None = None, path: str | None = None,
                      + house.plural(max(1, MIN_DAYS - weekends), "more day"))
         return house.progress(state=house.READY, summary=said + ".", **common)
 
+    by_dow = shape.get(BY_DOW) or {}
+    own = [(int(d), v["wakes"]) for d, v in sorted(by_dow.items())
+           if int(d) < 5 and v.get("wakes")]
+    if own:
+        # No one weekday time, but days of the week that each keep their
+        # own: the house is measured, one day at a time.
+        said = "Weekdays differ: " + ", ".join(
+            f"{DOW_NAMES[d]} about {w['at']}" for d, w in own)
+        return house.progress(state=house.READY, summary=said + ".", **common)
+
     if weekdays >= MIN_DAYS:
         # Enough days and no answer: this house stirs anywhere across the
         # morning, and a median of that would be a confident number over
@@ -434,9 +500,7 @@ def progress(payload: dict | None = None, path: str | None = None,
 
 def wake_minute(payload: dict, when: dt.datetime) -> float | None:
     """The usual first-activity minute for the kind of day `when` is."""
-    part = payload.get(WEEKEND if when.weekday() >= 5 else WEEKDAY) or {}
-    shape = part.get("wakes")
-    return shape["minute"] if shape else None
+    return _minute_for(payload, when.date(), "wakes")
 
 
 def settle_minute(payload: dict, when: dt.datetime) -> float | None:
@@ -446,14 +510,11 @@ def settle_minute(payload: dict, when: dt.datetime) -> float | None:
     on a Saturday the settle that matters is Friday night's, which is the
     day it was filed under, and the wake still to come is Saturday's.
     """
-    day = house_day(when)
-    part = payload.get(WEEKEND if day.weekday() >= 5 else WEEKDAY) or {}
-    shape = part.get("settles")
-    return shape["minute"] if shape else None
+    return _minute_for(payload, house_day(when), "settles")
 
 
 __all__ = [
-    "DAY_START_MIN", "KEEP_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY",
+    "BY_DOW", "DAY_START_MIN", "KEEP_DAYS", "MIN_DOW_DAYS", "MAX_SPREAD_MIN", "MINUTES_PER_DAY",
     "MIN_DAYS", "PERSON_CAUSES", "house_day",
     "PROGRESS_UNIT_S", "STORE", "WEEKDAY", "WEEKEND", "circular_distance",
     "circular_median",

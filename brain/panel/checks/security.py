@@ -287,33 +287,69 @@ def brain_posture(snap: dict, now: float) -> list[dict]:
 # sec.addon_unprotected — protection mode off
 # ---------------------------------------------------------------------------
 
+# BRUH add-ons whose own manifest asks for something the Supervisor grants
+# only with Protection mode off, and whose own page says so before the
+# owner turns it off. Task Manager's process view needs `host_pid`, which
+# takes effect only unprotected (`supervisor/docker/app.py`'s pid_mode),
+# so its Protection mode being off is the owner switching that view on,
+# not a fault. Matched by the slug's tail (the Supervisor puts the
+# repository's hash in front of it, and that hash differs per install)
+# AND the name, `devloop.siblings.spec_for`'s rule, and only while the
+# manifest still carries the need: an explicit `host_pid: false` is not
+# this add-on as it ships.
+UNPROTECTED_BY_DESIGN: tuple[dict, ...] = (
+    {"key": "bruh-task-manager", "name": "BRUH Task Manager",
+     "needs": "host_pid"},
+)
+
+
+def unprotected_by_design(addon: dict) -> bool:
+    slug = str(addon.get("slug") or "")
+    name = str(addon.get("name") or "").strip().lower()
+    for spec in UNPROTECTED_BY_DESIGN:
+        if not (slug == spec["key"] or slug.endswith("_" + spec["key"])):
+            continue
+        if name and name != spec["name"].lower():
+            continue
+        return addon.get(spec["needs"]) is not False
+    return False
+
+
+def unprotected_text(name: str) -> str:
+    """One row per add-on, under a text that names it: the store dedupes
+    and settles by text, so an answer about one add-on is about that one
+    and cannot hide another turned unprotected later."""
+    return f"{name} runs with Protection mode switched off"
+
+
 def addon_unprotected(snap: dict, now: float) -> list[dict]:
     """Installed add-ons the Supervisor says are running unprotected.
 
     `protected` comes off each add-on's own `/info` and is folded into its
     row by the collector. A row WITHOUT it — an `/info` that did not
     answer, or a snapshot from before the field was folded — is "I could
-    not look", never "unprotected", so only an explicit False fires.
+    not look", never "unprotected", so only an explicit False fires. An
+    add-on that needs it off by design (`UNPROTECTED_BY_DESIGN`) files
+    nothing.
     """
     addons = ((snap.get("supervisor") or {}).get("addons") or [])
-    hits = sorted(str(a.get("name") or a.get("slug") or "an add-on")
-                  for a in addons
-                  if isinstance(a, dict) and a.get("installed", True) is not False
-                  and a.get("protected") is False)
-    if not hits:
-        return []
+    names = sorted(str(a.get("name") or a.get("slug") or "An add-on")
+                   for a in addons
+                   if isinstance(a, dict) and a.get("installed", True) is not False
+                   and a.get("protected") is False
+                   and not unprotected_by_design(a))
     return [{
-        "text": "Some add-ons run with Protection mode switched off",
-        "detail": counted_names(hits)
-                  + ". Protection mode is what stops an add-on that asks for "
-                    "full access to the machine from getting it; with it off, "
-                    "that add-on can reach the host and every other add-on.",
-        "fix": "Settings > Add-ons > (the add-on) > Info: turn Protection mode "
-               "back on unless you know that add-on needs it off.",
+        "text": unprotected_text(name),
+        "detail": f"{name} has Protection mode switched off. Protection "
+                  "mode is what stops an add-on that asks for full access "
+                  "to the machine from getting it; with it off, this "
+                  "add-on can reach the host and every other add-on.",
+        "fix": f"Settings > Add-ons > {name} > Info: turn Protection mode "
+               "back on unless you know this add-on needs it off.",
         "severity": "info",
         "fixable": False,
         "entity_id": "",
-    }]
+    } for name in names]
 
 
 # ---------------------------------------------------------------------------

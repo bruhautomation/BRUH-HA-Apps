@@ -27,8 +27,8 @@ sys.path.insert(0, str(TESTS_DIR))
 
 import baselines  # noqa: E402
 import checks  # noqa: E402
-from checks import baseline as base_check  # noqa: E402
-from checks import devices  # noqa: E402
+import checks.baseline as base_check  # noqa: E402
+import checks.devices as devices  # noqa: E402
 from test_house_checks import NOW, house, iso  # noqa: E402
 
 EID = "sensor.heat_pump_compressor_temperature"
@@ -112,7 +112,8 @@ class TestTheNightIsKeptOutOfTheBaseline(unittest.IsolatedAsyncioTestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 payload = await baselines.build(
-                    None, {EID: coil(18)}, now=NOW, path=f"{tmp}/b.json")
+                    None, {EID: coil(18)}, now=NOW, path=f"{tmp}/b.json",
+                    ranges=devices)
         finally:
             baselines.fetch_hourly = old
         built = payload["entities"][EID]
