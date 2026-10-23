@@ -754,6 +754,13 @@ class TestWhatTheHookSendsAndSkips(unittest.TestCase):
         self.assertFalse(self.hook.reads_only(self.hook.MCP_PREFIX + "call_service",
                                               {"action": "search"}))
 
+    def test_asking_how_a_designed_part_is_doing_is_not_sent(self):
+        tool = self.hook.MCP_PREFIX + "bambu_design"
+        self.assertTrue(self.hook.reads_only(tool, {"action": "status"}))
+        for acting in ("create", "message", "print"):
+            self.assertFalse(self.hook.reads_only(tool, {"action": acting}), acting)
+        self.assertIn("bambu_design", self.hook.GATED_MCP)
+
     def test_a_task_carries_the_persons_words_apart_from_its_prompt(self):
         with patch.dict(os.environ, {"BRAIN_PERSON_WORDS": "  make the porch light warmer "}):
             self.assertEqual(self.hook.task_words(), ["make the porch light warmer"])

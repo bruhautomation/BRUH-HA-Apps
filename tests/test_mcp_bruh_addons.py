@@ -30,8 +30,13 @@ class FakeCore:
         self.online = ["Steve", ".EmmaPlays", "DadCraft42"]
         self.reachable = True
         self.missing = set()
+        self.services = ["light", "bruh_bambu", "bruh_minecraft"]
 
     def __call__(self, payload, timeout=15):
+        if payload["type"] == "get_services":
+            if self.services is None:
+                raise OSError("Home Assistant is not answering")
+            return {d: {"x": {}} for d in self.services}
         assert payload["type"] == "call_service", payload
         assert payload["return_response"] is True
         key = (payload["domain"], payload["service"])
@@ -57,6 +62,22 @@ class FakeCore:
             files = (["imports/Set/a.stl", "imports/Set/b.stl"] if "many" in url
                      else ["imports/3dbenchy.stl"])
             return {"response": {"job": {"state": "done", "files": files}}}
+        if key == ("bruh_bambu", "design_part"):
+            return {"response": {"part": "wall-hook-abc123", "name": "New part",
+                                 "version": None, "working": True, "started": True,
+                                 "sentence": "brAIn is thinking…"}}
+        if key == ("bruh_bambu", "design_status"):
+            return {"response": {"part": "wall-hook-abc123", "name": "Wall hook",
+                                 "version": 1, "built": True, "working": False,
+                                 "sentence": "Version 1 of Wall hook is built, 40 × 12 × 30 mm.",
+                                 "reply": "Here is your hook.", "questions": [],
+                                 "problem": "", "file": "designs/wall-hook-abc123/v1/hook.3mf",
+                                 "print": None, "size_mm": [40, 12, 30],
+                                 "state": "idle", "versions": 1, "brain": {"state": "ok"}}}
+        if key == ("bruh_bambu", "print_part"):
+            return {"response": {"sentence": "Slicing and sending version 1 on X1C.",
+                                 "job": {"id": "j1", "state": "running"},
+                                 "plan": {"material": "PLA"}}}
         if key[0] == "bruh_bambu":
             return {"response": {"printer": "X1C", "acknowledged": True}}
         if key[0] == "bruh_print":
@@ -255,7 +276,7 @@ class TestTheOtherCalls(Base):
                      "minecraft_world", "minecraft_command", "minecraft_server",
                      "minecraft_addons", "label_printer_status", "print_label",
                      "bright_status", "bright_show", "bambu_status", "bambu_print",
-                     "bambu_control", "bambu_slice"):
+                     "bambu_control", "bambu_slice", "bambu_design"):
             self.assertIn(name, names)
             self.assertTrue(callable(getattr(m, m.TOOL_IMPLEMENTATIONS[name])))
 
@@ -287,20 +308,37 @@ class TestBambu(Base):
         m.bambu_control("home")
         self.assertEqual(self.core.calls[-1], (("bruh_bambu", "send_gcode"), {"gcode": "G28"}))
 
-    def test_voice_may_pause_and_may_not_start_stop_slice_or_send_gcode(self):
+    def test_voice_may_start_and_pause_and_may_not_stop_slice_or_send_gcode(self):
+        # The owner's rule since brAIn 3.9: voice may design a part and start
+        # a print ("print it"), and still may not stop one, slice or send
+        # G-code — stopping cannot be undone and G-code is anything at all.
         self.voice()
         self.assertTrue(m.bambu_print("pause")["done"])
         self.assertTrue(m.bambu_control("light", value="on")["done"])
+        self.assertTrue(m.bambu_print("start", file="sliced/benchy.gcode.3mf")["done"])
+        self.assertEqual(self.core.calls[-1][0], ("bruh_bambu", "print_file"))
         before = len(self.core.calls)
-        for refused in (lambda: m.bambu_print("start", file="a.3mf"),
-                        lambda: m.bambu_print("stop"),
+        for refused in (lambda: m.bambu_print("stop"),
                         lambda: m.bambu_control("gcode", value="G28"),
                         lambda: m.bambu_slice("a.3mf")):
             self.assertIn("administration action", refused()["error"])
         self.assertEqual(len(self.core.calls), before)
         # And the generic route is held to the same split.
-        for service in ("print_file", "stop_print", "send_gcode", "slice_file"):
+        for service in ("stop_print", "send_gcode", "slice_file", "open_in_studio"):
             self.assertIn(("bruh_bambu", service), m.VOICE_ADMIN_SERVICES)
+        for service in ("print_file", "print_part", "design_part", "design_status"):
+            self.assertNotIn(("bruh_bambu", service), m.VOICE_ADMIN_SERVICES)
+        got = m.call_service("bruh_bambu", "stop_print", {}, return_response=True)
+        self.assertIn("administration action", got["error"])
+        got = m.call_service("bruh_bambu", "print_file", {"file": "a.3mf"},
+                             return_response=True)
+        self.assertNotIn("error", got)
+
+    def test_voice_may_not_start_a_print_from_a_link(self):
+        self.voice()
+        got = m.bambu_print("start", url="https://www.printables.com/model/3161-3d-benchy")
+        self.assertIn("administration action", got["error"])
+        self.assertNotIn(("bruh_bambu", "import_url"), [c[0] for c in self.core.calls])
 
     def test_a_link_is_imported_then_printed(self):
         got = m.bambu_print("start", printer="X1C",
@@ -321,8 +359,127 @@ class TestBambu(Base):
         self.assertIn(("bruh_bambu", "import_url"), m.VOICE_ADMIN_SERVICES)
 
     def test_the_acting_tools_are_kept_off_an_approved_change(self):
-        for name in ("bambu_print", "bambu_control", "bambu_slice"):
+        for name in ("bambu_print", "bambu_control", "bambu_slice", "bambu_design"):
             self.assertIn(name, m.CONTRACT_REFUSED_TOOLS)
+
+
+class TestBambuDesign(Base):
+    """bambu_design: the Design tab's conversation and its Slice and print,
+    through BRUH Bambu Studio's design_part, design_status and print_part."""
+
+    def call(self, **args):
+        return m.handle_tool_call("bambu_design", args)
+
+    def test_create_starts_a_design_and_says_how_to_follow_it(self):
+        got = self.call(action="create", description="a 4 cm wall hook", name="Wall hook")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "design_part"),
+                                               {"description": "a 4 cm wall hook",
+                                                "name": "Wall hook"}))
+        self.assertEqual(got["part"], "wall-hook-abc123")
+        self.assertIn("status", got["next"])
+        self.assertIn("error", self.call(action="create"))
+
+    def test_message_continues_a_part(self):
+        self.call(action="message", part="Wall hook", message="make it 6 cm")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "design_part"),
+                                               {"part": "Wall hook", "message": "make it 6 cm"}))
+        self.assertIn("error", self.call(action="message", part="Wall hook"))
+
+    def test_status_reads_one_part_or_all(self):
+        got = self.call(action="status", part="wall-hook-abc123")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "design_status"),
+                                               {"part": "wall-hook-abc123"}))
+        self.assertTrue(got["built"])
+        self.assertIn("print", got["next"])
+        self.call(action="status")
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "design_status"), {}))
+
+    def test_print_goes_to_print_part(self):
+        got = self.call(action="print", part="wall-hook-abc123", printer="X1C",
+                        copies=2, slot="0", settings={"infill_density": 25})
+        self.assertEqual(self.core.calls[-1], (("bruh_bambu", "print_part"), {
+            "part": "wall-hook-abc123", "printer": "X1C", "copies": 2, "slot": 0,
+            "settings": {"infill_density": 25}}))
+        self.assertIn("Slicing and sending", got["sentence"])
+        self.assertIn("error", self.call(action="print"))
+
+    def test_a_voice_turn_may_design_and_print(self):
+        self.voice()
+        names = {t["name"] for t in m.tools_for_channel()}
+        self.assertIn("bambu_design", names)
+        self.assertNotIn("error", self.call(action="create", description="a wall hook"))
+        self.assertNotIn("error", self.call(action="status", part="wall-hook-abc123"))
+        self.assertNotIn("error", self.call(action="print", part="wall-hook-abc123"))
+        self.assertEqual([c[0][1] for c in self.core.calls],
+                         ["design_part", "design_status", "print_part"])
+
+    def test_a_voice_turn_prints_a_bounded_number(self):
+        self.voice()
+        got = self.call(action="print", part="wall-hook-abc123", copies=40)
+        self.assertIn(str(m.BAMBU_VOICE_MAX_COPIES), got["error"])
+        self.assertEqual(self.core.calls, [])
+        self.call(action="print", part="wall-hook-abc123", copies=m.BAMBU_VOICE_MAX_COPIES)
+        self.assertEqual(self.core.calls[-1][1]["copies"], m.BAMBU_VOICE_MAX_COPIES)
+
+    def test_a_blocked_service_still_blocks_it(self):
+        m.DENIED_SERVICES = ["bruh_bambu.print_part"]
+        got = self.call(action="print", part="wall-hook-abc123")
+        self.assertIn("error", got)
+        self.assertEqual(self.core.calls, [])
+
+    def test_an_add_on_not_installed_says_so(self):
+        self.core.missing = {("bruh_bambu", "design_part")}
+        got = self.call(action="create", description="a hook")
+        self.assertIn("BRUH Bambu Studio", got["error"])
+
+    def test_it_is_an_acting_tool_everywhere_acting_tools_are_listed(self):
+        self.assertIn("bambu_design", m.CONTRACT_REFUSED_TOOLS)
+        self.assertIn("bambu_design", m.ALWAYS_LOAD_TOOLS)
+
+
+class TestOnlyWhenBambuIsInstalled(Base):
+    """The Bambu tools are listed only on a house whose Core has the
+    bruh_bambu integration's services."""
+
+    BAMBU = {"bambu_status", "bambu_print", "bambu_control", "bambu_slice", "bambu_design"}
+
+    def setUp(self):
+        super().setUp()
+        for p in (patch.object(m, "SUPERVISOR_TOKEN", "token"),
+                  patch.dict(m._SERVICE_DOMAINS, {"at": 0.0, "domains": None})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def listed(self):
+        m._SERVICE_DOMAINS["at"] = 0.0
+        return {t["name"] for t in m.tools_for_channel()}
+
+    def test_a_house_without_it_is_not_offered_them(self):
+        self.core.services = ["light", "bruh_minecraft"]
+        names = self.listed()
+        self.assertEqual(names & self.BAMBU, set())
+        self.assertIn("minecraft_status", names)
+        self.voice()
+        self.assertEqual(self.listed() & self.BAMBU, set())
+
+    def test_a_house_with_it_is(self):
+        self.assertEqual(self.listed() & self.BAMBU, self.BAMBU)
+        self.voice()
+        self.assertEqual(self.listed() & self.BAMBU, self.BAMBU)
+
+    def test_a_core_that_could_not_be_asked_lists_them(self):
+        # "I could not ask" is not "it is not there": the call itself says
+        # when the integration is missing.
+        self.core.services = None
+        self.assertEqual(self.listed() & self.BAMBU, self.BAMBU)
+
+    def test_the_answer_is_cached_briefly(self):
+        self.listed()
+        asked = len(self.core.calls)
+        self.core.services = ["light"]
+        names = {t["name"] for t in m.tools_for_channel()}
+        self.assertEqual(names & self.BAMBU, self.BAMBU)
+        self.assertEqual(len(self.core.calls), asked)
 
 
 if __name__ == "__main__":
