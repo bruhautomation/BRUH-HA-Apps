@@ -776,7 +776,10 @@ async def _addon_details(session, addons: list) -> list:
                               # False is protection mode off, and a row
                               # without the key is "I could not look".
                               "protected", "full_access", "docker_api",
-                              "host_network")
+                              "host_network",
+                              # A need only Protection mode off grants
+                              # (`security.UNPROTECTED_BY_DESIGN`).
+                              "host_pid")
                              if k in extra}}
         out.append(row)
     return out
