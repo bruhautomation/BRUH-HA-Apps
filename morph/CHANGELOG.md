@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.1.1
+
+### Added
+
+- **Two dashboard settings for a calmer page.** `room_marks: false` in dashboard.yaml takes the door and motion chips and the marks off every room's title line. `night_dim: true` dims the rooms gently at night; without it, night no longer dims anything. (#343, #347)
+
+### Fixed
+
+- **Suggestions can be closed again.** Several suggestions made in one pass could share an id, so Not now, No and Do it on one of them changed nothing. Every suggestion now has its own id, a file with duplicates is repaired when it is read, an answer closes the suggestion and withdraws its card in brAIn, and a "fix the card code" suggestion closes itself once that card loads cleanly. (#331)
+- **A broken card file is a suggestion again, not a fault in Morph.** A card file that failed to load was filed as a fault in Morph's own code because its name was no longer read off the message.
+- **One room that fails to draw no longer blanks the page.** Each room is built and drawn on its own; a room that throws says "Morph could not draw this room" and the rest of the page draws. The fault is reported once. (#344)
+- **A room whose area id is a word like "constructor" no longer stops the page working out what matters.** (#332)
+- **A dashboard made before 1.0 that has a card called "- Bread Stretch" reads right** without a rebuild. (#357)
+- **The learning pass knows when the use log is missing.** A digest showing no use at all now says whether the log was never written, could not be read, or nobody used anything, and the learning pass does not suggest hiding cards on a missing log. (#361)
+- Two cards in one room are never given the same short name (already fixed in 0.2.1, now held by a test). (#364)
+
 ## 1.1.0
 
 ### Changed
