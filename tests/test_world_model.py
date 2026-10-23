@@ -96,7 +96,11 @@ def dutch_house() -> dict:
             {"entity_id": "sensor.buiten_temperatuur", "platform": "netatmo"},
             {"entity_id": "sensor.woonkamer_temperatuur", "platform": "zha",
              "area_id": "woonkamer"},
-            {"entity_id": "sensor.spuitmond", "platform": "octoprint"},
+            # An MQTT bridge, not a printer integration: a printer's own
+            # platform now answers before any word or reading does
+            # (`devices.HOT_PLATFORMS`), and this house is about the case
+            # where nothing but a reading can.
+            {"entity_id": "sensor.spuitmond", "platform": "mqtt"},
             {"entity_id": "sensor.wasmachine_vermogen", "platform": "shelly"},
             {"entity_id": "sensor.telefoon_batterij", "platform": "mobile_app",
              "entity_category": "diagnostic", "device_id": "d_phone"},
