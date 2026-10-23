@@ -5535,6 +5535,8 @@ async def _generate(insight_id: str) -> None:
         # no id here, and nothing downstream pretends otherwise.
         run_id = capture.run_id_from(result.get("meta") or {})
         model_findings = _model_findings(obj.get("findings"))
+        # A device the card names as offline is a finding too, or links one.
+        model_findings += await _card_device_faults(obj, model_findings)
         # Gated like every other producer. This run read the house — and
         # it was asked to write a card, not to decide whether what it
         # noticed on the way past belongs on a list of decisions, which
@@ -8677,6 +8679,107 @@ def _open_rows_for_verdict(source: str) -> list[dict]:
     return out
 
 
+_NAMED_PATTERN: list = [None, None, {}]
+
+
+def _named_entities(texts: list[str]) -> list[str]:
+    """The entities ``texts`` name by the name they go by (`_NAMES`): names
+    of two words or more, whole words, longest first, so "Hall light" is
+    not read inside "Hall light switch" and a room's one word names
+    nothing."""
+    key = (len(_NAMES), tuple(list(_NAMES)[:8]))
+    if _NAMED_PATTERN[0] != key:
+        by_name: dict[str, str] = {}
+        for eid, row in _NAMES.items():
+            name = str((row or {}).get("name") or "").strip()
+            if len(name.split()) >= 2 and len(name) >= 6:
+                by_name.setdefault(name.lower(), eid)
+        names = sorted(by_name, key=len, reverse=True)
+        _NAMED_PATTERN[:] = [key, re.compile(
+            r"(?<![\w])(" + "|".join(re.escape(n) for n in names) + r")(?![\w])",
+            re.I) if names else None, by_name]
+    pattern, by_name = _NAMED_PATTERN[1], _NAMED_PATTERN[2]
+    out: list[str] = []
+    if pattern is None:
+        return out
+    for text in texts:
+        for m in pattern.finditer(text or ""):
+            eid = by_name.get(m.group(1).lower())
+            if eid and eid not in out:
+                out.append(eid)
+    return out
+
+
+async def _card_states() -> dict:
+    """Home Assistant's states now, ``{}`` when it does not answer: what
+    `_card_device_faults` reads a card's devices against."""
+    import aiohttp  # noqa: PLC0415
+    import ha_data  # noqa: PLC0415
+    try:
+        async with aiohttp.ClientSession() as session:
+            raw = await ha_data._rest_get(session, "/states", timeout=30)
+    except Exception as exc:  # noqa: BLE001 — could not look files nothing
+        log.debug("card states unread: %s", exc)
+        return {}
+    return {s["entity_id"]: s for s in raw or []
+            if isinstance(s, dict) and s.get("entity_id")}
+
+
+# How long a device the card names has to have been unavailable before the
+# card files it: a reboot is not a fault.
+CARD_FAULT_MIN_S = 3600
+CARD_FAULT_FIX = ("Check that it has power and is within reach of the hub "
+                  "or Wi-Fi it uses, then reload its integration in Settings "
+                  "> Devices & services.")
+
+
+async def _card_device_faults(obj: dict, filed: list[dict]) -> list[dict]:
+    """Findings for the devices a card names that are offline and on no
+    list yet.
+
+    A card that says a lock has been offline since Saturday is a card
+    about a fault the Findings tab never heard of. Every entity the card
+    names (by id or by name) that Home Assistant reports unavailable for
+    at least `CARD_FAULT_MIN_S` either has a live finding already — the
+    card links it, `_card_entities` — or gets one here, filed with the
+    card's own findings through `triage.gate`. Never a reading, never
+    something the card's reply already filed.
+    """
+    texts = [str(obj.get("title") or ""), str(obj.get("summary") or "")]
+    for h in obj.get("highlights") or []:
+        if isinstance(h, dict):
+            texts += [str(h.get(k) or "") for k in ("label", "value", "delta")]
+    named = _card_entities({"title": texts[0], "summary": " ".join(texts[1:])})
+    if not named:
+        return []
+    states = await _card_states()
+    if not states:
+        return []
+    covered = {str(f.get("entity_id") or "") for f in filed}
+    covered |= {str(f.get("entity_id") or "")
+                for f in findings_store.list_all("live")}
+    now = time.time()
+    out = []
+    for eid in named:
+        st = states.get(eid) or {}
+        if eid in covered or st.get("state") != "unavailable":
+            continue
+        since = checks._util.parse_ts(st.get("last_changed"))
+        if since is None or now - since < CARD_FAULT_MIN_S:
+            continue
+        name = (_NAMES.get(eid) or {}).get("name") or eid
+        day = now - since >= 86400
+        out.append({
+            "text": (f"{name} has been unavailable for more than a day" if day
+                     else f"{name} is unavailable"),
+            "detail": ("Unavailable since "
+                       + time.strftime("%a %d %b %H:%M", time.localtime(since))
+                       + "."),
+            "fix": CARD_FAULT_FIX, "severity": "serious", "fixable": False,
+            "entity_id": eid})
+    return out
+
+
 def _card_covers(cat: dict, previous: dict | None) -> dict:
     """What a card is about, for the live rows its prompt shows first
     (`findings_store.prompt_block`'s ``covers``): its domains, its device
@@ -8707,6 +8810,11 @@ def _card_entities(insight: dict) -> list[str]:
     # The live list was validated when the card was written; it stands.
     out = [e for e in insight.get("live") or []
            if isinstance(e, str) and facts_store.entity_shaped(e)]
+    # And what it names by name, which is how a card is told to name
+    # things: a lock the card calls "Front door lock" is the lock.
+    for eid in _named_entities(texts):
+        if eid not in out:
+            out.append(eid)
     known = _NAMES
     for text in texts:
         for m in _ENTITY_IN_TEXT_RE.finditer(text):
