@@ -808,6 +808,63 @@ def battery_low(snap: dict, now: float) -> list[dict]:
 # dev.implausible — a reading no sensor should give
 # ---------------------------------------------------------------------------
 
+# **A heater's gate lifts the ceiling, never the floor.** The hot-sensor
+# gate exists because a nozzle or a boiler pipe reads far above room air;
+# nothing in a house reads below the coldest air on earth, and an outdoor
+# heat-pump thermometer named for its compressor read −150 °F overnight
+# while the house's outdoor reference read 54 °F (#337). With the whole
+# range lifted, nothing called that impossible, the baseline learned the
+# night as normal and the morning's +18 °F was filed as unusual. So the
+# cold floor holds for every temperature — a few degrees below the lowest
+# air temperature anywhere people live — and only cold storage (a freezer,
+# a dewar, a cryogenic store, whose name says so) is allowed below it,
+# down to what liquid nitrogen reaches.
+COLD_FLOOR = {"°C": -55.0, "°F": -67.0}
+CRYO_FLOOR = {"°C": -200.0, "°F": -328.0}
+_COLD_STORAGE_WORDS = frozenset({
+    "freezer", "freezers", "deepfreeze", "cryo", "cryogenic", "cryostat",
+    "ult", "nitrogen", "ln2", "dewar"})
+# An impossible reading the nightly baseline pass threw away is still the
+# sensor's fault after it starts reading sanely again; reported for this
+# long after the last one, then left to the next night.
+IMPOSSIBLE_RECENT_DAYS = 2.0
+
+
+def bounds_for(attrs: dict, entity_id: str = "", world=None
+               ) -> tuple[float, float] | None:
+    """The physical range a reading of this kind can take, or None.
+
+    Shared by `dev.implausible`, `base.unusual` (through `out_of_range`)
+    and the nightly baseline pass, which drops what falls outside it so a
+    broken night never becomes a normal one.
+    """
+    attrs = attrs or {}
+    klass = attrs.get("device_class")
+    unit = attrs.get("unit_of_measurement")
+    bounds = _RANGES.get((klass, unit))
+    if klass != "temperature" or not bounds:
+        return bounds
+    name = attrs.get("friendly_name") or ""
+    low, high = bounds
+    # A heater's temperature is not an impossible temperature. The upper
+    # bound is an ambient one and this is the only thing standing between
+    # it and every oven, kettle, boiler and print head in the house.
+    if measures_something_hot(entity_id, name, world):
+        low, high = COLD_FLOOR.get(unit, low), float("inf")
+    if _words(entity_id, name) & _COLD_STORAGE_WORDS:
+        low = CRYO_FLOOR.get(unit, low)
+    return low, high
+
+
+def impossible_value(value: float | None, attrs: dict, entity_id: str = "",
+                     world=None) -> bool:
+    """True when ``value`` is outside what this kind of sensor can read."""
+    bounds = bounds_for(attrs, entity_id, world)
+    if not bounds or value is None:
+        return False
+    return not bounds[0] <= value <= bounds[1]
+
+
 def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
     """True when a reading is outside what its kind of sensor can produce.
 
@@ -822,49 +879,83 @@ def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
     and an id given is one more place to find a word like `nozzle`.
     """
     attrs = (state or {}).get("attributes") or {}
-    bounds = _RANGES.get((attrs.get("device_class"),
-                          attrs.get("unit_of_measurement")))
-    value = num((state or {}).get("state"))
-    if not bounds or value is None:
-        return False
-    # A heater's temperature is not an impossible temperature. The bound
-    # is an ambient one and this is the only thing standing between it
-    # and every oven, kettle, boiler and print head in the house.
-    if (attrs.get("device_class") == "temperature"
-            and measures_something_hot(entity_id,
-                                       attrs.get("friendly_name") or "",
-                                       world)):
-        return False
-    return not bounds[0] <= value <= bounds[1]
+    return impossible_value(num((state or {}).get("state")), attrs,
+                            entity_id, world)
+
+
+def recently_impossible(baseline: dict | None, now: float) -> dict | None:
+    """What the nightly pass threw away as impossible for this sensor, when
+    the last of it was inside `IMPOSSIBLE_RECENT_DAYS`, or None."""
+    seen = (baseline or {}).get("impossible") if isinstance(
+        baseline, dict) else None
+    if not isinstance(seen, dict):
+        return None
+    last = seen.get("last")
+    if not isinstance(last, (int, float)) or isinstance(last, bool):
+        return None
+    if now - float(last) > IMPOSSIBLE_RECENT_DAYS * 86400:
+        return None
+    return seen
+
+
+def _range_said(key: tuple, bounds: tuple[float, float]) -> str:
+    lo, hi = bounds
+    if hi == float("inf"):
+        return (f"a {key[0]} sensor cannot read below "
+                f"{numfmt.quantity(lo, key[1])}")
+    return (f"a {key[0]} sensor cannot read outside {numfmt.number(lo)}–"
+            f"{numfmt.quantity(hi, key[1])}")
+
+
+def _outside_said(house: House, attrs: dict) -> str:
+    if attrs.get("device_class") != "temperature":
+        return ""
+    from .baseline import outdoor_reading  # noqa: PLC0415 — it imports us
+    said = outdoor_reading(house, "temperature")
+    return f" For comparison, {said}." if said else ""
+
+
+IMPLAUSIBLE_FIX = ("The sensor is likely faulty or misconfigured. Check its "
+                   "wiring or pairing, and exclude it from automations until "
+                   "it reads sanely.")
 
 
 def implausible(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    stored = (snap.get("baselines") or {}).get("entities") or {}
     out = []
     for eid, st in _live_hardware(house):
         attrs = st.get("attributes") or {}
         key = (attrs.get("device_class"), attrs.get("unit_of_measurement"))
-        bounds = _RANGES.get(key)
+        bounds = bounds_for(attrs, eid, house.world)
         if not bounds:
             continue
         value = num(st.get("state"))
         if value is None:
             continue
-        lo, hi = bounds
-        if not out_of_range(st, eid, house.world):
-            continue
+        if out_of_range(st, eid, house.world):
+            detail = (f"{numfmt.quantity(value, key[1])} as of "
+                      f"{when(st.get('last_updated'))}; "
+                      f"{_range_said(key, bounds)}.")
+        else:
+            # Reading sanely now, after a night it could not have read:
+            # still the sensor, and the night was kept out of its baseline.
+            seen = recently_impossible(stored.get(eid), now)
+            lowest = num((seen or {}).get("lowest"))
+            if lowest is None:
+                continue
+            if lowest >= bounds[0]:
+                lowest = num(seen.get("highest")) or lowest
+            detail = (f"It read {numfmt.quantity(lowest, key[1])} as "
+                      f"recently as {when(seen.get('last'))} and reads "
+                      f"{numfmt.quantity(value, key[1])} now; "
+                      f"{_range_said(key, bounds)}.")
         if not house.should_report(eid, "dev.implausible"):
             continue
         out.append({
             "text": f"{house.name(eid)} is reporting an impossible value",
-            "detail": f"{numfmt.quantity(value, key[1])} as of "
-                      f"{when(st.get('last_updated'))}; a {key[0]} sensor "
-                      f"cannot read outside {numfmt.number(lo)}–"
-                      f"{numfmt.quantity(hi, key[1])}."
-                      + house.placed(eid),
-            "fix": "The sensor is faulty or misconfigured. Check its wiring "
-                   "or pairing, and exclude it from automations until it "
-                   "reads sanely.",
+            "detail": detail + _outside_said(house, attrs) + house.placed(eid),
+            "fix": IMPLAUSIBLE_FIX,
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,
