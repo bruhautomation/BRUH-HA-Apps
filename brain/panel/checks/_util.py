@@ -586,6 +586,8 @@ class House:
                 if (domain not in self.known_domains or domain == "notify"
                         or ref in services):
                     continue
+                if not _could_be_an_id(domain, obj_id):
+                    continue
                 if spans and _BUILT_ANYWHERE.match(text, m.end()):
                     continue
                 if spans and _inside(m.start(), spans) and _not_a_ref(
@@ -641,7 +643,27 @@ def _loop_vars(text: str) -> frozenset[str]:
 def _not_a_ref(text: str, m: re.Match, loop_vars: frozenset[str]) -> bool:
     if m.group(1) in loop_vars:
         return True
+    if _REGEX_ARG.search(text, 0, m.start()):
+        return True
     return bool(_GLUED_OR_CALLED.match(text, m.end()))
+
+
+# Home Assistant never names an entity whose domain or object id starts or
+# ends with `_` or holds `__` (`valid_entity_id`), so a token shaped like
+# that is a piece of an id wherever it sits: `'switch.pump_zone_' ~ n`
+# with the prefix kept in a `{% set %}` or a `variables:` value, where the
+# glue is nowhere near it (#336).
+def _could_be_an_id(domain: str, obj_id: str) -> bool:
+    return not any(part.startswith("_") or part.endswith("_") or "__" in part
+                   for part in (domain, obj_id))
+
+
+# A regex filter's or test's pattern names no entity, whatever it looks
+# like: `regex_replace('switch.pump_zone_', '')`, `is match('light.hall')`,
+# `select('search', 'light.hall')`. Asked of the text up to the token.
+_REGEX_ARG = re.compile(
+    r"""(?:\b(?:regex_[a-z_]+|match|search)\s*\(\s*|"""
+    r"""['"](?:regex_[a-z_]+|match|search)['"]\s*,\s*)['"]\Z""")
 
 
 # Keys whose string value names a service, a trigger kind or a platform —
