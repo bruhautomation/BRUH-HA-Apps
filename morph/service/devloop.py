@@ -166,6 +166,11 @@ def withdraw(fp: str) -> dict:
 
 _DEBUG = re.compile(r"^\s*\[?DEBUG\b")
 _CARD_LOAD = re.compile(r"^Card code (\S+?) failed to load: (.*)$", re.S)
+# What the panel sends now (util.cardFailure): the cause alone in the
+# message, so five cards failing for one reason are one fault, and the
+# file's name in front of the detail.
+_CARD_LOAD_NOW = re.compile(r"^Card code failed to load: (.*)$", re.S)
+_CARD_NAME = re.compile(r"^([\w.-]+\.m?js): ")
 
 
 def house_card(row: dict) -> bool:
@@ -178,11 +183,23 @@ def house_card(row: dict) -> bool:
     brAIn to fix the file. Answers whether the row was the house's."""
     if str(row.get("kind") or "") != "card" or str(row.get("card_type") or "") != "custom":
         return False
-    m = _CARD_LOAD.match(str(row.get("message") or "").strip())
-    if not m or not (paths.CARDS_DIR / m.group(1)).is_file():
+    message = str(row.get("message") or "").strip()
+    m = _CARD_LOAD.match(message)
+    if m:
+        name, error = m.group(1), m.group(2)
+    else:
+        # The panel stopped putting the name in the message, and this match
+        # went on expecting it, so every broken house card was filed as a
+        # fault in Morph's code again.
+        now_m = _CARD_LOAD_NOW.match(message)
+        named = _CARD_NAME.match(str(row.get("detail") or ""))
+        if not now_m or not named:
+            return False
+        name, error = named.group(1), now_m.group(1)
+    if not (paths.CARDS_DIR / name).is_file():
         return False
     import learning  # here, not at the top: learning reaches devloop lazily too
-    learning.house_card_broken(m.group(1), m.group(2), now=float(row.get("ts") or 0) or None)
+    learning.house_card_broken(name, error, now=float(row.get("ts") or 0) or None)
     return True
 
 
@@ -192,6 +209,12 @@ def ingest_errors() -> int:
     rows = paths.read_jsonl(paths.ERRORS, limit=2000)
     for r in rows:
         kind = str(r.get("kind") or "panel")
+        if kind == "loaded":
+            # A card file with a "Fix the card code" suggestion open loaded
+            # cleanly: news for the suggestion, never a fault.
+            import learning
+            learning.house_card_loaded(str(r.get("message") or ""), now=float(r.get("ts") or 0) or None)
+            continue
         if house_card(r):
             continue
 

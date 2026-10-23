@@ -62,6 +62,7 @@ def empty() -> dict:
 
 
 UNREADABLE = "dashboard.yaml could not be read"
+LEADING_SEPARATORS = " \t-\u2013\u2014:|\u00b7"
 
 
 def clip_lines(text: str, limit: int, rest: str) -> str:
@@ -161,6 +162,11 @@ def _card(raw, problems: list[str], where: str, extra: tuple = ()) -> dict | Non
     for key in ("name", "icon", "unit"):
         if raw.get(key):
             card[key] = str(raw[key])[:80]
+    if card.get("name"):
+        # A dashboard generated before the separator went with the room
+        # (#357) carries "- Bread Stretch" as a card's name; nobody means a
+        # name to open on a dash, so the file reads right without a rebuild.
+        card["name"] = card["name"].lstrip(LEADING_SEPARATORS) or card["name"]
     if raw.get("span") is not None:
         try:
             card["span"] = max(1, min(4, int(raw["span"])))
@@ -193,6 +199,13 @@ def normalize(raw) -> tuple[dict, list[str]]:
     out["scenes"] = _entities(raw.get("scenes"))
     if isinstance(raw.get("theme"), str) and raw["theme"] in ("auto", "dark", "light", "medium"):
         out["theme"] = raw["theme"]
+    # Kept only where somebody set them, so a house that never did gets no
+    # new line in its file: night_dim (off: night does not dim the page,
+    # #343) and room_marks (on: a room's title carries its door and motion
+    # marks, #347).
+    for flag in ("night_dim", "room_marks"):
+        if flag in raw:
+            out[flag] = bool(raw[flag])
 
     used: set[str] = set()
     # Types a copy of cards.js in /config/morph/frontend adds are Morph's own

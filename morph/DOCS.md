@@ -102,10 +102,13 @@ right now, and it can always say why.
   that line for **Keep it here** and **Not this**.
 - **Rooms.** A room with something on, moving or unusual is open; a quiet
   room folds to one line with its name, its scenes and anything open. Tap a
-  room's name to open it. A room where somebody is asleep is dimmed.
+  room's name to open it. A room where somebody is asleep is dimmed. The
+  door and motion marks at the right of a room's title go with
+  `room_marks: false` in `dashboard.yaml`.
 - **Night, away and still.** With the alarm armed for the night (or
-  everyone asleep) the page dims and shows only what is wrong, usually
-  nothing: *Everything is at rest.* With everybody away it says so. A
+  everyone asleep) the rooms fold and the page shows only what is wrong,
+  usually nothing: *Everything is at rest.* It is not dimmed unless
+  `night_dim: true` is in `dashboard.yaml`. With everybody away it says so. A
   family tablet left untouched settles into a page readable across the room.
 - **Then.** Slide Coming up into the past and every card shows the house as
   it was at that moment; dots behind the line are what happened.
