@@ -23,13 +23,12 @@ from test_house_checks import NOW, house  # noqa: E402
 try:
     from zoneinfo import ZoneInfo
     NEW_YORK = ZoneInfo("America/New_York")
-except Exception:  # noqa: BLE001 — no tz data on this machine
-    NEW_YORK = None
+except Exception:  # noqa: BLE001 — no tz data: New York is UTC-4 on these dates
+    NEW_YORK = dt.timezone(dt.timedelta(hours=-4))
 
 CHANGED = "2026-10-21T00:40:00+00:00"
 
 
-@unittest.skipIf(NEW_YORK is None, "no timezone data")
 class TestADateIsTheHouses(unittest.TestCase):
     def setUp(self):
         self._old = baselines.house_timezone
