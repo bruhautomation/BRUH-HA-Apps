@@ -78,6 +78,24 @@ FLAT_MAD_FRACTION = 0.0
 # it has stepped at least this many times. Fewer is an outlier, not a
 # step size, and one outlier may not set the band.
 MIN_STEP_MOVES = 3
+# A reading that only ever takes whole values — a count of events that
+# resets each evening, a setpoint, a humidity sensor that reports integers
+# — cannot move by less than one of its steps. Its hourly means are mostly
+# exactly whole, and the few that are not are hours it stepped in partway
+# through (1.0167, 0.9833), so a step size measured off those came out at
+# 0.02 and a reading of 2 against a usual 1 was "50 spreads" out (#349).
+# Past this share of whole-valued readings, with at least two different
+# whole values among them, the smallest gap between those values is the
+# floor under every spread it has.
+WHOLE_SHARE = 0.5
+# An hour of the week has at most four samples in a four-week window, and
+# four samples that happened to agree say little about how far it strays:
+# an hour at 0.55 between neighbours at 7.7 and 9.6 made almost any reading
+# look far out (#335). An hour whose spread is under this fraction of the
+# hours either side of it borrows theirs; one with no neighbour measured
+# borrows the whole history's.
+NEIGHBOUR_HOURS = 2
+NEIGHBOUR_RATIO = 1 / 3
 # Past this a baseline describes a house that may have changed.
 STALE_DAYS = 10.0
 # One statistics call per batch; the same bound the checks snapshot uses,
@@ -224,7 +242,24 @@ def step_size(values: list[float], centre: float | None = None) -> float:
     return median(moves)
 
 
-def summarise(values: list[float], stepped_floor: float = 0.0) -> dict | None:
+def whole_step(values: list[float]) -> float:
+    """The smallest step of a reading that only takes whole values, or 0.0.
+
+    0.0 for a reading whose values are mostly not whole, or that has only
+    ever held one whole value: there is no step to measure there."""
+    if not values:
+        return 0.0
+    whole = [v for v in values if float(v).is_integer()]
+    if len(whole) < len(values) * WHOLE_SHARE:
+        return 0.0
+    distinct = sorted(set(whole))
+    if len(distinct) < 2:
+        return 0.0
+    return min(b - a for a, b in zip(distinct, distinct[1:]))
+
+
+def summarise(values: list[float], stepped_floor: float = 0.0,
+              min_spread: float = 0.0) -> dict | None:
     """One bucket, or None when there is not enough of it to mean anything.
 
     ``stepped_floor`` is the whole history's spread, handed to an hour's
@@ -233,6 +268,9 @@ def summarise(values: list[float], stepped_floor: float = 0.0) -> dict | None:
     moves in steps that is the hour it happened not to step in — not a
     band 0.02 wide. It is applied only where this bucket's own MAD
     collapsed, so an hour that measured a real wobble keeps it.
+
+    ``min_spread`` is a whole-valued reading's step (`whole_step`), which
+    is a floor everywhere: such a reading cannot move by less.
     """
     if len(values) < MIN_SAMPLES:
         return None
@@ -241,6 +279,7 @@ def summarise(values: list[float], stepped_floor: float = 0.0) -> dict | None:
     spread = max(own, spread_floor(centre))
     if own == 0.0:
         spread = max(spread, step_size(values, centre), stepped_floor)
+    spread = max(spread, min_spread)
     return {
         "median": round(centre, 4),
         "spread": round(spread, 6),
@@ -278,7 +317,8 @@ def build_buckets(rows: list[dict], tz: dt.tzinfo) -> dict:
     if mad(every) <= FLAT_MAD_FRACTION and len(set(every)) <= 1:
         return {"flat": True, "value": round(every[0], 4), "samples": len(every)}
 
-    overall = summarise(every)
+    step = whole_step(every)
+    overall = summarise(every, min_spread=step)
     if not overall:
         return {}
     # A stepped reading's history is what knows its step size; an hour's
@@ -286,10 +326,33 @@ def build_buckets(rows: list[dict], tz: dt.tzinfo) -> dict:
     stepped = overall["spread"] if mad(every) == 0.0 else 0.0
     buckets = {}
     for bucket, values in by_bucket.items():
-        summary = summarise(values, stepped)
+        summary = summarise(values, stepped, step)
         if summary:
             buckets[str(bucket)] = summary
-    return {"buckets": buckets, "overall": overall, "samples": len(every)}
+    built = {"buckets": buckets, "overall": overall, "samples": len(every)}
+    if step:
+        built["step"] = step
+    return built
+
+
+def _borrowed_spread(baseline: dict, bucket: int, own: float) -> float:
+    """The spread a thin hour compares with: its own, unless the hours
+    around it say it strays far more (`NEIGHBOUR_RATIO`), then theirs —
+    or, with no neighbour measured, the whole history's."""
+    rows = baseline.get("buckets") or {}
+    near = []
+    for offset in range(1, NEIGHBOUR_HOURS + 1):
+        for other in (bucket - offset, bucket + offset):
+            entry = rows.get(str(other % HOURS_PER_WEEK))
+            if isinstance(entry, dict) and entry.get("spread"):
+                near.append(float(entry["spread"]))
+    if near:
+        theirs = median(near)
+    else:
+        theirs = float((baseline.get("overall") or {}).get("spread") or 0.0)
+    if theirs and own < theirs * NEIGHBOUR_RATIO:
+        return theirs
+    return own
 
 
 def deviation(value: float, baseline: dict, bucket: int) -> dict | None:
@@ -310,6 +373,8 @@ def deviation(value: float, baseline: dict, bucket: int) -> dict | None:
     if not entry:
         return None
     spread = entry.get("spread") or spread_floor(entry.get("median") or 0.0)
+    if source == "hour":
+        spread = _borrowed_spread(baseline, bucket, spread)
     centre = entry.get("median") or 0.0
     return {
         "value": value,
@@ -718,6 +783,38 @@ def refused(kind: str, prev: dict, reason: str) -> dict:
     return {**prev, "error": reason}
 
 
+def _without_impossible(series: list, attrs: dict, eid: str,
+                        devices) -> tuple[list, dict | None]:
+    """The rows a baseline may learn from, and what was thrown away.
+
+    A thermometer that read −150 °F overnight is broken, not cold, and a
+    baseline that learned the night as normal reported the morning after
+    as unusual (#337). Readings outside what the sensor's kind can read
+    (`checks.devices.bounds_for`, the table `dev.implausible` reports
+    against) are dropped, and how many, the lowest and the newest are
+    kept so `dev.implausible` can still name the night once it has passed.
+    """
+    if devices is None or not series:
+        return series, None
+    kept, dropped = [], []
+    for row in series:
+        value = row.get("mean") if isinstance(row, dict) else None
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and devices.impossible_value(float(value), attrs, eid)):
+            dropped.append(row)
+        else:
+            kept.append(row)
+    if not dropped:
+        return series, None
+    stamps = [r.get("start") for r in dropped
+              if isinstance(r.get("start"), (int, float))]
+    means = [float(r["mean"]) for r in dropped]
+    return kept, {"count": len(dropped),
+                  "lowest": round(min(means), 2),
+                  "highest": round(max(means), 2),
+                  "last": int(max(stamps)) if stamps else None}
+
+
 async def build(session, states: dict, now: float | None = None,
                 path: str | None = None,
                 entities: list | None = None) -> dict:
@@ -752,11 +849,18 @@ async def build(session, states: dict, now: float | None = None,
         return refused("baselines", load(path),
                        "the recorder did not answer for any of the "
                        f"{len(ids)} sensors asked about")
+    try:
+        from checks import devices as _devices  # noqa: PLC0415 — one range table
+    except Exception:  # noqa: BLE001 — without it every reading is kept
+        _devices = None
     for eid, series in rows.items():
+        attrs = ((states.get(eid) or {}).get("attributes") or {})
+        series, impossible = _without_impossible(series, attrs, eid, _devices)
         built = build_buckets(series, tz)
         if not built:
             continue
-        attrs = ((states.get(eid) or {}).get("attributes") or {})
+        if impossible:
+            built["impossible"] = impossible
         unit = attrs.get("unit_of_measurement")
         if unit:
             built["unit"] = str(unit)[:16]

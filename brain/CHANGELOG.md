@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.3
+
+### Fixed
+
+- **A counter that resets every evening is not "far outside its usual range" at 2.** A reading that only takes whole numbers is measured in whole steps, so its normal spread is never a sliver of one. (#349)
+- **An hour with only a few readings does not make everything look unusual.** When this hour's spread is far tighter than the hours either side of it, brAIn uses theirs before comparing. (#335)
+- **An impossibly cold temperature is reported as a faulty sensor, not learned as normal.** A reading far below anything an ambient or equipment sensor can read (−150 °F beside a 54 °F outdoor reading) is filed once as likely faulty, kept out of the baselines, and no longer reported as merely unusual. Freezers and cold storage still read as low as they really go. (#337)
+- **An automation that builds an entity id from parts is not reported as pointing at a missing entity.** Part of an id (one that starts or ends with "_") and the pattern of a regex in a template are no longer read as references; a whole missing id still is. (#336)
+- **Dates on findings are in the house's own time.** "As of" and "since" no longer show tomorrow's date in the evening of a house west of UTC. (#334)
+- **One missing entity shown on several dashboards is one finding** that names every dashboard, not a finding per dashboard. (#341)
+- **Every finding says what to do.** The overnight log check could file a finding with an empty "what to do"; it now always gives one for the record's own source, and a test runs every check and fails on an empty one. (#342)
+- **Log findings name the integration the way Home Assistant shows it**, and the device when it is known, instead of its internal name (bambu_lab, forecast_solar). The offline check's leftover-entity finding does the same. (#340)
+
 ## 3.8.2
 
 ### Added

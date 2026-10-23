@@ -36,7 +36,6 @@ second files a row. `collect` is the one function that fills them, and
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 import os
 import re
@@ -44,7 +43,7 @@ import re
 import prompt_kit
 
 from ._util import (House, counted_names, domain_of, evidence_for, join_names,
-                    load_yaml_file, parse_ts)
+                    load_yaml_file, parse_ts, when)
 
 CONFIG_DIR = os.environ.get("BRAIN_HA_CONFIG_DIR", "/config")
 IP_BANS_FILE = os.environ.get(
@@ -339,8 +338,7 @@ def login_bans(snap: dict, now: float) -> list[dict]:
     bans = recent_bans(snap, now)
     if not bans:
         return []
-    shown = [f"{b['ip']} ({dt.datetime.fromtimestamp(b['ts'], tz=dt.timezone.utc).strftime('%-d %b')})"
-             for b in bans]
+    shown = [f"{b['ip']} ({when(b['ts'])})" for b in bans]
     return [{
         "text": "Home Assistant banned an address after failed logins",
         "detail": f"{len(bans)} in the last {BAN_WINDOW_DAYS} days: "

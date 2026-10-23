@@ -139,7 +139,9 @@ class TestNotYourTemplate(unittest.TestCase):
         _dig, parsed = self.cause_for("automation:\n  - id: x\n")
         [cause] = parsed["causes"]
         self.assertNotIn("template", cause["fix"].lower())
-        self.assertIn("forecast_solar", cause["fix"])
+        # Named as Home Assistant shows it, never by its domain (#340).
+        self.assertIn("Forecast Solar", cause["fix"])
+        self.assertNotIn("forecast_solar", cause["fix"])
         self.assertNotIn("template", cause["detail"].lower())
         self.assertEqual(parsed["rewritten"], 1)
 
