@@ -40,7 +40,7 @@ import * as sal from './salience.js';
 import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
-import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT } from './util.js';
+import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
 
 const HOLD_MS = 540;
 // The card types whose entities are `entity`/`entities`; a hosted Lovelace
@@ -964,7 +964,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const now = Date.now() / 1000;
     return (Array.isArray(b.todo) ? b.todo : []).filter((t) => t && t.id != null && !(t.snoozed_until && t.snoozed_until > now)).map((t) => {
       let area = '';
-      if (t.area_id && this.hass.areas && this.hass.areas[t.area_id]) area = this.hass.areas[t.area_id].name;
+      if (own(this.hass.areas, t.area_id)) area = own(this.hass.areas, t.area_id).name;
       return { ...t, area_name: area };
     });
   }
@@ -976,12 +976,12 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     let found = null;
     if (eid) this.eachSection((sec) => { if (!found && !sec.hidden && this.sectionEntities(sec).includes(eid)) found = sec.id; });
     if (found) return found;
-    const reg = eid && H.entities && H.entities[eid];
-    const a = area || (reg && (reg.area_id || (reg.device_id && H.devices && H.devices[reg.device_id] && H.devices[reg.device_id].area_id)));
+    const reg = eid && own(H.entities, eid);
+    const a = area || (reg && (reg.area_id || (reg.device_id && own(H.devices, reg.device_id) && own(H.devices, reg.device_id).area_id)));
     if (a) this.eachSection((sec) => { if (!found && !sec.hidden && sec.area === a) found = sec.id; });
     // A section with no `area` set is matched by its title against the
     // area's name, which is how most rooms are written by hand.
-    const an = a && H.areas && H.areas[a] && String(H.areas[a].name || '').trim().toLowerCase();
+    const an = a && own(H.areas, a) && String(own(H.areas, a).name || '').trim().toLowerCase();
     if (!found && an) this.eachSection((sec) => { if (!found && !sec.hidden && !sec.area && String(sec.title || '').trim().toLowerCase() === an) found = sec.id; });
     return found;
   }
@@ -1211,15 +1211,20 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const H = this.hass;
     if (!sec || !sec.area || !H.entities) return [];
     if (!this._areaEnts || this._areaEntsKey !== H.entities || this._areaEntsDev !== H.devices) {
-      const by = {};
+      // A Map, never an object: an area id is somebody's text, and one
+      // called "constructor" or "toString" read Object.prototype's function
+      // back and took salience down (#332).
+      const by = new Map();
       Object.values(H.entities).forEach((r) => {
         if (!r || !r.entity_id || r.hidden || r.disabled_by) return;
-        const a = r.area_id || (r.device_id && H.devices && H.devices[r.device_id] && H.devices[r.device_id].area_id);
-        if (a) (by[a] = by[a] || []).push(r.entity_id);
+        const a = r.area_id || (r.device_id && own(H.devices, r.device_id) && own(H.devices, r.device_id).area_id);
+        if (typeof a !== 'string' || !a) return;
+        if (!by.has(a)) by.set(a, []);
+        by.get(a).push(r.entity_id);
       });
       this._areaEnts = by; this._areaEntsKey = H.entities; this._areaEntsDev = H.devices;
     }
-    return this._areaEnts[sec.area] || [];
+    return this._areaEnts.get(String(sec.area)) || [];
   }
 
   // Somebody in the room, read off its motion, occupancy and presence

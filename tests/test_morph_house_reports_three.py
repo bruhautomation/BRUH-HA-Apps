@@ -130,3 +130,39 @@ class TestEverySuggestionHasItsOwnId(_Env):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PANEL_PRELUDE = """
+globalThis.window = globalThis;
+globalThis.HTMLElement = class {};
+let Panel = null;
+globalThis.customElements = { define(n, c) { if (n === 'morph-panel') Panel = c; }, get() { return null; } };
+globalThis.localStorage = { getItem() { return null; }, setItem() {} };
+await import(%s);
+"""
+
+
+def panel_node(body: str):
+    return run_node(PANEL_PRELUDE % json.dumps((FRONTEND / "morph-panel.js").as_uri()) + textwrap.dedent(body))
+
+
+class TestARoomNamedLikeAnObjectKey(unittest.TestCase):
+
+    def test_area_entities_is_always_a_list(self):
+        got = panel_node("""
+            const hass = { entities: {
+                'light.a': { entity_id: 'light.a', area_id: 'constructor' },
+                'light.b': { entity_id: 'light.b', area_id: 'kitchen' },
+                'light.c': { entity_id: 'light.c', device_id: 'd1' },
+              }, devices: { d1: { area_id: 'toString' } } };
+            const self = { hass };
+            const out = Object.create(null);
+            for (const area of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty', 'kitchen', 'nowhere', 42]) {
+              const got = Panel.prototype.areaEntities.call(self, { area });
+              out[String(area)] = Array.isArray(got) ? got : 'not a list: ' + typeof got;
+            }
+            console.log(JSON.stringify(out));
+        """)
+        self.assertEqual({"constructor": ["light.a"], "toString": ["light.c"], "valueOf": [],
+                          "__proto__": [], "hasOwnProperty": [], "kitchen": ["light.b"],
+                          "nowhere": [], "42": []}, got)
