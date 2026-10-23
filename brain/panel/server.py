@@ -14627,7 +14627,11 @@ async def build_baselines(reason: str = "schedule") -> dict:
                 payload = _done("baselines", await baselines.build(
                     session, by_id, started,
                     entities=ents if isinstance(ents, list) else None,
-                    ranges=checks.devices))
+                    ranges=checks.devices,
+                    house=House({
+                        "entities": ents if isinstance(ents, list) else [],
+                        "devices": devices if isinstance(devices, list)
+                        else []})))
             except Exception as exc:  # noqa: BLE001 — one builder, not the pass
                 _failed("baselines", exc)
             # The same pass, because it is the same claim about the same

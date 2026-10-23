@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.6
+
+### Fixed
+
+- **A 3D printer's nozzle and bed, and a computer's processor, are no longer reported as impossible temperatures.** brAIn now reads which integration provides a sensor and the name of the device it is on, not only the sensor's own name, so a printer bed at 65 °C, a nozzle at 220 °C or a processor at 85 °C is a hot thing working normally. A room thermometer at 99 °C is still reported, and a hot printer bed is kept in its usual range rather than thrown away. (#373)
+- **BRUH Task Manager is not flagged for running with Protection mode off.** Its process view needs Protection mode off, and its own page says so before you turn it off, so brAIn no longer raises it as a problem. Every other add-on with Protection mode off now gets a finding of its own, so saying one is fine never hides another. (#377)
+
 ## 3.8.5
 
 ### Fixed

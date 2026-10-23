@@ -190,19 +190,46 @@ oven grill griddle bbq barbecue smoker fryer hob stove burner kettle
 boiler flue exhaust chimney furnace radiator manifold
 flow return coolant condenser compressor refrigerant superheat
 cpu gpu chip core soc die vrm nvme ssd drive disk
+processor package cputemp coretemp k10temp acpitz tctl tdie pch
 engine motor inverter transformer inlet outlet
 sauna steam hot_water hotwater dhw cylinder immersion
 sous_vide sousvide probe meat roast food griddle
 tank kiln soldering iron laser
 """.split())
-# `bed`, `chamber` and `plate` are only hot next to one of these — a
-# heated bed is a printer's and a chamber is its enclosure, while a
-# bedroom sensor and a chamber thermostat are ordinary rooms.
-_HOT_WHEN_PAIRED = frozenset({"bed", "chamber", "plate", "platform"})
+# `bed`, `chamber`, `plate` and `tool` are only hot next to one of these
+# — a heated bed is a printer's, a chamber is its enclosure and `tool0`
+# is OctoPrint's name for the hotend, while a bedroom sensor and a
+# chamber thermostat are ordinary rooms.
+_HOT_WHEN_PAIRED = frozenset({"bed", "chamber", "plate", "platform", "tool"})
 _PAIR_WORDS = frozenset({"printer", "print", "3d", "bambu", "prusa", "ender",
                          "creality", "voron", "klipper", "octoprint",
                          "anycubic", "elegoo", "filament", "extruder",
-                         "nozzle", "hotend", "kiln"})
+                         "nozzle", "hotend", "kiln", "moonraker",
+                         "prusalink", "mainsail", "fluidd"})
+
+# The integration that provides a reading is a fact, not a guess from its
+# name: every temperature a printer integration publishes is a heater's or
+# its enclosure's, and every one a system monitor publishes is a chip's or
+# a drive's. Read before the name — the printer word on a Bambu Lab
+# reading is on the DEVICE ("P1S"), never on "Bed temperature", which is
+# how a working printer was filed as impossible three times.
+PRINTER_PLATFORMS = frozenset({
+    "octoprint", "prusalink", "bambu_lab", "moonraker", "klipper",
+    "elegoo_printer", "anycubic_cloud", "creality_cloud", "duet3d",
+})
+COMPUTER_PLATFORMS = frozenset({
+    "systemmonitor", "glances", "hddtemp", "openhardwaremonitor",
+    "librehardwaremonitor", "proxmoxve", "synology_dsm", "qnap", "unraid",
+    "truenas", "netdata", "hp_ilo",
+})
+HOT_PLATFORMS = PRINTER_PLATFORMS | COMPUTER_PLATFORMS
+# What a DEVICE's own name, model or maker may add. Narrower than the
+# entity's words on purpose: a thermostatic radiator valve reads the room
+# it sits in, so "radiator" on the device says nothing about the reading,
+# while a reading on a printer or a computer is a heater's or a chip's.
+_HOT_DEVICE_WORDS = _PAIR_WORDS | frozenset({
+    "computer", "server", "nas", "synology", "qnap", "unraid", "truenas",
+    "proxmox", "raspberry", "nuc", "pc", "laptop", "desktop", "cpu", "gpu"})
 
 
 def _words(*parts: str) -> set[str]:
@@ -215,20 +242,45 @@ def _words(*parts: str) -> set[str]:
     return {w for w in out if w}
 
 
-def _hot_by_name(eid: str, name: str) -> bool:
+def _hot_by_name(eid: str, name: str, device_names=()) -> bool:
     words = _words(eid, name)
     if words & _HOT_WORDS:
         return True
-    return bool(words & _HOT_WHEN_PAIRED and words & _PAIR_WORDS)
+    device = _words(*device_names)
+    if device & _HOT_DEVICE_WORDS:
+        return True
+    return bool(words & _HOT_WHEN_PAIRED and (words | device) & _PAIR_WORDS)
 
 
-def measures_something_hot(eid: str, name: str, world=None) -> bool:
+def heat_context(house, eid: str) -> tuple[str, tuple[str, ...]]:
+    """The providing platform and the device's own names, for the gate.
+
+    ``house`` is a `House` (or None, which is no context and the gate
+    reading the entity's own words exactly as it always did).
+    """
+    if house is None:
+        return "", ()
+    reg = house.registry.get(eid) or {}
+    dev = house.device_of(eid) or {}
+    names = tuple(str(dev.get(k) or "") for k in
+                  ("name_by_user", "name", "model", "manufacturer")
+                  if dev.get(k))
+    return str(reg.get("platform") or ""), names
+
+
+def measures_something_hot(eid: str, name: str, world=None,
+                           house=None) -> bool:
     """Whether this sensor plainly measures something other than room air.
 
     Public because `base.unusual` stands down for what `dev.implausible`
     claims, and the two have to agree about which sensors those are —
     the same reason `out_of_range` is shared and `_zwave_dead_devices`
     is.
+
+    ``house`` adds what the registries know: the providing integration,
+    which answers first (a printer's or a system monitor's temperature is
+    never room air, whatever a reading says), and the device's names,
+    which the word list reads beside the entity's own.
 
     `world` is the snapshot's entity readings (`world_model`): a
     confident reading of `heater` or `room_air` answers in any language,
@@ -237,8 +289,11 @@ def measures_something_hot(eid: str, name: str, world=None) -> bool:
     """
     import world_model  # noqa: PLC0415 — panel-local, a leaf
 
-    return world_model.measures_heat(world, eid,
-                                     lambda: _hot_by_name(eid, name))
+    platform, device_names = heat_context(house, eid)
+    if platform in HOT_PLATFORMS:
+        return True
+    return world_model.measures_heat(
+        world, eid, lambda: _hot_by_name(eid, name, device_names))
 
 
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
@@ -830,7 +885,7 @@ _COLD_STORAGE_WORDS = frozenset({
 IMPOSSIBLE_RECENT_DAYS = 2.0
 
 
-def bounds_for(attrs: dict, entity_id: str = "", world=None
+def bounds_for(attrs: dict, entity_id: str = "", world=None, house=None
                ) -> tuple[float, float] | None:
     """The physical range a reading of this kind can take, or None.
 
@@ -849,7 +904,7 @@ def bounds_for(attrs: dict, entity_id: str = "", world=None
     # A heater's temperature is not an impossible temperature. The upper
     # bound is an ambient one and this is the only thing standing between
     # it and every oven, kettle, boiler and print head in the house.
-    if measures_something_hot(entity_id, name, world):
+    if measures_something_hot(entity_id, name, world, house):
         low, high = COLD_FLOOR.get(unit, low), float("inf")
     if _words(entity_id, name) & _COLD_STORAGE_WORDS:
         low = CRYO_FLOOR.get(unit, low)
@@ -857,15 +912,16 @@ def bounds_for(attrs: dict, entity_id: str = "", world=None
 
 
 def impossible_value(value: float | None, attrs: dict, entity_id: str = "",
-                     world=None) -> bool:
+                     world=None, house=None) -> bool:
     """True when ``value`` is outside what this kind of sensor can read."""
-    bounds = bounds_for(attrs, entity_id, world)
+    bounds = bounds_for(attrs, entity_id, world, house)
     if not bounds or value is None:
         return False
     return not bounds[0] <= value <= bounds[1]
 
 
-def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
+def out_of_range(state: dict, entity_id: str = "", world=None,
+                 house=None) -> bool:
     """True when a reading is outside what its kind of sensor can produce.
 
     Shared with `base.unusual`, which stands down for exactly these: a
@@ -880,7 +936,7 @@ def out_of_range(state: dict, entity_id: str = "", world=None) -> bool:
     """
     attrs = (state or {}).get("attributes") or {}
     return impossible_value(num((state or {}).get("state")), attrs,
-                            entity_id, world)
+                            entity_id, world, house)
 
 
 def recently_impossible(baseline: dict | None, now: float) -> dict | None:
@@ -927,13 +983,13 @@ def implausible(snap: dict, now: float) -> list[dict]:
     for eid, st in _live_hardware(house):
         attrs = st.get("attributes") or {}
         key = (attrs.get("device_class"), attrs.get("unit_of_measurement"))
-        bounds = bounds_for(attrs, eid, house.world)
+        bounds = bounds_for(attrs, eid, house.world, house)
         if not bounds:
             continue
         value = num(st.get("state"))
         if value is None:
             continue
-        if out_of_range(st, eid, house.world):
+        if out_of_range(st, eid, house.world, house):
             detail = (f"{numfmt.quantity(value, key[1])} as of "
                       f"{when(st.get('last_updated'))}; "
                       f"{_range_said(key, bounds)}.")
