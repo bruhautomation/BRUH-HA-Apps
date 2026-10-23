@@ -406,9 +406,11 @@ function amsBlock(p) {
 
 function hmsBlock(p) {
   if (!(p.hms && p.hms.length) && !p.error_code) return null;
+  const notes = p.hms_notes || {};
   const items = (p.hms || []).map((code) => el("li", {},
     el("a", { href: `https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/${code}`, target: "_blank",
-      rel: "noopener" }, code)));
+      rel: "noopener" }, code),
+    notes[code] ? el("p", { class: "hint" }, notes[code]) : null));
   return el("div", { class: "alert" },
     el("b", {}, p.error_code ? `Print error ${p.error_code}` : "The printer has messages"),
     items.length ? el("ul", { class: "plain" }, items) : null,

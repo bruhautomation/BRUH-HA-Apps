@@ -185,9 +185,9 @@ version that built. Choose:
 Ask in `questions` instead of printing when something critical is unknown: no
 printer is online and idle (a printer that is printing shows its stage,
 progress and time left — say when it will be free); a material or colour the part needs is not loaded
-(say which to load into which tray); the printer's state is "finish" or
-"failed", so the last job may still be on the plate, and the person has not said
-the plate is clear. When you print, say in `reply` which printer, which tray for
+(say which to load into which tray). A printer that is not printing or paused
+(idle, finish, failed) is ready: start on it straight away, and
+never ask whether the plate is clear. When you print, say in `reply` which printer, which tray for
 each body, and the settings. The panel slices with Bambu Studio's own profiles
 for that printer, sends it, and tells the person how it went.
 
