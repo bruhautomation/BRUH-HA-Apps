@@ -61,6 +61,7 @@ import re
 import atomic_write
 import prompt_kit
 import textclip
+from checks._util import spell_integration
 
 STORE = os.environ.get("BRAIN_SRE_FILE", "/data/sre.json")
 SOURCE = "sre"
@@ -151,6 +152,24 @@ async def collect(session) -> dict:
     arows = areas.get("result") if areas.get("ok") else None
     out["areas"] = {str(a.get("area_id")): str(a.get("name") or "")
                     for a in arows or [] if isinstance(a, dict)}
+    # What each integration is called where a person sees it: its manifest's
+    # name, else its one config entry's title. A finding titled by the
+    # domain ("the bambu_lab integration") names a registry key (#340).
+    domains = sorted({integration_of(r.get("name"))
+                      for r in out["log"] if isinstance(r, dict)} - {""})
+    try:
+        entries, manifests = await ha_data._ws_calls(session, [
+            {"type": "config_entries/get"},
+            {"type": "manifest/list", "integrations": domains},
+        ])
+        erows = entries.get("result") if entries.get("ok") else None
+        mrows = manifests.get("result") if manifests.get("ok") else None
+    except Exception as exc:  # noqa: BLE001 — names are a nicety
+        out["errors"]["config_entries"] = str(exc)[:200]
+        erows = mrows = None
+    out["available"]["config_entries"] = isinstance(erows, list)
+    out["config_entries"] = [e for e in erows or [] if isinstance(e, dict)]
+    out["manifests"] = [m for m in mrows or [] if isinstance(m, dict)]
     try:
         raw = await ha_data._rest_get(session, "/states", timeout=60)
         out["states"] = {s["entity_id"]: s for s in raw or []
@@ -631,6 +650,9 @@ def digest(collected: dict, now: float) -> dict:
     entity_devices = {str(e["entity_id"]): str(e.get("device_id") or "")
                       for e in reg if e.get("device_id")}
     return {"records": records,
+            "integration_names": integration_names(
+                records, collected.get("config_entries") or [],
+                collected.get("manifests") or []),
             "subjects": _subjects(records, collected.get("entities") or []),
             "entity_device": entity_device,
             "names": names, "device_names": device_names,
@@ -638,6 +660,47 @@ def digest(collected: dict, now: float) -> dict:
             "area_names": sorted({str(v).lower() for v in
                                   (collected.get("areas") or {}).values() if v}),
             "available": dict(collected.get("available") or {})}
+
+
+def integration_names(records: list[dict], entries: list[dict],
+                      manifests: list[dict]) -> dict[str, str]:
+    """`{domain: name}` for every integration a record names, as Home
+    Assistant shows it: the manifest's name, else the title of its only
+    config entry, else the domain spelled as words. Never the domain."""
+    by_manifest = {str(m.get("domain") or ""): str(m.get("name") or "").strip()
+                   for m in manifests if m.get("domain")}
+    titles: dict[str, list[str]] = {}
+    for e in entries:
+        if e.get("domain") and str(e.get("title") or "").strip():
+            titles.setdefault(str(e["domain"]), []).append(
+                str(e["title"]).strip())
+    out: dict[str, str] = {}
+    for rec in records:
+        for key in ("integration", "owner"):
+            domain = str(rec.get(key) or "")
+            if not domain or domain in out:
+                continue
+            only = titles.get(domain) or []
+            out[domain] = (by_manifest.get(domain)
+                           or (only[0] if len(only) == 1 else "")
+                           or spell_integration(domain))
+    return out
+
+
+def integration_name(domain: str, dig: dict) -> str:
+    return ((dig.get("integration_names") or {}).get(domain)
+            or spell_integration(domain))
+
+
+def plain_slugs(text: str, dig: dict) -> str:
+    """``text`` with every integration domain the digest knows that a
+    person would read as a key (`bambu_lab`) said as the integration's
+    name."""
+    for domain, name in (dig.get("integration_names") or {}).items():
+        if "_" in domain and name:
+            text = re.sub(r"(?<![\w.])" + re.escape(domain) + r"(?![\w])",
+                          name, text)
+    return text
 
 
 def worth_a_run(dig: dict) -> bool:
@@ -826,10 +889,28 @@ def _without(text: str, names: set[str]) -> str:
 _TEMPLATE_WORDS = re.compile(r"\btemplates?\b", re.I)
 
 
-def _not_your_template_fix(logs: list[dict]) -> str:
+def _record_fix(rec: dict, dig: dict) -> str:
+    """What to do about one record, in plain words, for a cause that came
+    back with no fix of its own."""
+    if rec["kind"] == "zigbee":
+        return ("Check it has power, then move it closer to the Zigbee "
+                "coordinator or a mains-powered Zigbee device, or add one "
+                "between them.")
+    if rec["kind"] == "zwave":
+        return ("Check it has power, then open it in Settings > Devices & "
+                "services > Z-Wave and re-interview it.")
+    if rec["kind"] == "automation":
+        return ("Edit that automation so it no longer switches the plug off: "
+                "a Zigbee router has to stay powered for the devices behind "
+                "it.")
+    return _not_your_template_fix([rec], dig)
+
+
+def _not_your_template_fix(logs: list[dict], dig: dict | None = None) -> str:
     who = next((str(r.get("owner") or r.get("integration") or "")
                 for r in logs if r.get("owner") or r.get("integration")), "")
-    where = f"the {who} integration" if who else "an integration"
+    where = (f"the {integration_name(who, dig or {})} integration" if who
+             else "an integration")
     return (f"This comes from {where}, not from anything you wrote: check "
             "that integration's settings, or report it to its author if it "
             "keeps happening.")
@@ -940,9 +1021,13 @@ def _plain_title(rec: dict, dig: dict) -> str:
     if ents:
         who = names.get(ents[0]) or ents[0]
         return f"Errors in the log about {who}"
+    for dev in rec.get("devices") or []:
+        dev_names = (dig.get("device_names") or {}).get(dev) or []
+        if dev_names:
+            return f"Errors in the log about {sorted(dev_names)[0]}"
     where = rec.get("owner") or rec.get("integration")
-    return (f"Errors in the log from the {where} integration" if where
-            else "Errors keep appearing in the log")
+    return (f"Errors in the log from the {integration_name(where, dig)} "
+            "integration" if where else "Errors keep appearing in the log")
 
 
 def parse_causes(answer: dict | None, dig: dict) -> dict:
@@ -1030,7 +1115,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             # Nothing the homeowner wrote refers to what the line is about,
             # so "edit the template" sends them looking for a template
             # that is not theirs. The integration is the source.
-            fix = _not_your_template_fix(logs)
+            fix = _not_your_template_fix(logs, dig)
             kept = [s for s in _SENTENCES.split(detail)
                     if not _TEMPLATE_WORDS.search(s)]
             detail = " ".join(kept).strip()
@@ -1058,6 +1143,12 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             touched = True
         if touched:
             unrelated += 1
+        title, detail, fix = (plain_slugs(title, dig), plain_slugs(detail, dig),
+                              plain_slugs(fix, dig))
+        if not fix:
+            # A run that wrote no fix, or one whose every sentence was about
+            # another problem: the card still says what to do (#342).
+            fix = _record_fix(by_id[real[0]], dig)
         causes.append({
             "title": title,
             "detail": textclip.clip(detail, MAX_DETAIL),
@@ -1125,6 +1216,9 @@ def rows(causes: list[dict], dig: dict, state: dict,
                          None)
         text = known["text"] if isinstance(known, dict) and known.get("text") \
             else cause["title"]
+        # A title reused from an earlier night was written before the
+        # integration had a name here.
+        text = plain_slugs(text, dig)
         anchors[cause["anchor"]] = {"text": text, "at": int(now),
                                     "entity": entity}
         evidence = [{"entity": rid, "value": textclip.clip(

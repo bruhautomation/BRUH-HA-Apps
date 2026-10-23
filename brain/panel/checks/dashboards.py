@@ -2,8 +2,11 @@
 
 A card pointing at an entity that no longer exists renders as a red
 "Entity not available" tile that the person has usually stopped seeing.
-One finding per dashboard, listing the entities, so a rebuilt integration
-that renamed forty entities is one row and not forty.
+One finding per missing entity, naming every dashboard that shows it — a
+deleted scene on two dashboards is one thing to fix, and was filed twice
+when the rows were per dashboard (#341). Entities missing from exactly the
+same dashboards share a row, so a rebuilt integration that renamed forty
+entities is still one row and not forty.
 """
 from __future__ import annotations
 
@@ -36,25 +39,45 @@ def _dashboard_refs(house: House, config) -> set[str]:
 
 def dead_ref(snap: dict, now: float) -> list[dict]:
     house = House(snap)
-    out = []
+    # Which dashboards show each missing entity, in the order they are listed.
+    shown_on: dict[str, list[str]] = {}
     for dash in snap.get("dashboards") or []:
         if not isinstance(dash, dict) or not isinstance(dash.get("config"), dict):
             continue
-        refs = _dashboard_refs(house, dash["config"])
-        dead = sorted(r for r in refs if not house.exists(r)
-                      and r.split(".", 1)[0] in house.known_domains)
-        if not dead:
-            continue
-        if not house.should_report(dead[0], "org.dashboard_dead_ref"):
-            continue
         title = str(dash.get("title") or dash.get("url_path") or "Overview")
+        for ref in sorted(_dashboard_refs(house, dash["config"])):
+            if house.exists(ref) or ref.split(".", 1)[0] not in house.known_domains:
+                continue
+            on = shown_on.setdefault(ref, [])
+            if title not in on:
+                on.append(title)
+    # Entities missing from the same dashboards are one thing to fix there.
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for ref in sorted(shown_on):
+        if not house.should_report(ref, "org.dashboard_dead_ref"):
+            continue
+        groups.setdefault(tuple(shown_on[ref]), []).append(ref)
+    out = []
+    for titles, dead in sorted(groups.items(), key=lambda g: g[1][0]):
+        first = house.label(dead[0])
+        # The text names the first missing entity and never the dashboards
+        # or a count, which move from pass to pass: it is the dedupe key.
+        text = (f"{first} is on a dashboard but no longer exists"
+                if len(dead) == 1 else
+                f"{first} and other entities on a dashboard no longer exist")
+        quoted = [f"'{t}'" for t in titles]
         out.append({
-            "text": f"Dashboard '{title}' shows entities that no longer exist",
-            "detail": "Missing: " + join_names([house.label(r) for r in dead], 8)
-                      + ". Each one renders "
-                      "as a red 'entity not available' tile.",
-            "fix": "Edit the dashboard and point those cards at the entities "
-                   "that replaced them, or remove the cards.",
+            "text": text[:1].upper() + text[1:],
+            "detail": ("Missing: " + join_names([house.label(r) for r in dead], 8)
+                       + ". Shown on "
+                       + ("the dashboard " if len(titles) == 1 else "the dashboards ")
+                       + join_names(quoted, 8) + ", where "
+                       + ("it renders" if len(dead) == 1 else "each one renders")
+                       + " as a red 'entity not available' tile."),
+            "fix": ("Edit " + ("that dashboard" if len(titles) == 1
+                               else "those dashboards")
+                    + " and point those cards at the entities that replaced "
+                    "them, or remove the cards."),
             "severity": "warning",
             "fixable": True,
             "entity_id": dead[0],

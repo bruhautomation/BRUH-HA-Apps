@@ -684,6 +684,12 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # Reporting both is the same sensor under two fixes, which is how
         # a list stops being read — and they share `baselines.trend`, so
         # they cannot disagree about whether it is drifting.
+        # A sensor that read an impossible value in the last few nights is
+        # `dev.implausible`'s, which files it once as faulty; its band was
+        # built without those nights, but the morning after is the fault
+        # still, not something added near it (#337).
+        if devices.recently_impossible(baseline, now):
+            continue
         drift = baseline.get("trend") or {}
         if drift.get("consistent") and abs(
                 drift.get("spreads") or 0.0) >= DRIFT_SPREADS:
