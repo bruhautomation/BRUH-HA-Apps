@@ -16,7 +16,10 @@
     "import_url": "mdi:link-plus",
     "find_printers": "mdi:printer-search",
     "reconnect": "mdi:lan-connect",
-    "refresh": "mdi:refresh"
+    "refresh": "mdi:refresh",
+    "design_part": "mdi:cube-outline",
+    "design_status": "mdi:cube-scan",
+    "print_part": "mdi:printer-3d-nozzle-outline"
   },
   "entity": {
     "sensor": {

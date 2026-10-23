@@ -29,6 +29,8 @@ from .const import (
     CARD_RETRY_TRIES,
     DOMAIN,
     RUNNING_FILE,
+    SERVICE_DESIGN,
+    SERVICE_DESIGN_STATUS,
     SERVICE_FIND,
     SERVICE_GCODE,
     SERVICE_IMPORT,
@@ -37,6 +39,7 @@ from .const import (
     SERVICE_OPEN,
     SERVICE_PAUSE,
     SERVICE_PRINT_FILE,
+    SERVICE_PRINT_PART,
     SERVICE_PRINTER_FILES,
     SERVICE_RECONNECT,
     SERVICE_REFRESH,
@@ -112,6 +115,31 @@ SERVICES = {
     SERVICE_RECONNECT: PRINTER_ONLY,
     SERVICE_REFRESH: PRINTER_ONLY,
 }
+DESIGN_SCHEMA = vol.Schema({
+    vol.Optional("description"): cv.string,
+    vol.Optional("name"): cv.string,
+    vol.Optional("part"): cv.string,
+    vol.Optional("message"): cv.string,
+})
+
+PRINT_PART_SCHEMA = vol.Schema({
+    vol.Required("part"): cv.string,
+    vol.Optional("version"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+    PRINTER: cv.string,
+    vol.Optional("slot"): vol.Any("external", vol.All(vol.Coerce(int), vol.Range(min=0, max=15))),
+    vol.Optional("copies"): vol.All(vol.Coerce(int), vol.Range(min=1, max=50)),
+    vol.Optional("timelapse"): cv.boolean,
+    vol.Optional("settings"): dict,
+})
+
+# Design with brAIn: they answer with data and start work that takes
+# minutes, so they answer as soon as it has started.
+DESIGN_SERVICES = {
+    SERVICE_DESIGN: DESIGN_SCHEMA,
+    SERVICE_DESIGN_STATUS: vol.Schema({vol.Optional("part"): cv.string}),
+    SERVICE_PRINT_PART: PRINT_PART_SCHEMA,
+}
+
 # Reads: they answer with data and change nothing.
 READS = {
     SERVICE_STATUS: vol.Schema({}),
@@ -201,13 +229,28 @@ async def _forward(kind: str, data: dict) -> dict:
     return {k: v for k, v in response.items() if k != "ok"}
 
 
+def _check_design(data: dict) -> None:
+    """A new part needs a description; a part already started needs a message."""
+    if data.get("part"):
+        if not str(data.get("message") or data.get("description") or "").strip():
+            raise HomeAssistantError(
+                "Say what to change about the part in `message`.")
+    elif not str(data.get("description") or "").strip():
+        raise HomeAssistantError(
+            "Describe the part to design in `description`, or name a part in `part` "
+            "with a `message` to change it.")
+
+
 def _register_services(hass: HomeAssistant) -> None:
     def make(kind: str):
         async def handler(call: ServiceCall) -> dict:
-            return await _forward(kind, dict(call.data))
+            data = dict(call.data)
+            if kind == SERVICE_DESIGN:
+                _check_design(data)
+            return await _forward(kind, data)
         return handler
 
-    for name, schema in READS.items():
+    for name, schema in {**READS, **DESIGN_SERVICES}.items():
         if not hass.services.has_service(DOMAIN, name):
             hass.services.async_register(DOMAIN, name, make(name), schema=schema,
                                          supports_response=SupportsResponse.ONLY)

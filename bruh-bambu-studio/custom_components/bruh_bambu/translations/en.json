@@ -321,6 +321,72 @@
           "description": "Which printer, by its name or serial number. Left out when there is only one."
         }
       }
+    },
+    "design_part": {
+      "name": "Design a part with brAIn",
+      "description": "Describe a part and brAIn designs it, builds it and keeps it as a version on the Design tab; or name a part and say what to change. Answers as soon as brAIn has started, with the part's id and name; designing takes minutes, so ask design_status afterwards. Needs brAIn with its Automation integration on.",
+      "fields": {
+        "description": {
+          "name": "Description",
+          "description": "What the part is, with any sizes that matter."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What to call a new part. Left out, brAIn names it."
+        },
+        "part": {
+          "name": "Part",
+          "description": "A part already designed, by its id or its name, to change instead of starting a new one."
+        },
+        "message": {
+          "name": "Message",
+          "description": "What to change about that part."
+        }
+      }
+    },
+    "design_status": {
+      "name": "Design status",
+      "description": "How a designed part is doing — its latest version, whether brAIn is still working on it, brAIn's last reply, whether it built, and any print of it — or every part when none is named. Changes nothing.",
+      "fields": {
+        "part": {
+          "name": "Part",
+          "description": "The part, by its id or its name. Left out, every part."
+        }
+      }
+    },
+    "print_part": {
+      "name": "Print a designed part",
+      "description": "Slice a designed part with Bambu Studio's own profiles for the printer and the filament in the tray, and send it — the Design tab's Slice and print. Answers once it has started; design_status says how the print is going.",
+      "fields": {
+        "part": {
+          "name": "Part",
+          "description": "The part, by its id or its name."
+        },
+        "version": {
+          "name": "Version",
+          "description": "Which version to print. Left out, the current one."
+        },
+        "printer": {
+          "name": "Printer",
+          "description": "Which printer, by its name or serial number. Left out when there is only one."
+        },
+        "slot": {
+          "name": "AMS tray",
+          "description": "Which AMS tray (0-based) to print from, or external. Left out, the tray whose filament best fits the part."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "How many of it, arranged on the plate."
+        },
+        "timelapse": {
+          "name": "Timelapse",
+          "description": "Timelapse."
+        },
+        "settings": {
+          "name": "Settings",
+          "description": "Print settings over the part's own, as the Design tab's print options name them (layer_height, infill_density, wall_loops, supports...)."
+        }
+      }
     }
   }
 }

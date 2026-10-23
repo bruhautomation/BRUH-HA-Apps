@@ -50,6 +50,46 @@ def _with_wait(path: str):
     return build
 
 
+def _part_path(p: dict, tail: str = "") -> str:
+    """A part's route: by id or by the name somebody said, quoted for a path."""
+    return "/api/design/parts/" + urllib.parse.quote(str(p.get("part") or ""), safe="") + tail
+
+
+def _design_part(p: dict):
+    """A new part from a description, or the next message to one.
+
+    Answered as soon as the turn has started: brAIn takes minutes to design
+    and build, and the caller asks `design_status` afterwards.
+    """
+    if p.get("part"):
+        return "POST", _part_path(p, "/message"), {
+            "text": p.get("message") or p.get("description") or ""}
+    return "POST", "/api/design/parts", {"name": p.get("name") or "New part",
+                                         "message": p.get("description") or ""}
+
+
+def _design_status(p: dict):
+    if p.get("part"):
+        return "GET", _part_path(p), None
+    return "GET", "/api/design/parts?brief=1", None
+
+
+def _print_part(p: dict):
+    settings = dict(p.get("settings") or {}) if isinstance(p.get("settings"), dict) else {}
+    if p.get("copies") is not None:
+        settings["copies"] = p["copies"]
+    body = {"print_settings": settings, "timelapse": bool(p.get("timelapse")),
+            # Started, not finished: a slice is minutes, and design_status
+            # says how the print is going.
+            "wait": p.get("wait", 0)}
+    for key in ("version", "printer"):
+        if p.get(key) not in (None, ""):
+            body[key] = p[key]
+    if p.get("slot") not in (None, ""):
+        body["slot"] = p["slot"]
+    return "POST", _part_path(p, "/print"), body
+
+
 ROUTES = {
     "get_status": lambda p: ("GET", "/api/state", None),
     "list_files": lambda p: ("GET", "/api/files?profiles=1", None),
@@ -71,6 +111,9 @@ ROUTES = {
     "refresh": _command("refresh"),
     "find_printers": lambda p: ("POST", "/api/printers/scan",
                                 {"subnet": p.get("subnet", ""), "wait": 120}),
+    "design_part": _design_part,
+    "design_status": _design_status,
+    "print_part": _print_part,
 }
 
 # The fields a service call carries under the names people use, renamed to
@@ -142,8 +185,21 @@ async def handle(request: dict) -> dict:
             payload[new] = payload.pop(old)
     method, path, body = route(payload)
     answer = await asyncio.to_thread(_forward, method, path, body)
-    if kind == "get_status" and answer.get("ok") is not False:
+    if answer.get("ok") is False:
+        return answer
+    if kind == "get_status":
         return summarise_state(answer)
+    if kind == "design_part":
+        return {"ok": True, **(answer.get("summary") or {}),
+                "started": bool(answer.get("started"))}
+    if kind == "design_status":
+        if "summary" in answer:
+            return {"ok": True, **answer["summary"], "brain": answer.get("brain")}
+        return {"ok": True, "brain": answer.get("brain"), "parts": answer.get("parts") or []}
+    if kind == "print_part":
+        job = answer.get("job") or {}
+        return {"ok": True, "sentence": answer.get("sentence", ""), "plan": answer.get("plan"),
+                "job": {k: job.get(k) for k in ("id", "state", "phase", "printer", "error")}}
     return answer
 
 
