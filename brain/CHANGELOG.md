@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.1
+
+### Changed
+
+- **brAIn prints on a Bambu printer without asking whether the plate is clear.** `bambu_print` tells brAIn that a printer that is not printing or paused is ready, matching BRUH Bambu Studio 0.2.4. (#371)
+
+### Fixed
+
+- **The ⋯ menu on Ask is never empty in the classic terminal.** Every item in it was hidden for the classic face, so ⋯ opened a blank box. It now offers New terminal window, and Your chats on a phone. (#366)
+
 ## 3.8.0
 
 ### Added
