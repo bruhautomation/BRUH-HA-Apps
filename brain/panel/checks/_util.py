@@ -95,13 +95,29 @@ def age_days(value: Any, now: float) -> float | None:
     return None if ts is None else max(0.0, (now - ts) / DAY)
 
 
+def house_tz() -> dt.tzinfo:
+    """The house's timezone (`baselines.house_timezone`), UTC when it
+    cannot be read."""
+    try:
+        import baselines  # noqa: PLC0415 — panel-local, the one clock
+        return baselines.house_timezone()[0]
+    except Exception:  # noqa: BLE001 — a date in UTC beats no date
+        return dt.timezone.utc
+
+
 def when(value: Any) -> str:
-    """A short date for a `detail` line: '3 Sep' / '3 Sep 2025'."""
+    """A short date for a `detail` line: '3 Sep' / '3 Sep 2025'.
+
+    In the house's own timezone: a reading that changed at 00:40Z on 21
+    Oct changed on the evening of 20 Oct in New York, and that is the day
+    the person living there would call it (#334). Every date a check
+    writes goes through here."""
     ts = parse_ts(value)
     if ts is None:
         return "an unknown time"
-    d = dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
-    return d.strftime("%-d %b %Y") if d.year != dt.datetime.now(dt.timezone.utc).year \
+    tz = house_tz()
+    d = dt.datetime.fromtimestamp(ts, tz=tz)
+    return d.strftime("%-d %b %Y") if d.year != dt.datetime.now(tz).year \
         else d.strftime("%-d %b")
 
 
