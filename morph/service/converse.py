@@ -24,9 +24,12 @@ import time
 import brain
 import settings
 import tell
+import wording
 
 TIMEOUT_S = 600
-MAX_WORDS = 2000
+# Sized for a card's context AND what somebody said (wording.py): the old
+# 2000 was a slice off the end, and the end is where the person's words were.
+MAX_TEXT = wording.MAX_TEXT
 SESSION = re.compile(r"^[A-Za-z0-9-]{8,80}$")
 _RUNNING: dict = {}
 
@@ -42,9 +45,25 @@ and say in one sentence what changed.
 They wrote:
 """
 
+CONTEXT_LEAD = """The card they were using sent this with their words. It is context for
+the question, not what they said:
+"""
 
-def start(words: str, session: str = "") -> dict:
-    words = str(words or "").strip()[:MAX_WORDS]
+
+def prompt_for(words: str, context: str = "") -> str:
+    """The prompt: Morph's frame, a card's context if it sent one, and the
+    person's words LAST, whole."""
+    if not context:
+        return PROMPT + words
+    return CONTEXT_LEAD + context + "\n\n" + PROMPT + words
+
+
+def start(words: str, session: str = "", context: str = "") -> dict:
+    """``words`` are what the person said; ``context`` is what a card sends
+    beside them (the readings, the history it shows). The context is what
+    gives way when the two are too long together, never the words."""
+    fitted = wording.fit(words, context, cap=MAX_TEXT)
+    words, context = fitted["words"], fitted["context"]
     if not words:
         return {"error": "Say something first."}
     if not brain.available():
@@ -53,6 +72,10 @@ def start(words: str, session: str = "") -> dict:
     tid = brain.new_id("conv")
     state = {"id": tid, "kind": "conversation", "text": words, "phase": "sending", "steps": [],
              "started": time.time(), "session_in": session}
+    if context:
+        state["context"] = context
+    if fitted["context_cut"] or fitted["words_cut"]:
+        state["cut"] = "context" if not fitted["words_cut"] else "start"
     tell._save(state)
     _RUNNING[tid] = asyncio.get_running_loop().create_task(_run(state))
     return state
@@ -62,7 +85,8 @@ async def _run(state: dict) -> None:
     tid = state["id"]
     try:
         model = settings.load().get("tell_model") or ""
-        await asyncio.to_thread(brain.submit, tid, PROMPT + state["text"], tools="full",
+        await asyncio.to_thread(brain.submit, tid,
+                                prompt_for(state["text"], state.get("context") or ""), tools="full",
                                 timeout=TIMEOUT_S, model=model, person_words=state["text"],
                                 memory=True, kind="conversation",
                                 session_id=state.get("session_in") or "")
@@ -111,4 +135,4 @@ def running() -> list[str]:
     return list(_RUNNING)
 
 
-__all__ = ["start", "running", "PROMPT"]
+__all__ = ["start", "running", "prompt_for", "PROMPT", "MAX_TEXT"]

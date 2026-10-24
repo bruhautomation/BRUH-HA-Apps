@@ -61,11 +61,13 @@ import morphcode
 import paths
 import settings
 import store
+import wording
 
 log = logging.getLogger("morph.tell")
 
 TIMEOUT_S = 900
-MAX_WORDS = 4000
+MAX_WORDS = wording.MAX_TEXT   # a person's words and any context sent with them
+MAX_WRITTEN = 20000             # what Morph writes itself (a merge names files and paths)
 LESSONS_CHARS = 4000
 MAX_STEPS = 60
 VIEW_CHARS = 1500
@@ -464,7 +466,7 @@ def _history_lines(previous: list[dict], earlier: int) -> list[str]:
 
 def build_prompt(target: dict, words: str, current: str, previous: list[dict] | None = None,
                  *, shot=None, view: dict | None = None, scope: str = "ui", origin: str = "panel",
-                 note: str = "", earlier: int = 0) -> str:
+                 note: str = "", earlier: int = 0, context: str = "") -> str:
     """The prompt a Tell hands brAIn, built around ONE procedure: look at
     what was held, read the request, find where the thing lives, keep to the
     scope, follow the household's rules, change the files, answer. Each rule
@@ -497,6 +499,8 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
                   + f": {view.get('text') or '(nothing readable)'}", ""]
 
     # 2. The request.
+    if context:
+        lines += ["Sent with the request (context, not the person's words):", context, ""]
     lines += ["THE REQUEST", f"Asked: “{words}”", f"Target: {what}"]
     if path:
         lines.append(f"Where: {path}")
@@ -575,7 +579,7 @@ def build_prompt(target: dict, words: str, current: str, previous: list[dict] | 
 
 def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
           view: dict | None = None, scope: str = "ui", origin: str = "panel", note: str = "",
-          person_words: str | None = None) -> dict:
+          person_words: str | None = None, context: str = "") -> dict:
     """Begin a tell. Returns its state; the work continues in a task.
 
     ``scope`` is never read off the wire: a request from the panel is a
@@ -588,9 +592,12 @@ def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
     Morph wrote around it: the words as typed, the suggestion text a person
     approved, the option they pressed, or the sentence Morph wrote for
     Undo. A redo nobody typed carries none."""
-    # A person types at most MAX_WORDS; what Morph writes (a merge of every
-    # paused copy) names files and paths and is allowed more room.
-    words = str(words or "").strip()[:MAX_WORDS if origin == "panel" else MAX_WORDS * 5]
+    # What a person (or a card) sends fits in MAX_WORDS with any context it
+    # sent beside it; what Morph writes (a merge of every paused copy) names
+    # files and paths and is allowed more room. The context gives way, never
+    # the words, and a cut is said in the text (wording.py).
+    fitted = wording.fit(words, context, cap=MAX_WORDS if origin == "panel" else MAX_WRITTEN)
+    words, context = fitted["words"], fitted["context"]
     if not words:
         return {"error": "Say what should change."}
     if not brain.available():
@@ -613,7 +620,7 @@ def start(target: dict, words: str, previous_id: str = "", *, shot: str = "",
     state = {"id": tid, "text": words, "target": target, "phase": "sending", "steps": [],
              "started": time.time(), "history": previous[-HISTORY_TURNS:], "earlier": earlier,
              "scope": scope if scope in SCOPES else "ui", "view": clean_view(view),
-             "origin": origin, "note": str(note or "")[:300],
+             "origin": origin, "note": str(note or "")[:300], "context": context,
              "person_words": person_words if person_words is not None
              else "" if origin == "redo" else words}
     if target.get("kind") == "code" and target.get("id") == morphcode.MERGE_ALL:
@@ -669,7 +676,8 @@ async def _run(state: dict) -> None:
         prompt = build_prompt(target, state["text"], current, state.get("history"),
                               shot=picture, view=state.get("view"), scope=state.get("scope", "ui"),
                               origin=origin, note=state.get("note") or "",
-                              earlier=int(state.get("earlier") or 0))
+                              earlier=int(state.get("earlier") or 0),
+                              context=state.get("context") or "")
         state["payload"] = prompt
         model = settings.load().get("tell_model") or ""
         await asyncio.to_thread(brain.submit, tid, prompt, schema=RESULT_SCHEMA,

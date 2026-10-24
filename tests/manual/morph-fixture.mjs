@@ -113,6 +113,9 @@ export function dashboard() {
           { label: 'Party', cards: [C('switch.party_light', { id: 'c_party' }), C('script.movie_time', { id: 'c_movie' })] },
         ], 'living_room'),
         sec('s_entry', 'Entry', 'teal', 2, [
+          // A house's own "Now" card (a hosted custom card) whose Next chip
+          // opens Coming up under it (the morph-coming-up event, AGENTS.md).
+          { cards: [{ id: 'c_now', type: 'lovelace', card: { type: 'custom:morph-next' } }] },
           { cards: [C('light.entryway', { id: 'c_entryway' }), C('light.mudroom', { id: 'c_mudroom' })] },
           { cards: [C('lock.front_door', { id: 'c_front_lock' }), C('cover.garage_door', { id: 'c_garage' })] },
         ], 'entry'),
@@ -210,6 +213,24 @@ export function page(opts) {
   const o = opts || {};
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>html,body{margin:0;height:100%;background:#000}</style></head><body>
+<script>
+customElements.define('morph-next', class extends HTMLElement {
+  setConfig(c) { this.c = c; if (!this.shadowRoot) this.attachShadow({ mode: 'open' }); this.draw(); }
+  set hass(h) { this._h = h; this.draw(); }
+  draw() {
+    if (!this.shadowRoot) return;
+    const ev = this._h && this._h.states['calendar.family'];
+    const what = ev ? ev.attributes.message : 'Nothing';
+    this.shadowRoot.innerHTML = '<style>:host{display:block;padding:14px 16px;font:15px system-ui;color:#e8e8e8}button{font:inherit;min-height:44px;padding:0 14px;border-radius:22px;border:1px solid #556;background:transparent;color:inherit}button[aria-pressed="true"]{background:#2b3140}</style><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><b>Now</b><span>Quiet evening</span><button type="button" data-next-chip aria-pressed="' + !!this._shown + '">Next · ' + what + '</button></div>';
+    this.shadowRoot.querySelector('button').onclick = () => {
+      const e = new CustomEvent('morph-coming-up', { bubbles: true, composed: true, detail: {} });
+      this.dispatchEvent(e);
+      window.__nextShown = e.detail.shown;
+      this._shown = e.detail.shown; this.draw();
+    };
+  }
+});
+</script>
 <script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: state(), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
 <script type="module">
 const F = window.__fixture;
@@ -303,6 +324,12 @@ const hass = {
       if (window.__askFallback) return { do: 'fallback' };
       return { do: 'conversation' };
     }
+    // brAIn's personality file, as brAIn's Settings saves it; a test sets
+    // window.__persona to change it (null: no file) between opens.
+    if (t === 'morph/personality') {
+      const p = window.__persona === undefined ? { name: 'Juniper', persona: 'Warm and brief.\\n\\nNever lectures.', growth: [{ date: '2026-08-01', text: 'Stopped saying good morning at noon.' }, { date: '2026-09-02', text: 'Learned the dog is called Biscuit.' }], updated_at: 1788300000 } : window.__persona;
+      return { brain: window.__noBrain ? false : true, personality: p };
+    }
     if (t === 'morph/yaml') return { text: 'title: Home\\n' };
     if (t === 'history/history_during_period') {
       const out = {}; (msg.entity_ids || []).forEach((e) => {
@@ -327,7 +354,7 @@ const hass = {
   },
   connection: { subscribeMessage(cb) { listeners.push(cb); return Promise.resolve(() => {}); } },
 };
-window.loadCardHelpers = async () => ({ createCardElement(cfg) { const el = document.createElement('div'); el.className = 'fake-ll'; el.style.cssText = 'padding:14px;border-radius:12px;background:#223;color:#cde;font:14px sans-serif'; el.textContent = 'Lovelace ' + cfg.type + ' · ' + (cfg.entity || ''); return el; } });
+window.loadCardHelpers = async () => ({ createCardElement(cfg) { const tag = String(cfg.type || ''); if (tag.startsWith('custom:') && customElements.get(tag.slice(7))) { const c = document.createElement(tag.slice(7)); c.setConfig(cfg); return c; } const el = document.createElement('div'); el.className = 'fake-ll'; el.style.cssText = 'padding:14px;border-radius:12px;background:#223;color:#cde;font:14px sans-serif'; el.textContent = 'Lovelace ' + cfg.type + ' · ' + (cfg.entity || ''); return el; } });
 function push() { const h = { ...hass, states }; el.hass = h; }
 // Home Assistant's order (ha-panel-custom.ts): import the module, create
 // the element it names, set its properties, then put it in the page. The
