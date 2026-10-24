@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.10
+
+### Fixed
+
+- **A rate-limited credential renewal backs off instead of retrying all day.** When Anthropic answers a renewal with "too many requests", brAIn waits 15 minutes, then 30, then an hour and longer (never less than the server asks), keeps that wait across a restart, and says the renewal is rate limited and when it tries next rather than asking you to sign in again. Each sign-in is renewed at most once per pass. (#422, #318)
+- **"Findings are still waiting for a look" says when the budget figure is brAIn's own estimate**, because your account's figures were not being reported. (#82)
+- **The terminal keeps your full Claude sign-in.** Once the access token lapsed after a few hours, the terminal handed Claude Code the shared token that can only run Claude, so Remote Control refused and the sign-in never refreshed. A sign-in that can still renew itself is now left to renew; `ha login --status` reads "expired, refreshes itself on next use" and warns when the only usable login is the limited token. (#397)
+- **Voice's room map no longer fails to save when two refreshes run at once.** Every writer uses its own scratch file. (#422)
+
 ## 3.8.9
 
 ### Added

@@ -1118,6 +1118,29 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         said = _said(reports.faults(held))
         self.assertIn("the session usage budget is spent", said)
 
+    def test_a_budget_held_by_brains_own_estimate_says_it_is_one(self):
+        """A house whose account figures went unreported for a day held its
+        looks for ten hours on "the session usage budget is spent" — a
+        figure that was brAIn's own estimate, because the account's real
+        one was missing. The row says so, in the detail and the sentence,
+        and does not say it when the figure is the account's."""
+        base = {**FIELD,
+                "journal": {"runs": 10, "claude_runs": 10,
+                            "by_outcome": {"ok": 10},
+                            "by_source": {"resident": {"ok": 10}}},
+                "resident": {"last_error": "the session usage budget is spent"},
+                "findings": {"waiting_for_look": 3,
+                             "waiting_for_look_oldest_s": 10 * 3600}}
+        rows = [r for r in reports.faults(base) if r["where"] == "Looks"]
+        self.assertEqual(len(rows), 1)
+        for text in (rows[0]["detail"], rows[0]["sentence"]):
+            self.assertIn("estimate", text)
+            self.assertIn("not being reported", text)
+        account = {**base, "usage": {"source": "account", "used_percent": 99}}
+        rows = [r for r in reports.faults(account) if r["where"] == "Looks"]
+        self.assertNotIn("estimate", rows[0]["detail"])
+        self.assertNotIn("estimate", rows[0]["sentence"])
+
     def test_an_anecdote_is_not_a_producer_being_wrong(self):
         """Two endings say nothing about a rule. `findings_store`'s own
         floor, and the reason the tab hides a producer below it."""

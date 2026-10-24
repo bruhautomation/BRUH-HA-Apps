@@ -180,6 +180,20 @@ report_contract_file() {
     return 0
 }
 
+# Whether the CLI's file carries a refresh token that can still renew it:
+# a non-empty string, and before its own recorded expiry when the file
+# records one — the predicate brain-auth-env.sh, run.sh's restore and
+# engine._cli_credentials_present apply to the same file.
+cli_refreshable() {
+    jq -e --argjson now "$(date +%s)" '
+        (.claudeAiOauth // {}) as $o
+        | ((($o.refreshToken // "") | (type == "string") and (length > 0))
+           and ((($o.refreshTokenExpiresAt // 0)
+                 | (type != "number") or (. <= 0))
+                or (($o.refreshTokenExpiresAt / 1000) > ($now + 60))))
+    ' "$CLI_FILE" > /dev/null 2>&1
+}
+
 # The CLI's own store is a different shape and the only one that records an
 # expiry — so it is the only one whose liveness can actually be checked.
 # Being shaped like a credential is not being one.
@@ -202,6 +216,14 @@ report_cli_file() {
         local secs
         secs=$(( expires / 1000 - now ))
         if [ "$secs" -le 60 ]; then
+            # The access token lives for hours by design; the refresh token
+            # beside it is what the CLI mints the next one from on its next
+            # run, and brain-auth-env.sh defers to the file for exactly that
+            # reason. Only one with nothing left to renew it is EXPIRED.
+            if cli_refreshable; then
+                echo -e "  ${GREEN}Claude Code's own login: expired, refreshes itself on next use${NC} ${DIM}(access token lapsed $(human_time $(( expires / 1000 ))))${NC}"
+                return 0
+            fi
             echo -e "  ${RED}Claude Code's own login: EXPIRED${NC} ${DIM}($(human_time $(( expires / 1000 ))))${NC}"
             return 1
         fi
@@ -218,6 +240,22 @@ show_status() {
     report_contract_file "Panel sign-in" "$PANEL_FILE";     local panel=$?
     report_contract_file "Shared with other add-ons" "$AUTH_FILE"; local shared=$?
     echo ""
+
+    # A panel or `ha login` token is a long-lived one minted by `claude
+    # setup-token`: it runs Claude and nothing else. When it is the only
+    # usable credential, the usage figures and Remote Control cannot work,
+    # and the sign-in that fixes that is the account one — never this
+    # command again, which mints the same kind of token.
+    local setup_token=1
+    for f in "$PANEL_FILE" "$AUTH_FILE"; do
+        [ "$(jq -r '.type // ""' "$f" 2>/dev/null)" = "oauth_token" ] && setup_token=0
+    done
+    if [ "$cli" -ne 0 ] && [ "$setup_token" -eq 0 ]; then
+        echo -e "${YELLOW}The only usable login is a long-lived token that can only run Claude:${NC}"
+        echo -e "${YELLOW}it cannot read the usage figures or use Remote Control.${NC}"
+        echo -e "  For those, in the panel: ${CYAN}Settings -> Claude account -> Sign in again -> Sign in to your Claude account${NC}"
+        echo ""
+    fi
 
     if [ "$shared" -eq 0 ]; then
         echo -e "${GREEN}Shared login: ACTIVE${NC} — other BRUH add-ons can use it."

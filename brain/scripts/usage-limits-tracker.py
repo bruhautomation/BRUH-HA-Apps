@@ -202,11 +202,36 @@ REFRESH_TIMEOUT_S = 30
 # What a renewal can come back as. `renewed` is a live token in hand;
 # `rejected` is Anthropic saying the session is over (`invalid_grant`, or a
 # 4xx on the grant), which no retry changes; `failed` is anything about
-# the request rather than the credential — the network, a 5xx, the token
-# endpoint's own rate limit — and is asked again next pass; `raced` is the
-# CLI having rewritten the file while our request was in flight, in which
-# case ITS answer is the one on disk and ours is dropped unread.
+# the request rather than the credential — the network, a 5xx — and is
+# asked again next pass; `raced` is the CLI having rewritten the file while
+# our request was in flight, in which case ITS answer is the one on disk
+# and ours is dropped unread; `rate_limited` is the token endpoint's own
+# 429, which is waited out on a ladder rather than asked again next pass.
 RENEWED, REJECTED, FAILED, RACED = "renewed", "rejected", "failed", "raced"
+RATE_LIMITED = "rate_limited"
+# The status for a pass whose renewal was refused for rate, or is waiting
+# out the refusal. It is the 429 ladder's claim about a different endpoint:
+# nothing is wrong with the sign-in, asking again cannot help, and the
+# figure comes back on its own when a renewal is let through. A 429 used to
+# be FAILED and asked again on the next pass — and a pass comes after every
+# finished run as well as on the heartbeat, so one rate-limited renewal was
+# a hundred requests in a day, each of them keeping the limit in place,
+# with the usage figures unreported for the whole of it.
+RENEWAL_LIMITED = "oauth_renewal_rate_limited"
+# The ladder. A few attempts an hour at first, because the figures stay
+# unreported until one is let through, then hours, because retrying is what
+# sustains a rate limit. The last rung repeats. A Retry-After may lengthen a
+# rung (capped at RETRY_AFTER_MAX_S) and never shorten one: the usage
+# endpoint answers `Retry-After: 0` while still refusing, and nothing says
+# the token endpoint is kinder.
+RENEWAL_BACKOFF_S = (900, 1800, 3600, 7200, 14400)
+# Where the promise lives, so a restart — the first thing anybody does when
+# the sensors go dark — keeps it rather than asking straight back into the
+# limit (`_resume_backoff`'s reason, for the other endpoint). Its own file
+# because the usage file is rewritten whole by a good reading, which can
+# arrive from a lower store while the renewal is still waiting.
+RENEWAL_BACKOFF_FILE = os.environ.get("BRAIN_USAGE_RENEWAL_BACKOFF",
+                                      "/data/usage-renewal-backoff.json")
 AUTH_PROBLEMS = ("no_oauth_token", "api_key_has_no_usage_limits", "http_401",
                  SCOPE_ERROR)
 # A bare `http_403` is deliberately NOT in that list. The narrowed code above
@@ -252,6 +277,14 @@ ERROR_DETAIL = {
         "make the figure arrive sooner. If this has been the answer for "
         "more than a few hours the add-on log says what the renewal ran "
         "into."
+    ),
+    RENEWAL_LIMITED: (
+        "The signed-in account credential's access token has lapsed and "
+        "Anthropic is rate limiting brAIn's requests to renew it. Nothing "
+        "is wrong with the sign-in and signing in again will not make the "
+        "figure arrive sooner: brAIn waits, then tries the renewal again "
+        "at the next attempt shown, waiting longer each time it is refused, "
+        "and the usage figures come back once a renewal goes through."
     ),
     "http_401": (
         "Anthropic refused the saved credential: the session has expired "
@@ -459,6 +492,11 @@ def oauth_tokens(state=None):
     """
     seen_paths = set()
     seen_tokens = set()
+    # Refresh tokens already offered for renewal this pass. Two copies of
+    # one sign-in at two real paths (a config dir that is not the symlink
+    # run.sh makes it) are one credential: renewing the second sends a
+    # refresh token the first renewal may just have rotated.
+    seen_refresh = set()
 
     def unseen(token):
         """True the first time this exact credential is offered.
@@ -491,6 +529,11 @@ def oauth_tokens(state=None):
             continue
         kind, token = _credential_state(path)
         if kind == CRED_LAPSED:
+            refresh = (_load_oauth(path) or {}).get("refreshToken")
+            if isinstance(refresh, str) and refresh.strip():
+                if refresh.strip() in seen_refresh:
+                    continue
+                seen_refresh.add(refresh.strip())
             # This is the one store an account sign-in writes, and it
             # always ranks first, so a lapse here means "the credential
             # that can read usage is between refreshes". It used to be
@@ -504,6 +547,12 @@ def oauth_tokens(state=None):
                 # (RACED) — either way a live token, and the file says so.
                 _note_source(state, "claude cli")
                 yield token
+            elif outcome == RATE_LIMITED:
+                # Still the right credential, still waiting — and waiting
+                # on a promise of quiet, which the pass's verdict says.
+                if state is not None:
+                    state["lapsed"] = True
+                    state["renewal_limited"] = True
             elif outcome == REJECTED:
                 # A dead session, said so by the only party that can say
                 # it. Not "between refreshes": _fetch_with_any_credential
@@ -715,8 +764,10 @@ def _refresh_request(refresh_token, scopes):
     Which failures are which is the load-bearing half. A 401, a 403, or a
     4xx whose body names one of GRANT_REFUSALS is REJECTED: Anthropic has
     said the session is over, and asking again is the request nobody will
-    ever answer that the scope verdict's memory exists to stop. Everything
-    else — the network, a 5xx, a 429 on the token endpoint, a 400 with no
+    ever answer that the scope verdict's memory exists to stop. A 429 is
+    RATE_LIMITED, with its Retry-After left in `_renewal_retry_after`, and
+    is waited out (see _renew). Everything else — the network, a 5xx, a
+    400 with no
     recognisable code (which is more likely OUR request being malformed
     than the session being dead, and must not send somebody to sign in
     again over a bug in this file) — is FAILED, and is asked again next
@@ -746,8 +797,12 @@ def _refresh_request(refresh_token, scopes):
         sys.stderr.write(
             f"usage-limits-tracker: HTTP {status} renewing the signed-in "
             f"account credential: {text[:ERROR_BODY_LOG]}\n")
+        if status == 429:
+            _renewal_retry_after["seconds"] = _parse_retry_after(
+                getattr(exc, "headers", None))
+            return None, RATE_LIMITED
         if status in (401, 403) or (
-                400 <= status < 500 and status != 429
+                400 <= status < 500
                 and _refusal_named(text) in GRANT_REFUSALS):
             return None, REJECTED
         return None, FAILED
@@ -859,6 +914,62 @@ def _write_credentials(path, oauth, sent_refresh):
     return True
 
 
+# Where _refresh_request leaves a 429's Retry-After for _renew to read —
+# `_retry_after`'s arrangement for the usage endpoint, for the same reason.
+_renewal_retry_after = {"seconds": None}
+
+
+def _renewal_backoff():
+    """(until epoch, strikes) of a rate-limited renewal, or (0.0, 0).
+
+    Never raises. A file nobody can read promises nothing, which is the
+    direction in which being wrong costs one request.
+    """
+    try:
+        with open(RENEWAL_BACKOFF_FILE) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return 0.0, 0
+    if not isinstance(data, dict):
+        return 0.0, 0
+    until = data.get("until")
+    strikes = data.get("strikes")
+    if not isinstance(until, (int, float)) or isinstance(until, bool):
+        return 0.0, 0
+    strikes = strikes if isinstance(strikes, int) and strikes > 0 else 1
+    # A promise past the cap from now is a clock that moved; it is held to
+    # the cap rather than believed.
+    return min(float(until), time.time() + RETRY_AFTER_MAX_S), strikes
+
+
+def renewal_wait_left():
+    """Seconds still owed to a rate-limited renewal, or 0.0."""
+    until, _ = _renewal_backoff()
+    return max(until - time.time(), 0.0)
+
+
+def _note_renewal_limited(retry_after):
+    """Climb the ladder one rung and write the promise down → its wait."""
+    strikes = _renewal_backoff()[1] + 1
+    step = RENEWAL_BACKOFF_S[min(strikes, len(RENEWAL_BACKOFF_S)) - 1]
+    delay = float(step)
+    if isinstance(retry_after, (int, float)) and retry_after > step:
+        delay = min(float(retry_after), RETRY_AFTER_MAX_S)
+    _write_json_atomic(RENEWAL_BACKOFF_FILE,
+                       {"until": time.time() + delay, "strikes": strikes},
+                       create_dir=False)
+    return delay
+
+
+def _clear_renewal_backoff():
+    """The token endpoint answered something other than a 429."""
+    try:
+        os.unlink(RENEWAL_BACKOFF_FILE)
+    except OSError:
+        # Nothing was owed, or the file is already gone.
+        pass
+
+
 def _signin_in_progress(now=None):
     """True while the panel's guided sign-in holds the credentials file.
 
@@ -898,9 +1009,23 @@ def _renew(path, state):
     dead = state.setdefault("dead_refresh", set()) if state is not None else set()
     if refresh in dead:
         return None, REJECTED
+    if renewal_wait_left() > 0:
+        # A rate-limited renewal is waited out, whoever is asking: the
+        # heartbeat, a finished run, a restart. Not a request.
+        return None, RATE_LIMITED
     scopes = oauth.get("scopes") if isinstance(oauth.get("scopes"), list) else []
     scopes = [s for s in scopes if isinstance(s, str) and s]
+    _renewal_retry_after["seconds"] = None
     payload, outcome = _refresh_request(refresh, scopes)
+    if outcome == RATE_LIMITED:
+        delay = _note_renewal_limited(_renewal_retry_after["seconds"])
+        sys.stderr.write(
+            "usage-limits-tracker: Anthropic is rate limiting the renewal of "
+            "the signed-in account credential (not your account's usage) — "
+            f"waiting {delay / 60:.0f} minutes before trying again\n")
+        return None, RATE_LIMITED
+    # Anything else is the endpoint answering, which ends the ladder.
+    _clear_renewal_backoff()
     if payload is None:
         if outcome == REJECTED:
             dead.add(refresh)
@@ -1156,6 +1281,65 @@ def fetch_usage_limits(token):
 # Output
 # ---------------------------------------------------------------------------
 
+
+def _new_file_mode():
+    """The mode `open()` would give a new file here: 0666 less the umask.
+
+    Read from /proc rather than by setting and restoring the umask, which
+    would race any other thread creating a file in between.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("Umask:"):
+                    return 0o666 & ~int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        # No /proc here: the umask nearly every process starts with.
+        pass
+    return 0o666 & ~0o022
+
+def _write_json_atomic(path, payload, indent=None, create_dir=True):
+    """Write JSON through a scratch name only this writer holds → True.
+
+    `path + ".tmp"` is one name for every writer, so two writers both
+    create it, the first rename moves it and the second fails — and one
+    write is lost (`panel/atomic_write.py`'s reason). `mkstemp` in the
+    target's own directory keeps the rename same-filesystem; the mode of
+    the file being replaced is kept (what open() gives a new one, which is what
+    `open()` gave), because the panel and Home Assistant read these.
+    Never raises: a failed write leaves whatever was there.
+    """
+    directory = os.path.dirname(path) or "."
+    tmp = None
+    try:
+        if create_dir:
+            os.makedirs(directory, exist_ok=True)
+        elif not os.path.isdir(directory):
+            return False
+        try:
+            mode = stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            mode = _new_file_mode()
+        fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
+                                   suffix=".tmp", dir=directory)
+        with os.fdopen(fd, "w") as fh:
+            json.dump(payload, fh, indent=indent)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+        tmp = None
+        return True
+    except OSError as exc:
+        sys.stderr.write(f"usage-limits-tracker: could not write {path}: {exc}\n")
+        return False
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                # Already gone with its directory; nothing to tidy.
+                pass
+
+
 def write_usage(data):
     """Atomically write usage limits to the shared JSON file."""
     os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
@@ -1167,13 +1351,7 @@ def write_usage(data):
         **data,
     }
 
-    tmp = USAGE_FILE + ".tmp"
-    try:
-        with open(tmp, "w") as fh:
-            json.dump(output, fh, indent=2)
-        os.replace(tmp, USAGE_FILE)
-    except OSError as exc:
-        sys.stderr.write(f"usage-limits-tracker: write error: {exc}\n")
+    _write_json_atomic(USAGE_FILE, output, indent=2)
 
 
 def _record_failure(error, delay_s, strikes=0):
@@ -1213,16 +1391,9 @@ def _record_failure(error, delay_s, strikes=0):
         data["rate_limit_strikes"] = strikes
     else:
         data.pop("rate_limit_strikes", None)
-    tmp = USAGE_FILE + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(USAGE_FILE), exist_ok=True)
-        with open(tmp, "w") as fh:
-            json.dump(data, fh, indent=2)
-        os.replace(tmp, USAGE_FILE)
-    except OSError:
-        # Same rule as write_error_status: a failed write leaves whatever
-        # was there to age out.
-        pass
+    # Same rule as write_error_status: a failed write leaves whatever was
+    # there to age out.
+    _write_json_atomic(USAGE_FILE, data, indent=2)
 
 
 def _restate_next_attempt(delay_s, strikes):
@@ -1384,15 +1555,9 @@ def write_error_status(error_msg, detail=None):
     }
     if detail:
         output["detail"] = detail
-    tmp = USAGE_FILE + ".tmp"
-    try:
-        with open(tmp, "w") as fh:
-            json.dump(output, fh, indent=2)
-        os.replace(tmp, USAGE_FILE)
-    except OSError:
-        # The sensors read this file. A failed write leaves the previous
-        # reading to age out, which is what the two-hour window is for.
-        pass
+    # The sensors read this file. A failed write leaves the previous
+    # reading to age out, which is what the two-hour window is for.
+    _write_json_atomic(USAGE_FILE, output, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -1467,6 +1632,8 @@ def _fetch_with_any_credential(state):
         # And whether Anthropic refused to RENEW it this pass, which is
         # the opposite claim and must not be read as waiting.
         state["rejected"] = False
+        # And whether the renewal is waiting out a rate limit this pass.
+        state["renewal_limited"] = False
     data = error = settled = None
     for token in oauth_tokens(state):
         if token in unusable:
@@ -1494,6 +1661,12 @@ def _fetch_with_any_credential(state):
                 "trying the next store\n"
             )
     verdict = error or settled or credential_problem()
+    if (data is None and verdict in MASKED_BY_REFRESH
+            and (state or {}).get("renewal_limited")):
+        # The same masking, with the reason the wait is longer: the
+        # renewal is rate limited, and the sentence says when it is next
+        # tried rather than "on the next poll".
+        return None, RENEWAL_LIMITED
     if (data is None and verdict in MASKED_BY_REFRESH
             and (state or {}).get("lapsed")):
         # A structural verdict earned by a *lower* store must not be the
@@ -1588,6 +1761,27 @@ def _rate_limit_delay(strikes, retry_after):
     if isinstance(retry_after, (int, float)) and retry_after > step:
         return min(float(retry_after), RETRY_AFTER_MAX_S)
     return float(step)
+
+
+def _next_delay(error, rate_limit_strikes, consecutive_failures):
+    """(seconds until the next pass, whether a finished run may cut it).
+
+    One derivation of the wait and of whether it is a promise of quiet,
+    because a threshold moved in one of two copies is a promise a nudge
+    quietly starts cutting short. A rate-limited renewal is a promise too:
+    the next pass is the moment the renewal may be tried again, and a
+    nudge before it would only find the renewal still waiting.
+    """
+    if rate_limit_strikes:
+        return _rate_limit_delay(rate_limit_strikes,
+                                 _retry_after["seconds"]), False
+    if error == RENEWAL_LIMITED:
+        left = renewal_wait_left()
+        if left > 0:
+            return max(left, float(NUDGE_CHECK_S)), False
+    if consecutive_failures >= 5:
+        return FAILURE_BACKOFF_S, False
+    return POLL_INTERVAL, True
 
 
 def _next_failure_count(count, asked):
@@ -1686,9 +1880,9 @@ def main():
             consecutive_failures += 1
             rate_limit_strikes = 0
 
+        delay, heartbeat = _next_delay(error, rate_limit_strikes,
+                                       consecutive_failures)
         if rate_limit_strikes:
-            delay = _rate_limit_delay(rate_limit_strikes,
-                                      _retry_after["seconds"])
             # Every strike up to the cap lengthens the wait, so each one is
             # news; past the cap the number stops changing and so does the
             # log, rather than repeating the same line forever.
@@ -1698,13 +1892,6 @@ def main():
                     f"(not your account's usage) — waiting {delay / 60:.0f} "
                     "minutes before asking again\n"
                 )
-            heartbeat = False
-        elif consecutive_failures >= 5:
-            delay = FAILURE_BACKOFF_S
-            heartbeat = False
-        else:
-            delay = POLL_INTERVAL
-            heartbeat = True
 
         if not success:
             # The reason and the next attempt, on disk, before the wait —

@@ -26,17 +26,20 @@
 # allowed is preferring a CLI credential that is *dead*, which is what step
 # 1 used to do.
 #
-# The expiry rule here is deliberately stricter than the panel's, and the
-# asymmetry follows from the position. `_cli_credentials_present` is the
-# LAST store engine.get_auth consults, so a wrong "no" there is the whole
-# add-on reporting itself signed out; it therefore counts an expired access
-# token beside a refreshToken as usable, because the CLI mints a new one
-# from it on the next run. Step 1 here is the FIRST store, and a wrong "no"
-# costs nothing: it falls through to two more, and with those empty it
-# emits nothing at all — which is exactly what deferring would have done,
-# leaving the CLI to refresh itself unimpeded. So this end can afford to be
-# strict, and being strict is what stops a CLI credential whose refresh may
-# itself be revoked from shadowing a pasted token that works today.
+# The expiry rule is the panel's, and for a while it was not. An access
+# token lives for hours; the file also carries the refreshToken the CLI
+# mints the next one from, by itself, on its next run. Step 1 used to read
+# a lapsed access token as no credential, on the theory that a wrong "no"
+# at the FIRST store costs nothing because it only falls through. It costs
+# the sign-in: the fall-through exports the panel's or `ha login`'s token,
+# which can run Claude and nothing else, as CLAUDE_CODE_OAUTH_TOKEN — the
+# CLI then never opens its own file, never refreshes it, and Remote
+# Control refuses for want of a full-scope login, every few hours, for
+# ever. So a lapsed access token beside a usable refreshToken (one whose
+# own `refreshTokenExpiresAt`, when the file records it, is still ahead)
+# is deferred to, exactly as `_cli_credentials_present` and run.sh's
+# restore count it; only a past expiry with nothing left to renew it falls
+# through. The three readers are driven over one fixture set and compared.
 #
 # Emits nothing at all when there is no credential: an unset variable is
 # the correct state for "not signed in", and exporting an empty one makes
@@ -65,16 +68,20 @@ _brain_auth_cli="${_brain_auth_home}/.claude/.credentials.json"
 #    A missing or zero expiresAt is treated as live: it means the file does
 #    not record one, not that the token is past it.
 #
-#    A refreshToken does NOT rescue a lapsed access token here, and that is
-#    the one place this rule parts company with `_cli_credentials_present`
-#    — see the note at the top of this file for why the same fact answers
-#    the two questions differently.
+#    A lapsed access token beside a refreshToken is deferred to as well:
+#    the CLI renews it itself, and exporting a lower store's token over it
+#    is what stops that renewal ever happening (see the note at the top).
 if [ -r "$_brain_auth_cli" ] \
     && jq -e --argjson now "$(date +%s)" '
         (.claudeAiOauth // {}) as $o
         | (($o.accessToken // "") | startswith("sk-ant-"))
           and (($o.expiresAt // 0) <= 0
-               or (($o.expiresAt / 1000) > ($now + 60)))
+               or (($o.expiresAt / 1000) > ($now + 60))
+               or ((($o.refreshToken // "")
+                    | (type == "string") and (length > 0))
+                   and ((($o.refreshTokenExpiresAt // 0)
+                         | (type != "number") or (. <= 0))
+                        or (($o.refreshTokenExpiresAt / 1000) > ($now + 60)))))
     ' "$_brain_auth_cli" > /dev/null 2>&1; then
     unset _brain_auth_home _brain_auth_local _brain_auth_shared _brain_auth_cli
     return 0 2>/dev/null || exit 0

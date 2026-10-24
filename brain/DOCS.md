@@ -2864,6 +2864,14 @@ token from `ha login`, reported *that* one's scope refusal, and so told you to
 perform the sign-in you had just performed — which is why it looked like signing
 in never took.
 
+The other status that means *nothing is wrong* is `oauth_renewal_rate_limited`:
+Anthropic is refusing brAIn's requests to renew the access token for now. brAIn
+waits a quarter of an hour, then longer each time it is refused (up to a few
+hours), says when it will try next, and does not ask in between however many
+runs finish — asking again is what keeps a rate limit in place. The figure is
+brAIn's own estimate until a renewal goes through, and signing in again will not
+make it arrive sooner.
+
 From a terminal, `ha login` and `brain login` are the same command:
 
 ```bash

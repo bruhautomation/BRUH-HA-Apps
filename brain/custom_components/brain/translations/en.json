@@ -1401,6 +1401,7 @@
           "http_403": "Permission refused",
           "oauth_token_lacks_usage_scope": "Sign-in cannot read usage",
           "oauth_token_awaiting_refresh": "Waiting for sign-in to renew",
+          "oauth_renewal_rate_limited": "Sign-in renewal rate-limited",
           "http_429": "Usage endpoint rate-limited",
           "network_error": "Anthropic unreachable",
           "invalid_response": "Unreadable answer",

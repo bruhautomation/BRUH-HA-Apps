@@ -300,15 +300,22 @@ MEMORYMD
     # while the container was down is a perfectly good credential, and
     # deleting it forces a login nobody needed to do. What stays dead is a
     # past expiry with no refresh token: that is the revoked session this
-    # check was written for, and nothing in the file can renew it.
+    # check was written for, and nothing in the file can renew it — and so
+    # does a refresh token past the `refreshTokenExpiresAt` the file
+    # records for it. `brain-auth-env.sh` and `engine._cli_credentials_present`
+    # apply the same rule to the same file.
     _credential_is_usable() {
         jq -e --argjson now "$(date +%s)" '
             (.claudeAiOauth // {}) as $o
             | (($o.accessToken // "") | startswith("sk-ant-"))
               and (($o.expiresAt // 0) <= 0
                    or (($o.expiresAt / 1000) > ($now + 60))
-                   or (($o.refreshToken // "")
-                       | (type == "string") and (length > 0)))
+                   or ((($o.refreshToken // "")
+                        | (type == "string") and (length > 0))
+                       and ((($o.refreshTokenExpiresAt // 0)
+                             | (type != "number") or (. <= 0))
+                            or (($o.refreshTokenExpiresAt / 1000)
+                                > ($now + 60)))))
         ' "$1" > /dev/null 2>&1
     }
     if [ -s "$data_home/.claude/.credentials.json" ]; then

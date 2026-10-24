@@ -199,11 +199,11 @@ class TestTheCliCredentialVerdict(unittest.TestCase):
     # -- the three states an expiry in the past can be ---------------------
 
     def test_a_lapsed_token_with_another_store_behind_it_warns(self):
-        """The shadowing case, and the only one the warning was ever true
-        of. `brain-auth-env.sh` is strict here on purpose: it falls through
-        and exports the panel credential, so the terminal runs on that one
-        and the CLI never gets the run that would refresh its own."""
-        self._credential(-3600)
+        """The shadowing case, and the only one the warning is true of: a
+        lapsed token with NOTHING to renew it. `brain-auth-env.sh` falls
+        through there and exports the panel credential, so the terminal
+        runs on that one."""
+        self._credential(-3600, refresh=False)
         self._other_store("panel")
         lines = self._run()
         self.assertIn("WARN", self._kinds(lines))
@@ -215,10 +215,25 @@ class TestTheCliCredentialVerdict(unittest.TestCase):
         self.assertNotIn("keep asking you to log in", warned)
 
     def test_the_shared_store_shadows_it_too_and_is_named(self):
-        self._credential(-3600)
+        self._credential(-3600, refresh=False)
         self._other_store("shared")
         warned = " ".join(t for k, t in self._run() if k == "WARN")
         self.assertIn("ha login", warned)
+
+    def test_a_renewable_token_is_not_shadowed_by_another_store(self):
+        """`brain-auth-env.sh` defers to a lapsed token beside a refresh
+        token whatever sits below it, so a store behind it shadows
+        nothing and there is nothing to warn about."""
+        for which in ("panel", "shared"):
+            with self.subTest(store=which):
+                self.tearDown()
+                self.setUp()
+                self._credential(-3600)
+                self._other_store(which)
+                lines = self._run()
+                self.assertNotIn("WARN", self._kinds(lines))
+                said = " ".join(t for _, t in lines)
+                self.assertIn("refreshes itself on next use", said)
 
     def test_a_lapsed_token_that_can_renew_itself_is_only_an_info(self):
         """The bug. Nothing is wrong here: the next `claude` run mints a new

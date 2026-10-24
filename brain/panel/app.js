@@ -809,6 +809,14 @@ function limitsNote(u) {
         + `on the next poll. Nothing is wrong and <b>signing in again will `
         + `not make it arrive sooner</b>. The figure above is an estimate `
         + `until then.`);
+    case "oauth_renewal_rate_limited":
+      // Nothing to do at any age, like the endpoint's own 429: the tracker
+      // waits on a ladder and asks again by itself.
+      return say("Your sign-in is fine — Anthropic is rate limiting its renewal.",
+        `The access token lapsed and Anthropic is refusing brAIn's requests `
+        + `to renew it for now, so brAIn waits a little longer each time. `
+        + `<b>Signing in again will not make it arrive sooner.</b> The figure `
+        + `above is an estimate until a renewal goes through.`);
     case "http_403":
       return say("Anthropic refused to show your usage.",
         `It did not say why. The figure above is an estimate; signing in `
