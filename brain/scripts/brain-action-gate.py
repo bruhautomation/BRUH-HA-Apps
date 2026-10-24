@@ -67,7 +67,7 @@ GATED_MCP = frozenset({
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
-    "report_bug",
+    "report_bug", "note_personality_change",
 })
 # A gated tool's actions that only read: asking which add-ons exist,
 # searching Modrinth or asking how a designed part is doing changes nothing, and a gate in front of a search is a

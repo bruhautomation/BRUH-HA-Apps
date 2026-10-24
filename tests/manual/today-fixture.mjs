@@ -383,8 +383,10 @@ window.fetch = async (url, opts) => {
 
 // Every label a button on Today may carry: the design doc's vocabulary,
 // plus Yes and No — the answer to a question rather than a verb — and
-// "Doesn't apply", a question's way of saying it was irrelevant.
-export const VOCAB = new Set(['Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
+// "Doesn't apply", a question's way of saying it was irrelevant, and
+// "Respond", the first press on a finding card, which opens the line to
+// brAIn under its row.
+export const VOCAB = new Set(['Respond', 'Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
   'Delete', 'Yes', 'No', 'Cancel', 'Change', "Doesn't apply"]);

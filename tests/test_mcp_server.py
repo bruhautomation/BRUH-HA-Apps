@@ -571,6 +571,8 @@ class TestMCPProtocol(unittest.TestCase):
             "bambu_status", "bambu_print", "bambu_control", "bambu_slice",
             # 3.9: designing a part with brAIn and printing it
             "bambu_design",
+            # Recording how brAIn's personality has grown (⚙ › Personality)
+            "note_personality_change",
         }
         self.assertEqual(tool_names, expected_tools)
 

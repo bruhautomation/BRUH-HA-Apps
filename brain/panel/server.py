@@ -191,6 +191,7 @@ import feedback_store
 import finding_requests
 import findings_store
 import fixer
+import personality
 import healing
 import health
 import house
@@ -23594,6 +23595,7 @@ def _settings_payload(settings: dict) -> dict:
     return {
         "settings": {**settings, **options},
         "model_label": chat_session.pretty_model(options["model"]),
+        "personality_summary": personality.summary(personality.load()),
         "usage": _usage_for_panel(settings),
         "addon_defaults": addon_defaults(),
         "options_synced": addon_options.snapshot() is not None,
@@ -24030,11 +24032,28 @@ def development_mode() -> bool:
         return False
 
 
+def _personality_lines() -> str:
+    """The household's chosen personality for brAIn, as prompt lines, or ""
+    when none is set (`personality.prompt_block`). Never raises: a file
+    that cannot be read is no personality, and the identity above stands."""
+    try:
+        block = personality.prompt_block()
+    except Exception:  # noqa: BLE001 — unreadable is "none set"
+        return ""
+    if not block:
+        return ""
+    return ("The household gave brAIn a personality (⚙ › Personality); "
+            "speak as it.\n" + block)
+
+
 def _chat_system_prompt(session) -> str:
     """The appended system prompt for one chat spawn (see CHAT_IDENTITY)."""
     lines = _chat_house_lines()
     base = CHAT_IDENTITY + "\n\n" + (
         DEVELOPMENT_MODE_ON if development_mode() else DEVELOPMENT_MODE_OFF)
+    persona = _personality_lines()
+    if persona:
+        base += "\n\n" + persona
     if yolo_mode():
         base += "\n\n" + YOLO_MODE_ON
     if not lines:
@@ -24080,6 +24099,64 @@ async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
     opened = await asyncio.to_thread(
         chat_session._open_in_terminal, session_id, prompt)
     return {"ok": True, "opened": bool(opened), "session_id": session_id}
+
+
+# ---- ⚙ › Personality ---------------------------------------------------
+#
+# Who brAIn is in this house: a name, a persona and a growth log, in
+# brAIn's own config (`personality.py`). The file is also the wire Morph
+# reads; the chat, the terminal, the generated CLAUDE.md and the voice
+# prompt carry it. A save rewrites the terminal's appended prompt so the
+# next window opened has it.
+
+async def _personality_body(request: web.Request) -> dict:
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError):
+        raise web.HTTPBadRequest(text="send a JSON object")
+    if not isinstance(body, dict):
+        raise web.HTTPBadRequest(text="send a JSON object")
+    return body
+
+
+async def h_personality_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(personality.payload))
+
+
+async def h_personality_put(request: web.Request) -> web.Response:
+    body = await _personality_body(request)
+    name, persona = body.get("name", ""), body.get("persona", "")
+    if not isinstance(name, str) or not isinstance(persona, str):
+        raise web.HTTPBadRequest(text="send {name, persona} as text")
+    try:
+        await asyncio.to_thread(personality.save, name, persona)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    except OSError:
+        log.exception("could not save the personality")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    await asyncio.to_thread(_write_terminal_prompt)
+    return web.json_response(await asyncio.to_thread(personality.payload))
+
+
+async def h_personality_growth(request: web.Request) -> web.Response:
+    """POST {text}: one dated growth entry (the `note_personality_change`
+    MCP tool, from a conversation about who brAIn is)."""
+    body = await _personality_body(request)
+    text = body.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise web.HTTPBadRequest(text="say what changed, as {text}")
+    try:
+        entry = await asyncio.to_thread(personality.add_growth, text)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(text=str(exc))
+    except OSError:
+        log.exception("could not record a personality change")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not record that; the add-on log says why.")
+    await asyncio.to_thread(_write_terminal_prompt)
+    return web.json_response({"ok": True, "entry": entry})
 
 
 async def h_instructions(request: web.Request) -> web.Response:
@@ -25294,6 +25371,9 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_get("/api/personality", h_personality_get)
+    app.router.add_put("/api/personality", h_personality_put)
+    app.router.add_post("/api/personality/growth", h_personality_growth)
     app.router.add_get("/api/instructions", h_instructions)
     app.router.add_get("/api/instructions/{key}", h_instruction_get)
     app.router.add_put("/api/instructions/{key}", h_instruction_put)
@@ -25333,6 +25413,13 @@ def make_app() -> web.Application:
         await asyncio.to_thread(instructions.export_builtins)
         # A browser left over from before the restart (report #355).
         await asyncio.to_thread(browser_reaper.maybe_reap)
+        # The household's personality used to live in Morph's own code;
+        # read it out of Morph's copy ONCE, while brAIn has no file of its
+        # own, before the terminal's prompt is written from it. Morph's
+        # file is never written.
+        moved = await asyncio.to_thread(personality.migrate_from_morph)
+        if moved:
+            log.info("personality: %s", moved)
         await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from

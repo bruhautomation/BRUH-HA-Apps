@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.15
+
+### Added
+
+- **The household's personality lives in brAIn.** Its name, its persona and how it has grown are kept in brAIn's own configuration and edited in ⚙ › Personality, where the growth is listed and Ask opens a conversation about it. The chat, the terminal and voice carry it when one is set, and Morph reads it from brAIn rather than keeping its own; a personality Morph kept before is read once and carried over. (#390)
+
+### Changed
+
+- **A finding card's reply box opens from Respond.** Respond is the first button in a card's answer row, and the box and Send appear only once it is pressed; Escape or a second press puts it away, and what was typed is kept. (#379)
+
 ## 3.8.14
 
 ### Added
