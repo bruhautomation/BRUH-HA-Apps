@@ -173,6 +173,30 @@ def _write(data: dict, path: str) -> None:
     atomic_write.write_json(path, data, mode=0o644, indent=1, ensure_ascii=False)
 
 
+def save_refusal(name, persona, path: str | None = None) -> str:
+    """Why `save` would refuse these, as the sentence a person reads, or
+    "" when it would not. The routes answer with this rather than with an
+    exception's text."""
+    if not isinstance(name, str) or not isinstance(persona, str):
+        return "send {name, persona} as text"
+    if len(name.strip()) > NAME_MAX:
+        return f"a name is at most {NAME_MAX} characters"
+    if len(persona.strip()) > PERSONA_MAX:
+        return f"a personality is at most {PERSONA_MAX} characters"
+    if not writable(path or STORE):
+        return "brAIn's config folder is not there to save into"
+    return ""
+
+
+def growth_refusal(text, path: str | None = None) -> str:
+    """Why `add_growth` would refuse this, or ""."""
+    if not _block(text, GROWTH_TEXT_MAX):
+        return "say what changed"
+    if not writable(path or STORE):
+        return "brAIn's config folder is not there to save into"
+    return ""
+
+
 def save(name, persona, path: str | None = None) -> dict:
     """Replace the name and the persona; the growth log is kept.
 

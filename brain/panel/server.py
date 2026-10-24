@@ -24733,11 +24733,12 @@ async def h_personality_put(request: web.Request) -> web.Response:
     name, persona = body.get("name", ""), body.get("persona", "")
     if not isinstance(name, str) or not isinstance(persona, str):
         raise web.HTTPBadRequest(text="send {name, persona} as text")
+    refusal = await asyncio.to_thread(personality.save_refusal, name, persona)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
     try:
         await asyncio.to_thread(personality.save, name, persona)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
-    except OSError:
+    except (ValueError, OSError):
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
@@ -24752,11 +24753,12 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="say what changed, as {text}")
+    refusal = await asyncio.to_thread(personality.growth_refusal, text)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
     try:
         entry = await asyncio.to_thread(personality.add_growth, text)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
-    except OSError:
+    except (ValueError, OSError):
         log.exception("could not record a personality change")
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
