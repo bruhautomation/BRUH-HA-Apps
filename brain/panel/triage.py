@@ -109,6 +109,43 @@ LEGACY_STOCK = ("The look at this one did not finish, so it is on the list "
                 "as it was filed.",)
 
 
+# A NOTE is news brAIn files for a person to read, never a problem for a
+# look to judge: a change to how brAIn talks or behaves that somebody asked
+# it to keep developing ("show it as findings about how you're updating
+# your personality"), or anything a conversation files as `kind: note`.
+# Landing as `triaging` like a house fault, one could be held by a look,
+# shown as "Unchecked" by the stale sweep and answered with a problem's
+# buttons. One rule, here at the one door: a note is filed OPEN, as
+# information (`kind: change` — news about brAIn itself, read and
+# acknowledged — `severity: info`, `informational: true`), with nothing for a look
+# to judge; its card has one press (`answers` "acknowledge": Done) and
+# no notification carries one (`notify_router.worth_sending`). Never the
+# harm family: a row from those sources is never demoted to a note,
+# whatever it says about itself.
+NOTE_SOURCES = frozenset({"personality"})
+NOTE_EXCLUDED = frozenset({"safety", "security", "correction"})
+
+
+def is_note(row) -> bool:
+    """Whether a row is a note (above)."""
+    if not isinstance(row, dict):
+        return False
+    source = str(row.get("source") or "")
+    if source in NOTE_EXCLUDED or source.startswith("check:"):
+        return False
+    return (source in NOTE_SOURCES or row.get("kind") == "note"
+            or row.get("informational") is True)
+
+
+def _filed(row):
+    if not isinstance(row, dict):
+        return row
+    if is_note(row):
+        return {**row, "status": "open", "kind": "change", "informational": True,
+                "severity": "info", "fixable": False}
+    return {**row, "status": "triaging"}
+
+
 def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
     """The wire-shaped findings a producer is about to file, every one of
     them marked as waiting for something to look at it — less the ones
@@ -140,8 +177,7 @@ def gate(rows: list[dict], muted: set[str] | None = None) -> list[dict]:
         except Exception:  # noqa: BLE001 — a settings file that cannot
             # be read mutes nothing: the wrong direction here hides a card.
             muted = set()
-    return [{**row, "status": "triaging"} if isinstance(row, dict) else row
-            for row in rows
+    return [_filed(row) for row in rows
             if not (isinstance(row, dict) and muted
                     and str(row.get("source") or "") in muted)]
 
@@ -188,5 +224,6 @@ HOT_LOOKS_PER_DAY = 150
 __all__ = [
     "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
     "SHOW_AFTER_S", "STALE_S",
-    "UNJUDGED", "VERDICTS", "WAITING", "gate", "waiting_too_long",
+    "NOTE_EXCLUDED", "NOTE_SOURCES",
+    "UNJUDGED", "VERDICTS", "WAITING", "gate", "is_note", "waiting_too_long",
 ]

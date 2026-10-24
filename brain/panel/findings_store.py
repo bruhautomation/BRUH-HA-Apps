@@ -1130,6 +1130,10 @@ def _case_fields(entry: dict) -> dict:
     kind = entry.get("kind")
     if kind in CASE_KINDS:
         out["kind"] = kind
+    # A note (`triage.is_note`): news to read, answered with Got it. Only a
+    # literal True, so nothing on the wire can set it by being truthy.
+    if entry.get("informational") is True:
+        out["informational"] = True
     claim = textclip.clip(str(entry.get("claim") or "").strip(), MAX_CLAIM)
     if claim:
         out["claim"] = claim

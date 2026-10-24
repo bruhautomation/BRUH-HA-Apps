@@ -193,6 +193,10 @@ def worth_sending(findings: list[dict], min_severity: str) -> list[dict]:
     floor = findings_store.SEVERITIES.index(min_severity)
     out = []
     for f in findings or []:
+        if (f or {}).get("informational") is True:
+            # A note brAIn filed for a person to read (`triage.is_note`)
+            # is never a notification: it is on the list, and that is all.
+            continue
         sev = str((f or {}).get("severity") or "warning")
         if sev not in findings_store.SEVERITIES:
             sev = "warning"

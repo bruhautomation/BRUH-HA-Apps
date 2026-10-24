@@ -84,6 +84,8 @@ SITUATIONS = (
     # A registry tidy-up brAIn can propose for review (`tidy.py`), and a
     # question the house book needs a person to answer (`house_book.py`).
     "tidy", "gap",
+    # A note brAIn filed for a person to read (`triage.is_note`): one press.
+    "acknowledge",
 )
 
 # Which check ids read as which situation. Keyed on the id and never on
@@ -227,6 +229,8 @@ def situation(case: dict) -> str:
 
     if store == "todo":
         return "chore_done" if status == "done" else "chore"
+    if case.get("informational") is True and fstatus != "fixed":
+        return "acknowledge"
     if kind == "question" and case.get("source") == HOUSE_BOOK_SOURCE:
         return "gap"
     if kind == "question" or store == "hypotheses":
@@ -493,6 +497,15 @@ def answers(case: dict) -> list[dict]:
             # brAIn will not make this change: a person's hands.
             lead = _todo(cid, primary=True)
         return _problem_row(case, lead)
+
+    if sit == "acknowledge":
+        return [_answer(
+            # "Done", the action vocabulary's word for an acknowledgement
+            # (a change brAIn made carries the same press).
+            "ack", "Done", "Clear it off the list — it is something "
+            "brAIn wanted you to know, not something to fix.",
+            route=f"/api/case/{cid}/do", request="ack", primary=True,
+            done="Got it")]
 
     if sit == "change":
         out = [_answer(
@@ -776,6 +789,7 @@ def request_answers(row: dict) -> list[dict]:
         "source": row.get("source") or "",
         "fixable": row.get("fixable", True) is not False,
         "plan": row.get("plan") or {},
+        "informational": row.get("informational") is True,
     }
     if case["finding_status"] in ("planning", "fixing"):
         return []
@@ -786,7 +800,8 @@ def request_answers(row: dict) -> list[dict]:
             and situation(case) != "chore_check"):
         out.insert(0, {"action": "todo", "label": "Add to To Do"})
         actions.add("todo")
-    if out and "snooze" not in actions and case["kind"] != "change":
+    if out and "snooze" not in actions and case["kind"] != "change" \
+            and situation(case) != "acknowledge":
         out.append({"action": "snooze", "label": "Snooze"})
     return out
 

@@ -557,6 +557,8 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         # `findings_store` would give it. `_base` defaults the other way
         # because no other store makes that promise.
         "fixable": row.get("fixable", True) is not False,
+        # A note brAIn filed about itself (`triage.is_note`): one press.
+        "informational": row.get("informational") is True,
         "evidence": list(row.get("evidence") or []),
         "actions": list(row.get("actions") or []),
         "memory_hint": row.get("memory_hint") or "",
