@@ -1778,6 +1778,155 @@ def _note_seen_again(held: list[tuple[int, str]]) -> None:
             log.warning("could not note a report on its to-do item: %s", exc)
 
 
+# One cause filed as several rows. Two folds over the live list, run after
+# every filing (`add_many`, which `add_case` goes through) and after an
+# investigation rewrites a row (`refine`), because a case's evidence is what
+# says which devices it reaches:
+#
+#   * a row that DIAGNOSES a shared cause — the Resident's case or the
+#     overnight check's (`SHARED_CAUSE_HOSTS`) — whose evidence names two or
+#     more devices takes in the live rows filed about each of them ("four
+#     Wi-Fi devices are not reachable" beside a row each for two of them);
+#   * a model-written row about an automation or a script whose evidence
+#     names one device folds into that device's own live row: "the porch
+#     automation failed, the light did not respond" is the light being
+#     offline, said a second time. Model-written only: a house check about
+#     an automation (`auto.trigger_unavailable`) is deliberately its own
+#     claim, the one that answers why the automation stopped.
+#
+# A folded row leaves the list — no memory line, no settled key,
+# `clear_resolved`'s ending — and the row it folded into lists the device
+# among its evidence and takes the worse severity. A re-report of a folded
+# device is folded again on the way in, so it is never announced.
+#
+# Never a row in the harm family (`SUBJECT_FOLD_EXCLUDED`'s safety,
+# security and correction, the harm checks), never a row brAIn fixed
+# (`CROSS_FOLD_STATUSES` holds only live ones), never a question or a
+# suggestion, never a row somebody has replied under, put back, planned or
+# snoozed (`nobody_has_touched`'s rule for a row on screen), and never into
+# a row less visible than the one folded: a held cause must not hide an
+# open device.
+SHARED_CAUSE_HOSTS = frozenset({"resident", "sre"})
+SHARED_CAUSE_KINDS = ("", "problem")
+AUTOMATION_DOMAINS = ("automation", "script")
+_VISIBLE_HOSTS = ("open", "needs_you")
+
+
+def _devices_named(entry: dict) -> set[str]:
+    """The device entities a row is about: its own and its evidence's,
+    never an automation or a script."""
+    out = {_entity_shaped(entry.get("entity_id"))}
+    for ev in entry.get("evidence") or []:
+        if isinstance(ev, dict):
+            out.add(_entity_shaped(ev.get("entity")))
+    out.discard("")
+    return {e for e in out if e.split(".", 1)[0] not in AUTOMATION_DOMAINS}
+
+
+def _may_fold_away(entry: dict) -> bool:
+    if entry.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    if str(entry.get("kind") or "") not in SHARED_CAUSE_KINDS:
+        return False
+    source = str(entry.get("source") or "")
+    if source in SUBJECT_FOLD_EXCLUDED or source in TODO_HOLD_EXCLUDED:
+        return False
+    if source.startswith("check:"):
+        check = source.split(":", 1)[1]
+        if (check in CHECK_FOLD_EXCLUDED
+                or check.startswith(CHECK_FOLD_EXCLUDED_PREFIXES)):
+            return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if record.get("elevated_by_person") or entry.get("plan"):
+        return False
+    if int(entry.get("snoozed_until") or 0):
+        return False
+    return not any(isinstance(t, dict) and t.get("who") == "you"
+                   for t in entry.get("thread") or [])
+
+
+def _may_host(host: dict, entry: dict) -> bool:
+    if host is entry or host.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    if str(host.get("source") or "") in TODO_HOLD_EXCLUDED:
+        return False
+    return (host.get("status") in _VISIBLE_HOSTS
+            or host.get("status") == entry.get("status"))
+
+
+def _take_in(host: dict, entry: dict) -> None:
+    """``entry``'s device and severity onto ``host``."""
+    evidence = _clean_evidence(host.get("evidence"))
+    have = {e["entity"] for e in evidence}
+    eid = str(entry.get("entity_id") or "")
+    extra = []
+    if eid and eid not in have:
+        extra.append({"entity": eid,
+                      "value": str(entry.get("claim") or entry.get("text") or ""),
+                      "when": ""})
+        have.add(eid)
+    for ev in _clean_evidence(entry.get("evidence")):
+        if ev["entity"] not in have:
+            extra.append(ev)
+            have.add(ev["entity"])
+    if extra:
+        host["evidence"] = _clean_evidence(evidence + extra)
+    if _severity_rank(entry.get("severity")) > _severity_rank(
+            host.get("severity")):
+        host["severity"] = entry["severity"]
+
+
+def _fold_shared(items: list[dict]) -> set[int]:
+    """Fold the rows one cause was filed as (above). Returns the ids that
+    left the list; ``items`` is changed in place."""
+    hosts = []
+    for f in items:
+        if (str(f.get("source") or "") in SHARED_CAUSE_HOSTS
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS
+                and f.get("status") in CROSS_FOLD_STATUSES):
+            devices = _devices_named(f)
+            if len(devices) >= 2:
+                hosts.append((f, devices))
+    # The widest cause first, so a row naming four devices takes in one
+    # naming two rather than the other way round.
+    hosts.sort(key=lambda h: -len(h[1]))
+    by_entity: dict[str, dict] = {}
+    for f in items:
+        eid = _entity_shaped(f.get("entity_id"))
+        if eid and eid.split(".", 1)[0] not in AUTOMATION_DOMAINS \
+                and f.get("status") in CROSS_FOLD_STATUSES \
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS:
+            by_entity.setdefault(eid, f)
+    gone: set[int] = set()
+    for f in items:
+        ts = int(f.get("ts") or 0)
+        if ts in gone or not _may_fold_away(f):
+            continue
+        eid = _entity_shaped(f.get("entity_id"))
+        host = None
+        if eid and eid.split(".", 1)[0] in AUTOMATION_DOMAINS:
+            devices = _devices_named(f)
+            if len(devices) == 1 and _model_written(f.get("source")):
+                host = by_entity.get(next(iter(devices)))
+        elif eid:
+            mine = len(_devices_named(f))
+            for candidate, devices in hosts:
+                if (eid in devices and len(devices) > mine
+                        and int(candidate.get("ts") or 0) not in gone):
+                    host = candidate
+                    break
+        if host is None or not _may_host(host, f) \
+                or int(host.get("ts") or 0) in gone:
+            continue
+        _take_in(host, f)
+        gone.add(ts)
+    if gone:
+        items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
+        log.info("folded %d finding(s) into the row about their shared cause",
+                 len(gone))
+    return gone
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -1876,7 +2025,10 @@ def add_many(objs: list[dict]) -> list[dict]:
             checked.setdefault(ck, entry)
         items.append(entry)
         created.append(_shape(entry))
-    if created or refreshed:
+    gone = _fold_shared(items) if created or refreshed else set()
+    if gone:
+        created = [c for c in created if int(c.get("ts") or 0) not in gone]
+    if created or refreshed or gone:
         _write(_prune(items))
     if held:
         _note_seen_again(held)
@@ -2105,8 +2257,12 @@ def refine(ts: int, case: dict, run_id: str = "",
             "elevated_at": int(
                 (entry.get("triage") or {}).get("elevated_at") or 0),
             "wrote_fix": bool(fix)})
+        # The run that looked may have named every device a cause reaches,
+        # or found this row to be one of them — then it is the shared row
+        # that carries it, and there is nothing of this one left to show.
+        gone = _fold_shared(items)
         _write(items)
-        return _shape(entry)
+        return None if int(ts) in gone else _shape(entry)
     return None
 
 
