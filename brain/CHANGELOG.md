@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.11
+
+### Added
+
+- **brAIn watches your Wi-Fi through UniFi.** A device UniFi says is connected while every one of its own entities has stopped answering for two hours is reported, grouped by access point; a device that drops off ten or more times in a week is reported; every UniFi tracker dropping together again and again is one card about the integration. Home Assistant restarting is never counted as a device dropping. (#403)
+- **brAIn watches the Z-Wave and Zigbee meshes.** A Z-Wave battery device silent for more than three of its wake-up intervals (a day when the interval is unknown), a Z-Wave device with a very weak or slow link, a weak Zigbee router, and a Zigbee device not heard from for hours are reported, read from what the network itself last heard rather than what Home Assistant last changed, which a restart resets. Devices that are disabled or labelled not in use are left alone. (#415)
+- **Integrations are audited.** An integration that has failed to set up for more than a day (never an ignored discovery or one you disabled), a low-battery warning from any integration, and an error repeated more than 100 times in a day in Home Assistant's log, named by the integration and device behind it, are reported. (#416)
+
 ## 3.8.10
 
 ### Fixed
