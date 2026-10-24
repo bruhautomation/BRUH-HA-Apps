@@ -1546,9 +1546,12 @@ class _TokenEndpoint:
                         "headers": {k.lower(): v for k, v in self.headers.items()}}
                 endpoint.requests.append(seen)
                 answer = endpoint.answer
-                status, payload = answer(seen) if callable(answer) else answer
+                status, payload, *extra = (answer(seen) if callable(answer)
+                                           else answer)
                 data = json.dumps(payload).encode("utf-8")
                 self.send_response(status)
+                for name, value in (extra[0] if extra else {}).items():
+                    self.send_header(name, value)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -1599,6 +1602,8 @@ class TestTheTrackerRenewsTheCredentialItself(unittest.TestCase):
             "BRAIN_SHARED_AUTH": self.shared,
             "BRAIN_CLI_VERSION": "2.1.273",
             "CLAUDE_CONFIG_DIR": None,
+            "BRAIN_USAGE_RENEWAL_BACKOFF": os.path.join(
+                self.tmp.name, "usage-renewal-backoff.json"),
         })
         self.endpoint = _TokenEndpoint()
         self.addCleanup(self.endpoint.close)
@@ -1872,6 +1877,204 @@ class TestTheTrackerRenewsTheCredentialItself(unittest.TestCase):
         self._lapsed()
         self.assertIsNone(self.mod._fetch_with_any_credential({})[1])
         self.assertEqual(len(self.endpoint.requests), 1)
+
+
+class TestARateLimitedRenewalBacksOff(unittest.TestCase):
+    """A 429 from the token endpoint was FAILED and asked again on the next
+    pass — and a pass comes after every finished run as well as on the
+    heartbeat, so one rate-limited renewal became a hundred a day, each of
+    them keeping the limit in place, with the usage figures unreported the
+    whole time. A rate-limited renewal now waits on a ladder of its own,
+    on disk so a restart keeps the promise, with Retry-After only ever
+    lengthening a rung and a nudge never shortening one."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = os.path.join(self.tmp.name, "home")
+        self.secrets = os.path.join(self.tmp.name, "secrets")
+        self.shared = os.path.join(self.tmp.name, "shared", "claude_auth.json")
+        os.makedirs(os.path.join(self.home, ".claude"))
+        os.makedirs(self.secrets)
+        os.makedirs(os.path.dirname(self.shared))
+        self.backoff = os.path.join(self.tmp.name, "usage-renewal-backoff.json")
+        self.env = {
+            "BRAIN_HOME": self.home,
+            "BRAIN_SECRETS": self.secrets,
+            "BRAIN_SHARED_AUTH": self.shared,
+            "BRAIN_CLI_VERSION": "2.1.273",
+            "CLAUDE_CONFIG_DIR": None,
+            "BRAIN_USAGE_RENEWAL_BACKOFF": self.backoff,
+        }
+        self.endpoint = _TokenEndpoint()
+        self.addCleanup(self.endpoint.close)
+        self.endpoint.answer = (429, {"type": "error", "error": {
+            "type": "rate_limit_error", "message": "Rate limited"}},
+            {"Retry-After": "0"})
+        self.cli = os.path.join(self.home, ".claude", ".credentials.json")
+        self.mod = self._load()
+
+    def _load(self):
+        mod = load_tracker(self.env)
+        mod.TOKEN_URL = self.endpoint.url
+        mod.USAGE_FILE = os.path.join(self.tmp.name, "usage_limits.json")
+
+        def fetch(token):
+            if "NEW" in token:
+                return {"five_hour": {"utilization": 12}}, None
+            return None, "http_401"
+        mod.fetch_usage_limits = fetch
+        return mod
+
+    def _lapsed(self, path=None):
+        oauth = {"accessToken": "sk-ant-oat01-LAPSED",
+                 "refreshToken": "sk-ant-ort01-refresh",
+                 "expiresAt": int((time.time() - 3600) * 1000),
+                 "scopes": ["user:profile", "user:inference"]}
+        with open(path or self.cli, "w") as fh:
+            json.dump({"claudeAiOauth": oauth}, fh)
+
+    def _setup_token(self):
+        with open(os.path.join(self.secrets, "claude_auth.json"), "w") as fh:
+            json.dump({"type": "oauth_token", "value": "sk-ant-oat01-SETUP"}, fh)
+
+    def _expire_backoff(self):
+        with open(self.backoff) as fh:
+            data = json.load(fh)
+        data["until"] = time.time() - 1
+        with open(self.backoff, "w") as fh:
+            json.dump(data, fh)
+
+    def _left(self):
+        with open(self.backoff) as fh:
+            return json.load(fh)["until"] - time.time()
+
+    def test_a_429_is_its_own_verdict_and_the_next_pass_asks_nothing(self):
+        self._lapsed()
+        state = {}
+        first = self.mod._fetch_with_any_credential(state)[1]
+        self.assertEqual(first, self.mod.RENEWAL_LIMITED)
+        for _ in range(5):
+            # Every finished run is a pass; none of them may ask again.
+            self.assertEqual(self.mod._fetch_with_any_credential(state)[1],
+                             self.mod.RENEWAL_LIMITED)
+        self.assertEqual(len(self.endpoint.requests), 1)
+
+    def test_retry_after_zero_does_not_shorten_the_first_rung(self):
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        self.assertGreater(self._left(),
+                           self.mod.RENEWAL_BACKOFF_S[0] - 30)
+
+    def test_a_longer_retry_after_lengthens_it(self):
+        self.endpoint.answer = (429, {"error": "rate_limited"},
+                                {"Retry-After": "5400"})
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        self.assertGreater(self._left(), 5300)
+
+    def test_the_ladder_escalates_and_a_success_clears_it(self):
+        self._lapsed()
+        state = {}
+        self.mod._fetch_with_any_credential(state)
+        first = self._left()
+        self._expire_backoff()
+        self.mod._fetch_with_any_credential(state)
+        self.assertEqual(len(self.endpoint.requests), 2)
+        self.assertGreater(self._left(), first + 60)
+        self._expire_backoff()
+        self.endpoint.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                                      "expires_in": 3600})
+        data, error = self.mod._fetch_with_any_credential(state)
+        self.assertIsNone(error)
+        self.assertEqual(data["five_hour"]["utilization"], 12)
+        self.assertFalse(os.path.exists(self.backoff))
+
+    def test_a_restart_keeps_the_promise(self):
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        restarted = self._load()
+        self.assertEqual(restarted._fetch_with_any_credential({})[1],
+                         restarted.RENEWAL_LIMITED)
+        self.assertEqual(len(self.endpoint.requests), 1)
+
+    def test_a_lower_store_s_verdict_does_not_speak_for_it(self):
+        """The setup token's scope refusal is true of that token and its
+        remedy is a sign-in the person has already done; the pass's answer
+        is the renewal being rate limited."""
+        self._lapsed()
+        self._setup_token()
+        self.mod.fetch_usage_limits = lambda token: (None, self.mod.SCOPE_ERROR)
+        self.assertEqual(self.mod._fetch_with_any_credential({})[1],
+                         self.mod.RENEWAL_LIMITED)
+
+    def test_the_wait_is_the_renewal_s_and_a_nudge_cannot_cut_it(self):
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        delay, interruptible = self.mod._next_delay(
+            self.mod.RENEWAL_LIMITED, 0, 1)
+        self.assertFalse(interruptible)
+        self.assertGreater(delay, self.mod.RENEWAL_BACKOFF_S[0] - 30)
+        # ...and the ordinary cadence is still the ordinary cadence.
+        self.assertEqual(self.mod._next_delay("network_error", 0, 1),
+                         (self.mod.POLL_INTERVAL, True))
+
+    def test_the_sentence_says_rate_limited_and_never_sign_in(self):
+        detail = self.mod.ERROR_DETAIL[self.mod.RENEWAL_LIMITED]
+        self.assertIn("rate limit", detail)
+        self.assertNotIn("Sign in again", detail)
+        self.assertNotIn(self.mod.RENEWAL_LIMITED, self.mod.AUTH_PROBLEMS)
+        self._lapsed()
+        self.mod._fetch_with_any_credential({})
+        delay, _ = self.mod._next_delay(self.mod.RENEWAL_LIMITED, 0, 1)
+        self.mod._record_failure(self.mod.RENEWAL_LIMITED, delay)
+        with open(self.mod.USAGE_FILE) as fh:
+            data = json.load(fh)
+        when = datetime.fromisoformat(data["next_attempt_at"])
+        self.assertGreater((when - datetime.now(timezone.utc)).total_seconds(),
+                           self.mod.RENEWAL_BACKOFF_S[0] - 60)
+
+    def test_every_place_a_person_reads_a_status_glosses_it(self):
+        """A bare code is read on a support thread; and the panel must
+        count it as nothing to do, or a rate limit doing its job turns the
+        health sensor degraded for as long as it lasts."""
+        root = BASE_DIR / "brain"
+        for path in (root / "panel" / "app.js", root / "panel" / "docs.js",
+                     root / "DOCS.md", root / "scripts" / "ha-selftest.sh",
+                     root / "custom_components" / "brain" / "sensor.py"):
+            self.assertIn(self.mod.RENEWAL_LIMITED,
+                          path.read_text(encoding="utf-8"), path.name)
+        sys.path.insert(0, str(root / "panel"))
+        try:
+            import usage_store
+        finally:
+            sys.path.pop(0)
+        self.assertTrue(usage_store.needs_nothing(self.mod.RENEWAL_LIMITED))
+
+    def test_one_refresh_token_at_two_paths_is_renewed_once(self):
+        """Two copies of one sign-in (a config dir that is not the symlink
+        run.sh makes it) are one credential: the second renewal would send
+        a refresh token the first had just rotated."""
+        other = os.path.join(self.tmp.name, "cfg")
+        os.makedirs(other)
+        self.env["CLAUDE_CONFIG_DIR"] = other
+        self.mod = self._load()
+        self._lapsed()
+        self._lapsed(os.path.join(other, ".credentials.json"))
+        self.endpoint.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                                      "expires_in": 3600})
+        # The renewed token refused, so the search moves on to the copy.
+        self.mod.fetch_usage_limits = lambda token: (None, "http_401")
+        self.mod._fetch_with_any_credential({})
+        self.assertEqual(len(self.endpoint.requests), 1)
+
+    def test_a_backoff_file_nobody_can_read_backs_nothing_off(self):
+        with open(self.backoff, "w") as fh:
+            fh.write("{nope")
+        self._lapsed()
+        self.endpoint.answer = (200, {"access_token": "sk-ant-oat01-NEW",
+                                      "expires_in": 3600})
+        self.assertIsNone(self.mod._fetch_with_any_credential({})[1])
 
 
 class TestAVerdictCarriesHowLongItHasStood(unittest.TestCase):

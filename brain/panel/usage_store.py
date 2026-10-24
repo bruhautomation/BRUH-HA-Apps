@@ -307,8 +307,13 @@ def _fresh_payload() -> dict | None:
 # Everything else stays a problem, because everything else names something
 # a person can do: sign in, re-run the account sign-in for the scope, or
 # find out why the tracker has written nothing at all.
+#
+# `oauth_renewal_rate_limited` is the same claim as `http_429` about the
+# OTHER endpoint the tracker calls: Anthropic is rate limiting the renewal
+# of the account credential, and the tracker waits on a ladder of its own
+# and asks again by itself.
 NEEDS_NOTHING = ("oauth_token_awaiting_refresh", "api_key_has_no_usage_limits",
-                 "http_429")
+                 "http_429", "oauth_renewal_rate_limited")
 
 # ...and the one whose "nothing to do" has a shelf life. The tracker
 # renews the account credential itself now, on every pass, so "between
@@ -342,8 +347,14 @@ STUCK_DETAIL = {
 # would lift on its own — true of an evening, untrue of a day and a half.
 # Past this the verdict is unchanged and the words say how long it has
 # stood (`overdue` on the payload, for the popover and the brief).
-OVERDUE_AFTER = {"http_429": 24 * 3600}
+OVERDUE_AFTER = {"http_429": 24 * 3600,
+                 "oauth_renewal_rate_limited": 24 * 3600}
 OVERDUE_DETAIL = {
+    "oauth_renewal_rate_limited": (
+        "Anthropic has refused to renew the sign-in's access token for "
+        "{hours} hours now, so the usage figure is brAIn's own estimate. "
+        "Nothing is wrong with the sign-in; the tracker goes on trying every "
+        "few hours and the add-on log says what it was told."),
     "http_429": (
         "The usage endpoint has refused every request for {hours} hours "
         "now, so the usage figure is brAIn's own estimate. This is not the "

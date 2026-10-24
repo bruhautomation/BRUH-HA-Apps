@@ -2783,6 +2783,21 @@ class TestCredentialBackupRestore(unittest.TestCase):
                 {"accessToken": "nope", "expiresAt": future, "refreshToken": refresh},
             "no token at all":
                 {"refreshToken": refresh},
+            # The refresh token's own life, which the file records once a
+            # renewal has answered with one: inside it the sign-in renews
+            # itself, past it nothing can.
+            "expired, refresh token still inside its own life":
+                {"accessToken": token, "expiresAt": past, "refreshToken": refresh,
+                 "refreshTokenExpiresAt": future},
+            "expired, refresh token past its own life":
+                {"accessToken": token, "expiresAt": past, "refreshToken": refresh,
+                 "refreshTokenExpiresAt": past},
+            "live, refresh token past its own life":
+                {"accessToken": token, "expiresAt": future, "refreshToken": refresh,
+                 "refreshTokenExpiresAt": past},
+            "expired, refresh token life recorded as zero":
+                {"accessToken": token, "expiresAt": past, "refreshToken": refresh,
+                 "refreshTokenExpiresAt": 0},
         }
         for name, oauth in fixtures.items():
             with self.subTest(case=name):
@@ -2812,6 +2827,30 @@ class TestCredentialBackupRestore(unittest.TestCase):
                     shell_says, panel_says,
                     f"{name}: run.sh would {'keep' if shell_says else 'delete'} "
                     f"this credential and the panel calls it "
+                    f"{'usable' if panel_says else 'dead'}")
+
+                # The third reader: the terminal's resolver. It defers to
+                # the CLI (exports nothing) for exactly the credentials the
+                # other two call usable, or a lower store's weaker token
+                # shadows a sign-in that would have renewed itself.
+                secrets = self.root / "secrets"
+                self._put(secrets / "claude_auth.json", json.dumps(
+                    {"type": "oauth_token", "value": "sk-ant-oat01-" + "p" * 30}))
+                env = {**os.environ, "BRAIN_HOME": str(self.home),
+                       "BRAIN_SECRETS": str(secrets),
+                       "BRAIN_SHARED_AUTH": str(self.root / "none.json")}
+                env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+                resolved = subprocess.run(
+                    ["bash", "-c", '. "$1"; echo "${CLAUDE_CODE_OAUTH_TOKEN:-}"',
+                     "_", str(ADDON_DIR / "scripts" / "brain-auth-env.sh")],
+                    capture_output=True, text=True, timeout=30, env=env)
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                terminal_defers = resolved.stdout.strip() == ""
+                self.assertEqual(
+                    terminal_defers, panel_says,
+                    f"{name}: the terminal "
+                    f"{'defers to' if terminal_defers else 'shadows'} this "
+                    f"credential and the panel calls it "
                     f"{'usable' if panel_says else 'dead'}")
 
     def test_the_restored_file_is_readable_only_by_its_owner(self):

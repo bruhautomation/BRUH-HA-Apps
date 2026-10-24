@@ -250,6 +250,16 @@ verify_mcp_config_full() {
 # Area map (cached) — lets Claude skip the get_areas round-trip
 # ---------------------------------------------------------------------------
 
+# A scratch file beside $1 that no other writer can be handed, readable the
+# way the map always was (mktemp makes it 0600, and the pool and the panel
+# read these). Prints its path; fails when one cannot be made.
+area_map_scratch() {
+    local tmp
+    tmp=$(mktemp "${1}.XXXXXX") || return 1
+    chmod 644 "$tmp" 2>/dev/null || true
+    printf '%s' "$tmp"
+}
+
 refresh_area_map() {
     [ -n "$SUPERVISOR_TOKEN" ] || return 1
 
@@ -300,8 +310,14 @@ JINJA
     }
 
     # The whole-house copy first, before anything is filtered out of it.
-    printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "${AREA_MAP_FULL_FILE}.tmp" \
-        && mv "${AREA_MAP_FULL_FILE}.tmp" "$AREA_MAP_FULL_FILE"
+    # Every write goes through a scratch name only this call holds
+    # (`area_map_scratch`): two refreshes at once used to share one
+    # `<file>.tmp`, and the second `mv` found it already moved.
+    local full_tmp
+    if full_tmp=$(area_map_scratch "$AREA_MAP_FULL_FILE"); then
+        printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" > "$full_tmp" \
+            && mv -f "$full_tmp" "$AREA_MAP_FULL_FILE" || rm -f "$full_tmp"
+    fi
 
     # What voice may see: the map is filtered to what Home Assistant
     # exposes to Assist, through the one module the worker pool and the MCP
@@ -322,18 +338,20 @@ JINJA
 
     # Truncate oversized maps on a line boundary (a cut-off entity_id would
     # be worse than a missing area) and make the truncation visible.
+    local map_tmp
+    map_tmp=$(area_map_scratch "$AREA_MAP_FILE") || return 1
     if [ "${#rendered}" -gt "$AREA_MAP_MAX_BYTES" ]; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] AREA-MAP truncated: ${#rendered} chars > ${AREA_MAP_MAX_BYTES} (some areas omitted — raise AREA_MAP_MAX_BYTES if entities are missed)" \
             >> "$LOG_DIR/assist-$(date +%Y%m%d).log"
-        printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "${AREA_MAP_FILE}.tmp"
+        printf '%s\n' "$rendered" | head -c "$AREA_MAP_MAX_BYTES" | sed '$d' > "$map_tmp"
         # Said in the prompt, not only in the log: a map that claims to be
         # complete tells the model not to search for the room it cannot see.
         printf '1' > "$CACHE_DIR/area_map.cut" 2>/dev/null || true
     else
-        printf '%s\n' "$rendered" > "${AREA_MAP_FILE}.tmp"
+        printf '%s\n' "$rendered" > "$map_tmp"
         rm -f "$CACHE_DIR/area_map.cut"
     fi
-    mv "${AREA_MAP_FILE}.tmp" "$AREA_MAP_FILE"
+    mv -f "$map_tmp" "$AREA_MAP_FILE" || { rm -f "$map_tmp"; return 1; }
     return 0
 }
 
