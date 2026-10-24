@@ -460,9 +460,9 @@ def trace_error(snap: dict, now: float) -> list[dict]:
                            f"{error[:300].rstrip('.')}. One cause behind them "
                            f"all is likelier than {len(members)} separate "
                            "faults."),
-                "fix": "Press Fix and brAIn reads one of their traces and "
-                       "proposes the change; it is likely to fix every one "
-                       "of them.",
+                "fix": "Fix proposes one change to the cause they share, "
+                       "for you to approve; one repair is likely to clear "
+                       "every one of them.",
                 "severity": ("serious" if any(
                     not (f["failed"] == 1 and len(f["rows"]) > 1)
                     for f in members) else "warning"),
@@ -488,9 +488,9 @@ def trace_error(snap: dict, now: float) -> list[dict]:
                            + (f": {error[:300].rstrip('.')}." if error else
                               ": the run ended in an error.")
                            + tally),
-                "fix": "Press Fix and brAIn reads the run's trace and "
-                       "proposes the change, or open the automation in Home "
-                       "Assistant and look at its last run.",
+                "fix": "Fix proposes the change that stops this error, for "
+                       "you to approve, or edit the automation in Home "
+                       "Assistant.",
                 # A single failure among clean runs is most often something
                 # transient (a device that did not answer once).
                 "severity": ("warning" if failed == 1 and len(rows) > 1
@@ -546,9 +546,9 @@ def condition_never_passes(snap: dict, now: float) -> list[dict]:
                       + (f"its actions last ran on {when(last_ran)}."
                          if last_ran else "its actions have never run.")
                       + " It is alive and cannot act.",
-            "fix": "Check the condition against the entities it tests — "
-                   "it is probably comparing against a state or value that "
-                   "never occurs.",
+            "fix": "Change the condition to a state or value those "
+                   "entities actually reach, or remove it — it is probably "
+                   "comparing against one that never occurs.",
             "severity": "warning",
             "fixable": True,
             "entity_id": eid,
@@ -737,8 +737,9 @@ def never_fired(snap: dict, now: float) -> list[dict]:
             "text": f"{_label('Automation', item)} has never fired",
             "detail": f"Enabled since {when(reg.get('created_at'))} and its "
                       "trigger has not happened once.",
-            "fix": "Check the trigger against what actually happens in the "
-                   "house — or delete it if it is no longer wanted.",
+            "fix": "Point the trigger at something that happens in this "
+                   "house, or delete the automation if it is no longer "
+                   "wanted.",
             "severity": "info",
             "fixable": False,
             "entity_id": eid,

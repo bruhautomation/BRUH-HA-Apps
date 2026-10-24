@@ -866,9 +866,9 @@ def heater_idle(snap: dict, now: float) -> list[dict]:
                        f"{when(since)}. A heater this hot with nothing "
                        "printing is not cooling down."
                        + house.placed(eid)),
-            "fix": ("Turn the heater off from the printer or its app, and "
-                    "look at what left it on — a print that ended early, "
-                    "or a temperature set by hand."),
+            "fix": ("Turn the heater off from the printer or its app; a "
+                    "print that ended early or a temperature set by hand "
+                    "is the usual reason it stayed on."),
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,

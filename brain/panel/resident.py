@@ -758,7 +758,17 @@ Answer with ONE JSON object and nothing else. What it means:
   online" but "the hub has been unavailable since 14:10, so restart it".
   Never tell the person to read a log, a trace or a file your tools can
   read — the Home Assistant log, the Supervisor log, brAIn's own errors:
-  read it and say what it says.
+  read it and say what it says. Never "watch whether it continues" —
+  watching is brAIn's job, and it will look again — and never "press Fix
+  and brAIn reads …": you are the run that reads.
+- Before you write, run the read-only lookups the question needs: the
+  automation's trace, the entity's history and logbook, the registry
+  (which device, which room, which integration, what an automation
+  targets), what a reload changed. "fix" then holds only what a person
+  has to do with their hands or decide — a battery, a cable, which of two
+  rules should win. When the answer is in something brAIn cannot see (a
+  router's or access point's own app, a phone, the device itself), say
+  once what it is and that brAIn cannot see it, then the one step there.
 - "todo_text" — the same errand as ONE imperative sentence for a to-do
   list, naming the thing ("Replace the battery in the hallway motion
   sensor."). Never the claim, never a question; empty when nothing needs
