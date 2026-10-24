@@ -573,7 +573,7 @@ def schedule(snap, area: str, wake_minutes: float | None = None,
 
     triggers, branches = [], []
     for mood in MOODS:
-        triggers.append({"platform": "time", "at": times[mood], "id": mood})
+        triggers.append({"trigger": "time", "at": times[mood], "id": mood})
         branches.append({
             "conditions": [{"condition": "trigger", "id": mood}],
             "sequence": [{
@@ -585,9 +585,9 @@ def schedule(snap, area: str, wake_minutes: float | None = None,
             }],
         })
     config = {
-        "trigger": triggers,
-        "condition": [],
-        "action": [{"choose": branches}],
+        "triggers": triggers,
+        "conditions": [],
+        "actions": [{"choose": branches}],
         "mode": "single",
     }
     return {

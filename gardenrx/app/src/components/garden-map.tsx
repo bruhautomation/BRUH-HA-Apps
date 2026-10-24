@@ -13,6 +13,7 @@ import type {
   RegionType,
 } from '@/lib/database.types';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -1485,6 +1486,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
     const { region_type, variety_id } = decodeRegionTypeSelection(rawTypeSelection, varietyIdForm);
     const color = formData.get('color') as string;
     const borderColor = formData.get('border_color') as string;
+    const notes = ((formData.get('notes') as string | null) ?? '').trim() || null;
 
     if (editRegion) {
       const widthFt = formData.get('width_ft') as string;
@@ -1495,6 +1497,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         variety_id: number | null;
         color: string;
         border_color: string;
+        notes: string | null;
         width?: number;
         height?: number;
       } = {
@@ -1503,6 +1506,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         variety_id,
         color,
         border_color: borderColor,
+        notes,
       };
       if (widthFt) update.width = Math.round(parseFloat(widthFt) / FT_PER_CELL);
       if (heightFt) update.height = Math.round(parseFloat(heightFt) / FT_PER_CELL);
@@ -1525,6 +1529,7 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
         height: newRect.h,
         color,
         border_color: borderColor,
+        notes,
         z_index: maxZ + 1,
       });
       if (error) console.error('Insert region failed:', error.message ?? error);
@@ -2547,6 +2552,19 @@ export function GardenMap({ zones, regions, templates, varieties, crops, cropGro
                 }
               }}
             />
+            <div className="space-y-1.5">
+              <Label htmlFor="r-notes" className="text-xs font-medium text-muted-foreground">
+                Notes <span className="text-muted-foreground/40">(optional)</span>
+              </Label>
+              <Textarea
+                key={dialogRegion?.id ?? 'new'}
+                id="r-notes"
+                name="notes"
+                rows={3}
+                defaultValue={dialogRegion?.notes ?? ''}
+                className="rounded-lg"
+              />
+            </div>
             {/* Size fields (edit mode only) */}
             {dialogRegion && (
               <div className="flex gap-3">

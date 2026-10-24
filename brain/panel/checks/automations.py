@@ -515,11 +515,70 @@ def trace_error(snap: dict, now: float) -> list[dict]:
 CONDITION_PASSED_DAYS = 14
 
 
+def _polls(trig: dict) -> bool:
+    """A trigger that fires on a clock or at startup rather than on news:
+    a `time_pattern`, Home Assistant starting (`homeassistant` / `start`,
+    or the `homeassistant_start` event)."""
+    kind = _trigger_kind(trig)
+    if kind == "time_pattern":
+        return True
+    if kind == "homeassistant":
+        return str(trig.get("event") or "").lower() == "start"
+    if kind == "event":
+        return "homeassistant_start" in {
+            str(t) for t in listify(trig.get("event_type"))}
+    return False
+
+
+def _guard_conditions(config: dict) -> bool:
+    """The condition tests one entity's state, or a time window, and
+    nothing else (`and` blocks read through)."""
+    raw = config.get("conditions")
+    if raw is None:
+        raw = config.get("condition")
+    pending = list(listify(raw))
+    entities: set[str] = set()
+    seen = 0
+    while pending:
+        cond = pending.pop()
+        if not isinstance(cond, dict):
+            return False
+        kind = str(cond.get("condition") or "").lower()
+        if kind == "and":
+            pending.extend(listify(cond.get("conditions")))
+            continue
+        if kind == "state":
+            ids = [str(e) for e in listify(cond.get("entity_id"))]
+            if not ids:
+                return False
+            entities.update(ids)
+        elif kind != "time":
+            return False
+        seen += 1
+    return seen > 0 and len(entities) <= 1
+
+
+def _polled_guard(config) -> bool:
+    """An interlock: an automation that wakes on a clock (or at startup)
+    and acts only while one thing holds. Its condition failing on nearly
+    every run is the design — the guard is re-checked every minute so the
+    action happens the minute it is allowed — and a card saying it "cannot
+    act" was marked Wrong every time it was shown."""
+    if not isinstance(config, dict):
+        return False
+    return (any(_polls(t) for t in _triggers(config))
+            and _guard_conditions(config))
+
+
 def condition_never_passes(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    configs = {str(c.get("id")): c for c in (snap.get("automations") or [])
+               if isinstance(c, dict) and c.get("id") is not None}
     out = []
     for item in _traced(house):
         if item["kind"] != "Automation":
+            continue
+        if _polled_guard(configs.get(item["key"].split(".", 1)[1])):
             continue
         eid = item["entity_id"]
         rows = _traces_for(snap, item["key"])
@@ -1334,36 +1393,36 @@ def conflicting(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "auto.dead_ref", "title": "Automations naming missing entities",
+    {"id": "auto.dead_ref", "area": "automations", "title": "Automations naming missing entities",
      "needs": ("states", "registry", "automations"), "run": dead_ref},
-    {"id": "auto.trigger_unavailable",
+    {"id": "auto.trigger_unavailable", "area": "automations",
      "title": "Automations whose trigger is not reporting",
      "needs": ("states", "registry", "automations"), "run": trigger_unavailable},
-    {"id": "auto.dead_service", "title": "Automations calling missing services",
+    {"id": "auto.dead_service", "area": "automations", "title": "Automations calling missing services",
      "needs": ("services", "automations"), "run": dead_service},
-    {"id": "auto.trace_error", "title": "Automations whose last run failed",
+    {"id": "auto.trace_error", "area": "automations", "title": "Automations whose last run failed",
      "needs": ("states", "traces"), "run": trace_error},
-    {"id": "auto.condition_never_passes",
+    {"id": "auto.condition_never_passes", "area": "automations",
      "title": "Automations whose condition never passes",
      "needs": ("states", "traces"), "run": condition_never_passes},
-    {"id": "auto.already_running",
+    {"id": "auto.already_running", "area": "automations",
      "title": "Automations dropping triggers on mode: single",
      "needs": ("states", "traces"), "run": already_running},
-    {"id": "auto.never_fired", "title": "Automations that have never fired",
+    {"id": "auto.never_fired", "area": "automations", "title": "Automations that have never fired",
      "needs": ("states", "registry", "automations"), "run": never_fired},
-    {"id": "auto.forgotten_off", "title": "Automations left switched off",
+    {"id": "auto.forgotten_off", "area": "automations", "title": "Automations left switched off",
      "needs": ("states", "registry", "automations"), "run": forgotten_off},
-    {"id": "auto.duplicate", "title": "Duplicate automations",
+    {"id": "auto.duplicate", "area": "automations", "title": "Duplicate automations",
      "needs": ("registry", "automations"), "run": duplicate},
-    {"id": "auto.blueprint_missing", "title": "Automations on a missing blueprint",
+    {"id": "auto.blueprint_missing", "area": "automations", "title": "Automations on a missing blueprint",
      "needs": ("registry", "automations"), "run": blueprint_missing},
-    {"id": "auto.conflict",
+    {"id": "auto.conflict", "area": "automations",
      "title": "Automations undoing each other",
      # A Wrong is about the pair, so it is written under every rule the
      # row's evidence names, not only the one the row is filed under.
      "except_evidence": True,
      "needs": ("actions",), "run": conflicting},
-    {"id": "auto.overridden", "title": "Automations a person keeps undoing",
+    {"id": "auto.overridden", "area": "automations", "title": "Automations a person keeps undoing",
      "needs": ("actions",), "run": overridden},
 ]
 

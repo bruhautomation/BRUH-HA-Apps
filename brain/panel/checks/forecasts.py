@@ -220,8 +220,8 @@ def decline(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "forecast.battery", "title": "Batteries running down",
+    {"id": "forecast.battery", "area": "devices", "title": "Batteries running down",
      "needs": ("states", "registry", "battery_stats"), "run": battery_runway},
-    {"id": "forecast.decline", "title": "Readings drifting for weeks",
+    {"id": "forecast.decline", "area": "devices", "title": "Readings drifting for weeks",
      "needs": ("states", "registry", "baselines"), "run": decline},
 ]

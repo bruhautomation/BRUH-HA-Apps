@@ -332,9 +332,9 @@ def _smoke(house: House, snap: dict, patterns: list[str],
         "notify": notify,
         "note": NO_UNLOCK,
         "config": {
-            "trigger": [{"platform": "state",
-                         "entity_id": _ids(sensors), "to": "on"}],
-            "action": steps,
+            "triggers": [{"trigger": "state",
+                          "entity_id": _ids(sensors), "to": "on"}],
+            "actions": steps,
             "mode": "single",
             "id": "brain_playbook_smoke",
         },
@@ -400,9 +400,9 @@ def _leak(house: House, snap: dict, patterns: list[str],
                  "matched these by name, and a switch it has read wrong is "
                  "one it would turn off in a leak."),
         "config": {
-            "trigger": [{"platform": "state",
-                         "entity_id": _ids(sensors), "to": "on"}],
-            "action": steps,
+            "triggers": [{"trigger": "state",
+                          "entity_id": _ids(sensors), "to": "on"}],
+            "actions": steps,
             "mode": "single",
             "id": "brain_playbook_leak",
         },
@@ -495,21 +495,21 @@ def _freeze(house: House, snap: dict, patterns: list[str],
             # are conditions: whichever fires, the automation re-asks the
             # other. A trigger alone would fire on a cold room in a house
             # whose heating is working perfectly.
-            "trigger": [
-                {"platform": "numeric_state",
+            "triggers": [
+                {"trigger": "numeric_state",
                  "entity_id": room["entity_id"], "below": below},
-                {"platform": "state", "entity_id": room["climate"],
+                {"trigger": "state", "entity_id": room["climate"],
                  "attribute": "hvac_action", "to": idle,
                  "for": f"00:{IDLE_MINUTES:02d}:00"},
             ],
-            "condition": [
+            "conditions": [
                 {"condition": "numeric_state",
                  "entity_id": room["entity_id"], "below": below},
                 {"condition": "state", "entity_id": room["climate"],
                  "attribute": "hvac_action", "state": idle,
                  "for": {"minutes": IDLE_MINUTES}},
             ],
-            "action": _notify_steps(notify, "Freeze risk", message),
+            "actions": _notify_steps(notify, "Freeze risk", message),
             "mode": "single",
             "id": "brain_playbook_freeze",
         },

@@ -146,7 +146,7 @@ class TestTheHappyPath(WriterCase):
         self.assertEqual(rows[1]["id"], "brain_1700000000123")
         self.assertEqual(rows[1]["alias"], proposal()["title"])
         self.assertIn("Proposed by brAIn", rows[1]["description"])
-        self.assertEqual(rows[1]["action"],
+        self.assertEqual(rows[1]["actions"],
                          proposal()["config"]["action"])
         self.assertEqual(rows[1]["mode"], "single")
 

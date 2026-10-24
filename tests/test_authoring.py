@@ -72,7 +72,7 @@ class TestWhatItBuilds(AuthoringCase):
         cfg = out["config"]
         self.assertEqual(cfg["id"], "brain_asked_1700000000000")
         self.assertEqual(cfg["mode"], "single")
-        self.assertEqual([a["service"] for a in cfg["action"]], ["light.turn_on"],
+        self.assertEqual([a["service"] for a in cfg["actions"]], ["light.turn_on"],
                          "nothing here adds a disarm action")
         self.assertNotIn("alias", cfg)
         self.assertEqual(out["spoken"]["sentence"], SENTENCE)

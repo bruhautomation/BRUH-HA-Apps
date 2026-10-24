@@ -329,7 +329,7 @@ class TestADutchHouse(unittest.TestCase):
         built = [p for p in playbooks.build(with_world(dutch_house()))
                  if p["playbook"]["class"] == "leak"]
         self.assertEqual(len(built), 1)
-        actions = built[0]["config"]["action"]
+        actions = built[0]["config"]["actions"]
         off = [a for a in actions if a.get("service") == "switch.turn_off"]
         self.assertEqual(off[0]["target"]["entity_id"], ["switch.hoofdkraan"])
         # And still nothing anywhere unlocks anything.
@@ -344,7 +344,7 @@ class TestADutchHouse(unittest.TestCase):
                                          "confidence": 0.9}}
         built = [p for p in playbooks.build(with_world(dutch_house(), answers))
                  if p["playbook"]["class"] == "leak"]
-        actions = built[0]["config"]["action"]
+        actions = built[0]["config"]["actions"]
         self.assertTrue(any(a.get("service") == "switch.turn_on"
                             and a["target"]["entity_id"] == ["switch.hoofdkraan"]
                             for a in actions))
@@ -361,7 +361,7 @@ class TestADutchHouse(unittest.TestCase):
         snap["world"] = world
         built = [p for p in playbooks.build(snap)
                  if p["playbook"]["class"] == "leak"]
-        actions = built[0]["config"]["action"]
+        actions = built[0]["config"]["actions"]
         self.assertTrue(any(a.get("service") == "valve.close_valve"
                             for a in actions))
 

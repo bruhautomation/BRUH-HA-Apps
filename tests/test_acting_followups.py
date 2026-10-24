@@ -217,7 +217,7 @@ class TestARuleMayRestart(AuthoringCase):
                             {**ANSWER, "once": True, "mode": "restart"},
                             1_700_000_000_000)
         self.assertEqual(out["config"]["mode"], "single")
-        self.assertEqual(out["config"]["action"][-1]["target"]["entity_id"],
+        self.assertEqual(out["config"]["actions"][-1]["target"]["entity_id"],
                          intents.SELF_TARGET)
 
 
@@ -266,7 +266,7 @@ class TestATwoWordRoomGetsItsSchedule(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(offered, 1)
         self.assertEqual(self.added[0]["schedule"]["area"], "Living Room")
         targets = {b["sequence"][0]["target"]["entity_id"]
-                   for b in self.added[0]["config"]["action"][0]["choose"]}
+                   for b in self.added[0]["config"]["actions"][0]["choose"]}
         self.assertEqual(len(targets), 4)
 
     async def test_three_of_four_moods_is_not_a_schedule(self):

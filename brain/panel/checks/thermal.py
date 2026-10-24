@@ -680,19 +680,19 @@ def window(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "climate.underheated",
+    {"id": "climate.underheated", "area": "devices",
      "title": "Asked for a temperature it never reaches",
      "needs": ("states", "registry", "thermal"), "run": underheated},
-    {"id": "climate.heat_loss",
+    {"id": "climate.heat_loss", "area": "devices",
      "title": "Loses heat faster than the rest of the house",
      "needs": ("states", "registry", "thermal"), "run": heat_loss},
-    {"id": "climate.preheat",
+    {"id": "climate.preheat", "area": "devices",
      "title": "Still warming when the house gets up",
      "needs": ("states", "registry", "thermal", "baselines"), "run": preheat},
-    {"id": "climate.freeze",
+    {"id": "climate.freeze", "area": "devices",
      "title": "On course to get cold enough to matter",
      "needs": ("states", "registry", "thermal"), "run": freeze},
-    {"id": "climate.window",
+    {"id": "climate.window", "area": "devices",
      "title": "Losing heat faster than it can",
      "needs": ("states", "registry", "thermal"), "run": window},
 ]

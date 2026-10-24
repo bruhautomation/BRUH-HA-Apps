@@ -59,6 +59,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import automation_keys
 
 CONFIG_DIR = os.environ.get("BRAIN_CONFIG_DIR", "/config")
 
@@ -422,6 +423,40 @@ def description_for(row: dict, now: float | None = None) -> str:
     return f"Proposed by brAIn from what you do by hand; accepted on {day}."
 
 
+# The plural keys (`triggers:`/`conditions:`/`actions:`, `- trigger:`) load
+# only on Home Assistant 2024.10 and later; an older Core refuses the whole
+# automations.yaml over one entry spelled that way. The running Core's
+# version is not fetched here: the checks pass already reads it from the
+# Supervisor's /core/info, and the panel hands it over (`note_core_version`)
+# every pass, so a write costs no request.
+MODERN_KEYS_SINCE = (2024, 10)
+CORE_VERSION = {"version": ""}
+
+
+def note_core_version(version) -> None:
+    """Remember the running Core's version (from the checks snapshot)."""
+    text = str(version or "").strip()
+    if text:
+        CORE_VERSION["version"] = text
+
+
+def _version_tuple(version: str) -> tuple[int, int] | None:
+    parts = str(version or "").split(".")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def modern_keys_ok(version: str | None = None) -> bool:
+    """Whether to write the 2024.10 spelling. An unreadable or unknown
+    version is True: every supported install is past 2024.10, and refusing
+    the current spelling because a version string could not be parsed
+    would write the deprecated one on the houses that are up to date."""
+    found = _version_tuple(CORE_VERSION["version"] if version is None else version)
+    return found is None or found >= MODERN_KEYS_SINCE
+
+
 def entry_for(row: dict, now: float | None = None) -> dict:
     """The automation, as it goes into the file.
 
@@ -432,7 +467,15 @@ def entry_for(row: dict, now: float | None = None) -> dict:
     write-time fact, not part of what was proposed.
     """
     now = time.time() if now is None else now
-    config = row.get("config") or {}
+    # In Home Assistant's current words (`automation_keys`): a proposal
+    # stored before brAIn wrote them, or a model's answer in the old ones,
+    # is respelled here, on the way into the file. Only a NEW entry: an
+    # entry a person wrote is never respelled (`apply_edit` writes their
+    # config back as they had it).
+    config = automation_keys.modern(row.get("config") or {})
+    if not modern_keys_ok():
+        # An older Core reads only the old words: one place downgrades.
+        config = automation_keys.legacy(config)
     # A config may name its own id, and an emergency playbook does:
     # `brain_playbook_smoke` says what it is when somebody opens the file
     # in six months, where `brain_1757000000000` says when it was
@@ -446,8 +489,8 @@ def entry_for(row: dict, now: float | None = None) -> dict:
         "alias": str(row.get("title") or "brAIn automation")[:255],
         "description": description_for(row, now),
     }
-    for key in ("trigger", "triggers", "condition", "conditions",
-                "action", "actions", "mode"):
+    for key in ("triggers", "trigger", "conditions", "condition",
+                "actions", "action", "mode"):
         if key in config:
             entry[key] = config[key]
     return entry
@@ -1033,6 +1076,7 @@ __all__ = ["AUTOMATIONS_FILE", "CONFIGURATION_FILE", "ID_PREFIX", "INCLUDE_RE",
            "INDEX", "JOURNAL_DIR", "SNAP_DIR", "TOOL", "apply", "apply_edit",
            "description_for", "entry_for",
            "in_config_tree",
-           "is_protected", "locate", "protected_patterns", "remove",
+           "is_protected", "locate", "modern_keys_ok", "note_core_version",
+           "protected_patterns", "remove",
            "remove_entry",
            "replace_entry", "revert", "slugify", "snapshot"]

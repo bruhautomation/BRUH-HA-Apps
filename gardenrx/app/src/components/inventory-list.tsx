@@ -11,7 +11,7 @@ import { ProductAvatar } from '@/components/product-avatar';
 import { avatarTypeFor } from '@/lib/product-visual';
 import { CATEGORY_ORDER, type CropCategory } from '@/lib/crop-category';
 import { AREA_STYLE } from '@/lib/area-meta';
-import { formForUnit, containerNoun, UNIT_GROUPS } from '@/lib/container';
+import { formForUnit, containerNoun, parseSize, UNIT_GROUPS } from '@/lib/container';
 
 /** A numeric input that only saves on blur or Enter — no per-keystroke writes */
 function DebouncedNumber({
@@ -152,34 +152,6 @@ interface InventoryItem {
 type SortKey = 'name' | 'area' | 'stock';
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-/** Parse a price_size label like "32 oz concentrate" into a numeric size + our unit. */
-function parseSize(priceSize: string | null): { size: number | null; unit: string } {
-  if (!priceSize) return { size: null, unit: 'fl oz' };
-  // Longer tokens first + word boundary so "gallon" isn't matched as "g" (grams).
-  const m = priceSize.match(/(\d+(?:\.\d+)?)\s*(fl\s*oz|gallon|gal|lb|oz|ml|g)\b/i);
-  if (!m) return { size: null, unit: 'fl oz' };
-  const size = parseFloat(m[1]);
-  const raw = m[2].toLowerCase().replace(/\s+/g, ' ');
-  const liquid = /concentrate|fl\s*oz|gal|ml/i.test(priceSize);
-  const unit =
-    raw === 'ml'
-      ? 'mL'
-      : raw === 'gallon' || raw === 'gal'
-        ? 'gal'
-        : raw === 'lb'
-          ? 'lb'
-          : raw === 'g'
-            ? 'g'
-            : raw === 'fl oz'
-              ? 'fl oz'
-              : raw === 'oz'
-                ? liquid
-                  ? 'fl oz'
-                  : 'oz'
-                : 'fl oz';
-  return { size, unit };
-}
 
 export function InventoryList({
   products,

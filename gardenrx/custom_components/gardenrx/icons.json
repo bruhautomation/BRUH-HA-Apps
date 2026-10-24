@@ -34,6 +34,27 @@
     "delete_queued_spray": {
       "service": "mdi:playlist-remove"
     },
+    "log_spray": {
+      "service": "mdi:spray-bottle"
+    },
+    "queue_spray": {
+      "service": "mdi:playlist-plus"
+    },
+    "adjust_inventory": {
+      "service": "mdi:bottle-tonic-plus-outline"
+    },
+    "add_crop": {
+      "service": "mdi:sprout"
+    },
+    "add_variety": {
+      "service": "mdi:seed-plus"
+    },
+    "log_note": {
+      "service": "mdi:note-edit-outline"
+    },
+    "get_harvests": {
+      "service": "mdi:basket-outline"
+    },
     "refresh": {
       "service": "mdi:refresh"
     }

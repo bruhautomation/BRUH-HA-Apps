@@ -87,7 +87,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "org.dashboard_dead_ref",
+    {"id": "org.dashboard_dead_ref", "area": "dashboards",
      "title": "Dashboards showing missing entities",
      "needs": ("states", "registry", "dashboards"), "run": dead_ref},
 ]

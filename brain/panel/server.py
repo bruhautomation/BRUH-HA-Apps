@@ -10328,7 +10328,9 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 # The checks whose answer about a device the overnight pass honours: the
 # offline checks. A device somebody set aside there is not reported again
 # in the log's words.
-SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen")
+SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
+                        "net.wifi_hung", "net.zwave_silent",
+                        "net.zigbee_silent")
 
 
 def _sre_set_aside(now: float) -> set[str]:
@@ -11867,6 +11869,11 @@ _ENTITY_IN_TEXT_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 
 
 def _note_registry(snapshot: dict) -> None:
+    # The running Core's version, for which spelling a new automation is
+    # written in (`automation_writer.modern_keys_ok`).
+    core = ((snapshot.get("supervisor") or {}).get("core") or {})
+    if isinstance(core, dict):
+        automation_writer.note_core_version(core.get("version"))
     try:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]
@@ -14473,6 +14480,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                 {findings_store.normalize(f["text"]) for f in shadow_rows})
             shadow_findings.prune(started)
             _note_pass_decisions(result, created)
+            _note_coverage(result, snapshot, started)
             return created, refreshed, cleared, {
                 "created": len(hidden), "found": len(shadow_rows)}
 
@@ -15886,7 +15894,7 @@ async def h_appliances(request: web.Request) -> web.Response:
     rows = []
     for eid, shape in sorted((store.get("entities") or {}).items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(
+                     "chore_kind": shape.get("kind") or checks.chores.kind_of(
                          shape.get("name") or "")})
     return web.json_response({
         "built_at": store.get("built_at", 0),
@@ -15999,6 +16007,18 @@ def _thermal_payload(store: dict) -> dict:
     """
     outdoor = store.get("coldest")
     rooms = []
+    # Each room's area id and aliases, off the registry the last checks
+    # pass read: `room_physics` takes "the area name or id", and a room
+    # matched only by its display name answered "no measured room by that
+    # name" about an id somebody had typed.
+    entity_areas = _FACTS_CTX.get("entity_areas") or {}
+    area_aliases = _FACTS_CTX.get("area_aliases") or {}
+
+    def _where(eid: str) -> dict:
+        area_id = str(entity_areas.get(eid) or "")
+        return {"area_id": area_id,
+                "area_aliases": [str(a) for a in area_aliases.get(area_id) or []]}
+
     for eid, entry in sorted((store.get("rooms") or {}).items()):
         if not isinstance(entry, dict):
             continue
@@ -16018,6 +16038,7 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
             "measured": True,
+            **_where(eid),
         })
     # The rooms the nightly pass considered and could not measure, each with
     # its reason, as rows of their own: the `room_physics` tool answers from
@@ -16036,6 +16057,7 @@ def _thermal_payload(store: dict) -> dict:
             "warmest": None, "coolest": None, "hours_to_warm": None,
             "measured": False,
             "why_not_measured": str(left.get("reason") or "")[:300],
+            **_where(eid),
         })
     # The reference every `k` above was measured against, why it was the
     # one, and what else could have been — so the tab can say it and the
@@ -16089,7 +16111,8 @@ async def _appliance_detail(now: float) -> dict:
     rows = []
     for eid, shape in sorted(shapes.items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(shape.get("name") or ""),
+                     "chore_kind": (shape.get("kind")
+                                    or checks.chores.kind_of(shape.get("name") or "")),
                      "now": appliances.state_at(shape, live.get(eid) or [], now)
                      if live else {}})
     return {"built_at": store.get("built_at", 0),
@@ -17171,6 +17194,12 @@ def _diagnostics_payload() -> dict:
         # broke, so the fault list names a check in words (`reports.faults`
         # is pure and cannot ask the catalog itself).
         "check_titles": _check_titles(CHECKS_STATE["last"]),
+        # Which parts of Home Assistant brAIn has looked at, per area: when,
+        # whether every check in it could look, and what it found — one
+        # line each, off the record every pass keeps (`checks.coverage`).
+        "coverage": _safe_summary(
+            lambda: checks.coverage.summary(checks.coverage.load(),
+                                            checks.CHECKS)),
         # What brAIn decided not to say, counted by reason over the last
         # day, and whether the trail can be read or written at all: a
         # trail that stopped writing makes every "why didn't you tell me"
@@ -21192,6 +21221,22 @@ def _signal_decisions(signals_list, kind: str, reason: str) -> list[dict]:
                     "reason": str(reason or ""),
                     "text": str(sig.get("text") or "")})
     return out
+
+
+def _note_coverage(result: dict, snapshot: dict, now: float) -> int:
+    """Record what this pass examined, per area, and put one "checked,
+    nothing wrong" line per clean area on the decision trail — so "did
+    you look at the recorder" has an answer. Never raises."""
+    try:
+        record = checks.coverage.record(
+            checks.coverage.load(), result, now, snapshot.get("errors") or {})
+        checks.coverage.save(record)
+        areas = checks.coverage.area_view(record, checks.CHECKS, now)
+        return decision_trail.note_many(checks.coverage.checked_rows(
+            areas, now, checks._util.house_tz()), now)
+    except Exception as exc:  # noqa: BLE001 — accounting never fails a pass
+        log.debug("could not record this pass's coverage: %s", exc)
+        return 0
 
 
 def _note_pass_decisions(result: dict, created: list[dict]) -> int:
