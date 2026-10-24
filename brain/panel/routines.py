@@ -492,17 +492,17 @@ def to_config(routine: dict) -> dict | None:
     # entity's name, which a rename moves, and the time, which the
     # median moves by a minute. What is left is the change itself.
     config = {
-        "trigger": [{"platform": "time",
-                     "at": f"{minute // 60:02d}:{minute % 60:02d}:00"}],
-        "action": [{"service": service,
-                    "target": {"entity_id": routine["entity_id"]}}],
+        "triggers": [{"trigger": "time",
+                      "at": f"{minute // 60:02d}:{minute % 60:02d}:00"}],
+        "actions": [{"service": service,
+                     "target": {"entity_id": routine["entity_id"]}}],
         "mode": "single",
     }
     shape = routine.get("when_days")
     if shape == "weekdays":
-        config["condition"] = [{"condition": "time", "weekday": WEEKDAYS}]
+        config["conditions"] = [{"condition": "time", "weekday": WEEKDAYS}]
     elif shape == "weekends":
-        config["condition"] = [{"condition": "time", "weekday": WEEKENDS}]
+        config["conditions"] = [{"condition": "time", "weekday": WEEKENDS}]
     return config
 
 

@@ -71,6 +71,19 @@ and so cannot clear anything):
                     `/core/logs`), its errors folded by logger and message
                     (`integrations.summarise_log`), redacted. Unavailable
                     when the Supervisor would not hand it over
+    repairs        [issue] — `repairs/list_issues`: what Home Assistant
+                    itself has raised under Settings > System > Repairs
+    energy_prefs   {configured, prefs} — `energy/get_prefs`; Core's "No
+                    prefs" is `configured: False`, an answer, and any other
+                    refusal leaves the key unavailable
+    custom_components {integrations: [{domain, name, mtime, dependencies,
+                    after_dependencies}], referenced: [domain]} — the
+                    manifests in /config/custom_components and which
+                    domains a YAML file mentions (`load_custom_components`)
+    bluetooth      {rssi: {address: dBm}} — what Core's Bluetooth stack
+                    hears, off `bluetooth/subscribe_advertisements`; `{}`
+                    and available with no Bluetooth set up, unavailable
+                    on a Core that will not share it
     labels         label registry rows (label_id, name) — best effort, an
                     empty list when Core would not list them
     config_entries [{entry_id, domain, title, state, source, disabled_by,
@@ -96,6 +109,11 @@ and so cannot clear anything):
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
+    unavailable_since {entity_id: iso} — for the entities unavailable now
+                    whose live stamp is under a day old, when the recorder
+                    says the current stretch of being unavailable began
+                    (a restart re-stamps `last_changed`). `{}` and available
+                    when nothing needed asking
     job_status     {entity_id: [history rows]} for the status entities
                     that say a job just finished (`chores.job_candidates`)
                     — `{}` and available when nothing has; unavailable
@@ -221,6 +239,151 @@ def load_recorder(config_dir: str = CONFIG_DIR) -> dict | None:
 # The live house
 # ---------------------------------------------------------------------------
 
+
+def energy_prefs(call: dict | None) -> dict | None:
+    """The Energy dashboard's settings as `{"configured", "prefs"}`, or
+    None when Core would not say. Core answers "No prefs" (not found) for
+    a dashboard nobody set up — that is an answer, not a refusal."""
+    if not isinstance(call, dict):
+        return None
+    if call.get("ok") and isinstance(call.get("result"), dict):
+        return {"configured": True, "prefs": call["result"]}
+    if "no prefs" in str(call.get("error") or "").lower():
+        return {"configured": False, "prefs": {}}
+    return None
+
+
+# How long to wait for Core's first report of what Bluetooth hears. The
+# subscription sends everything it currently knows at once.
+BLUETOOTH_WAIT_S = 5.0
+
+
+async def bluetooth_heard(session) -> dict[str, float] | None:
+    """``{address: rssi}`` for every advertisement Core's Bluetooth stack
+    holds, through `bluetooth/subscribe_advertisements` (the command
+    Home Assistant's own Bluetooth panel uses): subscribe, take the first
+    event's ``add`` list, close. None when Core refuses the command (an
+    older Home Assistant) or says nothing in time — "could not look"."""
+    import aiohttp
+
+    import ha_data
+
+    async def _run() -> dict[str, float] | None:
+        async with session.ws_connect(ha_data.CORE_WS, heartbeat=20) as ws:
+            async for msg in ws:
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    return None
+                data = msg.json()
+                kind = data.get("type")
+                if kind == "auth_required":
+                    await ws.send_json({"type": "auth",
+                                        "access_token": ha_data.SUPERVISOR_TOKEN})
+                elif kind == "auth_invalid":
+                    return None
+                elif kind == "auth_ok":
+                    await ws.send_json({"id": 1,
+                                        "type": "bluetooth/subscribe_advertisements"})
+                elif kind == "result" and data.get("id") == 1:
+                    if not data.get("success"):
+                        return None
+                elif kind == "event" and data.get("id") == 1:
+                    event = data.get("event") or {}
+                    out: dict[str, float] = {}
+                    for row in event.get("add") or ():
+                        if not isinstance(row, dict):
+                            continue
+                        addr = str(row.get("address") or "").lower()
+                        rssi = row.get("rssi")
+                        if addr and isinstance(rssi, (int, float)):
+                            out[addr] = max(float(rssi), out.get(addr, -999.0))
+                    return out
+        return None
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=BLUETOOTH_WAIT_S)
+    except (asyncio.TimeoutError, OSError):
+        return None
+
+
+# Folders under /config never holding a configuration file a person
+# wrote, and the one file nothing may read.
+_YAML_SKIP_DIRS = frozenset({"custom_components", "deps", "www", "tts",
+                             "backups", "node_modules", "media", "share"})
+YAML_SCAN_MAX_FILES = 400
+YAML_SCAN_MAX_BYTES = 4 * 1024 * 1024
+
+
+def load_custom_components(config_dir: str = CONFIG_DIR) -> dict | None:
+    """The custom integrations in /config/custom_components and which of
+    them the YAML configuration mentions.
+
+    ``{"integrations": [{domain, name, mtime, dependencies,
+    after_dependencies}], "referenced": [domain, ...]}``. A domain is
+    referenced when any YAML file a person keeps under /config (packages
+    included, `secrets.yaml` never) has it as a key — `domain:` — or as a
+    `platform:`. That is the cheap direction: a key that merely shares the
+    name counts as a use, and costs a row nobody needed to read. None when
+    the folder exists and cannot be read; an absent folder is an empty
+    list, which is an answer."""
+    import json as _json
+    import re as _re
+    root = os.path.join(config_dir, "custom_components")
+    if not os.path.isdir(root):
+        return {"integrations": [], "referenced": []}
+    found = []
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for name in names:
+        manifest = os.path.join(root, name, "manifest.json")
+        if name.startswith((".", "_")) or not os.path.isfile(manifest):
+            continue
+        try:
+            with open(manifest, "r", encoding="utf-8") as fh:
+                data = _json.load(fh)
+            mtime = os.path.getmtime(manifest)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        found.append({"domain": str(data.get("domain") or name),
+                      "name": str(data.get("name") or name)[:80],
+                      "mtime": mtime,
+                      "dependencies": [str(d) for d in data.get("dependencies") or ()][:20],
+                      "after_dependencies": [str(d) for d in
+                                             data.get("after_dependencies") or ()][:20]})
+    domains = {c["domain"] for c in found}
+    referenced: set[str] = set()
+    if domains:
+        texts = []
+        budget, count = YAML_SCAN_MAX_BYTES, 0
+        for dirpath, dirnames, filenames in os.walk(config_dir):
+            rel = os.path.relpath(dirpath, config_dir)
+            dirnames[:] = sorted(d for d in dirnames if not d.startswith(".")
+                                 and not (rel == "." and d in _YAML_SKIP_DIRS))
+            for fn in sorted(filenames):
+                if not fn.endswith((".yaml", ".yml")) or fn == "secrets.yaml":
+                    continue
+                if count >= YAML_SCAN_MAX_FILES or budget <= 0:
+                    break
+                try:
+                    with open(os.path.join(dirpath, fn), "r", encoding="utf-8",
+                              errors="replace") as fh:
+                        text = fh.read(budget)
+                except OSError:
+                    continue
+                count += 1
+                budget -= len(text)
+                texts.append(text)
+        blob = "\n".join(texts)
+        for dom in domains:
+            pat = (r"(?m)^\s*(?:-\s*)?(?:" + _re.escape(dom) + r"\s*:|platform\s*:"
+                   r"\s*[\"']?" + _re.escape(dom) + r"[\"']?\s*(?:#.*)?$)")
+            if _re.search(pat, blob):
+                referenced.add(dom)
+    return {"integrations": found, "referenced": sorted(referenced)}
+
 async def collect_rooms(now: float | None = None) -> dict:
     """The four keys a `House` needs to answer "what is in this room".
 
@@ -290,6 +453,12 @@ async def collect(now: float | None = None) -> dict:
         snap[key] = cfg[key]
     _mark("automations", cfg["automations"] is not None,
           "" if cfg["automations"] is not None else "automations.yaml not readable")
+
+    custom = load_custom_components()
+    snap["custom_components"] = custom or {}
+    _mark("custom_components", custom is not None,
+          "" if custom is not None else
+          "the custom integrations folder could not be read")
 
     async with aiohttp.ClientSession() as session:
         # The runs Core is holding right now, over the WebSocket — never
@@ -456,6 +625,50 @@ async def collect(now: float | None = None) -> dict:
             snap["config_entries"] = []
             _mark("config_entries", False, str(exc))
 
+        # Repairs Home Assistant raised, and the Energy dashboard's own
+        # preferences — one round trip. "No prefs" is Core saying the
+        # dashboard was never set up, which is an answer; any other
+        # refusal is "I could not ask".
+        try:
+            rep, energy = await ha_data._ws_calls(session, [
+                {"type": "repairs/list_issues"},
+                {"type": "energy/get_prefs"}])
+            issues = (rep.get("result") or {}).get("issues") \
+                if rep.get("ok") and isinstance(rep.get("result"), dict) else None
+            snap["repairs"] = issues if isinstance(issues, list) else []
+            _mark("repairs", isinstance(issues, list),
+                  "" if isinstance(issues, list)
+                  else "Home Assistant did not list its repairs")
+            snap["energy_prefs"] = energy_prefs(energy)
+            _mark("energy_prefs", snap["energy_prefs"] is not None,
+                  "" if snap["energy_prefs"] is not None
+                  else "Home Assistant did not hand over the Energy "
+                       "dashboard's settings")
+            if snap["energy_prefs"] is None:
+                snap["energy_prefs"] = {}
+        except Exception as exc:  # noqa: BLE001
+            snap["repairs"], snap["energy_prefs"] = [], {}
+            _mark("repairs", False, str(exc))
+            _mark("energy_prefs", False, str(exc))
+
+        # What the Bluetooth adapters and proxies hear, only where
+        # Bluetooth is set up: a house without it is answered by the
+        # check's own `absent`, not by a refusal.
+        try:
+            if any(isinstance(e, dict) and e.get("domain") == "bluetooth"
+                   for e in snap.get("config_entries") or ()):
+                heard = await bluetooth_heard(session)
+            else:
+                heard = {}
+            snap["bluetooth"] = {"rssi": heard or {}}
+            _mark("bluetooth", heard is not None,
+                  "" if heard is not None else
+                  "Home Assistant did not share what its Bluetooth "
+                  "receivers hear (a newer Home Assistant does)")
+        except Exception as exc:  # noqa: BLE001
+            snap["bluetooth"] = {"rssi": {}}
+            _mark("bluetooth", False, str(exc))
+
         # The Z-Wave mesh as Z-Wave JS sees it: each node's status and
         # statistics, which carry a "last seen" a restart does not reset.
         try:
@@ -552,6 +765,21 @@ async def collect(now: float | None = None) -> dict:
                              if isinstance(shapes, dict) else 0),
                 "recent": {}}
             _mark("appliances", False, str(exc))
+
+        # A device offline across a restart: Core re-stamps every entity
+        # when it starts, so how long one has really been unavailable is
+        # the recorder's to say. Asked only about the unavailable entities
+        # that look younger than a day.
+        try:
+            gone = await _unavailable_history(
+                session, snap.get("states") or {}, now)
+            snap["unavailable_since"] = gone or {}
+            _mark("unavailable_since", gone is not None,
+                  "" if gone is not None else
+                  "the recorder did not answer for unavailable entities")
+        except Exception as exc:  # noqa: BLE001
+            snap["unavailable_since"] = {}
+            _mark("unavailable_since", False, str(exc))
 
         # A device whose integration says in words that its job ended (a
         # 3D printer's print status, a washer's operation state) and has
@@ -855,7 +1083,12 @@ async def _addon_details(session, addons: list) -> list:
                               "host_network",
                               # A need only Protection mode off grants
                               # (`security.UNPROTECTED_BY_DESIGN`).
-                              "host_pid")
+                              "host_pid",
+                              # The services it announces to Home Assistant
+                              # (`discovery:` in its config) — which
+                              # integration a stopped add-on leaves with
+                              # nothing to talk to (`audit.needed_stopped`).
+                              "discovery")
                              if k in extra}}
         out.append(row)
     return out
@@ -911,6 +1144,38 @@ async def _job_history(session, states: dict, now: float) -> dict | None:
         return None
     got = ha_data.series_by_entity(raw)
     return {eid: got.get(eid) or [] for eid in ids}
+
+
+async def _unavailable_history(session, states: dict,
+                               now: float) -> dict | None:
+    """`{entity_id: iso stamp}` — when each young-looking unavailable
+    entity's current stretch of being unavailable began, read off the
+    recorder (`devices.unavailable_candidates` / `unavailable_since`), or
+    None when Core would not answer. Nothing to ask is `{}` and costs no
+    request; an entity the recorder has no stretch for is left out, so the
+    check reads its live stamp exactly as it did before."""
+    import ha_data
+
+    from . import devices
+
+    ids = devices.unavailable_candidates(states, now)
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=devices.UNAVAILABLE_HISTORY_DAYS)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    out = {}
+    for eid in ids:
+        since = devices.unavailable_since(got.get(eid) or [])
+        if since:
+            out[eid] = since
+    return out
 
 
 def _stamp_entries(entries: list, now: float,

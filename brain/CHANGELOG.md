@@ -2,6 +2,29 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.13
+
+### Added
+
+- **brAIn examines every part of Home Assistant by default, and says what it looked at.** After each checks pass, every area — networks, integrations, custom integrations, add-ons, host, backups, recorder, automations, dashboards, energy, people and presence, HACS, repairs, and devices — gets one line: checked and nothing wrong, how many findings, could not look and why, or not set up in this house. The lines are in `brain doctor`, the problem report and Diagnostics, and "did you look at X" can be asked of the decision log. (#418)
+- **New checks for the areas nothing covered:** a repair left open for a week; an energy dashboard naming a statistic that does not exist or a rate sensor where a total belongs; a phone that has stopped reporting for a week; a person's GPS tracker that has not updated for a week; a custom integration nothing uses; an add-on stopped while an integration still depends on it; HACS updates waiting two weeks; Matter set up with no devices; a Bluetooth device heard only faintly. A house that backs up to the cloud with no local copy is no longer told it has never backed up. (#418)
+
+## 3.8.12
+
+### Added
+
+- **A dehumidifier that stops while its room is still damp is reported.** brAIn learns the humidity at which each dehumidifier usually starts; when one is switched on, has drawn only standby power for three hours and its room is well above that level (a full tank, or switched off at its own panel), it says so, and the card clears when the machine runs again. (#396)
+- **The 3D-printer chore clears itself when BRUH Bambu Studio sees the plate empty.** With that add-on installed, brAIn reads its plate reading and no longer says it cannot tell whether the print was taken off. (#395)
+- **The morning brief can use each day's own wake time.** When weekdays as a group are too spread out, a day of the week whose mornings agree (one odd morning in five allowed) gets its own measured time. (#394)
+
+### Fixed
+
+- **A rule's report stops once nobody has marked it wrong for two weeks**, even when brAIn later rewrote its old answers. (#146)
+- **A device unavailable for days is reported even when Home Assistant restarted in between.** brAIn reads from the recorder when the stretch of being unavailable began. (#404)
+- **An automation that checks every minute and acts only while something is on is not reported as "its condition never passes".** (#407)
+- **Room heat questions find a room by its area id or alias**, and the list of known rooms names each room once. (#410)
+- **Automations brAIn writes use the current `triggers:` / `conditions:` / `actions:` keys** on Home Assistant 2024.10 and later, and the older keys on an older Home Assistant. Your own automations are left as you wrote them. (#421)
+
 ## 3.8.11
 
 ### Added

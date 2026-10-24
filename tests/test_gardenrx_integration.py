@@ -224,6 +224,41 @@ class TestTheIntegration(unittest.TestCase):
         with self.assertRaisesRegex(HomeAssistantError, "not set up"):
             self.call(hass, "delete_harvest", {"id": 1})
 
+    def test_every_lever_the_panel_has_is_a_service_that_answers(self):
+        """The owner's ask: log a spray, queue one, adjust stock, add a crop or
+        a variety, keep a dated note and read the harvests back, all from
+        Home Assistant, each answering with the record it made or changed."""
+        hass, _ = self.hass_with(FakeClient())
+        for service in ("log_spray", "queue_spray", "adjust_inventory", "add_crop",
+                        "add_variety", "log_note"):
+            self.assertIs(SupportsResponse.OPTIONAL, hass.services.registered[("gardenrx", service)][2],
+                          service)
+        # Reading the harvests back is only an answer, so it is response-only.
+        self.assertIs(SupportsResponse.ONLY, hass.services.registered[("gardenrx", "get_harvests")][2])
+
+    def test_a_read_does_not_ask_for_a_refresh_and_a_write_does(self):
+        client = FakeClient()
+        hass, coordinator = self.hass_with(client)
+        self.call(hass, "get_harvests", {"crop": "Apples", "start": dt.date(2026, 7, 1),
+                                         "end": dt.date(2026, 7, 31)})
+        self.assertEqual([("get_harvests", {"crop": "Apples", "start": "2026-07-01", "end": "2026-07-31"})],
+                         client.calls)
+        self.assertEqual(0, coordinator.refreshes)
+        self.call(hass, "queue_spray", {"crop": ["Apples"], "product": ["Captan"],
+                                        "planned_date": dt.date(2026, 7, 20)})
+        self.assertEqual(("queue_spray", {"crop": ["Apples"], "product": ["Captan"], "planned_date": "2026-07-20"}),
+                         client.calls[-1])
+        self.assertEqual(1, coordinator.refreshes)
+
+    def test_a_new_lever_refuses_with_the_add_ons_sentence(self):
+        client = FakeClient(error=self.api.GardenRxError('No crop is called "tomatos".'))
+        hass, coordinator = self.hass_with(client)
+        with self.assertRaisesRegex(HomeAssistantError, 'No crop is called "tomatos"'):
+            self.call(hass, "add_variety", {"crop": "tomatos", "name": "Sungold"})
+        with self.assertRaisesRegex(HomeAssistantError, 'No crop is called "tomatos"'):
+            self.call(hass, "get_harvests", {"crop": "tomatos"})
+        self.assertEqual(0, coordinator.refreshes)
+
     def test_each_sensor_reads_its_part_of_the_summary(self):
         coordinator = self.init.GardenRxCoordinator(None, FakeClient())
         coordinator.data = SUMMARY

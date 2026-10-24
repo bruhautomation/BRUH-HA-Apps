@@ -63,6 +63,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import automation_keys
 
 log = logging.getLogger("brain.intents")
 
@@ -304,13 +305,14 @@ SCHEMA = {
                   "Only when nothing in the house matches what they named: "
                   "what you looked for and did not find. Leave the "
                   "automation out."},
-        "trigger": {"type": "array", "items": {"type": "object"},
-                    "description": "Home Assistant triggers of kind time, "
-                    "state, numeric_state or template only."},
-        "condition": {"type": "array", "items": {"type": "object"},
-                      "description": "May be empty."},
-        "action": {"type": "array", "items": {"type": "object"},
-                   "description": "What to do, naming entities by id."},
+        "triggers": {"type": "array", "items": {"type": "object"},
+                     "description": "Home Assistant triggers of kind time, "
+                     "state, numeric_state or template only, each naming "
+                     "its kind under `trigger:` (never `platform:`)."},
+        "conditions": {"type": "array", "items": {"type": "object"},
+                       "description": "May be empty."},
+        "actions": {"type": "array", "items": {"type": "object"},
+                    "description": "What to do, naming entities by id."},
         # A standing rule's own (`authoring.ALLOWED_MODES`); a one-off
         # ignores it, because it disarms itself after one run whatever.
         "mode": {"type": "string", "description":
@@ -430,16 +432,18 @@ def build(sentence: str, answer: dict, ts: int,
 
     alias = out["title"]
     entity_id = f"automation.{automation_writer.slugify(alias)}"
-    config = {
+    # In Home Assistant's current words whatever the answer used
+    # (`automation_keys`): a trigger's kind is `trigger:`, never `platform:`.
+    config = automation_keys.modern({
         "id": f"{ID_PREFIX}{int(ts)}",
-        "trigger": triggers,
-        "condition": _listify(answer.get("condition")
-                              or answer.get("conditions")),
-        "action": list(steps) + [disarm()],
+        "triggers": triggers,
+        "conditions": _listify(answer.get("condition")
+                               or answer.get("conditions")),
+        "actions": list(steps) + [disarm()],
         # Not the model's to choose. A one-off that could run twice at
         # once is a one-off that is not one.
         "mode": "single",
-    }
+    })
 
     try:
         shadow.check_replayable(config)

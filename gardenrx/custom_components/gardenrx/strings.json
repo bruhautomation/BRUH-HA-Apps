@@ -109,6 +109,168 @@
         }
       }
     },
+    "log_spray": {
+      "name": "Log a spray",
+      "description": "Record a spray that was not queued, the same as the spray planner's Log: the spray is saved with its crops and products, a queued spray for the same crops is cleared, and what it used comes out of stock. A product not labelled for a crop is saved and the response says so.",
+      "fields": {
+        "crop": {
+          "name": "Crops",
+          "description": "The crops sprayed, by name or id; part of a name is enough when only one crop matches. Leave it out to name an area instead."
+        },
+        "area": {
+          "name": "Area",
+          "description": "Optional. Orchard, Garden or Landscape: every crop growing there."
+        },
+        "product": {
+          "name": "Products",
+          "description": "The products in the tank, by name or id. Part of a name is enough when only one product matches."
+        },
+        "rate": {
+          "name": "Rate",
+          "description": "Optional. The rate, one for every product or one for each. Left out, the label's rate for these crops."
+        },
+        "rate_unit": {
+          "name": "Rate unit",
+          "description": "Optional. Such as fl oz/gal or tbsp/gal. Left out, the label's unit."
+        },
+        "volume_gallons": {
+          "name": "Sprayer volume",
+          "description": "Gallons mixed. Left out, the panel's default sprayer size."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day it was sprayed. Left out, today."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Optional."
+        }
+      }
+    },
+    "queue_spray": {
+      "name": "Queue a spray",
+      "description": "Plan a spray for later, the same as the spray planner's Queue. It shows on the planner and the queued sprays sensor, and Mark a queued spray done logs it.",
+      "fields": {
+        "crop": {
+          "name": "Crops",
+          "description": "The crops sprayed, by name or id; part of a name is enough when only one crop matches. Leave it out to name an area instead."
+        },
+        "area": {
+          "name": "Area",
+          "description": "Optional. Orchard, Garden or Landscape: every crop growing there."
+        },
+        "product": {
+          "name": "Products",
+          "description": "The products in the tank, by name or id. Part of a name is enough when only one product matches."
+        },
+        "rate": {
+          "name": "Rate",
+          "description": "Optional. The rate, one for every product or one for each. Left out, the label's rate for these crops."
+        },
+        "rate_unit": {
+          "name": "Rate unit",
+          "description": "Optional. Such as fl oz/gal or tbsp/gal. Left out, the label's unit."
+        },
+        "planned_date": {
+          "name": "Planned date",
+          "description": "Optional. The day it is planned for."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Optional."
+        }
+      }
+    },
+    "adjust_inventory": {
+      "name": "Adjust stock",
+      "description": "Add to or take from the stock of a treatment, or say how much is on hand, the same as the Stock page. A product not stocked yet is added to the Stock page.",
+      "fields": {
+        "product": {
+          "name": "Product",
+          "description": "The product's name or id. Part of a name is enough when only one product matches."
+        },
+        "change": {
+          "name": "Change",
+          "description": "How much to add (above zero) or take out (below zero). Give this or Amount on hand."
+        },
+        "quantity": {
+          "name": "Amount on hand",
+          "description": "How much there is now. Give this or Change."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "Optional. For a product not stocked yet, the unit to count it in; for one already stocked, it must be the unit it is counted in."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Optional, for a product not stocked yet."
+        }
+      }
+    },
+    "add_crop": {
+      "name": "Add a crop",
+      "description": "Add a crop to the Crops page. A crop the catalog knows gets its crop group, and so its labels and pre-harvest intervals.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "What the crop is called."
+        },
+        "crop_group": {
+          "name": "Crop group",
+          "description": "Optional, such as Pome Fruit or Nightshades. Left out, the catalog's group for that crop."
+        }
+      }
+    },
+    "add_variety": {
+      "name": "Add a variety",
+      "description": "Add a variety to a crop, the same as the crop page's Add variety.",
+      "fields": {
+        "crop": {
+          "name": "Crop",
+          "description": "The crop's name or id."
+        },
+        "name": {
+          "name": "Name",
+          "description": "What the variety is called."
+        }
+      }
+    },
+    "log_note": {
+      "name": "Log a garden note",
+      "description": "Keep a dated note about a place on the garden map. It is added to that place's notes, shown in the map's Edit dialog, one dated line each.",
+      "fields": {
+        "place": {
+          "name": "Place",
+          "description": "The name of an element on the garden map, such as a bed or a tree. Part of a name is enough when only one matches."
+        },
+        "note": {
+          "name": "Note",
+          "description": "What to remember."
+        },
+        "date": {
+          "name": "Date",
+          "description": "The day it is about. Left out, today."
+        }
+      }
+    },
+    "get_harvests": {
+      "name": "Get harvests",
+      "description": "Read the logged harvests back, newest first, with totals per crop and unit. Changes nothing.",
+      "fields": {
+        "crop": {
+          "name": "Crop",
+          "description": "Optional. The crop's name or id. Left out, every crop."
+        },
+        "start": {
+          "name": "From",
+          "description": "Optional. The first day to include."
+        },
+        "end": {
+          "name": "To",
+          "description": "Optional. The last day to include."
+        }
+      }
+    },
     "refresh": {
       "name": "Refresh",
       "description": "Read the garden from the add-on now instead of waiting for the next poll."

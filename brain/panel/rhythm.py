@@ -115,6 +115,8 @@ WEEKEND = "weekend"
 BY_DOW = "by_dow"
 MIN_DOW_DAYS = 4
 DOW_HALF_MIN = 30.0
+# At most one day in this many may sit far from the rest (`_dow_shape`).
+DOW_ODD_IN = 5
 DOW_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 # Where one house day ends and the next begins, in minutes after local
@@ -349,12 +351,34 @@ def _dow_shape(rows: list[dict], field: str) -> dict | None:
     if centre is None:
         return None
     widest = max(circular_distance(m, centre) for m in minutes)
-    if widest > DOW_HALF_MIN:
+    if widest <= DOW_HALF_MIN:
+        return {"minute": round(centre, 1), "at": clock(centre),
+                "spread_min": round(circular_spread(minutes, centre), 1),
+                "days": len(minutes),
+                "usual_days": len(minutes), "confidence": "low"}
+    # One odd day in DOW_ODD_IN (a bank holiday, a late night): the rest
+    # still have to agree within DOW_HALF_MIN, and the odd ones have to be
+    # far away (further than MAX_SPREAD_MIN), so a house that stirs
+    # anywhere is still refused — its days are spread, not one apart.
+    # Without this, five weeks of data put one odd day on nearly every day
+    # of the week and the whole week went unanswered.
+    core = _densest(minutes)
+    if not core:
         return None
+    centre = circular_median(core)
+    if centre is None:
+        return None
+    kept = [m for m in minutes if circular_distance(m, centre) <= DOW_HALF_MIN]
+    odd = [m for m in minutes if circular_distance(m, centre) > DOW_HALF_MIN]
+    if (len(kept) < MIN_DOW_DAYS
+            or len(odd) > len(minutes) // DOW_ODD_IN
+            or any(circular_distance(m, centre) <= MAX_SPREAD_MIN for m in odd)):
+        return None
+    centre = circular_median(kept)
     return {"minute": round(centre, 1), "at": clock(centre),
-            "spread_min": round(circular_spread(minutes, centre), 1),
+            "spread_min": round(circular_spread(kept, centre), 1),
             "days": len(minutes),
-            "usual_days": len(minutes), "confidence": "low"}
+            "usual_days": len(kept), "confidence": "low"}
 
 
 def profile(payload: dict | None = None, path: str | None = None) -> dict:

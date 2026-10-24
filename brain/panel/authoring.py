@@ -41,6 +41,7 @@ in which being wrong changes somebody's house every evening.
 """
 from __future__ import annotations
 
+import automation_keys
 import intents
 import prompt_kit
 
@@ -87,7 +88,10 @@ Each of these is something brAIn refuses the answer over.
   for a standing rule that should keep happening every time ("always turn
   the heating down when nobody is home"). When you cannot tell, it is a
   standing rule, and say so in `plain`.
-- `trigger` may only use `time`, `state`, `numeric_state` or `template`.
+- Write Home Assistant's current keys: `triggers`, `conditions` and
+  `actions`, and each trigger names its kind under `trigger:`, never
+  `platform:`.
+- `triggers` may only use `time`, `state`, `numeric_state` or `template`.
   Those are the four the recorder can replay, and the card shows how often
   the trigger would have fired over the last month and how that squares
   with what they did themselves — the only check there is on an
@@ -95,7 +99,7 @@ Each of these is something brAIn refuses the answer over.
   `webhook`, `mqtt`, `sun`, `zone`) makes the answer unusable. Write
   "after dark" as a `state` trigger or condition on `sun.sun` or a
   `template`, never a `sun` trigger.
-- `action` names entities by id. For a one-off do not add an action that
+- `actions` names entities by id. For a one-off do not add an action that
   switches the automation off — brAIn writes that itself.
 - `mode` is `single` (the default) or `restart`, and nothing else. Use
   `restart` when the automation WAITS — a `delay`, `wait_for_trigger` or
@@ -184,14 +188,14 @@ def build(sentence: str, answer: dict, ts: int,
             "than one copy at once over a single trigger. Ask again and it "
             "will write one that runs once, or restarts.")
         return out
-    config = {
+    config = automation_keys.modern({
         "id": f"{ID_PREFIX}{int(ts)}",
-        "trigger": triggers,
-        "condition": intents._listify(answer.get("condition")
-                                      or answer.get("conditions")),
-        "action": list(steps),
+        "triggers": triggers,
+        "conditions": intents._listify(answer.get("condition")
+                                       or answer.get("conditions")),
+        "actions": list(steps),
         "mode": mode,
-    }
+    })
 
     try:
         shadow.check_replayable(config)

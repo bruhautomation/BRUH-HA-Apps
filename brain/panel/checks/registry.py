@@ -403,13 +403,13 @@ def orphan_device(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "reg.hardware_name", "title": "Entities named after hardware",
+    {"id": "reg.hardware_name", "area": "devices", "title": "Entities named after hardware",
      "needs": ("states", "registry"), "run": hardware_name},
-    {"id": "reg.no_area", "title": "Devices in no area",
+    {"id": "reg.no_area", "area": "devices", "title": "Devices in no area",
      "needs": ("states", "registry"), "run": no_area},
-    {"id": "reg.unused_helper", "title": "Helpers nothing uses",
+    {"id": "reg.unused_helper", "area": "devices", "title": "Helpers nothing uses",
      "needs": ("states", "registry", "automations", "dashboards"),
      "run": unused_helper},
-    {"id": "reg.orphan_device", "title": "Devices with no entities",
+    {"id": "reg.orphan_device", "area": "devices", "title": "Devices with no entities",
      "needs": ("registry",), "run": orphan_device},
 ]

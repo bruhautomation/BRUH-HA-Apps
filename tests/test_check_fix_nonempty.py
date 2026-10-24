@@ -37,6 +37,7 @@ from test_finding_text_plain import SWEEP_MODULES, _Capture  # noqa: E402
 EXTRA_MODULES = (
     "test_thermal", "test_closures", "test_safety_tripped_check",
     "test_access_steward", "test_actions", "test_baselines",
+    "test_dehumidifier_stopped",
     "test_printer_heaters_and_hot_machines",
 )
 
