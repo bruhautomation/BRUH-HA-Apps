@@ -1943,22 +1943,31 @@ def room_physics(area):
     result = _panel_get("/api/knowledge/house/thermal")
     if isinstance(result, dict) and result.get("error"):
         return result
-    rooms = (result or {}).get("rooms") or []
-    want = str(area or "").strip().lower()
-    match = [r for r in rooms if isinstance(r, dict) and want in (
-        str(r.get("area") or "").lower(), str(r.get("name") or "").lower(),
-        str(r.get("id") or "").lower())]
+    rooms = [r for r in (result or {}).get("rooms") or [] if isinstance(r, dict)]
+
+    def fold(text) -> str:
+        # An area id and its name differ by case and underscores
+        # (`crawl_space` / "Crawl space"), so both are compared as words.
+        return " ".join(str(text or "").replace("_", " ").lower().split())
+
+    def names(r: dict) -> set[str]:
+        return {fold(x) for x in (r.get("area"), r.get("area_id"), r.get("name"),
+                                  r.get("id"), *(r.get("area_aliases") or []))
+                if fold(x)}
+
+    want = fold(area)
+    match = [r for r in rooms if want in names(r)]
     if not match and want:
-        match = [r for r in rooms if isinstance(r, dict) and want in
-                 (str(r.get("area") or "") + " " + str(r.get("name") or "")).lower()]
+        match = [r for r in rooms if any(want in n for n in names(r))]
     if not rooms:
         return {"area": area, "rooms": [], "note": (
             "brAIn has not fitted a heat model to any room yet — it needs "
             "a month of nights with an outdoor reference, and says which "
             "rooms it could not fit and why in the Knowledge tab.")}
     if not match:
-        return {"area": area, "rooms": [], "known_rooms": [
-            r.get("area") or r.get("name") for r in rooms if isinstance(r, dict)],
+        # One line per room, not per thermometer in it.
+        known = list(dict.fromkeys(r.get("area") or r.get("name") for r in rooms))
+        return {"area": area, "rooms": [], "known_rooms": known,
             "note": "no measured room by that name — see known_rooms"}
     return {"area": area, "outdoor_reference": (result or {}).get("outdoor"),
             "unit": (result or {}).get("unit"),

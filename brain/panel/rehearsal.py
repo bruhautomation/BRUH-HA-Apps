@@ -126,9 +126,9 @@ PLAN: list[dict] = [
                 f"{PREFIX}missing — an entity that does not exist",
         "proves": "auto.dead_ref — automations naming missing entities",
         "row": _automation("dead_ref", {
-            "trigger": [{"platform": "state", "entity_id": "sun.sun"}],
-            "action": [{"service": "light.turn_on",
-                        "target": {"entity_id": f"light.{PREFIX}missing"}}],
+            "triggers": [{"trigger": "state", "entity_id": "sun.sun"}],
+            "actions": [{"service": "light.turn_on",
+                         "target": {"entity_id": f"light.{PREFIX}missing"}}],
         }),
     },
     {
@@ -139,9 +139,9 @@ PLAN: list[dict] = [
                 "that is not registered",
         "proves": "auto.dead_service — automations calling missing services",
         "row": _automation("dead_service", {
-            "trigger": [{"platform": "state", "entity_id": "sun.sun"}],
-            "action": [{"service": f"notify.{PREFIX}nowhere",
-                        "data": {"message": "brAIn rehearsal"}}],
+            "triggers": [{"trigger": "state", "entity_id": "sun.sun"}],
+            "actions": [{"service": f"notify.{PREFIX}nowhere",
+                         "data": {"message": "brAIn rehearsal"}}],
         }),
     },
     {

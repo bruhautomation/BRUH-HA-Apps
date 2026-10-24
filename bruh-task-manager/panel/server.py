@@ -68,6 +68,16 @@ MIRROR_TOP = 10
 _LOG = logging.getLogger("task_manager")
 
 
+def _for_log(value, limit: int = 120) -> str:
+    """A value from a request, safe to put in a log line.
+
+    Line breaks and other control characters are replaced, so a name sent
+    to the panel cannot forge a second log line; long values are cut.
+    """
+    text = "".join(ch if ch.isprintable() else "?" for ch in str(value))
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 class QuietAccessLogger(AbstractAccessLogger):
     """A poll that succeeded is not news; everything else is logged."""
 
@@ -265,7 +275,8 @@ class Monitor:
 
     async def _run_job(self, job: dict) -> None:
         path = apps_mod.action_path(job["key"], job["action"])
-        _LOG.warning("%s %s (%s)", job["action"].capitalize(), job["name"], job["key"])
+        _LOG.warning("%s %s (%s)", _for_log(job["action"]).capitalize(),
+                     _for_log(job["name"]), _for_log(job["key"]))
         try:
             await self.supervisor.post(path, timeout=900)
         except apps_mod.SupervisorError as exc:

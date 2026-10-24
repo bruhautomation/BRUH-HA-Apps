@@ -50,11 +50,34 @@ and so cannot clear anything):
                     EMPTY list is "nothing is pending"; a Supervisor that
                     would not answer leaves the key unavailable, because
                     "I could not look" may not read as "you are up to date"
-    zha_devices    [{name, ieee, available, last_seen}] — absent unless ZHA
-                    is installed, which is what makes the key unavailable
+    zha_devices    [{name, ieee, available, last_seen, lqi, rssi,
+                    power_source, device_type, device_reg_id}] — absent
+                    unless ZHA is installed, which makes the key unavailable
+    zwave_nodes    {device_id: {status, statistics}} — Z-Wave JS's own
+                    `zwave_js/node_status` and `zwave_js/node_statistics`
+                    per node: its status (asleep/awake/alive/dead), when the
+                    controller last heard from it (which a restart does not
+                    reset) and its link's signal and round trip. `{}` and
+                    available on a house with no Z-Wave; unavailable when
+                    Core would not answer for any node
+    wifi_history   {days, entities: {entity_id: [history rows]}} — a week
+                    of the UniFi trackers and one entity of each device they
+                    track (`network.wifi_history_candidates`), bounded the
+                    way the job history is. `{}` entities and available
+                    with no UniFi clients; unavailable when the recorder
+                    would not answer
+    core_log       {hours, lines, groups: [{logger, domain, message, count,
+                    last, ips}]} — Core's live log (the Supervisor's
+                    `/core/logs`), its errors folded by logger and message
+                    (`integrations.summarise_log`), redacted. Unavailable
+                    when the Supervisor would not hand it over
+    labels         label registry rows (label_id, name) — best effort, an
+                    empty list when Core would not list them
     config_entries [{entry_id, domain, title, state, source, disabled_by,
-                    reason}] — every integration entry and whether it set
-                    itself up. Unavailable when Core would not answer, which
+                    reason, failing_since}] — every integration entry and
+                    whether it set itself up; a failing one carries when
+                    brAIn first saw it failing (`system.stamp_failing`,
+                    kept across passes in `ENTRY_FAILING_FILE`). Unavailable when Core would not answer, which
                     is a different claim from a house with nothing failing
     recorder       {db_bytes, db_path, purge_keep_days}
     users          [{id, name, admin, owner, active, system, local_only}] —
@@ -73,6 +96,11 @@ and so cannot clear anything):
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
+    unavailable_since {entity_id: iso} — for the entities unavailable now
+                    whose live stamp is under a day old, when the recorder
+                    says the current stretch of being unavailable began
+                    (a restart re-stamps `last_changed`). `{}` and available
+                    when nothing needed asking
     job_status     {entity_id: [history rows]} for the status entities
                     that say a job just finished (`chores.job_candidates`)
                     — `{}` and available when nothing has; unavailable
@@ -137,6 +165,12 @@ MAX_ADDON_INFO = 40
 # after a change before it is asked about (the recorder commits in
 # seconds; half an hour is never the recorder merely being slow).
 HISTORY_PROBE_HOURS = 96
+# When each failing config entry was first seen failing, across passes and
+# restarts (Core records no such time).
+ENTRY_FAILING_FILE = os.environ.get("BRAIN_ENTRY_FAILING_FILE",
+                                    "/data/entry-failing.json")
+# Z-Wave nodes asked about in one pass, at most.
+ZWAVE_NODES_MAX = 120
 HISTORY_PROBE_MAX = 12
 HISTORY_PROBE_SETTLE_S = 1800
 
@@ -296,19 +330,26 @@ async def collect(now: float | None = None) -> dict:
             _mark("states", False, str(exc))
 
         try:
-            areas, devices, entities = await ha_data._ws_commands(session, [
-                {"type": "config/area_registry/list"},
-                {"type": "config/device_registry/list"},
-                {"type": "config/entity_registry/list"},
-            ])
+            areas, devices, entities, labels = await ha_data._ws_commands(
+                session, [
+                    {"type": "config/area_registry/list"},
+                    {"type": "config/device_registry/list"},
+                    {"type": "config/entity_registry/list"},
+                    # Best effort: a label's NAME says "not in use"; its id
+                    # is that name slugified, which the checks read when
+                    # this list could not be had.
+                    {"type": "config/label_registry/list"},
+                ])
             if entities is None:
                 raise RuntimeError("entity registry did not answer")
             snap["areas"] = areas or []
             snap["devices"] = devices or []
             snap["entities"] = entities or []
+            snap["labels"] = labels if isinstance(labels, list) else []
             _mark("registry", True)
         except Exception as exc:  # noqa: BLE001
             snap["areas"], snap["devices"], snap["entities"] = [], [], []
+            snap["labels"] = []
             _mark("registry", False, str(exc))
 
         try:
@@ -411,12 +452,52 @@ async def collect(now: float | None = None) -> dict:
             entries = (await ha_data._ws_commands(
                 session, [{"type": "config_entries/get"}]))[0]
             snap["config_entries"] = entries if isinstance(entries, list) else []
+            if isinstance(entries, list):
+                _stamp_entries(snap["config_entries"], now)
             _mark("config_entries", isinstance(entries, list),
                   "" if isinstance(entries, list)
                   else "Home Assistant did not list its config entries")
         except Exception as exc:  # noqa: BLE001
             snap["config_entries"] = []
             _mark("config_entries", False, str(exc))
+
+        # The Z-Wave mesh as Z-Wave JS sees it: each node's status and
+        # statistics, which carry a "last seen" a restart does not reset.
+        try:
+            nodes = await _zwave_nodes(session, snap.get("devices") or [])
+            snap["zwave_nodes"] = nodes or {}
+            _mark("zwave_nodes", nodes is not None,
+                  "" if nodes is not None else
+                  "Z-Wave JS did not answer for its nodes")
+        except Exception as exc:  # noqa: BLE001
+            snap["zwave_nodes"] = {}
+            _mark("zwave_nodes", False, str(exc))
+
+        # A week of the Wi-Fi clients and their devices, for the drops a
+        # single instant cannot show. Only once the registry is in hand:
+        # which entities to ask about is read off it.
+        try:
+            if not snap["available"].get("registry"):
+                raise RuntimeError("the registry was not read")
+            wifi = await _wifi_history(session, snap, now)
+            snap["wifi_history"] = wifi or {}
+            _mark("wifi_history", wifi is not None,
+                  "" if wifi is not None else
+                  "the recorder did not answer for the Wi-Fi history")
+        except Exception as exc:  # noqa: BLE001
+            snap["wifi_history"] = {}
+            _mark("wifi_history", False, str(exc))
+
+        # Core's own log, folded into what repeats.
+        try:
+            logs = await _core_log(session, now)
+            snap["core_log"] = logs or {}
+            _mark("core_log", logs is not None,
+                  "" if logs is not None else
+                  "the Supervisor did not hand over Home Assistant's log")
+        except Exception as exc:  # noqa: BLE001
+            snap["core_log"] = {}
+            _mark("core_log", False, str(exc))
 
         sup = await _supervisor(session)
         snap["supervisor"] = sup
@@ -476,6 +557,21 @@ async def collect(now: float | None = None) -> dict:
                              if isinstance(shapes, dict) else 0),
                 "recent": {}}
             _mark("appliances", False, str(exc))
+
+        # A device offline across a restart: Core re-stamps every entity
+        # when it starts, so how long one has really been unavailable is
+        # the recorder's to say. Asked only about the unavailable entities
+        # that look younger than a day.
+        try:
+            gone = await _unavailable_history(
+                session, snap.get("states") or {}, now)
+            snap["unavailable_since"] = gone or {}
+            _mark("unavailable_since", gone is not None,
+                  "" if gone is not None else
+                  "the recorder did not answer for unavailable entities")
+        except Exception as exc:  # noqa: BLE001
+            snap["unavailable_since"] = {}
+            _mark("unavailable_since", False, str(exc))
 
         # A device whose integration says in words that its job ended (a
         # 3D printer's print status, a washer's operation state) and has
@@ -835,6 +931,147 @@ async def _job_history(session, states: dict, now: float) -> dict | None:
         return None
     got = ha_data.series_by_entity(raw)
     return {eid: got.get(eid) or [] for eid in ids}
+
+
+async def _unavailable_history(session, states: dict,
+                               now: float) -> dict | None:
+    """`{entity_id: iso stamp}` — when each young-looking unavailable
+    entity's current stretch of being unavailable began, read off the
+    recorder (`devices.unavailable_candidates` / `unavailable_since`), or
+    None when Core would not answer. Nothing to ask is `{}` and costs no
+    request; an entity the recorder has no stretch for is left out, so the
+    check reads its live stamp exactly as it did before."""
+    import ha_data
+
+    from . import devices
+
+    ids = devices.unavailable_candidates(states, now)
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=devices.UNAVAILABLE_HISTORY_DAYS)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    out = {}
+    for eid in ids:
+        since = devices.unavailable_since(got.get(eid) or [])
+        if since:
+            out[eid] = since
+    return out
+
+
+def _stamp_entries(entries: list, now: float,
+                   path: str | None = None) -> None:
+    """Stamp `failing_since` on failing entries off the ledger on disk, and
+    write the ledger back. Never raises; a ledger that cannot be read is no
+    ledger, one that cannot be written is the dev-checkout case (its parent
+    does not exist) or a full disk, and either way the pass goes on."""
+    import json
+
+    from . import system
+    path = path or ENTRY_FAILING_FILE
+    ledger = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+        if isinstance(raw, dict):
+            ledger = {str(k): float(v) for k, v in raw.items()
+                      if isinstance(v, (int, float))}
+    except FileNotFoundError:
+        ledger = None
+    except Exception as exc:  # noqa: BLE001
+        log.debug("entry ledger unread: %s", exc)
+        ledger = None
+    new = system.stamp_failing(entries, ledger, now)
+    if new == ledger:
+        return
+    if not os.path.isdir(os.path.dirname(path) or "."):
+        return
+    try:
+        import atomic_write
+        atomic_write.write_json(path, new)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("entry ledger unwritten: %s", exc)
+
+
+async def _zwave_nodes(session, devices: list) -> dict | None:
+    """`{device_id: {status, statistics}}` for every Z-Wave JS device, or
+    None when Core answered for none of them (Z-Wave JS's commands are
+    missing on this Core, or it would not answer). `{}` with nothing to ask."""
+    import ha_data
+
+    ids = sorted(str(d["id"]) for d in devices
+                 if isinstance(d, dict) and d.get("id")
+                 and not d.get("disabled_by")
+                 and any(isinstance(i, (list, tuple)) and len(i) == 2
+                         and i[0] == "zwave_js"
+                         for i in d.get("identifiers") or ()))[:ZWAVE_NODES_MAX]
+    if not ids:
+        return {}
+    commands = []
+    for dev_id in ids:
+        commands.append({"type": "zwave_js/node_status", "device_id": dev_id})
+        commands.append({"type": "zwave_js/node_statistics", "device_id": dev_id})
+    answers = await ha_data._ws_calls(session, commands)
+    out: dict = {}
+    for i, dev_id in enumerate(ids):
+        status, stats = answers[2 * i], answers[2 * i + 1]
+        node = {"status": status.get("result") if status.get("ok") else None,
+                "statistics": stats.get("result") if stats.get("ok") else None}
+        if isinstance(node["status"], dict) or isinstance(node["statistics"], dict):
+            out[dev_id] = node
+    return out or None
+
+
+async def _wifi_history(session, snap: dict, now: float) -> dict | None:
+    """A week of the UniFi clients (`network.wifi_history_candidates`), or
+    None when the recorder would not answer. Nothing to ask costs nothing."""
+    import ha_data
+
+    from . import network
+    cands = network.wifi_history_candidates(snap)
+    ids = sorted({c["tracker"] for c in cands} | {c["probe"] for c in cands})
+    if not ids:
+        return {"days": network.FLAP_DAYS, "entities": {}}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=network.FLAP_DAYS)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    return {"days": network.FLAP_DAYS,
+            "entities": {eid: got.get(eid) or [] for eid in ids}}
+
+
+async def _core_log(session, now: float) -> dict | None:
+    """Core's live log from the Supervisor, folded by
+    `integrations.summarise_log`; None when it would not answer."""
+    import aiohttp
+
+    import ha_data
+
+    from . import integrations
+    from ._util import house_tz
+    async with session.get(
+            f"{SUPERVISOR_API}/core/logs",
+            headers={"Authorization": f"Bearer {ha_data.SUPERVISOR_TOKEN}",
+                     "Accept": "text/plain",
+                     # The last lines, not the first: what the Supervisor
+                     # sends with no range is not a day's worth.
+                     "Range": f"entries=:-{integrations.LOG_MAX_LINES}:"},
+            timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        if resp.status >= 400:
+            return None
+        text = await resp.text(errors="replace")
+    return integrations.summarise_log(text[-8_000_000:], now, house_tz())
 
 
 async def _history_probe(session, states: dict, now: float) -> dict | None:

@@ -248,11 +248,11 @@ class TestTheAutomationItWouldWrite(unittest.TestCase):
 
     def test_it_is_a_time_trigger_and_a_weekday_condition(self):
         config = routines.to_config(self.routine)
-        self.assertEqual(config["trigger"],
-                         [{"platform": "time", "at": "18:40:00"}])
-        self.assertEqual(config["condition"],
+        self.assertEqual(config["triggers"],
+                         [{"trigger": "time", "at": "18:40:00"}])
+        self.assertEqual(config["conditions"],
                          [{"condition": "time", "weekday": routines.WEEKDAYS}])
-        self.assertEqual(config["action"],
+        self.assertEqual(config["actions"],
                          [{"service": "light.turn_on",
                            "target": {"entity_id": "light.hall"}}])
 

@@ -515,11 +515,70 @@ def trace_error(snap: dict, now: float) -> list[dict]:
 CONDITION_PASSED_DAYS = 14
 
 
+def _polls(trig: dict) -> bool:
+    """A trigger that fires on a clock or at startup rather than on news:
+    a `time_pattern`, Home Assistant starting (`homeassistant` / `start`,
+    or the `homeassistant_start` event)."""
+    kind = _trigger_kind(trig)
+    if kind == "time_pattern":
+        return True
+    if kind == "homeassistant":
+        return str(trig.get("event") or "").lower() == "start"
+    if kind == "event":
+        return "homeassistant_start" in {
+            str(t) for t in listify(trig.get("event_type"))}
+    return False
+
+
+def _guard_conditions(config: dict) -> bool:
+    """The condition tests one entity's state, or a time window, and
+    nothing else (`and` blocks read through)."""
+    raw = config.get("conditions")
+    if raw is None:
+        raw = config.get("condition")
+    pending = list(listify(raw))
+    entities: set[str] = set()
+    seen = 0
+    while pending:
+        cond = pending.pop()
+        if not isinstance(cond, dict):
+            return False
+        kind = str(cond.get("condition") or "").lower()
+        if kind == "and":
+            pending.extend(listify(cond.get("conditions")))
+            continue
+        if kind == "state":
+            ids = [str(e) for e in listify(cond.get("entity_id"))]
+            if not ids:
+                return False
+            entities.update(ids)
+        elif kind != "time":
+            return False
+        seen += 1
+    return seen > 0 and len(entities) <= 1
+
+
+def _polled_guard(config) -> bool:
+    """An interlock: an automation that wakes on a clock (or at startup)
+    and acts only while one thing holds. Its condition failing on nearly
+    every run is the design — the guard is re-checked every minute so the
+    action happens the minute it is allowed — and a card saying it "cannot
+    act" was marked Wrong every time it was shown."""
+    if not isinstance(config, dict):
+        return False
+    return (any(_polls(t) for t in _triggers(config))
+            and _guard_conditions(config))
+
+
 def condition_never_passes(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    configs = {str(c.get("id")): c for c in (snap.get("automations") or [])
+               if isinstance(c, dict) and c.get("id") is not None}
     out = []
     for item in _traced(house):
         if item["kind"] != "Automation":
+            continue
+        if _polled_guard(configs.get(item["key"].split(".", 1)[1])):
             continue
         eid = item["entity_id"]
         rows = _traces_for(snap, item["key"])

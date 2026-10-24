@@ -95,11 +95,17 @@ CHECK_SITUATIONS = {
     "dev.unavailable": "unplugged",
     "dev.zwave_dead": "unplugged",
     "dev.zha_unseen": "unplugged",
+    # A device gone quiet on its network is the same answer as one gone
+    # unavailable: somebody may have unplugged it on purpose.
+    "net.wifi_hung": "unplugged",
+    "net.zwave_silent": "unplugged",
+    "net.zigbee_silent": "unplugged",
     "dev.frozen": "stuck",
     "dev.implausible": "stuck",
     "base.unusual": "stuck",
     "chore.waiting": "chore_check",
     "chore.job_done": "chore_check",
+    "chore.dehumidifier": "chore_check",
     "evening.left_open": "chore_check",
     # Names and rooms are what `tidy` proposes, so "Fix it" on these two is
     # the tidy run — a table to tick through — rather than a plan run that
