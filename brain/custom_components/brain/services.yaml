@@ -2037,7 +2037,8 @@ set_integration_options:
       required: true
     options:
       name: Options
-      description: 'The fields to set, as a mapping, like {"scan_interval": 60}.'
+      description: The fields to set, as a mapping of field name to value (scan_interval set to 60,
+        say). A dry run lists the fields the form asks for.
       selector:
         object: {}
     dry_run:

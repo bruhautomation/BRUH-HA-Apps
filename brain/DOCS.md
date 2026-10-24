@@ -148,8 +148,8 @@ dead, and rebuild a node's routes. List the Thread networks Home Assistant knows
 (never their network key) and choose the preferred one. Set the local and internet
 addresses Home Assistant is reached at.
 
-All of these are admin-only `brain.*` services. A voice agent at the *Voice
-assistant* level cannot use any of them.
+All of these are admin-only brain services. A voice agent at the Voice assistant
+level cannot use any of them.
 
 **Dashboards.** List them, read them, create them, rewrite them, restore a previous
 version, reset one to defaults, and manage dashboard resources. brAIn can build you a
