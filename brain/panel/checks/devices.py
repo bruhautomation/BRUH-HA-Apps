@@ -189,13 +189,21 @@ nozzle extruder hotend hot_end heatbreak heatsink heat_sink
 oven grill griddle bbq barbecue smoker fryer hob stove burner kettle
 boiler flue exhaust chimney furnace radiator manifold
 flow return coolant condenser compressor refrigerant superheat
-cpu gpu chip core soc die vrm nvme ssd drive disk
-processor package cputemp coretemp k10temp acpitz tctl tdie pch
+processor
 engine motor inverter transformer inlet outlet
 sauna steam hot_water hotwater dhw cylinder immersion
 sous_vide sousvide probe meat roast food griddle
 tank kiln soldering iron laser
 """.split())
+# A computer's own parts: its chips, its drives. A subset of the words
+# above, named apart because `base.unusual` asks it — a processor's
+# temperature follows its load, never the hour of the house's week.
+_COMPUTER_WORDS = frozenset("""
+cpu gpu chip core soc die vrm nvme ssd drive disk
+hdd sata composite pkg x86 chipset apu dimm mainboard motherboard
+processor package cputemp coretemp k10temp acpitz tctl tdie pch
+""".split())
+_HOT_WORDS = _HOT_WORDS | _COMPUTER_WORDS
 # `bed`, `chamber`, `plate` and `tool` are only hot next to one of these
 # — a heated bed is a printer's, a chamber is its enclosure and `tool0`
 # is OctoPrint's name for the hotend, while a bedroom sensor and a
@@ -216,11 +224,14 @@ _PAIR_WORDS = frozenset({"printer", "print", "3d", "bambu", "prusa", "ender",
 PRINTER_PLATFORMS = frozenset({
     "octoprint", "prusalink", "bambu_lab", "moonraker", "klipper",
     "elegoo_printer", "anycubic_cloud", "creality_cloud", "duet3d",
+    # BRUH Bambu Studio's own integration: a status and two heaters per
+    # printer, and nothing on it is a room.
+    "bruh_bambu",
 })
 COMPUTER_PLATFORMS = frozenset({
     "systemmonitor", "glances", "hddtemp", "openhardwaremonitor",
     "librehardwaremonitor", "proxmoxve", "synology_dsm", "qnap", "unraid",
-    "truenas", "netdata", "hp_ilo",
+    "truenas", "netdata", "hp_ilo", "scrutiny",
 })
 HOT_PLATFORMS = PRINTER_PLATFORMS | COMPUTER_PLATFORMS
 # What a DEVICE's own name, model or maker may add. Narrower than the
@@ -294,6 +305,50 @@ def measures_something_hot(eid: str, name: str, world=None,
         return True
     return world_model.measures_heat(
         world, eid, lambda: _hot_by_name(eid, name, device_names))
+
+
+def computer_temperature(house, eid: str) -> bool:
+    """Whether this temperature is a computer's chip or drive.
+
+    The providing integration first (a system monitor's temperatures are
+    all a chip's or a drive's), then the chip and drive words on the
+    entity, or a computer word on its device. A confident `world_model`
+    reading of room air answers no, as it does for the hot gate.
+    """
+    st = house.states.get(eid) or {}
+    attrs = st.get("attributes") or {}
+    if str(attrs.get("device_class") or "") != "temperature":
+        return False
+    name = str(attrs.get("friendly_name") or "")
+    platform, device_names = heat_context(house, eid)
+    if platform in COMPUTER_PLATFORMS:
+        return True
+    if not measures_something_hot(eid, name, house.world, house):
+        return False
+    return bool(_words(eid, name) & _COMPUTER_WORDS
+                or _words(*device_names) & (_HOT_DEVICE_WORDS - _PAIR_WORDS))
+
+
+def printer_heater(house, eid: str) -> bool:
+    """Whether this temperature is a 3D printer's heater or enclosure.
+
+    A heater (`measures_something_hot`) on a printer: the providing
+    integration is a printer's, or a printer word is on the entity or its
+    device. Shared by `base.unusual`, which leaves these to
+    `base.heater_idle`, and that check, which judges them by whether the
+    printer is printing — the one thing an hour-of-the-week band cannot see.
+    """
+    st = house.states.get(eid) or {}
+    attrs = st.get("attributes") or {}
+    if str(attrs.get("device_class") or "") != "temperature":
+        return False
+    name = str(attrs.get("friendly_name") or "")
+    if not measures_something_hot(eid, name, house.world, house):
+        return False
+    platform, device_names = heat_context(house, eid)
+    if platform in PRINTER_PLATFORMS:
+        return True
+    return bool(_words(eid, name, *device_names) & _PAIR_WORDS)
 
 
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
@@ -939,9 +994,18 @@ def out_of_range(state: dict, entity_id: str = "", world=None,
                             entity_id, world, house)
 
 
-def recently_impossible(baseline: dict | None, now: float) -> dict | None:
+def recently_impossible(baseline: dict | None, now: float,
+                        bounds: tuple[float, float] | None = None
+                        ) -> dict | None:
     """What the nightly pass threw away as impossible for this sensor, when
-    the last of it was inside `IMPOSSIBLE_RECENT_DAYS`, or None."""
+    the last of it was inside `IMPOSSIBLE_RECENT_DAYS`, or None.
+
+    ``bounds`` is the range this sensor's kind can read as the pass reading
+    it NOW knows it (`bounds_for` with the registries). A record a pass
+    with less to go on left — one that took a chip's 90 °C for a room's —
+    is not evidence once the same values are possible: given the bounds,
+    a record whose lowest and highest both sit inside them is no record.
+    """
     seen = (baseline or {}).get("impossible") if isinstance(
         baseline, dict) else None
     if not isinstance(seen, dict):
@@ -951,6 +1015,12 @@ def recently_impossible(baseline: dict | None, now: float) -> dict | None:
         return None
     if now - float(last) > IMPOSSIBLE_RECENT_DAYS * 86400:
         return None
+    if bounds:
+        low, high = bounds
+        values = [num(seen.get(k)) for k in ("lowest", "highest")]
+        values = [v for v in values if v is not None]
+        if values and all(low <= v <= high for v in values):
+            return None
     return seen
 
 
@@ -996,7 +1066,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         else:
             # Reading sanely now, after a night it could not have read:
             # still the sensor, and the night was kept out of its baseline.
-            seen = recently_impossible(stored.get(eid), now)
+            seen = recently_impossible(stored.get(eid), now, bounds)
             lowest = num((seen or {}).get("lowest"))
             if lowest is None:
                 continue

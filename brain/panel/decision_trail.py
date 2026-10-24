@@ -68,6 +68,10 @@ MAX_ENTITIES = 12
 # the vocabulary; `explain` and the panel render the values.
 KINDS = {
     "cap": "a check gave up: too many at once to mean anything",
+    "drift": "the reading was in line with the season or the weather "
+             "moving, not one device",
+    "claimed": "another of brAIn's checks reports it, with the better fix",
+    "explained": "something in the house accounts for it",
     "dedupe": "it had already been answered",
     "exception": "you said this is not a problem here",
     "mute": "you asked brAIn to stop raising these",
@@ -84,15 +88,16 @@ KINDS = {
 
 # The decisions that are STANDING answers rather than events: a re-report
 # the settled ledger swallowed, a rule somebody corrected, a muted
-# producer, a rule on trial, a check that gave up. Each checks pass makes
-# the same one again about the same row — ten lines a day saying "you said
-# you had fixed it" about one finding, which is a trail nobody can read past
-# the first screen. So an identical one past `MERGE_S` FOLDS into the row
+# producer, a rule on trial, a check that gave up or explained a reading.
+# Each checks pass makes the same one again about the same row — ten
+# lines a day saying "you said you had fixed it" about one finding, which
+# is a trail nobody can read past the first screen. So an identical one past `MERGE_S` FOLDS into the row
 # already there: `count` goes up and `last_seen` moves, while `ts` stays the
 # first time, which is still the instant a person asks about. A hold, a
 # look's verdict or a notification decision is an event at a time and is
 # written again past the window, as before.
-FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap"})
+FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
+                        "drift", "claimed", "explained"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:
