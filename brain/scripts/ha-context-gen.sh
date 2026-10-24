@@ -127,6 +127,16 @@ memory_excerpt() {
     ' "$file"
 }
 
+# The household's personality for brAIn (⚙ › Personality), as a section of
+# this file, or nothing when none is set. The panel's `personality.py` is
+# the one reader of /config/.brain/personality.json and prints the section
+# itself, so the words cannot drift from what the chat is told. A missing
+# panel or file prints nothing.
+personality_section() {
+    python3 "${BRAIN_PANEL_DIR:-/opt/panel}/personality.py" section \
+        "${BRAIN_PERSONALITY_FILE:-/config/.brain/personality.json}" 2>/dev/null || true
+}
+
 generate_context() {
     bashio::log.info "Generating Home Assistant context for Claude Code..."
 
@@ -433,6 +443,9 @@ PYEOF
         yolo_state="on"
     fi
 
+    local personality_section=""
+    personality_section=$(personality_section)
+
     # Generate the CLAUDE.md file
     cat > "$OUTPUT_FILE" << CLAUDEMD
 # CLAUDE.md - Auto-generated Home Assistant Context
@@ -461,6 +474,7 @@ terminal or chat lives here; when they ask for something they want it done.
 - If a file is not writable, run \`brain own <path>\`; never ask the person
   for sudo or chown.
 
+${personality_section}
 ## Development mode (opt-in): currently ${dev_mode_state}
 
 Development mode is off unless the owner turned it on in ⚙ › Developer. When

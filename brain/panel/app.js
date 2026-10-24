@@ -3118,8 +3118,8 @@ function renderSettingsForm(data) {
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
 const SET_SECTIONS = ["account", "usage", "permissions", "notifications",
-                      "sources", "memory", "instructions", "diagnostics",
-                      "developer", "guide"];
+                      "sources", "memory", "personality", "instructions",
+                      "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
 // Where the list sits beside the section rather than in front of it. The
 // stylesheet's breakpoint for `.setlayout` is the same number.
@@ -3135,6 +3135,7 @@ const SET_LOADERS = {
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
   memory: () => loadSetMemory(),
+  personality: () => loadPersonality(),
   instructions: () => loadInstructions(),
   diagnostics: () => loadAdvanced(),
   developer: () => loadDeveloper(),
@@ -3364,6 +3365,9 @@ function renderSetSummaries(data) {
     const policy = String(st.notify_policy || "").trim();
     setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
       + (st.speak_first === true ? " · said aloud" : ""));
+    if (typeof d.personality_summary === "string") {
+      setSummary("setSumPersonality", d.personality_summary);
+    }
     const cams = Array.isArray(st.camera_confirm) ? st.camera_confirm.length : null;
     const cals = Array.isArray(st.occasion_calendars) ? st.occasion_calendars.length : null;
     if (cams !== null || cals !== null) {
@@ -16773,6 +16777,84 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAskAbout(); });
 
+// ---- ⚙ › Personality ------------------------------------------------------
+//
+// Who brAIn is in this house (`personality.py`, /api/personality): a name
+// and a persona the person edits here, and the growth log a conversation
+// adds to through `note_personality_change` — read-only on this page,
+// newest first. Ask opens Claude Code in the terminal with the personality
+// as the subject, so "talk to it about who it is" is one press.
+const persState = { data: null };
+
+async function loadPersonality() {
+  const list = $("#persGrowth");
+  if (!list) return;
+  try {
+    persState.data = await api("api/personality");
+  } catch (e) {
+    list.textContent = "";
+    list.appendChild(el("li", "persempty", `Could not read the personality: ${e.message}`));
+    return;
+  }
+  renderPersonality();
+}
+
+function renderPersonality() {
+  const d = persState.data || {};
+  $("#persName").value = d.name || "";
+  $("#persText").value = d.persona || "";
+  const list = $("#persGrowth");
+  list.textContent = "";
+  const growth = Array.isArray(d.growth) ? d.growth : [];
+  if (!growth.length) {
+    list.appendChild(el("li", "persempty", "Nothing yet."));
+    return;
+  }
+  growth.forEach((g) => {
+    const li = el("li", "persentry");
+    li.appendChild(el("span", "persdate", g.date || "Undated"));
+    li.appendChild(el("span", "persline", g.text || ""));
+    list.appendChild(li);
+  });
+}
+
+$("#persSave").addEventListener("click", async () => {
+  const btn = $("#persSave");
+  btn.disabled = true;
+  try {
+    persState.data = await api("api/personality", {
+      method: "PUT", body: JSON.stringify({
+        name: $("#persName").value, persona: $("#persText").value }) });
+    renderPersonality();
+    setSummary("setSumPersonality", persState.data.set
+      ? [persState.data.name, (persState.data.persona || "").split("\n")[0].slice(0, 60)]
+        .filter(Boolean).join(" · ")
+      : "None set");
+    toast("Saved. The next conversation speaks as it.");
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#persAsk").addEventListener("click", () => {
+  const d = persState.data || {};
+  const lines = ["I want to talk with you about who you are in this house: your personality."];
+  if (d.name || d.persona) {
+    lines.push("", "What is set now:",
+      d.name ? `Name: ${d.name}` : "No name is set.",
+      d.persona ? `Personality: ${d.persona}` : "No personality text is set.");
+  } else {
+    lines.push("", "Nothing is set yet.");
+  }
+  lines.push("",
+    `It is kept in ${d.path || "/config/.brain/personality.json"}, which ⚙ › Personality edits. `
+    + "When we settle a change to how you speak or behave, record it with "
+    + "note_personality_change in one sentence, and if the persona itself should "
+    + "change, tell me what to put in ⚙ › Personality.");
+  openInTerminal({ prompt: lines.join("\n") });
+});
 
 // ------------------------------------------------- ⚙ › Instructions
 //

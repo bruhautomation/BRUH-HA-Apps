@@ -946,6 +946,8 @@
         <span class="setnavname">Cameras &amp; calendars</span><span class="setnavsum" id="setSumSources">What brAIn may look at</span></button>
       <button type="button" class="setnavbtn" data-sec="memory" role="tab" aria-controls="setsecMemory">
         <span class="setnavname">Memory</span><span class="setnavsum" id="setSumMemory">What brAIn knows about your home</span></button>
+      <button type="button" class="setnavbtn" data-sec="personality" role="tab" aria-controls="setsecPersonality">
+        <span class="setnavname">Personality</span><span class="setnavsum" id="setSumPersonality">Who brAIn is in this house</span></button>
       <button type="button" class="setnavbtn" data-sec="instructions" role="tab" aria-controls="setsecInstructions">
         <span class="setnavname">Instructions</span><span class="setnavsum" id="setSumInstructions">What brAIn tells Claude</span></button>
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
@@ -1260,6 +1262,34 @@
            file under /config/.brain/instructions that every later run is
            sent; Restore deletes it. Ask opens Claude Code on the file, so
            brAIn can be asked to change its own instructions. -->
+      <!-- Who brAIn is in this house: a name, a persona and how it has
+           grown, kept in brAIn's own config (/config/.brain/personality.json)
+           and carried by the chat, the terminal, voice and Morph. It moved
+           here from Morph's Settings, because everybody uses brAIn and not
+           everybody uses Morph. -->
+      <section class="setsec" id="setsecPersonality" data-sec="personality" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Personality</h2>
+        </header>
+        <div class="setsecbody">
+          <p class="hint">Who brAIn is in this house. The chat, the terminal, voice and Morph all speak as it.</p>
+          <label for="persName">Name</label>
+          <input id="persName" class="persname" type="text" maxlength="60" autocomplete="off"
+            placeholder="brAIn">
+          <label for="persText">Personality</label>
+          <textarea id="persText" class="perstext" rows="6" maxlength="4000"
+            placeholder="How it speaks and behaves, in your own words…"></textarea>
+          <div class="row persacts">
+            <button type="button" id="persSave" class="btn primary">Save</button>
+            <button type="button" id="persAsk" class="btn">Ask</button>
+          </div>
+          <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>
+          <h4 class="sethead">How it has grown</h4>
+          <ul id="persGrowth" class="persgrowth" aria-label="How brAIn's personality has grown"></ul>
+        </div>
+      </section>
+
       <section class="setsec" id="setsecInstructions" data-sec="instructions" role="tabpanel" hidden>
         <header class="setsechead">
           <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
