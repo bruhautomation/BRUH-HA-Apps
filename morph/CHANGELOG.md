@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.2
+
+### Changed
+
+- **Coming up opens inside the card that asked for it.** A card sends `morph-coming-up` and the strip unfolds in that card's tile, which spans its row while the page makes room; the same press folds it away. A press on the strip is never a press on the card. With no card asking, it stays where it was. (#402)
+- **Morph's Personality section reads brAIn's personality.** Settings shows the name, the persona and how it has grown, read from brAIn each time Settings opens. Morph keeps none of its own; without one set it says to set it in brAIn's Settings › Personality, and without brAIn it says brAIn is not installed. (#391)
+
+### Fixed
+
+- **A long message to brAIn keeps the person's words.** A card's context and the person's words travel apart, up to 16,000 characters together, and when something has to give it is the context, never the words; brAIn is told it was cut. A reply too long for brAIn is refused in a sentence rather than cut silently, and a long Ask line goes to a conversation. (#401)
+
 ## 1.1.1
 
 ### Added

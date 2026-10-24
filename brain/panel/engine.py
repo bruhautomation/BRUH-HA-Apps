@@ -947,6 +947,9 @@ ANALYST_DENIED = [
     f"{MCP}report_bug",
     # A timed action calls services on a timer: a person asks for one.
     f"{MCP}timed_action",
+    # Recording how brAIn's personality has grown writes a file every later
+    # conversation is told; a person settles that in a conversation.
+    f"{MCP}note_personality_change",
     # What a device shows as: each one rewrites the entity registry or
     # creates and removes a helper's config entry, which an entity in a
     # dashboard, an automation or a voice assistant then stands on.

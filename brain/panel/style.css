@@ -6142,11 +6142,15 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 }
 .qcard .findnote { margin-top: 0; }
 
-/* Respond: one line to brAIn under a card's buttons, and the last two
-   turns of what was said about it. A line, never a fourth button, so the
-   answer row keeps its three. The box is class-qualified, so it restates
-   the 16px touch floor itself (a class rule outranks the bare one), and
-   Send takes the button's own 44px on touch. */
+/* Respond: the first button in a card's answer row opens one line to
+   brAIn under the row, and the last two turns of what was said about it
+   stay on the card. The box is hidden until Respond is pressed (`[hidden]`
+   is a UA rule and `display: flex` would beat it, so it is restated). It
+   is class-qualified, so it restates the 16px touch floor itself (a class
+   rule outranks the bare one), and Send takes the button's own 44px on
+   touch. */
+.qrespond[hidden] { display: none; }
+.qrespondopen.on { border-color: var(--accent); }
 .qthread { display: grid; gap: var(--sp-1); }
 .qturn { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
 .qturn.brain { color: var(--ink); }
@@ -6872,3 +6876,14 @@ body.term-classic #chatModelPick { display: none; }
 .instrtext[readonly] { opacity: .85; }
 @media (pointer: coarse) { .instrtext { font-size: 16px; } }
 .instracts { gap: 8px; }
+
+/* ⚙ › Personality: the name and persona are the edit-body's own fields;
+   the growth log is a plain read-only list, newest first, each line its
+   date over what changed. */
+.persacts { gap: 8px; margin-top: var(--sp-2); }
+.persgrowth { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.persentry { display: grid; gap: 2px; padding: var(--sp-2) 0; border-top: 1px solid var(--hairline); }
+.persentry:first-child { border-top: 0; }
+.persdate { font-size: 12px; color: var(--ink-3); }
+.persline { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
+.persempty { font-size: 14px; color: var(--ink-3); }

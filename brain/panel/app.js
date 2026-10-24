@@ -3118,8 +3118,8 @@ function renderSettingsForm(data) {
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
 const SET_SECTIONS = ["account", "usage", "permissions", "notifications",
-                      "sources", "memory", "instructions", "diagnostics",
-                      "developer", "guide"];
+                      "sources", "memory", "personality", "instructions",
+                      "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
 // Where the list sits beside the section rather than in front of it. The
 // stylesheet's breakpoint for `.setlayout` is the same number.
@@ -3135,6 +3135,7 @@ const SET_LOADERS = {
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
   memory: () => loadSetMemory(),
+  personality: () => loadPersonality(),
   instructions: () => loadInstructions(),
   diagnostics: () => loadAdvanced(),
   developer: () => loadDeveloper(),
@@ -3364,6 +3365,9 @@ function renderSetSummaries(data) {
     const policy = String(st.notify_policy || "").trim();
     setSummary("setSumNotify", (policy ? `“${policy}”` : "Urgent alerts only")
       + (st.speak_first === true ? " · said aloud" : ""));
+    if (typeof d.personality_summary === "string") {
+      setSummary("setSumPersonality", d.personality_summary);
+    }
     const cams = Array.isArray(st.camera_confirm) ? st.camera_confirm.length : null;
     const cals = Array.isArray(st.occasion_calendars) ? st.occasion_calendars.length : null;
     if (cams !== null || cals !== null) {
@@ -6430,18 +6434,23 @@ function makeCase(row) {
 // "These buttons don't cover what needs to happen here … maybe the button
 // is like Respond and I just type one quick instruction or response to
 // brAIn and it either does that to fix it, write it to memory, or
-// whatever" — the owner. Under every card's buttons, a one-line box; what
-// is typed goes to `/api/case/<id>/respond`, which reads it the way Morph's
-// reply line is read (`server._morph_reply`): a fix is PLANNED with the
-// words as the change (Apply is still its own press), "it's off on
-// purpose, remember that" ends the card as Wrong with the reason, done, To
-// Do, snooze, or an answer in words. The answer is a held task on the
-// server, so the card polls; what brAIn said is the toast, with Undo when
-// an ending was taken, and the last turns stay on the card if it stays.
-// What is typed survives a repaint of Today (`respondDrafts`), and a reply
-// still being answered keeps its line through one (`respondPending`).
+// whatever" — the owner. Respond is the FIRST button in a card's answer
+// row, and the box it opens sits under the row: "I don't think I want the
+// enter text box all the time. The first button should be Respond, clicking
+// that opens the text box." What is typed goes to `/api/case/<id>/respond`,
+// which reads it the way Morph's reply line is read (`server._morph_reply`):
+// a fix is PLANNED with the words as the change (Apply is still its own
+// press), "it's off on purpose, remember that" ends the card as Wrong with
+// the reason, done, To Do, snooze, or an answer in words. The answer is a
+// held task on the server, so the card polls; what brAIn said is the toast,
+// with Undo when an ending was taken, and the last turns stay on the card.
+// What is typed survives a repaint of Today and the box closing
+// (`respondDrafts`, per case id, in memory), an open box stays open through
+// a repaint (`respondOpen`), and a reply still being answered keeps its
+// line through one (`respondPending`).
 const respondDrafts = {};
 const respondPending = {};
+const respondOpen = {};
 const RESPOND_POLL_MS = 1500;
 const RESPOND_WAIT_MS = 5 * 60 * 1000;
 
@@ -6468,7 +6477,7 @@ function addRespond(card, id, thread, btns) {
   input.type = "text";
   input.className = "qrespondin";
   input.maxLength = 500;
-  input.placeholder = "Respond to brAIn — a fix, a reason, a question";
+  input.placeholder = "A fix, a reason, a question";
   input.setAttribute("aria-label", "Respond to brAIn about this");
   input.setAttribute("enterkeyhint", "send");
   input.value = respondDrafts[id] || "";
@@ -6480,6 +6489,38 @@ function addRespond(card, id, thread, btns) {
   form.append(input, send);
   card.appendChild(form);
   if (respondPending[id]) form.appendChild(phaseLine("brAIn is reading that…"));
+
+  // The press that opens it: first in the answer row.
+  const open = el("button", "btn-secondary qrespondopen", "Respond");
+  open.type = "button";
+  open.dataset.verb = "respond";
+  const formId = `qrespond-${String(id).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  form.id = formId;
+  open.setAttribute("aria-controls", formId);
+  const row = btns && btns.actions;
+  if (row) row.insertBefore(open, row.firstChild);
+  else card.insertBefore(open, form);
+  if (btns) btns.push(open);
+  const show = (on, focus) => {
+    const visible = on || !!respondPending[id];
+    form.hidden = !visible;
+    open.setAttribute("aria-expanded", visible ? "true" : "false");
+    open.classList.toggle("on", visible);
+    if (on) respondOpen[id] = true; else delete respondOpen[id];
+    if (on && focus) input.focus();
+  };
+  show(!!respondOpen[id], false);
+  open.addEventListener("click", () => {
+    if (form.hidden) show(true, true);
+    else { show(false); open.focus(); }
+  });
+  form.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !respondPending[id]) {
+      ev.preventDefault();
+      show(false);
+      open.focus();
+    }
+  });
   input.addEventListener("input", () => {
     respondDrafts[id] = input.value;
     send.disabled = empty();
@@ -6502,6 +6543,7 @@ async function sendRespond(id, text, form, btns) {
     return;
   }
   delete respondDrafts[id];
+  delete respondOpen[id];
   respondPending[id] = Date.now();
   form.appendChild(phaseLine("brAIn is reading that…"));
   let result = null;
@@ -16735,6 +16777,84 @@ document.addEventListener("pointerdown", (e) => {
 });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeAskAbout(); });
 
+// ---- ⚙ › Personality ------------------------------------------------------
+//
+// Who brAIn is in this house (`personality.py`, /api/personality): a name
+// and a persona the person edits here, and the growth log a conversation
+// adds to through `note_personality_change` — read-only on this page,
+// newest first. Ask opens Claude Code in the terminal with the personality
+// as the subject, so "talk to it about who it is" is one press.
+const persState = { data: null };
+
+async function loadPersonality() {
+  const list = $("#persGrowth");
+  if (!list) return;
+  try {
+    persState.data = await api("api/personality");
+  } catch (e) {
+    list.textContent = "";
+    list.appendChild(el("li", "persempty", `Could not read the personality: ${e.message}`));
+    return;
+  }
+  renderPersonality();
+}
+
+function renderPersonality() {
+  const d = persState.data || {};
+  $("#persName").value = d.name || "";
+  $("#persText").value = d.persona || "";
+  const list = $("#persGrowth");
+  list.textContent = "";
+  const growth = Array.isArray(d.growth) ? d.growth : [];
+  if (!growth.length) {
+    list.appendChild(el("li", "persempty", "Nothing yet."));
+    return;
+  }
+  growth.forEach((g) => {
+    const li = el("li", "persentry");
+    li.appendChild(el("span", "persdate", g.date || "Undated"));
+    li.appendChild(el("span", "persline", g.text || ""));
+    list.appendChild(li);
+  });
+}
+
+$("#persSave").addEventListener("click", async () => {
+  const btn = $("#persSave");
+  btn.disabled = true;
+  try {
+    persState.data = await api("api/personality", {
+      method: "PUT", body: JSON.stringify({
+        name: $("#persName").value, persona: $("#persText").value }) });
+    renderPersonality();
+    setSummary("setSumPersonality", persState.data.set
+      ? [persState.data.name, (persState.data.persona || "").split("\n")[0].slice(0, 60)]
+        .filter(Boolean).join(" · ")
+      : "None set");
+    toast("Saved. The next conversation speaks as it.");
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("#persAsk").addEventListener("click", () => {
+  const d = persState.data || {};
+  const lines = ["I want to talk with you about who you are in this house: your personality."];
+  if (d.name || d.persona) {
+    lines.push("", "What is set now:",
+      d.name ? `Name: ${d.name}` : "No name is set.",
+      d.persona ? `Personality: ${d.persona}` : "No personality text is set.");
+  } else {
+    lines.push("", "Nothing is set yet.");
+  }
+  lines.push("",
+    `It is kept in ${d.path || "/config/.brain/personality.json"}, which ⚙ › Personality edits. `
+    + "When we settle a change to how you speak or behave, record it with "
+    + "note_personality_change in one sentence, and if the persona itself should "
+    + "change, tell me what to put in ⚙ › Personality.");
+  openInTerminal({ prompt: lines.join("\n") });
+});
 
 // ------------------------------------------------- ⚙ › Instructions
 //

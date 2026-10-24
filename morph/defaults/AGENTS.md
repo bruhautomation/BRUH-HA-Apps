@@ -156,7 +156,11 @@ that copy is in use.
   `storyFacts`) from the house's state, led by brAIn's situation sentence when
   there is one. `story:` only switches it on or off.
 - **Coming up** is drawn by Morph's own code (`upcoming.js` gathers the events,
-  `morph-panel.js` places the strip). `coming_up:` only switches it.
+  `morph-panel.js` places the strip, under the story or under the card whose
+  Next chip opened it). `coming_up:` only switches it.
+- **The personality** is brAIn's (`/config/.brain/personality.json`, edited in
+  brAIn's Settings › Personality); Morph's Settings shows it and keeps none of
+  its own. Never write a personality into Morph's files.
 - **What leads the page.** The verdict at the top, the **Now** row, which rooms
   are open and which are one folded line, and each card's "because" line are
   worked out by Morph (`salience.js`) from the house's state and what brAIn
@@ -267,6 +271,26 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
 - **Nothing floats.** No popups, dialogs or overlays (design rule 1): open
   things in place, inside the card.
 - **Act** through `this._hass.callService(domain, service, data)`.
+- **Talk to brAIn** (a card with its own question box) through Morph's
+  conversation, which is brAIn's chat:
+  `this._hass.callWS({type: "morph/request", kind: "converse", payload: {text, context, session}})`.
+  `text` is ONLY what the person said; put everything the card adds (the
+  readings it shows, its history, who is asking) in `context`, never in
+  `text`. The two together hold 16,000 characters, and when they are longer
+  it is the context that is cut (and the cut is said), never the person's
+  words. The answer carries an `id`; follow it with
+  `{type: "morph/tell_status", tell: id}` until `phase` is `done` or
+  `failed` (`say` is brAIn's answer), and send its `session_id` as `session`
+  on the next turn to carry the conversation on.
+- **Open Coming up from a card** (a "Next" chip) with an event, never by
+  moving Morph's elements yourself:
+  `const e = new CustomEvent("morph-coming-up", {bubbles: true, composed: true, detail: {}}); this.dispatchEvent(e);`.
+  Coming up unfolds directly under the tile the event came from, across its
+  row, and the board makes room; the same press again folds it.
+  `detail.open: true/false` says which outright, and after the dispatch
+  `e.detail.shown` says whether it is showing, so the chip can draw itself
+  pressed. A card that is not on the board opens it in its usual place under
+  the story.
 - **Render with no data at all**: `hass` may arrive late, and an entity may be
   unavailable.
 - **A broken card is this house's to fix**, by a Tell or in a chat, not a bug

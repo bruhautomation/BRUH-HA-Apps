@@ -516,6 +516,12 @@ class TestATypedRuleWithTheSwitchOn(unittest.IsolatedAsyncioTestCase):
         import importlib
         self.server = importlib.import_module("server")
         s = self.server
+        # The run is journaled; keep that off the real /data.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        old_journal = s.journal.JOURNAL_FILE
+        s.journal.JOURNAL_FILE = os.path.join(tmp.name, "journal.jsonl")
+        self.addCleanup(setattr, s.journal, "JOURNAL_FILE", old_journal)
         self.accepts: list[int] = []
         self.switch = False
         olds = {k: getattr(s, k) for k in (

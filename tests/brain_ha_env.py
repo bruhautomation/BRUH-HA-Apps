@@ -224,11 +224,20 @@ def _llm_module():
     mod.LLMContext = LLMContext
 
     def async_register_api(hass, api):
+        # Core's own refusal (helpers/llm.py): a second registration of an
+        # id is an error, never a silent replacement — the shape a
+        # duplicate registration has to be caught against.
         registered = hass.__dict__.setdefault("llm_apis", {})
+        if api.id in registered:
+            raise HomeAssistantError(f"API {api.id} is already registered")
         registered[api.id] = api
         return lambda: registered.pop(api.id, None)
 
+    def async_get_apis(hass):
+        return list(hass.__dict__.setdefault("llm_apis", {}).values())
+
     mod.async_register_api = async_register_api
+    mod.async_get_apis = async_get_apis
     return mod
 
 

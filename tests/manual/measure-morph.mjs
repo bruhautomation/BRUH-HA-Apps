@@ -24,12 +24,17 @@
  *     ASKED about ("send this as an issue?") rather than filed;
  *   * Edit: hold a card and the Tell brAIn prompt opens INSIDE it, Send
  *     hands it over, and the answer ends with Keep · Undo;
- *   * Settings renders, and nothing on either width scrolls sideways.
+ *   * Settings renders, shows brAIn's personality (read again each time it
+ *     opens, and says where it lives when there is none), and nothing on
+ *     either width scrolls sideways.
  *
  *   * Coming up is one short strip: dragging it moves the timeline behind
  *     a fixed reading point and the readout says what is at the point, a
  *     tap on a dot goes there, a swipe settles on an event, Now comes back,
- *     and the arrow keys step from event to event;
+ *     and the arrow keys step from event to event; a card's Next chip
+ *     (`morph-coming-up`) unfolds it under that card's tile with nothing
+ *     overlapping, holding it in Edit holds the strip and not the tile, and
+ *     the same chip folds it;
  *
  * Exits non-zero with every failure listed.
  */
@@ -271,6 +276,103 @@ async function comingUp(p, name, narrow) {
   if ((await read()).at != null) fail(where, 'Home did not go back to now');
 }
 
+// A card's Next chip (the fixture's Now card, a house's own custom card)
+// sends `morph-coming-up`: the strip unfolds directly under THAT card's
+// tile, across its row, the board makes room with nothing overlapping at
+// rest or on the way, a press on it is not a press on the card, holding it
+// in Edit holds the strip (not the tile), and the same chip folds it. With
+// no card asking, it is in its old place under the story.
+async function comingUpUnderCard(p, name) {
+  const where = `${name} coming up under a card`;
+  const place = () => p.evaluate(() => {
+    const P = window.__panel; const root = P.shadowRoot;
+    const reg = P.upcRegion();
+    const tile = root.querySelector('[data-tile="c_now"]');
+    const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, b: r.bottom, r: r.right }; };
+    const find = (n) => { for (const el of n.querySelectorAll('*')) { if (el.matches('[data-next-chip]')) return el; if (el.shadowRoot) { const f = find(el.shadowRoot); if (f) return f; } } return null; };
+    const sec = tile && tile.closest('[data-sec]');
+    const others = sec ? [...sec.querySelectorAll('[data-tile]')].filter((t) => t !== tile).map(box) : [];
+    return {
+      home: !!reg && reg.parentElement && reg.parentElement.classList.contains('wrap') && reg.previousElementSibling && reg.previousElementSibling.getAttribute('data-region') === 'top',
+      inSlot: !!reg && !!reg.closest('[data-upc-slot]') && reg.closest('[data-tile]') === tile,
+      shown: !!reg && !reg.hidden && !!reg.querySelector('[data-upc-vp]'),
+      strip: box(reg && reg.querySelector('[data-upc-vp]')), tile: box(tile), chip: box(find(root)), others,
+      secW: sec ? sec.getBoundingClientRect().width : 0,
+      said: window.__nextShown,
+    };
+  });
+  const press = () => p.evaluate(() => {
+    const find = (n) => { for (const el of n.querySelectorAll('*')) { if (el.matches('[data-next-chip]')) return el; if (el.shadowRoot) { const f = find(el.shadowRoot); if (f) return f; } } return null; };
+    const chip = find(window.__panel.shadowRoot); if (!chip) return false;
+    chip.click(); return true;
+  });
+  let s = await place();
+  if (!s.home) fail(where, 'before any card asks, Coming up is not in its place under the story');
+  if (!s.chip) { fail(where, 'the fixture\'s Now card has no Next chip'); return; }
+  await p.evaluate(() => { const t = window.__panel.shadowRoot.querySelector('[data-tile="c_now"]'); t.scrollIntoView({ block: 'center' }); });
+  await settle(p, 400);
+  const sampling = sample(p, `${where} (unfolding)`, 1400);
+  if (!(await press())) fail(where, 'the Next chip could not be pressed');
+  await sampling;
+  await settle(p, 600);
+  atRest(`${where} at rest`, await still(p));
+  s = await place();
+  if (!s.inSlot) fail(where, 'the Next chip did not move Coming up into its card\'s tile');
+  if (!s.shown) fail(where, 'Coming up is not drawn under the card');
+  if (s.said !== true) fail(where, `the card was not told the strip is showing (detail.shown = ${s.said})`);
+  if (s.strip && s.chip && s.strip.y < s.chip.b - 1) fail(where, 'Coming up is not under the card that opened it (it starts above the chip)');
+  if (s.strip && s.tile && (s.strip.x < s.tile.x - 1 || s.strip.r > s.tile.r + 1 || s.strip.b > s.tile.b + 1)) fail(where, 'Coming up spills out of the tile it unfolded in');
+  if (s.tile && s.secW && s.tile.w < s.secW - 40) fail(where, `the card hosting Coming up does not span its row (${s.tile.w.toFixed(0)} of ${s.secW.toFixed(0)}px)`);
+  for (const o of s.others) if (s.tile && overlap(s.tile, { x: o.x, y: o.y, w: o.w, h: o.h }, 1)) fail(where, 'a tile in the same room sits on top of Coming up');
+  // A press on the strip is the strip's, never a tap on the card it is in.
+  const before = await p.evaluate(() => JSON.stringify(window.__calls));
+  if (s.strip) {
+    await p.mouse.click(s.strip.x + s.strip.w * 0.8, s.strip.y + s.strip.h / 2);
+    await settle(p, 900);
+    const after = await p.evaluate(() => ({ view: window.__panel.s.view, calls: JSON.stringify(window.__calls) }));
+    if (after.view) fail(where, `a press on Coming up opened the card under it (${after.view.id})`);
+    if (after.calls !== before) fail(where, 'a press on Coming up acted on the card under it');
+  }
+  // Edit: holding the strip holds the strip, not the tile it sits in.
+  await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
+  await settle(p, 1200);
+  await still(p);
+  s = await place();
+  if (!s.inSlot) fail(where, 'in Edit, Coming up left the card it was opened under');
+  if (s.strip) {
+    await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-tile="c_now"]').scrollIntoView({ block: 'center' }));
+    await settle(p, 300);
+    const st = (await place()).strip;
+    await p.mouse.move(st.x + st.w * 0.6, st.y + st.h / 2);
+    await p.mouse.down();
+    await p.waitForTimeout(150);
+    const mid = await p.evaluate(() => window.__panel.s.hold);
+    await p.waitForTimeout(650);
+    await p.mouse.up();
+    await settle(p, 500);
+    const held = await p.evaluate(() => ({ tell: window.__panel.s.tell && window.__panel.s.tell.kind, view: window.__panel.s.view && window.__panel.s.view.id }));
+    if (mid === 'c_now') fail(where, 'holding Coming up in Edit selected the tile it sits in');
+    if (held.tell !== 'upcoming') fail(where, `holding Coming up in Edit did not open Tell brAIn about Coming up (${held.tell || 'nothing'})`);
+    if (held.view === 'c_now') fail(where, 'holding Coming up in Edit opened the tile it sits in');
+  }
+  await p.evaluate(() => { const P = window.__panel; if (P.s.tell) P.closeTell(); P.act('edit', { dataset: {} }); });
+  await settle(p, 1400);
+  await still(p);
+  // The same chip folds it, and the board closes up again.
+  await press();
+  await settle(p, 1200);
+  atRest(`${where} folded`, await still(p));
+  s = await place();
+  if (s.shown) fail(where, 'pressing the Next chip again did not fold Coming up');
+  if (s.said !== false) fail(where, `the card was not told the strip folded (detail.shown = ${s.said})`);
+  // Nobody asking: back in its old place.
+  await p.evaluate(() => { const P = window.__panel; P.s.upcHost = null; P.s.upcShown = null; P.schedule(); });
+  await settle(p, 1200);
+  atRest(`${where} back home`, await still(p));
+  s = await place();
+  if (!s.home || !s.shown) fail(where, 'with no card asking, Coming up is not back in its place under the story');
+}
+
 // The page brAIn and Morph share (docs/design/morph-vision.md): a verdict
 // at the top, brAIn's cases drawn in the room they are about with a reply
 // line, To Do as a section, and no second door to a Tell beside Ask.
@@ -389,6 +491,7 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
   }
   await design(p, name, narrow);
   await comingUp(p, name, narrow);
+  await comingUpUnderCard(p, name);
 
   // Hold-open, then tap outside, on every kind.
   for (const id of KINDS) {
@@ -562,6 +665,31 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
   if (set.sideways) fail(name, 'Settings scrolls sideways');
   // "What do you want to fix?" is Ask now (vision §13.3), not a box here.
   if (/What do you want to fix in Morph\?/i.test(set.text)) fail(name, 'Settings still has its own report box beside Ask');
+  // The personality is brAIn's: Settings reads brAIn's file each time it
+  // opens, and says where it lives when there is none.
+  {
+    const persona = () => p.evaluate(() => { const e = window.__panel.shadowRoot.querySelector('.settings'); const h = [...e.querySelectorAll('.setsec')].find((x) => x.querySelector('h2') && x.querySelector('h2').textContent === 'Personality'); return h ? h.innerText : null; });
+    const reopen = async () => { await p.evaluate(() => { window.__panel.act('page', { dataset: { v: 'home' } }); window.__panel.act('page', { dataset: { v: 'settings' } }); }); await settle(p, 600); };
+    let t = await persona();
+    if (t == null) fail(name, 'Settings has no Personality section');
+    else {
+      if (!/Juniper/.test(t) || !/Never lectures/.test(t)) fail(name, `Settings does not show brAIn's personality: "${t.slice(0, 120)}"`);
+      if (t.indexOf('Biscuit') < 0 || t.indexOf('Biscuit') > t.indexOf('good morning')) fail(name, 'the growth is not listed newest first');
+      await p.evaluate(() => { window.__persona = { name: 'Fern', persona: 'Plain.', growth: [] }; });
+      await reopen();
+      t = await persona();
+      if (!/Fern/.test(t) || /Juniper/.test(t)) fail(name, 'an edit made in brAIn does not show when Settings opens again');
+      await p.evaluate(() => { window.__persona = null; });
+      await reopen();
+      t = await persona();
+      if (!/lives in brAIn/.test(t) || !/not set/.test(t)) fail(name, `with no personality set, Settings does not say where it lives: "${t}"`);
+      await p.evaluate(() => { window.__noBrain = true; });
+      await reopen();
+      t = await persona();
+      if (!/brAIn is not installed/.test(t)) fail(name, `a house without brAIn is not told where the personality lives: "${t}"`);
+      await p.evaluate(() => { window.__persona = undefined; window.__noBrain = false; });
+    }
+  }
 
   await p.evaluate(() => { window.__panel.act('page', { dataset: { v: 'home' } }); if (window.__panel.s.tell) window.__panel.closeTell(); });
   await settle(p, 800);

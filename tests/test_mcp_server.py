@@ -577,6 +577,8 @@ class TestMCPProtocol(unittest.TestCase):
             "garden_status", "garden_harvests", "garden_log_harvest",
             "garden_log_spray", "garden_queue_spray", "garden_adjust_inventory",
             "garden_add_crop", "garden_log_note",
+            # Recording how brAIn's personality has grown (⚙ › Personality)
+            "note_personality_change",
         }
         self.assertEqual(tool_names, expected_tools)
 

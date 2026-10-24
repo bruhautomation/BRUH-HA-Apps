@@ -236,16 +236,61 @@ def cut_on_line(text: str, limit: int) -> str:
     return cut.rsplit("\n", 1)[0] if "\n" in cut else ""
 
 
+# The household's own personality for brAIn (⚙ › Personality, the panel's
+# `personality.py`), which stands in for DEFAULT_STYLE when an agent has no
+# personality of its own. An agent's own still wins: it is the more specific
+# choice, made on that agent. Kept short for a spoken reply either way.
+HOUSEHOLD_FRAME = (
+    "PERSONALITY — the household chose this for brAIn. Keep replies to 1-2 "
+    "short spoken sentences unless asked for detail:\n{household}")
+
+
+def _panel_dir() -> str:
+    """Where the panel's modules are: the image's /opt/panel, or the repo's."""
+    configured = os.environ.get("BRAIN_PANEL_DIR", "")
+    if configured:
+        return configured
+    here = os.path.dirname(os.path.abspath(__file__))
+    sibling = os.path.normpath(os.path.join(here, "..", "panel"))
+    return sibling if os.path.isdir(sibling) else "/opt/panel"
+
+
+def household_personality() -> str:
+    """The household's personality as prompt lines, or "" (none set, or the
+    panel's reader could not be found). Never raises.
+
+    The panel's `personality` module is the one reader of that file, so it
+    is borrowed rather than written down a second time; appended to the END
+    of sys.path so it can never shadow a standard-library module.
+    """
+    path = _panel_dir()
+    if path not in sys.path:
+        sys.path.append(path)
+    try:
+        import personality  # noqa: PLC0415 — the panel's, found at call time
+        return personality.prompt_block(personality.load(
+            os.environ.get("BRAIN_PERSONALITY_FILE") or None))
+    except Exception:  # noqa: BLE001 — no reader is no personality
+        return ""
+
+
 def system_prompt(custom: str = "", tz: str = "", area_map: str = "",
                   memory: str = "", capabilities: str = "",
-                  partial: bool = False, learning: bool | None = None) -> str:
+                  partial: bool = False, learning: bool | None = None,
+                  household: str | None = None) -> str:
     """The whole voice system prompt, from its parts. Pure but for the
-    `learning` default, which reads the add-on's switch."""
+    `learning` default, which reads the add-on's switch, and the `household`
+    default, which reads the household's personality file."""
     custom = (custom or "").strip()
     learning = learning_on() if learning is None else learning
     operational = OPERATIONAL.replace("{remember}", REMEMBER_LINE if learning else "")
-    prompt = (PERSONALITY_FRAME.format(custom=custom) + "\n\n" + operational
-              if custom else DEFAULT_STYLE + "\n" + operational)
+    if custom:
+        prompt = PERSONALITY_FRAME.format(custom=custom) + "\n\n" + operational
+    else:
+        household = (household_personality() if household is None
+                     else household).strip()
+        prompt = (HOUSEHOLD_FRAME.format(household=household) + "\n\n" + operational
+                  if household else DEFAULT_STYLE + "\n" + operational)
     if tz:
         prompt += "\n" + TIMEZONE_LINE.format(tz=tz)
     area_map = (area_map or "").rstrip()

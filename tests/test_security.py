@@ -241,6 +241,9 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
         "get_camera_snapshot", "control_light", "control_climate",
         "control_media_player", "control_cover", "control_fan",
         "control_switch", "control_lock", "control_alarm", "control_vacuum",
+        # Writes the household's personality growth log, which every later
+        # conversation is told: a person settles that, never a timer.
+        "note_personality_change",
     )
 
     def setUp(self):
