@@ -2,6 +2,19 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.9
+
+### Added
+
+- **A 3D printer's heater left hot while nothing prints is reported.** While the printer prints, its nozzle and bed are no longer compared with their usual range for the hour; once it has been idle or finished for 45 minutes with a heater still hot, brAIn says so. An answer given about the printing case does not silence this one. (#382, #380, #406)
+
+### Fixed
+
+- **A computer's processor or drive temperature is not judged against a usual range or called impossible**, including drives on integrations brAIn did not know and a stale record from an older nightly pass. (#383, #399)
+- **A broken probe is not excused as the season.** Hours whose lowest or highest reading was impossible are left out of the nightly measurement, so a probe that swings to −150° is reported by the impossible-readings check rather than waved through as weather. (#384)
+- **"Why didn't you tell me" gives the real reason.** A reading set aside as the season, as another check's, or as explained by something in the house is recorded as that, and "too many at once" only when that limit fired. (#385)
+- **Heating and cooling equipment probes are not measured as rooms.** A probe on a coil, line, flue or exhaust, or one that jumps at the same hour every morning, is left out of the heat-loss model, so a room is measured from its air sensor or not at all. (#409)
+
 ## 3.8.8
 
 ### Added
