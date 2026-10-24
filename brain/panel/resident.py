@@ -102,6 +102,16 @@ def tier_for(job: str) -> str:
 VERDICTS = ("ignore", "watch", "investigate", "act")
 _RANK = {word: i for i, word in enumerate(VERDICTS)}
 
+# What a look may say a row ALREADY is, in a word rather than in its
+# sentence: something the house already answers, something the household
+# has marked wrong before, or the same thing as another open card. A row
+# the look says one of these about is not news, whatever verdict came
+# beside it, and it is held rather than shown — "the household marked this
+# wrong before" under a card on the list was the look being right and the
+# loop not listening. A word and not a reading of the reason, because
+# prose is what gets reworded.
+ALREADY = ("answered", "marked_wrong", "duplicate")
+
 # One sentence per signal, shown on nothing and read in the log and the
 # diagnostics — long enough to say what was read, short enough that a
 # batch of them is not a page.
@@ -212,6 +222,9 @@ FIRST_LOOK_SCHEMA = {
                                 "enum": ["ignore", "watch", "investigate",
                                          "act"]},
                     "why": {"type": "string"},
+                    "already": {"type": "string",
+                                "enum": ["", "answered", "marked_wrong",
+                                         "duplicate"]},
                 },
                 "required": ["id", "verdict", "why"],
                 "additionalProperties": False,
@@ -323,6 +336,13 @@ Rules:
   about it, judge its failure by what stops with it — never write "no
   known load" or "nothing depends on it" about an entity the prompt says
   something depends on.
+- "already" says, in one word, that a row is not news: "answered" (the
+  house or memory already answers it), "marked_wrong" (the household has
+  marked this report, or one just like it, wrong before), "duplicate" (it
+  is the same problem as another open card or row). Leave it out
+  otherwise. A row you give one of these is set aside whatever verdict
+  you write, so never use it to dismiss something you would investigate
+  for any other reason — and your "why" names what already answers it.
 - Judge each signal on what you were given. You cannot look anything up
   here: if you need to, that is what "investigate" means.
 - """ + prompt_kit.DATA_FENCE + """
@@ -330,7 +350,9 @@ Rules:
 Reply with JSON and nothing else:
 
 {"verdicts": [{"id": 1, "verdict": "ignore", "why": "one sentence"},
-              {"id": 2, "verdict": "investigate", "why": "one sentence"}]}
+              {"id": 2, "verdict": "investigate", "why": "one sentence"},
+              {"id": 3, "verdict": "ignore", "already": "duplicate",
+               "why": "one sentence"}]}
 
 Every id you were given must appear exactly once."""
 
@@ -583,6 +605,12 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                          "why": textclip.clip(strip_signal_refs(
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
+            already = str(row.get("already") or "").strip().lower()
+            if already in ALREADY:
+                # Not news, whatever verdict rode beside it: the row is
+                # set aside, which is what `ignore` does to a filed row.
+                said[idx]["verdict"] = "ignore"
+                said[idx]["already"] = already
 
     unreadable = not isinstance(listed, list)
     batch = list(rows or [])
@@ -601,6 +629,8 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
         signal = batch[idx - 1] if idx <= len(batch) else None
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         if floor and _RANK[answer["verdict"]] < _RANK[floor]:
+            # A floor outranks `already` too: "the same leak as the other
+            # card" is not a reason a tripped detector may be set aside on.
             answer = {"verdict": floor,
                       "why": textclip.clip(
                           (FORCED.format(why=why) + " " + answer["why"]).strip(),
@@ -1421,7 +1451,8 @@ class Ledger:
 
 __all__ = [
     "ACT_JOBS", "CASE_KINDS", "CASE_SCHEMA", "ESCALATE_CONFIDENCE",
-    "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED", "HOT_FLOOR",
+    "ALREADY", "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED",
+    "HOT_FLOOR",
     "INVESTIGATE_MAX_TURNS", "INVESTIGATE_SYSTEM", "INVESTIGATE_TIMEOUT_S",
     "JOBS", "JOB_APPLY", "JOB_FIRST_LOOK", "JOB_INVESTIGATE", "JOB_PLAN",
     "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",

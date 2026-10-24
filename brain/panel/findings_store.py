@@ -2253,7 +2253,10 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                   when: float | None = None) -> list[dict]:
     """Write what looked at a batch, and move each row to where it belongs.
 
-    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
+    ``verdicts`` is ``{ts: (verdict, reason)}``, or ``(verdict, reason,
+    True)`` for a hold the look said is NOT NEWS (`resident.ALREADY`), which
+    holds a row silence already showed too, while nobody has touched it
+    (:func:`nobody_has_touched`). An ``elevated`` or
     ``untriaged`` row becomes ``open`` — the second because nothing looked,
     which surfaces exactly like the first and says so on the card — and a
     ``held`` row becomes ``held``.
@@ -2286,9 +2289,12 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         late = entry.get("status") != "triaging"
         verdict, reason = verdicts[ts][:2]
+        not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
-        if late and verdict == "held" and look_may_set_aside(entry):
+        if late and verdict == "held" and (
+                look_may_set_aside(entry)
+                or (not_news and nobody_has_touched(entry))):
             # A house-book question the look found the house already
             # answers: held with the look's reason, announced to nobody,
             # still in History where it can be put back.
@@ -2376,6 +2382,31 @@ def look_may_set_aside(entry: dict) -> bool:
         return False
     record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
     return not record.get("elevated_by_person")
+
+
+def nobody_has_touched(entry: dict) -> bool:
+    """An open row no person has answered, replied under or put back, and
+    no run is planning or fixing — the one kind a look may still set aside
+    once it is on screen, and only when the look said the row is not news
+    (`resident.ALREADY`: already answered, marked wrong before, a duplicate).
+
+    "A row on screen never vanishes into a run" is about a run overruling
+    somebody; a row nobody has done anything with, under a look that says
+    the household already answered it, is the list showing what brAIn has
+    just said it should not. Held, not deleted: History › Set aside by
+    brAIn still has it, and Restore puts it back.
+    """
+    if not isinstance(entry, dict) or entry.get("status") != "open":
+        return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if record.get("elevated_by_person"):
+        return False
+    if entry.get("plan") or int(entry.get("snoozed_until") or 0):
+        return False
+    if entry.get("fix_by") in ("chat", "person"):
+        return False
+    return not any(isinstance(t, dict) and t.get("who") == "you"
+                   for t in entry.get("thread") or [])
 
 
 def late_verdict_welcome(entry: dict) -> bool:

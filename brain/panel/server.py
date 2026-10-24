@@ -12612,7 +12612,10 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         if verdict == "ignore":
             let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
-                decided[ts] = ("held", why)
+                # A row the look called already answered, marked wrong
+                # before or a duplicate is held even if silence already
+                # showed it (`findings_store.record_triage`'s third slot).
+                decided[ts] = ("held", why, bool(answer.get("already")))
             continue
         if ts and signal.get("source") == house_book.SOURCE:
             # A house-book question is already on screen as the question it
