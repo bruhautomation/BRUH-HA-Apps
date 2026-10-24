@@ -14,7 +14,10 @@ sentence a person has to translate before they can read the card:
   * **template code** (`{{ today_at('07:00') }}`), quoted out of a trigger
     or a condition, where a person wants the time or the plain word;
   * a device's **IP address** ("calls to 192.168.1.20 keep timing out"),
-    which nobody in the house knows their camera or plug by.
+    which nobody in the house knows their camera or plug by — and its MAC;
+  * Home Assistant's **internals**: a trace's step path
+    ("action/0/choose/1/sequence/0"), a raw state token ("goes not_home",
+    "went to “finish”"), a protocol name ("answers ARP"), "1 hours".
 
 So this is the deterministic half of the rule the prompts state: it turns
 what it can recognise and leaves everything else exactly as it was. An id
@@ -181,6 +184,51 @@ def addresses(text: str) -> str:
     return re.sub(r"[ \t]{2,}", " ", out)
 
 
+# A MAC address: an aside "(aa:bb:…)" is dropped, an "at <mac>" too, and
+# any other is "its hardware address" — nobody knows a hub by it.
+_MAC = r"(?<![\w:])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![\w:])"
+_MAC_ASIDE_RE = re.compile(r"\s*\(\s*(?:MAC:?\s*)?" + _MAC + r"\s*\)", re.I)
+_MAC_AT_RE = re.compile(r"\s+(?:at|on)\s+" + _MAC)
+_MAC_RE = re.compile(r"(?:\bMAC(?:\s+address)?\s+)?" + _MAC, re.I)
+# A trace's step path ("action/0/choose/1/sequence/0"): the step by its
+# key in the config, which a person never sees.
+_TRACE_PATH = (r"(?:actions?|sequence|choose|then|else|default|conditions?|"
+               r"triggers?|parallel|repeat)/\d+(?:/[a-z_]+(?:/\d+)?)*")
+_TRACE_AT_RE = re.compile(r"\bat (?:the )?step " + _TRACE_PATH)
+_TRACE_RE = re.compile(r"\b(?:step )?" + _TRACE_PATH)
+# A state token where Home Assistant's frontend shows a word, and the one
+# protocol a log line about a device going missing always names.
+_RAW_STATES = {"not_home": "away", "heat_cool": "heat/cool",
+               "fan_only": "fan only", "armed_away": "armed away",
+               "armed_home": "armed home", "armed_night": "armed night",
+               "armed_vacation": "armed vacation",
+               "below_horizon": "below the horizon",
+               "above_horizon": "above the horizon"}
+_RAW_STATE_RE = re.compile(r"`?\b(" + "|".join(_RAW_STATES) + r")\b`?")
+_QUOTED_FINISH_RE = re.compile(r"([“\"'])finish([”\"'])")
+_PROTOCOL_RE = re.compile(r"\bARP(?: (?:requests?|replies|lookups?|probes?))?\b")
+_ONE_PLURAL_RE = re.compile(r"\b1 (hour|minute|day|second|week)s\b")
+
+
+def internals(text: str) -> str:
+    """Home Assistant's internals as the words a person reads: a MAC out,
+    a trace step path as "one of its steps", a raw state token as the
+    frontend's word, ARP as "network lookups", and "1 hours" as "1 hour".
+    Text with none is returned exactly as it was."""
+    if not text:
+        return text
+    out = _MAC_ASIDE_RE.sub("", text)
+    out = _MAC_AT_RE.sub("", out)
+    out = _MAC_RE.sub("its hardware address", out)
+    out = _TRACE_AT_RE.sub("at one of its steps", out)
+    out = _TRACE_RE.sub("one of its steps", out)
+    out = _RAW_STATE_RE.sub(lambda m: _RAW_STATES[m.group(1)], out)
+    out = _QUOTED_FINISH_RE.sub(r"\1finished\2", out)
+    out = _PROTOCOL_RE.sub("network lookups", out)
+    out = _ONE_PLURAL_RE.sub(r"1 \1", out)
+    return out if out != text else text
+
+
 def slug(text: str) -> str:
     """The add-on's Supervisor slug as the name people know it by."""
     return _SLUG_RE.sub("brAIn", text) if text else text
@@ -192,7 +240,7 @@ def plain(text: str, names: Mapping | None = None,
     if not isinstance(text, str) or not text:
         return text
     try:
-        return entities(slug(times(addresses(templates(text)), tz,
-                                       now)), names)
+        return entities(slug(times(addresses(internals(templates(text))),
+                                   tz, now)), names)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text

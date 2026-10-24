@@ -58,7 +58,10 @@ class TestTheContractCarriesEachRule(unittest.TestCase):
                   "none with a status", '"html": ""')
 
     def test_the_summary_adds_to_the_titles_number_rather_than_repeating_it(self):
-        self.rule("inside its comparison and reason, never restated alone")
+        # It said "inside its comparison and reason, never restated alone",
+        # and cards opened by restating the title's figures anyway.
+        self.rule("never the title's figures again",
+                  "a title number the summary uses keeps the same meaning")
 
     def test_no_unit_a_resident_would_look_up(self):
         self.rule("No unit to look up", "°F·h", "degree-hours", '"2.4x"',

@@ -5059,7 +5059,8 @@ async def _mute_offer_pass(now: float) -> list[dict]:
                                       when=now)
         if row:
             mute_offer.record_asked(state, item["source"], int(row["ts"]),
-                                    item["wrong"], item["total"], now)
+                                    item["wrong"], item["total"], now,
+                                    text=str(row.get("text") or ""))
             filed.append(row)
     if filed:
         await asyncio.to_thread(mute_offer.save, state)
@@ -5666,6 +5667,18 @@ async def _generate(insight_id: str) -> None:
         model_findings = _model_findings(obj.get("findings"))
         # A device the card names as offline is a finding too, or links one.
         model_findings += await _card_device_faults(obj, model_findings)
+        # What the household already turned down is not filed again under
+        # new words: the prompt says so, and this is the half that does not
+        # depend on the run having read it (`findings_store.turned_down`).
+        kept_findings = []
+        for f in model_findings:
+            if findings_store.turned_down(str(f.get("text") or ""),
+                                          [f.get("entity_id")]):
+                log.info("%s: dropping a finding the household turned "
+                         "down: %s", insight_id, f.get("text"))
+                continue
+            kept_findings.append(f)
+        model_findings = kept_findings
         # Gated like every other producer. This run read the house — and
         # it was asked to write a card, not to decide whether what it
         # noticed on the way past belongs on a list of decisions, which
@@ -5696,9 +5709,16 @@ async def _generate(insight_id: str) -> None:
             if cleared:
                 log.info("%s: %d finding(s) it no longer reports cleared",
                          insight_id, len(cleared))
+        suggested = []
+        for opp in _card_opportunities(obj.get("opportunities")):
+            if findings_store.turned_down(opp.get("text") or "",
+                                          opp.get("entities") or ()):
+                log.info("%s: dropping a suggestion the household turned "
+                         "down: %s", insight_id, opp.get("text"))
+                continue
+            suggested.append(opp)
         opportunities = await _offer_card_opportunities(
-            insight_id, _card_opportunities(obj.get("opportunities")),
-            previous_opportunities)
+            insight_id, suggested, previous_opportunities)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -11329,10 +11349,43 @@ def _signal_for_finding(row: dict, now: float,
                         ctx: signals.RegistryContext) -> dict | None:
     """One findings row as a signal, through whichever adapter fits it."""
     source = str(row.get("source") or "")
+    signal = None
     for prefix, adapter in _FINDING_ADAPTERS:
         if source.startswith(prefix):
-            return adapter(row, now, ctx)
-    return signals.from_finding(row, now, ctx)
+            signal = adapter(row, now, ctx)
+            break
+    else:
+        signal = signals.from_finding(row, now, ctx)
+    return _with_reply(signal, row)
+
+
+# How much of what the person typed under a card rides into the look: an
+# evidence value's own cap, less the two quote marks.
+REPLY_EVIDENCE_CHARS = signals.MAX_EVIDENCE_VALUE - 2
+
+
+def _with_reply(signal: dict | None, row: dict) -> dict | None:
+    """The person's newest reply on the row, first among the evidence.
+
+    A card still waiting for its look carries a Respond line, and what is
+    typed there lands on the row's thread — which nothing handed the look,
+    so "it is propped open on purpose" was said to a card and then judged
+    by a run that never heard it. It goes first, ahead of the detail,
+    because the row's cap keeps the first rows and a reply is the one
+    piece of evidence nothing else could have supplied.
+    """
+    if not isinstance(signal, dict):
+        return signal
+    said = [t for t in (row.get("thread") or [])
+            if isinstance(t, dict) and t.get("who") == "you"
+            and str(t.get("text") or "").strip()]
+    if not said:
+        return signal
+    words = textclip.clip(" ".join(str(said[-1]["text"]).split()),
+                          REPLY_EVIDENCE_CHARS)
+    reply = signals.evidence_row("the homeowner replied", f"“{words}”",
+                                 float(said[-1].get("at") or 0))
+    return {**signal, "evidence": [reply, *(signal.get("evidence") or [])]}
 
 
 def _pending_finding_ts() -> set[int]:
@@ -11953,6 +12006,11 @@ def _note_registry(snapshot: dict) -> None:
         _USED_BY.update(_used_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
         log.debug("used-by note failed: %s", exc)
+    try:
+        _CONTROLLED_BY.clear()
+        _CONTROLLED_BY.update(_controlled_by_map(snapshot))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("controlled-by note failed: %s", exc)
     _note_world(snapshot)
 
 
@@ -11993,6 +12051,80 @@ def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
             note(house.entity_refs(cfg) - {f"script.{key}"},
                  f"script “{name[:80]}”")
     return out
+
+
+# Which automations SWITCH each entity, and what they watch to do it:
+# `{entity_id: [sentence]}`. `_USED_BY` says what names a device, which is
+# what stops when it fails; this says what decides when it should run. An
+# investigation said a dehumidifier "hasn't run even when the room humidity
+# hit 73%" off the room's sensor, while the automation that switches the
+# unit watches a thermostat's humidity and turns it on above 60% — so a
+# device's own controller is handed to the run that judges it, with the
+# sensor and the threshold the automation itself uses. Same snapshot, same
+# pass, `_NAMES`' rule.
+_CONTROLLED_BY: dict[str, list[str]] = {}
+CONTROLLED_BY_PER_ENTITY = 4
+# The keys of a trigger that say WHEN it fires, beside the entity it reads.
+_TRIGGER_TERMS = ("above", "below", "to", "from", "for", "at")
+
+
+def _trigger_words(house: House, trig: dict) -> str:
+    kind = shadow.kind_of(trig) or "trigger"
+    names = sorted(house.label(e) for e in house.entity_refs(trig))
+    terms = []
+    for key in _TRIGGER_TERMS:
+        value = trig.get(key)
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, separators=(",", ":"))[:40]
+        terms.append(f"{key} {value}")
+    said = " ".join(bit for bit in (", ".join(names), " ".join(terms)) if bit)
+    return f"{kind} {said}".strip()
+
+
+def _controlled_by_map(snapshot: dict) -> dict[str, list[str]]:
+    house = House(snapshot)
+    out: dict[str, list[str]] = {}
+    for cfg in snapshot.get("automations") or []:
+        if not isinstance(cfg, dict):
+            continue
+        name = str(cfg.get("alias") or cfg.get("id") or "").strip()[:80]
+        if not name:
+            continue
+        acts: dict[str, set[str]] = {}
+        for call in shadow.would_do(cfg):
+            verb = str(call.get("service") or "").split(".", 1)[-1]
+            for eid in call.get("entity_id") or []:
+                acts.setdefault(str(eid), set()).add(verb)
+        if not acts:
+            continue
+        triggers = [_trigger_words(house, t) for t in shadow.triggers_of(cfg)]
+        conditions = cfg.get("conditions", cfg.get("condition"))
+        watched = sorted(house.label(e) for e in house.entity_refs(
+            conditions or [])) if conditions else []
+        when = "; ".join(t for t in triggers if t)[:240]
+        for eid, verbs in acts.items():
+            row = f"automation “{name}” ({', '.join(sorted(verbs))})"
+            if when:
+                row += f" — triggered by {when}"
+            if watched:
+                row += f" — only if {', '.join(watched)[:160]} allow"
+            rows = out.setdefault(eid, [])
+            if row not in rows and len(rows) < CONTROLLED_BY_PER_ENTITY:
+                rows.append(row)
+    return out
+
+
+def _controlled_by_rows(entities) -> list[str]:
+    """One line per automation that switches one of these entities."""
+    rows: list[str] = []
+    for eid in entities or ():
+        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
+        label = f"{eid} ({name})" if name and name != eid else str(eid)
+        for how in _CONTROLLED_BY.get(str(eid)) or []:
+            rows.append(f"{label}: {how}")
+    return rows
 
 
 def _used_by_rows(entities) -> list[str]:
@@ -12587,7 +12719,10 @@ async def _resident_apply(batch: list[dict], verdicts: dict[int, dict],
         if verdict == "ignore":
             let_go.extend(_signal_decisions([signal], "look_ignore", why))
             if ts:
-                decided[ts] = ("held", why)
+                # A row the look called already answered, marked wrong
+                # before or a duplicate is held even if silence already
+                # showed it (`findings_store.record_triage`'s third slot).
+                decided[ts] = ("held", why, bool(answer.get("already")))
             continue
         if ts and signal.get("source") == house_book.SOURCE:
             # A house-book question is already on screen as the question it
@@ -12940,6 +13075,7 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
         await _house_prompt_block(now),
         await asyncio.to_thread(_open_case_rows, exclude=exclude),
         used_by=_used_by_rows(about),
+        controlled_by=_controlled_by_rows(about),
         signal_row=rows[0] if rows else "", why=why, refining=refining,
         now_line=_now_line(now),
         examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -13118,6 +13254,7 @@ async def _resident_escalate(case: dict, signal: dict, now: float,
             await _house_prompt_block(now),
             await asyncio.to_thread(_open_case_rows, exclude=exclude),
             used_by=_used_by_rows(_signal_entities(signal)),
+            controlled_by=_controlled_by_rows(_signal_entities(signal)),
             signal_row=rows[0] if rows else "", why=why, refining=refining,
             prior_case=case, now_line=_now_line(now),
             examples=await asyncio.to_thread(_outcome_examples, [signal], now,
@@ -17644,7 +17781,8 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
                 findings_store.add_case, devloop.verify.question_row(entry), when=now)
             if row:
                 devloop.verify.record_asked(state, entry["fp"], int(row["ts"]),
-                                            str(entry["fixed_in"]), now)
+                                            str(entry["fixed_in"]), now,
+                                            text=str(row.get("text") or ""))
                 asked += 1
         if asked:
             await asyncio.to_thread(devloop.verify.save, state)
@@ -19199,7 +19337,9 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     # note is the fact's text where there is one, because it is the
     # sentence a person will want to read back beside the rule it muted.
     if spec.get("kind") == "ignored":
-        written = await asyncio.to_thread(_record_exception, finding, note)
+        written = await asyncio.to_thread(
+            _record_condition if _is_resident_condition(finding, note)
+            else _record_exception, finding, note)
         if written:
             # Private to the press that made it: the route turns it into
             # the undo token and takes it off the payload (`_ending_undo`).
@@ -19296,6 +19436,37 @@ def _exception_rule(finding: dict) -> tuple[str, list[str]]:
     if source == findings_store.RESIDENT_SOURCE:
         return "resident", _finding_subjects(finding)
     return "", []
+
+
+def _is_resident_condition(finding: dict, note: str) -> bool:
+    """A Wrong on a Resident case whose reason says when the thing is meant
+    to act (`corrections.conditional`) — kept as a fact, not a rule."""
+    return (str(finding.get("source") or "") == findings_store.RESIDENT_SOURCE
+            and corrections.conditional(note))
+
+
+def _record_condition(finding: dict, note: str) -> list[str]:
+    """"It only turns on when…" on a Resident case: the condition, as a
+    fact under the entities the case was about, and NO `exception:resident`
+    — that rule silences every later look at the unit, the day the
+    condition holds and it stays off included. The ids ride the undo token
+    exactly as a rule's would."""
+    _rule, subjects = _exception_rule(finding)
+    if not subjects:
+        return []
+    report = str(finding.get("claim") or finding.get("text") or "")
+    try:
+        row, _created = facts_store.add(
+            note.strip(), subject=subjects[0],
+            extra_subjects=subjects[1:facts_store.MAX_SUBJECTS],
+            source="correction", run_id=str(finding.get("run_id") or ""),
+            confidence=0.95, about=report,
+            finding_key=findings_store.normalize(finding.get("text") or ""))
+    except Exception as exc:  # noqa: BLE001 — `_record_exception`'s rule
+        log.debug("could not record the condition for %s: %s",
+                  log_safe(subjects[0]), exc)
+        return []
+    return [row["id"]] if row else []
 
 
 def _record_exception(finding: dict, note: str) -> list[str]:
@@ -21647,6 +21818,13 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
+    if base_ids and _is_resident_condition(finding, note):
+        # A condition, already kept as a fact: there is no rule to widen
+        # and nothing for a model to scope.
+        eid = str(finding.get("entity_id") or "")
+        name = str((_NAMES.get(eid) or {}).get("name") or "")
+        return {"plan": None, "ids": [], "offer": None,
+                "sentence": corrections.conditional_confirmation(name)}
     if not base_ids or not note.strip() or not engine.get_auth():
         return None
     if not _correction_day_ok(now):
@@ -21680,7 +21858,7 @@ async def _scope_correction(finding: dict, note: str,
             result.get("error") or "an unreadable reply")[:200]
         return None
     the_plan = corrections.plan(
-        reply, finding, area_id=area_id,
+        reply, finding, area_id=area_id, note=note,
         device_class=str(named.get("class") or ""),
         protected=automation_writer.protected_patterns(),
         southern=await asyncio.to_thread(corrections.house_southern))

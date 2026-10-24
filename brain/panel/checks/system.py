@@ -182,8 +182,9 @@ def addon_down(snap: dict, now: float) -> list[dict]:
             "detail": join_names(errored)
                       + ". The Supervisor could not start it, or it exited "
                         "and kept exiting.",
-            "fix": "Open the add-on's Log tab — the reason is in the last "
-                   "few lines. A crash loop shows the same lines repeating.",
+            "fix": "Restart it from Settings > Add-ons; if it keeps "
+                   "exiting, an update or a change to its configuration is "
+                   "the usual cure.",
             "severity": "serious",
             "fixable": False,
             "entity_id": "",

@@ -54,7 +54,7 @@ sys.path.insert(0, str(TESTS_DIR))
 import checks  # noqa: E402
 import findings_store  # noqa: E402
 _util = checks._util
-from test_house_checks import NOW, house  # noqa: E402
+from test_house_checks import NOW, core_run, house  # noqa: E402
 
 registry = checks.registry
 devices = checks.devices
@@ -67,6 +67,33 @@ MAC_RE = re.compile(r"\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b", re.I)
 SERVICE_RE = re.compile(r"\bbrain\.[a-z_]+")
 # Template code: a person reads what a rule does, never its Jinja.
 TEMPLATE_RE = re.compile(r"\{\{|\{%")
+# Home Assistant's internals a person never reads (a house's report): a
+# trace's step path, a raw state token where the frontend shows a word, a
+# MAC or an IP address, a protocol name, and "1 hours".
+TRACE_RE = re.compile(r"\b(?:actions?|sequence|choose|then|else|default|"
+                      r"conditions?|triggers?|parallel|repeat)/\d+\b")
+RAW_STATES = ("not_home", "heat_cool", "fan_only", "armed_away",
+              "armed_home", "armed_night", "armed_vacation",
+              "armed_custom_bypass", "below_horizon", "above_horizon")
+RAW_STATE_RE = re.compile(r"\b(?:" + "|".join(RAW_STATES) + r")\b")
+QUOTED_RAW_RE = re.compile(r"[“\"'](?:finish|" + "|".join(RAW_STATES)
+                           + r")[”\"']")
+IP_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d]|\.\d)")
+# MQTT is left out: it is the name Home Assistant gives that integration,
+# so a person sees the word on their own Integrations page.
+PROTOCOL_RE = re.compile(r"\b(?:ARP|ICMP|mDNS|DHCP|SSDP|UDP|TCP)\b")
+ONE_PLURAL_RE = re.compile(r"\b1 (?:hours|minutes|days|seconds|weeks)\b")
+
+
+def internals(prose: str) -> list[str]:
+    """The raw internals in one piece of prose."""
+    found = []
+    for rx in (TRACE_RE, RAW_STATE_RE, QUOTED_RAW_RE, IP_RE, PROTOCOL_RE,
+               ONE_PLURAL_RE):
+        found += [m.group(0) for m in rx.finditer(prose or "")]
+    return found
+
+
 # A snake_case word outside an entity id. It fails the lint only when it is
 # an integration's domain: the house's own (its registry platforms and
 # config entries) or one of the commonly reported ones below. A setting a
@@ -134,6 +161,7 @@ def problems(check_id: str, row: dict, snap: dict | None) -> list[str]:
         if check_id not in MAC_ALLOWED:
             found += [m.group(0) for m in MAC_RE.finditer(prose)]
         found += SERVICE_RE.findall(prose)
+        found += internals(prose)
         if field in ("detail", "fix"):
             found += TEMPLATE_RE.findall(prose)
             slugs = domains_of(snap)
@@ -292,6 +320,63 @@ class TestTheReportedRows(unittest.TestCase):
              "state": "setup_error", "source": "user", "reason": "Gone"}])
         [row] = checks.system.entry_failed(snap, NOW)
         self.assertEqual(problems("sys.entry_failed", row, snap), [])
+
+
+class TestRawInternalsAreNotShown(unittest.TestCase):
+    """What a real house's findings read: a trace's step path, `not_home`,
+    an ARP lookup at an IP address, a status's own word "finish" and
+    "1 hours". Each is named the way Home Assistant's frontend says it."""
+
+    def test_the_lint_catches_what_the_house_reported(self):
+        for prose in ("at step action/0/choose/1/sequence/0: Failed to send " +
+                      "request",
+                      "The phone goes not_home at 05:20.",
+                      "none answers ARP from 192.168.1.40 ('host is " +
+                      "unreachable')",
+                      "went from running to “finish” 1 hours ago"):
+            self.assertTrue(problems("x", {"detail": prose}, None), prose)
+        for prose in ("It finished at 14:10.", "Nobody was home at 05:20.",
+                      "Version 2026.10.1 is waiting.",
+                      "when it tried to turn on Kitchen"):
+            self.assertFalse(problems("x", {"detail": prose}, None), prose)
+
+    def test_a_failed_step_is_named_by_what_it_does(self):
+        snap = house()
+        snap["automations"][0]["actions"] = [
+            {"choose": [
+                {"conditions": [], "sequence": [{"delay": "00:00:05"}]},
+                {"conditions": [], "sequence": [
+                    {"action": "light.turn_on",
+                     "target": {"entity_id": "light.kitchen"}}]}]}]
+        snap["traces"]["automation.morning-1"] = [
+            core_run("1", "error", 30, error="Failed to send request",
+                     last_step="action/0/choose/1/sequence/0")]
+        [row] = checks.automations.trace_error(snap, NOW)
+        self.assertEqual(problems("auto.trace_error", row, snap), [])
+        self.assertIn("when it tried to turn on Kitchen", row["detail"])
+        self.assertNotIn("/", row["detail"])
+
+    def test_a_step_it_cannot_find_is_left_out_rather_than_quoted(self):
+        snap = house()
+        snap["traces"]["automation.morning-1"] = [
+            core_run("1", "error", 30, error="boom",
+                     last_step="action/7/sequence/2")]
+        [row] = checks.automations.trace_error(snap, NOW)
+        self.assertNotIn("action/7", row["detail"])
+        self.assertIn("boom", row["detail"])
+
+    def test_states_are_the_words_the_frontend_shows(self):
+        for raw, shown in (("finish", "finished"), ("not_home", "away"),
+                           ("heat_cool", "heat/cool"), ("idle", "idle"),
+                           ("fan_only", "fan only")):
+            self.assertEqual(_util.state_words(raw), shown)
+
+    def test_durations_are_counted_in_words(self):
+        import numfmt
+        for minutes, said in ((1, "1 minute ago"), (5, "5 minutes ago"),
+                              (60, "1 hour ago"), (95, "1 hour ago"),
+                              (150, "2 hours ago")):
+            self.assertEqual(numfmt.ago_minutes(minutes), said)
 
 
 class TestARewordedFixReachesTheRowsAlreadyFiled(unittest.TestCase):

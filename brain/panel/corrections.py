@@ -342,9 +342,39 @@ def check_of(finding: dict) -> str:
     return source[len("check:"):] if source.startswith("check:") else ""
 
 
+# A reason that says WHEN the thing is meant to act: "it only turns on
+# when the thermostat reads above 60%", "it stays off unless the room is
+# damp". That is a fact about a condition, not "this is never a problem" —
+# stored as a blanket rule it silenced the Resident about the unit for good,
+# including on the day the condition held and the unit stayed off. So it is
+# kept as a fact (`server._end_finding`), the Resident writes no rule for
+# it, and a check's rule is never widened past the press's own.
+_CONDITIONAL_RE = re.compile(
+    r"\bonly\b(?:\W+\w+){0,8}?\W+(?:when|whenever|if|while|once|after|"
+    r"above|below)\b"
+    r"|\b(?:unless|as long as|provided that)\b", re.I)
+
+
+def conditional(note: str) -> bool:
+    """Whether a reason says the thing acts only under a condition."""
+    return bool(_CONDITIONAL_RE.search(str(note or "")))
+
+
+def conditional_confirmation(entity_name: str = "", *,
+                             rule_written: bool = False) -> str:
+    """What a person is told when their reason was a condition."""
+    name = entity_name or "it"
+    if rule_written:
+        return (f"Got it — brAIn won't flag that for {name}, and it will "
+                "remember when it is meant to run.")
+    return (f"Got it — brAIn will remember when {name} is meant to run, "
+            "and will only raise it again if that holds and it still "
+            "doesn't.")
+
+
 def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
          area_id: str = "", device_class: str = "", protected=(),
-         southern: bool = False) -> dict:
+         southern: bool = False, note: str = "") -> dict:
     """What a reply may do to this finding's rule. Never raises.
 
     ``{"scope", "resume", "expires", "until", "reason", "check",
@@ -371,6 +401,11 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
                    "a wider correction")
     if scope == "check_area" and not area_id:
         scope, clamped = "entity_check", "brAIn does not know which room it is in"
+    is_conditional = conditional(note)
+    if is_conditional and scope != "entity_check":
+        scope = "entity_check"
+        clamped = ("a reason that holds only under a condition is never "
+                   "widened past this report")
     resume = resume_date(reply, today, southern=southern)
     reason = " ".join(str(reply.get("reason") or "").split())[:MAX_REASON]
     return {
@@ -384,6 +419,7 @@ def plan(reply: dict | None, finding: dict, *, today: dt.date | None = None,
         "area_id": area_id if scope == "check_area" else "",
         "offer": scope in WIDE_SCOPES,
         "clamped": clamped,
+        "conditional": is_conditional,
     }
 
 
@@ -462,6 +498,8 @@ def confirmation(the_plan: dict, *, entity_name: str = "",
     question rather than a promise, so its sentence asks.
     """
     until = the_plan.get("until") or ""
+    if the_plan.get("conditional"):
+        return conditional_confirmation(entity_name, rule_written=True)
     what = _friendly_scope(the_plan, entity_name=entity_name,
                            area_name=area_name, check_title=check_title)
     if the_plan.get("offer"):
@@ -722,7 +760,8 @@ def summary(now: float | None = None) -> dict:
             "offers": len(_load_offers())}
 
 
-__all__ = ["LIFETIMES", "NEVER_CHECKS", "NEVER_CLASSES", "NEVER_DOMAINS",
+__all__ = [
+    "conditional", "conditional_confirmation","LIFETIMES", "NEVER_CHECKS", "NEVER_CLASSES", "NEVER_DOMAINS",
            "SCHEMA", "SCOPES", "SEASONS", "SOURCE", "SYSTEM", "WIDE_SCOPES",
            "accept_offer", "apply_plan", "check_of", "confirmation",
            "expires_for", "find_offer", "house_southern", "is_offer",

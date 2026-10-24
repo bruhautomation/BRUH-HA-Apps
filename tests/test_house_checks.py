@@ -427,7 +427,11 @@ class TestAutomationChecks(unittest.TestCase):
         found = automations.trace_error(snap, NOW)
         self.assertEqual(len(found), 1)
         self.assertIn("boom", found[0]["detail"])
-        self.assertIn("action/0", found[0]["detail"])
+        # It asserted the raw step path ("action/0") was in the detail; a
+        # person reads the step by what it does
+        # (`test_finding_text_plain.TestRawInternalsAreNotShown`).
+        self.assertIn("when it tried to turn on Kitchen", found[0]["detail"])
+        self.assertNotIn("action/0", found[0]["detail"])
         self.assertEqual(found[0]["entity_id"], "automation.morning")
 
     def test_condition_never_passes_needs_every_recent_run_to_stop_there(self):

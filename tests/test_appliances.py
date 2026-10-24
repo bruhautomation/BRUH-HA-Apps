@@ -466,7 +466,9 @@ class TestTheChore(unittest.TestCase):
         self.assertEqual(one["text"], two["text"])
         self.assertNotEqual(one["detail"], two["detail"])
         self.assertIn("minutes ago", one["detail"])
-        self.assertIn("hours ago", two["detail"])
+        # It asserted "hours ago" here, which at 95 minutes was the
+        # "1 hours ago" a house reported; a count agrees with its noun.
+        self.assertIn("1 hour ago", two["detail"])
 
     def test_the_fix_says_brAIn_cannot_see_you_emptied_it(self):
         # The honest limit, on the row: an empty machine and a full one

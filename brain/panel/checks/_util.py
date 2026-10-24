@@ -228,6 +228,30 @@ def spoken_id(entity_id: str) -> str:
     return f"the {noun} \u201c{words}\u201d"
 
 
+# A state Home Assistant stores as a token, as its frontend shows it. A
+# finding read "goes not_home at 05:20" and "went from running to
+# “finish”"; the words a person sees on the entity's own card are these.
+_STATE_WORDS = {
+    "not_home": "away", "home": "home", "finish": "finished",
+    "heat_cool": "heat/cool", "fan_only": "fan only",
+    "armed_away": "armed away", "armed_home": "armed home",
+    "armed_night": "armed night", "armed_vacation": "armed vacation",
+    "armed_custom_bypass": "armed custom bypass",
+    "below_horizon": "below the horizon",
+    "above_horizon": "above the horizon",
+}
+
+
+def state_words(state) -> str:
+    """A raw state token as Home Assistant's frontend says it: `not_home`
+    is "away", a status's `finish` is "finished", and any other token with
+    underscores reads with spaces."""
+    raw = str(state if state is not None else "").strip()
+    if raw in _STATE_WORDS:
+        return _STATE_WORDS[raw]
+    return raw.replace("_", " ")
+
+
 def without_mac(name: str) -> str:
     """A device name with any MAC address taken out of it.
 

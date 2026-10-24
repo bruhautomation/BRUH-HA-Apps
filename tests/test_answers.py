@@ -78,6 +78,9 @@ SHAPES = {
                        finding_status="failed"),
     "tidy": case(source="check:reg.hardware_name", fixable=True),
     "gap": case(kind="question", source="house_book"),
+    # A note brAIn filed for a person to read: news, answered with Got it.
+    "acknowledge": case(kind="change", source="personality",
+                        informational=True),
 }
 
 
@@ -107,7 +110,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
                 self.assertEqual(got, [], name)
                 continue
             self.assertTrue(got, name)
-            if name in ("change", "chore_done"):
+            if name in ("change", "chore_done", "acknowledge"):
                 continue
             verbs = {a["verb"] for a in got}
             self.assertTrue(verbs & NO, f"{name} offers no way to say no: {verbs}")
@@ -121,7 +124,8 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         for name, shape in SHAPES.items():
             got = answers.answers(shape)
             verbs = [a["verb"] for a in got]
-            if name in ("planning", "fixing", "change", "chore_done", "watching"):
+            if name in ("planning", "fixing", "change", "chore_done", "watching",
+                        "acknowledge"):
                 self.assertNotIn("not_now", verbs, name)
                 continue
             self.assertIn("not_now", verbs, name)

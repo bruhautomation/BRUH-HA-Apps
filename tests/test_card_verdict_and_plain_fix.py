@@ -45,12 +45,19 @@ CONTRACT = categories._CARD_CONTRACT
 
 
 class TestACardStatesOneVerdict(unittest.TestCase):
-    def test_the_contract_asks_for_a_verdict_first(self):
-        self.assertIn("opens with ONE plain verdict", CONTRACT)
-        for word in ("it is fine", "it needs action", "the one thing to do"):
-            self.assertIn(word, CONTRACT)
-        for system in (categories.SYSTEM_PROMPT, categories.ANALYST_SYSTEM):
-            self.assertIn("opens with ONE plain verdict", system)
+    def test_the_contract_asks_for_the_finding_first(self):
+        # It used to ask for "ONE plain verdict" first, and seven cards in
+        # eleven on a real house opened with the same reassurance ("nothing
+        # to fix", "No action") while the one that needed action was lost.
+        # The lead is the finding itself; an all-clear only where the
+        # reader would otherwise worry (`test_card_verdict_post_check`).
+        self.assertNotIn("ONE plain verdict", CONTRACT)
+        for phrase in ("the summary opens with the finding itself",
+                       "the reason, the comparison or the next step",
+                       "only where the reader would otherwise worry"):
+            self.assertIn(phrase, CONTRACT)
+            for system in (categories.SYSTEM_PROMPT, categories.ANALYST_SYSTEM):
+                self.assertIn(phrase, system)
 
     def test_each_number_is_read_against_this_houses_normal(self):
         self.assertIn("this house's own normal", CONTRACT)
@@ -58,7 +65,9 @@ class TestACardStatesOneVerdict(unittest.TestCase):
     def test_the_schema_says_the_summary_opens_with_it(self):
         summary = categories.CARD_SCHEMA["properties"]["summary"]
         self.assertEqual(summary["type"], "string")
-        self.assertIn("verdict", summary.get("description", ""))
+        self.assertIn("the finding itself", summary.get("description", ""))
+        self.assertIn("never the title's figures again",
+                      summary.get("description", ""))
 
     def test_the_contract_stays_under_its_ceiling(self):
         self.assertLess(len(CONTRACT), 9100)

@@ -102,6 +102,16 @@ def tier_for(job: str) -> str:
 VERDICTS = ("ignore", "watch", "investigate", "act")
 _RANK = {word: i for i, word in enumerate(VERDICTS)}
 
+# What a look may say a row ALREADY is, in a word rather than in its
+# sentence: something the house already answers, something the household
+# has marked wrong before, or the same thing as another open card. A row
+# the look says one of these about is not news, whatever verdict came
+# beside it, and it is held rather than shown — "the household marked this
+# wrong before" under a card on the list was the look being right and the
+# loop not listening. A word and not a reading of the reason, because
+# prose is what gets reworded.
+ALREADY = ("answered", "marked_wrong", "duplicate")
+
 # One sentence per signal, shown on nothing and read in the log and the
 # diagnostics — long enough to say what was read, short enough that a
 # batch of them is not a page.
@@ -212,6 +222,9 @@ FIRST_LOOK_SCHEMA = {
                                 "enum": ["ignore", "watch", "investigate",
                                          "act"]},
                     "why": {"type": "string"},
+                    "already": {"type": "string",
+                                "enum": ["", "answered", "marked_wrong",
+                                         "duplicate"]},
                 },
                 "required": ["id", "verdict", "why"],
                 "additionalProperties": False,
@@ -323,6 +336,13 @@ Rules:
   about it, judge its failure by what stops with it — never write "no
   known load" or "nothing depends on it" about an entity the prompt says
   something depends on.
+- "already" says, in one word, that a row is not news: "answered" (the
+  house or memory already answers it), "marked_wrong" (the household has
+  marked this report, or one just like it, wrong before), "duplicate" (it
+  is the same problem as another open card or row). Leave it out
+  otherwise. A row you give one of these is set aside whatever verdict
+  you write, so never use it to dismiss something you would investigate
+  for any other reason — and your "why" names what already answers it.
 - Judge each signal on what you were given. You cannot look anything up
   here: if you need to, that is what "investigate" means.
 - """ + prompt_kit.DATA_FENCE + """
@@ -330,7 +350,9 @@ Rules:
 Reply with JSON and nothing else:
 
 {"verdicts": [{"id": 1, "verdict": "ignore", "why": "one sentence"},
-              {"id": 2, "verdict": "investigate", "why": "one sentence"}]}
+              {"id": 2, "verdict": "investigate", "why": "one sentence"},
+              {"id": 3, "verdict": "ignore", "already": "duplicate",
+               "why": "one sentence"}]}
 
 Every id you were given must appear exactly once."""
 
@@ -583,6 +605,12 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                          "why": textclip.clip(strip_signal_refs(
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
+            already = str(row.get("already") or "").strip().lower()
+            if already in ALREADY:
+                # Not news, whatever verdict rode beside it: the row is
+                # set aside, which is what `ignore` does to a filed row.
+                said[idx]["verdict"] = "ignore"
+                said[idx]["already"] = already
 
     unreadable = not isinstance(listed, list)
     batch = list(rows or [])
@@ -601,6 +629,8 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
         signal = batch[idx - 1] if idx <= len(batch) else None
         floor, why = never_ignore(signal) if signal is not None else ("", "")
         if floor and _RANK[answer["verdict"]] < _RANK[floor]:
+            # A floor outranks `already` too: "the same leak as the other
+            # card" is not a reason a tripped detector may be set aside on.
             answer = {"verdict": floor,
                       "why": textclip.clip(
                           (FORCED.format(why=why) + " " + answer["why"]).strip(),
@@ -728,7 +758,17 @@ Answer with ONE JSON object and nothing else. What it means:
   online" but "the hub has been unavailable since 14:10, so restart it".
   Never tell the person to read a log, a trace or a file your tools can
   read — the Home Assistant log, the Supervisor log, brAIn's own errors:
-  read it and say what it says.
+  read it and say what it says. Never "watch whether it continues" —
+  watching is brAIn's job, and it will look again — and never "press Fix
+  and brAIn reads …": you are the run that reads.
+- Before you write, run the read-only lookups the question needs: the
+  automation's trace, the entity's history and logbook, the registry
+  (which device, which room, which integration, what an automation
+  targets), what a reload changed. "fix" then holds only what a person
+  has to do with their hands or decide — a battery, a cable, which of two
+  rules should win. When the answer is in something brAIn cannot see (a
+  router's or access point's own app, a phone, the device itself), say
+  once what it is and that brAIn cannot see it, then the one step there.
 - "todo_text" — the same errand as ONE imperative sentence for a to-do
   list, naming the thing ("Replace the battery in the hallway motion
   sensor."). Never the claim, never a question; empty when nothing needs
@@ -743,6 +783,10 @@ Answer with ONE JSON object and nothing else. What it means:
   own words. Say what an automation does in plain words ("it turns the
   fan back on while the room is still warm"), never its mechanics
   ("re-entered the control branch", "for: duration").
+- No internals in what a person reads: no trace step paths
+  ("action/0/choose/1"; say what the step does, "when it turned on the
+  hall light"), no raw state tokens (not_home is "away", finish is
+  "finished"), no MAC or IP addresses, no protocol names (ARP, mDNS).
 - TIMES are in the house's local time, the way every other screen shows
   them ("06:00", "since 14:10 yesterday") — never "UTC", never an ISO
   stamp with a Z.
@@ -790,7 +834,14 @@ Rules that matter more than anything about style:
   ids. Name the device and the time instead.
 - Before saying a device has nothing behind it, read what the prompt says
   it is USED BY and what brAIn knows about it: a plug that runs the
-  crawl-space fan is the crawl-space fan."""
+  crawl-space fan is the crawl-space fan.
+- Before claiming a device should have acted (run, turned on, turned off,
+  stopped), find what switches it: the automations whose actions target
+  it — the prompt lists the ones brAIn knows, and the related-items and
+  automation-config tools find the rest — and judge it by the sensor and
+  threshold THAT automation watches, not a sensor that only shares its
+  room. A unit that stayed off while its own trigger never crossed its
+  threshold is working."""
 
 # The part that applies only when the run was sent a ROW brAIn filed
 # (`refines=`): rewriting it in place, or holding it back. It used to sit
@@ -861,7 +912,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
                        situation_line: str = "", used_by=None,
-                       camera_line: str = "") -> str:
+                       camera_line: str = "", controlled_by=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -943,6 +994,15 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
         parts.append("WHAT USES THESE DEVICES — automations and scripts "
                      "that name them, so whatever stops when one fails:")
         parts += [f"- {row}" for row in used]
+        parts.append("")
+    switched = _rows(controlled_by)
+    if switched:
+        parts.append("WHAT SWITCHES THESE DEVICES — the automations whose "
+                     "actions act on them, with the sensor and threshold "
+                     "each one watches. Judge whether a device should have "
+                     "run against these, not against another sensor in the "
+                     "same room:")
+        parts += [f"- {row}" for row in switched]
         parts.append("")
     if house_block.strip():
         parts.append("WHAT BRAIN HAS MEASURED:\n" + house_block.strip() + "\n")
@@ -1421,7 +1481,8 @@ class Ledger:
 
 __all__ = [
     "ACT_JOBS", "CASE_KINDS", "CASE_SCHEMA", "ESCALATE_CONFIDENCE",
-    "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED", "HOT_FLOOR",
+    "ALREADY", "FIRST_LOOK_SCHEMA", "FIRST_LOOK_SYSTEM", "FORCED",
+    "HOT_FLOOR",
     "INVESTIGATE_MAX_TURNS", "INVESTIGATE_SYSTEM", "INVESTIGATE_TIMEOUT_S",
     "JOBS", "JOB_APPLY", "JOB_FIRST_LOOK", "JOB_INVESTIGATE", "JOB_PLAN",
     "LEDGER_FILE", "MAX_BATCH", "MAX_EXAMPLES", "MAX_EXAMPLE_CHARS",
