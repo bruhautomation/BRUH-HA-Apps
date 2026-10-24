@@ -192,7 +192,7 @@ class TestWhatIsComposed(unittest.TestCase):
         self.assertEqual(triggers[1]["attribute"], "hvac_action")
         # Both halves are conditions too: a cold room in a house whose
         # heating is working is not this finding.
-        kinds = {c.get("condition") for c in freeze["config"]["condition"]}
+        kinds = {c.get("condition") for c in freeze["config"]["conditions"]}
         self.assertEqual(kinds, {"numeric_state", "state"})
 
     def test_freeze_reads_the_coldest_room_when_there_are_several(self):
