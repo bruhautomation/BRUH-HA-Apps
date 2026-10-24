@@ -25,6 +25,13 @@ SERVICE_LOG_HARVEST = "log_harvest"
 SERVICE_DELETE_HARVEST = "delete_harvest"
 SERVICE_COMPLETE_QUEUED_SPRAY = "complete_queued_spray"
 SERVICE_DELETE_QUEUED_SPRAY = "delete_queued_spray"
+SERVICE_LOG_SPRAY = "log_spray"
+SERVICE_QUEUE_SPRAY = "queue_spray"
+SERVICE_ADJUST_INVENTORY = "adjust_inventory"
+SERVICE_ADD_CROP = "add_crop"
+SERVICE_ADD_VARIETY = "add_variety"
+SERVICE_LOG_NOTE = "log_note"
+SERVICE_GET_HARVESTS = "get_harvests"
 SERVICE_REFRESH = "refresh"
 
 # The add-on's action name for each service — written out as literals so the
@@ -34,6 +41,18 @@ ACTIONS = {
     "delete_harvest": "delete_harvest",
     "complete_queued_spray": "complete_queued_spray",
     "delete_queued_spray": "delete_queued_spray",
+    "log_spray": "log_spray",
+    "queue_spray": "queue_spray",
+    "adjust_inventory": "adjust_inventory",
+    "add_crop": "add_crop",
+    "add_variety": "add_variety",
+    "log_note": "log_note",
+    "get_harvests": "get_harvests",
 }
+
+# The services that only read: they answer and change nothing, so they are
+# response-only and ask for no refresh.
+READ_ONLY = {"get_harvests"}
+
 
 HARVEST_UNITS = ["lb", "oz", "kg", "g", "ct"]

@@ -42,3 +42,35 @@ const CONTAINER: Record<ProductForm, { one: string; many: string }> = {
 export function containerNoun(form: ProductForm, count = 1): string {
   return Math.abs(count) === 1 ? CONTAINER[form].one : CONTAINER[form].many;
 }
+
+/**
+ * Parse a price_size label like "32 oz concentrate" into a numeric size + our unit.
+ * Shared by the Stock page and the Home Assistant service that starts
+ * stocking a product, so the two open the same bottle.
+ */
+export function parseSize(priceSize: string | null): { size: number | null; unit: string } {
+  if (!priceSize) return { size: null, unit: 'fl oz' };
+  // Longer tokens first + word boundary so "gallon" isn't matched as "g" (grams).
+  const m = priceSize.match(/(\d+(?:\.\d+)?)\s*(fl\s*oz|gallon|gal|lb|oz|ml|g)\b/i);
+  if (!m) return { size: null, unit: 'fl oz' };
+  const size = parseFloat(m[1]);
+  const raw = m[2].toLowerCase().replace(/\s+/g, ' ');
+  const liquid = /concentrate|fl\s*oz|gal|ml/i.test(priceSize);
+  const unit =
+    raw === 'ml'
+      ? 'mL'
+      : raw === 'gallon' || raw === 'gal'
+        ? 'gal'
+        : raw === 'lb'
+          ? 'lb'
+          : raw === 'g'
+            ? 'g'
+            : raw === 'fl oz'
+              ? 'fl oz'
+              : raw === 'oz'
+                ? liquid
+                  ? 'fl oz'
+                  : 'oz'
+                : 'fl oz';
+  return { size, unit };
+}
