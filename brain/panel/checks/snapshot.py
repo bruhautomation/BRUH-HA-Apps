@@ -73,6 +73,11 @@ and so cannot clear anything):
                     as `panel/baselines.py` last measured it. Unavailable
                     until the first nightly pass has run, which is a real
                     state on a fresh install and not an unusual house
+    unavailable_since {entity_id: iso} — for the entities unavailable now
+                    whose live stamp is under a day old, when the recorder
+                    says the current stretch of being unavailable began
+                    (a restart re-stamps `last_changed`). `{}` and available
+                    when nothing needed asking
     job_status     {entity_id: [history rows]} for the status entities
                     that say a job just finished (`chores.job_candidates`)
                     — `{}` and available when nothing has; unavailable
@@ -477,6 +482,21 @@ async def collect(now: float | None = None) -> dict:
                 "recent": {}}
             _mark("appliances", False, str(exc))
 
+        # A device offline across a restart: Core re-stamps every entity
+        # when it starts, so how long one has really been unavailable is
+        # the recorder's to say. Asked only about the unavailable entities
+        # that look younger than a day.
+        try:
+            gone = await _unavailable_history(
+                session, snap.get("states") or {}, now)
+            snap["unavailable_since"] = gone or {}
+            _mark("unavailable_since", gone is not None,
+                  "" if gone is not None else
+                  "the recorder did not answer for unavailable entities")
+        except Exception as exc:  # noqa: BLE001
+            snap["unavailable_since"] = {}
+            _mark("unavailable_since", False, str(exc))
+
         # A device whose integration says in words that its job ended (a
         # 3D printer's print status, a washer's operation state) and has
         # no power sensor to profile. Asked only about the status entities
@@ -835,6 +855,38 @@ async def _job_history(session, states: dict, now: float) -> dict | None:
         return None
     got = ha_data.series_by_entity(raw)
     return {eid: got.get(eid) or [] for eid in ids}
+
+
+async def _unavailable_history(session, states: dict,
+                               now: float) -> dict | None:
+    """`{entity_id: iso stamp}` — when each young-looking unavailable
+    entity's current stretch of being unavailable began, read off the
+    recorder (`devices.unavailable_candidates` / `unavailable_since`), or
+    None when Core would not answer. Nothing to ask is `{}` and costs no
+    request; an entity the recorder has no stretch for is left out, so the
+    check reads its live stamp exactly as it did before."""
+    import ha_data
+
+    from . import devices
+
+    ids = devices.unavailable_candidates(states, now)
+    if not ids:
+        return {}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(days=devices.UNAVAILABLE_HISTORY_DAYS)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    out = {}
+    for eid in ids:
+        since = devices.unavailable_since(got.get(eid) or [])
+        if since:
+            out[eid] = since
+    return out
 
 
 async def _history_probe(session, states: dict, now: float) -> dict | None:

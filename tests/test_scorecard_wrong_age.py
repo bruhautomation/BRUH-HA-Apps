@@ -17,7 +17,6 @@ Driven through the real writers into the real scorecard and the real
 
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
