@@ -394,6 +394,58 @@ def _power_owns(house: House, snap: dict, eid: str) -> bool:
     return False
 
 
+# BRUH Bambu Studio's print failure detection publishes, per printer, a
+# "Plate clear" binary sensor: off while a print is on the plate, on once it
+# has been taken off, unknown when nothing has looked. It is read off the
+# snapshot by what the integration REGISTERED (its platform and translation
+# key, or the unique id it builds), never by name, and nothing is imported
+# from that add-on.
+PLATE_PLATFORM = "bruh_bambu"
+PLATE_KEY = "plate_clear"
+
+
+def _is_plate(reg: dict) -> bool:
+    if str(reg.get("platform") or "") != PLATE_PLATFORM:
+        return False
+    if str(reg.get("translation_key") or "") == PLATE_KEY:
+        return True
+    return str(reg.get("unique_id") or "").endswith("_" + PLATE_KEY)
+
+
+def plate_for(house: House, eid: str) -> str:
+    """The plate sensor for the printer this status entity belongs to, or
+    "". On the same device, or on a device carrying the same serial number
+    (the add-on's own device beside another integration's)."""
+    device = house.device_of(eid) or {}
+    if not device:
+        return ""
+    serial = str(device.get("serial_number") or "").strip()
+    for other in house.entities:
+        oid = str(other.get("entity_id") or "")
+        if domain_of(oid) != "binary_sensor" or not _is_plate(other):
+            continue
+        if other.get("device_id") == device.get("id"):
+            return oid
+        theirs = house.devices.get(other.get("device_id") or "") or {}
+        if serial and str(theirs.get("serial_number") or "").strip() == serial:
+            return oid
+    return ""
+
+
+def plate_reading(house: House, plate: str, finished: float) -> str:
+    """`"clear"`, `"occupied"`, or "" when the plate says nothing about
+    THIS print: no reading, or a clear plate whose reading predates the
+    finish (it was cleared before the job, not after)."""
+    st = house.states.get(plate) or {}
+    if st.get("state") == "off":
+        return "occupied"
+    if st.get("state") == "on":
+        changed = parse_ts(st.get("last_changed"))
+        if changed is not None and changed >= finished:
+            return "clear"
+    return ""
+
+
 def job_done(snap: dict, now: float) -> list[dict]:
     """Status entities whose job finished a while ago and has not restarted."""
     states = snap.get("states") or {}
@@ -424,7 +476,11 @@ def job_done(snap: dict, now: float) -> list[dict]:
         ago_min = (now - finished) / 60.0
         if ago_min < QUIET_MIN or ago_min > STALE_HOURS * 60.0:
             continue
-        hits.append((finished, kind, eid))
+        plate = plate_for(house, eid) if kind == "printer" else ""
+        seen = plate_reading(house, plate, finished) if plate else ""
+        if seen == "clear":
+            continue        # taken off: the chore is done
+        hits.append((finished, kind, eid, seen))
 
     if len(hits) > MAX_ROWS:
         house.gave_up("chore.job_done", [{"entity_id": h[2]} for h in hits],
@@ -435,7 +491,7 @@ def job_done(snap: dict, now: float) -> list[dict]:
     hits.sort()
 
     out = []
-    for finished, kind, eid in hits:
+    for finished, kind, eid, seen in hits:
         ago = int((now - finished) / 60.0)
         when = (f"{ago} minutes ago" if ago < 90
                 else f"{ago // 60} hours ago")
@@ -447,7 +503,10 @@ def job_done(snap: dict, now: float) -> list[dict]:
                        f"“{state}” {when}, and has not started "
                        "another job since. Read from the status its own "
                        "integration publishes."),
-            "fix": (("Take the print off" if kind == "printer"
+            "fix": ("Take the print off. This clears itself once BRUH "
+                    "Bambu Studio sees the plate clear."
+                    if seen == "occupied" else
+                    ("Take the print off" if kind == "printer"
                      else "Empty it")
                     + ", then mark it done — brAIn cannot see that "
                     "you have, because the status says the same thing "
