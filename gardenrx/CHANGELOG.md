@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.3
+
+### Added
+
+- **Everything the panel logs can be logged from Home Assistant, voice or brAIn.** New services: `gardenrx.log_spray` (a spray that was not queued; it clears queued sprays for the same crops and takes what was used out of stock, warning when a product is not labelled for a crop), `gardenrx.queue_spray`, `gardenrx.adjust_inventory` (add to, take from, or set what is on hand; a product not stocked yet is added), `gardenrx.add_crop`, `gardenrx.add_variety`, `gardenrx.log_note` (a dated note on a bed or tree on the Garden Map, which now shows its notes) and `gardenrx.get_harvests` (harvests by crop and dates, with totals). Each answers with the record it made and refuses with a sentence naming what is wrong. (#393)
+
+### Security
+
+- **Six vulnerable dependencies updated** (shadcn, @shadcn/registry, zod, undici, fast-uri, body-parser), within their existing ranges.
+
 ## 0.1.2
 
 ### Security
