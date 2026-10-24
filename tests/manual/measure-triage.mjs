@@ -46,8 +46,12 @@ const read = (page, id) => page.evaluate(({ id, cut }) => {
     meta: [...c.querySelectorAll('.meta > *')].map((x) => x.textContent).join(' · '),
     face: face.textContent,
     details: det ? det.textContent : '',
+    // Respond (the line to brAIn) leads every finding's row and is not
+    // one of its answers.
     presses: [...c.querySelectorAll(':scope > .card-actions button')]
-      .filter((b) => !b.classList.contains('icon')).map((b) => b.textContent.trim()),
+      .filter((b) => !b.classList.contains('icon') && !b.classList.contains('qrespondopen'))
+      .map((b) => b.textContent.trim()),
+    respondFirst: c.querySelector(':scope > .card-actions button')?.textContent.trim() === 'Respond',
     heights: [...c.querySelectorAll(':scope > .card-actions button')]
       .map((b) => Math.round(b.getBoundingClientRect().height)),
     cut: res.filter((re) => re.test(face.textContent)).map(String),
@@ -81,6 +85,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 430, touch
     if (loose.presses.join('|') !== wantRow) {
       note(where, `the unchecked card offers ${loose.presses.join(' · ')}`);
     }
+    if (!loose.respondFirst) note(where, 'the unchecked card\'s row does not open with Respond');
     if (loose.cut.length) note(where, `the unchecked card carries ${loose.cut.join(', ')}`);
     if (touch && loose.heights.some((h) => h < MIN_TARGET)) {
       note(where, `an unchecked press is under ${MIN_TARGET}px (${loose.heights.join(',')})`);

@@ -824,13 +824,17 @@ for (const width of [390, 1190]) {
   await context.close();
 }
 
-// Respond: one line to brAIn under every finding card ("these buttons
-// don't cover what needs to happen here", the owner). The box is under the
-// answer row — never a fourth button — on every case card and the loose
-// finding, 16px on a finger (iOS zooms the ingress frame below that) with a
-// 44px Send; what is typed is POSTed to /api/case/<id>/respond, the card
-// polls the answer, and what brAIn said is painted: in the toast, with
-// Undo when an ending was taken, and on the card as its last turn.
+// Respond: the first press on every finding card ("I don't think I want
+// the enter text box all the time. The first button should be Respond,
+// clicking that opens the text box", the owner). No box shows by default;
+// Respond is the first button in the answer row and the row stays one row
+// on a phone; pressing it shows the box under the row with focus in it and
+// a Send button, 16px on a finger (iOS zooms the ingress frame below that)
+// with 44px targets; Escape or a second press puts it away, and what was
+// typed is still there when it opens again, through a repaint too. What is
+// sent is POSTed to /api/case/<id>/respond, the card polls the answer, and
+// what brAIn said is painted: in the toast, with Undo when an ending was
+// taken, and on the card as its last turn.
 const RESPOND_ANSWER = `
 (() => {
   const inner = window.fetch;
@@ -849,47 +853,92 @@ const RESPOND_ANSWER = `
     return inner(url, opts);
   };
 })();`;
+const readRespond = (page, id) => page.evaluate((id) => {
+  const c = document.querySelector(`#findList .qcard[data-case-id="${id}"]`);
+  if (!c) return null;
+  const form = c.querySelector(':scope > .qrespond');
+  const input = form && form.querySelector('input');
+  const go = form && form.querySelector('button[type="submit"]');
+  const actions = c.querySelector(':scope > .card-actions');
+  const r = c.getBoundingClientRect();
+  const fr = form && form.getBoundingClientRect();
+  const shown = !!(form && !form.hidden && getComputedStyle(form).display !== 'none' && fr.height > 0);
+  return {
+    shown, value: input ? input.value : null,
+    focused: !!(input && document.activeElement === input),
+    font: input ? parseFloat(getComputedStyle(input).fontSize) : 0,
+    inH: input ? Math.round(input.getBoundingClientRect().height) : 0,
+    goH: go ? Math.round(go.getBoundingClientRect().height) : 0,
+    goLabel: go ? go.textContent.trim() : '',
+    under: !!(shown && actions && fr.top >= actions.getBoundingClientRect().bottom - 1),
+    inside: !!(shown && fr.left >= r.left - 1 && fr.right <= r.right + 1),
+    expanded: c.querySelector('.qrespondopen')?.getAttribute('aria-expanded') || '',
+  };
+}, id);
 for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touch: false }]) {
   const where = `${width}px (respond)`;
   const { page, context } = await openToday(browser, PANEL, {
     width, touch, extra: RESPOND_ANSWER,
     onError: (m) => note(where, `page error: ${m}`) });
   await page.waitForTimeout(300);
-  const boxes = await page.evaluate(() => [...document.querySelectorAll('#findList .qcard')]
+  const cardsNow = await page.evaluate(() => [...document.querySelectorAll('#findList .qcard')]
     .filter((c) => /^f:/.test(c.dataset.caseId || '') && c.dataset.situation !== 'gap')
     .map((c) => {
       const form = c.querySelector(':scope > .qrespond');
-      const input = form && form.querySelector('input');
-      const go = form && form.querySelector('button');
       const actions = c.querySelector(':scope > .card-actions');
-      const r = c.getBoundingClientRect();
-      const fr = form && form.getBoundingClientRect();
+      const first = actions && actions.querySelector(':scope > button');
+      const open = c.querySelector('.qrespondopen');
+      const presses = actions ? [...actions.querySelectorAll(':scope > button')] : [];
       return {
         id: c.dataset.caseId, has: !!form,
-        font: input ? parseFloat(getComputedStyle(input).fontSize) : 0,
-        inH: input ? Math.round(input.getBoundingClientRect().height) : 0,
-        goH: go ? Math.round(go.getBoundingClientRect().height) : 0,
-        goLabel: go ? go.textContent.trim() : '',
-        under: !!(form && actions && fr.top >= actions.getBoundingClientRect().bottom - 1),
-        inside: !!(fr && fr.left >= r.left - 1 && fr.right <= r.right + 1),
-        rowButtons: actions ? actions.querySelectorAll(':scope > button').length : 0,
+        boxShown: !!(form && !form.hidden && getComputedStyle(form).display !== 'none'),
+        anyInput: [...c.querySelectorAll('input[type="text"], textarea')]
+          .some((x) => x.offsetParent !== null),
+        first: first ? first.textContent.trim() : '',
+        openH: open ? Math.round(open.getBoundingClientRect().height) : 0,
+        rows: new Set(presses.map((b) => Math.round(b.getBoundingClientRect().top))).size,
       };
     }));
-  if (!boxes.length) note(where, 'no finding card was drawn');
-  for (const b of boxes) {
+  if (!cardsNow.length) note(where, 'no finding card was drawn');
+  for (const b of cardsNow) {
     if (!b.has) { note(where, `${b.id} has no Respond box`); continue; }
-    if (!b.under) note(where, `${b.id}: the Respond box is not under the answer row`);
-    if (!b.inside) note(where, `${b.id}: the Respond box spills out of its card`);
-    if (b.goLabel !== 'Send') note(where, `${b.id}: the Respond button reads "${b.goLabel}"`);
-    if (touch && b.font < 16) note(where, `${b.id}: the Respond box is ${b.font}px on a finger`);
-    if (touch && (b.goH < MIN_TARGET || b.inH < MIN_TARGET)) {
-      note(where, `${b.id}: the Respond box is ${b.inH}px and Send ${b.goH}px on a finger`);
-    }
+    if (b.boxShown || b.anyInput) note(where, `${b.id} shows a text box before Respond is pressed`);
+    if (b.first !== 'Respond') note(where, `${b.id}: the first button is "${b.first}", not Respond`);
+    if (touch && b.openH < MIN_TARGET) note(where, `${b.id}: Respond is ${b.openH}px on a finger`);
+    if (width <= 640 && b.rows > 1) note(where, `${b.id}: with Respond the row wraps to ${b.rows} rows`);
   }
-  // Send, and the answer is painted.
-  const target = boxes.find((b) => b.has);
+  const target = cardsNow.find((b) => b.has);
   if (target) {
-    // The answer lands on the card as its turns once the queue is re-read.
+    const card = `#findList .qcard[data-case-id="${target.id}"]`;
+    // Press Respond: the box opens under the row, focused.
+    await page.click(`${card} .qrespondopen`);
+    let b = await readRespond(page, target.id);
+    if (!b.shown) note(where, 'Respond did not open the box');
+    if (!b.focused) note(where, 'the box opened without focus in it');
+    if (b.expanded !== 'true') note(where, `Respond says aria-expanded="${b.expanded}" when open`);
+    if (!b.under) note(where, 'the Respond box is not under the answer row');
+    if (!b.inside) note(where, 'the Respond box spills out of its card');
+    if (b.goLabel !== 'Send') note(where, `the box's button reads "${b.goLabel}"`);
+    if (touch && b.font < 16) note(where, `the Respond box is ${b.font}px on a finger`);
+    if (touch && (b.goH < MIN_TARGET || b.inH < MIN_TARGET)) {
+      note(where, `the Respond box is ${b.inH}px and Send ${b.goH}px on a finger`);
+    }
+    // A draft survives Escape, a second press and a repaint.
+    await page.fill(`${card} .qrespond input`, 'half a thought');
+    await page.keyboard.press('Escape');
+    b = await readRespond(page, target.id);
+    if (b.shown) note(where, 'Escape did not put the box away');
+    await page.click(`${card} .qrespondopen`);
+    b = await readRespond(page, target.id);
+    if (!b.shown || b.value !== 'half a thought') note(where, `the draft after Escape reads "${b.value}"`);
+    await page.click(`${card} .qrespondopen`);
+    b = await readRespond(page, target.id);
+    if (b.shown) note(where, 'a second press did not put the box away');
+    await page.evaluate(() => renderFindings());
+    await page.click(`${card} .qrespondopen`);
+    b = await readRespond(page, target.id);
+    if (!b.shown || b.value !== 'half a thought') note(where, `the draft after a repaint reads "${b.value}"`);
+    // Send, and the answer is painted.
     await page.evaluate((id) => {
       const d = window.__today;
       const words = "It's off on purpose for the Task Manager. Remember that.";
@@ -898,24 +947,26 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       d.cases = d.cases.map((c) => (c.id === id ? { ...c, thread } : c));
       d.loose = d.loose.map((f) => (`f:${f.ts}` === id ? { ...f, thread } : f));
     }, target.id);
-    const sel = `#findList .qcard[data-case-id="${target.id}"] .qrespond`;
-    await page.fill(`${sel} input`, "It's off on purpose for the Task Manager. Remember that.");
-    await page.click(`${sel} button`);
+    await page.fill(`${card} .qrespond input`, "It's off on purpose for the Task Manager. Remember that.");
+    await page.click(`${card} .qrespond button[type="submit"]`);
     await page.waitForFunction(() => /won't raise this again/.test(
       document.getElementById('toast')?.textContent || ''), null, { timeout: 8000 })
       .catch(() => note(where, 'the answer never reached the toast'));
     const after = await page.evaluate((id) => {
       const t = document.getElementById('toast');
-      const card = document.querySelector(`#findList .qcard[data-case-id="${id}"]`);
+      const c = document.querySelector(`#findList .qcard[data-case-id="${id}"]`);
+      const form = c && c.querySelector(':scope > .qrespond');
       return {
-        undo: !!(t && [...t.querySelectorAll('button')].some((b) => b.textContent === 'Undo')),
-        turn: card ? (card.querySelector('.qthread')?.textContent || '') : '',
+        undo: !!(t && [...t.querySelectorAll('button')].some((x) => x.textContent === 'Undo')),
+        turn: c ? (c.querySelector('.qthread')?.textContent || '') : '',
+        boxShown: !!(form && !form.hidden),
       };
     }, target.id);
     if (!after.undo) note(where, 'the answer\'s toast carries no Undo');
     if (!/brAIn.*won't raise this again/.test(after.turn)) {
       note(where, `the card does not show what brAIn said (${after.turn || 'nothing'})`);
     }
+    if (after.boxShown) note(where, 'the box is still open after its answer landed');
     const sent = (await posts(page)).filter((x) => /\/respond$/.test(x.url));
     if (sent.length !== 1 || !/Task Manager/.test((sent[0].body || {}).text || '')) {
       note(where, `the press sent ${JSON.stringify(sent)}`);

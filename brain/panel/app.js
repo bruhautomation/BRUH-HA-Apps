@@ -6430,18 +6430,23 @@ function makeCase(row) {
 // "These buttons don't cover what needs to happen here … maybe the button
 // is like Respond and I just type one quick instruction or response to
 // brAIn and it either does that to fix it, write it to memory, or
-// whatever" — the owner. Under every card's buttons, a one-line box; what
-// is typed goes to `/api/case/<id>/respond`, which reads it the way Morph's
-// reply line is read (`server._morph_reply`): a fix is PLANNED with the
-// words as the change (Apply is still its own press), "it's off on
-// purpose, remember that" ends the card as Wrong with the reason, done, To
-// Do, snooze, or an answer in words. The answer is a held task on the
-// server, so the card polls; what brAIn said is the toast, with Undo when
-// an ending was taken, and the last turns stay on the card if it stays.
-// What is typed survives a repaint of Today (`respondDrafts`), and a reply
-// still being answered keeps its line through one (`respondPending`).
+// whatever" — the owner. Respond is the FIRST button in a card's answer
+// row, and the box it opens sits under the row: "I don't think I want the
+// enter text box all the time. The first button should be Respond, clicking
+// that opens the text box." What is typed goes to `/api/case/<id>/respond`,
+// which reads it the way Morph's reply line is read (`server._morph_reply`):
+// a fix is PLANNED with the words as the change (Apply is still its own
+// press), "it's off on purpose, remember that" ends the card as Wrong with
+// the reason, done, To Do, snooze, or an answer in words. The answer is a
+// held task on the server, so the card polls; what brAIn said is the toast,
+// with Undo when an ending was taken, and the last turns stay on the card.
+// What is typed survives a repaint of Today and the box closing
+// (`respondDrafts`, per case id, in memory), an open box stays open through
+// a repaint (`respondOpen`), and a reply still being answered keeps its
+// line through one (`respondPending`).
 const respondDrafts = {};
 const respondPending = {};
+const respondOpen = {};
 const RESPOND_POLL_MS = 1500;
 const RESPOND_WAIT_MS = 5 * 60 * 1000;
 
@@ -6468,7 +6473,7 @@ function addRespond(card, id, thread, btns) {
   input.type = "text";
   input.className = "qrespondin";
   input.maxLength = 500;
-  input.placeholder = "Respond to brAIn — a fix, a reason, a question";
+  input.placeholder = "A fix, a reason, a question";
   input.setAttribute("aria-label", "Respond to brAIn about this");
   input.setAttribute("enterkeyhint", "send");
   input.value = respondDrafts[id] || "";
@@ -6480,6 +6485,38 @@ function addRespond(card, id, thread, btns) {
   form.append(input, send);
   card.appendChild(form);
   if (respondPending[id]) form.appendChild(phaseLine("brAIn is reading that…"));
+
+  // The press that opens it: first in the answer row.
+  const open = el("button", "btn-secondary qrespondopen", "Respond");
+  open.type = "button";
+  open.dataset.verb = "respond";
+  const formId = `qrespond-${String(id).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  form.id = formId;
+  open.setAttribute("aria-controls", formId);
+  const row = btns && btns.actions;
+  if (row) row.insertBefore(open, row.firstChild);
+  else card.insertBefore(open, form);
+  if (btns) btns.push(open);
+  const show = (on, focus) => {
+    const visible = on || !!respondPending[id];
+    form.hidden = !visible;
+    open.setAttribute("aria-expanded", visible ? "true" : "false");
+    open.classList.toggle("on", visible);
+    if (on) respondOpen[id] = true; else delete respondOpen[id];
+    if (on && focus) input.focus();
+  };
+  show(!!respondOpen[id], false);
+  open.addEventListener("click", () => {
+    if (form.hidden) show(true, true);
+    else { show(false); open.focus(); }
+  });
+  form.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !respondPending[id]) {
+      ev.preventDefault();
+      show(false);
+      open.focus();
+    }
+  });
   input.addEventListener("input", () => {
     respondDrafts[id] = input.value;
     send.disabled = empty();
@@ -6502,6 +6539,7 @@ async function sendRespond(id, text, form, btns) {
     return;
   }
   delete respondDrafts[id];
+  delete respondOpen[id];
   respondPending[id] = Date.now();
   form.appendChild(phaseLine("brAIn is reading that…"));
   let result = null;

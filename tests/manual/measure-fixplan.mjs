@@ -57,8 +57,9 @@ const read = (page, id) => page.evaluate((i) => {
   if (!c) return null;
   const face = c.cloneNode(true);
   face.querySelectorAll('details').forEach((d) => d.remove());
+  // Respond (the line to brAIn) is on every card and is not an answer.
   const presses = [...c.querySelectorAll(':scope > .card-actions button')]
-    .filter((b) => !b.classList.contains('icon'));
+    .filter((b) => !b.classList.contains('icon') && !b.classList.contains('qrespondopen'));
   return {
     face: face.textContent,
     presses: presses.map((b) => b.textContent.trim()),
