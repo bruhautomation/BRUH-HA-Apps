@@ -658,7 +658,12 @@ async def fetch_hourly(session, ids: list[str], now: float,
                 "start_time": start.isoformat(),
                 "statistic_ids": batch,
                 "period": "hour",
-                "types": ["mean"],
+                # The hour's extremes ride with its mean in the same
+                # answer: a probe swinging to an impossible value and back
+                # inside one hour averages to a possible one, and only the
+                # minimum or maximum says the hour was broken
+                # (`_without_impossible`).
+                "types": ["mean", "min", "max"],
             }])
         except Exception as exc:  # noqa: BLE001 — a batch that failed is a
             # batch that failed; the rest of the house still gets a baseline.
@@ -678,7 +683,12 @@ async def fetch_hourly(session, ids: list[str], now: float,
                 if isinstance(start_ts, (int, float)) and start_ts > 1e11:
                     # Core reports milliseconds here and seconds elsewhere.
                     start_ts = start_ts / 1000.0
-                clean.append({"start": start_ts, "mean": row.get("mean")})
+                entry = {"start": start_ts, "mean": row.get("mean")}
+                for key in ("min", "max"):
+                    if isinstance(row.get(key), (int, float)) and not \
+                            isinstance(row.get(key), bool):
+                        entry[key] = row[key]
+                clean.append(entry)
             out[sid] = clean
     return out if answered else None
 
@@ -796,23 +806,30 @@ def _without_impossible(series: list, attrs: dict, eid: str,
     """
     if devices is None or not series:
         return series, None
-    kept, dropped = [], []
+    kept, dropped, bad = [], [], []
     for row in series:
-        value = row.get("mean") if isinstance(row, dict) else None
-        if (isinstance(value, (int, float)) and not isinstance(value, bool)
-                and devices.impossible_value(float(value), attrs, eid,
-                                             house=house)):
+        values = [row.get(k) for k in ("mean", "min", "max")] if isinstance(
+            row, dict) else []
+        wrong = [float(v) for v in values
+                 if isinstance(v, (int, float)) and not isinstance(v, bool)
+                 and devices.impossible_value(float(v), attrs, eid,
+                                              house=house)]
+        if wrong:
+            # An hour whose mean was possible and whose minimum was not is
+            # a broken hour all the same: the mean of 24 °C and −100 °C is
+            # a number nothing in the room ever read, and a week of them is
+            # what the recent-level figure would otherwise be built from.
             dropped.append(row)
+            bad.extend(wrong)
         else:
             kept.append(row)
     if not dropped:
         return series, None
     stamps = [r.get("start") for r in dropped
               if isinstance(r.get("start"), (int, float))]
-    means = [float(r["mean"]) for r in dropped]
     return kept, {"count": len(dropped),
-                  "lowest": round(min(means), 2),
-                  "highest": round(max(means), 2),
+                  "lowest": round(min(bad), 2),
+                  "highest": round(max(bad), 2),
                   "last": int(max(stamps)) if stamps else None}
 
 

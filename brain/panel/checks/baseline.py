@@ -26,7 +26,7 @@ import re
 import numfmt
 
 from . import chores, devices
-from ._util import House, domain_of, join_names, num, parse_ts
+from ._util import House, domain_of, join_names, num, parse_ts, when
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -113,8 +113,10 @@ DAILY_WORDS = frozenset({"today", "yesterday", "daily"})
 DEVICE_UNITS = frozenset({"Ω", "kΩ", "MΩ", "mΩ", "ohm", "ohms", "dBm"})
 # A part of a machine: a heat pump's coil, an evaporator, the air in its
 # ducts. Each swings with the machine's cycle, which is the machine working.
-MACHINE_WORDS = frozenset({"coil", "evaporator", "condenser"})
-MACHINE_PHRASES = ("supply air", "return air")
+MACHINE_WORDS = frozenset({"coil", "evaporator", "condenser", "refrigerant",
+                           "plenum", "duct", "ducts", "flue", "lineset"})
+MACHINE_PHRASES = ("supply air", "return air", "discharge air",
+                   "liquid line", "suction line", "air handler")
 
 
 def _name_words(house: House, eid: str, st: dict) -> list[list[str]]:
@@ -232,8 +234,20 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
     # machines those are.
     if chores.is_cycle_reading(attrs) and chores.cycling_machine(house, eid):
         return "a machine that runs in cycles"
+    # A printer's heater is hot every time it prints and at room
+    # temperature otherwise: an hour-of-the-week band is a judgement about
+    # when somebody prints. `base.heater_idle` reads the printer's own
+    # status instead, and files the one case that matters — hot while idle.
+    if devices.printer_heater(house, eid):
+        return "a printer's heater, judged by whether the printer is printing"
     if platform in PRINTER_PLATFORMS:
         return "a printer's job"
+    # A computer's processor or drive follows its load, not the hour of
+    # the house's week: 100 °C under a nightly backup is the machine
+    # working. Narrower than `dev.implausible`'s hot gate on purpose — a
+    # tank or a probe in a room is still a reading worth a band.
+    if devices.computer_temperature(house, eid):
+        return "a computer's own temperature, which follows its load"
     if str(attrs.get("device_class") or "") in SPAN_CLASSES:
         return "a span, not a quantity"
     if str(attrs.get("unit_of_measurement") or "").strip() in SPAN_UNITS:
@@ -671,7 +685,18 @@ def unusual(snap: dict, now: float) -> list[dict]:
     hits = []
     for eid, baseline in entities.items():
         st = house.states.get(eid)
-        if not st or not eligible(house, eid, st):
+        if not st:
+            continue
+        # Reading a value no sensor of its kind can read is
+        # `dev.implausible`'s, which files it as faulty; said on the trail
+        # as that, so "why was this not unusual" has the true answer.
+        if devices.out_of_range(st, eid, house.world, house):
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          "it is reading a value no sensor of its kind can "
+                          "read, so brAIn's impossible-readings check "
+                          "reports it as a faulty sensor", kind="claimed")
+            continue
+        if not eligible(house, eid, st):
             continue
         if not house.should_report(eid, "base.unusual"):
             continue
@@ -685,7 +710,15 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # `dev.implausible`'s, which files it once as faulty; its band was
         # built without those nights, but the morning after is the fault
         # still, not something added near it (#337).
-        if devices.recently_impossible(baseline, now):
+        attrs = st.get("attributes") or {}
+        if devices.recently_impossible(
+                baseline, now,
+                devices.bounds_for(attrs, eid, house.world, house)):
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          "it read values no sensor of its kind can read in "
+                          "the last few days, so brAIn's impossible-readings "
+                          "check reports it as a faulty sensor",
+                          kind="claimed")
             continue
         drift = baseline.get("trend") or {}
         if drift.get("consistent") and abs(
@@ -709,7 +742,6 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # Dry air beside the room's own dehumidifier is the machine
         # working. Below the band only: damp air beside a running one is
         # still worth a card.
-        attrs = st.get("attributes") or {}
         if (str(attrs.get("device_class") or "") == "humidity"
                 and value < found["median"]):
             machine = dehumidified(house, eid, now)
@@ -717,13 +749,14 @@ def unusual(snap: dict, now: float) -> list[dict]:
                 house.gave_up("base.unusual", [{"entity_id": eid}],
                               f"humidity below its usual range beside "
                               f"{machine}, which was running — that is the "
-                              "dehumidifier doing its job")
+                              "dehumidifier doing its job", kind="explained")
                 continue
         # A band that is mostly last month's weather: the reading sits
         # where the last week has been sitting against this same hour.
         shift = recent_level(baseline, found, measured_in)
         if shift:
-            house.gave_up("base.unusual", [{"entity_id": eid}], shift)
+            house.gave_up("base.unusual", [{"entity_id": eid}], shift,
+                          kind="drift")
             continue
         hits.append((abs(found["sigmas"]), eid, found, baseline))
 
@@ -745,7 +778,7 @@ def unusual(snap: dict, now: float) -> list[dict]:
         house.gave_up("base.unusual", [{"entity_id": h[1]} for h in seasonal],
                       "several sensors of the same kind moved the same "
                       "way at once — that is the season or the weather "
-                      "moving, not one device")
+                      "moving, not one device", kind="drift")
         hits = [h for h in hits if h not in seasonal]
     if len(hits) > MAX_ROWS:
         # Too many is the measurement being wrong, not the house. Said
@@ -782,6 +815,61 @@ def unusual(snap: dict, now: float) -> list[dict]:
                 + house.placed(eid)),
             "fix": unusual_fix(house, eid, house.states.get(eid) or {}),
             "severity": "info",
+            "fixable": False,
+            "entity_id": eid,
+        })
+    return out
+
+
+# --- a printer's heater, by whether the printer is printing -------------
+# A nozzle at 220 °C during a print and at room temperature an hour after
+# it is a printer working, and an hour-of-the-week band can only say when
+# somebody usually prints. What a homeowner wants to hear is the other
+# case — a heater still hot with nothing printing — and the printer's own
+# status says which case it is. A check of its own, rather than a branch of
+# `base.unusual`, so an answer given about the band ("normal while it
+# prints") is not read as an answer about this, and it is in
+# `corrections.NEVER_CHECKS` so no wide rule (the whole sensor, its room)
+# stands it down either: only an answer about the idle case does.
+# Long enough after a print for a nozzle and a bed to have cooled.
+HEATER_COOL_S = 45 * 60
+# Hot for a heater with nothing to heat: well above any room.
+HEATER_IDLE_HOT = {"°C": 50.0, "°F": 122.0, "K": 323.15}
+
+
+def heater_idle(snap: dict, now: float) -> list[dict]:
+    """A printer's heater still hot well after the printer went idle."""
+    house = House(snap)
+    out = []
+    for eid in sorted(house.states):
+        st = house.states.get(eid) or {}
+        if domain_of(eid) != "sensor" or not house.enabled(eid):
+            continue
+        if not devices.printer_heater(house, eid):
+            continue
+        attrs = st.get("attributes") or {}
+        unit = str(attrs.get("unit_of_measurement") or "")
+        bar = HEATER_IDLE_HOT.get(unit)
+        value = num(st.get("state"))
+        if bar is None or value is None or value < bar:
+            continue
+        state, since, status = chores.machine_status(house, eid)
+        if state != "idle" or since is None or now - since < HEATER_COOL_S:
+            continue
+        if not house.should_report(eid, "base.heater_idle"):
+            continue
+        word = str((house.states.get(status) or {}).get("state") or "")
+        out.append({
+            "text": f"{house.name(eid)} is hot while the printer is idle",
+            "detail": (f"{numfmt.quantity(value, unit)} now, and "
+                       f"{house.name(status)} has said “{word}” since "
+                       f"{when(since)}. A heater this hot with nothing "
+                       "printing is not cooling down."
+                       + house.placed(eid)),
+            "fix": ("Turn the heater off from the printer or its app, and "
+                    "look at what left it on — a print that ended early, "
+                    "or a temperature set by hand."),
+            "severity": "warning",
             "fixable": False,
             "entity_id": eid,
         })
@@ -825,6 +913,9 @@ CHECKS = [
      "needs": ("states", "registry", "baselines"), "run": unusual},
     {"id": "base.stale", "title": "Baselines no longer being measured",
      "needs": ("baselines",), "run": stale_baselines},
+    {"id": "base.heater_idle",
+     "title": "Printer heaters hot while the printer is idle",
+     "needs": ("states", "registry"), "run": heater_idle},
 ]
 
 __all__ = ["CHECKS"]

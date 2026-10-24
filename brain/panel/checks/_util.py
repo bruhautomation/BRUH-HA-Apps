@@ -547,19 +547,27 @@ class House:
                                if rule.get("until") else "")})
         return False
 
-    def gave_up(self, check_id: str, rows: list[dict], reason: str) -> None:
-        """A check that says nothing because it found too much. One line each.
+    def gave_up(self, check_id: str, rows: list[dict], reason: str,
+                kind: str = "cap") -> None:
+        """A check that says nothing about rows it found. One line each.
 
         Past a cap a check files nothing at all, on purpose — a dozen
         sensors frozen at once is a recorder purge, not a dozen broken
         sensors — and that is exactly the silence somebody later asks
         about. Each entity the check would have named gets a line on the
         decision trail with the sentence for why it went unsaid.
+
+        ``kind`` is the decision trail's word for WHY (`decision_trail.KINDS`):
+        ``cap`` only when a too-many-at-once limit fired, ``drift`` when the
+        reading was the season or the weather moving the band, ``claimed``
+        when another check reports the entity, ``explained`` when something
+        in the house accounts for it. One word for all of them told a person
+        a check had given up on a reading it had in fact explained.
         """
         for row in rows or ():
             if not isinstance(row, dict):
                 continue
-            self._note({"kind": "cap", "subject": str(row.get("entity_id") or ""),
+            self._note({"kind": kind, "subject": str(row.get("entity_id") or ""),
                         "check": check_id, "reason": reason,
                         "text": str(row.get("text") or "")})
 

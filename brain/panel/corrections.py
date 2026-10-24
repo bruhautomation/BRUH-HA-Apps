@@ -93,7 +93,12 @@ MAX_DAYS = 2 * 366
 NEVER_DOMAINS = frozenset({"lock", "alarm_control_panel"})
 NEVER_CLASSES = frozenset({"smoke", "gas", "carbon_monoxide", "moisture",
                            "safety"})
-NEVER_CHECKS = frozenset({"climate.freeze", "safety.tripped"})
+# `base.heater_idle` is here for a different reason from the other two: an
+# answer given about a printer heater's band ("normal while it prints") was
+# stored as a rule for the whole sensor, and that must not stand down the
+# one case the same person asked to hear about — a heater hot while idle.
+NEVER_CHECKS = frozenset({"climate.freeze", "safety.tripped",
+                          "base.heater_idle"})
 
 # Who files an offer, so the ending that answers it can tell it apart from
 # every other question on the feed (`server._end_finding`).
