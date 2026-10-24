@@ -783,6 +783,10 @@ Answer with ONE JSON object and nothing else. What it means:
   own words. Say what an automation does in plain words ("it turns the
   fan back on while the room is still warm"), never its mechanics
   ("re-entered the control branch", "for: duration").
+- No internals in what a person reads: no trace step paths
+  ("action/0/choose/1"; say what the step does, "when it turned on the
+  hall light"), no raw state tokens (not_home is "away", finish is
+  "finished"), no MAC or IP addresses, no protocol names (ARP, mDNS).
 - TIMES are in the house's local time, the way every other screen shows
   them ("06:00", "since 14:10 yesterday") — never "UTC", never an ISO
   stamp with a Z.

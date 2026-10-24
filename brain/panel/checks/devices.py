@@ -1309,7 +1309,7 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
         "detail": counted_names([n for _, n in rows])
                   + f". The quietest is {first}, last seen "
                     f"{when(max(0.0, now - longest * 86400))} "
-                    f"({int(longest)} days ago).",
+                    f"({numfmt.count(int(longest), 'day')} ago).",
         "fix": "A battery device this quiet has usually run its battery "
                "down or dropped off the mesh — press its button to wake "
                "it. If it does not come back, re-pair it near the "

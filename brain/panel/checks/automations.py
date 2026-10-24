@@ -397,6 +397,99 @@ def _plain_error(house: House, error) -> tuple[str, list[str]]:
 
 _ERROR_ID_RE = re.compile(r"(?<![\w.])([a-z_]+)\.([a-z0-9_]+)(?![\w])")
 
+# A trace names the step it stopped at by its path in the config
+# ("action/0/choose/1/sequence/0"), which is a key a person never sees.
+# The step is found by walking that path and is named by what it does.
+_PLURAL_KEY = {"action": "actions", "actions": "action",
+               "trigger": "triggers", "triggers": "trigger",
+               "condition": "conditions", "conditions": "condition"}
+_SERVICE_VERBS = {"turn_on": "turn on", "turn_off": "turn off",
+                  "toggle": "toggle", "open_cover": "open",
+                  "close_cover": "close", "lock": "lock", "unlock": "unlock",
+                  "set_temperature": "set the temperature of",
+                  "set_hvac_mode": "set the mode of", "play_media": "play on",
+                  "select_option": "set", "set_value": "set",
+                  "press": "press", "reload": "reload"}
+
+
+def _config_for(house: House, item: dict) -> dict | None:
+    key = str(item.get("key") or "")
+    domain, _, ident = key.partition(".")
+    if domain == "automation":
+        for cfg in house.snap.get("automations") or []:
+            if isinstance(cfg, dict) and str(cfg.get("id")) == ident:
+                return cfg
+    elif domain == "script":
+        cfg = (house.snap.get("scripts") or {}).get(ident)
+        if isinstance(cfg, dict):
+            return cfg
+    return None
+
+
+def _walk_step(cfg, path: str):
+    """The node a trace's step path names, or None where the config does
+    not hold it (edited since, or a path this cannot read)."""
+    node = cfg
+    for part in [p for p in str(path or "").split("/") if p]:
+        if part.isdigit():
+            i = int(part)
+            if isinstance(node, list) and i < len(node):
+                node = node[i]
+            elif isinstance(node, dict) and i == 0:
+                continue  # a single step written without its list
+            else:
+                return None
+        elif isinstance(node, dict):
+            if part in node:
+                node = node[part]
+            elif _PLURAL_KEY.get(part) in node:
+                node = node[_PLURAL_KEY[part]]
+            else:
+                return None
+        else:
+            return None
+    return node
+
+
+def _targets_of(house: House, step: dict) -> list[str]:
+    ids: list[str] = []
+    for holder in (step.get("target"), step.get("data"), step):
+        if isinstance(holder, dict):
+            ids += [e for e in listify(holder.get("entity_id"))
+                    if isinstance(e, str) and "." in e]
+    return [house.label(e) for e in dict.fromkeys(ids)]
+
+
+def step_words(house: House, item: dict, path: str) -> str:
+    """The step a run stopped at, as what it does ("when it tried to turn
+    on Kitchen"), or "" when the step cannot be found or said."""
+    node = _walk_step(_config_for(house, item), path)
+    if not isinstance(node, dict):
+        return ""
+    service = str(node.get("action") or node.get("service") or "")
+    if "." in service:
+        domain, _, verb = service.partition(".")
+        names = _targets_of(house, node)
+        if domain == "notify":
+            return "when it tried to send a notification"
+        if domain in ("script", "scene") and not names:
+            return f"when it tried to run the {domain} “{verb.replace('_', ' ')}”"
+        words = _SERVICE_VERBS.get(verb, verb.replace("_", " "))
+        if names:
+            return f"when it tried to {words} {join_names(names, limit=3)}"
+        return f"when it tried to {words} ({domain.replace('_', ' ')})"
+    if "delay" in node or "wait_template" in node or "wait_for_trigger" in node:
+        return "while it was waiting"
+    if "choose" in node or "if" in node:
+        return "while it was choosing what to do"
+    if "condition" in node:
+        return "while it was checking a condition"
+    if "scene" in node:
+        return "when it tried to set a scene"
+    if "event" in node:
+        return "when it tried to fire an event"
+    return ""
+
 
 def _error_key(error) -> str:
     """Two errors are one root cause when they say the same thing: case,
@@ -478,13 +571,13 @@ def trace_error(snap: dict, now: float) -> list[dict]:
             item, rows, last, failed = (f["item"], f["rows"], f["last"],
                                         f["failed"])
             error, ids = _plain_error(house, last.get("error"))
-            step = str(last.get("last_step") or "")
+            step = step_words(house, item, last.get("last_step"))
             tally = (f" {failed} of its last {len(rows)} runs ended in an "
                      "error." if len(rows) > 1 else "")
             row = {
                 "text": f"{_label_of(item)} failed the last time it ran",
                 "detail": (f"On {when(_trace_start(last))}"
-                           + (f", at step {step}" if step else "")
+                           + (f", {step}" if step else "")
                            + (f": {error[:300].rstrip('.')}." if error else
                               ": the run ended in an error.")
                            + tally),

@@ -156,6 +156,34 @@ class TestARowIsStoredPlain(StoreCase):
         self.assertEqual(row["text"], "brAIn lost switch.attic_fan")
 
 
+class TestRawInternalsInModelText(unittest.TestCase):
+    """The same internals a check may not show, in what a model wrote."""
+
+    def test_raw_states_macs_paths_and_protocols_come_out(self):
+        for said, kept, gone in (
+                ("The phone goes not_home at 05:20 most days.",
+                 "goes away at 05:20", "not_home"),
+                ("The hub (aa:bb:cc:dd:ee:ff) dropped off.",
+                 "The hub dropped off.", "aa:bb"),
+                ("It failed at step action/0/choose/1/sequence/0: timeout.",
+                 "at one of its steps", "action/0"),
+                ("None of them answers ARP from the gateway.",
+                 "answers network lookups", "ARP"),
+                ("It went from running to “finish” 1 hours ago.",
+                 "“finished” 1 hour ago", "“finish”"),
+                ("The thermostat sat in heat_cool all night.",
+                 "heat/cool", "heat_cool")):
+            with self.subTest(said=said):
+                out = house_words.plain(said)
+                self.assertIn(kept, out)
+                self.assertNotIn(gone, out)
+
+    def test_ordinary_words_are_left_alone(self):
+        for said in ("It finished at 14:10.", "Nobody was home.",
+                     "Version 2026.10.1 is waiting.", "It ran 1 hour."):
+            self.assertEqual(house_words.plain(said), said)
+
+
 class TestTheContractSaysSo(unittest.TestCase):
     def test_the_investigation_names_local_time_brain_and_plain_automations(self):
         system = resident.INVESTIGATE_SYSTEM
@@ -163,6 +191,12 @@ class TestTheContractSaysSo(unittest.TestCase):
         self.assertIn('never "UTC"', system)
         self.assertIn('Call the add-on "brAIn"', system)
         self.assertIn("what an automation does in plain words", system)
+
+    def test_the_investigation_names_no_internals(self):
+        system = resident.INVESTIGATE_SYSTEM
+        for phrase in ("trace step paths", "raw state tokens",
+                       "IP addresses", "protocol names"):
+            self.assertIn(phrase, system)
 
 
 if __name__ == "__main__":

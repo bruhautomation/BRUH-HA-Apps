@@ -26,7 +26,8 @@ import re
 import numfmt
 
 from . import chores, devices
-from ._util import House, domain_of, join_names, num, parse_ts, when
+from ._util import (House, domain_of, join_names, num, parse_ts, state_words,
+                    when)
 
 # Six spreads. On ordinary data a MAD is about 0.67 of a standard
 # deviation, so this is roughly four sigma — rare enough that a house
@@ -858,7 +859,7 @@ def heater_idle(snap: dict, now: float) -> list[dict]:
             continue
         if not house.should_report(eid, "base.heater_idle"):
             continue
-        word = str((house.states.get(status) or {}).get("state") or "")
+        word = state_words((house.states.get(status) or {}).get("state") or "")
         out.append({
             "text": f"{house.name(eid)} is hot while the printer is idle",
             "detail": (f"{numfmt.quantity(value, unit)} now, and "
