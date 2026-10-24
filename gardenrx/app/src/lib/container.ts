@@ -50,12 +50,16 @@ export function containerNoun(form: ProductForm, count = 1): string {
  */
 export function parseSize(priceSize: string | null): { size: number | null; unit: string } {
   if (!priceSize) return { size: null, unit: 'fl oz' };
+  // A label is a few words; anything longer is not one, and capping it (and
+  // the digit runs below) keeps a crafted value from making the match slow,
+  // now that a Home Assistant service can hand this a string.
+  priceSize = priceSize.slice(0, 120);
   // Longer tokens first + word boundary so "gallon" isn't matched as "g" (grams).
-  const m = priceSize.match(/(\d+(?:\.\d+)?)\s*(fl\s*oz|gallon|gal|lb|oz|ml|g)\b/i);
+  const m = priceSize.match(/(\d{1,7}(?:\.\d{1,4})?)\s{0,3}(fl\s{0,3}oz|gallon|gal|lb|oz|ml|g)\b/i);
   if (!m) return { size: null, unit: 'fl oz' };
   const size = parseFloat(m[1]);
   const raw = m[2].toLowerCase().replace(/\s+/g, ' ');
-  const liquid = /concentrate|fl\s*oz|gal|ml/i.test(priceSize);
+  const liquid = /concentrate|fl\s{0,3}oz|gal|ml/i.test(priceSize);
   const unit =
     raw === 'ml'
       ? 'mL'
