@@ -1380,6 +1380,70 @@
           "description": "Mark each user whose sign-ins have not been used for this many days (or ever) as unused."
         }
       }
+    },
+    "list_backups": {
+      "name": "List backups",
+      "description": "Every backup Home Assistant knows about, newest first, with its name, date, size, where it is kept, and whether it was automatic, partial or password-protected. Needs Home Assistant 2025.1 or later."
+    },
+    "delete_backups": {
+      "name": "Delete backups",
+      "description": "Delete the backups a filter picks — by id, age, name or kind — keeping the newest of them if asked. Previews by default; set dry_run off to delete. A call with no filter, or one that would leave no backup at all, is refused.",
+      "fields": {
+        "backup_id": {
+          "name": "Backup IDs",
+          "description": "Exactly these backups, as list_backups shows them."
+        },
+        "older_than_days": {
+          "name": "Older than (days)",
+          "description": "Only backups made more than this many days ago."
+        },
+        "name_contains": {
+          "name": "Name contains",
+          "description": "Only backups whose name contains this (not case-sensitive)."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "Only automatic, manual, full or partial backups."
+        },
+        "keep_newest": {
+          "name": "Keep newest",
+          "description": "Of the backups the filter picks, keep this many of the newest."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report what would be deleted."
+        }
+      }
+    },
+    "create_backup": {
+      "name": "Create backup",
+      "description": "Make a backup now — full, or partial on Home Assistant OS and Supervised — through the Supervisor where there is one, otherwise the backup integration. Waits until it is made.",
+      "fields": {
+        "partial": {
+          "name": "Partial",
+          "description": "Back up only what is named below instead of everything (needs the Supervisor)."
+        },
+        "name": {
+          "name": "Name",
+          "description": "A name for the backup (Supervisor only)."
+        },
+        "password": {
+          "name": "Password",
+          "description": "Protect the backup with this password (Supervisor only)."
+        },
+        "homeassistant": {
+          "name": "Home Assistant",
+          "description": "In a partial backup, include Home Assistant's own configuration."
+        },
+        "addons": {
+          "name": "Add-ons",
+          "description": "In a partial backup, the add-on slugs to include."
+        },
+        "folders": {
+          "name": "Folders",
+          "description": "In a partial backup, the folders to include (share, media, ssl, addons/local)."
+        }
+      }
     }
   },
   "issues": {

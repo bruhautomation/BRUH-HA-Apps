@@ -1837,3 +1837,98 @@ list_users:
           min: 1
           max: 3650
           mode: box
+list_backups:
+  name: List backups
+  description: Every backup Home Assistant knows about, newest first, with its name, date, size, where
+    it is kept, and whether it was automatic, partial or password-protected. Needs Home Assistant 2025.1
+    or later.
+delete_backups:
+  name: Delete backups
+  description: Delete the backups a filter picks — by id, age, name or kind — keeping the newest of them
+    if asked. Previews by default; set dry_run off to delete. A call with no filter, or one that would
+    leave no backup at all, is refused.
+  fields:
+    backup_id:
+      name: Backup IDs
+      description: Exactly these backups, as list_backups shows them.
+      selector:
+        text:
+          multiple: true
+    older_than_days:
+      name: Older than (days)
+      description: Only backups made more than this many days ago.
+      selector:
+        number:
+          min: 0
+          max: 3650
+          mode: box
+    name_contains:
+      name: Name contains
+      description: Only backups whose name contains this (not case-sensitive).
+      selector:
+        text: {}
+    kind:
+      name: Kind
+      description: Only automatic, manual, full or partial backups.
+      selector:
+        select:
+          options:
+          - automatic
+          - manual
+          - full
+          - partial
+    keep_newest:
+      name: Keep newest
+      description: Of the backups the filter picks, keep this many of the newest.
+      selector:
+        number:
+          min: 0
+          max: 100
+          mode: box
+      default: 0
+    dry_run:
+      name: Dry run
+      description: When on (the default), only report what would be deleted.
+      selector:
+        boolean: {}
+      default: true
+create_backup:
+  name: Create backup
+  description: Make a backup now — full, or partial on Home Assistant OS and Supervised — through the
+    Supervisor where there is one, otherwise the backup integration. Waits until it is made.
+  fields:
+    partial:
+      name: Partial
+      description: Back up only what is named below instead of everything (needs the Supervisor).
+      selector:
+        boolean: {}
+      default: false
+    name:
+      name: Name
+      description: A name for the backup (Supervisor only).
+      selector:
+        text: {}
+    password:
+      name: Password
+      description: Protect the backup with this password (Supervisor only).
+      selector:
+        text:
+          type: password
+    homeassistant:
+      name: Home Assistant
+      description: In a partial backup, include Home Assistant's own configuration.
+      selector:
+        boolean: {}
+      default: true
+    addons:
+      name: Add-ons
+      description: In a partial backup, the add-on slugs to include.
+      selector:
+        text:
+          multiple: true
+    folders:
+      name: Folders
+      description: In a partial backup, the folders to include (share, media, ssl, addons/local).
+      selector:
+        text:
+          multiple: true

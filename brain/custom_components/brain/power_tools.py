@@ -196,8 +196,11 @@ async def _create_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"area_id": entry.id}
 
 
-def _dry_run(call: ServiceCall) -> bool:
-    return bool(call.data.get("dry_run", False))
+def _dry_run(call: ServiceCall, default: bool = False) -> bool:
+    """The call's dry_run, with the default its schema declares — read here
+    too, so a service whose preview is the default stays a preview however
+    the call reached the handler."""
+    return bool(call.data.get("dry_run", default))
 
 
 async def _delete_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -2530,6 +2533,240 @@ async def _list_users(hass: HomeAssistant, call: ServiceCall) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Backups
+# ---------------------------------------------------------------------------
+
+
+def _backup_manager(hass: HomeAssistant):
+    """Home Assistant's backup manager (core 2025.1+), or None."""
+    manager = (getattr(hass, "data", None) or {}).get("backup")
+    if manager is None or not hasattr(manager, "async_get_backups"):
+        return None
+    return manager
+
+
+def _backup_field(backup, name, default=None):
+    if isinstance(backup, dict):
+        return backup.get(name, default)
+    return getattr(backup, name, default)
+
+
+def _backup_row(backup) -> dict:
+    """One backup in words a caller can filter on, from either the 2025
+    `ManagerBackup` shape or the older `Backup` one."""
+    import datetime as _dt
+
+    backup_id = _backup_field(backup, "backup_id") or _backup_field(backup, "slug")
+    date = _backup_field(backup, "date")
+    if isinstance(date, str):
+        try:
+            parsed = _dt.datetime.fromisoformat(date.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+    else:
+        parsed = date if isinstance(date, _dt.datetime) else None
+    if parsed is not None and parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    agents = _backup_field(backup, "agents") or {}
+    sizes = [_backup_field(a, "size") for a in agents.values()] if isinstance(agents, dict) else []
+    size = _backup_field(backup, "size")
+    if size is None and sizes:
+        size = max((x for x in sizes if isinstance(x, (int, float))), default=None)
+    extra = _backup_field(backup, "extra_metadata") or {}
+    automatic = _backup_field(backup, "with_automatic_settings")
+    if automatic is None and isinstance(extra, dict):
+        automatic = extra.get("with_automatic_settings")
+    database = _backup_field(backup, "database_included")
+    homeassistant = _backup_field(backup, "homeassistant_included")
+    partial = database is False or homeassistant is False
+    return {
+        "backup_id": backup_id,
+        "name": _backup_field(backup, "name"),
+        "date": parsed.isoformat() if parsed else (str(date) if date else None),
+        "size": size,
+        "automatic": bool(automatic),
+        "partial": bool(partial),
+        "protected": bool(_backup_field(backup, "protected", False)) or any(
+            bool(_backup_field(a, "protected", False))
+            for a in (agents.values() if isinstance(agents, dict) else [])),
+        "locations": sorted(agents) if isinstance(agents, dict) else [],
+        "_when": parsed,
+    }
+
+
+async def _backup_rows(hass: HomeAssistant) -> tuple[list[dict], list[str]]:
+    manager = _backup_manager(hass)
+    if manager is None:
+        raise HomeAssistantError(
+            "This Home Assistant has no backup manager brAIn can read "
+            "(Home Assistant 2025.1 or later is needed to list backups).")
+    answer = await manager.async_get_backups()
+    errors: list[str] = []
+    if isinstance(answer, tuple):
+        backups, agent_errors = answer[0], (answer[1] if len(answer) > 1 else {})
+        errors = [f"{agent}: {err}" for agent, err in (agent_errors or {}).items()]
+    else:
+        backups = answer
+    values = backups.values() if isinstance(backups, dict) else backups
+    rows = [_backup_row(b) for b in values]
+    rows.sort(key=lambda r: _sortable(r["_when"]), reverse=True)
+    return rows, errors
+
+
+def _public(rows: list[dict]) -> list[dict]:
+    return [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+
+
+async def _list_backups(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    rows, errors = await _backup_rows(hass)
+    result: dict[str, Any] = {"backups": _public(rows), "count": len(rows)}
+    if errors:
+        result["unreadable_locations"] = errors
+    return result
+
+
+async def _delete_backups(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete the backups a filter picks, newest kept, previewed by default.
+
+    A filter is required — a call that names nothing would match every
+    backup — and the last backup is never deleted: somebody pruning old
+    ones is never asking to be left with none."""
+    import datetime as _dt
+
+    ids = call.data.get("backup_id")
+    ids = [ids] if isinstance(ids, str) else list(ids or [])
+    older = call.data.get("older_than_days")
+    contains = str(call.data.get("name_contains") or "").strip().casefold()
+    kind = str(call.data.get("kind") or "").strip().lower()
+    keep = int(call.data.get("keep_newest") or 0)
+    if kind and kind not in ("automatic", "manual", "full", "partial"):
+        raise ServiceValidationError(
+            f"kind must be automatic, manual, full or partial; got {kind!r}.")
+    if not (ids or older is not None or contains or kind):
+        raise ServiceValidationError(
+            "Say which backups: backup_id, older_than_days, name_contains or "
+            "kind. With none of them every backup would match.")
+    if keep < 0:
+        raise ServiceValidationError("keep_newest cannot be negative.")
+    rows, errors = await _backup_rows(hass)
+    known = {r["backup_id"] for r in rows}
+    unknown = [i for i in ids if i not in known]
+    if unknown:
+        raise ServiceValidationError(
+            "backup_id: no backup has the id " + ", ".join(unknown)
+            + "; list_backups shows them.")
+    cutoff = None
+    if older is not None:
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=float(older))
+    matched = []
+    for row in rows:  # newest first
+        if ids and row["backup_id"] not in ids:
+            continue
+        if cutoff is not None and (row["_when"] is None or row["_when"] >= cutoff):
+            continue
+        if contains and contains not in str(row["name"] or "").casefold():
+            continue
+        if kind == "automatic" and not row["automatic"]:
+            continue
+        if kind == "manual" and row["automatic"]:
+            continue
+        if kind == "full" and row["partial"]:
+            continue
+        if kind == "partial" and not row["partial"]:
+            continue
+        matched.append(row)
+    kept = matched[:keep]
+    doomed = matched[keep:]
+    if rows and len(doomed) == len(rows):
+        raise ServiceValidationError(
+            "That would delete every backup this Home Assistant has. Set "
+            "keep_newest to keep at least one.")
+    result: dict[str, Any] = {
+        "dry_run": _dry_run(call, True),
+        "delete": _public(doomed),
+        "kept_by_keep_newest": _public(kept),
+        "remaining": len(rows) - len(doomed),
+    }
+    if errors:
+        result["unreadable_locations"] = errors
+    if _dry_run(call, True):
+        return result
+    manager = _backup_manager(hass)
+    failed = []
+    for row in doomed:
+        try:
+            answer = await manager.async_delete_backup(row["backup_id"])
+        except Exception as err:  # noqa: BLE001 — report each, carry on
+            failed.append({"backup_id": row["backup_id"], "error": str(err)})
+            continue
+        if isinstance(answer, dict) and answer:
+            failed.append({"backup_id": row["backup_id"], "error": "; ".join(
+                f"{agent}: {err}" for agent, err in answer.items())})
+    result["failed"] = failed
+    result["deleted"] = len(doomed) - len(failed)
+    return result
+
+
+async def _create_backup(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Make a backup through the service this Home Assistant has: the
+    Supervisor's (full or partial) where there is one, else the backup
+    integration's own."""
+    partial = bool(call.data.get("partial", False))
+    name = call.data.get("name")
+    password = call.data.get("password")
+    addons = call.data.get("addons") or []
+    folders = call.data.get("folders") or []
+    include_ha = bool(call.data.get("homeassistant", True))
+    has = hass.services.has_service
+    if partial:
+        if not has("hassio", "backup_partial"):
+            raise ServiceValidationError(
+                "A partial backup needs the Supervisor (Home Assistant OS or "
+                "Supervised); this Home Assistant can only make a full one.")
+        if not (addons or folders or include_ha):
+            raise ServiceValidationError(
+                "A partial backup has to include something: homeassistant, "
+                "addons or folders.")
+        domain, service = "hassio", "backup_partial"
+        data: dict[str, Any] = {"homeassistant": include_ha}
+        if addons:
+            data["addons"] = list(addons)
+        if folders:
+            data["folders"] = list(folders)
+    elif has("hassio", "backup_full"):
+        domain, service, data = "hassio", "backup_full", {}
+    elif has("backup", "create_automatic"):
+        if name or password:
+            raise ServiceValidationError(
+                "Without the Supervisor a backup takes the name and password "
+                "set under Settings → System → Backups; leave name and "
+                "password out.")
+        domain, service, data = "backup", "create_automatic", {}
+    elif has("backup", "create"):
+        if name or password:
+            raise ServiceValidationError(
+                "This Home Assistant's backup service takes no name or "
+                "password; leave them out.")
+        domain, service, data = "backup", "create", {}
+    else:
+        raise HomeAssistantError(
+            "No backup service is loaded on this Home Assistant (neither the "
+            "Supervisor's nor the backup integration's).")
+    if domain == "hassio":
+        if name:
+            data["name"] = str(name)
+        if password:
+            data["password"] = str(password)
+    answer = await hass.services.async_call(domain, service, data, blocking=True)
+    result: dict[str, Any] = {"service": f"{domain}.{service}", "partial": partial}
+    if name:
+        result["name"] = name
+    if isinstance(answer, dict) and answer:
+        result["answer"] = answer
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Diagnostics
 # ---------------------------------------------------------------------------
 
@@ -3402,6 +3639,24 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("list_users", _list_users, {
         vol.Optional("include_system", default=False): cv.boolean,
         vol.Optional("unused_for_days"): vol.Coerce(float),
+    }, has_response=True),
+    # Backups
+    PowerTool("list_backups", _list_backups, {}, has_response=True),
+    PowerTool("delete_backups", _delete_backups, {
+        vol.Optional("backup_id"): _STR_LIST,
+        vol.Optional("older_than_days"): vol.Coerce(float),
+        vol.Optional("name_contains"): cv.string,
+        vol.Optional("kind"): cv.string,
+        vol.Optional("keep_newest", default=0): vol.Coerce(int),
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("create_backup", _create_backup, {
+        vol.Optional("partial", default=False): cv.boolean,
+        vol.Optional("name"): cv.string,
+        vol.Optional("password"): cv.string,
+        vol.Optional("homeassistant", default=True): cv.boolean,
+        vol.Optional("addons"): _STR_LIST,
+        vol.Optional("folders"): _STR_LIST,
     }, has_response=True),
     # Diagnostics
     PowerTool("find_orphaned_references", _find_orphaned_references, {

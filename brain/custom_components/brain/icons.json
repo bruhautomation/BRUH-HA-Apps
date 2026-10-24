@@ -239,6 +239,15 @@
     },
     "list_users": {
       "service": "mdi:account-multiple-outline"
+    },
+    "list_backups": {
+      "service": "mdi:archive-search-outline"
+    },
+    "delete_backups": {
+      "service": "mdi:archive-remove-outline"
+    },
+    "create_backup": {
+      "service": "mdi:archive-plus-outline"
     }
   }
 }
