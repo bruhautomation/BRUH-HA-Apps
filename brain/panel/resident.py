@@ -830,7 +830,14 @@ Rules that matter more than anything about style:
   ids. Name the device and the time instead.
 - Before saying a device has nothing behind it, read what the prompt says
   it is USED BY and what brAIn knows about it: a plug that runs the
-  crawl-space fan is the crawl-space fan."""
+  crawl-space fan is the crawl-space fan.
+- Before claiming a device should have acted (run, turned on, turned off,
+  stopped), find what switches it: the automations whose actions target
+  it — the prompt lists the ones brAIn knows, and the related-items and
+  automation-config tools find the rest — and judge it by the sensor and
+  threshold THAT automation watches, not a sensor that only shares its
+  room. A unit that stayed off while its own trigger never crossed its
+  threshold is working."""
 
 # The part that applies only when the run was sent a ROW brAIn filed
 # (`refines=`): rewriting it in place, or holding it back. It used to sit
@@ -901,7 +908,7 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
                        prior_case: dict | None = None,
                        now_line: str = "", examples=None,
                        situation_line: str = "", used_by=None,
-                       camera_line: str = "") -> str:
+                       camera_line: str = "", controlled_by=None) -> str:
     """The prompt for one investigation.
 
     One signal, not a batch: the whole point of the tier is that this run
@@ -983,6 +990,15 @@ def investigate_prompt(signal: dict, memory_excerpt: str = "",
         parts.append("WHAT USES THESE DEVICES — automations and scripts "
                      "that name them, so whatever stops when one fails:")
         parts += [f"- {row}" for row in used]
+        parts.append("")
+    switched = _rows(controlled_by)
+    if switched:
+        parts.append("WHAT SWITCHES THESE DEVICES — the automations whose "
+                     "actions act on them, with the sensor and threshold "
+                     "each one watches. Judge whether a device should have "
+                     "run against these, not against another sensor in the "
+                     "same room:")
+        parts += [f"- {row}" for row in switched]
         parts.append("")
     if house_block.strip():
         parts.append("WHAT BRAIN HAS MEASURED:\n" + house_block.strip() + "\n")
