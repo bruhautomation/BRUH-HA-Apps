@@ -2141,6 +2141,7 @@ async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
                 f"Refusing to delete owner account: {user.name or user_id}"
             )
         users.append(user)
+    await _guard_admins(hass, users, "delete")
     result = {
         "dry_run": _dry_run(call),
         "users": [{"user_id": u.id, "name": u.name} for u in users],
@@ -2340,34 +2341,192 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | N
 # ---------------------------------------------------------------------------
 
 
-async def _set_user_active(
-    hass: HomeAssistant, call: ServiceCall, *, active: bool
-) -> None:
+# Core's group ids (homeassistant/auth/const.py), spelled here so a core
+# whose auth package moves cannot take the vocabulary with it.
+USER_GROUPS = {
+    "admin": "system-admin",
+    "user": "system-users",
+    "read_only": "system-read-only",
+}
+
+
+def _group_ids(user) -> list[str]:
+    return [str(getattr(g, "id", g)) for g in (getattr(user, "groups", None) or [])]
+
+
+def _administers(user) -> bool:
+    if getattr(user, "is_owner", False):
+        return True
+    is_admin = getattr(user, "is_admin", None)
+    if isinstance(is_admin, bool):
+        return is_admin
+    return USER_GROUPS["admin"] in _group_ids(user)
+
+
+async def _guard_admins(hass: HomeAssistant, targets: list, action: str) -> None:
+    """Refuse a demotion, deactivation or deletion that would leave nobody
+    able to administer this Home Assistant. The owner and system users are
+    refused one by one before this is asked."""
+    leaving = {u.id for u in targets if _administers(u)}
+    if not leaving:
+        return
+    users = await hass.auth.async_get_users()
+    left = [u for u in users
+            if u.id not in leaving and _administers(u)
+            and getattr(u, "is_active", True)
+            and not getattr(u, "system_generated", False)]
+    if not left:
+        names = ", ".join(u.name or u.id for u in targets if u.id in leaving)
+        raise ServiceValidationError(
+            f"Refusing to {action} {names}: nobody else active could "
+            "administer Home Assistant afterwards. Make another user an "
+            "admin first.")
+
+
+async def _users_named(hass: HomeAssistant, ids, verb: str) -> list:
     users = []
-    for user_id in call.data["user_id"]:
+    for user_id in ids:
         user = await hass.auth.async_get_user(user_id)
         if user is None:
-            raise ServiceValidationError(f"User not found: {user_id}")
+            raise ServiceValidationError(
+                f"user_id: no user has the id {user_id}; list_users shows them.")
         if user.system_generated:
             raise ServiceValidationError(
-                f"Cannot modify a system-generated user: {user_id}"
+                f"Cannot {verb} a system-generated user: {user.name or user_id}"
             )
-        # Guard Spook doesn't have: an owner can never be locked out.
-        if not active and user.is_owner:
+        if user.is_owner:
             raise ServiceValidationError(
-                f"Refusing to disable owner account: {user.name or user_id}"
+                f"Refusing to {verb} the owner account: {user.name or user_id}"
             )
         users.append(user)
+    return users
+
+
+async def _set_user_active(
+    hass: HomeAssistant, call: ServiceCall, *, active: bool
+) -> dict:
+    ids = call.data["user_id"]
+    ids = [ids] if isinstance(ids, str) else list(ids)
+    if active:
+        users = []
+        for user_id in ids:
+            user = await hass.auth.async_get_user(user_id)
+            if user is None:
+                raise ServiceValidationError(
+                    f"user_id: no user has the id {user_id}; list_users shows them.")
+            if user.system_generated:
+                raise ServiceValidationError(
+                    f"Cannot modify a system-generated user: {user_id}")
+            users.append(user)
+    else:
+        # Guard Spook doesn't have: an owner, and the last admin, can never
+        # be locked out.
+        users = await _users_named(hass, ids, "disable")
+        await _guard_admins(hass, users, "disable")
     for user in users:
         await hass.auth.async_update_user(user, is_active=active)
+    return {"active": active,
+            "users": [{"user_id": u.id, "name": u.name} for u in users]}
 
 
-async def _enable_user(hass: HomeAssistant, call: ServiceCall) -> None:
-    await _set_user_active(hass, call, active=True)
+async def _enable_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    return await _set_user_active(hass, call, active=True)
 
 
-async def _disable_user(hass: HomeAssistant, call: ServiceCall) -> None:
-    await _set_user_active(hass, call, active=False)
+async def _disable_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    return await _set_user_active(hass, call, active=False)
+
+
+async def _set_user_group(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Make a user an admin, an ordinary user or read-only — the group the
+    user dialog's Administrator switch writes (config/auth/update)."""
+    group = str(call.data.get("group") or "").strip().lower().replace("-", "_")
+    if group not in USER_GROUPS:
+        raise ServiceValidationError(
+            "group must be one of " + ", ".join(USER_GROUPS) + f"; got {group!r}.")
+    user_id = str(call.data.get("user_id") or "")
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise ServiceValidationError(
+            f"user_id: no user has the id {user_id}; list_users shows them.")
+    if user.system_generated:
+        raise ServiceValidationError(
+            f"Cannot change a system-generated user: {user.name or user_id}")
+    before = _group_ids(user)
+    if group != "admin":
+        if user.is_owner:
+            raise ServiceValidationError(
+                f"Refusing to change the owner's group: {user.name or user_id}. "
+                "The owner is always an administrator.")
+        await _guard_admins(hass, [user], "demote")
+    result = {"dry_run": _dry_run(call), "user_id": user.id, "name": user.name,
+              "groups_before": before, "groups": [USER_GROUPS[group]]}
+    if not _dry_run(call) and before != [USER_GROUPS[group]]:
+        await hass.auth.async_update_user(user, group_ids=[USER_GROUPS[group]])
+    return result
+
+
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _sortable(value) -> float:
+    stamp = getattr(value, "timestamp", None)
+    return stamp() if callable(stamp) else 0.0
+
+
+async def _list_users(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Every user with what proves whether they are used: their groups,
+    whether they are active, local-only or system, and when each of their
+    refresh tokens (a signed-in app, a browser, a long-lived token) was last
+    used. Token values are never read."""
+    import datetime as _dt
+
+    include_system = bool(call.data.get("include_system", False))
+    unused_days = call.data.get("unused_for_days")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    out = []
+    for user in await hass.auth.async_get_users():
+        if user.system_generated and not include_system:
+            continue
+        tokens = []
+        latest = None
+        for token in (getattr(user, "refresh_tokens", None) or {}).values():
+            used = getattr(token, "last_used_at", None)
+            tokens.append({
+                "client_name": getattr(token, "client_name", None)
+                or getattr(token, "client_id", None),
+                "type": str(getattr(token, "token_type", "") or ""),
+                "created_at": _iso(getattr(token, "created_at", None)),
+                "last_used_at": _iso(used),
+            })
+            if used is not None and (latest is None or _sortable(used) > _sortable(latest)):
+                latest = used
+        usernames = [
+            (getattr(c, "data", None) or {}).get("username")
+            for c in (getattr(user, "credentials", None) or [])]
+        row = {
+            "user_id": user.id,
+            "name": user.name,
+            "usernames": [u for u in usernames if u],
+            "groups": _group_ids(user),
+            "admin": _administers(user),
+            "owner": bool(user.is_owner),
+            "active": bool(getattr(user, "is_active", True)),
+            "local_only": bool(getattr(user, "local_only", False)),
+            "system_generated": bool(user.system_generated),
+            "last_used_at": _iso(latest),
+            "never_used": latest is None,
+            "refresh_tokens": tokens,
+        }
+        if unused_days is not None:
+            limit = now - _dt.timedelta(days=float(unused_days))
+            row["unused"] = latest is None or _sortable(latest) < limit.timestamp()
+        out.append(row)
+    return {"users": out, "count": len(out)}
 
 
 # ---------------------------------------------------------------------------
@@ -3231,10 +3390,19 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("enable_user", _enable_user, {
         vol.Required("user_id"): _STR_LIST,
-    }),
+    }, has_response=True),
     PowerTool("disable_user", _disable_user, {
         vol.Required("user_id"): _STR_LIST,
-    }),
+    }, has_response=True),
+    PowerTool("set_user_group", _set_user_group, {
+        vol.Required("user_id"): cv.string,
+        vol.Required("group"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("list_users", _list_users, {
+        vol.Optional("include_system", default=False): cv.boolean,
+        vol.Optional("unused_for_days"): vol.Coerce(float),
+    }, has_response=True),
     # Diagnostics
     PowerTool("find_orphaned_references", _find_orphaned_references, {
         vol.Optional("create_issue", default=False): cv.boolean,

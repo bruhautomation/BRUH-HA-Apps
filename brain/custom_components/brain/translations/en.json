@@ -919,7 +919,7 @@
     },
     "enable_user": {
       "name": "Enable user",
-      "description": "Re-enable one or more disabled Home Assistant user accounts.",
+      "description": "Re-enable one or more disabled Home Assistant user accounts. Returns the users enabled.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -929,7 +929,7 @@
     },
     "disable_user": {
       "name": "Disable user",
-      "description": "Disable one or more Home Assistant user accounts. Owner accounts and system-generated users are protected and cannot be disabled.",
+      "description": "Disable one or more Home Assistant user accounts. Owner accounts, system-generated users and the last remaining administrator are protected and cannot be disabled.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -1223,7 +1223,7 @@
     },
     "delete_user": {
       "name": "Delete user",
-      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts and system-generated users are protected and cannot be deleted. Set dry_run to preview the accounts that would be deleted.",
+      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts, system-generated users and the last remaining administrator are protected and cannot be deleted. Set dry_run to preview the accounts that would be deleted.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -1346,6 +1346,38 @@
         "unit_of_measurement": {
           "name": "Unit",
           "description": "The unit to show it in, e.g. °F or kWh. Only for sensors Home Assistant can convert."
+        }
+      }
+    },
+    "set_user_group": {
+      "name": "Set user group",
+      "description": "Make a Home Assistant user an administrator, an ordinary user or read-only. The owner, system users and the last remaining administrator are refused. Returns the groups before and after.",
+      "fields": {
+        "user_id": {
+          "name": "User ID",
+          "description": "The user's id, as list_users shows it."
+        },
+        "group": {
+          "name": "Group",
+          "description": "admin, user or read_only."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
+        }
+      }
+    },
+    "list_users": {
+      "name": "List users",
+      "description": "Every Home Assistant user with their groups, whether they are active, local-only or a system user, and when each of their sign-ins (apps, browsers, long-lived tokens) was last used, so an unused account can be shown to be unused. Token values are never returned.",
+      "fields": {
+        "include_system": {
+          "name": "Include system users",
+          "description": "Also list the users Home Assistant and add-ons create for themselves."
+        },
+        "unused_for_days": {
+          "name": "Unused for days",
+          "description": "Mark each user whose sign-ins have not been used for this many days (or ever) as unused."
         }
       }
     }

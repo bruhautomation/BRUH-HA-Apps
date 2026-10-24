@@ -233,6 +233,12 @@
     },
     "set_sensor_display": {
       "service": "mdi:decimal"
+    },
+    "set_user_group": {
+      "service": "mdi:account-key"
+    },
+    "list_users": {
+      "service": "mdi:account-multiple-outline"
     }
   }
 }
