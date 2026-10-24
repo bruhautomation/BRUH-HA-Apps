@@ -59,6 +59,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import automation_keys
 
 CONFIG_DIR = os.environ.get("BRAIN_CONFIG_DIR", "/config")
 
@@ -432,7 +433,12 @@ def entry_for(row: dict, now: float | None = None) -> dict:
     write-time fact, not part of what was proposed.
     """
     now = time.time() if now is None else now
-    config = row.get("config") or {}
+    # In Home Assistant's current words (`automation_keys`): a proposal
+    # stored before brAIn wrote them, or a model's answer in the old ones,
+    # is respelled here, on the way into the file. Only a NEW entry: an
+    # entry a person wrote is never respelled (`apply_edit` writes their
+    # config back as they had it).
+    config = automation_keys.modern(row.get("config") or {})
     # A config may name its own id, and an emergency playbook does:
     # `brain_playbook_smoke` says what it is when somebody opens the file
     # in six months, where `brain_1757000000000` says when it was
@@ -446,8 +452,8 @@ def entry_for(row: dict, now: float | None = None) -> dict:
         "alias": str(row.get("title") or "brAIn automation")[:255],
         "description": description_for(row, now),
     }
-    for key in ("trigger", "triggers", "condition", "conditions",
-                "action", "actions", "mode"):
+    for key in ("triggers", "trigger", "conditions", "condition",
+                "actions", "action", "mode"):
         if key in config:
             entry[key] = config[key]
     return entry

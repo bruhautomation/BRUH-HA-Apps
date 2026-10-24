@@ -58,6 +58,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import automation_keys
 import textclip
 
 STORE = Path(os.environ.get("BRAIN_PROPOSALS_FILE", "/data/proposals.json"))
@@ -103,7 +104,12 @@ def key_for(obj: dict) -> str:
     """
     config = obj.get("config")
     if config:
-        body = json.dumps(config, sort_keys=True, separators=(",", ":"))
+        # Over the pre-2024.10 spelling, which every stored key was taken
+        # over: brAIn now writes `triggers:`/`actions:`, and a hash that
+        # moved with the spelling would offer again every proposal somebody
+        # had already declined (`automation_keys.legacy`).
+        body = json.dumps(automation_keys.legacy(config), sort_keys=True,
+                          separators=(",", ":"))
     else:
         body = _normalise(str(obj.get("title") or ""))
     return hashlib.sha256(
