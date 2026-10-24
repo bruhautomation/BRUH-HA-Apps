@@ -488,7 +488,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "minecraft_command", "minecraft_server", "minecraft_addons",
     "print_label", "bright_show",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
-    "report_bug",
+    "report_bug", "note_personality_change",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -2342,6 +2342,17 @@ def report_bug(addon, title, what, evidence="", asked="", done_when="", ui=False
     return _panel_send("POST", "/api/devloop/report", {
         "addon": addon, "title": title, "what": what, "evidence": evidence,
         "asked": asked, "done_when": done_when, "ui": ui is True})
+
+
+def note_personality_change(text):
+    """Record one dated entry in the growth log of the household's
+    personality for brAIn (⚙ › Personality). Through the panel, which owns
+    the file; it changes nothing in the house, but it writes, so no
+    unattended run and no voice turn may call it."""
+    words = str(text or "").strip()
+    if not words:
+        return {"error": "say what changed about who brAIn is"}
+    return _panel_send("POST", "/api/personality/growth", {"text": words})
 
 
 # ---------------------------------------------------------------------------
@@ -7318,6 +7329,27 @@ TOOLS = [
         },
     },
     {
+        "name": "note_personality_change",
+        "description": (
+            "Record how brAIn's personality in this house has grown: one "
+            "dated line in the growth log the household reads in ⚙ › "
+            "Personality, which every later conversation is told. Use it when "
+            "the person, talking with you about who you are, settles a change "
+            "to how you speak or behave (\"be blunter\", \"stop calling me "
+            "sir\"), in one plain sentence about the change. Never for a fact "
+            "about the house (remember_fact is for those), and never on your "
+            "own initiative."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string",
+                         "description": "One sentence: what changed in how brAIn is"},
+            },
+            "required": ["text"],
+        },
+    },
+    {
         "name": "get_findings",
         "description": (
             "What brAIn has found wrong with this house and is waiting on the "
@@ -7702,6 +7734,7 @@ TOOL_IMPLEMENTATIONS = {
     "bruh_addon_status": "bruh_addon_status",
     "screenshot_panel": "screenshot_panel",
     "report_bug": "report_bug",
+    "note_personality_change": "note_personality_change",
     "get_health": "get_health",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
@@ -7787,6 +7820,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
     "bruh_addon_status", "report_bug", "screenshot_panel",
+    "note_personality_change",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

@@ -9,14 +9,17 @@
 // "Diagnostics › Developer": the owner's words were "really bulky, hard to
 // navigate sections, stuff is buried under collapsible sections".
 //
-// So ⚙ is a LIST of ten sections — Account, Model & usage, Permissions,
-// Notifications, Cameras & calendars, Memory, Diagnostics, Developer, Guide —
+// So ⚙ is a LIST of eleven sections — Account, Model & usage, Permissions,
+// Notifications, Cameras & calendars, Memory, Personality, Instructions,
+// Diagnostics, Developer, Guide (Personality moved here from Morph's own
+// Settings, because everybody uses brAIn and not everybody uses Morph) —
 // each row saying what it is set to now, beside the section in front on a
 // wide screen and as the page itself on a phone. The checks:
 //
 //   * the page's height at OPEN time is under a budget per width (the list
 //     on a phone, the list beside Account on a desktop).
-//   * there are exactly ten sections (Instructions after Memory), named and ordered as above, one row
+//   * there are exactly eleven sections (Personality and then Instructions
+//     after Memory), named and ordered as above, one row
 //     each on the list, every row clearing the touch floor and carrying a
 //     second line; the list's lines say what the weekly answers ARE at open
 //     time — signed in, the model, whether brAIn asks — with no press.
@@ -94,7 +97,10 @@ const MIN_TEXT = 16;
 // budget then was 1750/1400). The list opens at 774 on a phone and at the
 // viewport's own 900 beside Account on a desktop; the budgets leave room for
 // a font or a hairline to move and not for a section to come back flat.
-const MAX_SCROLL = { 390: 900, 768: 1000, 1200: 1000 };
+// The phone's list grew one row (~60px) when Personality moved in from
+// Morph (886 → 945 measured), so its budget moved by that one row and no
+// more; a section coming back flat is still hundreds of pixels over it.
+const MAX_SCROLL = { 390: 960, 768: 1000, 1200: 1000 };
 
 // The verbs a button in ⚙ may say. The doc's vocabulary, plus the few
 // labels it names for this dialog itself (Sign in again, Sign out, Edit,
@@ -123,6 +129,7 @@ const IDS = [
   'diagOvernightRun', 'diagAccess', 'diagAccessRun', 'setGuide',
   'setSearch', 'setSearchResults', 'versionChip', 'versionText',
   'whatsNewModal', 'whatsNewBody', 'whatsNewClose', 'whatsNewRestart',
+  'persName', 'persText', 'persSave', 'persAsk', 'persGrowth', 'setSumPersonality',
 ];
 
 // The sections, in order, and which one a wide page lands on the first
@@ -134,6 +141,7 @@ const SECTIONS = [
   { sec: 'notifications', name: 'Notifications', open: false },
   { sec: 'sources', name: 'Cameras & calendars', open: false },
   { sec: 'memory', name: 'Memory', open: false },
+  { sec: 'personality', name: 'Personality', open: false },
   { sec: 'instructions', name: 'Instructions', open: false },
   { sec: 'diagnostics', name: 'Diagnostics', open: false },
   { sec: 'developer', name: 'Developer', open: false },
@@ -156,7 +164,7 @@ const WEEKLY = [
 const DIAG_URLS = ['api/diagnostics', 'api/reports', 'api/doctor/deep',
                    'api/sre', 'api/access', 'api/knowledge/house'];
 const DEV_URLS = ['api/capture', 'api/doctor/rehearse'];
-const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS, 'api/instructions'];
+const LAZY_URLS = [...DIAG_URLS, ...DEV_URLS, 'api/instructions', 'api/personality'];
 
 const CUT = ['Copy selected', 'Copy all', 'Write a report now',
              'Copy for a bug report', 'File into memory now', 'Check it now',
@@ -195,6 +203,16 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/house-rules')) {
     return answer({ rules: [{ text: 'never turn the heating above 23', compiled: true }] });
+  }
+  if (p.includes('api/personality')) {
+    if (opts && opts.method === 'PUT') {
+      (window.__personaPuts = window.__personaPuts || []).push(JSON.parse(opts.body));
+    }
+    return answer({ set: true, name: 'Juniper', persona: 'Warm and dry-humoured.',
+      growth: [{ date: '2026-09-20', text: 'Stopped announcing the heating twice.' },
+               { date: '2026-08-02', text: 'Calls the side door the garden door.' }],
+      updated_at: ${NOW}, path: '/config/.brain/personality.json',
+      limits: { name: 60, persona: 4000, growth: 500 } });
   }
   if (p.includes('api/settings') && opts && opts.method === 'PUT') {
     (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
@@ -236,6 +254,7 @@ window.fetch = async (url, opts) => {
                rate_limited_until: window.__rateLimitedUntil || null,
                resets_at: ${NOW} + 7200, week_resets_at: ${NOW} + 200000 },
       options_synced: true, model_label: 'Claude Sonnet 4.5',
+      personality_summary: 'Juniper · Warm and dry-humoured.',
     });
   }
   if (p.includes('api/status')) {
@@ -571,6 +590,7 @@ for (const width of WIDTHS) {
   }
   if (sumOf('permissions') !== 'Asks before it acts') note(where, `the Permissions row reads "${sumOf('permissions')}"`);
   if (!/water/.test(sumOf('notifications'))) note(where, `the Notifications row reads "${sumOf('notifications')}"`);
+  if (!/Juniper/.test(sumOf('personality'))) note(where, `the Personality row reads "${sumOf('personality')}"`);
 
   // ---- no "?" bubble, and no hint past two sentences ---------------------
   if (m.bubbles.length) note(where, `"?" bubbles remain: ${m.bubbles.join(', ')}`);
@@ -1372,6 +1392,45 @@ for (const width of WIDTHS) {
       (c) => note(where, `a select cuts its text: ${c}`));
   } catch (e) {
     note(where, `driving the permission switch failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- Personality: the persona to edit, the growth log to read ----------
+  // It lives in brAIn now (it was Morph's): a name and a persona to edit
+  // and Save, the growth log newest first and read-only, and Ask, which
+  // opens a conversation about who brAIn is.
+  try {
+    await showSection(page, 'personality');
+    await page.waitForFunction(() => document.querySelector('#persName').value === 'Juniper',
+      null, { timeout: 4000 });
+    const pers = await page.evaluate(() => ({
+      text: document.querySelector('#persText').value,
+      growth: [...document.querySelectorAll('#persGrowth .persline')].map((x) => x.textContent),
+      font: parseFloat(getComputedStyle(document.querySelector('#persText')).fontSize),
+      nameFont: parseFloat(getComputedStyle(document.querySelector('#persName')).fontSize),
+      inputs: document.querySelectorAll('#persGrowth input, #persGrowth textarea, #persGrowth button').length,
+      saveH: Math.round(document.querySelector('#persSave').getBoundingClientRect().height),
+      askH: Math.round(document.querySelector('#persAsk').getBoundingClientRect().height),
+    }));
+    if (!/dry-humoured/.test(pers.text)) note(where, `the persona box reads "${pers.text}"`);
+    if (pers.growth[0] !== 'Stopped announcing the heating twice.') {
+      note(where, `the growth log is not newest first: ${pers.growth.join(' | ')}`);
+    }
+    if (pers.inputs) note(where, 'the growth log is editable');
+    if (touch && (pers.font < 16 || pers.nameFont < 16)) {
+      note(where, `the personality fields are ${pers.nameFont}px / ${pers.font}px on a finger`);
+    }
+    if (touch && (pers.saveH < MIN_TARGET || pers.askH < MIN_TARGET)) {
+      note(where, `Save is ${pers.saveH}px and Ask ${pers.askH}px on a finger`);
+    }
+    await page.fill('#persText', 'Warmer, and brief.');
+    await page.click('#persSave');
+    await page.waitForFunction(() => (window.__personaPuts || []).length === 1, null, { timeout: 4000 });
+    const sent = await page.evaluate(() => window.__personaPuts[0]);
+    if (sent.persona !== 'Warmer, and brief.' || sent.name !== 'Juniper') {
+      note(where, `Save sent ${JSON.stringify(sent)}`);
+    }
+  } catch (e) {
+    note(where, `driving the personality failed: ${String(e.message).split('\n')[0]}`);
   }
 
   // ---- Guide: eight groups, and it opens the docs -------------------------

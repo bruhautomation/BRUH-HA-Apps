@@ -75,10 +75,16 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     .map((c) => {
       const face = c.cloneNode(true);
       face.querySelectorAll('details').forEach((d) => d.remove());
-      const presses = [...c.querySelectorAll(':scope > .card-actions button')]
-        .filter((b) => !b.classList.contains('icon'));
+      // The answers the case carries, and apart from them Respond, the
+      // press that opens the line to brAIn and must come first in the row.
+      const all = [...c.querySelectorAll(':scope > .card-actions button')];
+      const presses = all.filter((b) => !b.classList.contains('icon')
+        && !b.classList.contains('qrespondopen'));
       return {
         id: c.dataset.caseId,
+        respondFirst: c.dataset.situation === 'gap'
+          || (all[0] && all[0].classList.contains('qrespondopen')
+              && all[0].textContent.trim() === 'Respond'),
         labels: presses.map((b) => b.textContent.trim()),
         primary: presses.filter((b) => b.classList.contains('btn-primary'))
           .map((b) => b.textContent.trim()),
@@ -94,7 +100,8 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
     if (card.primary.length !== 1 || card.primary[0] !== want.lead) {
       note(where, `${id} leads with ${JSON.stringify(card.primary)}, not ${want.lead}`);
     }
-    if (card.labels[0] !== want.lead) note(where, `${id}'s first press is "${card.labels[0]}"`);
+    if (card.labels[0] !== want.lead) note(where, `${id}'s first answer is "${card.labels[0]}"`);
+    if (!card.respondFirst) note(where, `${id}'s row does not open with Respond`);
     if (want.exact && card.labels.join('|') !== want.exact.join('|')) {
       note(where, `${id} offers ${card.labels.join(' · ')}`);
     }
