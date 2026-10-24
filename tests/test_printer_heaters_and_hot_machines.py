@@ -33,6 +33,7 @@ import baselines  # noqa: E402
 import corrections  # noqa: E402
 from checks import baseline as band  # noqa: E402
 from checks import devices  # noqa: E402
+from checks import get_check  # noqa: E402
 
 NOW = dt.datetime(2026, 1, 5, 10, 0, tzinfo=dt.timezone.utc).timestamp()
 PRINTER = {"id": "dev_printer", "name": "Workshop printer",
@@ -197,9 +198,8 @@ class TestHotWhileIdleIsFiled(unittest.TestCase):
         self.assertEqual(idle_rows(snap), [])
 
     def test_the_check_is_catalogued_and_urgent(self):
-        import checks
         import urgency
-        self.assertTrue(checks.get_check("base.heater_idle"))
+        self.assertTrue(get_check("base.heater_idle"))
         self.assertEqual(
             urgency.urgency_of({"source": "check:base.heater_idle"}), "now")
 
