@@ -11,6 +11,10 @@ import re
 
 import numfmt
 
+from ._registry_facts import (ENTRY_NOT_LOADED, FEATURE_PLATFORMS,  # noqa: F401 — re-exported
+                              SELF_PLATFORMS, SETTINGS_CATEGORIES,
+                              entry_not_loaded as _entry_not_loaded,
+                              is_node_status)
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
                     counted_names, domain_of, evidence_for, join_names, num,
                     parse_ts, spell_integration, when)
@@ -358,7 +362,7 @@ def printer_heater(house, eid: str) -> bool:
 # it does with the switch named. A check that files a finding about the
 # add-on's own sensor is the add-on filing a bug report against itself
 # under somebody else's remedy.
-SELF_PLATFORMS = frozenset({"brain"})
+
 
 
 def _live_hardware(house: House):
@@ -372,28 +376,7 @@ def _live_hardware(house: House):
         yield eid, st
 
 
-def is_node_status(entity_id: str, reg: dict) -> bool:
-    """Whether this is the node status sensor Z-Wave JS publishes.
 
-    Read off what the integration REGISTERED — its translation key
-    `node_status`, or its unique id `<home id>.<node id>.node_status` —
-    and never off the entity id alone. The entity id is derived from a
-    name: it is in the house's own language, it is whatever somebody
-    renamed it to, and a second device of the same name gets `_2` on the
-    end. Reading the suffix missed a node the controller had declared
-    dead for days, and its frozen 0% battery was filed in its place. The
-    suffix stays as the answer for a registry row that carries neither
-    field (an older Core), which is what this always did.
-    """
-    if not entity_id.startswith("sensor."):
-        return False
-    if reg.get("platform") != "zwave_js":
-        return False
-    if reg.get("translation_key") == "node_status":
-        return True
-    if str(reg.get("unique_id") or "").endswith(".node_status"):
-        return True
-    return entity_id.endswith("_node_status")
 
 
 def _zwave_dead_nodes(house: House) -> list[dict]:
@@ -465,22 +448,7 @@ DERIVED_PLATFORMS = frozenset({
 # per device here is the same fault said once per device under a remedy
 # (batteries, Wi-Fi) that cannot reach it. An entry somebody unloaded is a
 # decision, and not news either.
-ENTRY_NOT_LOADED = frozenset({
-    "setup_error", "setup_retry", "migration_error", "not_loaded",
-    "failed_unload",
-})
-# What a device's settings page carries. An unavailable firmware or "cloud
-# connection" entity on a device that still answers is not the device
-# having gone away.
-SETTINGS_CATEGORIES = frozenset({"diagnostic", "config"})
-# Integrations whose entities are features somebody switches on or off on
-# the device itself. The companion app publishes a sensor per phone feature
-# (kiosk mode, a camera, an activity reading) and one that is turned off in
-# the app reads unavailable for ever while the phone goes on reporting
-# everything else — a setting, not a fault. On a device that still answers
-# such an entity says nothing; a phone that has gone quiet altogether is
-# still reported as the device.
-FEATURE_PLATFORMS = frozenset({"mobile_app"})
+
 
 
 def _down(st: dict | None) -> bool:
@@ -498,14 +466,7 @@ def _members(house: House, eid: str) -> list[str]:
     return [m for m in raw if isinstance(m, str) and "." in m and m != eid]
 
 
-def _entry_not_loaded(snap: dict, reg: dict) -> bool:
-    entry_id = reg.get("config_entry_id")
-    if not entry_id:
-        return False
-    for entry in snap.get("config_entries") or []:
-        if isinstance(entry, dict) and entry.get("entry_id") == entry_id:
-            return str(entry.get("state") or "") in ENTRY_NOT_LOADED
-    return False
+
 
 
 def _device_answers(house: House, dev_id: str) -> bool:

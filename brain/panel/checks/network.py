@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import re
 
+from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
 from ._util import (DAY, SOFTWARE_DOMAINS, House, after_restart,
                     counted_names, domain_of, evidence_for, num,
                     without_mac,
@@ -128,7 +129,6 @@ def _named(name: str, fallback: str) -> str:
 
 
 def _self_platforms() -> frozenset:
-    from .devices import SELF_PLATFORMS  # noqa: PLC0415 — devices imports us
     return SELF_PLATFORMS
 
 
@@ -289,8 +289,7 @@ def wifi_history_candidates(snap: dict) -> list[dict]:
 
 
 def _entry_down(house: House, eid: str) -> bool:
-    from .devices import _entry_not_loaded  # noqa: PLC0415
-    return _entry_not_loaded(house.snap, house.registry.get(eid) or {})
+    return entry_not_loaded(house.snap, house.registry.get(eid) or {})
 
 
 def _hung_clients(house: House, now: float) -> list[dict]:
@@ -608,7 +607,6 @@ def zwave_last_seen(house: House, device_id: str, node: dict) -> float | None:
 
 
 def _zwave_nodes(house: House):
-    from .devices import is_node_status  # noqa: PLC0415
     for dev_id, node in sorted((house.snap.get("zwave_nodes") or {}).items()):
         if not isinstance(node, dict):
             continue
