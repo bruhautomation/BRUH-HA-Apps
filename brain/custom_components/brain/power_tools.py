@@ -62,6 +62,7 @@ released under the MIT License. Changes from Spook:
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import json
 import logging
@@ -2340,6 +2341,239 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | N
 
 
 # ---------------------------------------------------------------------------
+# Long-term statistics: correcting what the recorder kept
+#
+# Three operations Home Assistant's own Developer tools › Statistics screen
+# does by hand: shift a sum from an hour onward (the "adjust sum" dialog,
+# recorder/adjust_sum_statistics), drop statistics nothing provides any
+# more, and take out the hours where a meter glitched. Each reads the
+# recorder through its own statistics module in its executor, the way the
+# WebSocket handlers do.
+# ---------------------------------------------------------------------------
+
+
+def _recorder_parts():
+    try:
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder import statistics as rstats
+    except ImportError as err:
+        raise HomeAssistantError("The recorder integration is not loaded") from err
+    return get_instance, rstats
+
+
+async def _stat_metadata(hass: HomeAssistant, statistic_id: str) -> dict:
+    get_instance, rstats = _recorder_parts()
+    found = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.get_metadata, hass, statistic_ids={statistic_id}))
+    entry = (found or {}).get(statistic_id)
+    if entry is None:
+        raise ServiceValidationError(
+            f"statistic_id: the recorder keeps no statistics called "
+            f"{statistic_id}.")
+    meta = entry[1] if isinstance(entry, tuple) else entry
+    return dict(meta)
+
+
+def _when(value):
+    """A statistics row's start as an aware datetime (a float timestamp on
+    a current core, a datetime on an older one)."""
+    import datetime as _dt
+
+    if isinstance(value, (int, float)):
+        return _dt.datetime.fromtimestamp(value, _dt.timezone.utc)
+    if isinstance(value, str):
+        value = _dt.datetime.fromisoformat(value)
+    if isinstance(value, _dt.datetime) and value.tzinfo is None:
+        value = value.replace(tzinfo=_dt.timezone.utc)
+    return value
+
+
+async def _hourly(hass: HomeAssistant, statistic_id: str, start) -> list[dict]:
+    get_instance, rstats = _recorder_parts()
+    rows = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.statistics_during_period, hass, start, None,
+                     {statistic_id}, "hour", None, {"sum", "state"}))
+    out = []
+    for row in (rows or {}).get(statistic_id, []):
+        out.append({"start": _when(row.get("start")), "sum": row.get("sum"),
+                    "state": row.get("state")})
+    return out
+
+
+async def _adjust(hass, statistic_id, start, adjustment, unit) -> None:
+    get_instance, _ = _recorder_parts()
+    answer = get_instance(hass).async_adjust_statistics(
+        statistic_id, start, adjustment, unit)
+    if asyncio.iscoroutine(answer):
+        await answer
+
+
+async def _adjust_statistic_sum(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Add an amount to a statistic's sum from one hour onward — what the
+    Statistics screen's adjust-sum dialog does. Previewed by default,
+    because it changes every hour after the one named."""
+    statistic_id = str(call.data.get("statistic_id") or "")
+    meta = await _stat_metadata(hass, statistic_id)
+    if not meta.get("has_sum"):
+        raise ServiceValidationError(
+            f"{statistic_id} keeps no sum (it is a measurement, not a meter), "
+            "so there is nothing to adjust.")
+    start = call.data.get("start_time")
+    try:
+        start = _when(start)
+    except (TypeError, ValueError):
+        start = None
+    if start is None or not hasattr(start, "timestamp"):
+        raise ServiceValidationError(
+            "start_time must be a date and time, like 2026-03-01 14:00.")
+    try:
+        adjustment = float(call.data.get("adjustment"))
+    except (TypeError, ValueError) as err:
+        raise ServiceValidationError(
+            "adjustment must be a number: the amount to add to the sum "
+            "(negative to take it away).") from err
+    unit = call.data.get("unit") or meta.get("unit_of_measurement")
+    if unit != meta.get("unit_of_measurement"):
+        raise ServiceValidationError(
+            f"unit: {statistic_id} is kept in {meta.get('unit_of_measurement')}; "
+            "give the adjustment in that unit (or leave unit out).")
+    rows = await _hourly(hass, statistic_id, start)
+    result = {
+        "dry_run": _dry_run(call, True),
+        "statistic_id": statistic_id,
+        "start_time": start.isoformat(),
+        "adjustment": adjustment,
+        "unit": unit,
+        "hours_changed": len(rows),
+        "sum_at_start_before": rows[0]["sum"] if rows else None,
+        "sum_at_start_after": (rows[0]["sum"] + adjustment)
+        if rows and rows[0]["sum"] is not None else None,
+    }
+    if result["dry_run"]:
+        return result
+    await _adjust(hass, statistic_id, start, adjustment, unit)
+    return result
+
+
+async def _clear_orphaned_statistics(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Statistics the recorder keeps for entities that no longer exist.
+
+    Only the recorder's own (entity-style ids); an external statistic
+    (domain:object_id) has no entity by design and is never offered."""
+    get_instance, rstats = _recorder_parts()
+    listed = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.list_statistic_ids, hass))
+    registry = er.async_get(hass)
+    only = call.data.get("statistic_id")
+    only = {only} if isinstance(only, str) else set(only or [])
+    orphans = []
+    for row in listed or []:
+        sid = row.get("statistic_id") if isinstance(row, dict) else None
+        if not sid or ":" in sid or row.get("source", "recorder") != "recorder":
+            continue
+        if only and sid not in only:
+            continue
+        if hass.states.get(sid) is not None or registry.async_get(sid) is not None:
+            continue
+        orphans.append({"statistic_id": sid, "name": row.get("name"),
+                        "unit": row.get("statistics_unit_of_measurement")
+                        or row.get("unit_of_measurement")})
+    not_orphans = sorted(only - {o["statistic_id"] for o in orphans})
+    if not_orphans:
+        raise ServiceValidationError(
+            "statistic_id: " + ", ".join(not_orphans) + " still has an entity "
+            "(or keeps no statistics), so it is not an orphan.")
+    result = {"dry_run": _dry_run(call, True), "orphans": orphans,
+              "count": len(orphans)}
+    if result["dry_run"] or not orphans:
+        return result
+    answer = get_instance(hass).async_clear_statistics(
+        [o["statistic_id"] for o in orphans])
+    if asyncio.iscoroutine(answer):
+        await answer
+    return result
+
+
+# A 32-bit counter that rolls or a register read as garbage leaves a step
+# near a power of two in a meter's sum; nothing a house uses moves that much
+# in an hour.
+GLITCH_STEP = 2 ** 29
+
+
+async def _heal_statistic_spikes(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Find the hours where a meter's sum jumped absurdly and work out the
+    adjustment that takes each jump out.
+
+    An hour is a spike when its change is over `max_hourly_change` (when
+    given), at least 2^29 (a counter glitch), or negative (a sum that
+    falls). What that hour SHOULD have added is read from the states: the
+    meter's own change across the hour when that is an ordinary one, else
+    nothing. Each adjustment is applied at its hour and carries on to every
+    later hour, which is what removes the excess from the whole history.
+    Previewed by default."""
+    import datetime as _dt
+
+    statistic_id = str(call.data.get("statistic_id") or "")
+    meta = await _stat_metadata(hass, statistic_id)
+    if not meta.get("has_sum"):
+        raise ServiceValidationError(
+            f"{statistic_id} keeps no sum, so it has no spikes to heal.")
+    bound = call.data.get("max_hourly_change")
+    if bound is not None:
+        try:
+            bound = float(bound)
+        except (TypeError, ValueError) as err:
+            raise ServiceValidationError(
+                "max_hourly_change must be a number.") from err
+        if bound <= 0:
+            raise ServiceValidationError("max_hourly_change must be above 0.")
+    days = float(call.data.get("days") or 30)
+    start = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    rows = await _hourly(hass, statistic_id, start)
+    unit = meta.get("unit_of_measurement")
+
+    def ordinary(change) -> bool:
+        if change is None or change < 0 or change >= GLITCH_STEP:
+            return False
+        return bound is None or change <= bound
+
+    spikes = []
+    for before, row in zip(rows, rows[1:]):
+        if before["sum"] is None or row["sum"] is None:
+            continue
+        change = row["sum"] - before["sum"]
+        if ordinary(change):
+            continue
+        states = (row["state"] - before["state"]
+                  if row["state"] is not None and before["state"] is not None
+                  else None)
+        should = states if ordinary(states) else 0.0
+        spikes.append({
+            "start": row["start"].isoformat(),
+            "change": change,
+            "should_be": should,
+            "adjustment": should - change,
+            "_start": row["start"],
+        })
+    result = {
+        "dry_run": _dry_run(call, True),
+        "statistic_id": statistic_id,
+        "unit": unit,
+        "hours_read": len(rows),
+        "spikes": [{k: v for k, v in sp.items() if not k.startswith("_")}
+                   for sp in spikes],
+    }
+    if result["dry_run"] or not spikes:
+        return result
+    for sp in spikes:
+        await _adjust(hass, statistic_id, sp["_start"], sp["adjustment"], unit)
+    result["adjusted"] = len(spikes)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
@@ -3613,6 +3847,23 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
                 vol.Optional("sum"): vol.Coerce(float),
             },
         ],
+    }, has_response=True),
+    PowerTool("adjust_statistic_sum", _adjust_statistic_sum, {
+        vol.Required("statistic_id"): cv.string,
+        vol.Required("start_time"): cv.string,
+        vol.Required("adjustment"): vol.Coerce(float),
+        vol.Optional("unit"): cv.string,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("clear_orphaned_statistics", _clear_orphaned_statistics, {
+        vol.Optional("statistic_id"): _STR_LIST,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("heal_statistic_spikes", _heal_statistic_spikes, {
+        vol.Required("statistic_id"): cv.string,
+        vol.Optional("max_hourly_change"): vol.Coerce(float),
+        vol.Optional("days", default=30): vol.Coerce(float),
+        vol.Optional("dry_run", default=True): cv.boolean,
     }, has_response=True),
     # Users
     PowerTool("create_user", _create_user, {

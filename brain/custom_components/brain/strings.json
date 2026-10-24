@@ -1444,6 +1444,68 @@
           "description": "In a partial backup, the folders to include (share, media, ssl, addons/local)."
         }
       }
+    },
+    "adjust_statistic_sum": {
+      "name": "Adjust statistic sum",
+      "description": "Add an amount to a meter's long-term sum from one hour onward, the way the Statistics screen's adjust-sum dialog does — to fix a wrong reading in the energy dashboard. Previews by default; set dry_run off to change it.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistic",
+          "description": "The statistic id, usually the meter's entity id."
+        },
+        "start_time": {
+          "name": "From",
+          "description": "The hour the adjustment starts at; every later hour moves by the same amount."
+        },
+        "adjustment": {
+          "name": "Adjustment",
+          "description": "The amount to add to the sum (negative to take it away)."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "The adjustment's unit; it must be the unit the statistic is kept in. Leave out to use it."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report what would change."
+        }
+      }
+    },
+    "clear_orphaned_statistics": {
+      "name": "Clear orphaned statistics",
+      "description": "Find the long-term statistics the recorder keeps for entities that no longer exist, and delete them. External statistics (domain:object_id) are never touched. Previews by default.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistics",
+          "description": "Only these statistic ids (each must be an orphan). Leave out to find them all."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only list the orphans."
+        }
+      }
+    },
+    "heal_statistic_spikes": {
+      "name": "Heal statistic spikes",
+      "description": "Find the hours where a meter's sum jumped absurdly — a counter glitch near 2^30, a sum that fell, or a change over the bound you give — and take each jump out, keeping what the meter's own readings say the hour really added. Previews by default.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistic",
+          "description": "The meter's statistic id, usually its entity id."
+        },
+        "max_hourly_change": {
+          "name": "Largest real hourly change",
+          "description": "Any hour that added more than this is a spike. Leave out to find only glitches and falls."
+        },
+        "days": {
+          "name": "Days back",
+          "description": "How many days of history to look through."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only list the spikes and the adjustments."
+        }
+      }
     }
   },
   "issues": {

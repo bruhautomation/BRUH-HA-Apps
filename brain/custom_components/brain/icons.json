@@ -248,6 +248,15 @@
     },
     "create_backup": {
       "service": "mdi:archive-plus-outline"
+    },
+    "adjust_statistic_sum": {
+      "service": "mdi:chart-timeline-variant-shimmer"
+    },
+    "clear_orphaned_statistics": {
+      "service": "mdi:chart-box-minus-outline"
+    },
+    "heal_statistic_spikes": {
+      "service": "mdi:chart-bell-curve"
     }
   }
 }
