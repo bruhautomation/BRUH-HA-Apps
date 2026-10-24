@@ -243,7 +243,7 @@ class ServerCase(StoreCase):
                       dict(s.TIMED_STATE), os.environ.get(
                           "BRAIN_PROTECTED_ENTITIES"))
         s._typed_hooks = self.core.hooks
-        s.security.honeytoken_ids = lambda: set()
+        s.security.honeytoken_ids = set
         os.environ.pop("BRAIN_PROTECTED_ENTITIES", None)
 
         async def send(rows, held=False, message=None, buttons=None, **k):
@@ -425,7 +425,7 @@ class TestTheAskBarAndMorphAsk(AskCase):
         timed_actions.STORE = Path(self.tmpdir.name) / "timed.json"
         s.morph_bridge.MORPH_DIR = Path(self.tmpdir.name) / "a" / "b" / "c"
         s._typed_hooks = self.core.hooks
-        s.security.honeytoken_ids = lambda: set()
+        s.security.honeytoken_ids = set
 
         async def states():
             return list(self.core.house.values())

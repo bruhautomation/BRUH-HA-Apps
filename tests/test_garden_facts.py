@@ -64,7 +64,7 @@ class TestOneFactPerCrop(GardenFactsCase):
         self.assertIn("2026", tomato["text"])
         self.assertIn("last picked 2026-09-30", tomato["text"])
         self.assertEqual(tomato["subject"], SENSOR)
-        self.assertTrue(tomato["expires"] > facts_store._day(now))
+        self.assertGreater(tomato["expires"], facts_store._day(now))
         # `recall garden` returns every crop: the per-subject cap is per key
         # for a keyed fact, or six crops under one sensor would read as three.
         got = facts_store.recall(query="garden", limit=20)

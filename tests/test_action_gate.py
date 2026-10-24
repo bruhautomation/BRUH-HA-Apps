@@ -762,8 +762,6 @@ class TestWhatTheHookSendsAndSkips(unittest.TestCase):
         self.assertIn("bambu_design", self.hook.GATED_MCP)
 
     def test_every_garden_write_is_gated_and_no_garden_read_is(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "brain" / "panel"))
-        import consequence  # noqa: PLC0415
         writes = {"garden_log_harvest", "garden_log_spray", "garden_queue_spray",
                   "garden_adjust_inventory", "garden_add_crop", "garden_log_note"}
         for gated in (self.hook.GATED_MCP, consequence.GATED_MCP):

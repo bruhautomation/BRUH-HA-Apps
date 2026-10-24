@@ -3440,7 +3440,7 @@ def _garden_number(value, field, positive=True):
         number = float(value)
     except (TypeError, ValueError):
         return None, {"error": f"{field} is a number."}
-    if number != number or number in (float("inf"), float("-inf")):
+    if not math.isfinite(number):
         return None, {"error": f"{field} is a number."}
     if positive and number <= 0:
         return None, {"error": f"{field} must be more than 0."}

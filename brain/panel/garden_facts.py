@@ -19,6 +19,7 @@ as they are; a list that is empty (a new season) clears them.
 """
 from __future__ import annotations
 
+import math
 import time
 
 import facts_store
@@ -51,7 +52,7 @@ def _number(value) -> float | None:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if number == number else None
+    return number if math.isfinite(number) else None
 
 
 def _amount(value: float) -> str:
