@@ -15999,6 +15999,18 @@ def _thermal_payload(store: dict) -> dict:
     """
     outdoor = store.get("coldest")
     rooms = []
+    # Each room's area id and aliases, off the registry the last checks
+    # pass read: `room_physics` takes "the area name or id", and a room
+    # matched only by its display name answered "no measured room by that
+    # name" about an id somebody had typed.
+    entity_areas = _FACTS_CTX.get("entity_areas") or {}
+    area_aliases = _FACTS_CTX.get("area_aliases") or {}
+
+    def _where(eid: str) -> dict:
+        area_id = str(entity_areas.get(eid) or "")
+        return {"area_id": area_id,
+                "area_aliases": [str(a) for a in area_aliases.get(area_id) or []]}
+
     for eid, entry in sorted((store.get("rooms") or {}).items()):
         if not isinstance(entry, dict):
             continue
@@ -16018,6 +16030,7 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
             "measured": True,
+            **_where(eid),
         })
     # The rooms the nightly pass considered and could not measure, each with
     # its reason, as rows of their own: the `room_physics` tool answers from
@@ -16036,6 +16049,7 @@ def _thermal_payload(store: dict) -> dict:
             "warmest": None, "coolest": None, "hours_to_warm": None,
             "measured": False,
             "why_not_measured": str(left.get("reason") or "")[:300],
+            **_where(eid),
         })
     # The reference every `k` above was measured against, why it was the
     # one, and what else could have been — so the tab can say it and the
