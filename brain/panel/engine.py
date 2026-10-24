@@ -281,10 +281,19 @@ def _cli_credentials_present() -> bool:
                 return True
             refresh = oauth.get("refreshToken")
             # A non-empty string, which is deliberately the same predicate
-            # `run.sh`'s jq applies to the same field on the same file:
-            # two answers to "can the CLI renew this" is one too many, and
-            # the one that runs at boot decides what this one then reads.
-            return isinstance(refresh, str) and refresh != ""
+            # `run.sh`'s jq and `brain-auth-env.sh` apply to the same field
+            # on the same file: two answers to "can the CLI renew this" is
+            # one too many, and the one that runs at boot decides what this
+            # one then reads. A refresh token past its own recorded expiry
+            # renews nothing.
+            if not (isinstance(refresh, str) and refresh != ""):
+                return False
+            refresh_expires = oauth.get("refreshTokenExpiresAt")
+            if (isinstance(refresh_expires, (int, float))
+                    and not isinstance(refresh_expires, bool)
+                    and refresh_expires > 0):
+                return refresh_expires / 1000.0 > time.time() + 60
+            return True
         return True
     except (OSError, ValueError, AttributeError):
         return False

@@ -654,15 +654,16 @@ fi
 # sentence, and for a long time it got the worst of the three. That token
 # is short-lived by design and the file carries the `refreshToken` the CLI
 # mints the next one from, by itself, on its next run — so on an install
-# whose only credential is this one, a lapsed token is not a fault at all,
-# and telling somebody it "will keep asking you to log in" sent them to
-# redo a sign-in that was about to renew itself.
+# a lapsed token is not a fault at all, and telling somebody it "will keep
+# asking you to log in" sent them to redo a sign-in that was about to renew
+# itself.
 #
-# What does deserve a warning is a lapsed token with another store behind
-# it. `brain-auth-env.sh` is deliberately strict there: it falls through
-# and exports the panel or `ha login` credential, so the terminal runs on
-# that one and the CLI never gets the unimpeded run that would refresh its
-# own. Nothing else in the output would say so.
+# That holds with another store behind it too: `brain-auth-env.sh` defers
+# to a lapsed token beside a usable refresh token, exactly as the panel
+# does, so the terminal runs on the CLI's own sign-in and the CLI renews
+# it. What does deserve a warning is a lapsed token with NOTHING to renew
+# it and another store behind it: the terminal falls through and runs on
+# that one, which nothing else in the output would say.
 cli_cred="${CLAUDE_CONFIG_DIR:-${HOME:-/data/home}/.claude}/.credentials.json"
 [ -r "$cli_cred" ] || cli_cred="${HOME:-/data/home}/.claude/.credentials.json"
 if [ -r "$cli_cred" ]; then
@@ -687,12 +688,20 @@ if [ -r "$cli_cred" ]; then
                 # engine._cli_credentials_present and run.sh's restore apply
                 # to this field: a null, an empty string or a number records
                 # no refresh token.
-                cli_refresh=$(jq -r '.claudeAiOauth.refreshToken // "" | if type == "string" then . else "" end' "$cli_cred" 2>/dev/null)
-                if [ -n "$cli_shadow" ]; then
-                    warn "The Claude CLI's own credential EXPIRED ${cli_when} — the terminal falls through to the ${cli_shadow} credential, so that is what a 'claude' run there uses and the CLI never refreshes its own"
+                # ...and before the refresh token's own recorded expiry,
+                # when the file records one.
+                cli_refresh=$(jq -r --argjson now "$(date +%s)" '
+                    (.claudeAiOauth // {}) as $o
+                    | if (($o.refreshToken // "") | type == "string" and length > 0)
+                         and ((($o.refreshTokenExpiresAt // 0)
+                               | (type != "number") or (. <= 0))
+                              or (($o.refreshTokenExpiresAt / 1000) > ($now + 60)))
+                      then "yes" else "" end' "$cli_cred" 2>/dev/null)
+                if [ -n "$cli_refresh" ]; then
+                    info "Claude CLI access token lapsed ${cli_when} — expired, refreshes itself on next use (the file carries a refresh token, so the CLI mints a new one on its next run)"
+                elif [ -n "$cli_shadow" ]; then
+                    warn "The Claude CLI's own credential EXPIRED ${cli_when} and records no refresh token — the terminal falls through to the ${cli_shadow} credential, so that is what a 'claude' run there uses"
                     info "Fix: run 'claude' in the terminal and sign in again, which puts the CLI's own credential back in front"
-                elif [ -n "$cli_refresh" ]; then
-                    info "Claude CLI access token lapsed ${cli_when} — the file carries a refresh token, so the CLI mints a new one on its next run"
                 else
                     warn "The Claude CLI's own credential EXPIRED ${cli_when} and records no refresh token — nothing can renew it"
                     info "Fix: run 'claude' in the terminal, sign in from the panel, or use 'ha login'"
@@ -727,6 +736,12 @@ if [ -f "$USAGE_FILE" ]; then
         else
             info "Usage sensors: the sign-in's access token is between refreshes — the tracker renews it itself on its next poll; signing in again will not help"
         fi
+    elif [ "$uerr" = "oauth_renewal_rate_limited" ]; then
+        # The renewal's own rate limit: a promise of quiet the tracker
+        # keeps, not a sign-in problem, and the next attempt is on disk.
+        unext=$(jq -r '.next_attempt_at // empty' "$USAGE_FILE" 2>/dev/null)
+        unext_at=$(date -d "$unext" '+%H:%M' 2>/dev/null || echo "")
+        info "Usage sensors: Anthropic is rate limiting the renewal of the sign-in's access token${unext_at:+ — the tracker tries again at ${unext_at}}; signing in again will not help"
     elif [ -n "$uerr" ]; then
         warn "Usage sensors unavailable: ${uerr}"
         udetail=$(jq -r '.detail // empty' "$USAGE_FILE" 2>/dev/null)
