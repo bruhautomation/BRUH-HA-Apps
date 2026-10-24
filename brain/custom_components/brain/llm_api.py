@@ -176,5 +176,45 @@ def async_register(hass):
     return unregister if callable(unregister) else None
 
 
-__all__ = ["API_ID", "API_NAME", "async_register", "call_tool",
+# Where the one registration's unregister callable is kept, in the
+# integration's own hass.data dict.
+DATA_KEY = "_llm_api"
+
+
+def _already_registered(hass) -> bool:
+    get_apis = getattr(llm, "async_get_apis", None) if llm is not None else None
+    if not callable(get_apis):
+        return False
+    try:
+        return any(getattr(api, "id", None) == API_ID for api in get_apis(hass))
+    except Exception:  # noqa: BLE001 — could not ask; try to register
+        return False
+
+
+def async_ensure_registered(hass, data: dict) -> None:
+    """Register the API once for the whole integration, however many
+    entries ask. Synchronous from the check to the claim, so entries set up
+    together cannot each see "not yet" and register it again."""
+    if DATA_KEY in data:
+        return
+    if _already_registered(hass):
+        # Somebody (an earlier load of this integration) holds it already:
+        # it is there, which is what was wanted. Nothing to unregister.
+        data[DATA_KEY] = None
+        return
+    data[DATA_KEY] = async_register(hass)
+
+
+def async_unregister(data: dict) -> None:
+    """Take the API away; called when the last entry unloads."""
+    unregister = data.pop(DATA_KEY, None)
+    if callable(unregister):
+        try:
+            unregister()
+        except Exception as exc:  # noqa: BLE001 — unloading must finish
+            _LOGGER.debug("could not unregister brAIn's LLM API: %s", exc)
+
+
+__all__ = ["API_ID", "API_NAME", "DATA_KEY", "async_ensure_registered",
+           "async_register", "async_unregister", "call_tool",
            "entity_refusal", "filter_facts"]

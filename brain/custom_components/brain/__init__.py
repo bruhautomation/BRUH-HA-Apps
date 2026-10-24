@@ -360,12 +360,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if entry_type(entry) == ENTRY_TYPE_INSIGHT:
         _setup_insight_schedule(hass, entry)
     elif not hass.data[DOMAIN].get("_learning_watcher"):
+        # Claimed BEFORE anything is awaited. Home Assistant sets every entry
+        # up at once after a restart, and a flag set after the first await
+        # was read as unclaimed by every entry: each started its own
+        # watchers (every event fired once per entry) and its own LLM API.
+        hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
         # One watcher account-wide (memory is one store, not per entry):
         # fires a brain_learned logbook event per newly-learned fact, as
         # the docs promise. Primed to the log's current tip so a restart
         # does not replay the whole history into the logbook.
         watcher = LearningWatcher(hass)
-        await hass.async_add_executor_job(watcher.prime)
+        try:
+            await hass.async_add_executor_job(watcher.prime)
+        except Exception:
+            hass.data[DOMAIN].pop("_learning_watcher", None)
+            raise
         unsub_learning = async_track_time_interval(
             hass, watcher.async_poll, timedelta(seconds=60)
         )
@@ -383,20 +392,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # `parse_action` rejects far more than it accepts.
         unsub_actions = hass.bus.async_listen(
             EVENT_MOBILE_ACTION, _make_action_handler(hass))
-        # brAIn's measurements, for other conversation agents and the MCP
-        # Server integration: three read-only tools, exposure-respecting.
-        # Account-wide, like the watchers — one house, one API.
-        from .llm_api import async_register as _register_llm_api
-
-        unsub_llm = _register_llm_api(hass)
-        hass.data[DOMAIN]["_learning_watcher"] = entry.entry_id
 
         def _stop_learning() -> None:
             unsub_learning()
             unsub_findings()
             unsub_actions()
-            if unsub_llm is not None:
-                unsub_llm()
             # The Repairs entries are this watcher's, so they leave with
             # it: a reload puts them back on the first poll, and removing
             # the integration should not leave brAIn's rows on somebody's
@@ -405,6 +405,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass.data[DOMAIN].pop("_learning_watcher", None)
 
         entry.async_on_unload(_stop_learning)
+
+    if entry_type(entry) != ENTRY_TYPE_INSIGHT:
+        # brAIn's measurements, for other conversation agents and the MCP
+        # Server integration: three read-only tools, exposure-respecting.
+        # One house, one API: registered by whichever agent entry comes up
+        # first and kept until the LAST entry unloads, so unloading the
+        # entry that happened to register it takes nothing from the others.
+        from .llm_api import async_ensure_registered
+
+        async_ensure_registered(hass, hass.data[DOMAIN])
 
     # Check if the add-on deployed newer integration files that need a restart
     await _check_restart_required(hass)
@@ -491,6 +501,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Last entry removed — tear down the domain services so they don't
         # linger and raise "not configured" if called with no bridge.
         if not remaining:
+            from .llm_api import async_unregister
+
+            async_unregister(hass.data[DOMAIN])
             for service in (
                 "send_prompt",
                 "run_task",
