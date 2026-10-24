@@ -19,14 +19,25 @@ instead of editing `/config/.storage` files by hand:
                 and back (switch_as_x), sensor display precision and unit
 - Devices:      rename, enable/disable (cascades to lonely parent devices),
                 delete, orphan cleanup (dry-run default)
-- Integrations: enable/disable/reload/delete config entries
+- Integrations: enable/disable/reload/delete config entries, change their
+                options through their own options flow
 - Helpers:      create/delete any storage-backed helper (input_*, counter,
-                timer, schedule)
+                timer, schedule), set a group helper's members
+- Categories:   create/update/delete, assign on the automation, script,
+                scene and helper lists
 - Zones:        create, update, delete
-- Persons:      create/delete/rename, attach/detach device trackers
+- Persons:      create/delete/rename, attach/detach device trackers (named by
+                entity, person id or name)
 - Blueprints:   import automation/script blueprints from a URL
-- Statistics:   import/backfill long-term statistics (recorder)
-- Users:        create/delete/enable/disable (owner accounts are protected)
+- Statistics:   import/backfill long-term statistics (recorder), adjust a
+                sum, heal glitch spikes, clear orphans (dry-run default)
+- Users:        create/delete/enable/disable, set group, list with last use
+                (owner, system users and the last admin are protected)
+- Backups:      list, create (full/partial), delete by filter (dry-run default)
+- Z-Wave:       remove a failed node, rebuild a node's routes
+- Energy:       read and save the energy dashboard's settings
+- Core:         set the internal/external addresses
+- Thread:       list networks, set the preferred one
 - Diagnostics:  find automation/script/scene references to unknown entities
 - Dashboards:   create/delete/update/restore storage dashboards with
                 automatic backups, register/remove custom-card resources
@@ -62,6 +73,7 @@ released under the MIT License. Changes from Spook:
 from __future__ import annotations
 
 import asyncio
+import functools
 import importlib
 import json
 import logging
@@ -196,8 +208,11 @@ async def _create_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     return {"area_id": entry.id}
 
 
-def _dry_run(call: ServiceCall) -> bool:
-    return bool(call.data.get("dry_run", False))
+def _dry_run(call: ServiceCall, default: bool = False) -> bool:
+    """The call's dry_run, with the default its schema declares — read here
+    too, so a service whose preview is the default stays a preview however
+    the call reached the handler."""
+    return bool(call.data.get("dry_run", default))
 
 
 async def _delete_area(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -1891,53 +1906,159 @@ def _person_parts(hass: HomeAssistant):
     return collection, entity_component
 
 
+def _person_label(item: dict) -> str:
+    return str(item.get("name") or item.get("id") or "this person")
+
+
+def _people_list(collection) -> str:
+    items = list(getattr(collection, "data", {}).values())
+    if not items:
+        return "there are no people made in the UI"
+    return "the people are " + ", ".join(
+        f"{_person_label(i)} (person_id {i.get('id')})" for i in items)
+
+
+def _resolve_person(hass: HomeAssistant, call: ServiceCall) -> tuple:
+    """The person a call names, by entity, by the id `person/list` shows,
+    or by name — and a sentence naming the wrong field when it names none.
+
+    Returns (collection, item_id, item, entity_id). Only a person made in
+    the UI lives in the storage collection; a YAML person can be named but
+    not changed here, and is refused saying so."""
+    collection, entity_component = _person_parts(hass)
+    data = getattr(collection, "data", {}) or {}
+    entity_id = str(call.data.get("entity_id") or "").strip()
+    person_id = str(call.data.get("person_id") or "").strip()
+    name = str(call.data.get("person") or "").strip()
+    if not (entity_id or person_id or name):
+        raise ServiceValidationError(
+            "Name the person: entity_id (their person entity, like "
+            "person.alex), person_id (the id person/list shows) or person "
+            "(their name).")
+
+    found: list[tuple[str, str]] = []  # (field, item_id)
+    if entity_id:
+        if not entity_id.startswith("person."):
+            raise ServiceValidationError(
+                f"entity_id must be a person entity like person.alex; "
+                f"{entity_id} is not one (a device tracker goes in "
+                "device_tracker).")
+        entity = entity_component.get_entity(entity_id)
+        if entity is None:
+            raise ServiceValidationError(
+                f"entity_id: no person is called {entity_id}; "
+                f"{_people_list(collection)}.")
+        config = getattr(entity, "_config", {}) or {}
+        if not getattr(entity, "editable", False) or config.get("id") not in data:
+            raise ServiceValidationError(
+                f"{entity_id} is defined in YAML (configuration.yaml), so it "
+                "is changed there, not by this service.")
+        found.append(("entity_id", config["id"]))
+    if person_id:
+        if person_id not in data:
+            hint = (" — that is an entity id; it goes in entity_id"
+                    if "." in person_id else "")
+            raise ServiceValidationError(
+                f"person_id: no person has the id {person_id}{hint}; "
+                f"{_people_list(collection)}.")
+        found.append(("person_id", person_id))
+    if name:
+        folded = name.casefold()
+        matches = [i for i, item in data.items()
+                   if str(item.get("name") or "").casefold() == folded]
+        if not matches:
+            raise ServiceValidationError(
+                f"person: nobody made in the UI is called {name!r}; "
+                f"{_people_list(collection)}.")
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                f"person: more than one person is called {name!r}; name one "
+                "by person_id instead (" + ", ".join(matches) + ").")
+        found.append(("person", matches[0]))
+
+    ids = {item_id for _f, item_id in found}
+    if len(ids) > 1:
+        raise ServiceValidationError(
+            "These name different people: " + "; ".join(
+                f"{field} is {_person_label(data[item_id])}"
+                for field, item_id in found) + ". Give one.")
+    item_id = found[0][1]
+    if not entity_id:
+        entity_id = next(
+            (e.entity_id for e in getattr(entity_component, "entities", []) or []
+             if (getattr(e, "_config", {}) or {}).get("id") == item_id), "")
+    return collection, item_id, data[item_id], entity_id
+
+
+def _tracker_list(call: ServiceCall) -> list[str]:
+    raw = call.data.get("device_tracker")
+    if raw is None or raw == "" or raw == []:
+        raise ServiceValidationError(
+            "device_tracker is missing: list the device trackers, like "
+            "device_tracker.phone.")
+    values = [raw] if isinstance(raw, str) else list(raw)
+    wrong = [str(v) for v in values
+             if not isinstance(v, str) or not v.startswith("device_tracker.")]
+    if wrong:
+        raise ServiceValidationError(
+            "device_tracker must list device_tracker entities; "
+            + ", ".join(wrong) + (" is" if len(wrong) == 1 else " are")
+            + " not.")
+    return list(dict.fromkeys(values))
+
+
 async def _person_trackers(
     hass: HomeAssistant, call: ServiceCall, *, add: bool
-) -> None:
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable: {call.data['entity_id']}"
-        )
-    trackers = set(entity.device_trackers)
-    requested = set(call.data["device_tracker"])
-    trackers = trackers | requested if add else trackers - requested
-    await collection.async_update_item(
-        entity._config["id"],  # noqa: SLF001
-        {"device_trackers": sorted(trackers)},
-    )
+) -> dict:
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
+    requested = _tracker_list(call)
+    current = list(item.get("device_trackers") or [])
+    label = _person_label(item)
+    result: dict[str, Any] = {"person": label, "person_id": item_id,
+                              "entity_id": entity_id or None}
+    if add:
+        result["added"] = [t for t in requested if t not in current]
+        result["already_tracked"] = [t for t in requested if t in current]
+        trackers = current + result["added"]
+    else:
+        result["removed"] = [t for t in requested if t in current]
+        result["not_tracked"] = [t for t in requested if t not in current]
+        if not result["removed"]:
+            has = ", ".join(current) if current else "no device trackers"
+            raise ServiceValidationError(
+                f"device_tracker: {label} is not tracked by "
+                + ", ".join(requested) + f"; {label} has {has}.")
+        trackers = [t for t in current if t not in result["removed"]]
+    trackers = sorted(trackers)
+    if trackers != sorted(current):
+        await collection.async_update_item(item_id,
+                                           {"device_trackers": trackers})
+    result["device_trackers"] = trackers
+    return result
 
 
 async def _add_device_tracker_to_person(
     hass: HomeAssistant, call: ServiceCall
-) -> None:
-    await _person_trackers(hass, call, add=True)
+) -> dict | None:
+    return await _person_trackers(hass, call, add=True)
 
 
 async def _remove_device_tracker_from_person(
     hass: HomeAssistant, call: ServiceCall
-) -> None:
-    await _person_trackers(hass, call, add=False)
+) -> dict | None:
+    return await _person_trackers(hass, call, add=False)
 
 
-async def _rename_person(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _rename_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Rename a person. YAML-defined people are not editable, same as
     delete_person — say so rather than failing inside the collection."""
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
-        )
-    await collection.async_update_item(
-        entity._config["id"],  # noqa: SLF001
-        {"name": call.data["name"]},
-    )
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
+    name = str(call.data.get("name") or "").strip()
+    if not name:
+        raise ServiceValidationError("name is missing: give the new name.")
+    await collection.async_update_item(item_id, {"name": name})
+    return {"person_id": item_id, "entity_id": entity_id or None,
+            "old_name": item.get("name"), "name": name}
 
 
 async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -1953,23 +2074,17 @@ async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
 
 
 async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
-        )
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
     result = {
         "dry_run": _dry_run(call),
-        "entity_id": call.data["entity_id"],
-        "name": getattr(entity, "name", None),
-        "device_trackers": sorted(entity.device_trackers or []),
+        "person_id": item_id,
+        "entity_id": entity_id or None,
+        "name": item.get("name"),
+        "device_trackers": sorted(item.get("device_trackers") or []),
     }
     if _dry_run(call):
         return result
-    await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+    await collection.async_delete_item(item_id)
     return result
 
 
@@ -2041,6 +2156,7 @@ async def _delete_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
                 f"Refusing to delete owner account: {user.name or user_id}"
             )
         users.append(user)
+    await _guard_admins(hass, users, "delete")
     result = {
         "dry_run": _dry_run(call),
         "users": [{"user_id": u.id, "name": u.name} for u in users],
@@ -2236,38 +2352,1290 @@ async def _import_statistics(hass: HomeAssistant, call: ServiceCall) -> dict | N
 
 
 # ---------------------------------------------------------------------------
+# Long-term statistics: correcting what the recorder kept
+#
+# Three operations Home Assistant's own Developer tools › Statistics screen
+# does by hand: shift a sum from an hour onward (the "adjust sum" dialog,
+# recorder/adjust_sum_statistics), drop statistics nothing provides any
+# more, and take out the hours where a meter glitched. Each reads the
+# recorder through its own statistics module in its executor, the way the
+# WebSocket handlers do.
+# ---------------------------------------------------------------------------
+
+
+def _recorder_parts():
+    try:
+        from homeassistant.components.recorder import get_instance
+        from homeassistant.components.recorder import statistics as rstats
+    except ImportError as err:
+        raise HomeAssistantError("The recorder integration is not loaded") from err
+    return get_instance, rstats
+
+
+async def _stat_metadata(hass: HomeAssistant, statistic_id: str) -> dict:
+    get_instance, rstats = _recorder_parts()
+    found = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.get_metadata, hass, statistic_ids={statistic_id}))
+    entry = (found or {}).get(statistic_id)
+    if entry is None:
+        raise ServiceValidationError(
+            f"statistic_id: the recorder keeps no statistics called "
+            f"{statistic_id}.")
+    meta = entry[1] if isinstance(entry, tuple) else entry
+    return dict(meta)
+
+
+def _when(value):
+    """A statistics row's start as an aware datetime (a float timestamp on
+    a current core, a datetime on an older one)."""
+    import datetime as _dt
+
+    if isinstance(value, (int, float)):
+        return _dt.datetime.fromtimestamp(value, _dt.timezone.utc)
+    if isinstance(value, str):
+        value = _dt.datetime.fromisoformat(value)
+    if isinstance(value, _dt.datetime) and value.tzinfo is None:
+        value = value.replace(tzinfo=_dt.timezone.utc)
+    return value
+
+
+async def _hourly(hass: HomeAssistant, statistic_id: str, start) -> list[dict]:
+    get_instance, rstats = _recorder_parts()
+    rows = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.statistics_during_period, hass, start, None,
+                     {statistic_id}, "hour", None, {"sum", "state"}))
+    out = []
+    for row in (rows or {}).get(statistic_id, []):
+        out.append({"start": _when(row.get("start")), "sum": row.get("sum"),
+                    "state": row.get("state")})
+    return out
+
+
+async def _settled(answer):
+    """The recorder's queue calls return None on one core and a coroutine
+    on another; wait for the second and pass the first through."""
+    if asyncio.iscoroutine(answer):
+        return await answer
+    return answer
+
+
+async def _adjust(hass, statistic_id, start, adjustment, unit) -> None:
+    get_instance, _ = _recorder_parts()
+    await _settled(get_instance(hass).async_adjust_statistics(
+        statistic_id, start, adjustment, unit))
+
+
+async def _adjust_statistic_sum(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Add an amount to a statistic's sum from one hour onward — what the
+    Statistics screen's adjust-sum dialog does. Previewed by default,
+    because it changes every hour after the one named."""
+    statistic_id = str(call.data.get("statistic_id") or "")
+    meta = await _stat_metadata(hass, statistic_id)
+    if not meta.get("has_sum"):
+        raise ServiceValidationError(
+            f"{statistic_id} keeps no sum (it is a measurement, not a meter), "
+            "so there is nothing to adjust.")
+    start = call.data.get("start_time")
+    try:
+        start = _when(start)
+    except (TypeError, ValueError):
+        start = None
+    if start is None or not hasattr(start, "timestamp"):
+        raise ServiceValidationError(
+            "start_time must be a date and time, like 2026-03-01 14:00.")
+    try:
+        adjustment = float(call.data.get("adjustment"))
+    except (TypeError, ValueError) as err:
+        raise ServiceValidationError(
+            "adjustment must be a number: the amount to add to the sum "
+            "(negative to take it away).") from err
+    unit = call.data.get("unit") or meta.get("unit_of_measurement")
+    if unit != meta.get("unit_of_measurement"):
+        raise ServiceValidationError(
+            f"unit: {statistic_id} is kept in {meta.get('unit_of_measurement')}; "
+            "give the adjustment in that unit (or leave unit out).")
+    rows = await _hourly(hass, statistic_id, start)
+    result = {
+        "dry_run": _dry_run(call, True),
+        "statistic_id": statistic_id,
+        "start_time": start.isoformat(),
+        "adjustment": adjustment,
+        "unit": unit,
+        "hours_changed": len(rows),
+        "sum_at_start_before": rows[0]["sum"] if rows else None,
+        "sum_at_start_after": (rows[0]["sum"] + adjustment)
+        if rows and rows[0]["sum"] is not None else None,
+    }
+    if result["dry_run"]:
+        return result
+    await _adjust(hass, statistic_id, start, adjustment, unit)
+    return result
+
+
+async def _clear_orphaned_statistics(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    """Statistics the recorder keeps for entities that no longer exist.
+
+    Only the recorder's own (entity-style ids); an external statistic
+    (domain:object_id) has no entity by design and is never offered."""
+    get_instance, rstats = _recorder_parts()
+    listed = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.list_statistic_ids, hass))
+    registry = er.async_get(hass)
+    only = call.data.get("statistic_id")
+    only = {only} if isinstance(only, str) else set(only or [])
+    orphans = []
+    for row in listed or []:
+        sid = row.get("statistic_id") if isinstance(row, dict) else None
+        if not sid or ":" in sid or row.get("source", "recorder") != "recorder":
+            continue
+        if only and sid not in only:
+            continue
+        if hass.states.get(sid) is not None or registry.async_get(sid) is not None:
+            continue
+        orphans.append({"statistic_id": sid, "name": row.get("name"),
+                        "unit": row.get("statistics_unit_of_measurement")
+                        or row.get("unit_of_measurement")})
+    not_orphans = sorted(only - {o["statistic_id"] for o in orphans})
+    if not_orphans:
+        raise ServiceValidationError(
+            "statistic_id: " + ", ".join(not_orphans) + " still has an entity "
+            "(or keeps no statistics), so it is not an orphan.")
+    result = {"dry_run": _dry_run(call, True), "orphans": orphans,
+              "count": len(orphans)}
+    if result["dry_run"] or not orphans:
+        return result
+    await _settled(get_instance(hass).async_clear_statistics(
+        [o["statistic_id"] for o in orphans]))
+    return result
+
+
+# A 32-bit counter that rolls or a register read as garbage leaves a step
+# near a power of two in a meter's sum; nothing a house uses moves that much
+# in an hour.
+GLITCH_STEP = 2 ** 29
+
+
+async def _heal_statistic_spikes(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Find the hours where a meter's sum jumped absurdly and work out the
+    adjustment that takes each jump out.
+
+    An hour is a spike when its change is over `max_hourly_change` (when
+    given), at least 2^29 (a counter glitch), or negative (a sum that
+    falls). What that hour SHOULD have added is read from the states: the
+    meter's own change across the hour when that is an ordinary one, else
+    nothing. Each adjustment is applied at its hour and carries on to every
+    later hour, which is what removes the excess from the whole history.
+    Previewed by default."""
+    import datetime as _dt
+
+    statistic_id = str(call.data.get("statistic_id") or "")
+    meta = await _stat_metadata(hass, statistic_id)
+    if not meta.get("has_sum"):
+        raise ServiceValidationError(
+            f"{statistic_id} keeps no sum, so it has no spikes to heal.")
+    bound = call.data.get("max_hourly_change")
+    if bound is not None:
+        try:
+            bound = float(bound)
+        except (TypeError, ValueError) as err:
+            raise ServiceValidationError(
+                "max_hourly_change must be a number.") from err
+        if bound <= 0:
+            raise ServiceValidationError("max_hourly_change must be above 0.")
+    days = float(call.data.get("days") or 30)
+    start = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    rows = await _hourly(hass, statistic_id, start)
+    unit = meta.get("unit_of_measurement")
+
+    def ordinary(change) -> bool:
+        if change is None or change < 0 or change >= GLITCH_STEP:
+            return False
+        return bound is None or change <= bound
+
+    spikes = []
+    for before, row in zip(rows, rows[1:]):
+        if before["sum"] is None or row["sum"] is None:
+            continue
+        change = row["sum"] - before["sum"]
+        if ordinary(change):
+            continue
+        states = (row["state"] - before["state"]
+                  if row["state"] is not None and before["state"] is not None
+                  else None)
+        should = states if ordinary(states) else 0.0
+        spikes.append({
+            "start": row["start"].isoformat(),
+            "change": change,
+            "should_be": should,
+            "adjustment": should - change,
+            "_start": row["start"],
+        })
+    result = {
+        "dry_run": _dry_run(call, True),
+        "statistic_id": statistic_id,
+        "unit": unit,
+        "hours_read": len(rows),
+        "spikes": [{k: v for k, v in sp.items() if not k.startswith("_")}
+                   for sp in spikes],
+    }
+    if result["dry_run"] or not spikes:
+        return result
+    for sp in spikes:
+        await _adjust(hass, statistic_id, sp["_start"], sp["adjustment"], unit)
+    result["adjusted"] = len(spikes)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
 
-async def _set_user_active(
-    hass: HomeAssistant, call: ServiceCall, *, active: bool
-) -> None:
+# Core's group ids (homeassistant/auth/const.py), spelled here so a core
+# whose auth package moves cannot take the vocabulary with it.
+USER_GROUPS = {
+    "admin": "system-admin",
+    "user": "system-users",
+    "read_only": "system-read-only",
+}
+
+
+def _group_ids(user) -> list[str]:
+    return [str(getattr(g, "id", g)) for g in (getattr(user, "groups", None) or [])]
+
+
+def _administers(user) -> bool:
+    if getattr(user, "is_owner", False):
+        return True
+    is_admin = getattr(user, "is_admin", None)
+    if isinstance(is_admin, bool):
+        return is_admin
+    return USER_GROUPS["admin"] in _group_ids(user)
+
+
+async def _guard_admins(hass: HomeAssistant, targets: list, action: str) -> None:
+    """Refuse a demotion, deactivation or deletion that would leave nobody
+    able to administer this Home Assistant. The owner and system users are
+    refused one by one before this is asked."""
+    leaving = {u.id for u in targets if _administers(u)}
+    if not leaving:
+        return
+    users = await hass.auth.async_get_users()
+    left = [u for u in users
+            if u.id not in leaving and _administers(u)
+            and getattr(u, "is_active", True)
+            and not getattr(u, "system_generated", False)]
+    if not left:
+        names = ", ".join(u.name or u.id for u in targets if u.id in leaving)
+        raise ServiceValidationError(
+            f"Refusing to {action} {names}: nobody else active could "
+            "administer Home Assistant afterwards. Make another user an "
+            "admin first.")
+
+
+async def _users_named(hass: HomeAssistant, ids, verb: str) -> list:
     users = []
-    for user_id in call.data["user_id"]:
+    for user_id in ids:
         user = await hass.auth.async_get_user(user_id)
         if user is None:
-            raise ServiceValidationError(f"User not found: {user_id}")
+            raise ServiceValidationError(
+                f"user_id: no user has the id {user_id}; list_users shows them.")
         if user.system_generated:
             raise ServiceValidationError(
-                f"Cannot modify a system-generated user: {user_id}"
+                f"Cannot {verb} a system-generated user: {user.name or user_id}"
             )
-        # Guard Spook doesn't have: an owner can never be locked out.
-        if not active and user.is_owner:
+        if user.is_owner:
             raise ServiceValidationError(
-                f"Refusing to disable owner account: {user.name or user_id}"
+                f"Refusing to {verb} the owner account: {user.name or user_id}"
             )
         users.append(user)
+    return users
+
+
+async def _set_user_active(
+    hass: HomeAssistant, call: ServiceCall, *, active: bool
+) -> dict:
+    ids = call.data["user_id"]
+    ids = [ids] if isinstance(ids, str) else list(ids)
+    if active:
+        users = []
+        for user_id in ids:
+            user = await hass.auth.async_get_user(user_id)
+            if user is None:
+                raise ServiceValidationError(
+                    f"user_id: no user has the id {user_id}; list_users shows them.")
+            if user.system_generated:
+                raise ServiceValidationError(
+                    f"Cannot modify a system-generated user: {user_id}")
+            users.append(user)
+    else:
+        # Guard Spook doesn't have: an owner, and the last admin, can never
+        # be locked out.
+        users = await _users_named(hass, ids, "disable")
+        await _guard_admins(hass, users, "disable")
     for user in users:
         await hass.auth.async_update_user(user, is_active=active)
+    return {"active": active,
+            "users": [{"user_id": u.id, "name": u.name} for u in users]}
 
 
-async def _enable_user(hass: HomeAssistant, call: ServiceCall) -> None:
-    await _set_user_active(hass, call, active=True)
+async def _enable_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    return await _set_user_active(hass, call, active=True)
 
 
-async def _disable_user(hass: HomeAssistant, call: ServiceCall) -> None:
-    await _set_user_active(hass, call, active=False)
+async def _disable_user(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    return await _set_user_active(hass, call, active=False)
+
+
+async def _set_user_group(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Make a user an admin, an ordinary user or read-only — the group the
+    user dialog's Administrator switch writes (config/auth/update)."""
+    group = str(call.data.get("group") or "").strip().lower().replace("-", "_")
+    if group not in USER_GROUPS:
+        raise ServiceValidationError(
+            "group must be one of " + ", ".join(USER_GROUPS) + f"; got {group!r}.")
+    user_id = str(call.data.get("user_id") or "")
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise ServiceValidationError(
+            f"user_id: no user has the id {user_id}; list_users shows them.")
+    if user.system_generated:
+        raise ServiceValidationError(
+            f"Cannot change a system-generated user: {user.name or user_id}")
+    before = _group_ids(user)
+    if group != "admin":
+        if user.is_owner:
+            raise ServiceValidationError(
+                f"Refusing to change the owner's group: {user.name or user_id}. "
+                "The owner is always an administrator.")
+        await _guard_admins(hass, [user], "demote")
+    result = {"dry_run": _dry_run(call), "user_id": user.id, "name": user.name,
+              "groups_before": before, "groups": [USER_GROUPS[group]]}
+    if not _dry_run(call) and before != [USER_GROUPS[group]]:
+        await hass.auth.async_update_user(user, group_ids=[USER_GROUPS[group]])
+    return result
+
+
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _sortable(value) -> float:
+    stamp = getattr(value, "timestamp", None)
+    return stamp() if callable(stamp) else 0.0
+
+
+async def _list_users(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Every user with what proves whether they are used: their groups,
+    whether they are active, local-only or system, and when each of their
+    refresh tokens (a signed-in app, a browser, a long-lived token) was last
+    used. Token values are never read."""
+    import datetime as _dt
+
+    include_system = bool(call.data.get("include_system", False))
+    unused_days = call.data.get("unused_for_days")
+    now = _dt.datetime.now(_dt.timezone.utc)
+    out = []
+    for user in await hass.auth.async_get_users():
+        if user.system_generated and not include_system:
+            continue
+        tokens = []
+        latest = None
+        for token in (getattr(user, "refresh_tokens", None) or {}).values():
+            used = getattr(token, "last_used_at", None)
+            tokens.append({
+                "client_name": getattr(token, "client_name", None)
+                or getattr(token, "client_id", None),
+                "type": str(getattr(token, "token_type", "") or ""),
+                "created_at": _iso(getattr(token, "created_at", None)),
+                "last_used_at": _iso(used),
+            })
+            if used is not None and (latest is None or _sortable(used) > _sortable(latest)):
+                latest = used
+        usernames = [
+            (getattr(c, "data", None) or {}).get("username")
+            for c in (getattr(user, "credentials", None) or [])]
+        row = {
+            "user_id": user.id,
+            "name": user.name,
+            "usernames": [u for u in usernames if u],
+            "groups": _group_ids(user),
+            "admin": _administers(user),
+            "owner": bool(user.is_owner),
+            "active": bool(getattr(user, "is_active", True)),
+            "local_only": bool(getattr(user, "local_only", False)),
+            "system_generated": bool(user.system_generated),
+            "last_used_at": _iso(latest),
+            "never_used": latest is None,
+            "refresh_tokens": tokens,
+        }
+        if unused_days is not None:
+            limit = now - _dt.timedelta(days=float(unused_days))
+            row["unused"] = latest is None or _sortable(latest) < limit.timestamp()
+        out.append(row)
+    return {"users": out, "count": len(out)}
+
+
+# ---------------------------------------------------------------------------
+# Integration options and group helpers
+#
+# An integration's Configure dialog is its options flow. Driving that flow
+# — never writing entry.options directly — is what keeps the integration's
+# own validation in front of the change and reloads the entry the way the
+# dialog does. One step only: a flow that answers a second form or a menu
+# is refused with what it asked for, because guessing a second page's
+# answers is a change nobody chose.
+# ---------------------------------------------------------------------------
+
+_SECRET_FIELD = re.compile(r"pass|token|secret|key|pin|code", re.I)
+
+
+def _entry_named(hass: HomeAssistant, call: ServiceCall):
+    entry_id = str(call.data.get("config_entry_id") or "").strip()
+    if not entry_id:
+        raise ServiceValidationError(
+            "config_entry_id is missing: the id of the integration entry, as "
+            "get_registry(integrations) shows it.")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise ServiceValidationError(
+            f"config_entry_id: no integration entry has the id {entry_id}.")
+    return entry
+
+
+def _field_default(key):
+    default = getattr(key, "default", None)
+    if callable(default):
+        try:
+            value = default()
+        except Exception:  # noqa: BLE001 — voluptuous's UNDEFINED and friends
+            return None
+        return value if value.__class__.__name__ != "Undefined" else None
+    return None
+
+
+def _shown(field: str, value):
+    return "**redacted**" if _SECRET_FIELD.search(field) else value
+
+
+async def _run_options_flow(hass: HomeAssistant, entry, values: dict,
+                            *, dry_run: bool = False) -> dict:
+    """Submit `values` to the entry's options form, every other field as it
+    stands, and answer what the form wanted and what changed."""
+    manager = hass.config_entries.options
+    label = getattr(entry, "title", None) or entry.entry_id
+    try:
+        flow = await manager.async_init(entry.entry_id)
+    except Exception as err:  # noqa: BLE001 — UnknownHandler and kin
+        raise ServiceValidationError(
+            f"{label} ({entry.domain}) has no options to set: {err}") from err
+    flow_id = flow.get("flow_id") if isinstance(flow, dict) else None
+    kind = flow.get("type") if isinstance(flow, dict) else None
+    if kind == "menu":
+        with suppress(Exception):
+            manager.async_abort(flow_id)
+        raise ServiceValidationError(
+            f"{label}'s options start with a menu ("
+            + ", ".join(map(str, flow.get("menu_options") or []))
+            + ") — a flow of more than one step brAIn will not guess its way "
+            "through. Use its Configure dialog.")
+    if not flow_id or kind != "form":
+        why = (flow.get("reason") or kind) if isinstance(flow, dict) else flow
+        raise ServiceValidationError(
+            f"{label} would not open its options ({why}).")
+    finished = False
+    try:
+        keys = (getattr(flow.get("data_schema"), "schema", None) or {})
+        fields = _schema_fields(flow.get("data_schema"))
+        required = {getattr(k, "schema", k) for k in keys
+                    if type(k).__name__ == "Required"}
+        unknown = sorted(set(values) - set(fields))
+        if unknown:
+            raise ServiceValidationError(
+                f"{label}'s options form has no " + ", ".join(unknown)
+                + "; it asks for " + (", ".join(fields) or "nothing") + ".")
+        current = dict(getattr(entry, "options", None) or {})
+        user_input: dict[str, Any] = {}
+        for key in keys:
+            name = getattr(key, "schema", key)
+            if not isinstance(name, str):
+                continue
+            if name in values:
+                user_input[name] = values[name]
+            elif name in current:
+                user_input[name] = current[name]
+            else:
+                default = _field_default(key)
+                if default is not None:
+                    user_input[name] = default
+        missing = sorted(required - set(user_input))
+        if missing:
+            raise ServiceValidationError(
+                f"{label}'s options form needs " + ", ".join(missing)
+                + ", which it has no value for. Give it in options.")
+        before = {k: current.get(k) for k in values}
+        report = {
+            "config_entry_id": entry.entry_id,
+            "integration": entry.domain,
+            "title": getattr(entry, "title", None),
+            "step": flow.get("step_id"),
+            "fields": sorted(fields),
+            "before": {k: _shown(k, v) for k, v in before.items()},
+            "after": {k: _shown(k, v) for k, v in values.items()},
+            "dry_run": dry_run,
+        }
+        if dry_run:
+            return report
+        try:
+            result = await manager.async_configure(flow_id, user_input)
+        except Exception as err:  # noqa: BLE001 — the form's own validation
+            raise ServiceValidationError(
+                f"{label}'s options form refused the values: {err}. It asks "
+                "for " + ", ".join(fields) + ".") from err
+        rkind = result.get("type") if isinstance(result, dict) else None
+        if rkind == "create_entry":
+            finished = True
+            return report
+        if rkind == "form" and result.get("errors"):
+            raise ServiceValidationError(
+                f"{label}'s options form refused the values: "
+                + json.dumps(result.get("errors")))
+        if rkind in ("form", "menu"):
+            nxt = _schema_fields(result.get("data_schema"))
+            raise ServiceValidationError(
+                f"{label}'s options go on to a second step "
+                f"({result.get('step_id')}"
+                + (", asking for " + ", ".join(nxt) if nxt else "")
+                + ") — a flow of more than one step brAIn will not guess its "
+                "way through, so nothing was changed. Use its Configure dialog.")
+        finished = rkind == "abort"
+        reason = result.get("reason") if isinstance(result, dict) else result
+        raise HomeAssistantError(f"{label}'s options flow stopped ({reason}).")
+    finally:
+        if not finished and flow_id:
+            with suppress(Exception):
+                manager.async_abort(flow_id)
+
+
+async def _set_integration_options(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Change an integration entry's options through its own Configure
+    form. Only the named fields change; dry_run reports the form's fields
+    and what would change without submitting."""
+    entry = _entry_named(hass, call)
+    values = call.data.get("options")
+    if values is not None and not isinstance(values, dict):
+        raise ServiceValidationError(
+            "options must be a mapping of the fields to set, like "
+            "{\"scan_interval\": 60}.")
+    if not values and not _dry_run(call):
+        raise ServiceValidationError(
+            "options is missing: a mapping of the fields to set, like "
+            "{\"scan_interval\": 60}. A dry run with no options lists the "
+            "fields the form asks for.")
+    return await _run_options_flow(hass, entry, dict(values or {}),
+                                   dry_run=_dry_run(call))
+
+
+async def _set_group_members(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Set, add to or take from the members of a group helper made in the
+    UI, through the group's own options form."""
+    registry = er.async_get(hass)
+    group_id = str(call.data.get("entity_id") or "").strip()
+    reg = registry.async_get(group_id) if group_id else None
+    entry = None
+    if reg is not None and getattr(reg, "config_entry_id", None):
+        entry = hass.config_entries.async_get_entry(reg.config_entry_id)
+    if entry is None or getattr(entry, "domain", None) != "group":
+        raise ServiceValidationError(
+            f"entity_id: {group_id or 'nothing'} is not a group helper made in "
+            "the UI (Settings → Helpers → Group). A YAML group is changed in "
+            "its YAML.")
+    current = list((entry.options or {}).get("entities") or [])
+    group_type = (entry.options or {}).get("group_type") or _domain(group_id)
+
+    def listed(name):
+        raw = call.data.get(name)
+        if raw is None:
+            return None
+        return [raw] if isinstance(raw, str) else list(raw)
+
+    members, add, remove = listed("entities"), listed("add"), listed("remove")
+    if members is None and not add and not remove:
+        raise ServiceValidationError(
+            "Say what the members become: entities (the whole list), add or "
+            "remove.")
+    new = list(members) if members is not None else list(current)
+    for eid in add or []:
+        if eid not in new:
+            new.append(eid)
+    absent = [e for e in (remove or []) if e not in new]
+    if absent:
+        raise ServiceValidationError(
+            "remove: " + ", ".join(absent) + " is not in the group; it has "
+            + (", ".join(current) or "no members") + ".")
+    new = [e for e in new if e not in (remove or [])]
+    wrong = [e for e in new if _domain(e) != group_type]
+    if wrong:
+        raise ServiceValidationError(
+            f"A {group_type} group holds only {group_type} entities; "
+            + ", ".join(wrong) + (" is" if len(wrong) == 1 else " are") + " not.")
+    if group_id in new:
+        raise ServiceValidationError("A group cannot be a member of itself.")
+    missing = [e for e in new
+               if hass.states.get(e) is None and registry.async_get(e) is None]
+    if missing:
+        raise ServiceValidationError(
+            "No entity is called " + ", ".join(missing) + ".")
+    if not new:
+        raise ServiceValidationError(
+            "A group needs at least one member; to take it away delete the "
+            "helper.")
+    report = await _run_options_flow(hass, entry, {"entities": new},
+                                     dry_run=_dry_run(call))
+    return {"entity_id": group_id, "dry_run": report["dry_run"],
+            "before": current, "members": new,
+            "added": [e for e in new if e not in current],
+            "removed": [e for e in current if e not in new]}
+
+
+# ---------------------------------------------------------------------------
+# Z-Wave
+#
+# Two things the Z-Wave JS device page offers that no service does: remove
+# a node the controller has marked failed, and rebuild one node's routes.
+# Both go through the integration's own node lookup and the controller
+# object it holds, so they need a zwave_js new enough to have them, and are
+# refused in words where it is not.
+# ---------------------------------------------------------------------------
+
+
+async def _zwave_device(hass: HomeAssistant, call: ServiceCall):
+    device_id = str(call.data.get("device_id") or "").strip()
+    entity_id = str(call.data.get("entity_id") or "").strip()
+    if not device_id and entity_id:
+        entry = er.async_get(hass).async_get(entity_id)
+        device_id = getattr(entry, "device_id", None) or ""
+        if not device_id:
+            raise ServiceValidationError(
+                f"entity_id: {entity_id} belongs to no device brAIn can find.")
+    if not device_id:
+        raise ServiceValidationError(
+            "Name the Z-Wave device: device_id, or entity_id of one of its "
+            "entities.")
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        raise ServiceValidationError(f"device_id: no device has the id {device_id}.")
+    helpers = await _component(hass, "zwave_js.helpers")
+    async_get_node_from_device_id = getattr(
+        helpers, "async_get_node_from_device_id", None)
+    if async_get_node_from_device_id is None:
+        raise HomeAssistantError("The Z-Wave JS integration is not loaded.")
+    try:
+        node = async_get_node_from_device_id(hass, device_id)
+    except Exception as err:  # noqa: BLE001 — ValueError for a non-Z-Wave device
+        raise ServiceValidationError(
+            f"{getattr(device, 'name_by_user', None) or device.name or device_id} "
+            f"is not a Z-Wave device brAIn can reach: {err}") from err
+    controller = getattr(getattr(getattr(node, "client", None), "driver", None),
+                         "controller", None)
+    if controller is None:
+        raise HomeAssistantError("The Z-Wave JS server is not connected.")
+    name = getattr(device, "name_by_user", None) or getattr(device, "name", None)
+    return device_id, name, node, controller
+
+
+def _node_status(node) -> str:
+    status = getattr(node, "status", None)
+    name = getattr(status, "name", status)
+    return str(name or "unknown").lower()
+
+
+async def _zwave_remove_failed_node(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Remove a node the controller has marked failed (dead). A node that
+    is not dead is refused: the controller refuses it anyway, and removing a
+    working node is what exclusion is for. Previewed by default."""
+    device_id, name, node, controller = await _zwave_device(hass, call)
+    remove = getattr(controller, "async_remove_failed_node", None)
+    if remove is None:
+        raise HomeAssistantError(
+            "This Z-Wave JS cannot remove a failed node from a service.")
+    status = _node_status(node)
+    result = {"dry_run": _dry_run(call, True), "device_id": device_id,
+              "name": name, "node_id": getattr(node, "node_id", None),
+              "status": status}
+    if status != "dead":
+        raise ServiceValidationError(
+            f"{name or device_id} is {status}, not dead, so it is not a failed "
+            "node. Only a node the controller has marked dead can be removed "
+            "this way; ping it first, or exclude it to remove a working one.")
+    if result["dry_run"]:
+        return result
+    await remove(node)
+    return result
+
+
+async def _zwave_rebuild_node_routes(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Ask the controller to rebuild one node's routes — the device page's
+    Rebuild routes. Answers whether the controller says it worked."""
+    device_id, name, node, controller = await _zwave_device(hass, call)
+    rebuild = getattr(controller, "async_rebuild_node_routes", None) \
+        or getattr(controller, "async_heal_node", None)
+    if rebuild is None:
+        raise HomeAssistantError(
+            "This Z-Wave JS cannot rebuild a node's routes from a service.")
+    answer = await rebuild(node)
+    return {"device_id": device_id, "name": name,
+            "node_id": getattr(node, "node_id", None),
+            "rebuilt": bool(answer) if answer is not None else None}
+
+
+# ---------------------------------------------------------------------------
+# Energy dashboard
+# ---------------------------------------------------------------------------
+
+_ENERGY_STAT_KEYS = ("stat_energy_from", "stat_energy_to", "stat_cost",
+                     "stat_compensation", "stat_consumption", "stat_rate",
+                     "entity_energy_price", "stat_power")
+
+
+async def _energy_manager_mod(hass: HomeAssistant):
+    energy_data = await _component(hass, "energy.data")
+    if energy_data is None:
+        raise HomeAssistantError("The energy integration is not loaded.")
+    return energy_data
+
+
+def _stat_ids_in(value) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key in _ENERGY_STAT_KEYS and isinstance(inner, str) and inner:
+                if key != "entity_energy_price":
+                    found.add(inner)
+            else:
+                found |= _stat_ids_in(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            found |= _stat_ids_in(inner)
+    return found
+
+
+async def _get_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    energy_data = await _energy_manager_mod(hass)
+    manager = await energy_data.async_get_manager(hass)
+    prefs = manager.data
+    if prefs is None:
+        return {"configured": False, "energy_sources": [],
+                "device_consumption": []}
+    return {"configured": True, **dict(prefs)}
+
+
+async def _save_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Replace the energy dashboard's sources and/or individual devices.
+    Every statistic named must be one the recorder keeps; previewed by
+    default, because it replaces the whole list it names."""
+    energy_data = await _energy_manager_mod(hass)
+    update: dict[str, Any] = {}
+    for key in ("energy_sources", "device_consumption", "device_consumption_water"):
+        if call.data.get(key) is not None:
+            if not isinstance(call.data[key], list):
+                raise ServiceValidationError(f"{key} must be a list.")
+            update[key] = list(call.data[key])
+    if not update:
+        raise ServiceValidationError(
+            "Give energy_sources, device_consumption or both — the lists the "
+            "energy dashboard is made of (get_energy_prefs shows them).")
+    schemas = {"energy_sources": getattr(energy_data, "ENERGY_SOURCE_SCHEMA", None),
+               "device_consumption": getattr(energy_data, "DEVICE_CONSUMPTION_SCHEMA", None),
+               "device_consumption_water": getattr(
+                   energy_data, "DEVICE_CONSUMPTION_SCHEMA", None)}
+    for key, items in update.items():
+        schema = schemas.get(key)
+        if callable(schema):
+            try:
+                update[key] = [schema(i) for i in items] \
+                    if key != "energy_sources" else schema(items)
+            except Exception as err:  # noqa: BLE001 — vol.Invalid
+                raise ServiceValidationError(f"{key}: {err}") from err
+    named = _stat_ids_in(update)
+    get_instance, rstats = _recorder_parts()
+    found = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.get_metadata, hass, statistic_ids=named))
+    missing = sorted(named - set(found or {}))
+    if missing:
+        raise ServiceValidationError(
+            "The recorder keeps no statistics called " + ", ".join(missing)
+            + "; the energy dashboard would show nothing for them.")
+    manager = await energy_data.async_get_manager(hass)
+    before = dict(manager.data or {})
+    result = {"dry_run": _dry_run(call, True), "statistics": sorted(named),
+              "before": {k: before.get(k) for k in update}, "after": update}
+    if result["dry_run"]:
+        return result
+    await manager.async_update(update)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Core configuration: the addresses Home Assistant is reached at
+# ---------------------------------------------------------------------------
+
+
+def _check_url(field: str, value):
+    if value in (None, ""):
+        return None
+    from urllib.parse import urlsplit
+
+    text = str(value).strip()
+    parts = urlsplit(text)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ServiceValidationError(
+            f"{field} must be a whole address like https://home.example.com "
+            f"or http://192.168.1.10:8123; {text!r} is not.")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise ServiceValidationError(
+            f"{field} is the address of Home Assistant itself, with no path: "
+            f"{parts.scheme}://{parts.netloc} rather than {text}.")
+    try:
+        parts.port  # noqa: B018 — raises on a port that is not a number
+    except ValueError as err:
+        raise ServiceValidationError(f"{field} has a port that is not a number.") from err
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+async def _set_core_urls(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Set the internal and/or external address in Settings → System →
+    Network. An empty value clears that address (Home Assistant then works
+    it out)."""
+    changes: dict[str, Any] = {}
+    for name in ("internal_url", "external_url"):
+        if name in call.data:
+            changes[name] = _check_url(name, call.data.get(name))
+    if not changes:
+        raise ServiceValidationError("Give internal_url, external_url or both.")
+    before = {name: getattr(hass.config, name, None) for name in changes}
+    result = {"dry_run": _dry_run(call), "before": before, "after": changes}
+    if not result["dry_run"]:
+        await hass.config.async_update(**changes)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thread
+# ---------------------------------------------------------------------------
+
+
+async def _thread_store_mod(hass: HomeAssistant):
+    dataset_store = await _component(hass, "thread.dataset_store")
+    if dataset_store is None:
+        raise HomeAssistantError("The Thread integration is not loaded.")
+    return dataset_store
+
+
+async def _list_thread_datasets(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """The Thread networks Home Assistant knows, and which is preferred.
+    The dataset itself (it holds the network key) is never returned."""
+    dataset_store = await _thread_store_mod(hass)
+    store = await dataset_store.async_get_store(hass)
+    preferred = getattr(store, "preferred_dataset", None)
+    rows = []
+    for dataset_id, entry in (getattr(store, "datasets", None) or {}).items():
+        rows.append({
+            "dataset_id": dataset_id,
+            "network_name": getattr(entry, "network_name", None),
+            "extended_pan_id": getattr(entry, "extended_pan_id", None),
+            "pan_id": getattr(entry, "pan_id", None),
+            "channel": getattr(entry, "channel", None),
+            "source": getattr(entry, "source", None),
+            "created": _iso(getattr(entry, "created", None)),
+            "preferred": dataset_id == preferred,
+        })
+    return {"datasets": rows, "preferred": preferred}
+
+
+async def _set_preferred_thread_dataset(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    dataset_store = await _thread_store_mod(hass)
+    store = await dataset_store.async_get_store(hass)
+    dataset_id = str(call.data.get("dataset_id") or "").strip()
+    datasets = getattr(store, "datasets", None) or {}
+    if dataset_id not in datasets:
+        raise ServiceValidationError(
+            f"dataset_id: no Thread network has the id {dataset_id}; the ids "
+            "are " + (", ".join(
+                f"{i} ({getattr(e, 'network_name', None)})"
+                for i, e in datasets.items()) or "none") + ".")
+    setter = getattr(dataset_store, "async_set_preferred_dataset", None)
+    before = getattr(store, "preferred_dataset", None)
+    if setter is not None:
+        await setter(hass, dataset_id)
+    elif hasattr(store, "preferred_dataset"):
+        store.preferred_dataset = dataset_id
+        save = getattr(store, "async_schedule_save", None)
+        if callable(save):
+            save()
+    else:
+        raise HomeAssistantError(
+            "This Home Assistant's Thread integration cannot set the preferred "
+            "network from a service.")
+    return {"before": before, "preferred": dataset_id,
+            "network_name": getattr(datasets[dataset_id], "network_name", None)}
+
+
+# ---------------------------------------------------------------------------
+# Categories (the automation, script, scene and helper lists' groupings)
+# ---------------------------------------------------------------------------
+
+CATEGORY_SCOPES = ("automation", "script", "scene", "helpers")
+
+
+def _category_registry(hass: HomeAssistant):
+    try:
+        from homeassistant.helpers.category_registry import async_get
+    except ImportError as err:
+        raise HomeAssistantError(
+            "This Home Assistant has no categories (2024.4 or later).") from err
+    return async_get(hass)
+
+
+def _scope(call: ServiceCall) -> str:
+    scope = str(call.data.get("scope") or "").strip().lower()
+    if scope not in CATEGORY_SCOPES:
+        raise ServiceValidationError(
+            "scope must be one of " + ", ".join(CATEGORY_SCOPES)
+            + f" — the list the category groups; got {scope!r}.")
+    return scope
+
+
+def _category(registry, scope: str, category_id: str):
+    found = registry.async_get_category(scope=scope, category_id=category_id)
+    if found is None:
+        names = ", ".join(
+            f"{c.name} ({c.category_id})"
+            for c in registry.async_list_categories(scope=scope)) or "none"
+        raise ServiceValidationError(
+            f"category_id: no {scope} category has the id {category_id}; "
+            f"they are {names}.")
+    return found
+
+
+async def _create_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    try:
+        entry = registry.async_create(scope=scope, name=call.data["name"],
+                                      icon=call.data.get("icon"))
+    except ValueError as err:  # a name already taken in the scope
+        raise ServiceValidationError(str(err)) from err
+    return {"category_id": entry.category_id, "scope": scope, "name": entry.name}
+
+
+async def _update_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    current = _category(registry, scope, call.data["category_id"])
+    changes = _partial_update(call, ("name", "icon"))
+    try:
+        entry = registry.async_update(scope=scope, category_id=current.category_id,
+                                      **changes)
+    except ValueError as err:
+        raise ServiceValidationError(str(err)) from err
+    return {"category_id": entry.category_id, "scope": scope, "name": entry.name,
+            "icon": getattr(entry, "icon", None)}
+
+
+def _entities_in_category(hass, scope: str, category_id: str) -> list[str]:
+    registry = er.async_get(hass)
+    return sorted(
+        e.entity_id for e in registry.entities.values()
+        if (getattr(e, "categories", None) or {}).get(scope) == category_id)
+
+
+async def _delete_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete a category. The automations, scripts, scenes or helpers in it
+    are not deleted — they become uncategorised — and the answer lists them."""
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    entry = _category(registry, scope, call.data["category_id"])
+    result = {"dry_run": _dry_run(call), "category_id": entry.category_id,
+              "name": entry.name, "scope": scope,
+              "uncategorised": _entities_in_category(hass, scope, entry.category_id)}
+    if not result["dry_run"]:
+        registry.async_delete(scope=scope, category_id=entry.category_id)
+    return result
+
+
+async def _set_entity_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Put automations, scripts, scenes or helpers in a category, or take
+    them out of one (category_id empty)."""
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    category_id = str(call.data.get("category_id") or "").strip()
+    if category_id:
+        _category(registry, scope, category_id)
+    entities = er.async_get(hass)
+    ids = call.data["entity_id"]
+    ids = [ids] if isinstance(ids, str) else list(ids)
+    plans = []
+    for entity_id in ids:
+        entry = entities.async_get(entity_id)
+        if entry is None:
+            raise ServiceValidationError(
+                f"{entity_id} has no registry entry (no unique id), so Home "
+                "Assistant cannot keep a category for it.")
+        if scope in ("automation", "script", "scene") and _domain(entity_id) != scope:
+            raise ServiceValidationError(
+                f"{entity_id} is not a {scope}, so it is not in the {scope} list.")
+        plans.append(entry)
+    for entry in plans:
+        categories = dict(getattr(entry, "categories", None) or {})
+        if category_id:
+            categories[scope] = category_id
+        else:
+            categories.pop(scope, None)
+        entities.async_update_entity(entry.entity_id, categories=categories)
+    return {"scope": scope, "category_id": category_id or None,
+            "entity_id": [e.entity_id for e in plans]}
+
+
+# ---------------------------------------------------------------------------
+# Backups
+# ---------------------------------------------------------------------------
+
+
+def _backup_manager(hass: HomeAssistant):
+    """Home Assistant's backup manager (core 2025.1+), or None."""
+    manager = (getattr(hass, "data", None) or {}).get("backup")
+    if manager is None or not hasattr(manager, "async_get_backups"):
+        return None
+    return manager
+
+
+def _backup_field(backup, name, default=None):
+    if isinstance(backup, dict):
+        return backup.get(name, default)
+    return getattr(backup, name, default)
+
+
+def _backup_row(backup) -> dict:
+    """One backup in words a caller can filter on, from either the 2025
+    `ManagerBackup` shape or the older `Backup` one."""
+    import datetime as _dt
+
+    backup_id = _backup_field(backup, "backup_id") or _backup_field(backup, "slug")
+    date = _backup_field(backup, "date")
+    if isinstance(date, str):
+        try:
+            parsed = _dt.datetime.fromisoformat(date.replace("Z", "+00:00"))
+        except ValueError:
+            parsed = None
+    else:
+        parsed = date if isinstance(date, _dt.datetime) else None
+    if parsed is not None and parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    agents = _backup_field(backup, "agents") or {}
+    sizes = [_backup_field(a, "size") for a in agents.values()] if isinstance(agents, dict) else []
+    size = _backup_field(backup, "size")
+    if size is None and sizes:
+        size = max((x for x in sizes if isinstance(x, (int, float))), default=None)
+    extra = _backup_field(backup, "extra_metadata") or {}
+    automatic = _backup_field(backup, "with_automatic_settings")
+    if automatic is None and isinstance(extra, dict):
+        automatic = extra.get("with_automatic_settings")
+    database = _backup_field(backup, "database_included")
+    homeassistant = _backup_field(backup, "homeassistant_included")
+    partial = database is False or homeassistant is False
+    return {
+        "backup_id": backup_id,
+        "name": _backup_field(backup, "name"),
+        "date": parsed.isoformat() if parsed else (str(date) if date else None),
+        "size": size,
+        "automatic": bool(automatic),
+        "partial": bool(partial),
+        "protected": bool(_backup_field(backup, "protected", False)) or any(
+            bool(_backup_field(a, "protected", False))
+            for a in (agents.values() if isinstance(agents, dict) else [])),
+        "locations": sorted(agents) if isinstance(agents, dict) else [],
+        "_when": parsed,
+    }
+
+
+async def _backup_rows(hass: HomeAssistant) -> tuple[list[dict], list[str]]:
+    manager = _backup_manager(hass)
+    if manager is None:
+        raise HomeAssistantError(
+            "This Home Assistant has no backup manager brAIn can read "
+            "(Home Assistant 2025.1 or later is needed to list backups).")
+    answer = await manager.async_get_backups()
+    errors: list[str] = []
+    if isinstance(answer, tuple):
+        backups, agent_errors = answer[0], (answer[1] if len(answer) > 1 else {})
+        errors = [f"{agent}: {err}" for agent, err in (agent_errors or {}).items()]
+    else:
+        backups = answer
+    values = backups.values() if isinstance(backups, dict) else backups
+    rows = [_backup_row(b) for b in values]
+    rows.sort(key=lambda r: _sortable(r["_when"]), reverse=True)
+    return rows, errors
+
+
+def _public(rows: list[dict]) -> list[dict]:
+    return [{k: v for k, v in r.items() if not k.startswith("_")} for r in rows]
+
+
+async def _list_backups(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    rows, errors = await _backup_rows(hass)
+    result: dict[str, Any] = {"backups": _public(rows), "count": len(rows)}
+    if errors:
+        result["unreadable_locations"] = errors
+    return result
+
+
+async def _delete_backups(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete the backups a filter picks, newest kept, previewed by default.
+
+    A filter is required — a call that names nothing would match every
+    backup — and the last backup is never deleted: somebody pruning old
+    ones is never asking to be left with none."""
+    import datetime as _dt
+
+    ids = call.data.get("backup_id")
+    ids = [ids] if isinstance(ids, str) else list(ids or [])
+    older = call.data.get("older_than_days")
+    contains = str(call.data.get("name_contains") or "").strip().casefold()
+    kind = str(call.data.get("kind") or "").strip().lower()
+    keep = int(call.data.get("keep_newest") or 0)
+    if kind and kind not in ("automatic", "manual", "full", "partial"):
+        raise ServiceValidationError(
+            f"kind must be automatic, manual, full or partial; got {kind!r}.")
+    if not (ids or older is not None or contains or kind):
+        raise ServiceValidationError(
+            "Say which backups: backup_id, older_than_days, name_contains or "
+            "kind. With none of them every backup would match.")
+    if keep < 0:
+        raise ServiceValidationError("keep_newest cannot be negative.")
+    rows, errors = await _backup_rows(hass)
+    known = {r["backup_id"] for r in rows}
+    unknown = [i for i in ids if i not in known]
+    if unknown:
+        raise ServiceValidationError(
+            "backup_id: no backup has the id " + ", ".join(unknown)
+            + "; list_backups shows them.")
+    cutoff = None
+    if older is not None:
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=float(older))
+    matched = []
+    for row in rows:  # newest first
+        if ids and row["backup_id"] not in ids:
+            continue
+        if cutoff is not None and (row["_when"] is None or row["_when"] >= cutoff):
+            continue
+        if contains and contains not in str(row["name"] or "").casefold():
+            continue
+        if kind == "automatic" and not row["automatic"]:
+            continue
+        if kind == "manual" and row["automatic"]:
+            continue
+        if kind == "full" and row["partial"]:
+            continue
+        if kind == "partial" and not row["partial"]:
+            continue
+        matched.append(row)
+    kept = matched[:keep]
+    doomed = matched[keep:]
+    if rows and len(doomed) == len(rows):
+        raise ServiceValidationError(
+            "That would delete every backup this Home Assistant has. Set "
+            "keep_newest to keep at least one.")
+    result: dict[str, Any] = {
+        "dry_run": _dry_run(call, True),
+        "delete": _public(doomed),
+        "kept_by_keep_newest": _public(kept),
+        "remaining": len(rows) - len(doomed),
+    }
+    if errors:
+        result["unreadable_locations"] = errors
+    if _dry_run(call, True):
+        return result
+    manager = _backup_manager(hass)
+    failed = []
+    for row in doomed:
+        try:
+            answer = await manager.async_delete_backup(row["backup_id"])
+        except Exception as err:  # noqa: BLE001 — report each, carry on
+            failed.append({"backup_id": row["backup_id"], "error": str(err)})
+            continue
+        if isinstance(answer, dict) and answer:
+            failed.append({"backup_id": row["backup_id"], "error": "; ".join(
+                f"{agent}: {err}" for agent, err in answer.items())})
+    result["failed"] = failed
+    result["deleted"] = len(doomed) - len(failed)
+    return result
+
+
+async def _create_backup(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Make a backup through the service this Home Assistant has: the
+    Supervisor's (full or partial) where there is one, else the backup
+    integration's own."""
+    partial = bool(call.data.get("partial", False))
+    name = call.data.get("name")
+    password = call.data.get("password")
+    addons = call.data.get("addons") or []
+    folders = call.data.get("folders") or []
+    include_ha = bool(call.data.get("homeassistant", True))
+    has = hass.services.has_service
+    if partial:
+        if not has("hassio", "backup_partial"):
+            raise ServiceValidationError(
+                "A partial backup needs the Supervisor (Home Assistant OS or "
+                "Supervised); this Home Assistant can only make a full one.")
+        if not (addons or folders or include_ha):
+            raise ServiceValidationError(
+                "A partial backup has to include something: homeassistant, "
+                "addons or folders.")
+        domain, service = "hassio", "backup_partial"
+        data: dict[str, Any] = {"homeassistant": include_ha}
+        if addons:
+            data["addons"] = list(addons)
+        if folders:
+            data["folders"] = list(folders)
+    elif has("hassio", "backup_full"):
+        domain, service, data = "hassio", "backup_full", {}
+    elif has("backup", "create_automatic"):
+        if name or password:
+            raise ServiceValidationError(
+                "Without the Supervisor a backup takes the name and password "
+                "set under Settings → System → Backups; leave name and "
+                "password out.")
+        domain, service, data = "backup", "create_automatic", {}
+    elif has("backup", "create"):
+        if name or password:
+            raise ServiceValidationError(
+                "This Home Assistant's backup service takes no name or "
+                "password; leave them out.")
+        domain, service, data = "backup", "create", {}
+    else:
+        raise HomeAssistantError(
+            "No backup service is loaded on this Home Assistant (neither the "
+            "Supervisor's nor the backup integration's).")
+    if domain == "hassio":
+        if name:
+            data["name"] = str(name)
+        if password:
+            data["password"] = str(password)
+    answer = await hass.services.async_call(domain, service, data, blocking=True)
+    result: dict[str, Any] = {"service": f"{domain}.{service}", "partial": partial}
+    if name:
+        result["name"] = name
+    if isinstance(answer, dict) and answer:
+        result["answer"] = answer
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2821,6 +4189,12 @@ async def _remove_repair_issue(hass: HomeAssistant, call: ServiceCall) -> None:
 
 _STR_LIST = vol.All(cv.ensure_list, [cv.string])
 _ENTITY_LIST = vol.All(cv.ensure_list, [cv.entity_id])
+_LOOSE_LIST = vol.All(cv.ensure_list, [cv.string])
+_PERSON_FIELDS = {
+    vol.Optional("entity_id"): cv.string,
+    vol.Optional("person_id"): cv.string,
+    vol.Optional("person"): cv.string,
+}
 
 
 @dataclass(frozen=True)
@@ -3067,23 +4441,26 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("user_id"): cv.string,
         vol.Optional("device_tracker"): _ENTITY_LIST,
     }, has_response=True),
+    # A person is named by entity_id, person_id or person (their name), and
+    # every field is checked in the handler rather than by the schema: a
+    # schema refusal over REST is a bare 400 that names no field.
     PowerTool("delete_person", _delete_person, {
-        vol.Required("entity_id"): cv.entity_id,
+        **_PERSON_FIELDS,
         vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("rename_person", _rename_person, {
-        vol.Required("entity_id"): cv.entity_id,
-        vol.Required("name"): cv.string,
-    }),
+        **_PERSON_FIELDS,
+        vol.Optional("name"): cv.string,
+    }, has_response=True),
     PowerTool("add_device_tracker_to_person", _add_device_tracker_to_person, {
-        vol.Required("entity_id"): cv.entity_id,
-        vol.Required("device_tracker"): _ENTITY_LIST,
-    }),
+        **_PERSON_FIELDS,
+        vol.Optional("device_tracker"): _LOOSE_LIST,
+    }, has_response=True),
     PowerTool(
         "remove_device_tracker_from_person", _remove_device_tracker_from_person, {
-            vol.Required("entity_id"): cv.entity_id,
-            vol.Required("device_tracker"): _ENTITY_LIST,
-        },
+            **_PERSON_FIELDS,
+            vol.Optional("device_tracker"): _LOOSE_LIST,
+        }, has_response=True,
     ),
     # Blueprints
     PowerTool("import_blueprint", _import_blueprint, {
@@ -3109,6 +4486,23 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
             },
         ],
     }, has_response=True),
+    PowerTool("adjust_statistic_sum", _adjust_statistic_sum, {
+        vol.Required("statistic_id"): cv.string,
+        vol.Required("start_time"): cv.string,
+        vol.Required("adjustment"): vol.Coerce(float),
+        vol.Optional("unit"): cv.string,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("clear_orphaned_statistics", _clear_orphaned_statistics, {
+        vol.Optional("statistic_id"): _STR_LIST,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("heal_statistic_spikes", _heal_statistic_spikes, {
+        vol.Required("statistic_id"): cv.string,
+        vol.Optional("max_hourly_change"): vol.Coerce(float),
+        vol.Optional("days", default=30): vol.Coerce(float),
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
     # Users
     PowerTool("create_user", _create_user, {
         vol.Required("name"): cv.string,
@@ -3122,10 +4516,101 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     }, has_response=True),
     PowerTool("enable_user", _enable_user, {
         vol.Required("user_id"): _STR_LIST,
-    }),
+    }, has_response=True),
     PowerTool("disable_user", _disable_user, {
         vol.Required("user_id"): _STR_LIST,
-    }),
+    }, has_response=True),
+    PowerTool("set_user_group", _set_user_group, {
+        vol.Required("user_id"): cv.string,
+        vol.Required("group"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("list_users", _list_users, {
+        vol.Optional("include_system", default=False): cv.boolean,
+        vol.Optional("unused_for_days"): vol.Coerce(float),
+    }, has_response=True),
+    # Integration options and group helpers
+    PowerTool("set_integration_options", _set_integration_options, {
+        vol.Required("config_entry_id"): cv.string,
+        vol.Optional("options"): dict,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("set_group_members", _set_group_members, {
+        vol.Required("entity_id"): cv.string,
+        vol.Optional("entities"): _STR_LIST,
+        vol.Optional("add"): _STR_LIST,
+        vol.Optional("remove"): _STR_LIST,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    # Z-Wave
+    PowerTool("zwave_remove_failed_node", _zwave_remove_failed_node, {
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("zwave_rebuild_node_routes", _zwave_rebuild_node_routes, {
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+    }, has_response=True),
+    # Energy dashboard
+    PowerTool("get_energy_prefs", _get_energy_prefs, {}, has_response=True),
+    PowerTool("save_energy_prefs", _save_energy_prefs, {
+        vol.Optional("energy_sources"): list,
+        vol.Optional("device_consumption"): list,
+        vol.Optional("device_consumption_water"): list,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    # Core configuration
+    PowerTool("set_core_urls", _set_core_urls, {
+        vol.Optional("internal_url"): vol.Any(None, cv.string),
+        vol.Optional("external_url"): vol.Any(None, cv.string),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    # Thread
+    PowerTool("list_thread_datasets", _list_thread_datasets, {}, has_response=True),
+    PowerTool("set_preferred_thread_dataset", _set_preferred_thread_dataset, {
+        vol.Required("dataset_id"): cv.string,
+    }, has_response=True),
+    # Categories
+    PowerTool("create_category", _create_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("name"): cv.string,
+        vol.Optional("icon"): cv.icon,
+    }, has_response=True),
+    PowerTool("update_category", _update_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("category_id"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("icon"): vol.Any(None, cv.icon),
+    }, has_response=True),
+    PowerTool("delete_category", _delete_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("category_id"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("set_entity_category", _set_entity_category, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+        vol.Required("scope"): cv.string,
+        vol.Optional("category_id"): vol.Any(None, cv.string),
+    }, has_response=True),
+    # Backups
+    PowerTool("list_backups", _list_backups, {}, has_response=True),
+    PowerTool("delete_backups", _delete_backups, {
+        vol.Optional("backup_id"): _STR_LIST,
+        vol.Optional("older_than_days"): vol.Coerce(float),
+        vol.Optional("name_contains"): cv.string,
+        vol.Optional("kind"): cv.string,
+        vol.Optional("keep_newest", default=0): vol.Coerce(int),
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("create_backup", _create_backup, {
+        vol.Optional("partial", default=False): cv.boolean,
+        vol.Optional("name"): cv.string,
+        vol.Optional("password"): cv.string,
+        vol.Optional("homeassistant", default=True): cv.boolean,
+        vol.Optional("addons"): _STR_LIST,
+        vol.Optional("folders"): _STR_LIST,
+    }, has_response=True),
     # Diagnostics
     PowerTool("find_orphaned_references", _find_orphaned_references, {
         vol.Optional("create_issue", default=False): cv.boolean,

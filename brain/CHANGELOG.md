@@ -2,6 +2,24 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.14
+
+### Added
+
+- **Power Tools for what still needed a person or a raw WebSocket call.** Users: list them and change a user's group, and the last admin can never be disabled, deleted or demoted. Backups: list, create, and delete (previewed by default, filterable, never the last one). Statistics: adjust a sum, clear orphaned statistics and heal spikes, all previewed by default. An integration's own options and a group's members, through the integration's own options flow. Z-Wave failed-node removal and route rebuilds, energy settings, Home Assistant's own addresses, Thread networks, and categories made, changed, deleted and assigned. (#419)
+
+### Fixed
+
+- **`brain.remove_device_tracker_from_person` no longer answers HTTP 400.** A person can be named by entity, id or name, and a refusal names the field that was wrong. (#420)
+- **The LLM API and the account-wide watchers are claimed once.** Every extra brAIn agent tried to register `brain_measurements` again and logged a warning each time; the claim is now taken before anything is awaited. (#417)
+
+## 3.8.13
+
+### Added
+
+- **brAIn examines every part of Home Assistant by default, and says what it looked at.** After each checks pass, every area — networks, integrations, custom integrations, add-ons, host, backups, recorder, automations, dashboards, energy, people and presence, HACS, repairs, and devices — gets one line: checked and nothing wrong, how many findings, could not look and why, or not set up in this house. The lines are in `brain doctor`, the problem report and Diagnostics, and "did you look at X" can be asked of the decision log. (#418)
+- **New checks for the areas nothing covered:** a repair left open for a week; an energy dashboard naming a statistic that does not exist or a rate sensor where a total belongs; a phone that has stopped reporting for a week; a person's GPS tracker that has not updated for a week; a custom integration nothing uses; an add-on stopped while an integration still depends on it; HACS updates waiting two weeks; Matter set up with no devices; a Bluetooth device heard only faintly. A house that backs up to the cloud with no local copy is no longer told it has never backed up. (#418)
+
 ## 3.8.12
 
 ### Added

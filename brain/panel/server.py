@@ -14480,6 +14480,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                 {findings_store.normalize(f["text"]) for f in shadow_rows})
             shadow_findings.prune(started)
             _note_pass_decisions(result, created)
+            _note_coverage(result, snapshot, started)
             return created, refreshed, cleared, {
                 "created": len(hidden), "found": len(shadow_rows)}
 
@@ -17193,6 +17194,12 @@ def _diagnostics_payload() -> dict:
         # broke, so the fault list names a check in words (`reports.faults`
         # is pure and cannot ask the catalog itself).
         "check_titles": _check_titles(CHECKS_STATE["last"]),
+        # Which parts of Home Assistant brAIn has looked at, per area: when,
+        # whether every check in it could look, and what it found — one
+        # line each, off the record every pass keeps (`checks.coverage`).
+        "coverage": _safe_summary(
+            lambda: checks.coverage.summary(checks.coverage.load(),
+                                            checks.CHECKS)),
         # What brAIn decided not to say, counted by reason over the last
         # day, and whether the trail can be read or written at all: a
         # trail that stopped writing makes every "why didn't you tell me"
@@ -21214,6 +21221,22 @@ def _signal_decisions(signals_list, kind: str, reason: str) -> list[dict]:
                     "reason": str(reason or ""),
                     "text": str(sig.get("text") or "")})
     return out
+
+
+def _note_coverage(result: dict, snapshot: dict, now: float) -> int:
+    """Record what this pass examined, per area, and put one "checked,
+    nothing wrong" line per clean area on the decision trail — so "did
+    you look at the recorder" has an answer. Never raises."""
+    try:
+        record = checks.coverage.record(
+            checks.coverage.load(), result, now, snapshot.get("errors") or {})
+        checks.coverage.save(record)
+        areas = checks.coverage.area_view(record, checks.CHECKS, now)
+        return decision_trail.note_many(checks.coverage.checked_rows(
+            areas, now, checks._util.house_tz()), now)
+    except Exception as exc:  # noqa: BLE001 — accounting never fails a pass
+        log.debug("could not record this pass's coverage: %s", exc)
+        return 0
 
 
 def _note_pass_decisions(result: dict, created: list[dict]) -> int:

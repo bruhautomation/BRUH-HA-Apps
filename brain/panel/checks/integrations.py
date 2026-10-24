@@ -226,6 +226,6 @@ def log_flood(snap: dict, now: float) -> list[dict]:
 INTEGRATIONS = "Integrations"
 
 CHECKS = [
-    {"id": "integ.log_flood", "title": "Integrations repeating an error",
+    {"id": "integ.log_flood", "area": "integrations", "title": "Integrations repeating an error",
      "source_title": INTEGRATIONS, "needs": ("core_log",), "run": log_flood},
 ]

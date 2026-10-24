@@ -85,7 +85,11 @@ def house(**over) -> dict:
             "history_health",
             # The networks (checks/network.py) and the integrations' log
             # (checks/integrations.py): asked, and nothing in them wrong.
-            "zwave_nodes", "wifi_history", "core_log")},
+            "zwave_nodes", "wifi_history", "core_log",
+            # The parts of Home Assistant checks/audit.py reads: repairs,
+            # the Energy dashboard, custom integrations and what Bluetooth
+            # hears — asked, and nothing in them wrong.
+            "repairs", "energy_prefs", "custom_components", "bluetooth")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -191,6 +195,26 @@ def house(**over) -> dict:
         "zwave_nodes": {},
         "wifi_history": {"days": 7, "entities": {}},
         "core_log": {"hours": 24, "lines": 0, "groups": []},
+        # A repair raised two days ago (not a week), one somebody ignored
+        # and brAIn's own — `repairs.stale` has nothing to say about any.
+        "repairs": [
+            {"domain": "hue", "issue_id": "firmware", "created": iso(2 * DAY),
+             "severity": "warning", "ignored": False},
+            {"domain": "sonos", "issue_id": "old", "created": iso(40 * DAY),
+             "severity": "warning", "ignored": True},
+            {"domain": "brain", "issue_id": "restart_required",
+             "created": iso(40 * DAY), "severity": "warning"}],
+        # An Energy dashboard reading a utility's own statistic, which
+        # names no entity to be missing or a rate.
+        "energy_prefs": {"configured": True, "prefs": {
+            "energy_sources": [{"type": "grid", "flow_from": [
+                {"stat_energy_from": "utility:grid_import"}], "flow_to": []}],
+            "device_consumption": []}},
+        # The one custom integration here is the one brAIn deploys.
+        "custom_components": {"integrations": [
+            {"domain": "brain", "name": "brAIn", "mtime": NOW - 90 * DAY}],
+            "referenced": []},
+        "bluetooth": {"rssi": {}},
         # Every integration loaded. The disabled and ignored rows are here
         # on purpose: `sys.entry_failed` has to stay silent about both,
         # because neither is a fault.
