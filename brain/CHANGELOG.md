@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.17
+
+### Added
+
+- **Timed actions: something done once, on a timer, with no automation written.** "Water the garden for 90 minutes" or "in an hour turn on the porch light" is run by brAIn itself: the steps are listed in the panel and in Morph, each can be stopped, and stopping one runs its ending at once. Every step is checked the way any call is — never unlocking, disarming or opening a garage, door or gate, and never a protected entity. The ask bar, a phone reply and the chat (`timed_action`) all start one, and with *Let brAIn act without asking* on, a rule somebody typed is accepted at once instead of waiting as a draft. (#400)
+- **brAIn can see and log the garden.** Eight GardenRX tools read the season's status and harvests and log a harvest, a spray or a note, queue a spray, adjust inventory and add a crop, listed only where the GardenRX integration is set up. Writing ones are never offered to unattended runs, and voice may log but not queue a spray or change inventory. Each checks pass files one fact per crop with the season's totals, so "what did we harvest" has an answer. (#392)
+
+### Fixed
+
+- **Screenshots of Morph draw its own custom cards.** The screenshot harness ran a placeholder for every card, so Morph's own cards never appeared; it now runs each card's code with a read-only Home Assistant and labels a card that could not be drawn. (#398)
+
+### Security
+
+- **The personality routes no longer answer with an exception's text.** A refused name, persona or growth entry is answered with brAIn's own sentence, checked before anything is written.
+
 ## 3.8.16
 
 ### Added

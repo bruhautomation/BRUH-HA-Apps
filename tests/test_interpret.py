@@ -140,7 +140,7 @@ class AskCase(RouteCase):
 
         s.engine.run_analyst = analyst
         self.intent_calls = []
-        s.intents.request = lambda text, via="panel": (
+        s.intents.request = lambda text, via="panel", **k: (
             self.intent_calls.append((text, via)) or text[:40])
         self.studies = []
         s.onboarding.request_study = lambda topic="", *a, **k: (

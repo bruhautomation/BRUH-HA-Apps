@@ -488,7 +488,9 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "minecraft_command", "minecraft_server", "minecraft_addons",
     "print_label", "bright_show",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
-    "report_bug", "note_personality_change",
+    "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
+    "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
+    "report_bug", "timed_action", "note_personality_change",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -1203,6 +1205,10 @@ VOICE_UNTARGETED = {
                              "set_temperature", "print_file", "design_part",
                              "design_status", "print_part"}),
     "music_assistant": frozenset({"search", "get_library"}),
+    # The owner asked for the garden by voice: a pick, a spray made and a
+    # note are logged, and what was picked is read. Changing the stock,
+    # the crops or the queue is not done by ear.
+    "gardenrx": frozenset({"log_harvest", "log_spray", "log_note", "get_harvests"}),
 }
 VOICE_CROSS_DOMAIN = {
     "homeassistant": frozenset({"turn_on", "turn_off", "toggle", "update_entity"}),
@@ -2344,6 +2350,31 @@ def report_bug(addon, title, what, evidence="", asked="", done_when="", ui=False
         "asked": asked, "done_when": done_when, "ui": ui is True})
 
 
+def timed_action(action="list", title="", said="", steps=None, id=None):
+    """Start, stop or list brAIn's timed actions: a few service calls at
+    set moments ("water the garden for 90 minutes"), run by brAIn itself
+    with no automation written. Through the panel, which checks every step
+    exactly as it checks one read from a sentence (the protected list, the
+    tripwire, never unlocking, disarming or opening a garage, door or gate)
+    and runs each one through the same chokepoint as every panel call."""
+    action = str(action or "list").strip().lower()
+    if action == "list":
+        return _panel_send("GET", "/api/timed")
+    if action == "stop":
+        try:
+            task_id = int(id)
+        except (TypeError, ValueError):
+            return {"error": "stop needs the id of a timed action (list them first)"}
+        return _panel_send("POST", f"/api/timed/{task_id}/stop", {})
+    if action == "start":
+        if not isinstance(steps, list) or not steps:
+            return {"error": "start needs steps: [{after_minutes, domain, service, entities, ends}]"}
+        return _panel_send("POST", "/api/timed", {
+            "title": title, "said": said or title, "steps": steps,
+            "via": "chat"})
+    return {"error": "action must be start, stop or list"}
+
+
 def note_personality_change(text):
     """Record one dated entry in the growth log of the household's
     personality for brAIn (⚙ › Personality). Through the panel, which owns
@@ -2688,6 +2719,12 @@ VOICE_ADMIN_SERVICES = frozenset({
     # slice or a download is nothing anybody asks for by ear.
     ("bruh_bambu", s) for s in (
         "stop_print", "send_gcode", "slice_file", "open_in_studio", "import_url")
+} | {
+    # The garden's record by ear is a pick, a spray and a note; stock,
+    # crops, the queue and deleting a row are typed.
+    ("gardenrx", s) for s in (
+        "adjust_inventory", "add_crop", "add_variety", "queue_spray",
+        "complete_queued_spray", "delete_queued_spray", "delete_harvest")
 })
 
 ADDON_NAMES = {
@@ -2695,6 +2732,7 @@ ADDON_NAMES = {
     "bright": ("BRight", "BRight"),
     "bruh_print": ("BRUH Print", "BRUH Print"),
     "bruh_bambu": ("BRUH Bambu Studio", "BRUH Bambu Studio"),
+    "gardenrx": ("GardenRX", "GardenRX"),
 }
 
 
@@ -3313,6 +3351,294 @@ def bright_show(action, party="", track="", media_player="", scene=""):
     if isinstance(result, dict) and result.get("error"):
         return result
     return {"done": True, "action": action}
+
+
+# -- GardenRX -----------------------------------------------------------------
+#
+# The garden's harvests, sprays, stock and notes. GardenRX's integration is
+# the one writer of its database, so every action here is one of its own
+# services (`_addon_call`), and what the garden holds right now is read off
+# the sensors it publishes — each carries a `gardenrx` attribute saying which
+# part of the summary it is, so a renamed entity is still found.
+
+GARDEN_KIND_ATTR = "gardenrx"
+GARDEN_LIST_MAX = 40
+# What a person typed into GardenRX, marked as text from outside.
+GARDEN_TEXT_KEYS = ("notes", "note")
+GARDEN_HARVEST_UNITS = ("lb", "oz", "kg", "g", "ct")
+GARDEN_STOCK_UNITS = ("mL", "fl oz", "tbsp", "tsp", "pt", "qt", "gal", "g",
+                      "oz", "lb", "ct", "packets")
+_GARDEN_DROP_ATTRS = frozenset({"friendly_name", "icon", "device_class",
+                                "state_class", "unit_of_measurement",
+                                "attribution", GARDEN_KIND_ATTR})
+
+
+def _garden_trim(value):
+    if isinstance(value, list):
+        return [_garden_trim(v) for v in value[:GARDEN_LIST_MAX]]
+    if isinstance(value, dict):
+        return {k: _garden_trim(v) for k, v in value.items()}
+    return value
+
+
+def garden_status():
+    """What GardenRX holds now: the season's harvest by crop, the last and
+    queued sprays, the pre-harvest intervals running and the low stock."""
+    result = ha_api_request("/api/states")
+    if not isinstance(result, list):
+        return result if isinstance(result, dict) else {
+            "error": "Home Assistant's states could not be read."}
+    sensors = []
+    for row in result:
+        if not isinstance(row, dict):
+            continue
+        attrs = row.get("attributes") or {}
+        kind = attrs.get(GARDEN_KIND_ATTR) if isinstance(attrs, dict) else None
+        if not kind:
+            continue
+        eid = str(row.get("entity_id") or "")
+        if EXPOSED_ONLY and not _entity_exposed(eid):
+            continue
+        sensors.append({
+            "kind": str(kind), "entity_id": eid,
+            "name": attrs.get("friendly_name") or eid,
+            "state": row.get("state"),
+            "unit": attrs.get("unit_of_measurement") or "",
+            **_garden_trim({k: v for k, v in attrs.items()
+                            if k not in _GARDEN_DROP_ATTRS}),
+        })
+    if not sensors:
+        if EXPOSED_ONLY:
+            return {"error": (
+                "None of GardenRX's sensors is exposed to voice assistants. "
+                "garden_harvests answers what was picked.")}
+        return {"error": (
+            "GardenRX's Home Assistant integration is not set up (no GardenRX "
+            "sensors). Tell the user to install the GardenRX add-on and add "
+            "its integration.")}
+    sensors.sort(key=lambda s: (s["kind"], s["entity_id"]))
+    return {"sensors": _tag_text(sensors, GARDEN_TEXT_KEYS)}
+
+
+def _garden_date(value, field="date"):
+    """A date the integration takes (YYYY-MM-DD), "" for today, or an error
+    sentence. "today" and "yesterday" are what people say."""
+    from datetime import datetime, timedelta
+    text = str(value or "").strip().lower()
+    if not text or text == "today":
+        return "", None
+    if text == "yesterday":
+        return (datetime.now() - timedelta(days=1)).date().isoformat(), None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d").date().isoformat(), None
+    except ValueError:
+        return "", {"error": f"{field} is a date as YYYY-MM-DD (or leave it out for today)."}
+
+
+def _garden_number(value, field, positive=True):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, {"error": f"{field} is a number."}
+    if not math.isfinite(number):
+        return None, {"error": f"{field} is a number."}
+    if positive and number <= 0:
+        return None, {"error": f"{field} must be more than 0."}
+    return number, None
+
+
+def _garden_names(value):
+    """One name or several, as the list the integration takes."""
+    if isinstance(value, (list, tuple)):
+        items = [str(v).strip() for v in value]
+    else:
+        items = [p.strip() for p in str(value or "").split(",")]
+    return [i[:80] for i in items if i][:20]
+
+
+def _garden_done(result, keep=()):
+    if not isinstance(result, dict) or result.get("error"):
+        return result
+    out = {"done": True}
+    for key, value in result.items():
+        if key != "ok" and (not keep or key in keep):
+            out[key] = value
+    return _tag_text(out, GARDEN_TEXT_KEYS)
+
+
+def garden_log_harvest(crop, weight, unit="lb", variety="", date="", notes=""):
+    """Log a pick in GardenRX: a crop, how much, and when."""
+    crop = str(crop or "").strip()
+    if not crop:
+        return {"error": "Name the crop that was picked."}
+    amount, problem = _garden_number(weight, "weight")
+    if problem:
+        return problem
+    unit = str(unit or "lb").strip().lower()
+    unit = {"lbs": "lb", "pound": "lb", "pounds": "lb", "ounce": "oz",
+            "ounces": "oz", "kilo": "kg", "kilos": "kg", "kilograms": "kg",
+            "gram": "g", "grams": "g", "count": "ct", "each": "ct"}.get(unit, unit)
+    if unit not in GARDEN_HARVEST_UNITS:
+        return {"error": "unit is one of " + ", ".join(GARDEN_HARVEST_UNITS) + "."}
+    day, problem = _garden_date(date)
+    if problem:
+        return problem
+    data = {"crop": crop[:80], "weight": amount, "unit": unit}
+    if str(variety or "").strip():
+        data["variety"] = str(variety).strip()[:80]
+    if day:
+        data["date"] = day
+    if str(notes or "").strip():
+        data["notes"] = str(notes).strip()[:500]
+    return _garden_done(_addon_call("gardenrx", "log_harvest", data))
+
+
+def _garden_spray_data(product, crop, area, rate, rate_unit, notes):
+    products = _garden_names(product)
+    if not products:
+        return None, {"error": "Name the product sprayed (several are a list)."}
+    data = {"product": products}
+    crops, areas = _garden_names(crop), _garden_names(area)
+    if crops:
+        data["crop"] = crops
+    if areas:
+        data["area"] = areas
+    if not crops and not areas:
+        return None, {"error": "Name the crops sprayed, or the area (Orchard, Garden or Landscape)."}
+    if rate not in (None, "", []):
+        rates = rate if isinstance(rate, (list, tuple)) else [rate]
+        out = []
+        for one in rates[:20]:
+            number, problem = _garden_number(one, "rate")
+            if problem:
+                return None, problem
+            out.append(number)
+        data["rate"] = out
+    units = _garden_names(rate_unit)
+    if units:
+        data["rate_unit"] = units
+    if str(notes or "").strip():
+        data["notes"] = str(notes).strip()[:500]
+    return data, None
+
+
+def garden_log_spray(product, crop=None, area=None, rate=None, rate_unit="",
+                     volume_gallons=None, date="", notes=""):
+    """Log a spray that was made: the products, on which crops or area."""
+    data, problem = _garden_spray_data(product, crop, area, rate, rate_unit, notes)
+    if problem:
+        return problem
+    if volume_gallons not in (None, ""):
+        volume, problem = _garden_number(volume_gallons, "volume_gallons")
+        if problem:
+            return problem
+        data["volume_gallons"] = volume
+    day, problem = _garden_date(date)
+    if problem:
+        return problem
+    if day:
+        data["date"] = day
+    return _garden_done(_addon_call("gardenrx", "log_spray", data))
+
+
+def garden_queue_spray(product, crop=None, area=None, rate=None, rate_unit="",
+                       planned_date="", notes=""):
+    """Put a spray on GardenRX's queue, to be made on a planned day."""
+    refusal = _voice_admin_refusal("Queuing a spray")
+    if refusal:
+        return refusal
+    data, problem = _garden_spray_data(product, crop, area, rate, rate_unit, notes)
+    if problem:
+        return problem
+    day, problem = _garden_date(planned_date, "planned_date")
+    if problem:
+        return problem
+    if day:
+        data["planned_date"] = day
+    return _garden_done(_addon_call("gardenrx", "queue_spray", data))
+
+
+def garden_adjust_inventory(product, change=None, quantity=None, unit="", notes=""):
+    """Change how much of a product is in stock: by an amount, or set it."""
+    refusal = _voice_admin_refusal("Changing the garden's stock")
+    if refusal:
+        return refusal
+    product = str(product or "").strip()
+    if not product:
+        return {"error": "Name the product whose stock changed."}
+    has_change = change not in (None, "")
+    has_quantity = quantity not in (None, "")
+    if has_change == has_quantity:
+        return {"error": "Give change (how much was added or used, negative for used) "
+                         "or quantity (how much is left now), not both."}
+    data = {"product": product[:80]}
+    if has_change:
+        number, problem = _garden_number(change, "change", positive=False)
+        if problem:
+            return problem
+        data["change"] = number
+    else:
+        number, problem = _garden_number(quantity, "quantity", positive=False)
+        if problem:
+            return problem
+        if number < 0:
+            return {"error": "quantity cannot be less than 0."}
+        data["quantity"] = number
+    if str(unit or "").strip():
+        if str(unit).strip() not in GARDEN_STOCK_UNITS:
+            return {"error": "unit is one of " + ", ".join(GARDEN_STOCK_UNITS) + "."}
+        data["unit"] = str(unit).strip()
+    if str(notes or "").strip():
+        data["notes"] = str(notes).strip()[:500]
+    return _garden_done(_addon_call("gardenrx", "adjust_inventory", data))
+
+
+def garden_add_crop(name, crop_group="", variety=""):
+    """Add a crop to GardenRX, or a variety to a crop it has."""
+    refusal = _voice_admin_refusal("Adding a crop to GardenRX")
+    if refusal:
+        return refusal
+    name = str(name or "").strip()
+    if not name:
+        return {"error": "Name the crop."}
+    if str(variety or "").strip():
+        return _garden_done(_addon_call("gardenrx", "add_variety", {
+            "crop": name[:80], "name": str(variety).strip()[:80]}))
+    data = {"name": name[:80]}
+    if str(crop_group or "").strip():
+        data["crop_group"] = str(crop_group).strip()[:80]
+    return _garden_done(_addon_call("gardenrx", "add_crop", data))
+
+
+def garden_log_note(place, note, date=""):
+    """A note about a place in the garden: what was seen, what was done."""
+    place, note = str(place or "").strip(), str(note or "").strip()
+    if not place or not note:
+        return {"error": "Give the place (a bed, a tree, an area) and the note."}
+    data = {"place": place[:80], "note": note[:500]}
+    day, problem = _garden_date(date)
+    if problem:
+        return problem
+    if day:
+        data["date"] = day
+    return _garden_done(_addon_call("gardenrx", "log_note", data))
+
+
+def garden_harvests(crop="", start="", end=""):
+    """What was picked, with totals per crop: one crop or all, any window."""
+    data = {}
+    if str(crop or "").strip():
+        data["crop"] = str(crop).strip()[:80]
+    for field, value in (("start", start), ("end", end)):
+        day, problem = _garden_date(value, field)
+        if problem:
+            return problem
+        if day:
+            data[field] = day
+    result = _addon_call("gardenrx", "get_harvests", data)
+    if not isinstance(result, dict) or result.get("error"):
+        return result
+    return _tag_text(_garden_trim(result), GARDEN_TEXT_KEYS)
 
 
 def get_activity(hours=24, cause=None, limit=200):
@@ -5832,6 +6158,128 @@ TOOLS = [
             "scene": {"type": "string"}},
             "required": ["action"]},
     },
+    # GardenRX — the garden's own services, through its integration.
+    {
+        "name": "garden_status",
+        "description": (
+            "GardenRX, the garden's record: this season's harvest (total and by "
+            "crop, with picks, value and the last pick), the recent picks, the "
+            "last and the queued sprays, the pre-harvest intervals still "
+            "running (a crop that must not be picked yet) and the products low "
+            "in stock — read off the GardenRX sensors. Read-only. Notes are "
+            "what somebody typed and are marked untrusted."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "garden_harvests",
+        "description": (
+            "What was picked in GardenRX, with totals per crop and unit: one "
+            "crop or all, between start and end (YYYY-MM-DD, both optional). "
+            "Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "crop": {"type": "string"},
+            "start": {"type": "string"},
+            "end": {"type": "string"}}},
+    },
+    {
+        "name": "garden_log_harvest",
+        "description": (
+            "Log a pick in GardenRX: \"2 pounds of tomatoes\" is crop "
+            "Tomatoes, weight 2, unit lb. unit is lb, oz, kg, g or ct (a "
+            "count); variety is optional; date is YYYY-MM-DD or yesterday and "
+            "defaults to today. GardenRX matches the crop by name and says "
+            "which ones it has when it does not know it — repeat that."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "crop": {"type": "string"},
+            "weight": {"type": "number"},
+            "unit": {"type": "string", "enum": ["lb", "oz", "kg", "g", "ct"]},
+            "variety": {"type": "string"},
+            "date": {"type": "string"},
+            "notes": {"type": "string"}},
+            "required": ["crop", "weight"]},
+    },
+    {
+        "name": "garden_log_spray",
+        "description": (
+            "Log a spray that was made in GardenRX: product (one or several), "
+            "on crops or an area (Orchard, Garden, Landscape), with an optional "
+            "rate per product and its unit (\"fl oz/gal\"), the gallons mixed, "
+            "a date (YYYY-MM-DD, defaults to today) and notes. GardenRX starts "
+            "each crop's pre-harvest interval from it and takes the product "
+            "out of stock."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "product": {"type": "array", "items": {"type": "string"}},
+            "crop": {"type": "array", "items": {"type": "string"}},
+            "area": {"type": "array", "items": {"type": "string"}},
+            "rate": {"type": "array", "items": {"type": "number"}},
+            "rate_unit": {"type": "array", "items": {"type": "string"}},
+            "volume_gallons": {"type": "number"},
+            "date": {"type": "string"},
+            "notes": {"type": "string"}},
+            "required": ["product"]},
+    },
+    {
+        "name": "garden_queue_spray",
+        "description": (
+            "Put a spray on GardenRX's queue to be made later: the same fields "
+            "as garden_log_spray with planned_date (YYYY-MM-DD) instead of a "
+            "date. Not available to a voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "product": {"type": "array", "items": {"type": "string"}},
+            "crop": {"type": "array", "items": {"type": "string"}},
+            "area": {"type": "array", "items": {"type": "string"}},
+            "rate": {"type": "array", "items": {"type": "number"}},
+            "rate_unit": {"type": "array", "items": {"type": "string"}},
+            "planned_date": {"type": "string"},
+            "notes": {"type": "string"}},
+            "required": ["product"]},
+    },
+    {
+        "name": "garden_adjust_inventory",
+        "description": (
+            "Change a product's stock in GardenRX: change (added, or negative "
+            "for used) or quantity (what is left now), with its unit. Not "
+            "available to a voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "product": {"type": "string"},
+            "change": {"type": "number"},
+            "quantity": {"type": "number"},
+            "unit": {"type": "string"},
+            "notes": {"type": "string"}},
+            "required": ["product"]},
+    },
+    {
+        "name": "garden_add_crop",
+        "description": (
+            "Add a crop to GardenRX (name, optional crop_group), or with "
+            "variety a variety of a crop it already has. Not available to a "
+            "voice-level agent."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "crop_group": {"type": "string"},
+            "variety": {"type": "string"}},
+            "required": ["name"]},
+    },
+    {
+        "name": "garden_log_note",
+        "description": (
+            "A note in GardenRX about a place in the garden (a bed, a tree, an "
+            "area): what was seen or done there, dated today unless date "
+            "(YYYY-MM-DD) says otherwise."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "place": {"type": "string"},
+            "note": {"type": "string"},
+            "date": {"type": "string"}},
+            "required": ["place", "note"]},
+    },
     # Music Assistant — its own API, through the panel.
     {
         "name": "music_assistant_status",
@@ -7329,6 +7777,53 @@ TOOLS = [
         },
     },
     {
+        "name": "timed_action",
+        "description": (
+            "Do something now and undo it later, or do it after a delay, "
+            "without writing an automation: \"water the garden for 90 "
+            "minutes\", \"in an hour turn on the porch light\". brAIn runs "
+            "the steps itself and lists them, each stoppable, in the panel "
+            "and in Morph. Use it whenever somebody asks for something once "
+            "on a timer, and an automation only for something that should "
+            "happen every time. Each step is minutes from now (0 to 1440), "
+            "a service of the device's own kind and the entity ids it acts "
+            "on; the step that puts things back is the last, with ends: "
+            "true. It refuses unlocking, disarming, opening a garage, door "
+            "or gate, scripts and scenes, and anything protected; say the "
+            "refusal as it comes back. Stopping one runs its ending at once."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["start", "stop", "list"]},
+                "title": {"type": "string",
+                          "description": "Their request in a few plain words"},
+                "said": {"type": "string",
+                         "description": "What they asked, in their words"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "after_minutes": {"type": "number"},
+                            "domain": {"type": "string"},
+                            "service": {"type": "string"},
+                            "entities": {"type": "array",
+                                         "items": {"type": "string"}},
+                            "data": {"type": "object"},
+                            "ends": {"type": "boolean"},
+                        },
+                        "required": ["after_minutes", "domain", "service",
+                                     "entities"],
+                    },
+                },
+                "id": {"type": "integer",
+                       "description": "Which timed action to stop"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "note_personality_change",
         "description": (
             "Record how brAIn's personality in this house has grown: one "
@@ -7734,6 +8229,7 @@ TOOL_IMPLEMENTATIONS = {
     "bruh_addon_status": "bruh_addon_status",
     "screenshot_panel": "screenshot_panel",
     "report_bug": "report_bug",
+    "timed_action": "timed_action",
     "note_personality_change": "note_personality_change",
     "get_health": "get_health",
     "get_statistics": "get_statistics",
@@ -7785,6 +8281,14 @@ TOOL_IMPLEMENTATIONS = {
     "bambu_control": "bambu_control",
     "bambu_slice": "bambu_slice",
     "bambu_design": "bambu_design",
+    "garden_status": "garden_status",
+    "garden_harvests": "garden_harvests",
+    "garden_log_harvest": "garden_log_harvest",
+    "garden_log_spray": "garden_log_spray",
+    "garden_queue_spray": "garden_queue_spray",
+    "garden_adjust_inventory": "garden_adjust_inventory",
+    "garden_add_crop": "garden_add_crop",
+    "garden_log_note": "garden_log_note",
     "explain_decision": "explain_decision",
 }
 
@@ -7819,7 +8323,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
-    "bruh_addon_status", "report_bug", "screenshot_panel",
+    "bruh_addon_status", "report_bug", "screenshot_panel", "timed_action",
     "note_personality_change",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
@@ -7908,6 +8412,9 @@ VOICE_HIDDEN_TOOLS = frozenset({
     # `_voice_service_refusal` refuses at call_service on every voice turn.
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
+    # Refused for voice in full (VOICE_ADMIN_SERVICES): the garden's stock,
+    # crops and spray queue are changed by typing.
+    "garden_queue_spray", "garden_adjust_inventory", "garden_add_crop",
 })
 VOICE_HIDDEN_PREFIXES = ("music_assistant_",)  # MA_VOICE_REFUSAL, every one
 
@@ -7923,7 +8430,7 @@ VOICE_HIDDEN_PREFIXES = ("music_assistant_",)  # MA_VOICE_REFUSAL, every one
 # schemas on every turn for a latency rule that is voice's. They keep the two
 # search tools always loaded, because nearly every one of their runs starts
 # by looking something up. Voice adds what its own prompt sends it to: the
-# past, the forecast, remembering, and the three add-ons it may drive.
+# past, the forecast, remembering, and the add-ons it may drive.
 ALWAYS_LOAD_TOOLS = frozenset({
     "control_light", "control_climate", "control_media_player",
     "control_cover", "control_fan", "control_switch", "control_lock",
@@ -7932,7 +8439,7 @@ ALWAYS_LOAD_TOOLS = frozenset({
     "get_history", "get_statistics", "get_weather_forecast", "remember_fact",
     "print_label", "label_printer_status", "bright_show", "minecraft_teleport",
     "minecraft_status", "bambu_status", "bambu_print", "bambu_control",
-    "bambu_design",
+    "bambu_design", "garden_log_harvest", "garden_log_spray", "garden_log_note",
 })
 ALWAYS_LOAD_ELSEWHERE = frozenset({"get_entity_state", "get_all_states"})
 _ALWAYS = {"anthropic/alwaysLoad": True}
@@ -7979,6 +8486,10 @@ CHAT_ONLY_TOOLS = frozenset({"offer_resolutions"})
 ADDON_TOOL_DOMAINS = {
     "bruh_bambu": frozenset({"bambu_status", "bambu_print", "bambu_control",
                              "bambu_slice", "bambu_design"}),
+    "gardenrx": frozenset({"garden_status", "garden_harvests", "garden_log_harvest",
+                           "garden_log_spray", "garden_queue_spray",
+                           "garden_adjust_inventory", "garden_add_crop",
+                           "garden_log_note"}),
 }
 SERVICE_DOMAINS_TTL_S = 60
 _SERVICE_DOMAINS = {"at": 0.0, "domains": None}

@@ -30,6 +30,7 @@ INTEGRATIONS = {
     "bright": REPO / "bright" / "custom_components" / "bright",
     "bruh_print": REPO / "bruh-print" / "custom_components" / "bruh_print",
     "bruh_bambu": REPO / "bruh-bambu-studio" / "custom_components" / "bruh_bambu",
+    "gardenrx": REPO / "gardenrx" / "custom_components" / "gardenrx",
 }
 RESPONDS = ("optional", "only")
 
@@ -75,7 +76,8 @@ def _stubs() -> dict:
              "homeassistant.helpers.issue_registry", "homeassistant.helpers.event",
              "homeassistant.helpers.entity_platform", "homeassistant.components",
              "homeassistant.components.sensor", "homeassistant.data_entry_flow",
-             "homeassistant.helpers.device_registry", "homeassistant.helpers.entity")
+             "homeassistant.helpers.device_registry", "homeassistant.helpers.entity",
+             "homeassistant.helpers.aiohttp_client")
     mods = {name: _Module(name) for name in names}
     mods["homeassistant.core"].SupportsResponse = types.SimpleNamespace(
         NONE=None, OPTIONAL="optional", ONLY="only")

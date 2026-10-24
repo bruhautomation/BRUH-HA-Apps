@@ -761,6 +761,13 @@ class TestWhatTheHookSendsAndSkips(unittest.TestCase):
             self.assertFalse(self.hook.reads_only(tool, {"action": acting}), acting)
         self.assertIn("bambu_design", self.hook.GATED_MCP)
 
+    def test_every_garden_write_is_gated_and_no_garden_read_is(self):
+        writes = {"garden_log_harvest", "garden_log_spray", "garden_queue_spray",
+                  "garden_adjust_inventory", "garden_add_crop", "garden_log_note"}
+        for gated in (self.hook.GATED_MCP, consequence.GATED_MCP):
+            self.assertEqual(writes - gated, set())
+            self.assertEqual({"garden_status", "garden_harvests"} & gated, set())
+
     def test_a_task_carries_the_persons_words_apart_from_its_prompt(self):
         with patch.dict(os.environ, {"BRAIN_PERSON_WORDS": "  make the porch light warmer "}):
             self.assertEqual(self.hook.task_words(), ["make the porch light warmer"])

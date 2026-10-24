@@ -124,7 +124,8 @@ def _now() -> float:
 # ---------------------------------------------------------------------------
 
 def request(sentence: str, via: str = "panel",
-            now: float | None = None, *, trial: bool = False) -> str:
+            now: float | None = None, *, trial: bool = False,
+            typed: bool = False) -> str:
     """Queue one sentence. Returns what was queued, or "" for nothing.
 
     The panel's own writer. The integration writes the identical shape
@@ -137,6 +138,12 @@ def request(sentence: str, via: str = "panel",
     existed asked for. It is a field of the REQUEST, not a rule about who
     sent it: a trial writes nothing to the house (it replays the week and
     grades it), and a one-off ignores it.
+
+    ``typed`` says a person typed it into the ask bar or Morph's Ask line.
+    It is only ever a reason to ACCEPT the drafted proposal at once, and
+    only while "Let brAIn act without asking" (or YOLO mode) is on when the
+    panel drains it — read then, never from the request
+    (`server._one_intent`). With the switch off it changes nothing.
     """
     text = str(sentence or "").strip()[:MAX_SENTENCE]
     if not text:
@@ -154,6 +161,8 @@ def request(sentence: str, via: str = "panel",
     body = {"ts": int(now), "sentence": text, "via": str(via or "")[:32]}
     if trial:
         body["trial"] = True
+    if typed:
+        body["typed"] = True
     atomic_write.write_json(REQUEST_DIR / f"{stamp}.json", body)
     return text
 
@@ -190,6 +199,8 @@ def parse_request(obj) -> dict | None:
     # The literal `true` and nothing else, so an older request is unchanged.
     if obj.get("trial") is True:
         out["trial"] = True
+    if obj.get("typed") is True:
+        out["typed"] = True
     return out
 
 

@@ -30,7 +30,7 @@ class FakeCore:
         self.online = ["Steve", ".EmmaPlays", "DadCraft42"]
         self.reachable = True
         self.missing = set()
-        self.services = ["light", "bruh_bambu", "bruh_minecraft"]
+        self.services = ["light", "bruh_bambu", "bruh_minecraft", "gardenrx"]
 
     def __call__(self, payload, timeout=15):
         if payload["type"] == "get_services":
@@ -80,6 +80,14 @@ class FakeCore:
                                  "plan": {"material": "PLA"}}}
         if key[0] == "bruh_bambu":
             return {"response": {"printer": "X1C", "acknowledged": True}}
+        if key == ("gardenrx", "get_harvests"):
+            return {"response": {"ok": True, "harvests": [
+                {"id": 7, "crop": "Tomatoes", "weight": 2, "unit": "lb",
+                 "notes": "the ripe ones"}],
+                "totals": [{"crop": "Tomatoes", "unit": "lb", "amount": 2, "picks": 1}]}}
+        if key[0] == "gardenrx":
+            return {"response": {"ok": True, "id": 41,
+                                 "message": "Logged 2 lb of Tomatoes."}}
         if key[0] == "bruh_print":
             return {"response": {"printed": payload["service_data"].get("copies", 1),
                                  "side": "left", "notes": []}}
@@ -480,6 +488,141 @@ class TestOnlyWhenBambuIsInstalled(Base):
         names = {t["name"] for t in m.tools_for_channel()}
         self.assertEqual(names & self.BAMBU, self.BAMBU)
         self.assertEqual(len(self.core.calls), asked)
+
+
+
+class TestGarden(Base):
+    """GardenRX through its own services: a pick, a spray, a note, the
+    stock and the crops, and what the garden holds now off its sensors."""
+
+    WRITES = {"garden_log_harvest", "garden_log_spray", "garden_queue_spray",
+              "garden_adjust_inventory", "garden_add_crop", "garden_log_note"}
+    READS = {"garden_status", "garden_harvests"}
+
+    def test_every_garden_tool_is_registered_and_reachable(self):
+        names = {t["name"] for t in m.TOOLS}
+        for name in self.WRITES | self.READS:
+            self.assertIn(name, names)
+            self.assertTrue(callable(getattr(m, m.TOOL_IMPLEMENTATIONS[name])))
+
+    def test_two_pounds_of_tomatoes_is_one_pick(self):
+        got = m.garden_log_harvest(crop="Tomatoes", weight=2, unit="pounds")
+        self.assertTrue(got["done"], got)
+        self.assertEqual(self.core.calls, [(("gardenrx", "log_harvest"),
+                                            {"crop": "Tomatoes", "weight": 2.0, "unit": "lb"})])
+
+    def test_yesterday_is_a_date_and_a_word_that_is_not_is_refused(self):
+        m.garden_log_harvest(crop="Beans", weight=1, date="yesterday")
+        day = self.core.calls[-1][1]["date"]
+        self.assertRegex(day, r"^\d{4}-\d{2}-\d{2}$")
+        before = len(self.core.calls)
+        self.assertIn("error", m.garden_log_harvest(crop="Beans", weight=1, date="soon"))
+        self.assertIn("error", m.garden_log_harvest(crop="Beans", weight=0))
+        self.assertEqual(len(self.core.calls), before)
+
+    def test_a_spray_names_its_products_and_crops_as_lists(self):
+        m.garden_log_spray(product="Captan, Sulfur", crop="Apples", rate=[1, 2],
+                           rate_unit="fl oz/gal")
+        self.assertEqual(self.core.calls[-1], (("gardenrx", "log_spray"), {
+            "product": ["Captan", "Sulfur"], "crop": ["Apples"], "rate": [1.0, 2.0],
+            "rate_unit": ["fl oz/gal"]}))
+        self.assertIn("error", m.garden_log_spray(product="Captan"))
+
+    def test_the_other_writes_reach_their_services(self):
+        m.garden_queue_spray(product=["Captan"], area=["Orchard"], planned_date="2026-05-01")
+        m.garden_adjust_inventory(product="Captan", change=-4, unit="fl oz")
+        m.garden_add_crop(name="Apples", variety="Liberty")
+        m.garden_add_crop(name="Kale")
+        m.garden_log_note(place="North bed", note="Aphids on the kale")
+        self.assertEqual([k for k, _ in self.core.calls], [
+            ("gardenrx", "queue_spray"), ("gardenrx", "adjust_inventory"),
+            ("gardenrx", "add_variety"), ("gardenrx", "add_crop"),
+            ("gardenrx", "log_note")])
+        self.assertIn("error", m.garden_adjust_inventory(product="Captan", change=1, quantity=2))
+
+    def test_what_was_picked_comes_back_with_notes_marked(self):
+        got = m.garden_harvests(crop="Tomatoes", start="2026-01-01")
+        self.assertEqual(self.core.calls[-1], (("gardenrx", "get_harvests"),
+                                               {"crop": "Tomatoes", "start": "2026-01-01"}))
+        self.assertTrue(got["harvests"][0]["notes"]["untrusted"])
+
+    def test_status_reads_the_garden_sensors_and_nothing_else(self):
+        states = [
+            {"entity_id": "sensor.gardenrx_harvest_season", "state": "42.5",
+             "attributes": {"gardenrx": "harvest", "year": 2026, "friendly_name": "Harvest",
+                            "unit_of_measurement": "lb",
+                            "by_crop": [{"crop": "Tomatoes", "lb": 42.5, "picks": 9}],
+                            "recent": [{"crop": "Tomatoes", "notes": "first big pick"}]}},
+            {"entity_id": "sensor.gardenrx_low_stock", "state": "1",
+             "attributes": {"gardenrx": "inventory", "items": [{"product": "Captan"}]}},
+            {"entity_id": "light.kitchen", "state": "on", "attributes": {}}]
+        with patch.object(m, "ha_api_request", lambda *a, **k: states):
+            got = m.garden_status()
+        kinds = {s["kind"]: s for s in got["sensors"]}
+        self.assertEqual(set(kinds), {"harvest", "inventory"})
+        self.assertEqual(kinds["harvest"]["state"], "42.5")
+        self.assertEqual(kinds["harvest"]["by_crop"][0]["crop"], "Tomatoes")
+        self.assertTrue(kinds["harvest"]["recent"][0]["notes"]["untrusted"])
+        with patch.object(m, "ha_api_request", lambda *a, **k: states[2:]):
+            self.assertIn("GardenRX", m.garden_status()["error"])
+
+    def test_an_add_on_not_installed_says_so(self):
+        self.core.missing = {("gardenrx", "log_harvest")}
+        self.assertIn("GardenRX", m.garden_log_harvest(crop="Kale", weight=1)["error"])
+
+    def test_voice_logs_a_pick_a_spray_and_a_note(self):
+        self.voice()
+        self.assertTrue(m.garden_log_harvest(crop="Tomatoes", weight=2)["done"])
+        self.assertTrue(m.garden_log_spray(product="Captan", crop="Apples")["done"])
+        self.assertTrue(m.garden_log_note(place="Orchard", note="Blossom")["done"])
+        self.assertIn("harvests", m.garden_harvests())
+        self.assertEqual([k for k, _ in self.core.calls], [
+            ("gardenrx", "log_harvest"), ("gardenrx", "log_spray"),
+            ("gardenrx", "log_note"), ("gardenrx", "get_harvests")])
+
+    def test_voice_may_not_change_the_stock_the_crops_or_the_queue(self):
+        self.voice()
+        for got in (m.garden_adjust_inventory(product="Captan", change=-1),
+                    m.garden_add_crop(name="Kale"),
+                    m.garden_queue_spray(product="Captan", crop="Apples")):
+            self.assertIn("'Voice assistant'", got["error"])
+        # …nor through call_service, the side door.
+        for service in ("adjust_inventory", "add_crop", "add_variety", "queue_spray",
+                        "delete_harvest"):
+            self.assertIn("error", m.call_service("gardenrx", service, {}))
+        self.assertEqual(self.core.calls, [])
+
+    def test_voice_sees_the_tools_it_may_use_and_they_are_loaded_first(self):
+        self.voice()
+        listed = {t["name"]: t for t in m.tools_for_channel()}
+        for name in ("garden_log_harvest", "garden_log_spray", "garden_log_note",
+                     "garden_harvests"):
+            self.assertIn(name, listed)
+        for name in ("garden_log_harvest", "garden_log_spray", "garden_log_note"):
+            self.assertTrue(listed[name].get("_meta", {}).get("anthropic/alwaysLoad"))
+        for name in ("garden_adjust_inventory", "garden_add_crop", "garden_queue_spray"):
+            self.assertNotIn(name, listed)
+
+    def test_the_writes_are_kept_off_an_approved_change(self):
+        for name in self.WRITES:
+            self.assertIn(name, m.CONTRACT_REFUSED_TOOLS)
+
+    def test_listed_only_where_gardenrx_is(self):
+        self.assertEqual(m.ADDON_TOOL_DOMAINS["gardenrx"], self.WRITES | self.READS)
+        with patch.object(m, "SUPERVISOR_TOKEN", "token"), \
+             patch.dict(m._SERVICE_DOMAINS, {"at": 0.0, "domains": None}):
+            self.core.services = ["light"]
+            names = {t["name"] for t in m.tools_for_channel()}
+            self.assertEqual(names & (self.WRITES | self.READS), set())
+            m._SERVICE_DOMAINS["at"] = 0.0
+            self.core.services = ["light", "gardenrx"]
+            names = {t["name"] for t in m.tools_for_channel()}
+            self.assertEqual(names & (self.WRITES | self.READS), self.WRITES | self.READS)
+
+    def test_the_voice_prompt_names_the_garden(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "scripts"))
+        import brain_voice_context  # noqa: PLC0415
+        self.assertIn("garden_log_harvest", brain_voice_context.OPERATIONAL)
 
 
 if __name__ == "__main__":

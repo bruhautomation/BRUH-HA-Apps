@@ -183,6 +183,7 @@ import doctor
 import energy
 import engine
 import facts_store
+import garden_facts
 import episodes
 import esphome
 import eventbus
@@ -243,6 +244,7 @@ import synthesis
 import terminal_proxy
 import textclip
 import thermal
+import timed_actions
 import todo_store
 import triage
 import trials
@@ -2499,7 +2501,8 @@ async def _apply_finding_requests() -> list[dict]:
            "subject": r["case"], "via": r.get("via", "morph")}
           if r.get("kind") == finding_requests.MORPH_KIND else r)
          for r in requests
-         if r.get("kind") != finding_requests.MORPH_CASE_KIND],
+         if r.get("kind") not in (finding_requests.MORPH_CASE_KIND,
+                                  finding_requests.TIMED_KIND)],
         signals.from_reply, time.time())
     out: list[dict] = []
     asked: list[dict] = []
@@ -2518,6 +2521,13 @@ async def _apply_finding_requests() -> list[dict]:
             continue
         if req.get("kind") == finding_requests.MORPH_CASE_KIND:
             out.append(await _apply_morph_case(req))
+            continue
+        if req.get("kind") == finding_requests.TIMED_KIND:
+            # Morph's Stop on a timed action: the panel's own Stop.
+            payload, status = await _stop_timed(req["id"])
+            out.append({"kind": "timed", "id": req["id"],
+                        "via": req.get("via", ""), "ok": status == 200,
+                        "why": str(payload.get("error") or "")})
             continue
         ts, action = req["ts"], req["action"]
         result = {"ts": ts, "action": action, "via": req.get("via", ""),
@@ -3370,7 +3380,12 @@ async def _morph_reply(case_id: str, text: str,
                                  subject=subjects[0] if subjects else "",
                                  subjects=subjects[1:])
             sentences.append("brAIn will remember that.")
-        elif kind in ("one_off", "standing_rule"):
+        elif kind in ("timed", "one_off"):
+            how, result = await _timed_or_intent(route["text"], surface)
+            sentences.append(_timed_say(how, result) or (
+                "brAIn is working that out as an automation — it will be "
+                "offered here for you to accept."))
+        elif kind == "standing_rule":
             await asyncio.to_thread(intents.request, route["text"], surface)
             sentences.append("brAIn is working that out as an automation — "
                              "it will be offered here for you to accept.")
@@ -3515,11 +3530,16 @@ async def _answer_morph_ask(ask: dict) -> dict:
             # automation that exists: Morph's conversation task (contract
             # E), which is brAIn's chat and does what it is asked.
             conversation = True
-        elif kind in ("one_off", "standing_rule"):
-            queued = await asyncio.to_thread(intents.request, text, "morph")
-            say.append("brAIn is drafting that as an automation — it will be "
-                       "offered for you to accept." if queued else
-                       "brAIn could not queue that just now.")
+        elif kind in ("timed", "one_off"):
+            how, result = await _timed_or_intent(text, "morph", typed=True)
+            if how == "timed":
+                say.append(_timed_say(how, result))
+            else:
+                say.append(_intent_say(bool(result), "morph", typed=True))
+        elif kind == "standing_rule":
+            queued = await asyncio.to_thread(intents.request, text, "morph",
+                                             typed=True)
+            say.append(_intent_say(bool(queued), "morph", typed=True))
         elif kind == "remember":
             await _submit_memory(text, source="person")
             say.append("Remembered.")
@@ -3774,6 +3794,11 @@ def _morph_diagnostics() -> dict:
             "writable": morph_bridge.writable()}
 
 
+# Where a typed sentence comes from: the ask bar and Morph's Ask line. A
+# phone reply, the Respond box and `brain.intent` keep the card.
+TYPED_INTENT_VIAS = ("panel", "morph")
+
+
 async def _one_intent(req: dict, now: float) -> dict | None:
     """One sentence into one card. Returns the row it produced, or None.
 
@@ -3886,6 +3911,22 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         if tried is not None:
             log.info("its trial week started, as the request asked")
             row = tried
+    if req.get("typed") and str(req.get("via") or "") in TYPED_INTENT_VIAS \
+            and row.get("status") in proposals.OPEN_STATUSES \
+            and _acts_without_asking():
+        # A person typed it, and has said brAIn may act without asking:
+        # the card would be a second press for what they already said. The
+        # ordinary accept — write, reload, verify, settle, with its Undo —
+        # and on a refusal the card stays, carrying why.
+        payload, status = await _decide_proposal(row["ts"], "accept")
+        if status == 200 and isinstance(payload.get("proposal"), dict):
+            log.info("accepted at once, as it was typed with brAIn acting "
+                     "without asking")
+            row = {**payload["proposal"], "accepted_at_once": True,
+                   "undo": payload.get("undo")}
+        else:
+            log.info("could not accept it at once, so it stays a card: %s",
+                     log_safe(payload.get("error") or ""))
     return row
 
 
@@ -3962,6 +4003,369 @@ async def _apply_intent_requests() -> int:
             log.warning("could not answer an intent: %s", exc)
         now += 0.001                 # so two in one pass get two ids
     return answered
+
+
+# ---------------------------------------------------------------------------
+# Timed actions: something to do now and undo later, with no automation
+# ---------------------------------------------------------------------------
+#
+# "Water the garden for 90 minutes" is two service calls at two moments,
+# asked for by somebody who is there. `timed_actions` holds the steps and
+# the rules; this is the half that talks to Core: the one cheap run that
+# reads the sentence, the loop that runs due steps through `typed_fix`'s
+# call (the protected list and the tripwire asked again, the before-state
+# read, the ledger row written under `timed`), Stop, and the file Morph
+# reads.
+
+TIMED_TICK_S = 5
+TIMED_STATE: dict = {"last_tick": 0, "ran": 0, "missed": 0, "failed": 0,
+                     "started": 0, "fallbacks": 0, "last_error": "",
+                     "published": ""}
+_TIMED_LOCK: dict = {"loop": None, "lock": None}
+_TIMED_TASKS: set = set()
+
+
+def _timed_lock() -> asyncio.Lock:
+    """One lock per event loop: the tick and Stop must not both run the
+    same step, and a lock made for another loop (a test's) cannot be
+    awaited on this one."""
+    loop = asyncio.get_running_loop()
+    if _TIMED_LOCK["loop"] is not loop:
+        _TIMED_LOCK.update(loop=loop, lock=asyncio.Lock())
+    return _TIMED_LOCK["lock"]
+
+
+def _timed_names() -> dict:
+    return dict(_NAMES)
+
+
+async def _timed_states() -> dict | None:
+    """Every state, keyed by entity id, or None when Core did not answer."""
+    try:
+        rows = await _fetch_states_once()
+    except Exception as exc:  # noqa: BLE001 — "could not look"
+        log.info("timed action: could not read the states: %s", exc)
+        return None
+    return {str(r.get("entity_id")): r for r in rows
+            if isinstance(r, dict) and r.get("entity_id")}
+
+
+def _timed_sentence(row: dict) -> str:
+    """What brAIn says when it has taken a timed action on."""
+    summary = timed_actions.summary(row, time.time(), _timed_names())
+    first = summary["steps"][0]["does"] if summary["steps"] else ""
+    when = summary["steps"][0]["at"] if summary["steps"] else 0
+    said = f"brAIn will {first[:1].lower() + first[1:]}" if first else \
+        "brAIn will do that"
+    said += " now" if when - time.time() < 60 else f" {_when_words(when)}"
+    if summary["stop_runs"] and len(summary["steps"]) > 1:
+        ends = summary["steps"][-1]["at"]
+        said += (f", and {summary['stop_runs'][:1].lower()}"
+                 f"{summary['stop_runs'][1:]} {_when_words(ends)}")
+    return said + ". It is on brAIn's list of timed actions, where you can stop it."
+
+
+async def _add_timed(task: dict) -> dict:
+    row = await asyncio.to_thread(timed_actions.add, task)
+    if row is None:
+        return {"refused": (f"brAIn already has {timed_actions.MAX_LIVE} timed "
+                            "actions waiting. Stop one and ask again.")}
+    TIMED_STATE["started"] += 1
+    log.info("timed action taken on: %s", log_safe(row["title"]))
+    await _timed_publish()
+    # A step due now runs on this press, not on the next tick.
+    task = asyncio.get_running_loop().create_task(_timed_tick_quietly())
+    _TIMED_TASKS.add(task)
+    task.add_done_callback(_TIMED_TASKS.discard)
+    return {"task": timed_actions.summary(row, time.time(), _timed_names()),
+            "say": _timed_sentence(row)}
+
+
+async def _start_timed(text: str, via: str) -> dict | None:
+    """Read a sentence into a timed action and take it on.
+
+    `{"task", "say"}` when it was taken on, `{"refused": sentence}` when a
+    step is one brAIn will not take (said, never handed to the automation
+    path, which would offer the same thing as a card), and None when it is
+    not a timed action or could not be read — the caller then does what it
+    did before timed actions existed.
+    """
+    if not engine.get_auth():
+        return None
+    states = await _timed_states()
+    if not states:
+        return None
+    offered = timed_actions.candidates(states, text)
+    if not offered:
+        return None
+    try:
+        result = await _claude(
+            engine.run_claude, timed_actions.prompt(text, offered),
+            timed_actions.SYSTEM, eff_model(), timed_actions.TIMEOUT_S, 2,
+            "timed", job="timed", schema=timed_actions.SCHEMA,
+            priority=run_queue.PRESS)
+    except Exception as exc:  # noqa: BLE001
+        result = {"ok": False, "error": str(exc)}
+    if not result.get("ok"):
+        TIMED_STATE["fallbacks"] += 1
+        return None
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    try:
+        task = timed_actions.build(
+            _answer(result), text, states,
+            protected=automation_writer.protected_patterns(),
+            honeytokens=tokens, via=via)
+    except timed_actions.Refused as exc:
+        return {"refused": str(exc)}
+    if task is None:
+        TIMED_STATE["fallbacks"] += 1
+        return None
+    return await _add_timed(task)
+
+
+async def _timed_or_intent(text: str, via: str,
+                           typed: bool = False) -> tuple[str, object]:
+    """A sentence that may be a timed action: `("timed", result)` when it
+    was taken on or refused, otherwise `("intent", queued)` — the intent
+    drop, exactly as before. `typed` is a person typing into the ask bar or
+    Morph's Ask line (`_one_intent`'s accept-at-once rule)."""
+    started = await _start_timed(text, via)
+    if started is not None:
+        return "timed", started
+    if typed:
+        return "intent", await asyncio.to_thread(intents.request, text, via,
+                                                 typed=True)
+    return "intent", await asyncio.to_thread(intents.request, text, via)
+
+
+def _acts_without_asking() -> bool:
+    """YOLO mode or "Let brAIn act without asking". Only an explicit True
+    acts; anything unreadable asks, the direction that keeps the card."""
+    try:
+        return eff_skip_permissions() is True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _intent_say(queued: bool, via: str, typed: bool = False) -> str:
+    """What the Ask line says about a sentence sent to the intent drop."""
+    if not queued:
+        return "brAIn could not queue that just now."
+    if typed and _acts_without_asking():
+        return "brAIn is writing that as an automation now."
+    return ("brAIn is drafting that as an automation — it will be offered "
+            "for you to accept.")
+
+
+def _timed_say(kind: str, result) -> str:
+    if kind == "timed":
+        return str(result.get("say") or (
+            f"brAIn will not do that: {result.get('refused')}"))
+    return ""
+
+
+async def _run_timed_step(task: dict, index: int) -> tuple[bool, str]:
+    """Carry one step out. `(ok, why)`.
+
+    The step is checked again against the house as it is NOW — each entity
+    read fresh, the protected list and the tripwire re-read — and then made
+    by `typed_fix.execute`, the call every panel service call goes through.
+    """
+    step = task["steps"][index]
+    hooks = _typed_hooks()
+    states: dict = {}
+    for eid in step.get("entities") or []:
+        try:
+            row = await hooks.state(eid)
+        except Exception:  # noqa: BLE001 — could not see it
+            row = None
+        if isinstance(row, dict):
+            states[eid] = row
+    protected = automation_writer.protected_patterns()
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    try:
+        op = timed_actions.check_step(step, states, protected, tokens)
+    except (timed_actions.Refused, plan_ops.Refused) as exc:
+        return False, str(exc)
+    out = await typed_fix.execute(
+        [op], hooks, protected=protected, honeytokens=tokens,
+        channel="timed", intervention=f"timed-{task['id']}")
+    return bool(out.get("ok")), str(out.get("error") or "")
+
+
+async def _timed_failed(task: dict | None) -> None:
+    """Say a failed step once per task. Never raises."""
+    if not task or task.get("notified"):
+        return
+    await asyncio.to_thread(timed_actions.mark_notified, task["id"])
+    title = "brAIn could not finish a timed action"
+    body = f"{task.get('title')}: {task.get('error') or 'a step failed'}"
+    try:
+        await _send_notification(
+            [{"text": title, "severity": "warning", "source": "timed"}],
+            message=(title, body), buttons=[])
+    except Exception as exc:  # noqa: BLE001 — recorded on the task already
+        log.warning("could not say a timed action failed: %s", exc)
+
+
+async def _timed_tick(now: float | None = None) -> int:
+    """Run every step whose moment has come. Returns how many ran."""
+    ran = 0
+    async with _timed_lock():
+        now = time.time() if now is None else float(now)
+        TIMED_STATE["last_tick"] = int(now)
+        for task_id, index in await asyncio.to_thread(timed_actions.due, now):
+            task = await asyncio.to_thread(timed_actions.get, task_id)
+            if task is None or task.get("status") not in timed_actions.LIVE \
+                    or task["steps"][index].get("status") != "pending":
+                continue
+            verdict = timed_actions.decide(task, index, now)
+            if verdict == "run":
+                ok, why = await _run_timed_step(task, index)
+                task = await asyncio.to_thread(
+                    timed_actions.mark_step, task_id, index,
+                    "done" if ok else "failed", error=why, now=now)
+                ran += 1
+                TIMED_STATE["ran"] += 1
+                if not ok:
+                    TIMED_STATE["failed"] += 1
+                    log.warning("a timed action's step failed: %s", why)
+                    await _timed_failed(task)
+            elif verdict == "missed":
+                TIMED_STATE["missed"] += 1
+                await asyncio.to_thread(
+                    timed_actions.mark_step, task_id, index, "missed",
+                    error="its time passed while brAIn was not running",
+                    now=now)
+            else:
+                await asyncio.to_thread(timed_actions.mark_step, task_id,
+                                        index, "skipped", now=now)
+    await _timed_publish()
+    return ran
+
+
+async def _timed_tick_quietly() -> None:
+    try:
+        await _timed_tick()
+    except Exception as exc:  # noqa: BLE001 — the loop's next pass retries
+        TIMED_STATE["last_error"] = str(exc)[:200]
+        log.warning("timed actions pass failed: %s", exc)
+
+
+async def _stop_timed(task_id: int) -> tuple[dict, int]:
+    """Stop a timed action: cancel what is waiting, run its ending."""
+    async with _timed_lock():
+        before = await asyncio.to_thread(timed_actions.get, task_id)
+        if before is None:
+            return {"error": "there is no such timed action"}, 404
+        row, index = (before, -1) if before.get("status") not in \
+            timed_actions.LIVE else await asyncio.to_thread(
+                timed_actions.stop, task_id)
+        if row is None:
+            return {"error": "there is no such timed action"}, 404
+        if before.get("status") not in timed_actions.LIVE:
+            return {"error": "that timed action has already finished",
+                    **timed_actions.listing(names=_timed_names())}, 409
+        say = "Stopped."
+        if index >= 0:
+            does = timed_actions.describe_step(row["steps"][index],
+                                               _timed_names())
+            ok, why = await _run_timed_step(row, index)
+            row = await asyncio.to_thread(
+                timed_actions.mark_step, task_id, index,
+                "done" if ok else "failed", error=why)
+            await asyncio.to_thread(timed_actions.finish_stop, task_id)
+            if ok:
+                say = f"Stopped — {does[:1].lower() + does[1:]}."
+            else:
+                say = f"Stopped, but brAIn could not {does.lower()}: {why}"
+                await _timed_failed(row)
+    await _timed_publish()
+    return {"ok": True, "say": say,
+            **timed_actions.listing(names=_timed_names())}, 200
+
+
+async def _timed_publish() -> bool:
+    """Write `timed.json` for Morph when what it says moved. Never raises."""
+    if not morph_bridge.writable():
+        return False
+    try:
+        payload = timed_actions.morph_payload(names=_timed_names())
+        digest = json.dumps(payload["tasks"], sort_keys=True)
+        if digest == TIMED_STATE["published"]:
+            return False
+        ok = await asyncio.to_thread(morph_bridge.publish_timed, payload)
+        if ok:
+            TIMED_STATE["published"] = digest
+        return ok
+    except Exception as exc:  # noqa: BLE001 — a mirror, never the panel
+        log.warning("could not publish timed.json: %s", exc)
+        return False
+
+
+async def _timed_loop() -> None:
+    """Run due timed steps. Its first pass is the restart recovery: a step
+    whose moment passed while the add-on was down is run or recorded as
+    missed by `timed_actions.decide`, never hours late."""
+    while True:
+        _beat("timed")
+        try:
+            await _timed_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the loop outlives a pass
+            TIMED_STATE["last_error"] = str(exc)[:200]
+            log.warning("timed actions pass failed: %s", exc)
+        await asyncio.sleep(TIMED_TICK_S)
+
+
+async def h_timed(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(
+        timed_actions.listing, None, _timed_names()))
+
+
+async def h_timed_add(request: web.Request) -> web.Response:
+    """Take on a timed action from steps already written (the chat's
+    `timed_action` tool). Every step is checked exactly as a sentence's."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        return web.json_response({"error": "send the steps as JSON"},
+                                 status=400)
+    states = await _timed_states()
+    if states is None:
+        return web.json_response(
+            {"error": "Home Assistant did not answer, so brAIn could not "
+                      "check the devices"}, status=503)
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    try:
+        task = timed_actions.build(
+            {"timed": True, "title": body.get("title"),
+             "steps": body.get("steps")},
+            str(body.get("said") or body.get("title") or ""), states,
+            protected=automation_writer.protected_patterns(),
+            honeytokens=tokens, via=str(body.get("via") or "chat"))
+    except timed_actions.Refused as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    if task is None:
+        return web.json_response(
+            {"error": "every step needs after_minutes, a domain, a service "
+                      "and the entities it acts on"}, status=400)
+    out = await _add_timed(task)
+    if out.get("refused"):
+        return web.json_response({"error": out["refused"]}, status=409)
+    return web.json_response(out)
+
+
+async def h_timed_stop(request: web.Request) -> web.Response:
+    try:
+        task_id = int(request.match_info["id"])
+    except ValueError:
+        return web.json_response({"error": "not a timed action"}, status=404)
+    payload, status = await _stop_timed(task_id)
+    return web.json_response(payload, status=status)
 
 
 async def _requests_loop():
@@ -11216,6 +11620,18 @@ def _record_rhythm(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_garden(snapshot: dict, now: float) -> int | None:
+    """Keep one fact per crop with the garden's season so far
+    (`garden_facts`), read off the states this pass already fetched. None
+    when the garden could not be read — the facts are left as they were."""
+    try:
+        return garden_facts.sync(snapshot.get("states") or {}, now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file the garden's season: %s", exc)
+        return None
+
+
 def _record_routines(snapshot: dict, now: float) -> int:
     """File the person-caused moves this pass saw, for the habit miner.
 
@@ -14585,6 +15001,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_rhythm, snapshot, started)
         await asyncio.to_thread(_record_routines, snapshot, started)
         await asyncio.to_thread(_record_manual, snapshot, started)
+        await asyncio.to_thread(_record_garden, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
@@ -21605,9 +22022,14 @@ async def _route_ask(question: str, routes: list[dict]) -> dict:
                      if kind == "automation_edit" else text)
             if _enqueue(card_id, question=asked[:500]):
                 out["queued"].append(card_id)
-        elif kind in ("one_off", "standing_rule"):
+        elif kind in ("timed", "one_off"):
+            # Something to do now and undo later is brAIn's to do, listed
+            # and stoppable; anything else is drafted as before.
+            how, result = await _timed_or_intent(text, "panel", typed=True)
+            out["timed" if how == "timed" else "intent"] = result
+        elif kind == "standing_rule":
             out["intent"] = await asyncio.to_thread(
-                intents.request, text, "panel")
+                intents.request, text, "panel", typed=True)
         elif kind == "study":
             match = LEARN_RE.match(text)
             topic = (text[match.end():] if match else text).strip().rstrip("?.!")
@@ -21694,7 +22116,12 @@ async def _reply_routes(finding: dict, said: str,
                                  subject=subjects[0] if subjects else "",
                                  subjects=subjects[1:])
             sentences.append("I'll remember that.")
-        elif kind in ("one_off", "standing_rule"):
+        elif kind in ("timed", "one_off"):
+            how, result = await _timed_or_intent(route["text"], "reply")
+            sentences.append(_timed_say(how, result) or (
+                "I'm working that out as an automation — it'll be on "
+                "Proposals for you to accept."))
+        elif kind == "standing_rule":
             await asyncio.to_thread(intents.request, route["text"], "reply")
             sentences.append("I'm working that out as an automation — "
                              "it'll be on Proposals for you to accept.")
@@ -24306,11 +24733,12 @@ async def h_personality_put(request: web.Request) -> web.Response:
     name, persona = body.get("name", ""), body.get("persona", "")
     if not isinstance(name, str) or not isinstance(persona, str):
         raise web.HTTPBadRequest(text="send {name, persona} as text")
+    refusal = await asyncio.to_thread(personality.save_refusal, name, persona)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
     try:
         await asyncio.to_thread(personality.save, name, persona)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
-    except OSError:
+    except (ValueError, OSError):
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
@@ -24325,11 +24753,12 @@ async def h_personality_growth(request: web.Request) -> web.Response:
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="say what changed, as {text}")
+    refusal = await asyncio.to_thread(personality.growth_refusal, text)
+    if refusal:
+        raise web.HTTPBadRequest(text=refusal)
     try:
         entry = await asyncio.to_thread(personality.add_growth, text)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
-    except OSError:
+    except (ValueError, OSError):
         log.exception("could not record a personality change")
         raise web.HTTPInternalServerError(
             text="brAIn could not record that; the add-on log says why.")
@@ -25397,6 +25826,10 @@ def make_app() -> web.Application:
     app.router.add_get("/devloop/harness/js/{name}", h_harness_js)
     app.router.add_get("/devloop/harness/morph/{name}", h_harness_morph)
     app.router.add_get("/devloop/harness/morph_cards/{name}", h_harness_morph_cards)
+    # A house's card that imports Morph's kit by the path Home Assistant
+    # serves it at (`/morph_cards/<name>.js`) finds it here too, by name,
+    # under the one root; loopback only, like the rest of the harness.
+    app.router.add_get("/morph_cards/{name}", h_harness_morph_cards)
     app.router.add_get("/devloop/harness/ws", h_harness_ws)
     app.router.add_get("/devloop/harness/{name}", h_harness_page)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
@@ -25465,6 +25898,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/playbook/{ts}/rehearsal", h_playbook_rehearsal)
     app.router.add_post("/api/proposal/{ts}/trial", h_proposal_trial)
     app.router.add_post("/api/intent/{ts}/remove", h_intent_remove)
+    app.router.add_get("/api/timed", h_timed)
+    app.router.add_post("/api/timed", h_timed_add)
+    app.router.add_post("/api/timed/{id}/stop", h_timed_stop)
     app.router.add_get("/api/scenes/areas", h_scene_areas)
     app.router.add_post("/api/scenes/design", h_scene_design)
     app.router.add_post("/api/proposal/{ts}/{verb}", h_proposal_decide)
@@ -25724,6 +26160,7 @@ def make_app() -> web.Application:
         # The follow-up looks at every applied fix, and the tripwire file
         # rewritten so a tripwire named in settings guards from boot.
         app["followups"] = _supervise("followups", _followup_loop())
+        app["timed"] = _supervise("timed", _timed_loop(), stall_after_s=120)
         try:
             await asyncio.to_thread(security.publish)
         except Exception as exc:  # noqa: BLE001 — a guard that could not

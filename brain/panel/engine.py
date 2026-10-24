@@ -894,6 +894,9 @@ ANALYST_TOOLS = [
     f"{MCP}label_printer_status",
     f"{MCP}bright_status",
     f"{MCP}bambu_status",
+    # GardenRX, the reading half: the season so far, and what was picked.
+    f"{MCP}garden_status",
+    f"{MCP}garden_harvests",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -935,8 +938,15 @@ ANALYST_DENIED = [
     f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
     # Designing a part starts a brAIn run and a build; printing it is a print.
     f"{MCP}bambu_design",
+    # The garden's record: every one writes a row into GardenRX's database
+    # (a pick, a spray, the stock, a crop, a note) a family keeps by hand.
+    f"{MCP}garden_log_harvest", f"{MCP}garden_log_spray",
+    f"{MCP}garden_queue_spray", f"{MCP}garden_adjust_inventory",
+    f"{MCP}garden_add_crop", f"{MCP}garden_log_note",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
+    # A timed action calls services on a timer: a person asks for one.
+    f"{MCP}timed_action",
     # Recording how brAIn's personality has grown writes a file every later
     # conversation is told; a person settles that in a conversation.
     f"{MCP}note_personality_change",

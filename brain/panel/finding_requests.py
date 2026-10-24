@@ -147,6 +147,13 @@ CHECKS_KIND = "checks"
 HYPOTHESIS_KIND = "hypothesis"
 HYPOTHESIS_ACTIONS = ("confirm", "reject")
 
+# The fifth: stop a timed action (`timed_actions`), Morph's Stop on the
+# list it reads out of `timed.json`. One action and one id, the id an int
+# the panel minted; the panel runs the action's ending through the same
+# `_stop_timed` the panel's own route uses.
+TIMED_KIND = "timed"
+TIMED_ACTIONS = ("stop",)
+
 
 def parse(obj) -> dict | None:
     """A validated request, or None for anything that is not one.
@@ -172,6 +179,8 @@ def parse(obj) -> dict | None:
         return _parse_morph(obj)
     if kind == MORPH_CASE_KIND:
         return _parse_morph_case(obj)
+    if kind == TIMED_KIND:
+        return _parse_timed(obj)
     ts = obj.get("ts")
     if isinstance(ts, bool) or not isinstance(ts, (int, float)):
         return None
@@ -337,6 +346,19 @@ def _parse_hypothesis(obj: dict) -> dict | None:
     }
 
 
+def _parse_timed(obj: dict) -> dict | None:
+    """A request to stop a timed action, or None."""
+    action = str(obj.get("action") or "").strip().lower()
+    if action not in TIMED_ACTIONS:
+        return None
+    task_id = obj.get("id")
+    if isinstance(task_id, bool) or not isinstance(task_id, int) \
+            or task_id <= 0:
+        return None
+    return {"kind": TIMED_KIND, "action": action, "id": task_id,
+            "via": str(obj.get("via") or "")[:32]}
+
+
 def verb_for(action: str) -> str:
     """The Findings tab's verb for a request's action, or "" for a snooze."""
     return VERBS.get(action, "")
@@ -425,6 +447,6 @@ __all__ = [
     "MORPH_ACTIONS", "MORPH_CASE_ACTIONS", "MORPH_CASE_KIND", "MORPH_KIND",
     "ACTIONS", "CHECKS_KIND", "HYPOTHESIS_ACTIONS", "HYPOTHESIS_KIND", "KEEP_S", "MAX_BYTES", "MAX_PER_PASS", "MAX_QUEUED",
     "NOTE_MAX", "REQUEST_DIR", "SNOOZE_DEFAULT_H", "SNOOZE_MAX_H",
-    "TODO_ACTIONS", "TODO_TEXT_MAX",
+    "TIMED_ACTIONS", "TIMED_KIND", "TODO_ACTIONS", "TODO_TEXT_MAX",
     "collect", "parse", "pending", "verb_for",
 ]

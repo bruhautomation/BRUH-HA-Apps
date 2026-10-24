@@ -13,6 +13,9 @@ under ``/config/.brain/morph/``:
   Morph: every case `cases.py` reads, with its To Do sentence, its
   conversation and the presses Morph can carry back, plus To Do itself and
   how Morph's own suggestions ended (``ended_morph``).
+* ``timed.json`` — the timed actions waiting or running
+  (`timed_actions.morph_payload`): what each does and when, and the request
+  that stops one (kind ``timed`` on the request queue).
 * ``asks/<id>.json`` in and ``answers/<id>.json`` out — Morph's Ask line,
   read by the interpreter on the ``morph`` surface.
 
@@ -393,6 +396,11 @@ def todo_rows(items: list, snoozes: dict, area_of, word=None) -> list:
 
 def publish_cases(payload: dict) -> bool:
     return _write("cases.json", payload)
+
+
+def publish_timed(payload: dict) -> bool:
+    """Write `timed.json`. Skipped on a dev checkout; never raises."""
+    return _write("timed.json", payload)
 
 
 # ---------------------------------------------------------------------------

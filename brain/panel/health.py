@@ -159,6 +159,8 @@ LOOPS = {
     "morph": ("Morph's Ask line and the list it draws", "degraded"),
     "notify_learn": ("the weekly notification suggestions", "degraded"),
     "followups": ("the follow-up looks at what brAIn changed", "degraded"),
+    "timed": ("the timed actions (one-off tasks brAIn runs on a timer)",
+              "degraded"),
     "resident": ("the attention loop", "degraded"),
     "situation": ("the reading of what the house is doing now", "degraded"),
     "options": ("the add-on options poll", "degraded"),

@@ -232,7 +232,8 @@ async def _update(hooks: Hooks, command: dict) -> str:
     return ""
 
 
-async def _one(op: dict, hooks: Hooks, intervention: str) -> dict:
+async def _one(op: dict, hooks: Hooks, intervention: str,
+               channel: str = "fix") -> dict:
     """Carry out one op. `{ok, detail, undo?, call?}` — never raises past
     a hook's own exception, which the caller turns into a failure."""
     kind = op["op"]
@@ -262,7 +263,8 @@ async def _one(op: dict, hooks: Hooks, intervention: str) -> dict:
         data["entity_id"] = list(op["entities"])
         await hooks.call(op["domain"], op["service"], data)
         row = ledger_row(op["domain"], op["service"], op["entities"],
-                         before=before, intervention=intervention)
+                         before=before, channel=channel,
+                         intervention=intervention)
         if hooks.ledger is not None:
             hooks.ledger(row)
         return {"ok": True, "detail": plan_ops.describe(op), "call": row}
@@ -337,13 +339,15 @@ async def undo_one(item: dict, hooks: Hooks) -> str:
 
 
 async def execute(ops: list[dict], hooks: Hooks, *, intervention: str = "",
-                  protected=None, honeytokens=()) -> dict:
+                  protected=None, honeytokens=(), channel: str = "fix") -> dict:
     """Carry out every deterministic op, in order, or none of the reversible
     ones.
 
     Returns `{"ok", "done": [...], "undo": [...], "calls": [...],
     "journal_ts": [...], "error", "rolled_back": [...]}`. `undo` is what a
     later Undo press reverses; `calls` is what a Restore press can put back.
+    `channel` is what the ledger row names as the face that asked: `fix`
+    for an applied plan, `timed` for a timed action's step.
     """
     out: dict = {"ok": False, "done": [], "undo": [], "calls": [],
                  "journal_ts": [], "error": "", "rolled_back": []}
@@ -356,7 +360,7 @@ async def execute(ops: list[dict], hooks: Hooks, *, intervention: str = "",
         if op.get("op") not in plan_ops.DETERMINISTIC:
             continue
         try:
-            step = await _one(op, hooks, intervention)
+            step = await _one(op, hooks, intervention, channel)
         except Exception as exc:  # noqa: BLE001 — every way an op fails is
             # the same answer to the person waiting: it did not happen.
             step = {"ok": False, "detail": f"{plan_ops.describe(op)} failed: "

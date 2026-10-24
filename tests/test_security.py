@@ -285,7 +285,10 @@ class TestAnalystCanOnlyRead(unittest.TestCase):
         acting = {n for n in declared if re.match(
             r"^(call_service|control_|send_|activate_|run_script|reload_|set_|"
             r"create_|delete_|update_|render_template|fire_event|remember_|"
-            r"show_|stop_)", n)}
+            r"show_|stop_)", n)
+            # An add-on's acting verb after its prefix: garden_log_harvest,
+            # garden_queue_spray, garden_adjust_inventory, garden_add_crop.
+            or re.match(r"^[a-z]+_(log|queue|adjust|add|set|create|delete|update)_", n)}
         self.assertTrue(acting, "no acting tools found — did the regex rot?")
         missing = sorted(
             n for n in acting

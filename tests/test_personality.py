@@ -241,6 +241,21 @@ class TestTheRoutes(unittest.TestCase):
         self.assertIn("Your name is Juniper.",
                       self.server.TERMINAL_PROMPT_FILE.read_text(encoding="utf-8"))
 
+    def test_a_refusal_is_said_in_brains_own_words(self):
+        seen = {}
+
+        async def body(client):
+            res = await client.put("/api/personality", json={
+                "name": "x" * (self.server.personality.NAME_MAX + 1),
+                "persona": "Warm."})
+            seen["status"], seen["text"] = res.status, await res.text()
+
+        self.drive(body)
+        self.assertEqual(seen["status"], 400)
+        self.assertEqual(
+            seen["text"],
+            f"a name is at most {self.server.personality.NAME_MAX} characters")
+
     def test_the_chat_prompt_carries_it_only_when_set(self):
         plain = self.server._chat_system_prompt(None)
         self.assertNotIn("Your name is", plain)

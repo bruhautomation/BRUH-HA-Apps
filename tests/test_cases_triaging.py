@@ -131,7 +131,7 @@ class TestTheLookReadsTheReply(WaitingCase):
             row, time.time(), self.server.signals.EMPTY_CONTEXT)
         self.assertFalse([e for e in sig["evidence"]
                           if "replied" in e["entity"]])
-        self.assertTrue(triage.SHOW_AFTER_S > 0)
+        self.assertGreater(triage.SHOW_AFTER_S, 0)
 
 
 if __name__ == "__main__":
