@@ -70,6 +70,13 @@ class TestTheContractSaysItInAWord(unittest.TestCase):
 
 
 class TestARowTheLookCallsAnsweredIsHeld(LoopCase):
+    def setUp(self):
+        super().setUp()
+        import decision_trail
+        old = decision_trail.TRAIL_FILE
+        decision_trail.TRAIL_FILE = str(Path(self.tmp.name) / "trail.jsonl")
+        self.addCleanup(setattr, decision_trail, "TRAIL_FILE", old)
+
     def test_a_fresh_row_marked_wrong_before_is_held_not_investigated(self):
         srv = self.server
         row = self.file_check_row()

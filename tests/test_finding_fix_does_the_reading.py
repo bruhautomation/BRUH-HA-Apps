@@ -19,8 +19,10 @@ old shape.
 
 import ast
 import io
+import os
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -86,7 +88,7 @@ class TestTheLintSeesTheOldSentences(unittest.TestCase):
     def test_it_lets_a_physical_step_through(self):
         for said in ("Replace the battery in the hall sensor.",
                      "Check its power and its connection, then reload its "
-                     "integration.",
+                     + "integration.",
                      "Shut whatever is open: a window or a vent."):
             self.assertNotRegex(said, READING)
 
@@ -103,6 +105,12 @@ class TestNoCheckSendsAPersonToRead(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_no_row_the_sweep_produces(self):
+        import decision_trail
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        old = decision_trail.TRAIL_FILE
+        decision_trail.TRAIL_FILE = os.path.join(tmp.name, "decisions.jsonl")
+        self.addCleanup(setattr, decision_trail, "TRAIL_FILE", old)
         with _Capture() as cap:
             suite = unittest.defaultTestLoader.loadTestsFromNames(
                 SWEEP_MODULES)
