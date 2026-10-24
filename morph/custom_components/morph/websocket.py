@@ -39,6 +39,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 
+from . import words
 from .bridge import send_request
 from .const import (
     BRAIN_SHARED,
@@ -65,7 +66,6 @@ CASE_ID = re.compile(r"^[a-z]{1,3}:[A-Za-z0-9_.:-]{1,64}$")
 CASE_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo", "not_applicable")
 TODO_ACTIONS = ("done", "drop", "snooze")
 ASK_WAIT_S = 40
-MAX_CASE_TEXT = 500
 TELL_ID = re.compile(r"^[a-z0-9-]{4,64}$")
 USAGE_KINDS = ("open", "toggle", "slide", "scene", "history", "tell", "undo", "ask", "edit")
 MAX_EVENTS = 50
@@ -76,6 +76,16 @@ MAX_SHOT_BYTES = 2_900_000
 MAX_SHOTS = 80
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_ERRORS_PER_HOUR = 120
+# brAIn's personality (/config/.brain/personality.json, written by brAIn's
+# Settings). Morph only reads it, with brAIn's own caps: what is here was
+# meant for every chat turn, so nothing longer is shown either.
+PERSONA_FILE = "personality.json"
+PERSONA_READ_MAX = 256 * 1024
+PERSONA_NAME_MAX = 60
+PERSONA_MAX = 4000
+PERSONA_GROWTH_TEXT_MAX = 500
+PERSONA_GROWTH_MAX = 200
+_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def _read_json(path) -> dict:
@@ -123,6 +133,56 @@ def _brain_feed() -> dict:
     }
 
 
+def _clip_words(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1]
+    if " " in cut[limit // 2:]:
+        cut = cut[: cut.rindex(" ")]
+    return cut.rstrip() + "…"
+
+
+def _personality() -> dict:
+    """brAIn's personality as brAIn stored it, or None: an absent, unreadable,
+    oversized or empty file is no personality, never an error."""
+    path = BRAIN_SHARED / PERSONA_FILE
+    out = {"brain": BRAIN_SHARED.is_dir(), "personality": None}
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(PERSONA_READ_MAX + 1)
+        data = json.loads(raw.decode("utf-8")) if len(raw) <= PERSONA_READ_MAX else None
+    except (OSError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        return out
+    name = _clip_words(" ".join(str(data.get("name") or "").split()), PERSONA_NAME_MAX)
+    persona = _clip_words(str(data.get("persona") or "").replace("\r\n", "\n").strip(), PERSONA_MAX)
+    growth = []
+    for row in data.get("growth") if isinstance(data.get("growth"), list) else []:
+        row = {"text": row} if isinstance(row, str) else row
+        if not isinstance(row, dict):
+            continue
+        text = _clip_words(str(row.get("text") or "").strip(), PERSONA_GROWTH_TEXT_MAX)
+        if not text:
+            continue
+        day = str(row.get("date") or "")[:10]
+        entry = {"date": day if _DAY.match(day) else "", "text": text}
+        at = row.get("at")
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0:
+            entry["at"] = int(at / 1000 if at > 1e12 else at)
+        growth.append(entry)
+    growth.sort(key=lambda e: (e["date"], e.get("at") or 0))
+    growth = growth[-PERSONA_GROWTH_MAX:]
+    if not (name or persona or growth):
+        return out
+    p = {"name": name, "persona": persona, "growth": growth}
+    stamp = data.get("updated_at")
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool) and stamp > 0:
+        p["updated_at"] = int(stamp)
+    out["personality"] = p
+    return out
+
+
 def _load() -> dict:
     # ``code`` is the stamp of the panel code Home Assistant would serve now
     # and ``integration`` the Morph it is running: the page compares both
@@ -148,6 +208,15 @@ async def ws_load(hass: HomeAssistant, connection, msg) -> None:
     data = await hass.async_add_executor_job(_load)
     data["admin"] = bool(connection.user and connection.user.is_admin)
     connection.send_result(msg["id"], data)
+
+
+@websocket_api.websocket_command({vol.Required("type"): "morph/personality"})
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_personality(hass: HomeAssistant, connection, msg) -> None:
+    """brAIn's personality for Morph's Settings; Morph keeps none of its own
+    and edits nothing here: it is changed in brAIn's ⚙ › Personality."""
+    connection.send_result(msg["id"], await hass.async_add_executor_job(_personality))
 
 
 @websocket_api.websocket_command({vol.Required("type"): "morph/yaml"})
@@ -358,7 +427,11 @@ async def ws_case(hass: HomeAssistant, connection, msg) -> None:
     if req is None:
         connection.send_result(msg["id"], {"ok": False, "error": "brAIn's integration is not loaded, or is older than this Morph. Restart Home Assistant after updating brAIn."})
         return
-    text = msg["text"].strip()[:MAX_CASE_TEXT]
+    text = msg["text"].strip()
+    refusal = words.reply_refusal(text)
+    if refusal:
+        connection.send_result(msg["id"], {"ok": False, "error": refusal})
+        return
     if msg["action"] == "reply" and not text:
         connection.send_result(msg["id"], {"ok": False, "error": "Say something first."})
         return
@@ -427,9 +500,14 @@ async def ws_ask(hass: HomeAssistant, connection, msg) -> None:
     made of them: done (with a sentence), a conversation, a Tell, or
     `fallback` — no answer, which the panel meets with its old behaviour."""
     import asyncio
-    text = msg["text"].strip()[:MAX_CASE_TEXT]
+    text = msg["text"].strip()
     if not text:
         connection.send_result(msg["id"], {"do": "fallback"})
+        return
+    if words.too_long(text):
+        # Longer than brAIn's interpreter keeps: a conversation takes it
+        # whole, where the interpreter would have read a slice of it.
+        connection.send_result(msg["id"], {"do": "conversation"})
         return
     ask_id = "a-" + uuid.uuid4().hex[:16]
     user = connection.user.id if connection.user else ""
@@ -517,6 +595,6 @@ def async_register(hass: HomeAssistant) -> None:
     if data.get("ws"):
         return
     for handler in (ws_load, ws_yaml, ws_request, ws_tell_status, ws_shot, ws_usage, ws_report,
-                    ws_finding, ws_case, ws_todo, ws_ask, ws_subscribe):
+                    ws_finding, ws_case, ws_todo, ws_ask, ws_subscribe, ws_personality):
         websocket_api.async_register_command(hass, handler)
     data["ws"] = True
