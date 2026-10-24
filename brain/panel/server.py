@@ -5058,7 +5058,8 @@ async def _mute_offer_pass(now: float) -> list[dict]:
                                       when=now)
         if row:
             mute_offer.record_asked(state, item["source"], int(row["ts"]),
-                                    item["wrong"], item["total"], now)
+                                    item["wrong"], item["total"], now,
+                                    text=str(row.get("text") or ""))
             filed.append(row)
     if filed:
         await asyncio.to_thread(mute_offer.save, state)
@@ -17731,7 +17732,8 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
                 findings_store.add_case, devloop.verify.question_row(entry), when=now)
             if row:
                 devloop.verify.record_asked(state, entry["fp"], int(row["ts"]),
-                                            str(entry["fixed_in"]), now)
+                                            str(entry["fixed_in"]), now,
+                                            text=str(row.get("text") or ""))
                 asked += 1
         if asked:
             await asyncio.to_thread(devloop.verify.save, state)

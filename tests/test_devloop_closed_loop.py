@@ -180,10 +180,16 @@ class TestTheOwnerIsAskedWhetherTheirFixHeld(_Case):
                                    "what": "the brief never mentions the boiler"})
         self.assertEqual(row["kind"], "question")
         self.assertEqual(row["source"], verify.SOURCE)
-        self.assertIn("brAIn 2.17.2 was meant to fix this", row["claim"])
+        # The report is named in its own words, never by its fingerprint,
+        # and the release rides in the key (`text`) but is not the subject.
         self.assertIn("boiler", row["claim"])
-        self.assertTrue(row["text"].startswith(verify.TEXT_PREFIX + "a" * 16))
-        self.assertEqual(verify.fp_for_finding({}, {"text": row["text"]}), "a" * 16)
+        self.assertNotIn("a" * 16, row["text"] + row["claim"] + row["detail"])
+        self.assertIn("2.17.2", row["text"])
+        self.assertTrue(row["text"].startswith(verify.TEXT_PREFIX))
+        state = verify.record_asked({}, "a" * 16, 9, "2.17.2", 0,
+                                    text=row["text"])
+        self.assertEqual(verify.fp_for_finding(state, {"text": row["text"]}),
+                         "a" * 16)
 
     def test_yes_confirms_on_the_issue_and_no_reopens_it_with_the_words(self):
         self.switch_on()

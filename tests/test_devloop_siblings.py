@@ -237,7 +237,9 @@ class TestTheFixIsWaitedForInItsOwnRelease(DevloopCase):
         self.assertEqual(verify.due(items, "2.18.0", {}, set(), {"GardenRX": "0.1.0"}), [])
         due = verify.due(items, "2.18.0", {}, set(), {"GardenRX": "0.1.1"})
         self.assertEqual(len(due), 1)
-        self.assertIn("GardenRX 0.1.1 was meant", verify.question_row(due[0])["claim"])
+        row = verify.question_row(due[0])
+        self.assertIn("GardenRX update", row["detail"])
+        self.assertIn("GardenRX 0.1.1", row["text"])
 
     def test_a_brain_report_is_unchanged(self):
         entry = {"fixed_in": "2.18.0"}

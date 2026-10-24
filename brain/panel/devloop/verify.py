@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import atomic_write
@@ -39,7 +40,11 @@ log = logging.getLogger("brain.devloop")
 
 SOURCE = "devloop_verify"
 SOURCE_TITLE = "Development loop"
-TEXT_PREFIX = "Was this fixed: "
+TEXT_PREFIX = "Is this fixed now: "
+# How a question was worded before it was named in words: the report's
+# fingerprint, then the release. A row filed that way is still found.
+LEGACY_TEXT_PREFIX = "Was this fixed: "
+_LEGACY_FP_RE = re.compile(r"^[0-9a-f]{8,64}$")
 VERIFY_STREAMS = frozenset({"look", "unmet"})
 MAX_PER_PASS = 1
 MAX_STATE = 300
@@ -95,40 +100,62 @@ def due(items: dict, version: str, state: dict, live_ts: set[int],
 
 
 def question_row(entry: dict) -> dict:
+    """The question, named by the report's own words and where it was.
+
+    It used to be named by the report's fingerprint with the release as
+    its subject — "Was this fixed: 70766c7a7025546b (brAIn 3.8.6)" — which
+    is the dedupe key on the screen. The fingerprint stays in the ledger
+    (`record_asked`); what a person reads is the report.
+    """
     fixed_in = str(entry.get("fixed_in") or "")
     product = product_of(entry)
-    what = clip(str(entry.get("what") or ""), 160)
+    what = clip(str(entry.get("what") or ""), 160).rstrip(" .")
+    where = clip(str(entry.get("where") or ""), 60).strip()
+    place = f" ({where})" if where else ""
     return {
-        # Stable per fix: the fingerprint and the release, so the store's
-        # dedupe and the settled ledger let the same report be asked about
-        # again only under a NEW fix.
-        "text": f"{TEXT_PREFIX}{entry.get('fp', '')} ({product} {fixed_in})",
-        "claim": f"{product} {fixed_in} was meant to fix this: “{what}”. "
-                 "Is it fixed here?",
-        "detail": ("Yes tells whoever fixed it that the fix held on this "
-                   "house. No sends what you type back with the report and "
-                   "reopens it, so the fix is looked at again. Nothing is "
-                   "written to memory either way."),
+        # Stable per fix: the report's words and the release it was fixed
+        # in, so the store's dedupe and the settled ledger let the same
+        # report be asked about again only under a NEW fix. The release
+        # rides at the end, never as the subject.
+        "text": f"{TEXT_PREFIX}{what}{place} — after the {product} "
+                f"{fixed_in} update",
+        "claim": f"Is this fixed now: “{what}”{place}?",
+        "detail": (f"The {product} update installed here was meant to fix "
+                   "it. Yes tells whoever fixed it that the fix held on "
+                   "this house. No sends what you type back with the "
+                   "report and reopens it, so the fix is looked at again. "
+                   "Nothing is written to memory either way."),
         "kind": "question", "severity": "info", "stakes": "low",
         "fixable": False, "source": SOURCE, "source_title": SOURCE_TITLE,
         "entity_id": "", "evidence": [],
     }
 
 
-def record_asked(state: dict, fp: str, ts: int, fixed_in: str, now: float) -> dict:
+def record_asked(state: dict, fp: str, ts: int, fixed_in: str, now: float,
+                 *, text: str = "") -> dict:
     state[fp] = {"ts": int(ts), "at": int(now), "fixed_in": str(fixed_in),
                  "answer": ""}
+    if text:
+        state[fp]["text"] = str(text)[:400]
     return state
 
 
 def fp_for_finding(state: dict, finding: dict) -> str:
+    """The report a question row is about: by the row's id, then by its
+    words, then — for a row filed the old way — the fingerprint its text
+    began with."""
     ts = finding.get("ts")
+    text = str(finding.get("text") or "")
     for fp, rec in state.items():
         if isinstance(rec, dict) and rec.get("ts") == ts:
             return fp
-    text = str(finding.get("text") or "")
-    if text.startswith(TEXT_PREFIX):
-        return text[len(TEXT_PREFIX):].split(" ", 1)[0]
+    for fp, rec in state.items():
+        if isinstance(rec, dict) and text and rec.get("text") == text:
+            return fp
+    if text.startswith(LEGACY_TEXT_PREFIX):
+        token = text[len(LEGACY_TEXT_PREFIX):].split(" ", 1)[0]
+        if _LEGACY_FP_RE.match(token):
+            return token
     return ""
 
 
