@@ -391,14 +391,14 @@ def login_bans(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "sec.lock_cloud_voice", "title": "Locks a cloud speaker can open",
+    {"id": "sec.lock_cloud_voice", "area": "devices", "title": "Locks a cloud speaker can open",
      "needs": ("states", "registry", "exposure"), "run": lock_cloud_voice},
-    {"id": "sec.brain_posture",
+    {"id": "sec.brain_posture", "area": "addons",
      "title": "A terminal session the permission switch did not reach",
      "needs": ("posture",), "run": brain_posture},
-    {"id": "sec.addon_unprotected", "title": "Add-ons with protection off",
+    {"id": "sec.addon_unprotected", "area": "addons", "title": "Add-ons with protection off",
      "needs": ("supervisor",), "run": addon_unprotected},
-    {"id": "sec.login_bans", "title": "Addresses banned after failed logins",
+    {"id": "sec.login_bans", "area": "host", "title": "Addresses banned after failed logins",
      "needs": ("ip_bans",), "run": login_bans},
 ]
 

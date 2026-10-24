@@ -1408,22 +1408,22 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "dev.unavailable", "title": "Devices unavailable for a day",
+    {"id": "dev.unavailable", "area": "devices", "title": "Devices unavailable for a day",
      "needs": ("states", "registry"), "run": unavailable},
-    {"id": "dev.battery_low", "title": "Batteries low or gone quiet",
+    {"id": "dev.battery_low", "area": "devices", "title": "Batteries low or gone quiet",
      "needs": ("states", "registry"), "run": battery_low},
-    {"id": "dev.implausible", "title": "Impossible sensor readings",
+    {"id": "dev.implausible", "area": "devices", "title": "Impossible sensor readings",
      "needs": ("states", "registry"), "run": implausible},
-    {"id": "dev.frozen", "title": "Sensors frozen on one value",
+    {"id": "dev.frozen", "area": "devices", "title": "Sensors frozen on one value",
      "needs": ("states", "registry", "stats"), "run": frozen,
      # A week of one value read off a recorder that is missing rows is a
      # week of holes: skipped (never "it went away") while the history
      # probe says the recorder is incomplete — `checks.run_all`.
      "reads_history": True},
-    {"id": "dev.restored", "title": "Entities with no integration",
+    {"id": "dev.restored", "area": "devices", "title": "Entities with no integration",
      "needs": ("states", "registry", "config_entries"), "run": restored},
-    {"id": "dev.zwave_dead", "title": "Z-Wave nodes marked dead",
+    {"id": "dev.zwave_dead", "area": "networks", "title": "Z-Wave nodes marked dead",
      "needs": ("states", "registry"), "run": zwave_dead},
-    {"id": "dev.zha_unseen", "title": "Zigbee devices gone quiet",
+    {"id": "dev.zha_unseen", "area": "networks", "title": "Zigbee devices gone quiet",
      "needs": ("zha_devices",), "run": zha_unseen},
 ]

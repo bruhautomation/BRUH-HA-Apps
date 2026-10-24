@@ -95,6 +95,6 @@ def tripped(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "safety.tripped", "title": "Safety detectors reading tripped",
+    {"id": "safety.tripped", "area": "devices", "title": "Safety detectors reading tripped",
      "needs": ("states", "registry"), "run": tripped},
 ]
