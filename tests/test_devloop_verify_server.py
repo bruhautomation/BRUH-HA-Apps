@@ -70,7 +70,10 @@ class TestTheQuestionThroughThePanel(DispatchCase):
         self.assertEqual(self.run_pass(), 1)
         q = self.question()
         self.assertEqual(q["kind"], "question")
-        self.assertIn("brAIn 2.17.2 was meant to fix this", q["claim"])
+        # The release is in the row's key and never its subject: the
+        # question names the report in its own words.
+        self.assertIn("2.17.2", q["text"])
+        self.assertNotIn("2.17.2", q["claim"])
         self.assertIn("boiler", q["claim"])
         self.assertEqual(self.run_pass(), 0, "asked again while it waits")
 

@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import re
 
-from ._util import CouldNotLook, House, domain_of, parse_ts
+import numfmt
+
+from ._util import CouldNotLook, House, domain_of, parse_ts, state_words
 
 # The three machines that finish and then wait for somebody. Matched
 # against the entity's own name, lower-cased; see the module docstring
@@ -149,8 +151,7 @@ def waiting(snap: dict, now: float) -> list[dict]:
     out = []
     for finished, kind, eid, shape in hits:
         ago = int((now - finished) / 60.0)
-        when = (f"{ago} minutes ago" if ago < 90
-                else f"{ago // 60} hours ago")
+        when = numfmt.ago_minutes(ago)
         out.append({
             # Stable across runs — the minutes change every pass and the
             # store dedupes on this text, so they live in `detail`.
@@ -562,9 +563,8 @@ def job_done(snap: dict, now: float) -> list[dict]:
     out = []
     for finished, kind, eid, seen in hits:
         ago = int((now - finished) / 60.0)
-        when = (f"{ago} minutes ago" if ago < 90
-                else f"{ago // 60} hours ago")
-        state = (states.get(eid) or {}).get("state")
+        when = numfmt.ago_minutes(ago)
+        state = state_words((states.get(eid) or {}).get("state"))
         out.append({
             # Stable across runs; the minutes live in `detail`.
             "text": JOB_TEXT[kind],

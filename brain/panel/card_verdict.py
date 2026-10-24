@@ -20,6 +20,21 @@ shapes came back from a real house that the contract alone did not stop:
   there and says why (`HOLD_WHY`), the way `REFRESH_HOLDS` already says why
   a card did not move.
 
+Two more came back after the contract stopped asking for a verdict first:
+
+* **An opening reassurance.** Seven cards in eleven opened "There's no
+  leak and nothing to fix", "No action", "Normal, nothing to do" — one
+  denying a leak nobody had raised — and the one card that needed action
+  was lost among them. A summary that OPENS with a no-action clause and
+  then says something is stripped of the clause (`strip_reassurance`); a
+  card that is only an all-clear keeps it, and a reassurance after the
+  finding stays where it was put.
+* **The title said twice.** "Septic pump: 34 h, 143 gal since Thu" over
+  "It last ran 33 h 55 min ago … with 143 gal since". The title holds the
+  headline, so a first summary sentence that repeats two or more of the
+  title's figures (`title_echo`; a duration of hours and minutes counts as
+  the hours it rounds to) is dropped, when another sentence follows it.
+
 Everything here is pure over the parsed reply and the previous card, so
 the server's `_generate` asks it once and the tests drive it directly. It
 never invents a number or a sentence about the house: a rewrite only ever
@@ -58,6 +73,7 @@ _NOTHING_NEW = re.compile(
 # A card about nothing having happened.
 _QUIET = re.compile(
     r"\b(?:nothing (?:happened|ran|to report|changed|moved|was used)|"
+    r"nothing new since|no change since|"
     r"no (?:activity|use|usage|runs?|cycles?|events?|openings?|overrides?|"
     r"changes?)\b|"
     r"0(?:\.0+)? ?(?:kwh|wh|runs?|cycles?|events?|times|openings?|"
@@ -67,6 +83,20 @@ _QUIET = re.compile(
 _ZERO_COUNT = re.compile(
     r"\s*(?:0(?:\.0+)?|none|no|zero)\s*(?:kwh|wh|runs?|cycles?|events?|times|"
     r"openings?|overrides?)?\s*", re.I)
+
+# A clause that tells the reader there is nothing to do, or denies a
+# problem: the opening reassurance. Matched over the WHOLE clause, so
+# "There's no leak and nothing to fix" is one.
+_REASSURE = re.compile(
+    r"\b(?:nothing (?:to (?:fix|do|worry about|act on|report|change)|"
+    r"(?:needs|requires) (?:action|attention|fixing|doing|changing))|"
+    r"no (?:action|change|fix|attention)(?: is)?(?: needed| required)?|"
+    r"no need to (?:act|worry|do anything|change anything)|"
+    r"all (?:good|clear|normal|fine))\b", re.I)
+# A clause that is a verdict word and nothing else ("Normal", "Fine").
+_BARE_VERDICT = re.compile(
+    r"\s*(?:all\s+)?(?:normal|fine|ok|okay|healthy|good|clear|steady)\s*",
+    re.I)
 
 # A rise the card states itself.
 _NUM = r"(\d[\d,]*(?:\.\d+)?)"
@@ -204,6 +234,99 @@ def strip_verdict(text: str) -> tuple[str, bool]:
     return rest.strip(), stripped
 
 
+def is_reassurance(clause: str) -> bool:
+    """A clause whose whole job is telling the reader there is nothing to
+    do: "No action", "Normal", "There's no leak and nothing to fix"."""
+    clause = clause or ""
+    if _BARE_VERDICT.fullmatch(clause):
+        return True
+    return bool(_REASSURE.search(clause)) or (says_fine(clause)
+                                              and len(clause) <= 40)
+
+
+def strip_reassurance(text: str) -> tuple[str, bool]:
+    """The summary with its OPENING reassurance taken off, when something
+    follows it; `(text, False)` when it opens with something else or is
+    nothing but an all-clear (which the contract allows)."""
+    rest, stripped = text or "", False
+    while True:
+        clause, after = lead_clause(rest)
+        if clause == rest or not after.strip() or not is_reassurance(clause):
+            break
+        rest, stripped = after, True
+    return (_capital(rest), True) if stripped else (text, False)
+
+
+# A duration of hours and minutes is one figure, the hours it rounds to:
+# "33 h 55 min" is the "34 h" of the title said again.
+_DURATION = re.compile(r"(\d+(?:\.\d+)?)\s*h(?:ours?)?\s+(\d+)\s*min", re.I)
+_CLOCK = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+_FIGURE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+(?=[A-Z0-9“\"'])")
+
+
+def _figures(text: str) -> list[float]:
+    text = text or ""
+    out: list[float] = []
+
+    def hours(m: re.Match) -> str:
+        out.append(float(m.group(1)) + float(m.group(2)) / 60.0)
+        return " "
+
+    def clock(m: re.Match) -> str:
+        out.append(int(m.group(1)) * 100.0 + int(m.group(2)) + 0.5)
+        return " "
+
+    text = _CLOCK.sub(clock, _DURATION.sub(hours, text))
+    for m in _FIGURE.finditer(text):
+        n = _num(m.group(0))
+        if n is not None:
+            out.append(n)
+    return out
+
+
+def title_echo(title: str, sentence: str) -> int:
+    """How many of the title's figures a sentence says again (a figure
+    within 2% of one is the same figure said in other units)."""
+    said = _figures(sentence)
+    count = 0
+    for n in dict.fromkeys(_figures(title)):
+        if any(abs(n - m) <= 0.02 * max(abs(n), abs(m), 1.0) for m in said):
+            count += 1
+    return count
+
+
+def drop_title_echo(title: str, summary: str) -> tuple[str, bool]:
+    """The summary without a first sentence that only restates the title."""
+    parts = _SENTENCE_END.split(summary or "", maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return summary, False
+    if title_echo(title, parts[0]) < 2:
+        return summary, False
+    return _capital(parts[1]), True
+
+
+def _finish(out: dict, changed: list[str]) -> None:
+    """The two passes every stored card gets, whatever else was rewritten:
+    no opening reassurance, and no first sentence that is the title again."""
+    summary = str(out.get("summary") or "")
+    body, stripped = strip_reassurance(summary)
+    if stripped:
+        out["summary"] = body
+        changed.append("no opening reassurance")
+    title = str(out.get("title") or "")
+    subject, sep, rest = title.partition(":")
+    if sep and subject.strip() and is_reassurance(rest.strip()):
+        out["title"] = subject.strip()[:120]
+        if "no opening reassurance" not in changed:
+            changed.append("no opening reassurance")
+    body, dropped = drop_title_echo(str(out.get("title") or ""),
+                                    str(out.get("summary") or ""))
+    if dropped:
+        out["summary"] = body
+        changed.append("the title said twice")
+
+
 def _names_row(texts: list[str], row: dict) -> bool:
     """Whether the card's words name the device an open row is about."""
     words = " ".join(texts)
@@ -226,6 +349,16 @@ def open_row_named(obj: dict, open_rows) -> dict | None:
 
 def review(obj: dict, previous: dict | None = None,
            open_rows=()) -> dict:
+    """What to do with one parsed card (`_review`), with the reassurance
+    and the restated title taken off whatever is to be stored."""
+    got = _review(obj, previous, open_rows)
+    if not got["hold"]:
+        _finish(got["obj"], got["changed"])
+    return got
+
+
+def _review(obj: dict, previous: dict | None = None,
+            open_rows=()) -> dict:
     """What to do with one parsed card.
 
     `{"obj": the card to store, "hold": "" or why it should not be stored,
@@ -279,6 +412,7 @@ def review(obj: dict, previous: dict | None = None,
     return {"obj": out, "hold": "", "changed": changed}
 
 
-__all__ = ["HOLD_WHY", "RISE", "lead_clause", "nothing_new", "open_row_named",
-           "quiet",
+__all__ = ["HOLD_WHY", "RISE", "drop_title_echo", "is_reassurance",
+           "lead_clause", "nothing_new", "open_row_named", "quiet",
+           "strip_reassurance", "title_echo",
            "review", "rises", "says_fine", "strip_verdict", "when_said"]

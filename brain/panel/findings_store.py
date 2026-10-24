@@ -265,6 +265,16 @@ PROMPT_COVERED = 24
 PROMPT_DETAIL = 240
 PROMPT_IGNORED = 20
 PROMPT_FIXED = 20
+# What the household turned down about what a card covers, listed apart
+# and outside the newest-twenty cut (`prompt_block`'s ``covers``).
+PROMPT_TURNED_DOWN = 12
+# A card's finding or opportunity naming the entity of a settled Wrong is
+# the same thing said again when it carries this share of that Wrong's
+# words (`turned_down`).
+TURNED_DOWN_SHARE = 0.5
+_TURNED_DOWN_STOP = frozenset(
+    "the a an and or of to is it its on in at for from this that with be "
+    "been has have was were are by as so if when".split())
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
@@ -1130,6 +1140,10 @@ def _case_fields(entry: dict) -> dict:
     kind = entry.get("kind")
     if kind in CASE_KINDS:
         out["kind"] = kind
+    # A note (`triage.is_note`): news to read, answered with Got it. Only a
+    # literal True, so nothing on the wire can set it by being truthy.
+    if entry.get("informational") is True:
+        out["informational"] = True
     claim = textclip.clip(str(entry.get("claim") or "").strip(), MAX_CLAIM)
     if claim:
         out["claim"] = claim
@@ -1778,6 +1792,155 @@ def _note_seen_again(held: list[tuple[int, str]]) -> None:
             log.warning("could not note a report on its to-do item: %s", exc)
 
 
+# One cause filed as several rows. Two folds over the live list, run after
+# every filing (`add_many`, which `add_case` goes through) and after an
+# investigation rewrites a row (`refine`), because a case's evidence is what
+# says which devices it reaches:
+#
+#   * a row that DIAGNOSES a shared cause — the Resident's case or the
+#     overnight check's (`SHARED_CAUSE_HOSTS`) — whose evidence names two or
+#     more devices takes in the live rows filed about each of them ("four
+#     Wi-Fi devices are not reachable" beside a row each for two of them);
+#   * a model-written row about an automation or a script whose evidence
+#     names one device folds into that device's own live row: "the porch
+#     automation failed, the light did not respond" is the light being
+#     offline, said a second time. Model-written only: a house check about
+#     an automation (`auto.trigger_unavailable`) is deliberately its own
+#     claim, the one that answers why the automation stopped.
+#
+# A folded row leaves the list — no memory line, no settled key,
+# `clear_resolved`'s ending — and the row it folded into lists the device
+# among its evidence and takes the worse severity. A re-report of a folded
+# device is folded again on the way in, so it is never announced.
+#
+# Never a row in the harm family (`SUBJECT_FOLD_EXCLUDED`'s safety,
+# security and correction, the harm checks), never a row brAIn fixed
+# (`CROSS_FOLD_STATUSES` holds only live ones), never a question or a
+# suggestion, never a row somebody has replied under, put back, planned or
+# snoozed (`nobody_has_touched`'s rule for a row on screen), and never into
+# a row less visible than the one folded: a held cause must not hide an
+# open device.
+SHARED_CAUSE_HOSTS = frozenset({"resident", "sre"})
+SHARED_CAUSE_KINDS = ("", "problem")
+AUTOMATION_DOMAINS = ("automation", "script")
+_VISIBLE_HOSTS = ("open", "needs_you")
+
+
+def _devices_named(entry: dict) -> set[str]:
+    """The device entities a row is about: its own and its evidence's,
+    never an automation or a script."""
+    out = {_entity_shaped(entry.get("entity_id"))}
+    for ev in entry.get("evidence") or []:
+        if isinstance(ev, dict):
+            out.add(_entity_shaped(ev.get("entity")))
+    out.discard("")
+    return {e for e in out if e.split(".", 1)[0] not in AUTOMATION_DOMAINS}
+
+
+def _may_fold_away(entry: dict) -> bool:
+    if entry.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    if str(entry.get("kind") or "") not in SHARED_CAUSE_KINDS:
+        return False
+    source = str(entry.get("source") or "")
+    if source in SUBJECT_FOLD_EXCLUDED or source in TODO_HOLD_EXCLUDED:
+        return False
+    if source.startswith("check:"):
+        check = source.split(":", 1)[1]
+        if (check in CHECK_FOLD_EXCLUDED
+                or check.startswith(CHECK_FOLD_EXCLUDED_PREFIXES)):
+            return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if record.get("elevated_by_person") or entry.get("plan"):
+        return False
+    if int(entry.get("snoozed_until") or 0):
+        return False
+    return not any(isinstance(t, dict) and t.get("who") == "you"
+                   for t in entry.get("thread") or [])
+
+
+def _may_host(host: dict, entry: dict) -> bool:
+    if host is entry or host.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    if str(host.get("source") or "") in TODO_HOLD_EXCLUDED:
+        return False
+    return (host.get("status") in _VISIBLE_HOSTS
+            or host.get("status") == entry.get("status"))
+
+
+def _take_in(host: dict, entry: dict) -> None:
+    """``entry``'s device and severity onto ``host``."""
+    evidence = _clean_evidence(host.get("evidence"))
+    have = {e["entity"] for e in evidence}
+    eid = str(entry.get("entity_id") or "")
+    extra = []
+    if eid and eid not in have:
+        extra.append({"entity": eid,
+                      "value": str(entry.get("claim") or entry.get("text") or ""),
+                      "when": ""})
+        have.add(eid)
+    for ev in _clean_evidence(entry.get("evidence")):
+        if ev["entity"] not in have:
+            extra.append(ev)
+            have.add(ev["entity"])
+    if extra:
+        host["evidence"] = _clean_evidence(evidence + extra)
+    if _severity_rank(entry.get("severity")) > _severity_rank(
+            host.get("severity")):
+        host["severity"] = entry["severity"]
+
+
+def _fold_shared(items: list[dict]) -> set[int]:
+    """Fold the rows one cause was filed as (above). Returns the ids that
+    left the list; ``items`` is changed in place."""
+    hosts = []
+    for f in items:
+        if (str(f.get("source") or "") in SHARED_CAUSE_HOSTS
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS
+                and f.get("status") in CROSS_FOLD_STATUSES):
+            devices = _devices_named(f)
+            if len(devices) >= 2:
+                hosts.append((f, devices))
+    # The widest cause first, so a row naming four devices takes in one
+    # naming two rather than the other way round.
+    hosts.sort(key=lambda h: -len(h[1]))
+    by_entity: dict[str, dict] = {}
+    for f in items:
+        eid = _entity_shaped(f.get("entity_id"))
+        if eid and eid.split(".", 1)[0] not in AUTOMATION_DOMAINS \
+                and f.get("status") in CROSS_FOLD_STATUSES \
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS:
+            by_entity.setdefault(eid, f)
+    gone: set[int] = set()
+    for f in items:
+        ts = int(f.get("ts") or 0)
+        if ts in gone or not _may_fold_away(f):
+            continue
+        eid = _entity_shaped(f.get("entity_id"))
+        host = None
+        if eid and eid.split(".", 1)[0] in AUTOMATION_DOMAINS:
+            devices = _devices_named(f)
+            if len(devices) == 1 and _model_written(f.get("source")):
+                host = by_entity.get(next(iter(devices)))
+        elif eid:
+            mine = len(_devices_named(f))
+            for candidate, devices in hosts:
+                if (eid in devices and len(devices) > mine
+                        and int(candidate.get("ts") or 0) not in gone):
+                    host = candidate
+                    break
+        if host is None or not _may_host(host, f) \
+                or int(host.get("ts") or 0) in gone:
+            continue
+        _take_in(host, f)
+        gone.add(ts)
+    if gone:
+        items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
+        log.info("folded %d finding(s) into the row about their shared cause",
+                 len(gone))
+    return gone
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -1876,7 +2039,10 @@ def add_many(objs: list[dict]) -> list[dict]:
             checked.setdefault(ck, entry)
         items.append(entry)
         created.append(_shape(entry))
-    if created or refreshed:
+    gone = _fold_shared(items) if created or refreshed else set()
+    if gone:
+        created = [c for c in created if int(c.get("ts") or 0) not in gone]
+    if created or refreshed or gone:
         _write(_prune(items))
     if held:
         _note_seen_again(held)
@@ -2105,8 +2271,12 @@ def refine(ts: int, case: dict, run_id: str = "",
             "elevated_at": int(
                 (entry.get("triage") or {}).get("elevated_at") or 0),
             "wrote_fix": bool(fix)})
+        # The run that looked may have named every device a cause reaches,
+        # or found this row to be one of them — then it is the shared row
+        # that carries it, and there is nothing of this one left to show.
+        gone = _fold_shared(items)
         _write(items)
-        return _shape(entry)
+        return None if int(ts) in gone else _shape(entry)
     return None
 
 
@@ -2253,7 +2423,10 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
                   when: float | None = None) -> list[dict]:
     """Write what looked at a batch, and move each row to where it belongs.
 
-    ``verdicts`` is ``{ts: (verdict, reason)}``. An ``elevated`` or
+    ``verdicts`` is ``{ts: (verdict, reason)}``, or ``(verdict, reason,
+    True)`` for a hold the look said is NOT NEWS (`resident.ALREADY`), which
+    holds a row silence already showed too, while nobody has touched it
+    (:func:`nobody_has_touched`). An ``elevated`` or
     ``untriaged`` row becomes ``open`` — the second because nothing looked,
     which surfaces exactly like the first and says so on the card — and a
     ``held`` row becomes ``held``.
@@ -2286,9 +2459,12 @@ def record_triage(verdicts: dict[int, tuple[str, str]], run_id: str = "",
             continue
         late = entry.get("status") != "triaging"
         verdict, reason = verdicts[ts][:2]
+        not_news = len(verdicts[ts]) > 2 and verdicts[ts][2] is True
         if verdict not in triage.VERDICTS:
             continue
-        if late and verdict == "held" and look_may_set_aside(entry):
+        if late and verdict == "held" and (
+                look_may_set_aside(entry)
+                or (not_news and nobody_has_touched(entry))):
             # A house-book question the look found the house already
             # answers: held with the look's reason, announced to nobody,
             # still in History where it can be put back.
@@ -2376,6 +2552,31 @@ def look_may_set_aside(entry: dict) -> bool:
         return False
     record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
     return not record.get("elevated_by_person")
+
+
+def nobody_has_touched(entry: dict) -> bool:
+    """An open row no person has answered, replied under or put back, and
+    no run is planning or fixing — the one kind a look may still set aside
+    once it is on screen, and only when the look said the row is not news
+    (`resident.ALREADY`: already answered, marked wrong before, a duplicate).
+
+    "A row on screen never vanishes into a run" is about a run overruling
+    somebody; a row nobody has done anything with, under a look that says
+    the household already answered it, is the list showing what brAIn has
+    just said it should not. Held, not deleted: History › Set aside by
+    brAIn still has it, and Restore puts it back.
+    """
+    if not isinstance(entry, dict) or entry.get("status") != "open":
+        return False
+    record = entry.get("triage") if isinstance(entry.get("triage"), dict) else {}
+    if record.get("elevated_by_person"):
+        return False
+    if entry.get("plan") or int(entry.get("snoozed_until") or 0):
+        return False
+    if entry.get("fix_by") in ("chat", "person"):
+        return False
+    return not any(isinstance(t, dict) and t.get("who") == "you"
+                   for t in entry.get("thread") or [])
 
 
 def late_verdict_welcome(entry: dict) -> bool:
@@ -3889,6 +4090,49 @@ def _covered(row: dict, covers: dict, names: dict) -> bool:
     return False
 
 
+def _words(text: str) -> set[str]:
+    out = set()
+    for w in normalize(text).split():
+        if len(w) < 2 or w in _TURNED_DOWN_STOP:
+            continue
+        out.add(w[:-1] if len(w) > 3 and w.endswith("s") else w)
+    return out
+
+
+def turned_down(text: str, entities=()) -> dict | None:
+    """The settled Wrong a card's finding or suggestion says again, or None.
+
+    The same words are the same report whatever they name; a report naming
+    the entity a Wrong was about is the same report when it carries most
+    of that Wrong's words ("make the double-tap scene leave the hallway
+    light on" after "the hallway double-tap scene turns the hallway light
+    off" was waved away). A different problem on the same entity is not:
+    "the hallway light has been unavailable since Tue" shares the name and
+    nothing else, and still files. Never raises: a ledger that cannot be
+    read turns nothing down, the direction in which being wrong shows a
+    card."""
+    try:
+        key = normalize(text)
+        if not key:
+            return None
+        named = {str(e) for e in entities or () if e}
+        said = _words(text)
+        for entry in _load_settled():
+            if entry.get("kind") != "ignored":
+                continue
+            if entry.get("key") == key or normalize(entry.get("text")) == key:
+                return entry
+            eid = str(entry.get("entity_id") or "")
+            if not eid or eid not in named:
+                continue
+            theirs = _words(entry.get("text") or "")
+            if theirs and len(theirs & said) / len(theirs) >= TURNED_DOWN_SHARE:
+                return entry
+    except Exception:  # noqa: BLE001 — "could not read" turns nothing down
+        return None
+    return None
+
+
 def prompt_block(exclude_sources=(), own=None, figures: bool = False,
                  covers: dict | None = None) -> str:
     """What the analyst needs to know about findings before it reports more.
@@ -3948,7 +4192,29 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False,
                 break
         return out
 
-    ignored = _settled("ignored", PROMPT_IGNORED)
+    # What the household turned down about what this card covers, read off
+    # the ledger by entity rather than by age: on a house that answers
+    # things, the newest twenty across every device had long since pushed
+    # out the one about this card's own light.
+    declined: list[dict] = []
+    if covers is not None:
+        names = _names_now()
+        seen_keys: set[str] = set()
+        for entry in settled_listing():
+            if entry.get("kind") != "ignored" or not entry.get("entity_id"):
+                continue
+            key = normalize(entry.get("text") or "")
+            if not key or key in seen_keys:
+                continue
+            if _covered(entry, covers, names):
+                seen_keys.add(key)
+                declined.append(entry)
+            if len(declined) >= PROMPT_TURNED_DOWN:
+                break
+    declined_keys = {normalize(e.get("text") or "") for e in declined}
+    ignored = [(t, n) for t, n in _settled("ignored",
+                                            PROMPT_IGNORED + len(declined))
+               if normalize(t) not in declined_keys][:PROMPT_IGNORED]
     fixed = _settled("fixed", PROMPT_FIXED)
     parts: list[str] = []
     if own:
@@ -4001,6 +4267,21 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False,
         parts.append(
             "PROBLEMS ALREADY ON THE FINDINGS LIST — do NOT report these again:")
         parts += [f"- {f['text']}" for f in live]
+    if declined:
+        names = _names_now()
+        parts.append(
+            "\nWHAT THE HOUSEHOLD HAS ALREADY TURNED DOWN ABOUT WHAT THIS CARD "
+            "COVERS — do not raise these again, as a finding, an opportunity "
+            "or a change suggested in the summary, unless something new "
+            "happened; where they said why, that reason stands:")
+        for entry in declined:
+            eid = str(entry.get("entity_id") or "")
+            row = names.get(eid)
+            name = (row.get("name") if isinstance(row, dict) else row) or ""
+            about = f" ({name}, {eid})" if name else f" ({eid})"
+            note = str(entry.get("note") or "").strip()[:MAX_NOTE]
+            parts.append(f"- {entry.get('text', '')}{about}"
+                         + (f"\n  They said: {note}" if note else ""))
     if ignored:
         parts.append(
             "\nPROBLEMS THE HOMEOWNER SAID WERE WRONG OR NOT PROBLEMS HERE — "

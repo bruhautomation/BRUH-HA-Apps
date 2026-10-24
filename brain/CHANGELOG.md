@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.16
+
+### Added
+
+- **A note brAIn files about itself is news to read, not a problem to judge.** A note in the findings inbox is shown as a note and never goes through the look that decides whether a fault is real. (#381)
+
+### Changed
+
+- **One cause is one row.** A finding about a device or a cause that already has an open row is folded into it, with every device it reaches listed under the cause, and a card that tells the same story links to that finding instead of telling it again. (#411)
+- **"What to do" is the person's step.** The look reads what its tools can read first — the automation's trace, the history, the registry, whether a reload brought it back — and "what to do" holds only the physical step or the decision left for a person. (#413)
+- **A device is judged by what switches it.** Before saying a machine should have run, the look finds the sensor or thermostat that actually switches it, and an answer such as "it only turns on above 60%" is kept as that condition. (#408)
+- **brAIn's own housekeeping is named in words.** A "Was this fixed" question says what was wrong and what changed, and an offer to mute a rule names the rule by its description rather than its id. (#388)
+- **A card leads with what it found.** A card no longer opens with "Nothing to fix" or a similar reassurance unless the reader would otherwise worry; a reassurance that opens a card with something else to say is taken off. (#387)
+- **A card's summary does not repeat its title's numbers.** The title holds the headline and the summary adds the reason, the comparison or the next step; a first sentence that only restates the title's figures is dropped. (#412)
+
+### Fixed
+
+- **A finding still waiting for its first look can be answered.** Its buttons and Send no longer say "no such case", and the look hears what was replied. (#378)
+- **A finding its own look calls answered is not shown.** A row the look says is already answered, was marked wrong before, or repeats another card is held, or folded into the card it repeats, instead of being shown with the opposite verdict under it. (#386)
+- **A card does not bring back what the household turned down.** Each card is told what has been marked wrong about what it covers, with the reason given, and a finding or suggestion that matches one is dropped before it is filed. (#389)
+- **No internals in the text a person reads.** A failed automation names the step it was on by what the step does, states read the way Home Assistant's own screens show them ("away", not "not_home"), and trace paths, MAC and IP addresses and protocol names are left out; "1 hours ago" is "1 hour ago". (#414)
+
 ## 3.8.15
 
 ### Added

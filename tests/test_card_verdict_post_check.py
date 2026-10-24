@@ -90,12 +90,17 @@ class TestTheReview(unittest.TestCase):
         self.assertTrue(obj["summary"].startswith("Mon morning 193 min"))
         self.assertEqual(obj["title"], "Den heating")
 
-    def test_a_rise_under_half_keeps_its_verdict(self):
+    def test_a_rise_under_half_still_loses_its_opening_reassurance(self):
+        # This kept "Nothing needs action —" as the opener when the rise was
+        # under half. A card leads with what it found: the reassurance in
+        # front of a card that has something to say is the boilerplate
+        # seven cards in eleven opened with (`TestNoReassuranceOpener`).
         steady = {**HEAT, "summary": "Nothing needs action — Mon morning "
                   "120 min vs Sun 112 min to reach 68 °F."}
         got = card_verdict.review(steady, PREVIOUS)
-        self.assertEqual(got["changed"], [])
-        self.assertEqual(got["obj"]["summary"], steady["summary"])
+        self.assertEqual(got["obj"]["summary"],
+                         "Mon morning 120 min vs Sun 112 min to reach 68 °F.")
+        self.assertEqual(got["obj"]["title"], "Den heating")
 
     def test_a_card_about_nothing_is_held(self):
         for card in (QUIET, OVERRIDES):
@@ -120,6 +125,112 @@ class TestTheReview(unittest.TestCase):
         before = json.dumps(HEAT, sort_keys=True)
         card_verdict.review(HEAT, PREVIOUS)
         self.assertEqual(json.dumps(HEAT, sort_keys=True), before)
+
+
+# Seven of eleven cards on a real house opened with the same reassurance,
+# and the one card that needed action was lost among them.
+REASSURED = (
+    ("There's no leak and nothing to fix — the sump ran 4 times overnight, " +
+     "12 min each.", "The sump ran 4 times overnight, 12 min each."),
+    ("No action. The dryer finished at 14:10 and the drum is still full.",
+     "The dryer finished at 14:10 and the drum is still full."),
+    ("Normal, nothing to do: the attic fan ran 3 h 10 min on Tue.",
+     "The attic fan ran 3 h 10 min on Tue."),
+    ("Nothing to fix; the freezer held 0 °F all week.",
+     "The freezer held 0 °F all week."),
+    ("All good — the front door was locked by 22:15 every night.",
+     "The front door was locked by 22:15 every night."),
+    ("Nothing to worry about. Hall motion fired 31 times, mostly 07:00–08:00.",
+     "Hall motion fired 31 times, mostly 07:00–08:00."),
+)
+
+
+def _card(summary, title="Utility room"):
+    return {"title": title, "summary": summary,
+            "highlights": [{"label": "Runs", "value": "4"}]}
+
+
+class TestNoReassuranceOpener(unittest.TestCase):
+    def test_the_opening_reassurance_comes_off_a_card_with_content(self):
+        for said, kept in REASSURED:
+            with self.subTest(said=said):
+                got = card_verdict.review(_card(said), PREVIOUS)
+                self.assertEqual(got["obj"]["summary"], kept)
+                self.assertIn("no opening reassurance", got["changed"])
+
+    def test_a_card_that_is_only_an_all_clear_keeps_it(self):
+        for said in ("Nothing to fix.", "No action needed."):
+            with self.subTest(said=said):
+                got = card_verdict.review(_card(said), None)
+                self.assertEqual(got["obj"]["summary"], said)
+
+    def test_a_reassurance_after_the_finding_is_left_where_it_is(self):
+        said = "The sump ran 4 times overnight; nothing to fix."
+        got = card_verdict.review(_card(said), PREVIOUS)
+        self.assertEqual(got["obj"]["summary"], said)
+
+    def test_a_title_that_is_a_reassurance_loses_it(self):
+        got = card_verdict.review(
+            _card("No action. The sump ran 4 times.", "Sump: nothing to fix"),
+            PREVIOUS)
+        self.assertEqual(got["obj"]["title"], "Sump")
+
+    def test_a_scheduled_card_whose_news_is_nothing_new_is_held(self):
+        for said in ("Nothing new since the dryer finished.",
+                     "No change since Tue 13 Oct."):
+            with self.subTest(said=said):
+                card = {"title": "Dryer", "summary": said,
+                        "highlights": [{"label": "Last run",
+                                        "value": "Tue 13 Oct"}]}
+                self.assertEqual(card_verdict.review(card, PREVIOUS)["hold"],
+                                 card_verdict.HOLD_WHY)
+
+
+# The title holds the headline; the summary's first sentence repeated it.
+# A fixture card set: each title, the summary the model wrote, and the
+# summary a person reads.
+ECHOES = (
+    ("Septic pump: 34 h, 143 gal since Thu",
+     "It last ran 33 h 55 min ago, with 143 gal since. That is twice its " +
+     "usual gap, so the float switch is the first thing to look at.",
+     "That is twice its usual gap, so the float switch is the first thing " +
+     "to look at."),
+    ("Dehumidifiers: 1.2 kWh for 17–23 Oct, down from 49.3",
+     "The dehumidifiers used 1.2 kWh over 17–23 Oct, down from 49.3 kWh. " +
+     "The basement one has been switched off since Sat 17 Oct.",
+     "The basement one has been switched off since Sat 17 Oct."),
+    ("Back door: evening openings 14 → 5",
+     "Evening openings fell from 14 to 5 this week, all before 21:00.",
+     "Evening openings fell from 14 to 5 this week, all before 21:00."),
+    ("Garage: 3 openings after 22:00",
+     "The garage opened 3 times after 22:00. Each was under 2 min.",
+     "Each was under 2 min."),
+    ("Freezer: 0 °F all week",
+     "The compressor ran 41% of the time, up from 30%. The seal is the " +
+     "likely cause.",
+     "The compressor ran 41% of the time, up from 30%. The seal is the " +
+     "likely cause."),
+)
+
+
+class TestTheSummaryDoesNotRepeatTheTitle(unittest.TestCase):
+    def test_a_first_sentence_that_restates_the_title_is_dropped(self):
+        for title, said, kept in ECHOES:
+            with self.subTest(title=title):
+                card = {"title": title, "summary": said,
+                        "highlights": [{"label": "x", "value": "1"}]}
+                got = card_verdict.review(card, PREVIOUS)
+                self.assertEqual(got["obj"]["summary"], kept)
+                self.assertEqual(got["obj"]["title"], title)
+                self.assertEqual("the title said twice" in got["changed"],
+                                 kept != said)
+
+    def test_the_figures_compared(self):
+        self.assertEqual(card_verdict.title_echo(
+            "Septic pump: 34 h, 143 gal since Thu",
+            "It last ran 33 h 55 min ago, with 143 gal since."), 2)
+        self.assertEqual(card_verdict.title_echo(
+            "Garage: 3 openings after 22:00", "Each was under 2 min."), 0)
 
 
 class TestTheContractSaysSo(unittest.TestCase):
@@ -208,6 +319,14 @@ class TestThroughGenerate(GenerateCase):
         card = self.generate(scheduled=False)
         self.assertEqual(card["title"], QUIET["title"])
         self.assertNotIn("lighting", self.server.REFRESH_HOLDS)
+
+    def test_a_restated_title_and_a_reassurance_are_taken_off_when_stored(self):
+        self.plant_previous()
+        title, said, kept = ECHOES[0]
+        self.reply.update(title=title, summary="Nothing to fix. " + said)
+        card = self.generate(scheduled=True)
+        self.assertEqual(card["title"], title)
+        self.assertEqual(card["summary"], kept)
 
     def test_an_ordinary_card_is_stored_as_written(self):
         self.plant_previous()

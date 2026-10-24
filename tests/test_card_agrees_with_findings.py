@@ -127,11 +127,19 @@ class TestAFineVerdictOverAnOpenRowIsTakenOff(unittest.TestCase):
         self.assertIn(DEHUMIDIFIER["text"], out["obj"]["summary"])
         self.assertIn("open finding", " ".join(out["changed"]))
 
-    def test_a_card_about_something_else_keeps_its_verdict(self):
+    def test_a_card_about_something_else_is_not_pointed_at_the_row(self):
+        # It asserted the summary came back exactly as written, opening
+        # "Fine;". That opener is the reassurance a card no longer leads
+        # with (`test_card_verdict_post_check.TestNoReassuranceOpener`);
+        # what this test is about is that no open finding is dragged in.
         card = {"title": "Bedroom: fine", "summary": "Fine; the bedroom "
                 "held 20 °C all night.", "highlights": []}
         out = card_verdict.review(card, None, open_rows=self.OPEN)
-        self.assertEqual(out["obj"]["summary"], card["summary"])
+        self.assertEqual(out["obj"]["summary"],
+                         "The bedroom held 20 °C all night.")
+        self.assertNotIn("Open finding", out["obj"]["summary"])
+        self.assertNotIn("no fine verdict over an open finding",
+                         out["changed"])
 
 
 if __name__ == "__main__":

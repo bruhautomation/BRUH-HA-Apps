@@ -948,8 +948,9 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                           f"it still shows {st.get('state')}%, which is the "
                           "last thing it said, not what it is now."
                           + house.placed(eid, who),
-                "fix": "Check whether the device is still alive; a dead "
-                       "battery is the usual reason it went quiet.",
+                "fix": "Replace its battery, or wake it with its button; a "
+                       "dead battery is the usual reason a device goes "
+                       "quiet.",
                 "severity": "warning",
                 "fixable": False,
                 "entity_id": eid,
@@ -1266,8 +1267,9 @@ def frozen(snap: dict, now: float) -> list[dict]:
             "detail": f"{numfmt.quantity(lo, unit)} on every one of the "
                       f"last {len(days)} "
                       "days. A real sensor moves." + house.placed(eid),
-            "fix": "Check the sensor — it has probably stopped updating "
-                   "while its integration keeps repeating the last value.",
+            "fix": "Power-cycle the sensor, or reload its integration — it "
+                   "has probably stopped updating while its integration "
+                   "keeps repeating the last value.",
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,
@@ -1396,7 +1398,7 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
         "detail": counted_names([n for _, n in rows])
                   + f". The quietest is {first}, last seen "
                     f"{when(max(0.0, now - longest * 86400))} "
-                    f"({int(longest)} days ago).",
+                    f"({numfmt.count(int(longest), 'day')} ago).",
         "fix": "A battery device this quiet has usually run its battery "
                "down or dropped off the mesh — press its button to wake "
                "it. If it does not come back, re-pair it near the "

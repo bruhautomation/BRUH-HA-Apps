@@ -84,4 +84,23 @@ def times(value) -> str:
     return f"{text} {'time' if text == '1' else 'times'}"
 
 
-__all__ = ["MINUS", "number", "quantity", "times", "unit_text"]
+def count(n: int, one: str, many: str = "") -> str:
+    """'1 hour', '2 hours': a whole count with its noun agreeing."""
+    n = int(n)
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def ago_minutes(minutes) -> str:
+    """'5 minutes ago' under an hour, whole hours after: never "1 hours
+    ago", which is what two checks composed by hand."""
+    try:
+        m = max(0, int(minutes))
+    except (TypeError, ValueError):
+        return "a while ago"
+    if m < 60:
+        return count(m, "minute") + " ago"
+    return count(m // 60, "hour") + " ago"
+
+
+__all__ = ["MINUS", "ago_minutes", "count", "number", "quantity", "times",
+           "unit_text"]

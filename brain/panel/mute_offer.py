@@ -38,7 +38,10 @@ MAX_PER_PASS = 2
 MAX_SUBJECTS = 200
 # The producers that ask questions of their own are never the subject of one.
 SELF_SOURCES = frozenset({SOURCE, "notify_policy"})
-TEXT_PREFIX = "Mute suggestion about "
+TEXT_PREFIX = "Stop raising "
+# How an offer was keyed before it named the rule: by its source id. A row
+# filed that way is still found.
+LEGACY_TEXT_PREFIX = "Mute suggestion about "
 
 
 def load() -> dict:
@@ -94,17 +97,20 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
                 or not due(state, row, now, live_ts)):
             continue
         title = str(row.get("title") or source)
+        name = plain_words.producer_name(source, title)
         wrong, total = int(row["wrong"]), int(row["total"])
         out.append({
             "source": source, "wrong": wrong, "total": total,
             "row": {
                 # The subject and never the counts, or the store's dedupe
-                # would see a new question every time a number moved.
-                "text": TEXT_PREFIX + source,
+                # would see a new question every time a number moved — and
+                # the rule by its NAME, never its id ("Mute suggestion about
+                # check:base.unusual" was the key on the screen).
+                "text": f"{TEXT_PREFIX}“{name}”?",
                 # The count is worded where ⚙ › Diagnostics words it
                 # (`plain_words.record_words`): two wordings of one pair of
                 # numbers read as two different facts.
-                "claim": (f"{plain_words.producer_name(source, title)}: "
+                "claim": (f"{name}: "
                           f"{plain_words.record_words(wrong, total)} — stop "
                           "raising it?"),
                 "detail": (f"You have answered {total} of this rule's cards "
@@ -125,16 +131,25 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
 
 
 def record_asked(state: dict, source: str, ts: int, wrong: int, total: int,
-                 now: float) -> dict:
+                 now: float, *, text: str = "") -> dict:
     state[source] = {"ts": int(ts), "at": int(now), "wrong": int(wrong),
                      "total": int(total), "answer": ""}
+    if text:
+        state[source]["text"] = str(text)[:400]
     return state
 
 
 def source_for_finding(state: dict, finding: dict) -> str:
+    """The producer an offer is about: by the row's id, then by its words,
+    then — for a row filed the old way — the id its text ended with."""
     ts = finding.get("ts")
+    text = str(finding.get("text") or "")
     for source, rec in state.items():
         if isinstance(rec, dict) and rec.get("ts") == ts:
             return source
-    text = str(finding.get("text") or "")
-    return text[len(TEXT_PREFIX):] if text.startswith(TEXT_PREFIX) else ""
+    for source, rec in state.items():
+        if isinstance(rec, dict) and text and rec.get("text") == text:
+            return source
+    if text.startswith(LEGACY_TEXT_PREFIX):
+        return text[len(LEGACY_TEXT_PREFIX):]
+    return ""
