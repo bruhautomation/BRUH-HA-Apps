@@ -24066,7 +24066,7 @@ async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
 # prompt carry it. A save rewrites the terminal's appended prompt so the
 # next window opened has it.
 
-async def _json_body(request: web.Request) -> dict:
+async def _personality_body(request: web.Request) -> dict:
     try:
         body = await request.json()
     except (ValueError, UnicodeDecodeError):
@@ -24081,7 +24081,7 @@ async def h_personality_get(request: web.Request) -> web.Response:
 
 
 async def h_personality_put(request: web.Request) -> web.Response:
-    body = await _json_body(request)
+    body = await _personality_body(request)
     name, persona = body.get("name", ""), body.get("persona", "")
     if not isinstance(name, str) or not isinstance(persona, str):
         raise web.HTTPBadRequest(text="send {name, persona} as text")
@@ -24100,7 +24100,7 @@ async def h_personality_put(request: web.Request) -> web.Response:
 async def h_personality_growth(request: web.Request) -> web.Response:
     """POST {text}: one dated growth entry (the `note_personality_change`
     MCP tool, from a conversation about who brAIn is)."""
-    body = await _json_body(request)
+    body = await _personality_body(request)
     text = body.get("text")
     if not isinstance(text, str) or not text.strip():
         raise web.HTTPBadRequest(text="say what changed, as {text}")
