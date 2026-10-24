@@ -224,8 +224,16 @@ def with_condition(config: dict, condition: dict) -> dict:
     file is spelled.
     """
     out = dict(config)
-    key = "conditions" if "conditions" in out and "condition" not in out \
-        else "condition"
+    # An entry with no condition at all takes the spelling the rest of it
+    # is in: the old `condition:` beside `trigger:`/`action:`, the new
+    # `conditions:` otherwise.
+    if "conditions" in out or "condition" in out:
+        key = ("conditions" if "conditions" in out and "condition" not in out
+               else "condition")
+    else:
+        key = ("condition" if ("trigger" in out or "action" in out)
+               and "triggers" not in out and "actions" not in out
+               else "conditions")
     existing = out.get(key)
     if isinstance(existing, dict):
         existing = [existing]

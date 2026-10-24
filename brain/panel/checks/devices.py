@@ -488,8 +488,65 @@ def _device_answers(house: House, dev_id: str) -> bool:
     return False
 
 
+# How far back the checks pass asks the recorder when an unavailable entity
+# looks young, and how many it asks about. A week is the recorder's default
+# retention less a margin; past the cap the pass asks nothing more, because
+# a house with hundreds of entities down at once is a hub or a restart,
+# which the devices that are left still say.
+UNAVAILABLE_HISTORY_DAYS = 7
+UNAVAILABLE_FETCH_MAX = 200
+
+
+def unavailable_candidates(states: dict, now: float,
+                           cap: int = UNAVAILABLE_FETCH_MAX) -> list[str]:
+    """Which unavailable entities the recorder is asked about.
+
+    Home Assistant re-stamps `last_changed` on every entity when it
+    starts, so a device offline since Monday reads, after Wednesday's
+    restart, as offline for an hour, and "for more than a day" never
+    accrues for a device that stays gone across restarts. Only entities
+    unavailable now whose live stamp is younger than `UNAVAILABLE_DAYS`
+    need the question; an orphan Core restored is `dev.restored`'s. Sorted
+    by id so two passes ask the same thing.
+    """
+    out = []
+    for eid, st in states.items():
+        if not isinstance(st, dict) or domain_of(eid) in SOFTWARE_DOMAINS:
+            continue
+        if st.get("state") != "unavailable":
+            continue
+        if (st.get("attributes") or {}).get("restored"):
+            continue
+        age = age_days(st.get("last_changed"), now)
+        if age is None or age >= UNAVAILABLE_DAYS:
+            continue
+        out.append(eid)
+    return sorted(out)[:cap]
+
+
+def unavailable_since(rows: list) -> str | None:
+    """When the current stretch of being unavailable began, off history.
+
+    The earliest row of the unbroken run of `unavailable` rows that ends
+    the series; any other state ends the run, "unknown" included (a button
+    reads unknown until it is pressed, and a week of that is not a week of
+    the device being gone). None for a series with nothing recorded, or
+    one whose last row is not unavailable.
+    """
+    since = None
+    for entry in reversed([r for r in rows or [] if isinstance(r, dict)]):
+        if entry.get("state") != "unavailable":
+            break
+        since = entry.get("last_changed") or entry.get("last_updated") or since
+    return since
+
+
 def unavailable(snap: dict, now: float) -> list[dict]:
     house = House(snap)
+    # When each young-looking unavailable entity's stretch really began,
+    # read off the recorder by the checks pass. Absent is the live stamp,
+    # which is what this check read before.
+    history = snap.get("unavailable_since") or {}
     # A node the Z-Wave controller has declared dead is dev.zwave_dead's
     # row, with a mesh fix on it. Reporting the same box twice under two
     # different fixes is how a list stops being read.
@@ -508,6 +565,9 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         if st.get("state") != "unavailable":
             continue
         age = age_days(st.get("last_changed"), now)
+        earlier = age_days(history.get(eid), now) if history.get(eid) else None
+        if earlier is not None and (age is None or earlier > age):
+            age = earlier
         if age is None or age < UNAVAILABLE_DAYS:
             continue
         # An entity whose integration is gone is the `restored` check's.
@@ -562,13 +622,13 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             out.append({
                 "text": f"{house.name(first)} on {name} has been unavailable "
                         "for more than a day",
-                "detail": f"Since {when(house.states[first].get('last_changed'))}"
+                "detail": f"Since {when(_since(house, history, first))}"
                           + (f"; {len(rows)} of its entities are affected"
                              if len(rows) > 1 else "")
                           + f". {name} itself is still answering, so this is "
                             "that entity rather than the device."
                           + house.placed(first, house.name(first), name)
-                          + _restart_note(snap, house.states[first]),
+                          + _restart_note(snap, {"last_changed": _since(house, history, first)}),
                 "fix": "The device is reachable, so this is one of its "
                        "features: check what that entity reads from (a "
                        "sensor lead, an accessory, a cloud service), or "
@@ -581,12 +641,12 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             continue
         out.append({
             "text": f"{name} has been unavailable for more than a day",
-            "detail": f"Since {when(house.states[first].get('last_changed'))}"
+            "detail": f"Since {when(_since(house, history, first))}"
                       + (f"; {len(rows)} of its entities are affected"
                          if len(rows) > 1 else "")
                       + "."
                       + house.placed(first, name)
-                      + _restart_note(snap, house.states[first]),
+                      + _restart_note(snap, {"last_changed": _since(house, history, first)}),
             "fix": "Check its power and its connection (batteries, Wi-Fi, "
                    "the hub it pairs through), then reload its integration.",
             "severity": "serious",
@@ -599,9 +659,9 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
-            "detail": f"Since {when(house.states[eid].get('last_changed'))}."
+            "detail": f"Since {when(_since(house, history, eid))}."
                       + house.placed(eid)
-                      + _restart_note(snap, house.states[eid]),
+                      + _restart_note(snap, {"last_changed": _since(house, history, eid)}),
             "fix": "Check whatever provides it, then reload its integration.",
             "severity": "serious",
             "fixable": False,
@@ -609,6 +669,15 @@ def unavailable(snap: dict, now: float) -> list[dict]:
         })
     out.extend(_derived_rows(snap, house, derived, now))
     return out
+
+
+def _since(house: House, history: dict, eid: str):
+    """The stamp a row's "Since" names: the recorder's start of the stretch
+    where the pass read one, else the live stamp."""
+    live = house.states[eid].get("last_changed")
+    earlier = history.get(eid)
+    a, b = parse_ts(earlier), parse_ts(live)
+    return earlier if a is not None and (b is None or a < b) else live
 
 
 def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
@@ -670,7 +739,7 @@ def _derived_rows(snap: dict, house: House, derived: list, now: float) -> list:
         out.append({
             "text": f"{house.name(eid)} has been unavailable for more than "
                     "a day",
-            "detail": f"Since {when(house.states[eid].get('last_changed'))}."
+            "detail": f"Since {when(_since(house, snap.get('unavailable_since') or {}, eid))}."
                       + house.placed(eid)
                       + _restart_note(snap, house.states[eid]),
             "fix": fix,

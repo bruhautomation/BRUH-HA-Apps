@@ -2589,12 +2589,21 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
     if prior is not None and prior.get("lapsed_at"):
         recurrence = {"recurred": int(prior.get("recurred") or 0) + 1,
                       "previous_at": int(prior.get("ts") or 0)}
+    stamp = when or int(time.time())
     ledger.append({
         **recurrence,
         "key": key,
         "text": shaped["text"],
         "kind": kind,
-        "ts": when or int(time.time()),
+        "ts": stamp,
+        # When this key was first answered Wrong. `ts` is when the entry
+        # was last WRITTEN, and a key already Wrong is written again by
+        # bookkeeping that is not a person saying so again (an answer for a
+        # row that is gone, a request applied twice, an old row migrated
+        # in) — read as the Wrong's age, it kept a rule nobody had marked
+        # Wrong for weeks on the fault list (`scorecard`'s `last_wrong_ts`).
+        **({"wrong_at": _wrong_at(prior) or stamp} if kind == "ignored"
+           else {}),
         "note": str(note or "").strip()[:MAX_NOTE],
         # Who raised it. An ending is a label — "I did it" says the report
         # was right, "Wrong" says it was not — and without the producer on
@@ -2614,6 +2623,14 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
            if clean_items(shaped.get("items")) else {}),
     })
     _write_settled(ledger[-MAX_SETTLED:])
+
+
+def _wrong_at(entry: dict | None) -> int:
+    """When a ledger entry's Wrong was given, or 0 for one that is not
+    Wrong. An entry written before `wrong_at` existed is aged by its `ts`."""
+    if not isinstance(entry, dict) or entry.get("kind") != "ignored":
+        return 0
+    return int(entry.get("wrong_at") or entry.get("ts") or 0)
 
 
 # Which settled answers stop a problem being raised again, and for how long.
@@ -2780,8 +2797,7 @@ def scorecard() -> list[dict]:
             # The newest Wrong, so a fault about a rule that is often wrong
             # is a fault only while people are still saying so.
             if label == "wrong":
-                row["last_wrong_ts"] = max(row["last_wrong_ts"],
-                                           int(e.get("ts") or 0))
+                row["last_wrong_ts"] = max(row["last_wrong_ts"], _wrong_at(e))
     rows = list(by.values())
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]
@@ -2895,6 +2911,10 @@ def merge_settled(entries: list[dict]) -> int:
             "kind": kind if kind in ("fixed", "ignored") else "ignored",
             "ts": int(entry.get("ts") or 0) or int(time.time()),
             "note": str(entry.get("note") or "").strip()[:MAX_NOTE],
+            **({"wrong_at": _wrong_at(entry) or int(entry.get("ts") or 0)
+                or int(time.time())}
+               if (kind if kind in ("fixed", "ignored") else "ignored")
+               == "ignored" else {}),
         })
         known.add(key)
         added += 1
@@ -3011,11 +3031,14 @@ def migrate_settled() -> int:
     kept, moved = [], []
     for entry in items:
         if entry.get("status") == "ignored":
-            moved.append(_shape(entry))
+            # The row's own settled stamp: `_shape` does not carry it, and
+            # reading it off the shaped copy stamped every migrated answer
+            # with the time of the migration.
+            moved.append((_shape(entry), int(entry.get("settled_at") or 0)))
             continue
         kept.append(entry)
-    for shaped in moved:
-        _remember_settled(shaped, "ignored", when=shaped.get("settled_at") or 0)
+    for shaped, when in moved:
+        _remember_settled(shaped, "ignored", when=when)
     if moved:
         _write(kept)
     return len(moved)

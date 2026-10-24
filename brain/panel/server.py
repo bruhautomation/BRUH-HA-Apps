@@ -11869,6 +11869,11 @@ _ENTITY_IN_TEXT_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 
 
 def _note_registry(snapshot: dict) -> None:
+    # The running Core's version, for which spelling a new automation is
+    # written in (`automation_writer.modern_keys_ok`).
+    core = ((snapshot.get("supervisor") or {}).get("core") or {})
+    if isinstance(core, dict):
+        automation_writer.note_core_version(core.get("version"))
     try:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]
@@ -15888,7 +15893,7 @@ async def h_appliances(request: web.Request) -> web.Response:
     rows = []
     for eid, shape in sorted((store.get("entities") or {}).items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(
+                     "chore_kind": shape.get("kind") or checks.chores.kind_of(
                          shape.get("name") or "")})
     return web.json_response({
         "built_at": store.get("built_at", 0),
@@ -16001,6 +16006,18 @@ def _thermal_payload(store: dict) -> dict:
     """
     outdoor = store.get("coldest")
     rooms = []
+    # Each room's area id and aliases, off the registry the last checks
+    # pass read: `room_physics` takes "the area name or id", and a room
+    # matched only by its display name answered "no measured room by that
+    # name" about an id somebody had typed.
+    entity_areas = _FACTS_CTX.get("entity_areas") or {}
+    area_aliases = _FACTS_CTX.get("area_aliases") or {}
+
+    def _where(eid: str) -> dict:
+        area_id = str(entity_areas.get(eid) or "")
+        return {"area_id": area_id,
+                "area_aliases": [str(a) for a in area_aliases.get(area_id) or []]}
+
     for eid, entry in sorted((store.get("rooms") or {}).items()):
         if not isinstance(entry, dict):
             continue
@@ -16020,6 +16037,7 @@ def _thermal_payload(store: dict) -> dict:
             "coolest": entry.get("coolest"),
             "hours_to_warm": None if warm is None else round(warm, 1),
             "measured": True,
+            **_where(eid),
         })
     # The rooms the nightly pass considered and could not measure, each with
     # its reason, as rows of their own: the `room_physics` tool answers from
@@ -16038,6 +16056,7 @@ def _thermal_payload(store: dict) -> dict:
             "warmest": None, "coolest": None, "hours_to_warm": None,
             "measured": False,
             "why_not_measured": str(left.get("reason") or "")[:300],
+            **_where(eid),
         })
     # The reference every `k` above was measured against, why it was the
     # one, and what else could have been — so the tab can say it and the
@@ -16091,7 +16110,8 @@ async def _appliance_detail(now: float) -> dict:
     rows = []
     for eid, shape in sorted(shapes.items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(shape.get("name") or ""),
+                     "chore_kind": (shape.get("kind")
+                                    or checks.chores.kind_of(shape.get("name") or "")),
                      "now": appliances.state_at(shape, live.get(eid) or [], now)
                      if live else {}})
     return {"built_at": store.get("built_at", 0),

@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.12
+
+### Added
+
+- **A dehumidifier that stops while its room is still damp is reported.** brAIn learns the humidity at which each dehumidifier usually starts; when one is switched on, has drawn only standby power for three hours and its room is well above that level (a full tank, or switched off at its own panel), it says so, and the card clears when the machine runs again. (#396)
+- **The 3D-printer chore clears itself when BRUH Bambu Studio sees the plate empty.** With that add-on installed, brAIn reads its plate reading and no longer says it cannot tell whether the print was taken off. (#395)
+- **The morning brief can use each day's own wake time.** When weekdays as a group are too spread out, a day of the week whose mornings agree (one odd morning in five allowed) gets its own measured time. (#394)
+
+### Fixed
+
+- **A rule's report stops once nobody has marked it wrong for two weeks**, even when brAIn later rewrote its old answers. (#146)
+- **A device unavailable for days is reported even when Home Assistant restarted in between.** brAIn reads from the recorder when the stretch of being unavailable began. (#404)
+- **An automation that checks every minute and acts only while something is on is not reported as "its condition never passes".** (#407)
+- **Room heat questions find a room by its area id or alias**, and the list of known rooms names each room once. (#410)
+- **Automations brAIn writes use the current `triggers:` / `conditions:` / `actions:` keys** on Home Assistant 2024.10 and later, and the older keys on an older Home Assistant. Your own automations are left as you wrote them. (#421)
+
 ## 3.8.11
 
 ### Added
