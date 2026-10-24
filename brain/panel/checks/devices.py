@@ -11,7 +11,7 @@ import re
 
 import numfmt
 
-from ._registry_facts import (ENTRY_NOT_LOADED, FEATURE_PLATFORMS,  # noqa: F401 — re-exported
+from ._registry_facts import (FEATURE_PLATFORMS,
                               SELF_PLATFORMS, SETTINGS_CATEGORIES,
                               entry_not_loaded as _entry_not_loaded,
                               is_node_status)
