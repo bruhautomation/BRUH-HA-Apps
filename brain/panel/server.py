@@ -11326,10 +11326,43 @@ def _signal_for_finding(row: dict, now: float,
                         ctx: signals.RegistryContext) -> dict | None:
     """One findings row as a signal, through whichever adapter fits it."""
     source = str(row.get("source") or "")
+    signal = None
     for prefix, adapter in _FINDING_ADAPTERS:
         if source.startswith(prefix):
-            return adapter(row, now, ctx)
-    return signals.from_finding(row, now, ctx)
+            signal = adapter(row, now, ctx)
+            break
+    else:
+        signal = signals.from_finding(row, now, ctx)
+    return _with_reply(signal, row)
+
+
+# How much of what the person typed under a card rides into the look: an
+# evidence value's own cap, less the two quote marks.
+REPLY_EVIDENCE_CHARS = signals.MAX_EVIDENCE_VALUE - 2
+
+
+def _with_reply(signal: dict | None, row: dict) -> dict | None:
+    """The person's newest reply on the row, first among the evidence.
+
+    A card still waiting for its look carries a Respond line, and what is
+    typed there lands on the row's thread — which nothing handed the look,
+    so "it is propped open on purpose" was said to a card and then judged
+    by a run that never heard it. It goes first, ahead of the detail,
+    because the row's cap keeps the first rows and a reply is the one
+    piece of evidence nothing else could have supplied.
+    """
+    if not isinstance(signal, dict):
+        return signal
+    said = [t for t in (row.get("thread") or [])
+            if isinstance(t, dict) and t.get("who") == "you"
+            and str(t.get("text") or "").strip()]
+    if not said:
+        return signal
+    words = textclip.clip(" ".join(str(said[-1]["text"]).split()),
+                          REPLY_EVIDENCE_CHARS)
+    reply = signals.evidence_row("the homeowner replied", f"“{words}”",
+                                 float(said[-1].get("at") or 0))
+    return {**signal, "evidence": [reply, *(signal.get("evidence") or [])]}
 
 
 def _pending_finding_ts() -> set[int]:

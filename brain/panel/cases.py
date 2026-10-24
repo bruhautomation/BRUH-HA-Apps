@@ -146,6 +146,13 @@ _FINDING_STATUS = {
     "fixed": "open", "planning": "acting", "fixing": "acting",
     "held": "watching",
 }
+# ...and the statuses a PRESS may name. A row still `triaging` is no case
+# on the list (above), but once it has waited past `triage.SHOW_AFTER_S` it
+# is drawn on Today with the answer row and a Respond line, under `f:<ts>`
+# — so a press on it has to resolve, or Send, Snooze and Ignore answered
+# "no such case" on a card the screen offered them on. It reads as `open`:
+# somebody pressed it, and the look still judges it when it runs.
+_PRESSABLE_FINDING = frozenset(_FINDING_STATUS) | {"triaging"}
 # ...and a proposal's. A trial is brAIn watching an automation for a week,
 # which is the same claim `watching` makes about a held finding: something
 # is happening and nothing is waiting on you yet.
@@ -844,7 +851,7 @@ def get(value: str, now: float | None = None) -> dict | None:
     snoozes = _read_snoozes()
     if store == "findings":
         row = findings_store.get(key)
-        if row is None or row.get("status") not in _FINDING_STATUS:
+        if row is None or row.get("status") not in _PRESSABLE_FINDING:
             return None
         return _from_finding(row, snoozes)
     if store == "proposals":
