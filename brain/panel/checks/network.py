@@ -881,29 +881,137 @@ def zigbee_weak(snap: dict, now: float) -> list[dict]:
     return rows
 
 
+
+# ---------------------------------------------------------------------------
+# net.matter_empty — Matter set up with nothing on it
+# net.bluetooth_faint — a Bluetooth device heard only faintly
+# ---------------------------------------------------------------------------
+
+MATTER_GRACE_DAYS = 7
+MATTER_EMPTY_TEXT = "Matter is set up with nothing on it"
+# Below this a BLE advertisement is barely heard: one wall more, or a
+# fridge door, and the device drops out between readings.
+BLUETOOTH_FAINT_DBM = -90
+
+
+def _loaded(snap: dict, domain: str) -> list[dict]:
+    return [e for e in snap.get("config_entries") or ()
+            if isinstance(e, dict) and e.get("domain") == domain
+            and e.get("state") == "loaded"]
+
+
+def matter_absent(snap: dict) -> str | None:
+    return None if _loaded(snap, "matter") else "Matter is not set up"
+
+
+def matter_empty(snap: dict, now: float) -> list[dict]:
+    rows = []
+    for entry in _loaded(snap, "matter"):
+        eid = str(entry.get("entry_id") or "")
+        on_it = [d for d in snap.get("devices") or ()
+                 if isinstance(d, dict) and eid in (d.get("config_entries") or ())]
+        if on_it:
+            continue
+        # A fabric set up this week is somebody about to pair the first
+        # device. An entry that does not say when it was made is judged
+        # anyway: it is an info row about a controller with nothing on it.
+        made = parse_ts(entry.get("created_at"))
+        if made is not None and now - made < MATTER_GRACE_DAYS * 86400:
+            continue
+        rows.append({
+            "text": MATTER_EMPTY_TEXT,
+            "detail": ("The Matter integration is running with no device "
+                       "paired to it, so it and the Matter server it talks "
+                       "to do nothing in this house."),
+            "fix": ("Pair a Matter device under Settings > Devices & "
+                    "services > Matter, or delete the integration (and the "
+                    "Matter Server add-on) if nothing here uses Matter."),
+            "severity": "info",
+            "fixable": False,
+            "entity_id": "",
+        })
+        break
+    return rows
+
+
+def bluetooth_absent(snap: dict) -> str | None:
+    return None if _loaded(snap, "bluetooth") else "Bluetooth is not set up"
+
+
+def bluetooth_faint(snap: dict, now: float) -> list[dict]:
+    house = House(snap)
+    heard = {str(a).lower(): r for a, r in
+             ((snap.get("bluetooth") or {}).get("rssi") or {}).items()}
+    rows = []
+    for dev_id, dev in sorted(house.devices.items()):
+        macs = [str(c[1]).lower() for c in dev.get("connections") or ()
+                if isinstance(c, (list, tuple)) and len(c) == 2
+                and c[0] == "bluetooth"]
+        rssi = [heard[m] for m in macs if isinstance(heard.get(m), (int, float))]
+        if not rssi or max(rssi) > BLUETOOTH_FAINT_DBM:
+            continue
+        entity = next((str(r.get("entity_id")) for r in house.entities
+                       if r.get("device_id") == dev_id and r.get("entity_id")),
+                      "")
+        if not entity or not house.should_report(entity, "net.bluetooth_faint"):
+            continue
+        rows.append({
+            "text": f"{house.device_name(dev)} is barely heard over Bluetooth",
+            "detail": (f"The strongest receiver hears it at {max(rssi):g} dBm "
+                       f"(at or under {BLUETOOTH_FAINT_DBM} is faint), so its "
+                       "readings arrive late or not at all."
+                       + house.placed(entity, house.device_name(dev))),
+            "fix": ("Move the Bluetooth adapter or an ESPHome Bluetooth proxy "
+                    "closer to it, or add a proxy in that room; a USB adapter "
+                    "on an extension cable away from USB 3 ports helps too."),
+            "severity": "info",
+            "fixable": False,
+            "entity_id": entity,
+            "_rssi": max(rssi),
+        })
+    rows.sort(key=lambda r: r["_rssi"])
+    for r in rows:
+        r.pop("_rssi", None)
+    if len(rows) > MAX_ROWS:
+        house.gave_up("net.bluetooth_faint", rows[MAX_ROWS:],
+                      "more faint Bluetooth devices than one card each can say")
+        rows = rows[:MAX_ROWS]
+    return rows
+
 WIFI = "Network (Wi-Fi)"
 ZWAVE = "Network (Z-Wave)"
 ZIGBEE = "Network (Zigbee)"
+MATTER = "Network (Matter)"
+BLUETOOTH = "Network (Bluetooth)"
 
 CHECKS = [
-    {"id": "net.wifi_hung", "title": "Wi-Fi devices connected but not answering",
+    {"id": "net.wifi_hung", "area": "networks", "title": "Wi-Fi devices connected but not answering",
      "source_title": WIFI, "needs": ("states", "registry"), "run": wifi_hung},
-    {"id": "net.wifi_flapping", "title": "Wi-Fi devices that keep dropping off",
+    {"id": "net.wifi_flapping", "area": "networks", "title": "Wi-Fi devices that keep dropping off",
      "source_title": WIFI, "needs": ("states", "registry", "wifi_history"),
      "run": wifi_flapping},
-    {"id": "net.unifi_dropped", "title": "UniFi trackers dropping all at once",
+    {"id": "net.unifi_dropped", "area": "networks", "title": "UniFi trackers dropping all at once",
      "source_title": WIFI, "needs": ("states", "registry", "wifi_history"),
      "run": unifi_dropped},
-    {"id": "net.zwave_silent", "title": "Z-Wave battery nodes gone silent",
+    {"id": "net.zwave_silent", "area": "networks", "title": "Z-Wave battery nodes gone silent",
      "source_title": ZWAVE, "needs": ("states", "registry", "zwave_nodes"),
      "run": zwave_silent},
-    {"id": "net.zwave_link", "title": "Z-Wave nodes with a weak link",
+    {"id": "net.zwave_link", "area": "networks", "title": "Z-Wave nodes with a weak link",
      "source_title": ZWAVE, "needs": ("states", "registry", "zwave_nodes"),
      "run": zwave_link},
-    {"id": "net.zigbee_silent", "title": "Zigbee devices gone quiet for hours",
+    {"id": "net.zigbee_silent", "area": "networks", "title": "Zigbee devices gone quiet for hours",
      "source_title": ZIGBEE, "needs": ("registry", "zha_devices"),
      "run": zigbee_silent},
-    {"id": "net.zigbee_weak", "title": "Zigbee routers with a weak link",
+    {"id": "net.zigbee_weak", "area": "networks", "title": "Zigbee routers with a weak link",
      "source_title": ZIGBEE, "needs": ("registry", "zha_devices"),
      "run": zigbee_weak},
+    {"id": "net.matter_empty", "area": "networks",
+     "title": "Matter set up with nothing on it",
+     "source_title": MATTER, "needs": ("registry", "config_entries"),
+     "absent": matter_absent, "run": matter_empty},
+    {"id": "net.bluetooth_faint", "area": "networks",
+     "title": "Bluetooth devices heard only faintly",
+     "source_title": BLUETOOTH,
+     "needs": ("registry", "config_entries", "bluetooth"),
+     "absent": bluetooth_absent, "run": bluetooth_faint},
 ]

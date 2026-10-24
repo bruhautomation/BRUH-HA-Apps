@@ -82,6 +82,31 @@ def _sup(snap: dict) -> dict:
 # sys.backup_stale — nothing has been backed up
 # ---------------------------------------------------------------------------
 
+def ha_backup_stamps(snap: dict) -> list[tuple[float, str]]:
+    """When Home Assistant's own backup manager last made a backup, off its
+    sensors (`backup` integration: "Last successful automatic backup").
+
+    The Supervisor's list holds the backups stored on this machine and its
+    network mounts; a house that backs up to Home Assistant Cloud, Google
+    Drive or another location and keeps no copy here has a recent backup
+    that list never shows. Read off the registry's platform and the
+    sensor's own key, never a guessed entity id alone."""
+    states = snap.get("states") or {}
+    out = []
+    candidates = {str(r.get("entity_id")) for r in snap.get("entities") or ()
+                  if isinstance(r, dict) and r.get("platform") == "backup"
+                  and "last_successful" in (str(r.get("unique_id") or "")
+                                             + str(r.get("translation_key") or "")
+                                             + str(r.get("entity_id") or ""))}
+    candidates.add("sensor.backup_last_successful_automatic_backup")
+    for eid in sorted(candidates):
+        st = states.get(eid) or {}
+        ts = parse_ts(st.get("state"))
+        if ts is not None:
+            out.append((ts, eid))
+    return out
+
+
 def backup_stale(snap: dict, now: float) -> list[dict]:
     backups = _sup(snap).get("backups") or []
     ages = []
@@ -91,12 +116,15 @@ def backup_stale(snap: dict, now: float) -> list[dict]:
         age = age_days(b.get("date"), now)
         if age is not None:
             ages.append((age, b))
-    if not ages:
+    # Home Assistant's own record of its last backup, wherever it was kept.
+    managed = sorted((max(0.0, (now - ts) / 86400.0), eid)
+                     for ts, eid in ha_backup_stamps(snap))
+    if not ages and not managed:
         return [{
             "text": "Home Assistant has never been backed up",
-            "detail": "The Supervisor is holding no backups at all. A "
-                      "corrupt SD card or a bad update takes the whole "
-                      "house with it.",
+            "detail": "The Supervisor is holding no backups at all, and Home "
+                      "Assistant records no automatic backup. A corrupt SD "
+                      "card or a bad update takes the whole house with it.",
             "fix": "Settings > System > Backups > Create backup, then set "
                    "an automatic backup so it keeps happening.",
             "severity": "serious",
@@ -104,15 +132,20 @@ def backup_stale(snap: dict, now: float) -> list[dict]:
             "entity_id": "",
         }]
     ages.sort(key=lambda r: r[0])
-    newest_age, newest = ages[0]
+    newest_age = min([a for a, _ in ages] + [a for a, _ in managed])
     if newest_age < BACKUP_STALE_DAYS:
         return []
+    if ages and ages[0][0] <= newest_age:
+        _, newest = ages[0]
+        said = (f"'{newest.get('name') or newest.get('slug') or 'a backup'}' "
+                f"from {when(newest.get('date'))}, ")
+    else:
+        said = "Home Assistant's last automatic backup, "
     return [{
         "text": "The newest backup is more than a week old",
-        "detail": f"'{newest.get('name') or newest.get('slug') or 'a backup'}' "
-                  f"from {when(newest.get('date'))}, "
-                  f"{int(newest_age)} days ago. "
-                  f"{len(ages)} backup{'' if len(ages) == 1 else 's'} stored.",
+        "detail": f"{said}{int(newest_age)} days ago. "
+                  f"{len(ages)} backup{'' if len(ages) == 1 else 's'} stored "
+                  "on this machine.",
         "fix": "Settings > System > Backups — take one now, and set an "
                "automatic backup so this does not drift again.",
         "severity": "warning",
@@ -421,6 +454,12 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
     they belong to. A count is never the first word.
     """
     rows = [e for e in failed_entries(snap) if stuck(e, now)]
+    # An entry whose add-on is stopped is `addon.needed_stopped`'s, with the
+    # fix that works (start the add-on); reloading it here would not.
+    from .audit import needed_stopped  # noqa: PLC0415
+    claimed = {str(e.get("entry_id")) for _, needs in needed_stopped(snap)
+               for e in needs}
+    rows = [e for e in rows if str(e.get("entry_id")) not in claimed]
     if not rows:
         return []
     groups: dict[str, list[str]] = {}
@@ -555,19 +594,19 @@ def history_incomplete(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "sys.backup_stale", "title": "Backups missing or stale",
+    {"id": "sys.backup_stale", "area": "backups", "title": "Backups missing or stale",
      "needs": ("supervisor",), "run": backup_stale},
-    {"id": "sys.addon_down", "title": "Add-ons stopped or erroring",
+    {"id": "sys.addon_down", "area": "addons", "title": "Add-ons stopped or erroring",
      "needs": ("supervisor",), "run": addon_down},
-    {"id": "sys.disk_space", "title": "Disk nearly full",
+    {"id": "sys.disk_space", "area": "host", "title": "Disk nearly full",
      "needs": ("supervisor",), "run": disk_space},
-    {"id": "sys.recorder_size", "title": "Recorder database size",
+    {"id": "sys.recorder_size", "area": "recorder", "title": "Recorder database size",
      "needs": ("recorder",), "run": recorder_size},
-    {"id": "sys.entry_failed", "title": "Integrations that did not load",
+    {"id": "sys.entry_failed", "area": "integrations", "title": "Integrations that did not load",
      "source_title": "Integrations",
      "needs": ("config_entries",), "run": entry_failed},
-    {"id": "sys.update_pending", "title": "Updates waiting to be installed",
+    {"id": "sys.update_pending", "area": "host", "title": "Updates waiting to be installed",
      "needs": ("updates",), "run": update_pending},
-    {"id": "sys.history_incomplete", "title": "Recorder history incomplete",
+    {"id": "sys.history_incomplete", "area": "recorder", "title": "Recorder history incomplete",
      "needs": ("history_health",), "run": history_incomplete},
 ]

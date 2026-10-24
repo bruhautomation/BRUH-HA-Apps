@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.13
+
+### Added
+
+- **brAIn examines every part of Home Assistant by default, and says what it looked at.** After each checks pass, every area — networks, integrations, custom integrations, add-ons, host, backups, recorder, automations, dashboards, energy, people and presence, HACS, repairs, and devices — gets one line: checked and nothing wrong, how many findings, could not look and why, or not set up in this house. The lines are in `brain doctor`, the problem report and Diagnostics, and "did you look at X" can be asked of the decision log. (#418)
+- **New checks for the areas nothing covered:** a repair left open for a week; an energy dashboard naming a statistic that does not exist or a rate sensor where a total belongs; a phone that has stopped reporting for a week; a person's GPS tracker that has not updated for a week; a custom integration nothing uses; an add-on stopped while an integration still depends on it; HACS updates waiting two weeks; Matter set up with no devices; a Bluetooth device heard only faintly. A house that backs up to the cloud with no local copy is no longer told it has never backed up. (#418)
+
 ## 3.8.12
 
 ### Added

@@ -325,6 +325,19 @@ if [ "$health_state" = "degraded" ] || [ "$health_state" = "failed" ]; then
     done
 fi
 
+# What the house checks have looked at, one line per part of Home
+# Assistant: "checked, nothing wrong", what was found, or "could not look"
+# with the reason — never an empty list standing in for all three.
+coverage_lines=$(echo "$diag" | jq -r '.coverage.lines[]? // empty' 2>/dev/null)
+if [ -n "$coverage_lines" ]; then
+    info "What brAIn's house checks have looked at:"
+    while IFS= read -r line; do
+        [ -n "$line" ] && info "   $line"
+    done <<EOF_COVERAGE
+$coverage_lines
+EOF_COVERAGE
+fi
+
 chat_state=$(curl -s -m 5 "http://127.0.0.1:8099/api/chat/state" 2>/dev/null)
 if [ -n "$chat_state" ]; then
     cstate=$(echo "$chat_state" | jq -r '.state // empty' 2>/dev/null)

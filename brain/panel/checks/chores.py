@@ -674,16 +674,16 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "chore.dehumidifier",
+    {"id": "chore.dehumidifier", "area": "devices",
      "title": "Dehumidifier stopped in a damp room",
      "needs": ("states", "registry", "appliances"), "run": dehumidifier},
-    {"id": "chore.waiting",
+    {"id": "chore.waiting", "area": "devices",
      "title": "Finished and still full",
      "needs": ("states", "registry", "appliances"), "run": waiting},
     # Needs no key of its own up front: on a house with nothing finished
     # it has nothing to read, and when something has finished and the
     # history could not be fetched it says so (`CouldNotLook`).
-    {"id": "chore.job_done",
+    {"id": "chore.job_done", "area": "devices",
      "title": "Finished and waiting",
      "needs": ("states", "registry"), "run": job_done},
 ]

@@ -909,11 +909,11 @@ def stale_baselines(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "base.unusual", "title": "Readings outside their usual range",
+    {"id": "base.unusual", "area": "devices", "title": "Readings outside their usual range",
      "needs": ("states", "registry", "baselines"), "run": unusual},
-    {"id": "base.stale", "title": "Baselines no longer being measured",
+    {"id": "base.stale", "area": "devices", "title": "Baselines no longer being measured",
      "needs": ("baselines",), "run": stale_baselines},
-    {"id": "base.heater_idle",
+    {"id": "base.heater_idle", "area": "devices",
      "title": "Printer heaters hot while the printer is idle",
      "needs": ("states", "registry"), "run": heater_idle},
 ]
