@@ -257,6 +257,12 @@
     },
     "heal_statistic_spikes": {
       "service": "mdi:chart-bell-curve"
+    },
+    "set_integration_options": {
+      "service": "mdi:cog-outline"
+    },
+    "set_group_members": {
+      "service": "mdi:group"
     }
   }
 }

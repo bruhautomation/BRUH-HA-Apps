@@ -1506,6 +1506,50 @@
           "description": "When on (the default), only list the spikes and the adjustments."
         }
       }
+    },
+    "set_integration_options": {
+      "name": "Set integration options",
+      "description": "Change an integration's options through its own Configure form — only the fields named change, the rest stay as they are. A form of more than one step, or a menu, is refused with what it asked for. A dry run lists the fields the form asks for and changes nothing.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "The integration entry's id."
+        },
+        "options": {
+          "name": "Options",
+          "description": "The fields to set, as a mapping, like {\"scan_interval\": 60}."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report the form's fields and what would change."
+        }
+      }
+    },
+    "set_group_members": {
+      "name": "Set group members",
+      "description": "Set, add to or take from the members of a group helper made in the UI, through the group's own options form. Members must be the group's kind (a light group holds lights). Returns the members before and after.",
+      "fields": {
+        "entity_id": {
+          "name": "Group",
+          "description": "The group helper's entity."
+        },
+        "entities": {
+          "name": "Members",
+          "description": "The whole list of members it should have."
+        },
+        "add": {
+          "name": "Add",
+          "description": "Members to add."
+        },
+        "remove": {
+          "name": "Remove",
+          "description": "Members to take out."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change."
+        }
+      }
     }
   },
   "issues": {

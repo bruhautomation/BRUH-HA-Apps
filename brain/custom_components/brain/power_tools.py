@@ -2767,6 +2767,228 @@ async def _list_users(hass: HomeAssistant, call: ServiceCall) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Integration options and group helpers
+#
+# An integration's Configure dialog is its options flow. Driving that flow
+# — never writing entry.options directly — is what keeps the integration's
+# own validation in front of the change and reloads the entry the way the
+# dialog does. One step only: a flow that answers a second form or a menu
+# is refused with what it asked for, because guessing a second page's
+# answers is a change nobody chose.
+# ---------------------------------------------------------------------------
+
+_SECRET_FIELD = re.compile(r"pass|token|secret|key|pin|code", re.I)
+
+
+def _entry_named(hass: HomeAssistant, call: ServiceCall):
+    entry_id = str(call.data.get("config_entry_id") or "").strip()
+    if not entry_id:
+        raise ServiceValidationError(
+            "config_entry_id is missing: the id of the integration entry, as "
+            "get_registry(integrations) shows it.")
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise ServiceValidationError(
+            f"config_entry_id: no integration entry has the id {entry_id}.")
+    return entry
+
+
+def _field_default(key):
+    default = getattr(key, "default", None)
+    if callable(default):
+        try:
+            value = default()
+        except Exception:  # noqa: BLE001 — voluptuous's UNDEFINED and friends
+            return None
+        return value if value.__class__.__name__ != "Undefined" else None
+    return None
+
+
+def _shown(field: str, value):
+    return "**redacted**" if _SECRET_FIELD.search(field) else value
+
+
+async def _run_options_flow(hass: HomeAssistant, entry, values: dict,
+                            *, dry_run: bool = False) -> dict:
+    """Submit `values` to the entry's options form, every other field as it
+    stands, and answer what the form wanted and what changed."""
+    manager = hass.config_entries.options
+    label = getattr(entry, "title", None) or entry.entry_id
+    try:
+        flow = await manager.async_init(entry.entry_id)
+    except Exception as err:  # noqa: BLE001 — UnknownHandler and kin
+        raise ServiceValidationError(
+            f"{label} ({entry.domain}) has no options to set: {err}") from err
+    flow_id = flow.get("flow_id") if isinstance(flow, dict) else None
+    kind = flow.get("type") if isinstance(flow, dict) else None
+    if kind == "menu":
+        with suppress(Exception):
+            manager.async_abort(flow_id)
+        raise ServiceValidationError(
+            f"{label}'s options start with a menu ("
+            + ", ".join(map(str, flow.get("menu_options") or []))
+            + ") — a flow of more than one step brAIn will not guess its way "
+            "through. Use its Configure dialog.")
+    if not flow_id or kind != "form":
+        why = (flow.get("reason") or kind) if isinstance(flow, dict) else flow
+        raise ServiceValidationError(
+            f"{label} would not open its options ({why}).")
+    finished = False
+    try:
+        keys = (getattr(flow.get("data_schema"), "schema", None) or {})
+        fields = _schema_fields(flow.get("data_schema"))
+        required = {getattr(k, "schema", k) for k in keys
+                    if type(k).__name__ == "Required"}
+        unknown = sorted(set(values) - set(fields))
+        if unknown:
+            raise ServiceValidationError(
+                f"{label}'s options form has no " + ", ".join(unknown)
+                + "; it asks for " + (", ".join(fields) or "nothing") + ".")
+        current = dict(getattr(entry, "options", None) or {})
+        user_input: dict[str, Any] = {}
+        for key in keys:
+            name = getattr(key, "schema", key)
+            if not isinstance(name, str):
+                continue
+            if name in values:
+                user_input[name] = values[name]
+            elif name in current:
+                user_input[name] = current[name]
+            else:
+                default = _field_default(key)
+                if default is not None:
+                    user_input[name] = default
+        missing = sorted(required - set(user_input))
+        if missing:
+            raise ServiceValidationError(
+                f"{label}'s options form needs " + ", ".join(missing)
+                + ", which it has no value for. Give it in options.")
+        before = {k: current.get(k) for k in values}
+        report = {
+            "config_entry_id": entry.entry_id,
+            "integration": entry.domain,
+            "title": getattr(entry, "title", None),
+            "step": flow.get("step_id"),
+            "fields": sorted(fields),
+            "before": {k: _shown(k, v) for k, v in before.items()},
+            "after": {k: _shown(k, v) for k, v in values.items()},
+            "dry_run": dry_run,
+        }
+        if dry_run:
+            return report
+        try:
+            result = await manager.async_configure(flow_id, user_input)
+        except Exception as err:  # noqa: BLE001 — the form's own validation
+            raise ServiceValidationError(
+                f"{label}'s options form refused the values: {err}. It asks "
+                "for " + ", ".join(fields) + ".") from err
+        rkind = result.get("type") if isinstance(result, dict) else None
+        if rkind == "create_entry":
+            finished = True
+            return report
+        if rkind == "form" and result.get("errors"):
+            raise ServiceValidationError(
+                f"{label}'s options form refused the values: "
+                + json.dumps(result.get("errors")))
+        if rkind in ("form", "menu"):
+            nxt = _schema_fields(result.get("data_schema"))
+            raise ServiceValidationError(
+                f"{label}'s options go on to a second step "
+                f"({result.get('step_id')}"
+                + (", asking for " + ", ".join(nxt) if nxt else "")
+                + ") — a flow of more than one step brAIn will not guess its "
+                "way through, so nothing was changed. Use its Configure dialog.")
+        finished = rkind == "abort"
+        reason = result.get("reason") if isinstance(result, dict) else result
+        raise HomeAssistantError(f"{label}'s options flow stopped ({reason}).")
+    finally:
+        if not finished and flow_id:
+            with suppress(Exception):
+                manager.async_abort(flow_id)
+
+
+async def _set_integration_options(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Change an integration entry's options through its own Configure
+    form. Only the named fields change; dry_run reports the form's fields
+    and what would change without submitting."""
+    entry = _entry_named(hass, call)
+    values = call.data.get("options")
+    if values is not None and not isinstance(values, dict):
+        raise ServiceValidationError(
+            "options must be a mapping of the fields to set, like "
+            "{\"scan_interval\": 60}.")
+    if not values and not _dry_run(call):
+        raise ServiceValidationError(
+            "options is missing: a mapping of the fields to set, like "
+            "{\"scan_interval\": 60}. A dry run with no options lists the "
+            "fields the form asks for.")
+    return await _run_options_flow(hass, entry, dict(values or {}),
+                                   dry_run=_dry_run(call))
+
+
+async def _set_group_members(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Set, add to or take from the members of a group helper made in the
+    UI, through the group's own options form."""
+    registry = er.async_get(hass)
+    group_id = str(call.data.get("entity_id") or "").strip()
+    reg = registry.async_get(group_id) if group_id else None
+    entry = None
+    if reg is not None and getattr(reg, "config_entry_id", None):
+        entry = hass.config_entries.async_get_entry(reg.config_entry_id)
+    if entry is None or getattr(entry, "domain", None) != "group":
+        raise ServiceValidationError(
+            f"entity_id: {group_id or 'nothing'} is not a group helper made in "
+            "the UI (Settings → Helpers → Group). A YAML group is changed in "
+            "its YAML.")
+    current = list((entry.options or {}).get("entities") or [])
+    group_type = (entry.options or {}).get("group_type") or _domain(group_id)
+
+    def listed(name):
+        raw = call.data.get(name)
+        if raw is None:
+            return None
+        return [raw] if isinstance(raw, str) else list(raw)
+
+    members, add, remove = listed("entities"), listed("add"), listed("remove")
+    if members is None and not add and not remove:
+        raise ServiceValidationError(
+            "Say what the members become: entities (the whole list), add or "
+            "remove.")
+    new = list(members) if members is not None else list(current)
+    for eid in add or []:
+        if eid not in new:
+            new.append(eid)
+    absent = [e for e in (remove or []) if e not in new]
+    if absent:
+        raise ServiceValidationError(
+            "remove: " + ", ".join(absent) + " is not in the group; it has "
+            + (", ".join(current) or "no members") + ".")
+    new = [e for e in new if e not in (remove or [])]
+    wrong = [e for e in new if _domain(e) != group_type]
+    if wrong:
+        raise ServiceValidationError(
+            f"A {group_type} group holds only {group_type} entities; "
+            + ", ".join(wrong) + (" is" if len(wrong) == 1 else " are") + " not.")
+    if group_id in new:
+        raise ServiceValidationError("A group cannot be a member of itself.")
+    missing = [e for e in new
+               if hass.states.get(e) is None and registry.async_get(e) is None]
+    if missing:
+        raise ServiceValidationError(
+            "No entity is called " + ", ".join(missing) + ".")
+    if not new:
+        raise ServiceValidationError(
+            "A group needs at least one member; to take it away delete the "
+            "helper.")
+    report = await _run_options_flow(hass, entry, {"entities": new},
+                                     dry_run=_dry_run(call))
+    return {"entity_id": group_id, "dry_run": report["dry_run"],
+            "before": current, "members": new,
+            "added": [e for e in new if e not in current],
+            "removed": [e for e in current if e not in new]}
+
+
+# ---------------------------------------------------------------------------
 # Backups
 # ---------------------------------------------------------------------------
 
@@ -3890,6 +4112,19 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("list_users", _list_users, {
         vol.Optional("include_system", default=False): cv.boolean,
         vol.Optional("unused_for_days"): vol.Coerce(float),
+    }, has_response=True),
+    # Integration options and group helpers
+    PowerTool("set_integration_options", _set_integration_options, {
+        vol.Required("config_entry_id"): cv.string,
+        vol.Optional("options"): dict,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("set_group_members", _set_group_members, {
+        vol.Required("entity_id"): cv.string,
+        vol.Optional("entities"): _STR_LIST,
+        vol.Optional("add"): _STR_LIST,
+        vol.Optional("remove"): _STR_LIST,
+        vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     # Backups
     PowerTool("list_backups", _list_backups, {}, has_response=True),
