@@ -8,7 +8,7 @@ Provides:
 - brain.clear_conversation   — clear a persistent conversation session
 - brain.add_memory           — queue a fact for the home memory store
 - brain.answer_question      — answer one of brAIn's open guesses yes or no
-- BRUH Power Tools                 — 69 registry-management admin services
+- BRUH Power Tools                 — 90 registry-management admin services
   (areas, floors, labels, entities, device types, devices, integrations,
   helpers, zones, persons, blueprints, statistics, users, diagnostics,
   dashboards, repairs)

@@ -19,14 +19,25 @@ instead of editing `/config/.storage` files by hand:
                 and back (switch_as_x), sensor display precision and unit
 - Devices:      rename, enable/disable (cascades to lonely parent devices),
                 delete, orphan cleanup (dry-run default)
-- Integrations: enable/disable/reload/delete config entries
+- Integrations: enable/disable/reload/delete config entries, change their
+                options through their own options flow
 - Helpers:      create/delete any storage-backed helper (input_*, counter,
-                timer, schedule)
+                timer, schedule), set a group helper's members
+- Categories:   create/update/delete, assign on the automation, script,
+                scene and helper lists
 - Zones:        create, update, delete
-- Persons:      create/delete/rename, attach/detach device trackers
+- Persons:      create/delete/rename, attach/detach device trackers (named by
+                entity, person id or name)
 - Blueprints:   import automation/script blueprints from a URL
-- Statistics:   import/backfill long-term statistics (recorder)
-- Users:        create/delete/enable/disable (owner accounts are protected)
+- Statistics:   import/backfill long-term statistics (recorder), adjust a
+                sum, heal glitch spikes, clear orphans (dry-run default)
+- Users:        create/delete/enable/disable, set group, list with last use
+                (owner, system users and the last admin are protected)
+- Backups:      list, create (full/partial), delete by filter (dry-run default)
+- Z-Wave:       remove a failed node, rebuild a node's routes
+- Energy:       read and save the energy dashboard's settings
+- Core:         set the internal/external addresses
+- Thread:       list networks, set the preferred one
 - Diagnostics:  find automation/script/scene references to unknown entities
 - Dashboards:   create/delete/update/restore storage dashboards with
                 automatic backups, register/remove custom-card resources

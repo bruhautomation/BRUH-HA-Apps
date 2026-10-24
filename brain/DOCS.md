@@ -59,7 +59,7 @@ subscription — or your own API key.
 Most AI integrations can turn on a light. brAIn administers the installation.
 
 It reaches Home Assistant three ways at once — a **native MCP server** (97 tools) for
-reading and controlling, **69 registry-management services** for the parts of Home
+reading and controlling, **90 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 `/config` for everything that is still a YAML file.
 
@@ -116,11 +116,40 @@ entity standing in for it is on your protected list, and, while you have a list,
 when brAIn cannot read which entity stands in for which.
 
 **Integrations.** Reload one without restarting Home Assistant. Enable, disable, or
-remove one entirely.
+remove one entirely. Change an integration's options through its own Configure form
+(`brain.set_integration_options`): only the fields named change, and a form of more
+than one step is refused with what it asked for rather than guessed at.
 
 **Helpers, zones, people, users.** Create and delete input helpers, timers, counters
-and schedules. Draw a zone or edit its radius. Add a person, attach their device
-trackers. Create a user, disable one, remove one.
+and schedules, and change which lights or switches a group helper holds. Draw a zone
+or edit its radius. Add a person and attach or detach their device trackers — name
+the person by entity (`person.alex`), by the id Home Assistant lists, or by name.
+Create a user, make one an administrator or not, disable one, remove one, and list
+every user with when each of their sign-ins was last used, so an unused account can
+be shown to be unused. The owner, system users and the last administrator cannot be
+demoted, disabled or removed.
+
+**Categories.** Make, rename and delete the categories on the automation, script,
+scene and helper lists, and put things in them or take them out.
+
+**Backups.** List them, make one (full, or partial on Home Assistant OS), and prune
+old ones by age, name or kind, keeping the newest few. A prune shows its list first,
+and one that would leave no backup at all is refused.
+
+**Statistics.** Fix the energy dashboard's history the way the Statistics screen
+does: adjust a meter's sum from an hour onward, take out the hours where a meter
+glitched (a counter jump near 2^30, a sum that fell, or a jump over a bound you
+give), and delete statistics for entities that no longer exist. Each shows what it
+would change first. Read and replace the energy dashboard's sources and devices; a
+statistic the recorder does not keep is refused by name.
+
+**Z-Wave, Thread and the network.** Remove a Z-Wave node the controller has marked
+dead, and rebuild a node's routes. List the Thread networks Home Assistant knows
+(never their network key) and choose the preferred one. Set the local and internet
+addresses Home Assistant is reached at.
+
+All of these are admin-only `brain.*` services. A voice agent at the *Voice
+assistant* level cannot use any of them.
 
 **Dashboards.** List them, read them, create them, rewrite them, restore a previous
 version, reset one to defaults, and manage dashboard resources. brAIn can build you a
