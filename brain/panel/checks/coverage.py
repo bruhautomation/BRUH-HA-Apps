@@ -276,7 +276,7 @@ def checked_rows(areas: list[dict], now: float, tz=None) -> list[dict]:
     this house writes none — the first is on the Findings tab, the other
     two are not a look that came back clean."""
     import datetime as dt  # noqa: PLC0415
-    day = dt.datetime.fromtimestamp(now, tz=tz).strftime("%Y-%m-%d")
+    day = dt.datetime.fromtimestamp(now, tz=tz).date().isoformat()
     out = []
     for a in areas:
         if a.get("state") not in ("clear", "partial"):

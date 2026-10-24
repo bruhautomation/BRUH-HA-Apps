@@ -26,7 +26,7 @@ DAY = 86400.0
 # What the integration that is brAIn, and the other BRUH add-ons' own,
 # are: set up by their panels rather than by a person, and never a row
 # here about themselves.
-BRUH_DOMAINS = frozenset({"brain", "morph", "bruh_print", "bruh_minecraft",
+OWN_DOMAINS = frozenset({"brain", "morph", "bruh_print", "bruh_minecraft",
                           "bright", "bruh_bambu", "gardenrx",
                           "bruh_task_manager"})
 
@@ -74,7 +74,7 @@ def stale_repairs(snap: dict, now: float) -> list[dict]:
             continue
         domains = {str(issue.get("domain") or ""),
                    str(issue.get("issue_domain") or "")}
-        if domains & BRUH_DOMAINS:
+        if domains & OWN_DOMAINS:
             continue
         # Ignored or dismissed is somebody having acted on it.
         if issue.get("ignored") or issue.get("dismissed_version"):
@@ -336,7 +336,7 @@ def tracker_stale(snap: dict, now: float) -> list[dict]:
 
 def custom_absent(snap: dict) -> str | None:
     found = (snap.get("custom_components") or {}).get("integrations") or []
-    if not [c for c in found if c.get("domain") not in BRUH_DOMAINS]:
+    if not [c for c in found if c.get("domain") not in OWN_DOMAINS]:
         return "no custom integrations are installed"
     return None
 
@@ -355,7 +355,7 @@ def custom_unused(snap: dict, now: float) -> list[dict]:
     unused = []
     for c in integrations:
         dom = str(c.get("domain") or "")
-        if not dom or dom in BRUH_DOMAINS or dom in entries:
+        if not dom or dom in OWN_DOMAINS or dom in entries:
             continue
         if dom in referenced or dom in needed:
             continue
@@ -525,5 +525,5 @@ CHECKS = [
 ]
 
 
-__all__ = ["BRUH_DOMAINS", "CHECKS", "energy_stats", "needed_stopped",
+__all__ = ["OWN_DOMAINS", "CHECKS", "energy_stats", "needed_stopped",
            "silent_phones", "stale_repairs"]
