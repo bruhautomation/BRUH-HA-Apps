@@ -41,8 +41,9 @@ class TestTheCardContract(unittest.TestCase):
         self.assertIn('never "14 openings to 5"', CONTRACT)
 
     def test_the_titles_number_is_in_the_summary_with_one_meaning(self):
-        self.assertIn("a number in the title appears in the summary with "
-                      "the same meaning", CONTRACT)
+        self.assertIn("a title number the summary uses keeps the same "
+                      "meaning", CONTRACT)
+        self.assertIn("never the title's figures again", CONTRACT)
 
     def test_brains_own_data_limits_are_not_the_households_news(self):
         self.assertIn("Never mention the recorder, its retention, missing "
