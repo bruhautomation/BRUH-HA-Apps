@@ -2,6 +2,27 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.15
+
+### Added
+
+- **The household's personality lives in brAIn.** Its name, its persona and how it has grown are kept in brAIn's own configuration and edited in ⚙ › Personality, where the growth is listed and Ask opens a conversation about it. The chat, the terminal and voice carry it when one is set, and Morph reads it from brAIn rather than keeping its own; a personality Morph kept before is read once and carried over. (#390)
+
+### Changed
+
+- **A finding card's reply box opens from Respond.** Respond is the first button in a card's answer row, and the box and Send appear only once it is pressed; Escape or a second press puts it away, and what was typed is kept. (#379)
+
+## 3.8.14
+
+### Added
+
+- **Power Tools for what still needed a person or a raw WebSocket call.** Users: list them and change a user's group, and the last admin can never be disabled, deleted or demoted. Backups: list, create, and delete (previewed by default, filterable, never the last one). Statistics: adjust a sum, clear orphaned statistics and heal spikes, all previewed by default. An integration's own options and a group's members, through the integration's own options flow. Z-Wave failed-node removal and route rebuilds, energy settings, Home Assistant's own addresses, Thread networks, and categories made, changed, deleted and assigned. (#419)
+
+### Fixed
+
+- **`brain.remove_device_tracker_from_person` no longer answers HTTP 400.** A person can be named by entity, id or name, and a refusal names the field that was wrong. (#420)
+- **The LLM API and the account-wide watchers are claimed once.** Every extra brAIn agent tried to register `brain_measurements` again and logged a warning each time; the claim is now taken before anything is awaited. (#417)
+
 ## 3.8.13
 
 ### Added
