@@ -571,6 +571,10 @@ class TestMCPProtocol(unittest.TestCase):
             "bambu_status", "bambu_print", "bambu_control", "bambu_slice",
             # 3.9: designing a part with brAIn and printing it
             "bambu_design",
+            # GardenRX: the garden's record, through its integration
+            "garden_status", "garden_harvests", "garden_log_harvest",
+            "garden_log_spray", "garden_queue_spray", "garden_adjust_inventory",
+            "garden_add_crop", "garden_log_note",
         }
         self.assertEqual(tool_names, expected_tools)
 

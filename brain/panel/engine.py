@@ -894,6 +894,9 @@ ANALYST_TOOLS = [
     f"{MCP}label_printer_status",
     f"{MCP}bright_status",
     f"{MCP}bambu_status",
+    # GardenRX, the reading half: the season so far, and what was picked.
+    f"{MCP}garden_status",
+    f"{MCP}garden_harvests",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -935,6 +938,11 @@ ANALYST_DENIED = [
     f"{MCP}bambu_print", f"{MCP}bambu_control", f"{MCP}bambu_slice",
     # Designing a part starts a brAIn run and a build; printing it is a print.
     f"{MCP}bambu_design",
+    # The garden's record: every one writes a row into GardenRX's database
+    # (a pick, a spray, the stock, a crop, a note) a family keeps by hand.
+    f"{MCP}garden_log_harvest", f"{MCP}garden_log_spray",
+    f"{MCP}garden_queue_spray", f"{MCP}garden_adjust_inventory",
+    f"{MCP}garden_add_crop", f"{MCP}garden_log_note",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
     # What a device shows as: each one rewrites the entity registry or

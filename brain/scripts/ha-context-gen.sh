@@ -665,6 +665,13 @@ asked.
   to print it afterwards — the Design tab's own conversation and Slice and
   print. These tools are listed only
   when BRUH Bambu Studio's integration is in Home Assistant.
+- GardenRX (the garden's harvests, sprays, stock and notes) — \`garden_status\`
+  (the season by crop, the last and queued sprays, pre-harvest intervals,
+  low stock), \`garden_harvests\` (what was picked, any crop and window),
+  then \`garden_log_harvest\`, \`garden_log_spray\`, \`garden_queue_spray\`,
+  \`garden_adjust_inventory\`, \`garden_add_crop\` and \`garden_log_note\`.
+  GardenRX's database has one writer, the add-on: never edit it any other
+  way. Listed only when GardenRX's integration is in Home Assistant.
 
 ## Registry Management — BRUH Power Tools
 

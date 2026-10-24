@@ -183,6 +183,7 @@ import doctor
 import energy
 import engine
 import facts_store
+import garden_facts
 import episodes
 import esphome
 import eventbus
@@ -11195,6 +11196,18 @@ def _record_rhythm(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_garden(snapshot: dict, now: float) -> int | None:
+    """Keep one fact per crop with the garden's season so far
+    (`garden_facts`), read off the states this pass already fetched. None
+    when the garden could not be read — the facts are left as they were."""
+    try:
+        return garden_facts.sync(snapshot.get("states") or {}, now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file the garden's season: %s", exc)
+        return None
+
+
 def _record_routines(snapshot: dict, now: float) -> int:
     """File the person-caused moves this pass saw, for the habit miner.
 
@@ -14447,6 +14460,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_rhythm, snapshot, started)
         await asyncio.to_thread(_record_routines, snapshot, started)
         await asyncio.to_thread(_record_manual, snapshot, started)
+        await asyncio.to_thread(_record_garden, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
@@ -25119,6 +25133,10 @@ def make_app() -> web.Application:
     app.router.add_get("/devloop/harness/js/{name}", h_harness_js)
     app.router.add_get("/devloop/harness/morph/{name}", h_harness_morph)
     app.router.add_get("/devloop/harness/morph_cards/{name}", h_harness_morph_cards)
+    # A house's card that imports Morph's kit by the path Home Assistant
+    # serves it at (`/morph_cards/<name>.js`) finds it here too, by name,
+    # under the one root; loopback only, like the rest of the harness.
+    app.router.add_get("/morph_cards/{name}", h_harness_morph_cards)
     app.router.add_get("/devloop/harness/ws", h_harness_ws)
     app.router.add_get("/devloop/harness/{name}", h_harness_page)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)
