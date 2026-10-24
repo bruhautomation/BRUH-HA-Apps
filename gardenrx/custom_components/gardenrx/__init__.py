@@ -32,10 +32,18 @@ from .const import (
     DEFAULT_PORT,
     DOMAIN,
     HARVEST_UNITS,
+    READ_ONLY,
+    SERVICE_ADD_CROP,
+    SERVICE_ADD_VARIETY,
+    SERVICE_ADJUST_INVENTORY,
     SERVICE_COMPLETE_QUEUED_SPRAY,
     SERVICE_DELETE_HARVEST,
     SERVICE_DELETE_QUEUED_SPRAY,
+    SERVICE_GET_HARVESTS,
     SERVICE_LOG_HARVEST,
+    SERVICE_LOG_NOTE,
+    SERVICE_LOG_SPRAY,
+    SERVICE_QUEUE_SPRAY,
     SERVICE_REFRESH,
     TOKEN_PATH,
     VERSION,
@@ -49,6 +57,26 @@ PLATFORMS = [Platform.SENSOR]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _ID = vol.All(vol.Coerce(int), vol.Range(min=1))
+_NAME = vol.All(cv.string, vol.Length(min=1, max=80))
+_NOTES = vol.All(cv.string, vol.Length(max=500))
+_POSITIVE = vol.All(vol.Coerce(float), vol.Range(min=0, min_included=False))
+# A crop or product named one at a time or as a list, by name or id.
+_REFS = vol.All(cv.ensure_list, [vol.Any(cv.string, _ID)])
+
+# What a spray is, logged or queued: the crops (or an area), the products and
+# their rates. The add-on resolves the names and says which one is wrong.
+_SPRAY = {
+    vol.Optional("crop"): _REFS,
+    # Orchard, Garden or Landscape — matched by the add-on in any case.
+    vol.Optional("area"): vol.All(cv.ensure_list, [cv.string]),
+    vol.Required("product"): _REFS,
+    vol.Optional("rate"): vol.All(cv.ensure_list, [_POSITIVE]),
+    vol.Optional("rate_unit"): vol.All(cv.ensure_list, [vol.All(cv.string, vol.Length(min=1, max=40))]),
+    vol.Optional("notes"): _NOTES,
+}
+
+# Fields a service carries as a date; each is sent to the add-on as YYYY-MM-DD.
+DATE_FIELDS = ("date", "planned_date", "start", "end")
 
 SCHEMAS = {
     SERVICE_LOG_HARVEST: vol.Schema(
@@ -70,6 +98,43 @@ SCHEMAS = {
         }
     ),
     SERVICE_DELETE_QUEUED_SPRAY: vol.Schema({vol.Required("id"): _ID}),
+    SERVICE_LOG_SPRAY: vol.Schema(
+        {
+            **_SPRAY,
+            vol.Optional("volume_gallons"): _POSITIVE,
+            vol.Optional("date"): cv.date,
+        }
+    ),
+    SERVICE_QUEUE_SPRAY: vol.Schema({**_SPRAY, vol.Optional("planned_date"): cv.date}),
+    SERVICE_ADJUST_INVENTORY: vol.Schema(
+        {
+            vol.Required("product"): vol.Any(cv.string, _ID),
+            vol.Exclusive("change", "amount"): vol.Coerce(float),
+            vol.Exclusive("quantity", "amount"): vol.All(vol.Coerce(float), vol.Range(min=0)),
+            vol.Optional("unit"): vol.All(cv.string, vol.Length(min=1, max=20)),
+            vol.Optional("notes"): _NOTES,
+        }
+    ),
+    SERVICE_ADD_CROP: vol.Schema(
+        {vol.Required("name"): _NAME, vol.Optional("crop_group"): vol.Any(cv.string, _ID)}
+    ),
+    SERVICE_ADD_VARIETY: vol.Schema(
+        {vol.Required("crop"): vol.Any(cv.string, _ID), vol.Required("name"): _NAME}
+    ),
+    SERVICE_LOG_NOTE: vol.Schema(
+        {
+            vol.Required("place"): vol.Any(cv.string, _ID),
+            vol.Required("note"): vol.All(cv.string, vol.Length(min=1, max=500)),
+            vol.Optional("date"): cv.date,
+        }
+    ),
+    SERVICE_GET_HARVESTS: vol.Schema(
+        {
+            vol.Optional("crop"): vol.Any(cv.string, _ID),
+            vol.Optional("start"): cv.date,
+            vol.Optional("end"): cv.date,
+        }
+    ),
 }
 
 
@@ -145,15 +210,17 @@ def _register_services(hass: HomeAssistant) -> None:
         async def handle(call: ServiceCall) -> ServiceResponse:
             coordinator = _coordinator(hass)
             data = dict(call.data)
-            if "date" in data:
-                data["date"] = data["date"].isoformat()
+            for field in DATE_FIELDS:
+                if hasattr(data.get(field), "isoformat"):
+                    data[field] = data[field].isoformat()
             try:
                 result = await coordinator.client.action(ACTIONS[service], data)
             except GardenRxError as err:
                 # The add-on's own sentence, so it reaches the automation trace
                 # or the card's error line instead of a green tick.
                 raise HomeAssistantError(str(err)) from err
-            await coordinator.async_request_refresh()
+            if service not in READ_ONLY:
+                await coordinator.async_request_refresh()
             return result
 
         return handle
@@ -164,7 +231,9 @@ def _register_services(hass: HomeAssistant) -> None:
             service,
             make(service),
             schema=SCHEMAS[service],
-            supports_response=SupportsResponse.OPTIONAL,
+            supports_response=(
+                SupportsResponse.ONLY if service in READ_ONLY else SupportsResponse.OPTIONAL
+            ),
         )
 
     async def refresh(call: ServiceCall) -> None:
