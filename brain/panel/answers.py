@@ -95,6 +95,11 @@ CHECK_SITUATIONS = {
     "dev.unavailable": "unplugged",
     "dev.zwave_dead": "unplugged",
     "dev.zha_unseen": "unplugged",
+    # A device gone quiet on its network is the same answer as one gone
+    # unavailable: somebody may have unplugged it on purpose.
+    "net.wifi_hung": "unplugged",
+    "net.zwave_silent": "unplugged",
+    "net.zigbee_silent": "unplugged",
     "dev.frozen": "stuck",
     "dev.implausible": "stuck",
     "base.unusual": "stuck",

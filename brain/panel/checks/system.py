@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 
 from ._util import (House, age_days, evidence_for, history_cut, join_names,
-                    num, when)
+                    num, parse_ts, when)
 
 GB = 1024.0 ** 3
 BACKUP_STALE_DAYS = 7
@@ -53,6 +53,11 @@ ADDON_STOPPED_TEXT = "An add-on set to start on boot is not running"
 # restore or a downgrade), and a reload cannot touch it.
 ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
 ENTRY_FAILED_TEXT = "An integration did not finish setting up"
+# How long an entry has to have been failing before it is a finding. Core
+# retries a `setup_retry` on a backoff and most come back on their own —
+# a hub rebooting, a cloud service down for an hour, the network slower
+# than Home Assistant after a power cut. A day is no longer that.
+ENTRY_STUCK_S = 86400
 
 # What the Supervisor calls each thing it can update, said the way a
 # person would. An add-on brings its own name; these three do not have
@@ -264,6 +269,48 @@ def failed_entries(snap: dict) -> list[dict]:
     return sorted(out, key=lambda e: str(e.get("entry_id")))
 
 
+def stamp_failing(entries: list, ledger: dict | None, now: float) -> dict:
+    """Write `failing_since` onto every failing entry; return the ledger.
+
+    Core records when an entry was created and never when it stopped
+    loading, so the collector keeps `{entry_id: first seen failing}` and
+    hands it back here each pass. An entry the ledger already knows keeps
+    its stamp; a new failure is stamped now. When there is no ledger yet
+    (the first pass after an update) a failure brAIn was not there to see
+    start is stamped with when the entry was created, or 0 — "longer than
+    brAIn has been watching" — so a row already on the list is not cleared
+    and filed again a day later. An entry that loads drops out.
+    """
+    first = ledger is None
+    ledger = ledger or {}
+    out: dict = {}
+    for entry in entries or []:
+        if not isinstance(entry, dict) or not entry.get("entry_id"):
+            continue
+        if str(entry.get("state") or "") not in ENTRY_FAILED_STATES:
+            continue
+        key = str(entry["entry_id"])
+        if key in ledger:
+            since = ledger[key]
+        elif first:
+            since = parse_ts(entry.get("created_at")) or 0
+        else:
+            since = now
+        out[key] = since
+        entry["failing_since"] = since
+    return out
+
+
+def stuck(entry: dict, now: float) -> bool:
+    """Failing for at least `ENTRY_STUCK_S`. An entry with no stamp (a
+    snapshot nothing stamped) is reported as it always was."""
+    since = entry.get("failing_since")
+    if since is None:
+        return True
+    since = num(since)
+    return since is None or now - since >= ENTRY_STUCK_S
+
+
 def entry_name(entry: dict) -> str:
     """An entry as a person knows it: its own title. The integration's
     domain is a slug (`homekit_controller`), so it is said only when there
@@ -373,7 +420,7 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
     every entry. The integration's own words follow, paired with the entry
     they belong to. A count is never the first word.
     """
-    rows = failed_entries(snap)
+    rows = [e for e in failed_entries(snap) if stuck(e, now)]
     if not rows:
         return []
     groups: dict[str, list[str]] = {}
@@ -517,6 +564,7 @@ CHECKS = [
     {"id": "sys.recorder_size", "title": "Recorder database size",
      "needs": ("recorder",), "run": recorder_size},
     {"id": "sys.entry_failed", "title": "Integrations that did not load",
+     "source_title": "Integrations",
      "needs": ("config_entries",), "run": entry_failed},
     {"id": "sys.update_pending", "title": "Updates waiting to be installed",
      "needs": ("updates",), "run": update_pending},

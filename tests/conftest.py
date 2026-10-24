@@ -33,6 +33,10 @@ os.environ.setdefault("BRAIN_TERMINAL_PROMPT_FILE",
                       os.path.join(_SANDBOX, "brain-terminal-prompt.md"))
 os.environ.setdefault("BRAIN_TERMINAL_HANDOFF",
                       os.path.join(_SANDBOX, "terminal-handoff.json"))
+# The checks collector's ledger of failing integration entries: every test
+# that drives `checks.snapshot.collect` would otherwise stamp the real one.
+os.environ.setdefault("BRAIN_ENTRY_FAILING_FILE",
+                      os.path.join(_SANDBOX, "entry-failing.json"))
 
 
 @pytest.fixture(autouse=True)

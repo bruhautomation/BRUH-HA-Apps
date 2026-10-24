@@ -140,9 +140,6 @@ def reads_a_battery_voltage(house: House, eid: str, attrs: dict) -> bool:
 # integration reloaded, a statistics backfill), and fifty rows would be
 # reporting the measurement rather than the home.
 FROZEN_MAX_ROWS = 5
-# A Zigbee device quieter than this has dropped off the mesh. Sleepy
-# sensors check in daily at the very least; a week is not a long sleep.
-ZIGBEE_SILENT_DAYS = 7
 
 # Sane physical ranges by device class and unit. A reading outside these is
 # a broken sensor, not a hot day.
@@ -536,6 +533,13 @@ def unavailable(snap: dict, now: float) -> list[dict]:
     # row, with a mesh fix on it. Reporting the same box twice under two
     # different fixes is how a list stops being read.
     dead_devices = _zwave_dead_devices(house)
+    # A Wi-Fi client UniFi still holds while its entities are gone is
+    # `net.wifi_hung`'s row (named by its access point), and a Zigbee
+    # device gone quiet is `net.zigbee_silent`'s or `dev.zha_unseen`'s —
+    # the same box under one fix, never two.
+    from . import network  # noqa: PLC0415 — network imports this module
+    claimed = (network.wifi_hung_devices(house, now)
+               | network.zigbee_quiet_devices(house, now))
     by_device: dict[str, list[tuple[str, float]]] = {}
     loose: list[tuple[str, float]] = []
     derived: list[tuple[str, float]] = []
@@ -562,7 +566,7 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             continue
         dev = house.device_of(eid)
         if dev:
-            if dev["id"] in dead_devices:
+            if dev["id"] in dead_devices or dev["id"] in claimed:
                 continue
             by_device.setdefault(dev["id"], []).append((eid, age))
         else:
@@ -854,8 +858,17 @@ def battery_low(snap: dict, now: float) -> list[dict]:
     # the same box under a second fix — `dev.unavailable`'s rule, through
     # the same helper so the two cannot disagree about which box that is.
     dead_devices = _zwave_dead_devices(house)
+    # A Z-Wave battery node the mesh has not heard from is
+    # `net.zwave_silent`'s row: the battery it shows is the last thing it
+    # said, and its own row already says to check it.
+    from . import network  # noqa: PLC0415 — network imports this module
+    dead_devices = dead_devices | network.zwave_silent_devices(house, now)
     out = []
+    flagged: list[tuple[str, dict]] = []
     for eid, st in _live_hardware(house):
+        if _is_low_battery_flag(eid, st):
+            flagged.append((eid, st))
+            continue
         if not _is_battery(st):
             continue
         dev = house.device_of(eid)
@@ -911,6 +924,50 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "fixable": False,
                 "entity_id": eid,
             })
+    out.extend(_flag_rows(house, flagged, dead_devices))
+    return out
+
+
+def _is_low_battery_flag(eid: str, st: dict) -> bool:
+    """A low-battery flag: a binary sensor of class battery, on meaning low.
+
+    Some integrations report a battery only this way (a smoke alarm, a lock,
+    a Z-Wave node's notification), so a check reading percentages alone
+    never saw them run down.
+    """
+    attrs = st.get("attributes") or {}
+    return domain_of(eid) == "binary_sensor" \
+        and attrs.get("device_class") == "battery"
+
+
+def _flag_rows(house: House, flagged: list, dead_devices: set) -> list[dict]:
+    """`dev.battery_low`'s rows for a low-battery flag that is on, where the
+    device has no percentage of its own (that one already speaks)."""
+    out = []
+    for eid, st in flagged:
+        if st.get("state") != "on":
+            continue
+        dev = house.device_of(eid)
+        if dev and dev["id"] in dead_devices:
+            continue
+        if any(_is_battery(house.states.get(o) or {})
+               for o in house.siblings(eid)):
+            continue
+        if rechargeable(house, eid):
+            continue
+        if not house.should_report(eid, "dev.battery_low"):
+            continue
+        who = house.device_name(dev) if dev else house.name(eid)
+        out.append({
+            "text": f"{who} battery is low",
+            "detail": f"It has reported a low battery since "
+                      f"{when(st.get('last_changed'))}."
+                      + house.placed(eid, who),
+            "fix": "Replace the battery.",
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": eid,
+        })
     return out
 
 
@@ -1287,17 +1344,19 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
     """ZHA records `last_seen` per device, which is the honest question for
     a Zigbee mesh: a sleepy sensor is `available` between check-ins, so
     availability alone says nothing, and silence is what matters.
+
+    A week is this check's; hours are `net.zigbee_silent`'s. One classifier
+    (`network.zigbee_quiet`) decides which, over one list of the devices a
+    check may speak about, so a device is never in both.
     """
+    from . import network  # noqa: PLC0415 — network imports this module
+    house = House(snap)
     rows = []
-    for dev in snap.get("zha_devices") or []:
-        if not isinstance(dev, dict):
+    for dev, reg, _entity in network.zigbee_devices(house):
+        if network.zigbee_quiet(dev, now) != "dropped":
             continue
-        age = age_days(dev.get("last_seen"), now)
-        if age is None or age < ZIGBEE_SILENT_DAYS:
-            continue
-        name = str(dev.get("user_given_name") or dev.get("name")
-                   or dev.get("ieee") or "a Zigbee device")
-        rows.append((age, name))
+        age = age_days(dev.get("last_seen"), now) or 0.0
+        rows.append((age, network.zigbee_name(dev, reg, house)))
     if not rows:
         return []
     rows.sort(reverse=True)

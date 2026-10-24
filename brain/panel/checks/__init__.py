@@ -47,8 +47,8 @@ from __future__ import annotations
 # off the package the way server.py calls it; its aiohttp import is lazy,
 # inside the collector, so this costs the test suite nothing.
 from . import (automations, baseline, chores, dashboards,  # noqa: F401
-               devices, evening, forecasts, registry, safety, security,
-               snapshot, system, thermal)
+               devices, evening, forecasts, integrations, network, registry,
+               safety, security, snapshot, system, thermal)
 from ._util import CouldNotLook, House, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
@@ -60,9 +60,14 @@ CHECKS: list[dict] = [
     *safety.CHECKS,
     *automations.CHECKS,
     *devices.CHECKS,
+    # The networks devices talk through, and what the integrations log —
+    # the reason a device keeps dropping off (checks/network.py,
+    # checks/integrations.py).
+    *network.CHECKS,
     *dashboards.CHECKS,
     *registry.CHECKS,
     *system.CHECKS,
+    *integrations.CHECKS,
     # Who and what can reach the house — read deterministically, and each
     # rule fires only on a state somebody chose (see checks/security.py).
     *security.CHECKS,
@@ -116,6 +121,10 @@ GROUP_TITLES = {
     "climate": "Climate check",
     "sec": "Security check",
     "safety": "Safety check",
+    # A network check names its network on the card (`source_title` on
+    # each catalog entry); this is the group's word where none does.
+    "net": "Network check",
+    "integ": "Integrations",
 }
 
 
@@ -124,6 +133,11 @@ def source_for(check_id: str) -> str:
 
 
 def title_for(check_id: str) -> str:
+    """The producer's name on a card: the catalog entry's own
+    `source_title` where it has one ("Network (Z-Wave)"), else its group's."""
+    own = (get_check(check_id) or {}).get("source_title")
+    if own:
+        return str(own)
     return GROUP_TITLES.get(check_id.split(".", 1)[0], "House check")
 
 

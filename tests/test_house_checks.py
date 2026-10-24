@@ -82,7 +82,10 @@ def house(**over) -> dict:
             # nothing in them anybody has to look at twice.
             "users", "exposure", "posture", "ip_bans",
             # The history probe: asked, and the recorder whole.
-            "history_health")},
+            "history_health",
+            # The networks (checks/network.py) and the integrations' log
+            # (checks/integrations.py): asked, and nothing in them wrong.
+            "zwave_nodes", "wifi_history", "core_log")},
         "errors": {},
         "blueprints_dir": "",
         "states": {
@@ -182,6 +185,12 @@ def house(**over) -> dict:
                      "db_path": "/config/home-assistant_v2.db"},
         "zha_devices": [{"name": "Back Door sensor", "ieee": "00:11",
                          "available": True, "last_seen": iso(1800)}],
+        # No Z-Wave here, no UniFi clients, and a log with nothing in it
+        # repeating — the house the network and integrations checks must
+        # say nothing about.
+        "zwave_nodes": {},
+        "wifi_history": {"days": 7, "entities": {}},
+        "core_log": {"hours": 24, "lines": 0, "groups": []},
         # Every integration loaded. The disabled and ignored rows are here
         # on purpose: `sys.entry_failed` has to stay silent about both,
         # because neither is a fault.
