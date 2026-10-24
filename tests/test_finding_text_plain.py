@@ -324,10 +324,10 @@ class TestRawInternalsAreNotShown(unittest.TestCase):
     "1 hours". Each is named the way Home Assistant's frontend says it."""
 
     def test_the_lint_catches_what_the_house_reported(self):
-        for prose in ("at step action/0/choose/1/sequence/0: Failed to send "
+        for prose in ("at step action/0/choose/1/sequence/0: Failed to send " +
                       "request",
                       "The phone goes not_home at 05:20.",
-                      "none answers ARP from 192.168.1.40 ('host is "
+                      "none answers ARP from 192.168.1.40 ('host is " +
                       "unreachable')",
                       "went from running to “finish” 1 hours ago"):
             self.assertTrue(problems("x", {"detail": prose}, None), prose)

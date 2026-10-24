@@ -130,7 +130,7 @@ class TestTheReview(unittest.TestCase):
 # Seven of eleven cards on a real house opened with the same reassurance,
 # and the one card that needed action was lost among them.
 REASSURED = (
-    ("There's no leak and nothing to fix — the sump ran 4 times overnight, "
+    ("There's no leak and nothing to fix — the sump ran 4 times overnight, " +
      "12 min each.", "The sump ran 4 times overnight, 12 min each."),
     ("No action. The dryer finished at 14:10 and the drum is still full.",
      "The dryer finished at 14:10 and the drum is still full."),
@@ -191,12 +191,12 @@ class TestNoReassuranceOpener(unittest.TestCase):
 # summary a person reads.
 ECHOES = (
     ("Septic pump: 34 h, 143 gal since Thu",
-     "It last ran 33 h 55 min ago, with 143 gal since. That is twice its "
+     "It last ran 33 h 55 min ago, with 143 gal since. That is twice its " +
      "usual gap, so the float switch is the first thing to look at.",
-     "That is twice its usual gap, so the float switch is the first thing "
+     "That is twice its usual gap, so the float switch is the first thing " +
      "to look at."),
     ("Dehumidifiers: 1.2 kWh for 17–23 Oct, down from 49.3",
-     "The dehumidifiers used 1.2 kWh over 17–23 Oct, down from 49.3 kWh. "
+     "The dehumidifiers used 1.2 kWh over 17–23 Oct, down from 49.3 kWh. " +
      "The basement one has been switched off since Sat 17 Oct.",
      "The basement one has been switched off since Sat 17 Oct."),
     ("Back door: evening openings 14 → 5",
@@ -206,9 +206,9 @@ ECHOES = (
      "The garage opened 3 times after 22:00. Each was under 2 min.",
      "Each was under 2 min."),
     ("Freezer: 0 °F all week",
-     "The compressor ran 41% of the time, up from 30%. The seal is the "
+     "The compressor ran 41% of the time, up from 30%. The seal is the " +
      "likely cause.",
-     "The compressor ran 41% of the time, up from 30%. The seal is the "
+     "The compressor ran 41% of the time, up from 30%. The seal is the " +
      "likely cause."),
 )
 
