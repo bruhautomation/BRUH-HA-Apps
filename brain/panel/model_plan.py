@@ -78,6 +78,10 @@ JOBS: dict[str, tuple[str, str, bool, bool]] = {
     # scope and a lifetime: a closed vocabulary somebody is waiting on, so
     # neither steps up — a slower reader is a slower box.
     "interpret":       ("haiku",  "low",    False, False),
+    # A timed action: the sentence turned into steps over the devices it
+    # names, every step then checked in code — a closed shape somebody is
+    # waiting on, so it does not step up.
+    "timed":           ("haiku",  "low",    False, False),
     "correct":         ("haiku",  "low",    False, False),
     # The action gate: allow / ask / deny over a call it is shown in
     # code-resolved terms, seen only beside the person's own words. Never

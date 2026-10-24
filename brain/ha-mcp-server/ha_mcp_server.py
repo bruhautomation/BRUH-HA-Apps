@@ -488,7 +488,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "minecraft_command", "minecraft_server", "minecraft_addons",
     "print_label", "bright_show",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
-    "report_bug",
+    "report_bug", "timed_action",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -2342,6 +2342,31 @@ def report_bug(addon, title, what, evidence="", asked="", done_when="", ui=False
     return _panel_send("POST", "/api/devloop/report", {
         "addon": addon, "title": title, "what": what, "evidence": evidence,
         "asked": asked, "done_when": done_when, "ui": ui is True})
+
+
+def timed_action(action="list", title="", said="", steps=None, id=None):
+    """Start, stop or list brAIn's timed actions: a few service calls at
+    set moments ("water the garden for 90 minutes"), run by brAIn itself
+    with no automation written. Through the panel, which checks every step
+    exactly as it checks one read from a sentence (the protected list, the
+    tripwire, never unlocking, disarming or opening a garage, door or gate)
+    and runs each one through the same chokepoint as every panel call."""
+    action = str(action or "list").strip().lower()
+    if action == "list":
+        return _panel_send("GET", "/api/timed")
+    if action == "stop":
+        try:
+            task_id = int(id)
+        except (TypeError, ValueError):
+            return {"error": "stop needs the id of a timed action (list them first)"}
+        return _panel_send("POST", f"/api/timed/{task_id}/stop", {})
+    if action == "start":
+        if not isinstance(steps, list) or not steps:
+            return {"error": "start needs steps: [{after_minutes, domain, service, entities, ends}]"}
+        return _panel_send("POST", "/api/timed", {
+            "title": title, "said": said or title, "steps": steps,
+            "via": "chat"})
+    return {"error": "action must be start, stop or list"}
 
 
 # ---------------------------------------------------------------------------
@@ -7318,6 +7343,53 @@ TOOLS = [
         },
     },
     {
+        "name": "timed_action",
+        "description": (
+            "Do something now and undo it later, or do it after a delay, "
+            "without writing an automation: \"water the garden for 90 "
+            "minutes\", \"in an hour turn on the porch light\". brAIn runs "
+            "the steps itself and lists them, each stoppable, in the panel "
+            "and in Morph. Use it whenever somebody asks for something once "
+            "on a timer, and an automation only for something that should "
+            "happen every time. Each step is minutes from now (0 to 1440), "
+            "a service of the device's own kind and the entity ids it acts "
+            "on; the step that puts things back is the last, with ends: "
+            "true. It refuses unlocking, disarming, opening a garage, door "
+            "or gate, scripts and scenes, and anything protected; say the "
+            "refusal as it comes back. Stopping one runs its ending at once."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["start", "stop", "list"]},
+                "title": {"type": "string",
+                          "description": "Their request in a few plain words"},
+                "said": {"type": "string",
+                         "description": "What they asked, in their words"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "after_minutes": {"type": "number"},
+                            "domain": {"type": "string"},
+                            "service": {"type": "string"},
+                            "entities": {"type": "array",
+                                         "items": {"type": "string"}},
+                            "data": {"type": "object"},
+                            "ends": {"type": "boolean"},
+                        },
+                        "required": ["after_minutes", "domain", "service",
+                                     "entities"],
+                    },
+                },
+                "id": {"type": "integer",
+                       "description": "Which timed action to stop"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "get_findings",
         "description": (
             "What brAIn has found wrong with this house and is waiting on the "
@@ -7702,6 +7774,7 @@ TOOL_IMPLEMENTATIONS = {
     "bruh_addon_status": "bruh_addon_status",
     "screenshot_panel": "screenshot_panel",
     "report_bug": "report_bug",
+    "timed_action": "timed_action",
     "get_health": "get_health",
     "get_statistics": "get_statistics",
     "get_weather_forecast": "get_weather_forecast",
@@ -7786,7 +7859,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
-    "bruh_addon_status", "report_bug", "screenshot_panel",
+    "bruh_addon_status", "report_bug", "screenshot_panel", "timed_action",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.

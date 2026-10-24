@@ -59,9 +59,9 @@ import time
 
 import prompt_kit
 
-KINDS = ("card_question", "one_off", "standing_rule", "automation_edit",
-         "case_ending", "defer", "remember", "study", "explain", "scenes",
-         "chat")
+KINDS = ("card_question", "timed", "one_off", "standing_rule",
+         "automation_edit", "case_ending", "defer", "remember", "study",
+         "explain", "scenes", "chat")
 ENDINGS = ("wrong", "done", "todo", "not_now")
 SURFACES = ("ask_bar", "reply", "repairs", "service", "morph", "panel")
 
@@ -89,11 +89,11 @@ CASE_SURFACES = frozenset({"morph", "panel"})
 # What each surface can carry. A case ending needs a case, which only a
 # reply and a Repairs dialog have; a card needs a screen to land on.
 ALLOWED = {
-    "ask_bar": frozenset({"card_question", "one_off", "standing_rule",
+    "ask_bar": frozenset({"card_question", "timed", "one_off", "standing_rule",
                           "automation_edit", "remember", "study", "explain",
                           "scenes", "chat"}),
     "reply": frozenset({"case_ending", "defer", "remember", "explain",
-                        "one_off", "standing_rule", "chat"}),
+                        "timed", "one_off", "standing_rule", "chat"}),
     "repairs": frozenset({"case_ending", "defer", "remember"}),
     "service": frozenset({"one_off", "standing_rule", "automation_edit",
                           "remember", "study"}),
@@ -102,13 +102,13 @@ ALLOWED = {
     # line does not — the server drops what the request cannot carry
     # (`server._morph_reply` / `_answer_morph_ask`), exactly as it drops a
     # route a surface cannot carry here.
-    "morph": frozenset({"card_question", "one_off", "standing_rule",
+    "morph": frozenset({"card_question", "timed", "one_off", "standing_rule",
                         "automation_edit", "remember", "study", "explain",
                         "scenes", "chat", "case_ending", "defer",
                         "dashboard", "code"}),
     # Morph's reply line without the Tell: there is no dashboard under a
     # card in the panel.
-    "panel": frozenset({"card_question", "one_off", "standing_rule",
+    "panel": frozenset({"card_question", "timed", "one_off", "standing_rule",
                         "automation_edit", "remember", "study", "explain",
                         "scenes", "chat", "case_ending", "defer"}),
 }
@@ -169,6 +169,10 @@ SYSTEM = prompt_kit.assemble(
 Routes (use only these words):
 - card_question: a question about the house to answer with data ("how
   much power did the heating use this week?").
+- timed: something to do now or after a delay, for a set time or at a
+  time, with nothing to wait for ("water the garden for 90 minutes", "in
+  an hour turn on the porch light", "turn the fan off at 11pm"). brAIn
+  does these itself, with no automation.
 - one_off: something that should happen ONCE when a condition is met
   ("when the guests leave, turn the porch light off").
 - standing_rule: something that should happen EVERY time ("turn the hall

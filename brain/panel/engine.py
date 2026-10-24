@@ -937,6 +937,8 @@ ANALYST_DENIED = [
     f"{MCP}bambu_design",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
+    # A timed action calls services on a timer: a person asks for one.
+    f"{MCP}timed_action",
     # What a device shows as: each one rewrites the entity registry or
     # creates and removes a helper's config entry, which an entity in a
     # dashboard, an automation or a voice assistant then stands on.
