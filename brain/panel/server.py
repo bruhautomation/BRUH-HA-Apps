@@ -11867,6 +11867,11 @@ _ENTITY_IN_TEXT_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 
 
 def _note_registry(snapshot: dict) -> None:
+    # The running Core's version, for which spelling a new automation is
+    # written in (`automation_writer.modern_keys_ok`).
+    core = ((snapshot.get("supervisor") or {}).get("core") or {})
+    if isinstance(core, dict):
+        automation_writer.note_core_version(core.get("version"))
     try:
         states = snapshot.get("states") or {}
         areas = {a["area_id"]: a.get("name") or a["area_id"]

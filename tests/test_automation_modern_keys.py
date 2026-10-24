@@ -122,6 +122,46 @@ class TestAnEditKeepsThePersonsSpelling(unittest.TestCase):
         self.assertNotIn("condition", conditions.with_condition(new, cond))
 
 
+class TestTheSpellingFollowsTheRunningCore(WriterCase):
+    """The plural keys load only on Home Assistant 2024.10 and later; an
+    older Core refuses the whole automations.yaml over one entry spelled
+    that way. The writer reads the version the checks pass recorded."""
+
+    def written(self, version):
+        self.w.CORE_VERSION["version"] = ""
+        if version:
+            self.w.note_core_version(version)
+        self.house()
+        out = self.apply(proposal())
+        self.assertTrue(out["ok"], out)
+        return self.yaml_rows()[-1]
+
+    def test_a_current_core_gets_the_new_words(self):
+        assert_modern(self, self.written("2026.8.1"))
+        assert_modern(self, self.written("2024.10.0"))
+
+    def test_an_older_core_gets_the_old_ones(self):
+        entry = self.written("2024.9.3")
+        self.assertFalse({"triggers", "conditions", "actions"} & set(entry))
+        self.assertEqual(entry["trigger"], [{"platform": "time", "at": "18:40:00"}])
+        self.assertIn("condition", entry)
+        self.assertIn("action", entry)
+
+    def test_an_unknown_version_gets_the_new_words(self):
+        assert_modern(self, self.written(""))
+        assert_modern(self, self.written("not a version"))
+
+    def test_the_panel_records_the_version_off_the_checks_snapshot(self):
+        import server
+        self.w.CORE_VERSION["version"] = ""
+        server.automation_writer.CORE_VERSION["version"] = ""
+        server._note_registry({"supervisor": {"core": {"version": "2024.6.4"}}})
+        self.assertEqual(server.automation_writer.CORE_VERSION["version"],
+                         "2024.6.4")
+        self.assertFalse(server.automation_writer.modern_keys_ok())
+        server.automation_writer.CORE_VERSION["version"] = ""
+
+
 class TestTheIdentityDidNotMove(unittest.TestCase):
     def test_a_respelled_proposal_hashes_as_it_did(self):
         old = proposal()["config"]
