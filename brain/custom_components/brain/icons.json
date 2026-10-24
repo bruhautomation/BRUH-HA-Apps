@@ -263,6 +263,27 @@
     },
     "set_group_members": {
       "service": "mdi:group"
+    },
+    "zwave_remove_failed_node": {
+      "service": "mdi:z-wave"
+    },
+    "zwave_rebuild_node_routes": {
+      "service": "mdi:transit-connection-variant"
+    },
+    "get_energy_prefs": {
+      "service": "mdi:lightning-bolt-outline"
+    },
+    "save_energy_prefs": {
+      "service": "mdi:lightning-bolt"
+    },
+    "set_core_urls": {
+      "service": "mdi:web"
+    },
+    "list_thread_datasets": {
+      "service": "mdi:access-point-network"
+    },
+    "set_preferred_thread_dataset": {
+      "service": "mdi:access-point-check"
     }
   }
 }

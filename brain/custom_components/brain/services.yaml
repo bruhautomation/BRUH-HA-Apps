@@ -2082,3 +2082,109 @@ set_group_members:
       selector:
         boolean: {}
       default: false
+zwave_remove_failed_node:
+  name: Remove failed Z-Wave node
+  description: Remove a Z-Wave node the controller has marked dead, the way the device page's Remove failed
+    device does. A node that is not dead is refused. Previews by default.
+  fields:
+    device_id:
+      name: Device
+      description: The Z-Wave device.
+      selector:
+        device:
+          integration: zwave_js
+    entity_id:
+      name: Entity
+      description: Or one of the device's entities, instead of device_id.
+      selector:
+        entity: {}
+    dry_run:
+      name: Dry run
+      description: When on (the default), only report the node and its status.
+      selector:
+        boolean: {}
+      default: true
+zwave_rebuild_node_routes:
+  name: Rebuild Z-Wave node routes
+  description: Ask the Z-Wave controller to rebuild one node's routes, the way the device page's Rebuild
+    routes does. Answers whether the controller says it worked.
+  fields:
+    device_id:
+      name: Device
+      description: The Z-Wave device.
+      selector:
+        device:
+          integration: zwave_js
+    entity_id:
+      name: Entity
+      description: Or one of the device's entities, instead of device_id.
+      selector:
+        entity: {}
+get_energy_prefs:
+  name: Get energy settings
+  description: The energy dashboard's settings — its sources (grid, solar, battery, gas, water) and the
+    individual devices it lists.
+save_energy_prefs:
+  name: Save energy settings
+  description: Replace the energy dashboard's sources and/or individual devices. Every statistic named
+    must be one the recorder keeps. Previews by default, because each list given replaces the whole list.
+  fields:
+    energy_sources:
+      name: Sources
+      description: The whole list of sources, in the shape get_energy_prefs answers.
+      selector:
+        object: {}
+    device_consumption:
+      name: Individual devices
+      description: The whole list of individual devices, each with its stat_consumption.
+      selector:
+        object: {}
+    device_consumption_water:
+      name: Individual water devices
+      description: The whole list of individual water devices (newer Home Assistant only).
+      selector:
+        object: {}
+    dry_run:
+      name: Dry run
+      description: When on (the default), only report what would change.
+      selector:
+        boolean: {}
+      default: true
+set_core_urls:
+  name: Set Home Assistant addresses
+  description: Set the internal and/or external address Home Assistant is reached at (Settings → System
+    → Network). An empty value clears it. Each must be a whole address with no path, like https://home.example.com.
+  fields:
+    internal_url:
+      name: Local address
+      description: The address on the home network, like http://192.168.1.10:8123.
+      selector:
+        text:
+          type: url
+    external_url:
+      name: Internet address
+      description: The address from outside the home, like https://home.example.com.
+      selector:
+        text:
+          type: url
+    dry_run:
+      name: Dry run
+      description: When on, only report what would change.
+      selector:
+        boolean: {}
+      default: false
+list_thread_datasets:
+  name: List Thread networks
+  description: The Thread networks Home Assistant knows, with their name, channel and which one is preferred.
+    The network key is never returned.
+set_preferred_thread_dataset:
+  name: Set preferred Thread network
+  description: Make one of the Thread networks Home Assistant knows the preferred one, which new Thread
+    devices join.
+  fields:
+    dataset_id:
+      name: Network
+      description: The network's dataset id, as list_thread_datasets shows it.
+      selector:
+        text: {}
+      required: true

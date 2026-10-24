@@ -2989,6 +2989,294 @@ async def _set_group_members(hass: HomeAssistant, call: ServiceCall) -> dict | N
 
 
 # ---------------------------------------------------------------------------
+# Z-Wave
+#
+# Two things the Z-Wave JS device page offers that no service does: remove
+# a node the controller has marked failed, and rebuild one node's routes.
+# Both go through the integration's own node lookup and the controller
+# object it holds, so they need a zwave_js new enough to have them, and are
+# refused in words where it is not.
+# ---------------------------------------------------------------------------
+
+
+def _zwave_device(hass: HomeAssistant, call: ServiceCall):
+    device_id = str(call.data.get("device_id") or "").strip()
+    entity_id = str(call.data.get("entity_id") or "").strip()
+    if not device_id and entity_id:
+        entry = er.async_get(hass).async_get(entity_id)
+        device_id = getattr(entry, "device_id", None) or ""
+        if not device_id:
+            raise ServiceValidationError(
+                f"entity_id: {entity_id} belongs to no device brAIn can find.")
+    if not device_id:
+        raise ServiceValidationError(
+            "Name the Z-Wave device: device_id, or entity_id of one of its "
+            "entities.")
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        raise ServiceValidationError(f"device_id: no device has the id {device_id}.")
+    try:
+        from homeassistant.components.zwave_js.helpers import (
+            async_get_node_from_device_id,
+        )
+    except ImportError as err:
+        raise HomeAssistantError("The Z-Wave JS integration is not loaded.") from err
+    try:
+        node = async_get_node_from_device_id(hass, device_id)
+    except Exception as err:  # noqa: BLE001 — ValueError for a non-Z-Wave device
+        raise ServiceValidationError(
+            f"{getattr(device, 'name_by_user', None) or device.name or device_id} "
+            f"is not a Z-Wave device brAIn can reach: {err}") from err
+    controller = getattr(getattr(getattr(node, "client", None), "driver", None),
+                         "controller", None)
+    if controller is None:
+        raise HomeAssistantError("The Z-Wave JS server is not connected.")
+    name = getattr(device, "name_by_user", None) or getattr(device, "name", None)
+    return device_id, name, node, controller
+
+
+def _node_status(node) -> str:
+    status = getattr(node, "status", None)
+    name = getattr(status, "name", status)
+    return str(name or "unknown").lower()
+
+
+async def _zwave_remove_failed_node(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Remove a node the controller has marked failed (dead). A node that
+    is not dead is refused: the controller refuses it anyway, and removing a
+    working node is what exclusion is for. Previewed by default."""
+    device_id, name, node, controller = _zwave_device(hass, call)
+    remove = getattr(controller, "async_remove_failed_node", None)
+    if remove is None:
+        raise HomeAssistantError(
+            "This Z-Wave JS cannot remove a failed node from a service.")
+    status = _node_status(node)
+    result = {"dry_run": _dry_run(call, True), "device_id": device_id,
+              "name": name, "node_id": getattr(node, "node_id", None),
+              "status": status}
+    if status != "dead":
+        raise ServiceValidationError(
+            f"{name or device_id} is {status}, not dead, so it is not a failed "
+            "node. Only a node the controller has marked dead can be removed "
+            "this way; ping it first, or exclude it to remove a working one.")
+    if result["dry_run"]:
+        return result
+    await remove(node)
+    return result
+
+
+async def _zwave_rebuild_node_routes(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Ask the controller to rebuild one node's routes — the device page's
+    Rebuild routes. Answers whether the controller says it worked."""
+    device_id, name, node, controller = _zwave_device(hass, call)
+    rebuild = getattr(controller, "async_rebuild_node_routes", None) \
+        or getattr(controller, "async_heal_node", None)
+    if rebuild is None:
+        raise HomeAssistantError(
+            "This Z-Wave JS cannot rebuild a node's routes from a service.")
+    answer = await rebuild(node)
+    return {"device_id": device_id, "name": name,
+            "node_id": getattr(node, "node_id", None),
+            "rebuilt": bool(answer) if answer is not None else None}
+
+
+# ---------------------------------------------------------------------------
+# Energy dashboard
+# ---------------------------------------------------------------------------
+
+_ENERGY_STAT_KEYS = ("stat_energy_from", "stat_energy_to", "stat_cost",
+                     "stat_compensation", "stat_consumption", "stat_rate",
+                     "entity_energy_price", "stat_power")
+
+
+def _energy_manager_mod():
+    try:
+        from homeassistant.components.energy import data as energy_data
+    except ImportError as err:
+        raise HomeAssistantError("The energy integration is not loaded.") from err
+    return energy_data
+
+
+def _stat_ids_in(value) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            if key in _ENERGY_STAT_KEYS and isinstance(inner, str) and inner:
+                if key != "entity_energy_price":
+                    found.add(inner)
+            else:
+                found |= _stat_ids_in(inner)
+    elif isinstance(value, list):
+        for inner in value:
+            found |= _stat_ids_in(inner)
+    return found
+
+
+async def _get_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    energy_data = _energy_manager_mod()
+    manager = await energy_data.async_get_manager(hass)
+    prefs = manager.data
+    if prefs is None:
+        return {"configured": False, "energy_sources": [],
+                "device_consumption": []}
+    return {"configured": True, **dict(prefs)}
+
+
+async def _save_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Replace the energy dashboard's sources and/or individual devices.
+    Every statistic named must be one the recorder keeps; previewed by
+    default, because it replaces the whole list it names."""
+    energy_data = _energy_manager_mod()
+    update: dict[str, Any] = {}
+    for key in ("energy_sources", "device_consumption", "device_consumption_water"):
+        if call.data.get(key) is not None:
+            if not isinstance(call.data[key], list):
+                raise ServiceValidationError(f"{key} must be a list.")
+            update[key] = list(call.data[key])
+    if not update:
+        raise ServiceValidationError(
+            "Give energy_sources, device_consumption or both — the lists the "
+            "energy dashboard is made of (get_energy_prefs shows them).")
+    schemas = {"energy_sources": getattr(energy_data, "ENERGY_SOURCE_SCHEMA", None),
+               "device_consumption": getattr(energy_data, "DEVICE_CONSUMPTION_SCHEMA", None),
+               "device_consumption_water": getattr(
+                   energy_data, "DEVICE_CONSUMPTION_SCHEMA", None)}
+    for key, items in update.items():
+        schema = schemas.get(key)
+        if callable(schema):
+            try:
+                update[key] = [schema(i) for i in items] \
+                    if key != "energy_sources" else schema(items)
+            except Exception as err:  # noqa: BLE001 — vol.Invalid
+                raise ServiceValidationError(f"{key}: {err}") from err
+    named = _stat_ids_in(update)
+    get_instance, rstats = _recorder_parts()
+    found = await get_instance(hass).async_add_executor_job(
+        functools.partial(rstats.get_metadata, hass, statistic_ids=named))
+    missing = sorted(named - set(found or {}))
+    if missing:
+        raise ServiceValidationError(
+            "The recorder keeps no statistics called " + ", ".join(missing)
+            + "; the energy dashboard would show nothing for them.")
+    manager = await energy_data.async_get_manager(hass)
+    before = dict(manager.data or {})
+    result = {"dry_run": _dry_run(call, True), "statistics": sorted(named),
+              "before": {k: before.get(k) for k in update}, "after": update}
+    if result["dry_run"]:
+        return result
+    await manager.async_update(update)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Core configuration: the addresses Home Assistant is reached at
+# ---------------------------------------------------------------------------
+
+
+def _check_url(field: str, value):
+    if value in (None, ""):
+        return None
+    from urllib.parse import urlsplit
+
+    text = str(value).strip()
+    parts = urlsplit(text)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ServiceValidationError(
+            f"{field} must be a whole address like https://home.example.com "
+            f"or http://192.168.1.10:8123; {text!r} is not.")
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        raise ServiceValidationError(
+            f"{field} is the address of Home Assistant itself, with no path: "
+            f"{parts.scheme}://{parts.netloc} rather than {text}.")
+    try:
+        parts.port  # noqa: B018 — raises on a port that is not a number
+    except ValueError as err:
+        raise ServiceValidationError(f"{field} has a port that is not a number.") from err
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+async def _set_core_urls(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Set the internal and/or external address in Settings → System →
+    Network. An empty value clears that address (Home Assistant then works
+    it out)."""
+    changes: dict[str, Any] = {}
+    for name in ("internal_url", "external_url"):
+        if name in call.data:
+            changes[name] = _check_url(name, call.data.get(name))
+    if not changes:
+        raise ServiceValidationError("Give internal_url, external_url or both.")
+    before = {name: getattr(hass.config, name, None) for name in changes}
+    result = {"dry_run": _dry_run(call), "before": before, "after": changes}
+    if not result["dry_run"]:
+        await hass.config.async_update(**changes)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Thread
+# ---------------------------------------------------------------------------
+
+
+def _thread_store_mod():
+    try:
+        from homeassistant.components.thread import dataset_store
+    except ImportError as err:
+        raise HomeAssistantError("The Thread integration is not loaded.") from err
+    return dataset_store
+
+
+async def _list_thread_datasets(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """The Thread networks Home Assistant knows, and which is preferred.
+    The dataset itself (it holds the network key) is never returned."""
+    dataset_store = _thread_store_mod()
+    store = await dataset_store.async_get_store(hass)
+    preferred = getattr(store, "preferred_dataset", None)
+    rows = []
+    for dataset_id, entry in (getattr(store, "datasets", None) or {}).items():
+        rows.append({
+            "dataset_id": dataset_id,
+            "network_name": getattr(entry, "network_name", None),
+            "extended_pan_id": getattr(entry, "extended_pan_id", None),
+            "pan_id": getattr(entry, "pan_id", None),
+            "channel": getattr(entry, "channel", None),
+            "source": getattr(entry, "source", None),
+            "created": _iso(getattr(entry, "created", None)),
+            "preferred": dataset_id == preferred,
+        })
+    return {"datasets": rows, "preferred": preferred}
+
+
+async def _set_preferred_thread_dataset(
+    hass: HomeAssistant, call: ServiceCall
+) -> dict | None:
+    dataset_store = _thread_store_mod()
+    store = await dataset_store.async_get_store(hass)
+    dataset_id = str(call.data.get("dataset_id") or "").strip()
+    datasets = getattr(store, "datasets", None) or {}
+    if dataset_id not in datasets:
+        raise ServiceValidationError(
+            f"dataset_id: no Thread network has the id {dataset_id}; the ids "
+            "are " + (", ".join(
+                f"{i} ({getattr(e, 'network_name', None)})"
+                for i, e in datasets.items()) or "none") + ".")
+    setter = getattr(dataset_store, "async_set_preferred_dataset", None)
+    before = getattr(store, "preferred_dataset", None)
+    if setter is not None:
+        await setter(hass, dataset_id)
+    elif hasattr(store, "preferred_dataset"):
+        store.preferred_dataset = dataset_id
+        save = getattr(store, "async_schedule_save", None)
+        if callable(save):
+            save()
+    else:
+        raise HomeAssistantError(
+            "This Home Assistant's Thread integration cannot set the preferred "
+            "network from a service.")
+    return {"before": before, "preferred": dataset_id,
+            "network_name": getattr(datasets[dataset_id], "network_name", None)}
+
+
+# ---------------------------------------------------------------------------
 # Backups
 # ---------------------------------------------------------------------------
 
@@ -4125,6 +4413,35 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("add"): _STR_LIST,
         vol.Optional("remove"): _STR_LIST,
         vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    # Z-Wave
+    PowerTool("zwave_remove_failed_node", _zwave_remove_failed_node, {
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    PowerTool("zwave_rebuild_node_routes", _zwave_rebuild_node_routes, {
+        vol.Optional("device_id"): cv.string,
+        vol.Optional("entity_id"): cv.string,
+    }, has_response=True),
+    # Energy dashboard
+    PowerTool("get_energy_prefs", _get_energy_prefs, {}, has_response=True),
+    PowerTool("save_energy_prefs", _save_energy_prefs, {
+        vol.Optional("energy_sources"): list,
+        vol.Optional("device_consumption"): list,
+        vol.Optional("device_consumption_water"): list,
+        vol.Optional("dry_run", default=True): cv.boolean,
+    }, has_response=True),
+    # Core configuration
+    PowerTool("set_core_urls", _set_core_urls, {
+        vol.Optional("internal_url"): vol.Any(None, cv.string),
+        vol.Optional("external_url"): vol.Any(None, cv.string),
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    # Thread
+    PowerTool("list_thread_datasets", _list_thread_datasets, {}, has_response=True),
+    PowerTool("set_preferred_thread_dataset", _set_preferred_thread_dataset, {
+        vol.Required("dataset_id"): cv.string,
     }, has_response=True),
     # Backups
     PowerTool("list_backups", _list_backups, {}, has_response=True),
