@@ -3,8 +3,11 @@
   "name": "brAIn",
   "after_dependencies": [
     "blueprint",
+    "energy",
     "hassio",
-    "recorder"
+    "recorder",
+    "thread",
+    "zwave_js"
   ],
   "codeowners": [
     "@bruhautomation"

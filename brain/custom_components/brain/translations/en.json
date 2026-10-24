@@ -1611,15 +1611,15 @@
     },
     "set_core_urls": {
       "name": "Set Home Assistant addresses",
-      "description": "Set the internal and/or external address Home Assistant is reached at (Settings → System → Network). An empty value clears it. Each must be a whole address with no path, like https://home.example.com.",
+      "description": "Set the internal and/or external address Home Assistant is reached at (Settings → System → Network). An empty value clears it. Each must be a whole address with no path, just a scheme, a host name and an optional port.",
       "fields": {
         "internal_url": {
           "name": "Local address",
-          "description": "The address on the home network, like http://192.168.1.10:8123."
+          "description": "The address on the home network: a scheme, an IP address or host name, and the port."
         },
         "external_url": {
           "name": "Internet address",
-          "description": "The address from outside the home, like https://home.example.com."
+          "description": "The address from outside the home: a scheme, a host name and an optional port."
         },
         "dry_run": {
           "name": "Dry run",
