@@ -777,7 +777,15 @@
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "name": {
           "name": "Name",
@@ -787,11 +795,19 @@
     },
     "add_device_tracker_to_person": {
       "name": "Add device tracker to person",
-      "description": "Attach one or more device trackers to a person for presence detection.",
+      "description": "Attach one or more device trackers to a person for presence detection. Name the person by entity_id, person_id or name. Returns what was added and the person's trackers now.",
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "device_tracker": {
           "name": "Device trackers",
@@ -801,11 +817,19 @@
     },
     "remove_device_tracker_from_person": {
       "name": "Remove device tracker from person",
-      "description": "Detach one or more device trackers from a person.",
+      "description": "Detach one or more device trackers from a person. Name the person by entity_id, person_id or name. Returns what was removed, anything named that the person did not have, and the person's trackers now.",
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "device_tracker": {
           "name": "Device trackers",
@@ -1159,7 +1183,15 @@
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity to delete."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "dry_run": {
           "name": "Dry run",

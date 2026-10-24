@@ -1891,53 +1891,159 @@ def _person_parts(hass: HomeAssistant):
     return collection, entity_component
 
 
+def _person_label(item: dict) -> str:
+    return str(item.get("name") or item.get("id") or "this person")
+
+
+def _people_list(collection) -> str:
+    items = list(getattr(collection, "data", {}).values())
+    if not items:
+        return "there are no people made in the UI"
+    return "the people are " + ", ".join(
+        f"{_person_label(i)} (person_id {i.get('id')})" for i in items)
+
+
+def _resolve_person(hass: HomeAssistant, call: ServiceCall) -> tuple:
+    """The person a call names, by entity, by the id `person/list` shows,
+    or by name — and a sentence naming the wrong field when it names none.
+
+    Returns (collection, item_id, item, entity_id). Only a person made in
+    the UI lives in the storage collection; a YAML person can be named but
+    not changed here, and is refused saying so."""
+    collection, entity_component = _person_parts(hass)
+    data = getattr(collection, "data", {}) or {}
+    entity_id = str(call.data.get("entity_id") or "").strip()
+    person_id = str(call.data.get("person_id") or "").strip()
+    name = str(call.data.get("person") or "").strip()
+    if not (entity_id or person_id or name):
+        raise ServiceValidationError(
+            "Name the person: entity_id (their person entity, like "
+            "person.alex), person_id (the id person/list shows) or person "
+            "(their name).")
+
+    found: list[tuple[str, str]] = []  # (field, item_id)
+    if entity_id:
+        if not entity_id.startswith("person."):
+            raise ServiceValidationError(
+                f"entity_id must be a person entity like person.alex; "
+                f"{entity_id} is not one (a device tracker goes in "
+                "device_tracker).")
+        entity = entity_component.get_entity(entity_id)
+        if entity is None:
+            raise ServiceValidationError(
+                f"entity_id: no person is called {entity_id}; "
+                f"{_people_list(collection)}.")
+        config = getattr(entity, "_config", {}) or {}
+        if not getattr(entity, "editable", False) or config.get("id") not in data:
+            raise ServiceValidationError(
+                f"{entity_id} is defined in YAML (configuration.yaml), so it "
+                "is changed there, not by this service.")
+        found.append(("entity_id", config["id"]))
+    if person_id:
+        if person_id not in data:
+            hint = (" — that is an entity id; it goes in entity_id"
+                    if "." in person_id else "")
+            raise ServiceValidationError(
+                f"person_id: no person has the id {person_id}{hint}; "
+                f"{_people_list(collection)}.")
+        found.append(("person_id", person_id))
+    if name:
+        folded = name.casefold()
+        matches = [i for i, item in data.items()
+                   if str(item.get("name") or "").casefold() == folded]
+        if not matches:
+            raise ServiceValidationError(
+                f"person: nobody made in the UI is called {name!r}; "
+                f"{_people_list(collection)}.")
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                f"person: more than one person is called {name!r}; name one "
+                "by person_id instead (" + ", ".join(matches) + ").")
+        found.append(("person", matches[0]))
+
+    ids = {item_id for _f, item_id in found}
+    if len(ids) > 1:
+        raise ServiceValidationError(
+            "These name different people: " + "; ".join(
+                f"{field} is {_person_label(data[item_id])}"
+                for field, item_id in found) + ". Give one.")
+    item_id = found[0][1]
+    if not entity_id:
+        entity_id = next(
+            (e.entity_id for e in getattr(entity_component, "entities", []) or []
+             if (getattr(e, "_config", {}) or {}).get("id") == item_id), "")
+    return collection, item_id, data[item_id], entity_id
+
+
+def _tracker_list(call: ServiceCall) -> list[str]:
+    raw = call.data.get("device_tracker")
+    if raw is None or raw == "" or raw == []:
+        raise ServiceValidationError(
+            "device_tracker is missing: list the device trackers, like "
+            "device_tracker.phone.")
+    values = [raw] if isinstance(raw, str) else list(raw)
+    wrong = [str(v) for v in values
+             if not isinstance(v, str) or not v.startswith("device_tracker.")]
+    if wrong:
+        raise ServiceValidationError(
+            "device_tracker must list device_tracker entities; "
+            + ", ".join(wrong) + (" is" if len(wrong) == 1 else " are")
+            + " not.")
+    return list(dict.fromkeys(values))
+
+
 async def _person_trackers(
     hass: HomeAssistant, call: ServiceCall, *, add: bool
-) -> None:
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable: {call.data['entity_id']}"
-        )
-    trackers = set(entity.device_trackers)
-    requested = set(call.data["device_tracker"])
-    trackers = trackers | requested if add else trackers - requested
-    await collection.async_update_item(
-        entity._config["id"],  # noqa: SLF001
-        {"device_trackers": sorted(trackers)},
-    )
+) -> dict:
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
+    requested = _tracker_list(call)
+    current = list(item.get("device_trackers") or [])
+    label = _person_label(item)
+    result: dict[str, Any] = {"person": label, "person_id": item_id,
+                              "entity_id": entity_id or None}
+    if add:
+        result["added"] = [t for t in requested if t not in current]
+        result["already_tracked"] = [t for t in requested if t in current]
+        trackers = current + result["added"]
+    else:
+        result["removed"] = [t for t in requested if t in current]
+        result["not_tracked"] = [t for t in requested if t not in current]
+        if not result["removed"]:
+            has = ", ".join(current) if current else "no device trackers"
+            raise ServiceValidationError(
+                f"device_tracker: {label} is not tracked by "
+                + ", ".join(requested) + f"; {label} has {has}.")
+        trackers = [t for t in current if t not in result["removed"]]
+    trackers = sorted(trackers)
+    if trackers != sorted(current):
+        await collection.async_update_item(item_id,
+                                           {"device_trackers": trackers})
+    result["device_trackers"] = trackers
+    return result
 
 
 async def _add_device_tracker_to_person(
     hass: HomeAssistant, call: ServiceCall
-) -> None:
-    await _person_trackers(hass, call, add=True)
+) -> dict | None:
+    return await _person_trackers(hass, call, add=True)
 
 
 async def _remove_device_tracker_from_person(
     hass: HomeAssistant, call: ServiceCall
-) -> None:
-    await _person_trackers(hass, call, add=False)
+) -> dict | None:
+    return await _person_trackers(hass, call, add=False)
 
 
-async def _rename_person(hass: HomeAssistant, call: ServiceCall) -> None:
+async def _rename_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Rename a person. YAML-defined people are not editable, same as
     delete_person — say so rather than failing inside the collection."""
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
-        )
-    await collection.async_update_item(
-        entity._config["id"],  # noqa: SLF001
-        {"name": call.data["name"]},
-    )
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
+    name = str(call.data.get("name") or "").strip()
+    if not name:
+        raise ServiceValidationError("name is missing: give the new name.")
+    await collection.async_update_item(item_id, {"name": name})
+    return {"person_id": item_id, "entity_id": entity_id or None,
+            "old_name": item.get("name"), "name": name}
 
 
 async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -1953,23 +2059,17 @@ async def _create_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
 
 
 async def _delete_person(hass: HomeAssistant, call: ServiceCall) -> dict | None:
-    collection, entity_component = _person_parts(hass)
-    entity = entity_component.get_entity(call.data["entity_id"])
-    if entity is None:
-        raise ServiceValidationError(f"Person not found: {call.data['entity_id']}")
-    if not entity.editable or "id" not in entity._config:  # noqa: SLF001
-        raise ServiceValidationError(
-            f"This person is not editable (YAML-defined): {call.data['entity_id']}"
-        )
+    collection, item_id, item, entity_id = _resolve_person(hass, call)
     result = {
         "dry_run": _dry_run(call),
-        "entity_id": call.data["entity_id"],
-        "name": getattr(entity, "name", None),
-        "device_trackers": sorted(entity.device_trackers or []),
+        "person_id": item_id,
+        "entity_id": entity_id or None,
+        "name": item.get("name"),
+        "device_trackers": sorted(item.get("device_trackers") or []),
     }
     if _dry_run(call):
         return result
-    await collection.async_delete_item(entity._config["id"])  # noqa: SLF001
+    await collection.async_delete_item(item_id)
     return result
 
 
@@ -2821,6 +2921,12 @@ async def _remove_repair_issue(hass: HomeAssistant, call: ServiceCall) -> None:
 
 _STR_LIST = vol.All(cv.ensure_list, [cv.string])
 _ENTITY_LIST = vol.All(cv.ensure_list, [cv.entity_id])
+_LOOSE_LIST = vol.All(cv.ensure_list, [cv.string])
+_PERSON_FIELDS = {
+    vol.Optional("entity_id"): cv.string,
+    vol.Optional("person_id"): cv.string,
+    vol.Optional("person"): cv.string,
+}
 
 
 @dataclass(frozen=True)
@@ -3067,23 +3173,26 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
         vol.Optional("user_id"): cv.string,
         vol.Optional("device_tracker"): _ENTITY_LIST,
     }, has_response=True),
+    # A person is named by entity_id, person_id or person (their name), and
+    # every field is checked in the handler rather than by the schema: a
+    # schema refusal over REST is a bare 400 that names no field.
     PowerTool("delete_person", _delete_person, {
-        vol.Required("entity_id"): cv.entity_id,
+        **_PERSON_FIELDS,
         vol.Optional("dry_run", default=False): cv.boolean,
     }, has_response=True),
     PowerTool("rename_person", _rename_person, {
-        vol.Required("entity_id"): cv.entity_id,
-        vol.Required("name"): cv.string,
-    }),
+        **_PERSON_FIELDS,
+        vol.Optional("name"): cv.string,
+    }, has_response=True),
     PowerTool("add_device_tracker_to_person", _add_device_tracker_to_person, {
-        vol.Required("entity_id"): cv.entity_id,
-        vol.Required("device_tracker"): _ENTITY_LIST,
-    }),
+        **_PERSON_FIELDS,
+        vol.Optional("device_tracker"): _LOOSE_LIST,
+    }, has_response=True),
     PowerTool(
         "remove_device_tracker_from_person", _remove_device_tracker_from_person, {
-            vol.Required("entity_id"): cv.entity_id,
-            vol.Required("device_tracker"): _ENTITY_LIST,
-        },
+            **_PERSON_FIELDS,
+            vol.Optional("device_tracker"): _LOOSE_LIST,
+        }, has_response=True,
     ),
     # Blueprints
     PowerTool("import_blueprint", _import_blueprint, {
