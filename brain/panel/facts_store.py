@@ -101,6 +101,7 @@ SOURCES = (
     "correction", "card", "study", "voice", "chat", "terminal", "person",
     "check", "assist", "insights", "panel", "reply", "hook", "homeowner",
     "confirmed", "curiosity", "resident", "feedback", "user", "automation",
+    "gardenrx",
 )
 # A correction is what somebody typed to say brAIn had it wrong, and an
 # exception is the machine-readable half of one. Neither may be pruned
@@ -696,7 +697,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         expires: str = "", ts: float | None = None,
         extra_subjects=(), about: str = "", finding_key: str = "",
         near_dedupe: bool = False, said: str = "",
-        brain_fact: bool | None = None) -> tuple[dict | None, bool]:
+        brain_fact: bool | None = None,
+        keyed: bool = False) -> tuple[dict | None, bool]:
     """Record one fact. Returns ``(fact, created)``.
 
     A re-add is not a second fact: the id is the subject plus the
@@ -721,6 +723,10 @@ def add(text: str, *, subject: str = "", source: str = "panel",
     its text (`said_key`); ``brain_fact`` is the caller's judgement of
     `about_brain` (computed from the text alone when not given). Every row
     is stamped with the `version` it was filed under.
+
+    ``keyed`` marks a fact a producer keeps one of per ``predicate``
+    (`replace_keyed`): its totals change, so its text — and its id — moves
+    with every run, and the predicate is what names the row it replaces.
     """
     text = settle_text(text)
     if not text or not writable():
@@ -778,6 +784,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
                 row["version"] = version[:32]
             if brain_fact:
                 row["about_brain"] = True
+            if keyed:
+                row["keyed"] = True
             kept_said = list(_said_of(row) | set(said_keys))
             row["said"] = sorted(kept_said)[:MAX_SAID]
             # Seen again is seen again, whatever the reconcile last said:
@@ -812,6 +820,8 @@ def add(text: str, *, subject: str = "", source: str = "panel",
             entry["version"] = version[:32]
         if brain_fact:
             entry["about_brain"] = True
+        if keyed:
+            entry["keyed"] = True
         if about:
             entry["about"] = str(about)[:MAX_TEXT]
         if finding_key:
@@ -823,6 +833,45 @@ def add(text: str, *, subject: str = "", source: str = "panel",
         rows.append(entry)
         _write(_prune(rows))
     return dict(entry), True
+
+
+def replace_keyed(source: str, facts, *, ts: float | None = None) -> int:
+    """A producer's whole set of keyed facts, replacing the set it wrote last.
+
+    For a figure that changes — a season's totals — a fact per run would be
+    a pile of old totals, each still "true when it was said". So a producer
+    hands over everything it knows now, one fact per ``predicate``: each is
+    `add`ed (same text refreshes the row it already has), and every keyed
+    row of that ``source`` not in this set goes. Each fact is a dict with
+    ``text`` and ``predicate`` and optionally ``subject``,
+    ``extra_subjects``, ``expires`` and ``confidence``. Returns how many
+    are now in the store. A producer that could not look must not call
+    this: an empty set says there is nothing.
+    """
+    source = str(source or "").strip()[:32]
+    if not source or not writable():
+        return 0
+    kept: set[str] = set()
+    for fact in facts or ():
+        if not isinstance(fact, dict) or not str(fact.get("predicate") or ""):
+            continue
+        row, _created = add(
+            str(fact.get("text") or ""), subject=str(fact.get("subject") or ""),
+            source=source, predicate=str(fact["predicate"]),
+            expires=str(fact.get("expires") or ""),
+            extra_subjects=fact.get("extra_subjects") or (),
+            confidence=fact.get("confidence", 0.9), ts=ts, keyed=True,
+            brain_fact=False)
+        if row:
+            kept.add(str(row.get("id")))
+    with _locked():
+        rows = _load()
+        left = [r for r in rows if not (
+            r.get("keyed") and str(r.get("source") or "") == source
+            and str(r.get("id")) not in kept)]
+        if len(left) != len(rows):
+            _write(left)
+    return len(kept)
 
 
 def _is_exception_predicate(predicate: str) -> bool:
@@ -1213,10 +1262,15 @@ def recall(query: str = "", subject: str = "", subjects=(), limit: int = 20,
     for item in scored:
         row = item[5]
         head = str(row.get("subject") or "house")
+        # A keyed fact is one row per key by construction (`replace_keyed`),
+        # so its key is what the cap counts: nine crops' totals under one
+        # sensor are nine things, not one busy subject.
+        cap = (f"{head}\x00{row['predicate']}"
+               if row.get("keyed") and row.get("predicate") else head)
         if head not in wanted:
-            if per_subject.get(head, 0) >= PER_SUBJECT_CAP:
+            if per_subject.get(cap, 0) >= PER_SUBJECT_CAP:
                 continue
-            per_subject[head] = per_subject.get(head, 0) + 1
+            per_subject[cap] = per_subject.get(cap, 0) + 1
         out.append(dict(row))
         if len(out) >= max(1, int(limit or 20)):
             break

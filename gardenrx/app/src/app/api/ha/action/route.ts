@@ -2,10 +2,17 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/db/server';
 import { authorized } from '@/lib/ha/auth';
 import {
+  addCrop,
+  addVariety,
+  adjustInventory,
   completeQueuedSpray,
   deleteHarvest,
   deleteQueuedSpray,
+  getHarvests,
   logHarvest,
+  logNote,
+  logSpray,
+  queueSpray,
   type ActionResult,
 } from '@/lib/ha/actions';
 import type { DbClient } from '@/lib/db/query';
@@ -33,6 +40,20 @@ function run(
       return completeQueuedSpray(db, data, now, tz);
     case 'delete_queued_spray':
       return deleteQueuedSpray(db, data);
+    case 'log_spray':
+      return logSpray(db, data, now, tz);
+    case 'queue_spray':
+      return queueSpray(db, data, now, tz);
+    case 'adjust_inventory':
+      return adjustInventory(db, data, now, tz);
+    case 'add_crop':
+      return addCrop(db, data, now, tz);
+    case 'add_variety':
+      return addVariety(db, data, now, tz);
+    case 'log_note':
+      return logNote(db, data, now, tz);
+    case 'get_harvests':
+      return getHarvests(db, data, now, tz);
     default:
       return null;
   }

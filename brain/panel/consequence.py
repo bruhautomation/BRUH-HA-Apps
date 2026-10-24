@@ -55,6 +55,8 @@ GATED_MCP = frozenset({
     "set_device_class", "show_switch_as", "stop_showing_switch_as",
     "set_sensor_display",
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
+    "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
+    "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "report_bug", "timed_action",
 })
 # Built-in tools the gate reads only while a change contract is in force:

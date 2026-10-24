@@ -573,6 +573,10 @@ class TestMCPProtocol(unittest.TestCase):
             "bambu_design",
             # A few service calls at set moments, run by brAIn itself
             "timed_action",
+            # GardenRX: the garden's record, through its integration
+            "garden_status", "garden_harvests", "garden_log_harvest",
+            "garden_log_spray", "garden_queue_spray", "garden_adjust_inventory",
+            "garden_add_crop", "garden_log_note",
         }
         self.assertEqual(tool_names, expected_tools)
 

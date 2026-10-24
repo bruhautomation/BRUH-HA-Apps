@@ -12,8 +12,13 @@ that object out of the house's real data and nothing else.
 question goes to `/devloop/harness/ws`, which asks Core only what
 `screen_targets.READ_COMMANDS` names and refuses everything else, so a card
 that would write on load (Morph logs what is used) meets the same answer
-a press would. A hosted Lovelace card (`loadCardHelpers`) is drawn as a
-labelled box rather than a guess at what Home Assistant would draw.
+a press would. A custom card Morph hosts (`loadCardHelpers`) is drawn by
+its own code — a house's card from /config/morph/cards, served by name under
+`/devloop/harness/morph_cards/` and `/morph_cards/` (the path a card's own
+absolute import names) — and a card that throws on its config or on `hass`
+is a labelled box saying why. A built-in Lovelace card (a tile, an entities
+card) is Home Assistant's own code and is drawn as a labelled box rather than
+a guess at what Home Assistant would draw.
 
 The page is served on loopback only and is pure text here: `page(name)`.
 """
@@ -80,12 +85,71 @@ if (!customElements.get('ha-card')) customElements.define('ha-card', class exten
   attributeChangedCallback(_n, _o, v) { this.header = v; }
   set header(v) { this.shadowRoot.querySelector('.h').textContent = v || ''; }
 });
-window.loadCardHelpers = async () => ({ createCardElement(cfg) {
+const box = (text) => {
   const el = document.createElement('div');
   el.className = 'missing';
-  el.textContent = 'Lovelace ' + ((cfg && cfg.type) || 'card') + ' — drawn by Home Assistant, not in this preview';
+  el.textContent = text;
   return el;
+};
+// A custom card is drawn by its own code (Morph's cards in /config/morph/
+// cards are served from this page's morph_cards route), inside a wrapper
+// that turns a card that throws — on its config or on being handed hass —
+// into a labelled box. A built-in Lovelace card is Home Assistant's to draw.
+function customCard(cfg) {
+  const type = String((cfg && cfg.type) || '');
+  const tag = type.slice(7);
+  const wrap = document.createElement('div');
+  wrap.style.display = 'contents';
+  const fail = (why) => {
+    wrap.textContent = '';
+    wrap.appendChild(box(type + ' could not be drawn: ' + why));
+  };
+  let card = null;
+  try {
+    if (!customElements.get(tag)) throw new Error('its code did not define ' + tag);
+    card = document.createElement(tag);
+    if (card.setConfig) card.setConfig(cfg);
+    wrap.appendChild(card);
+  } catch (e) {
+    card = null;
+    fail((e && e.message) || String(e));
+  }
+  let current = null;
+  Object.defineProperty(wrap, 'hass', {
+    get: () => current,
+    set: (v) => {
+      current = v;
+      if (!card) return;
+      try { card.hass = v; } catch (e) { card = null; fail((e && e.message) || String(e)); }
+    },
+  });
+  wrap.getCardSize = () => (card && card.getCardSize ? card.getCardSize() : 1);
+  return wrap;
+}
+window.loadCardHelpers = async () => ({ async createCardElement(cfg) {
+  const type = String((cfg && cfg.type) || '');
+  if (!type.startsWith('custom:')) {
+    return box('Lovelace ' + (type || 'card') + ' — drawn by Home Assistant, not in this preview');
+  }
+  const tag = type.slice(7);
+  if (!customElements.get(tag)) {
+    await Promise.race([customElements.whenDefined(tag), new Promise((r) => setTimeout(r, 1500))]);
+  }
+  return customCard(cfg);
 } });
+// Morph is drawn once every card it hosts has something in its slot (its
+// own code, or a box saying why not), or after a bound.
+async function morphSettled(el) {
+  const until = Date.now() + 7000;
+  await new Promise((r) => setTimeout(r, 1500));
+  while (Date.now() < until) {
+    const root = el.shadowRoot;
+    const slots = root ? [...root.querySelectorAll('[data-ll]')] : [];
+    if (root && slots.every((s) => s.firstElementChild)) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  await new Promise((r) => setTimeout(r, 400));
+}
 window.__harnessReady = (async () => {
   const list = await ws({ type: 'get_states' });
   const states = {};
@@ -113,7 +177,7 @@ window.__harnessReady = (async () => {
     el.narrow = innerWidth < 870;
     el.hass = hass;
     root.appendChild(el);
-    await new Promise((r) => setTimeout(r, 2500));
+    await morphSettled(el);
     return;
   }
   for (const [tag, file] of CARDS) {

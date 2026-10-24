@@ -183,6 +183,7 @@ import doctor
 import energy
 import engine
 import facts_store
+import garden_facts
 import episodes
 import esphome
 import eventbus
@@ -11598,6 +11599,18 @@ def _record_rhythm(snapshot: dict, now: float) -> int:
         return 0
 
 
+def _record_garden(snapshot: dict, now: float) -> int | None:
+    """Keep one fact per crop with the garden's season so far
+    (`garden_facts`), read off the states this pass already fetched. None
+    when the garden could not be read — the facts are left as they were."""
+    try:
+        return garden_facts.sync(snapshot.get("states") or {}, now)
+    except Exception as exc:  # noqa: BLE001 — accounting must not fail the
+        # pass it is accounting for; same rule as `journal.record`.
+        log.warning("could not file the garden's season: %s", exc)
+        return None
+
+
 def _record_routines(snapshot: dict, now: float) -> int:
     """File the person-caused moves this pass saw, for the habit miner.
 
@@ -14850,6 +14863,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         await asyncio.to_thread(_record_rhythm, snapshot, started)
         await asyncio.to_thread(_record_routines, snapshot, started)
         await asyncio.to_thread(_record_manual, snapshot, started)
+        await asyncio.to_thread(_record_garden, snapshot, started)
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
@@ -14883,6 +14897,7 @@ async def run_checks(reason: str = "schedule") -> dict:
                 {findings_store.normalize(f["text"]) for f in shadow_rows})
             shadow_findings.prune(started)
             _note_pass_decisions(result, created)
+            _note_coverage(result, snapshot, started)
             return created, refreshed, cleared, {
                 "created": len(hidden), "found": len(shadow_rows)}
 
@@ -17596,6 +17611,12 @@ def _diagnostics_payload() -> dict:
         # broke, so the fault list names a check in words (`reports.faults`
         # is pure and cannot ask the catalog itself).
         "check_titles": _check_titles(CHECKS_STATE["last"]),
+        # Which parts of Home Assistant brAIn has looked at, per area: when,
+        # whether every check in it could look, and what it found — one
+        # line each, off the record every pass keeps (`checks.coverage`).
+        "coverage": _safe_summary(
+            lambda: checks.coverage.summary(checks.coverage.load(),
+                                            checks.CHECKS)),
         # What brAIn decided not to say, counted by reason over the last
         # day, and whether the trail can be read or written at all: a
         # trail that stopped writing makes every "why didn't you tell me"
@@ -21619,6 +21640,22 @@ def _signal_decisions(signals_list, kind: str, reason: str) -> list[dict]:
     return out
 
 
+def _note_coverage(result: dict, snapshot: dict, now: float) -> int:
+    """Record what this pass examined, per area, and put one "checked,
+    nothing wrong" line per clean area on the decision trail — so "did
+    you look at the recorder" has an answer. Never raises."""
+    try:
+        record = checks.coverage.record(
+            checks.coverage.load(), result, now, snapshot.get("errors") or {})
+        checks.coverage.save(record)
+        areas = checks.coverage.area_view(record, checks.CHECKS, now)
+        return decision_trail.note_many(checks.coverage.checked_rows(
+            areas, now, checks._util.house_tz()), now)
+    except Exception as exc:  # noqa: BLE001 — accounting never fails a pass
+        log.debug("could not record this pass's coverage: %s", exc)
+        return 0
+
+
 def _note_pass_decisions(result: dict, created: list[dict]) -> int:
     """What a checks pass withheld, onto the trail. Never raises."""
     try:
@@ -25532,6 +25569,10 @@ def make_app() -> web.Application:
     app.router.add_get("/devloop/harness/js/{name}", h_harness_js)
     app.router.add_get("/devloop/harness/morph/{name}", h_harness_morph)
     app.router.add_get("/devloop/harness/morph_cards/{name}", h_harness_morph_cards)
+    # A house's card that imports Morph's kit by the path Home Assistant
+    # serves it at (`/morph_cards/<name>.js`) finds it here too, by name,
+    # under the one root; loopback only, like the rest of the harness.
+    app.router.add_get("/morph_cards/{name}", h_harness_morph_cards)
     app.router.add_get("/devloop/harness/ws", h_harness_ws)
     app.router.add_get("/devloop/harness/{name}", h_harness_page)
     app.router.add_post("/api/devloop/item/{fp}/{verb}", h_devloop_item_verb)

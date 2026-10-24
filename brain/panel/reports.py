@@ -1161,6 +1161,17 @@ def _kv(row: dict) -> str:
     return "\n".join(out) if out else "(none)"
 
 
+def coverage_text(diagnostics) -> str:
+    """The coverage lines out of a diagnostics payload, one per area
+    (`checks.coverage.summary`). Never raises."""
+    try:
+        cov = diagnostics.get("coverage") if isinstance(diagnostics, dict) else None
+        lines = [str(x) for x in ((cov or {}).get("lines") or []) if x]
+    except Exception:  # noqa: BLE001 — a section, not the report
+        lines = []
+    return "\n".join(lines) if lines else "(not recorded yet)"
+
+
 def compose(kind: str, headline: str, what: str, look: str, *, now: float,
             run: dict | None, health: dict | None, extra_text: str,
             diagnostics, log_text: str) -> str:
@@ -1200,6 +1211,10 @@ def compose(kind: str, headline: str, what: str, look: str, *, now: float,
     # install that prompted it was in that file and none was findable.
     parts += ["--- what is wrong right now ---",
               faults_text(faults(diagnostics)), ""]
+    # And what was looked at: one line per part of Home Assistant, so a
+    # report says "checked, nothing wrong" or "could not look" for each
+    # rather than leaving an empty fault list to stand for both.
+    parts += ["--- what brAIn looked at ---", coverage_text(diagnostics), ""]
     parts += [f"--- add-on log, last {LOG_LINES} lines ---", log_text, ""]
     parts += ["--- diagnostics (abridged) ---",
               json.dumps(abridge(diagnostics), indent=1, ensure_ascii=False,

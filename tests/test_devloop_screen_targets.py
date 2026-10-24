@@ -532,3 +532,111 @@ class TestTheHarnessDrawsTheRealCode(unittest.TestCase):
                             for v in drawn), drawn)
         self.assertIn("morph/load", asked)
         self.assertTrue(set(asked) <= st.READ_COMMANDS, asked)
+
+    def test_morphs_own_custom_cards_are_drawn_by_their_code(self):
+        """A card brAIn wrote into /config/morph/cards is drawn by that file
+        (importing a kit beside it by both paths a card uses), a card that
+        throws is a box saying why, and a built-in Lovelace card is still
+        Home Assistant's to draw — with the write guard on throughout."""
+        import server  # noqa: PLC0415
+        os.environ["BRAIN_CHROMIUM"] = browser()
+        warm_up(os.environ["BRAIN_CHROMIUM"])
+        cards = Path(tempfile.mkdtemp())
+        (cards / "x-kit.js").write_text(
+            "export const word = () => 'GOOD CARD DRAWN';\n", encoding="utf-8")
+        (cards / "x-good.js").write_text(
+            "import { word } from './x-kit.js';\n"
+            "import { word as again } from '/morph_cards/x-kit.js';\n"
+            "customElements.define('x-good', class extends HTMLElement {\n"
+            "  setConfig(c) { this.c = c; }\n"
+            "  set hass(h) { this.textContent = word() + ' ' + again().length +"
+            " ' ' + Object.keys(h.states).length + ' states'; } });\n", encoding="utf-8")
+        (cards / "x-bad.js").write_text(
+            "customElements.define('x-bad', class extends HTMLElement {\n"
+            "  setConfig() { throw new Error('needs an entity'); } });\n", encoding="utf-8")
+        (cards / "x-sour.js").write_text(
+            "customElements.define('x-sour', class extends HTMLElement {\n"
+            "  setConfig() {}\n  set hass(h) { throw new Error('no sensor'); } });\n",
+            encoding="utf-8")
+        (cards / "x-broken.js").write_text("throw new Error('a typo');\n", encoding="utf-8")
+        lovelace = lambda cid, cfg: {"id": cid, "type": "lovelace", "card": cfg}  # noqa: E731
+        dash = {"title": "Home", "floors": [{"id": "f_home", "title": "Home", "sections": [
+            {"id": "s_cards", "title": "Cards", "color": "sand", "width": 3, "groups": [
+                {"cards": [lovelace("c_good", {"type": "custom:x-good"}),
+                           lovelace("c_bad", {"type": "custom:x-bad"}),
+                           lovelace("c_sour", {"type": "custom:x-sour"}),
+                           lovelace("c_broken", {"type": "custom:x-broken"}),
+                           lovelace("c_tile", {"type": "tile", "entity": "light.lamp"})]}]}]}]}
+        modules = [{"name": n, "v": 1} for n in ("x-good.js", "x-bad.js", "x-sour.js",
+                                                   "x-broken.js")]
+        load = {"mirror": {"revision": "r1", "dashboard": dash, "problems": [],
+                           "card_modules": modules},
+                "state": {"settings": {"fold_rooms": False}}, "brain": {}, "admin": True,
+                "now": 1.7e9, "code": "", "integration": "x"}
+        states = [{"entity_id": "light.lamp", "state": "on",
+                   "attributes": {"friendly_name": "Lamp"}}]
+        asked: list[str] = []
+
+        async def fake(session, commands, **kw):
+            kind = commands[0]["type"]
+            asked.append(kind)
+            if kind == "get_states":
+                return [{"ok": True, "result": states}]
+            if kind == "morph/load":
+                return [{"ok": True, "result": load}]
+            return [{"ok": True, "result": {} if kind == "get_config" else []}]
+
+        seen: list[str] = []
+
+        async def look(cdp, session):
+            r = await cdp.call("Runtime.evaluate", {"expression": (
+                "(() => { const p = document.querySelector('morph-panel');"
+                " return p && p.shadowRoot ? p.shadowRoot.textContent : ''; })()"),
+                "returnByValue": True}, session)
+            seen.append(r["result"]["value"])
+
+        from aiohttp import web  # noqa: PLC0415
+
+        async def run(out: Path):
+            app = web.Application()
+            app.router.add_get("/devloop/harness/morph/{name}", server.h_harness_morph)
+            app.router.add_get("/devloop/harness/morph_cards/{name}",
+                               server.h_harness_morph_cards)
+            app.router.add_get("/morph_cards/{name}", server.h_harness_morph_cards)
+            app.router.add_get("/devloop/harness/ws", server.h_harness_ws)
+            app.router.add_get("/devloop/harness/{name}", server.h_harness_page)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            port = site._server.sockets[0].getsockname()[1]
+            targets = st.harness_targets(f"http://127.0.0.1:{port}/", {"Morph": "1"})
+            try:
+                return await screens.capture(
+                    out, confidential=[], aliases=None, own=False, targets=targets,
+                    views=[(1200, 800, False, "light")])
+            finally:
+                await runner.cleanup()
+
+        old = screens.AFTER_REDACT
+        screens.AFTER_REDACT = look
+        tmp = tempfile.mkdtemp()
+        try:
+            with unittest.mock.patch("ha_data._ws_calls", fake), \
+                 unittest.mock.patch.object(st, "MORPH_CARDS", str(cards)), \
+                 unittest.mock.patch.object(st, "MORPH_FRONTEND",
+                                            str(BASE_DIR / "morph/custom_components/morph/frontend")):
+                result = asyncio.run(asyncio.wait_for(run(Path(tmp)), 180))
+        finally:
+            screens.AFTER_REDACT = old
+            shutil.rmtree(tmp, ignore_errors=True)
+            shutil.rmtree(cards, ignore_errors=True)
+        self.assertEqual(result["errors"], [])
+        text = " ".join(seen)
+        self.assertIn("GOOD CARD DRAWN 15 1 states", text)
+        self.assertIn("custom:x-bad could not be drawn: needs an entity", text)
+        self.assertIn("custom:x-sour could not be drawn: no sensor", text)
+        self.assertIn("custom:x-broken could not be drawn", text)
+        self.assertNotIn("custom:x-good — drawn by Home Assistant", text)
+        self.assertIn("Lovelace tile — drawn by Home Assistant", text)
+        self.assertTrue(set(asked) <= st.READ_COMMANDS, asked)
