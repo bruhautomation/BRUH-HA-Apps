@@ -84,6 +84,10 @@ KINDS = {
     "look_ignore": "brAIn looked and let it go",
     "look_watch": "brAIn looked and decided to watch it",
     "held": "looked at, and held back from the list",
+    # Not a silence about something wrong — the answer to "did you look at
+    # X": every check in that part of Home Assistant looked and found
+    # nothing. One row per area per day (the date is in the reason).
+    "checked": "brAIn looked and found nothing wrong",
 }
 
 # The decisions that are STANDING answers rather than events: a re-report
@@ -97,7 +101,7 @@ KINDS = {
 # look's verdict or a notification decision is an event at a time and is
 # written again past the window, as before.
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
-                        "drift", "claimed", "explained"})
+                        "drift", "claimed", "explained", "checked"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:
@@ -140,6 +144,11 @@ def _clean(row: dict, now: float) -> dict | None:
     source = str(row.get("source") or "").strip()[:64]
     if source:
         out["source"] = source
+    # The checks a "checked" row covers, so asking about one of them by id
+    # finds the area's row.
+    checks = [str(c).strip()[:96] for c in row.get("checks") or () if c][:40]
+    if checks:
+        out["checks"] = checks
     return out
 
 
@@ -283,7 +292,8 @@ def read() -> tuple[list[dict], bool]:
 def _about(row: dict, subject: str) -> bool:
     if row.get("subject") == subject or row.get("check") == subject:
         return True
-    return subject in (row.get("entities") or ())
+    return (subject in (row.get("entities") or ())
+            or subject in (row.get("checks") or ()))
 
 
 def for_subject(subject: str, *, since: float = 0.0, limit: int = 20,

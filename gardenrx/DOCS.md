@@ -51,6 +51,28 @@ as the Harvest page.
   takes what it used out of inventory, exactly as **Log this spray** on the
   Spray page does.
 - **`gardenrx.delete_queued_spray`** — `id`.
+- **`gardenrx.log_spray`** — a spray that was not queued: `product` (one or
+  a list, by name or id) and `crop` (one or a list) or `area` (`Orchard`,
+  `Garden`, `Landscape`), and optionally `rate`, `rate_unit`,
+  `volume_gallons`, `date` and `notes`. Without a rate it uses the label's
+  rate for those crops. A queued spray for the same crops is cleared and what
+  the spray used comes out of stock, as the Spray page's Log does; a product
+  not labelled for a crop is saved and `label_warning` says so.
+- **`gardenrx.queue_spray`** — the same crops and products, and optionally
+  `planned_date` and `notes`. It shows on the Spray page and is finished with
+  `complete_queued_spray`.
+- **`gardenrx.adjust_inventory`** — `product`, and either `change` (above
+  zero adds, below zero takes out) or `quantity` (how much is on hand). A
+  product not stocked yet is added to the Stock page, counted in `unit` or in
+  the unit its label is sold in.
+- **`gardenrx.add_crop`** — `name`, and optionally `crop_group`. A crop the
+  catalog knows gets its group without being told.
+- **`gardenrx.add_variety`** — `crop` and `name`.
+- **`gardenrx.log_note`** — `place`, `note`, and optionally `date`. GardenRX
+  has no journal, so a note is kept on a place on the Garden Map (a bed, a
+  tree), one dated line each, and shows in that place's Edit dialog.
+- **`gardenrx.get_harvests`** — response only: optionally `crop`, `start` and
+  `end`. The harvests, newest first, with `totals` per crop and unit.
 - **`gardenrx.refresh`** — read the garden now instead of at the next poll.
 
 Every service answers with what it did (call it with *response* in an

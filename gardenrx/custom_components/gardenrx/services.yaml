@@ -66,4 +66,167 @@ delete_queued_spray:
           min: 1
           max: 1000000000
           mode: box
+log_spray:
+  fields:
+    crop:
+      example: "Apples"
+      selector:
+        text:
+          multiple: true
+    area:
+      example: "Orchard"
+      selector:
+        select:
+          multiple: true
+          options: ["Orchard", "Garden", "Landscape"]
+    product:
+      required: true
+      example: "Captan"
+      selector:
+        text:
+          multiple: true
+    rate:
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: any
+          mode: box
+    rate_unit:
+      example: "fl oz/gal"
+      selector:
+        text:
+    volume_gallons:
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: any
+          mode: box
+    date:
+      selector:
+        date:
+    notes:
+      selector:
+        text:
+queue_spray:
+  fields:
+    crop:
+      example: "Apples"
+      selector:
+        text:
+          multiple: true
+    area:
+      example: "Orchard"
+      selector:
+        select:
+          multiple: true
+          options: ["Orchard", "Garden", "Landscape"]
+    product:
+      required: true
+      example: "Captan"
+      selector:
+        text:
+          multiple: true
+    rate:
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: any
+          mode: box
+    rate_unit:
+      example: "fl oz/gal"
+      selector:
+        text:
+    planned_date:
+      selector:
+        date:
+    notes:
+      selector:
+        text:
+adjust_inventory:
+  fields:
+    product:
+      required: true
+      example: "Captan"
+      selector:
+        text:
+    change:
+      example: -4
+      selector:
+        number:
+          min: -100000
+          max: 100000
+          step: any
+          mode: box
+    quantity:
+      example: 32
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: any
+          mode: box
+    unit:
+      example: "fl oz"
+      selector:
+        select:
+          options: ["mL", "fl oz", "tbsp", "tsp", "pt", "qt", "gal", "g", "oz", "lb", "ct", "packets"]
+    notes:
+      selector:
+        text:
+add_crop:
+  fields:
+    name:
+      required: true
+      example: "Tomatoes"
+      selector:
+        text:
+    crop_group:
+      example: "Nightshades"
+      selector:
+        text:
+add_variety:
+  fields:
+    crop:
+      required: true
+      example: "Apples"
+      selector:
+        text:
+    name:
+      required: true
+      example: "Liberty"
+      selector:
+        text:
+log_note:
+  fields:
+    place:
+      required: true
+      example: "North bed"
+      selector:
+        text:
+    note:
+      required: true
+      example: "Aphids on the kale"
+      selector:
+        text:
+          multiline: true
+    date:
+      selector:
+        date:
+get_harvests:
+  fields:
+    crop:
+      example: "Apples"
+      selector:
+        text:
+    start:
+      selector:
+        date:
+    end:
+      selector:
+        date:
 refresh:

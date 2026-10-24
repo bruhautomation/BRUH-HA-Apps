@@ -1,7 +1,7 @@
 ---
 name: "BRUH Task Manager"
 description: "See what is using your Home Assistant machine's CPU and memory, app by app — and, if you choose, process by process — and restart or stop what is running too hard"
-version: "0.1.1"
+version: "0.1.2"
 slug: "bruh-task-manager"
 init: false
 

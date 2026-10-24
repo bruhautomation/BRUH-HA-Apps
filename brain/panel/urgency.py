@@ -54,6 +54,9 @@ PRODUCER_URGENCY = {
     "check:chore.waiting": "whenever",
     # The same chore read off a printer's or a washer's own status.
     "check:chore.job_done": "whenever",
+    # A dehumidifier with a full tank: a damp room for as long as nobody
+    # empties it, and nothing about it is worth waking anybody for.
+    "check:chore.dehumidifier": "today",
     # Pipes. This is the one climate finding that is about the next few
     # hours rather than about the building, and the hours it fires in are
     # exactly the ones quiet hours would hold it through.

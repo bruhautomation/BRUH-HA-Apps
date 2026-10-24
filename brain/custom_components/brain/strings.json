@@ -777,7 +777,15 @@
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "name": {
           "name": "Name",
@@ -787,11 +795,19 @@
     },
     "add_device_tracker_to_person": {
       "name": "Add device tracker to person",
-      "description": "Attach one or more device trackers to a person for presence detection.",
+      "description": "Attach one or more device trackers to a person for presence detection. Name the person by entity_id, person_id or name. Returns what was added and the person's trackers now.",
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "device_tracker": {
           "name": "Device trackers",
@@ -801,11 +817,19 @@
     },
     "remove_device_tracker_from_person": {
       "name": "Remove device tracker from person",
-      "description": "Detach one or more device trackers from a person.",
+      "description": "Detach one or more device trackers from a person. Name the person by entity_id, person_id or name. Returns what was removed, anything named that the person did not have, and the person's trackers now.",
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "device_tracker": {
           "name": "Device trackers",
@@ -895,7 +919,7 @@
     },
     "enable_user": {
       "name": "Enable user",
-      "description": "Re-enable one or more disabled Home Assistant user accounts.",
+      "description": "Re-enable one or more disabled Home Assistant user accounts. Returns the users enabled.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -905,7 +929,7 @@
     },
     "disable_user": {
       "name": "Disable user",
-      "description": "Disable one or more Home Assistant user accounts. Owner accounts and system-generated users are protected and cannot be disabled.",
+      "description": "Disable one or more Home Assistant user accounts. Owner accounts, system-generated users and the last remaining administrator are protected and cannot be disabled.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -1159,7 +1183,15 @@
       "fields": {
         "entity_id": {
           "name": "Person",
-          "description": "The person entity to delete."
+          "description": "The person entity, like person.alex. Or name the person with person_id or person instead."
+        },
+        "person_id": {
+          "name": "Person id",
+          "description": "The person's id as person/list shows it, instead of entity_id."
+        },
+        "person": {
+          "name": "Person name",
+          "description": "The person's name (not case-sensitive), instead of entity_id."
         },
         "dry_run": {
           "name": "Dry run",
@@ -1191,7 +1223,7 @@
     },
     "delete_user": {
       "name": "Delete user",
-      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts and system-generated users are protected and cannot be deleted. Set dry_run to preview the accounts that would be deleted.",
+      "description": "Delete one or more Home Assistant user accounts and their credentials. Owner accounts, system-generated users and the last remaining administrator are protected and cannot be deleted. Set dry_run to preview the accounts that would be deleted.",
       "fields": {
         "user_id": {
           "name": "User IDs",
@@ -1314,6 +1346,374 @@
         "unit_of_measurement": {
           "name": "Unit",
           "description": "The unit to show it in, e.g. °F or kWh. Only for sensors Home Assistant can convert."
+        }
+      }
+    },
+    "set_user_group": {
+      "name": "Set user group",
+      "description": "Make a Home Assistant user an administrator, an ordinary user or read-only. The owner, system users and the last remaining administrator are refused. Returns the groups before and after.",
+      "fields": {
+        "user_id": {
+          "name": "User ID",
+          "description": "The user's id, as list_users shows it."
+        },
+        "group": {
+          "name": "Group",
+          "description": "admin, user or read_only."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change — nothing is modified."
+        }
+      }
+    },
+    "list_users": {
+      "name": "List users",
+      "description": "Every Home Assistant user with their groups, whether they are active, local-only or a system user, and when each of their sign-ins (apps, browsers, long-lived tokens) was last used, so an unused account can be shown to be unused. Token values are never returned.",
+      "fields": {
+        "include_system": {
+          "name": "Include system users",
+          "description": "Also list the users Home Assistant and add-ons create for themselves."
+        },
+        "unused_for_days": {
+          "name": "Unused for days",
+          "description": "Mark each user whose sign-ins have not been used for this many days (or ever) as unused."
+        }
+      }
+    },
+    "list_backups": {
+      "name": "List backups",
+      "description": "Every backup Home Assistant knows about, newest first, with its name, date, size, where it is kept, and whether it was automatic, partial or password-protected. Needs Home Assistant 2025.1 or later."
+    },
+    "delete_backups": {
+      "name": "Delete backups",
+      "description": "Delete the backups a filter picks — by id, age, name or kind — keeping the newest of them if asked. Previews by default; set dry_run off to delete. A call with no filter, or one that would leave no backup at all, is refused.",
+      "fields": {
+        "backup_id": {
+          "name": "Backup IDs",
+          "description": "Exactly these backups, as list_backups shows them."
+        },
+        "older_than_days": {
+          "name": "Older than (days)",
+          "description": "Only backups made more than this many days ago."
+        },
+        "name_contains": {
+          "name": "Name contains",
+          "description": "Only backups whose name contains this (not case-sensitive)."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "Only automatic, manual, full or partial backups."
+        },
+        "keep_newest": {
+          "name": "Keep newest",
+          "description": "Of the backups the filter picks, keep this many of the newest."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report what would be deleted."
+        }
+      }
+    },
+    "create_backup": {
+      "name": "Create backup",
+      "description": "Make a backup now — full, or partial on Home Assistant OS and Supervised — through the Supervisor where there is one, otherwise the backup integration. Waits until it is made.",
+      "fields": {
+        "partial": {
+          "name": "Partial",
+          "description": "Back up only what is named below instead of everything (needs the Supervisor)."
+        },
+        "name": {
+          "name": "Name",
+          "description": "A name for the backup (Supervisor only)."
+        },
+        "password": {
+          "name": "Password",
+          "description": "Protect the backup with this password (Supervisor only)."
+        },
+        "homeassistant": {
+          "name": "Home Assistant",
+          "description": "In a partial backup, include Home Assistant's own configuration."
+        },
+        "addons": {
+          "name": "Add-ons",
+          "description": "In a partial backup, the add-on slugs to include."
+        },
+        "folders": {
+          "name": "Folders",
+          "description": "In a partial backup, the folders to include (share, media, ssl, addons/local)."
+        }
+      }
+    },
+    "adjust_statistic_sum": {
+      "name": "Adjust statistic sum",
+      "description": "Add an amount to a meter's long-term sum from one hour onward, the way the Statistics screen's adjust-sum dialog does — to fix a wrong reading in the energy dashboard. Previews by default; set dry_run off to change it.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistic",
+          "description": "The statistic id, usually the meter's entity id."
+        },
+        "start_time": {
+          "name": "From",
+          "description": "The hour the adjustment starts at; every later hour moves by the same amount."
+        },
+        "adjustment": {
+          "name": "Adjustment",
+          "description": "The amount to add to the sum (negative to take it away)."
+        },
+        "unit": {
+          "name": "Unit",
+          "description": "The adjustment's unit; it must be the unit the statistic is kept in. Leave out to use it."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report what would change."
+        }
+      }
+    },
+    "clear_orphaned_statistics": {
+      "name": "Clear orphaned statistics",
+      "description": "Find the long-term statistics the recorder keeps for entities that no longer exist, and delete them. External statistics (domain:object_id) are never touched. Previews by default.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistics",
+          "description": "Only these statistic ids (each must be an orphan). Leave out to find them all."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only list the orphans."
+        }
+      }
+    },
+    "heal_statistic_spikes": {
+      "name": "Heal statistic spikes",
+      "description": "Find the hours where a meter's sum jumped absurdly — a counter glitch near 2^30, a sum that fell, or a change over the bound you give — and take each jump out, keeping what the meter's own readings say the hour really added. Previews by default.",
+      "fields": {
+        "statistic_id": {
+          "name": "Statistic",
+          "description": "The meter's statistic id, usually its entity id."
+        },
+        "max_hourly_change": {
+          "name": "Largest real hourly change",
+          "description": "Any hour that added more than this is a spike. Leave out to find only glitches and falls."
+        },
+        "days": {
+          "name": "Days back",
+          "description": "How many days of history to look through."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only list the spikes and the adjustments."
+        }
+      }
+    },
+    "set_integration_options": {
+      "name": "Set integration options",
+      "description": "Change an integration's options through its own Configure form — only the fields named change, the rest stay as they are. A form of more than one step, or a menu, is refused with what it asked for. A dry run lists the fields the form asks for and changes nothing.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "The integration entry's id."
+        },
+        "options": {
+          "name": "Options",
+          "description": "The fields to set, as a mapping of field name to value (scan_interval set to 60, say). A dry run lists the fields the form asks for."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report the form's fields and what would change."
+        }
+      }
+    },
+    "set_group_members": {
+      "name": "Set group members",
+      "description": "Set, add to or take from the members of a group helper made in the UI, through the group's own options form. Members must be the group's kind (a light group holds lights). Returns the members before and after.",
+      "fields": {
+        "entity_id": {
+          "name": "Group",
+          "description": "The group helper's entity."
+        },
+        "entities": {
+          "name": "Members",
+          "description": "The whole list of members it should have."
+        },
+        "add": {
+          "name": "Add",
+          "description": "Members to add."
+        },
+        "remove": {
+          "name": "Remove",
+          "description": "Members to take out."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change."
+        }
+      }
+    },
+    "zwave_remove_failed_node": {
+      "name": "Remove failed Z-Wave node",
+      "description": "Remove a Z-Wave node the controller has marked dead, the way the device page's Remove failed device does. A node that is not dead is refused. Previews by default.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Z-Wave device."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "Or one of the device's entities, instead of device_id."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report the node and its status."
+        }
+      }
+    },
+    "zwave_rebuild_node_routes": {
+      "name": "Rebuild Z-Wave node routes",
+      "description": "Ask the Z-Wave controller to rebuild one node's routes, the way the device page's Rebuild routes does. Answers whether the controller says it worked.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The Z-Wave device."
+        },
+        "entity_id": {
+          "name": "Entity",
+          "description": "Or one of the device's entities, instead of device_id."
+        }
+      }
+    },
+    "get_energy_prefs": {
+      "name": "Get energy settings",
+      "description": "The energy dashboard's settings — its sources (grid, solar, battery, gas, water) and the individual devices it lists."
+    },
+    "save_energy_prefs": {
+      "name": "Save energy settings",
+      "description": "Replace the energy dashboard's sources and/or individual devices. Every statistic named must be one the recorder keeps. Previews by default, because each list given replaces the whole list.",
+      "fields": {
+        "energy_sources": {
+          "name": "Sources",
+          "description": "The whole list of sources, in the shape get_energy_prefs answers."
+        },
+        "device_consumption": {
+          "name": "Individual devices",
+          "description": "The whole list of individual devices, each with its stat_consumption."
+        },
+        "device_consumption_water": {
+          "name": "Individual water devices",
+          "description": "The whole list of individual water devices (newer Home Assistant only)."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on (the default), only report what would change."
+        }
+      }
+    },
+    "set_core_urls": {
+      "name": "Set Home Assistant addresses",
+      "description": "Set the internal and/or external address Home Assistant is reached at (Settings → System → Network). An empty value clears it. Each must be a whole address with no path, just a scheme, a host name and an optional port.",
+      "fields": {
+        "internal_url": {
+          "name": "Local address",
+          "description": "The address on the home network: a scheme, an IP address or host name, and the port."
+        },
+        "external_url": {
+          "name": "Internet address",
+          "description": "The address from outside the home: a scheme, a host name and an optional port."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would change."
+        }
+      }
+    },
+    "list_thread_datasets": {
+      "name": "List Thread networks",
+      "description": "The Thread networks Home Assistant knows, with their name, channel and which one is preferred. The network key is never returned."
+    },
+    "set_preferred_thread_dataset": {
+      "name": "Set preferred Thread network",
+      "description": "Make one of the Thread networks Home Assistant knows the preferred one, which new Thread devices join.",
+      "fields": {
+        "dataset_id": {
+          "name": "Network",
+          "description": "The network's dataset id, as list_thread_datasets shows it."
+        }
+      }
+    },
+    "create_category": {
+      "name": "Create category",
+      "description": "Make a category on the automation, script, scene or helper list. Returns its category_id.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list it groups — automation, script, scene or helpers."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The category's name; it must be new on that list."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "An icon for it."
+        }
+      }
+    },
+    "update_category": {
+      "name": "Update category",
+      "description": "Rename a category or change its icon. Only the fields given change.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The new name."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "The new icon."
+        }
+      }
+    },
+    "delete_category": {
+      "name": "Delete category",
+      "description": "Delete a category. What was in it is not deleted, only left uncategorised, and the answer lists it. Set dry_run to preview.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would be left uncategorised."
+        }
+      }
+    },
+    "set_entity_category": {
+      "name": "Set category",
+      "description": "Put automations, scripts, scenes or helpers in a category, or take them out of one by leaving the category empty.",
+      "fields": {
+        "entity_id": {
+          "name": "Entities",
+          "description": "The automations, scripts, scenes or helpers."
+        },
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id; empty takes them out of their category."
         }
       }
     }

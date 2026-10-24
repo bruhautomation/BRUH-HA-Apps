@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+### Security
+
+- **A name sent to the panel cannot forge a line in the add-on's log.** The app name and action a Restart or Stop request carries are written to the log with line breaks and other control characters replaced.
+
 ## 0.1.1
 
 ### Fixed

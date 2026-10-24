@@ -46,9 +46,9 @@ from __future__ import annotations
 # ``snapshot`` is imported here too, so ``checks.snapshot.collect`` resolves
 # off the package the way server.py calls it; its aiohttp import is lazy,
 # inside the collector, so this costs the test suite nothing.
-from . import (automations, baseline, chores, dashboards,  # noqa: F401
-               devices, evening, forecasts, registry, safety, security,
-               snapshot, system, thermal)
+from . import (audit, automations, baseline, chores,  # noqa: F401
+               coverage, dashboards, devices, evening, forecasts, integrations, network, registry,
+               safety, security, snapshot, system, thermal)
 from ._util import CouldNotLook, House, history_cut
 
 # The catalog. Order is the order results are filed in, which is also the
@@ -60,9 +60,18 @@ CHECKS: list[dict] = [
     *safety.CHECKS,
     *automations.CHECKS,
     *devices.CHECKS,
+    # The networks devices talk through, and what the integrations log —
+    # the reason a device keeps dropping off (checks/network.py,
+    # checks/integrations.py).
+    *network.CHECKS,
     *dashboards.CHECKS,
     *registry.CHECKS,
     *system.CHECKS,
+    *integrations.CHECKS,
+    # The parts of Home Assistant nothing else read: open repairs, the
+    # Energy dashboard, what places people, custom integrations, an
+    # add-on an integration needs, HACS (checks/audit.py).
+    *audit.CHECKS,
     # Who and what can reach the house — read deterministically, and each
     # rule fires only on a state somebody chose (see checks/security.py).
     *security.CHECKS,
@@ -116,6 +125,15 @@ GROUP_TITLES = {
     "climate": "Climate check",
     "sec": "Security check",
     "safety": "Safety check",
+    # A network check names its network on the card (`source_title` on
+    # each catalog entry); this is the group's word where none does.
+    "net": "Network check",
+    "integ": "Integrations",
+    "repairs": "Repairs",
+    "energy": "Energy",
+    "people": "People",
+    "hacs": "HACS",
+    "addon": "Add-ons",
 }
 
 
@@ -124,6 +142,11 @@ def source_for(check_id: str) -> str:
 
 
 def title_for(check_id: str) -> str:
+    """The producer's name on a card: the catalog entry's own
+    `source_title` where it has one ("Network (Z-Wave)"), else its group's."""
+    own = (get_check(check_id) or {}).get("source_title")
+    if own:
+        return str(own)
     return GROUP_TITLES.get(check_id.split(".", 1)[0], "House check")
 
 
@@ -157,7 +180,10 @@ def run_all(snap: dict, now: float | None = None,
 
     Returns ``{"findings": [...], "shadow": [...], "ran": [ids],
     "skipped": {id: reason}, "errors": {id: message}, "per_check":
-    {id: count}, "withheld": [decision rows]}``. A check that raises is
+    {id: count}, "absent": {id: why}, "withheld": [decision rows]}``.
+    ``absent`` names the checks that ran and found nothing because what
+    they read is not in this house (a catalog entry's ``absent``
+    callable), which coverage says in those words. A check that raises is
     reported under ``errors`` and treated as not run: one bad rule must
     not take the batch down, and must not clear anything either.
 
@@ -184,6 +210,7 @@ def run_all(snap: dict, now: float | None = None,
     skipped: dict[str, str] = {}
     errors: dict[str, str] = {}
     per_check: dict[str, int] = {}
+    absent: dict[str, str] = {}
     names_cache: dict = {}
     for check in CHECKS:
         cid = check["id"]
@@ -202,6 +229,22 @@ def run_all(snap: dict, now: float | None = None,
             skipped[cid] = ("Home Assistant's history is incomplete this "
                             "pass (sys.history_incomplete)")
             continue
+        # A check whose subject is not in this house at all (no HACS, no
+        # Matter, no energy dashboard) RAN and found nothing — it may clear
+        # its own rows — and says why, so coverage can say "not set up
+        # here" rather than "checked, nothing wrong".
+        applies = check.get("absent")
+        if applies is not None:
+            try:
+                why = applies(snap)
+            except Exception as exc:  # noqa: BLE001 — one rule must not sink the batch
+                errors[cid] = f"{type(exc).__name__}: {exc}"[:200]
+                continue
+            if why:
+                ran.append(cid)
+                per_check[cid] = 0
+                absent[cid] = str(why)
+                continue
         try:
             found = check["run"](snap, now) or []
         except CouldNotLook as exc:
@@ -224,5 +267,5 @@ def run_all(snap: dict, now: float | None = None,
                 f["todo_text"] = _todo_text(snap, f, names_cache)
             into.append(f)
     return {"findings": out, "shadow": hidden, "ran": ran, "skipped": skipped,
-            "errors": errors, "per_check": per_check,
+            "errors": errors, "per_check": per_check, "absent": absent,
             "withheld": list(snap["_trail"])}

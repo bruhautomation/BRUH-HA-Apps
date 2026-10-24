@@ -464,6 +464,58 @@ def _power_owns(house: House, snap: dict, eid: str) -> bool:
     return False
 
 
+# BRUH Bambu Studio's print failure detection publishes, per printer, a
+# "Plate clear" binary sensor: off while a print is on the plate, on once it
+# has been taken off, unknown when nothing has looked. It is read off the
+# snapshot by what the integration REGISTERED (its platform and translation
+# key, or the unique id it builds), never by name, and nothing is imported
+# from that add-on.
+PLATE_PLATFORM = "bruh_bambu"
+PLATE_KEY = "plate_clear"
+
+
+def _is_plate(reg: dict) -> bool:
+    if str(reg.get("platform") or "") != PLATE_PLATFORM:
+        return False
+    if str(reg.get("translation_key") or "") == PLATE_KEY:
+        return True
+    return str(reg.get("unique_id") or "").endswith("_" + PLATE_KEY)
+
+
+def plate_for(house: House, eid: str) -> str:
+    """The plate sensor for the printer this status entity belongs to, or
+    "". On the same device, or on a device carrying the same serial number
+    (the add-on's own device beside another integration's)."""
+    device = house.device_of(eid) or {}
+    if not device:
+        return ""
+    serial = str(device.get("serial_number") or "").strip()
+    for other in house.entities:
+        oid = str(other.get("entity_id") or "")
+        if domain_of(oid) != "binary_sensor" or not _is_plate(other):
+            continue
+        if other.get("device_id") == device.get("id"):
+            return oid
+        theirs = house.devices.get(other.get("device_id") or "") or {}
+        if serial and str(theirs.get("serial_number") or "").strip() == serial:
+            return oid
+    return ""
+
+
+def plate_reading(house: House, plate: str, finished: float) -> str:
+    """`"clear"`, `"occupied"`, or "" when the plate says nothing about
+    THIS print: no reading, or a clear plate whose reading predates the
+    finish (it was cleared before the job, not after)."""
+    st = house.states.get(plate) or {}
+    if st.get("state") == "off":
+        return "occupied"
+    if st.get("state") == "on":
+        changed = parse_ts(st.get("last_changed"))
+        if changed is not None and changed >= finished:
+            return "clear"
+    return ""
+
+
 def job_done(snap: dict, now: float) -> list[dict]:
     """Status entities whose job finished a while ago and has not restarted."""
     states = snap.get("states") or {}
@@ -494,7 +546,11 @@ def job_done(snap: dict, now: float) -> list[dict]:
         ago_min = (now - finished) / 60.0
         if ago_min < QUIET_MIN or ago_min > STALE_HOURS * 60.0:
             continue
-        hits.append((finished, kind, eid))
+        plate = plate_for(house, eid) if kind == "printer" else ""
+        seen = plate_reading(house, plate, finished) if plate else ""
+        if seen == "clear":
+            continue        # taken off: the chore is done
+        hits.append((finished, kind, eid, seen))
 
     if len(hits) > MAX_ROWS:
         house.gave_up("chore.job_done", [{"entity_id": h[2]} for h in hits],
@@ -505,7 +561,7 @@ def job_done(snap: dict, now: float) -> list[dict]:
     hits.sort()
 
     out = []
-    for finished, kind, eid in hits:
+    for finished, kind, eid, seen in hits:
         ago = int((now - finished) / 60.0)
         when = numfmt.ago_minutes(ago)
         state = state_words((states.get(eid) or {}).get("state"))
@@ -516,7 +572,10 @@ def job_done(snap: dict, now: float) -> list[dict]:
                        f"“{state}” {when}, and has not started "
                        "another job since. Read from the status its own "
                        "integration publishes."),
-            "fix": (("Take the print off" if kind == "printer"
+            "fix": ("Take the print off. This clears itself once BRUH "
+                    "Bambu Studio sees the plate clear."
+                    if seen == "occupied" else
+                    ("Take the print off" if kind == "printer"
                      else "Empty it")
                     + ", then mark it done — brAIn cannot see that "
                     "you have, because the status says the same thing "
@@ -529,14 +588,102 @@ def job_done(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# A dehumidifier that stopped while the room is still damp
+# ---------------------------------------------------------------------------
+#
+# A dehumidifier is not a machine that finishes and waits: it stops when the
+# air is dry, and it stops when its tank is full. Power alone cannot tell the
+# two apart, and the room's humidity can — so the appliance store records,
+# for a machine it knows is a dehumidifier (`appliances.dehumidifiers`), the
+# humidity in its room and the level it measurably starts running at, read
+# off its own runs. A machine switched on, at standby for `DRY_STOPPED_H`,
+# in a room `DRY_MARGIN` points above that level is a tank to empty. It
+# clears itself when the machine runs again or the air dries. Floors: no
+# level is no row (nothing measured it), a plug switched off is somebody's
+# choice, and more than `MAX_ROWS` at once is a measurement gone wrong.
+DRY_STOPPED_H = 3.0
+DRY_MARGIN = 5.0
+
+
+def dehumidifier(snap: dict, now: float) -> list[dict]:
+    """Dehumidifiers at standby in a room damper than they run at."""
+    import appliances  # noqa: PLC0415
+
+    store = snap.get("appliances") or {}
+    shapes = store.get("entities") or {}
+    recent = store.get("recent") or {}
+    house = House(snap)
+    hits = []
+    for eid, shape in shapes.items():
+        if shape.get("kind") != appliances.DEHUMIDIFIER:
+            continue
+        level = shape.get("runs_from_rh")
+        rh_eid = str(shape.get("humidity_entity") or "")
+        if not isinstance(level, (int, float)) or not rh_eid:
+            continue
+        if not house.enabled(eid) or not house.should_report(
+                eid, "chore.dehumidifier"):
+            continue
+        try:
+            humidity = float((house.states.get(rh_eid) or {}).get("state"))
+        except (TypeError, ValueError):
+            continue
+        if humidity < float(level) + DRY_MARGIN:
+            continue
+        switches = [house.states.get(o) or {} for o in house.siblings(eid)
+                    if domain_of(o) == "switch"]
+        if switches and not any(st.get("state") == "on" for st in switches):
+            continue
+        points = recent.get(eid) or []
+        reading = appliances.state_at(shape, points, now)
+        if reading.get("state") not in (appliances.IDLE, appliances.FINISHED):
+            continue
+        watts = reading.get("watts")
+        if not isinstance(watts, (int, float)) or watts >= float(
+                shape.get("threshold_w") or 0):
+            continue
+        since = float(reading.get("finished_at") or reading.get("since") or 0)
+        if not since or now - since < DRY_STOPPED_H * 3600:
+            continue
+        hits.append((since, eid, humidity, float(level), rh_eid))
+    if len(hits) > MAX_ROWS:
+        house.gave_up("chore.dehumidifier", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} dehumidifiers stopped at once — past "
+                      f"{MAX_ROWS} that is a measurement gone wrong")
+        return []
+    out = []
+    for since, eid, humidity, level, rh_eid in sorted(hits):
+        hours = int((now - since) // 3600)
+        device = house.device_of(eid)
+        name = house.device_name(device) if device else house.name(eid)
+        out.append({
+            "text": f"{name} has stopped while the air is still damp",
+            "detail": (f"It has drawn only standby power for {hours} hours, "
+                       f"while {house.name(rh_eid)} reads {humidity:.0f}% — "
+                       f"it usually starts running at about {level:.0f}%. "
+                       "A full tank stops it like this."
+                       + house.placed(eid, name)),
+            "fix": ("Empty its tank, or check it is switched on at the unit. "
+                    "This clears itself when it runs again."),
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": eid,
+        })
+    return out
+
+
 CHECKS = [
-    {"id": "chore.waiting",
+    {"id": "chore.dehumidifier", "area": "devices",
+     "title": "Dehumidifier stopped in a damp room",
+     "needs": ("states", "registry", "appliances"), "run": dehumidifier},
+    {"id": "chore.waiting", "area": "devices",
      "title": "Finished and still full",
      "needs": ("states", "registry", "appliances"), "run": waiting},
     # Needs no key of its own up front: on a house with nothing finished
     # it has nothing to read, and when something has finished and the
     # history could not be fetched it says so (`CouldNotLook`).
-    {"id": "chore.job_done",
+    {"id": "chore.job_done", "area": "devices",
      "title": "Finished and waiting",
      "needs": ("states", "registry"), "run": job_done},
 ]

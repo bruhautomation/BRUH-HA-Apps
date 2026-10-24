@@ -100,6 +100,17 @@ class TestServices(unittest.TestCase):
             labelled = set(self.strings["services"][service].get("fields", {}))
             self.assertEqual(fields, labelled, service)
 
+    def test_the_panels_levers_are_all_services(self):
+        # Everything the panel lets a person log or add, so a prompt can too.
+        wanted = {"log_harvest", "delete_harvest", "complete_queued_spray", "delete_queued_spray",
+                  "log_spray", "queue_spray", "adjust_inventory", "add_crop", "add_variety",
+                  "log_note", "get_harvests"}
+        self.assertEqual(wanted, set(const_value("ACTIONS")))
+
+    def test_every_service_has_an_icon(self):
+        icons = json.loads((INTEGRATION / "icons.json").read_text())
+        self.assertEqual(set(self.services), set(icons["services"]))
+
     def test_the_translation_file_is_the_strings_file(self):
         self.assertEqual(self.strings, json.loads((INTEGRATION / "translations" / "en.json").read_text()))
 
