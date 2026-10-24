@@ -3014,7 +3014,7 @@ async def _set_group_members(hass: HomeAssistant, call: ServiceCall) -> dict | N
 # ---------------------------------------------------------------------------
 
 
-def _zwave_device(hass: HomeAssistant, call: ServiceCall):
+async def _zwave_device(hass: HomeAssistant, call: ServiceCall):
     device_id = str(call.data.get("device_id") or "").strip()
     entity_id = str(call.data.get("entity_id") or "").strip()
     if not device_id and entity_id:
@@ -3030,12 +3030,11 @@ def _zwave_device(hass: HomeAssistant, call: ServiceCall):
     device = dr.async_get(hass).async_get(device_id)
     if device is None:
         raise ServiceValidationError(f"device_id: no device has the id {device_id}.")
-    try:
-        from homeassistant.components.zwave_js.helpers import (
-            async_get_node_from_device_id,
-        )
-    except ImportError as err:
-        raise HomeAssistantError("The Z-Wave JS integration is not loaded.") from err
+    helpers = await _component(hass, "zwave_js.helpers")
+    async_get_node_from_device_id = getattr(
+        helpers, "async_get_node_from_device_id", None)
+    if async_get_node_from_device_id is None:
+        raise HomeAssistantError("The Z-Wave JS integration is not loaded.")
     try:
         node = async_get_node_from_device_id(hass, device_id)
     except Exception as err:  # noqa: BLE001 — ValueError for a non-Z-Wave device
@@ -3060,7 +3059,7 @@ async def _zwave_remove_failed_node(hass: HomeAssistant, call: ServiceCall) -> d
     """Remove a node the controller has marked failed (dead). A node that
     is not dead is refused: the controller refuses it anyway, and removing a
     working node is what exclusion is for. Previewed by default."""
-    device_id, name, node, controller = _zwave_device(hass, call)
+    device_id, name, node, controller = await _zwave_device(hass, call)
     remove = getattr(controller, "async_remove_failed_node", None)
     if remove is None:
         raise HomeAssistantError(
@@ -3083,7 +3082,7 @@ async def _zwave_remove_failed_node(hass: HomeAssistant, call: ServiceCall) -> d
 async def _zwave_rebuild_node_routes(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """Ask the controller to rebuild one node's routes — the device page's
     Rebuild routes. Answers whether the controller says it worked."""
-    device_id, name, node, controller = _zwave_device(hass, call)
+    device_id, name, node, controller = await _zwave_device(hass, call)
     rebuild = getattr(controller, "async_rebuild_node_routes", None) \
         or getattr(controller, "async_heal_node", None)
     if rebuild is None:
@@ -3104,11 +3103,10 @@ _ENERGY_STAT_KEYS = ("stat_energy_from", "stat_energy_to", "stat_cost",
                      "entity_energy_price", "stat_power")
 
 
-def _energy_manager_mod():
-    try:
-        from homeassistant.components.energy import data as energy_data
-    except ImportError as err:
-        raise HomeAssistantError("The energy integration is not loaded.") from err
+async def _energy_manager_mod(hass: HomeAssistant):
+    energy_data = await _component(hass, "energy.data")
+    if energy_data is None:
+        raise HomeAssistantError("The energy integration is not loaded.")
     return energy_data
 
 
@@ -3128,7 +3126,7 @@ def _stat_ids_in(value) -> set[str]:
 
 
 async def _get_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | None:
-    energy_data = _energy_manager_mod()
+    energy_data = await _energy_manager_mod(hass)
     manager = await energy_data.async_get_manager(hass)
     prefs = manager.data
     if prefs is None:
@@ -3141,7 +3139,7 @@ async def _save_energy_prefs(hass: HomeAssistant, call: ServiceCall) -> dict | N
     """Replace the energy dashboard's sources and/or individual devices.
     Every statistic named must be one the recorder keeps; previewed by
     default, because it replaces the whole list it names."""
-    energy_data = _energy_manager_mod()
+    energy_data = await _energy_manager_mod(hass)
     update: dict[str, Any] = {}
     for key in ("energy_sources", "device_consumption", "device_consumption_water"):
         if call.data.get(key) is not None:
@@ -3232,18 +3230,17 @@ async def _set_core_urls(hass: HomeAssistant, call: ServiceCall) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def _thread_store_mod():
-    try:
-        from homeassistant.components.thread import dataset_store
-    except ImportError as err:
-        raise HomeAssistantError("The Thread integration is not loaded.") from err
+async def _thread_store_mod(hass: HomeAssistant):
+    dataset_store = await _component(hass, "thread.dataset_store")
+    if dataset_store is None:
+        raise HomeAssistantError("The Thread integration is not loaded.")
     return dataset_store
 
 
 async def _list_thread_datasets(hass: HomeAssistant, call: ServiceCall) -> dict | None:
     """The Thread networks Home Assistant knows, and which is preferred.
     The dataset itself (it holds the network key) is never returned."""
-    dataset_store = _thread_store_mod()
+    dataset_store = await _thread_store_mod(hass)
     store = await dataset_store.async_get_store(hass)
     preferred = getattr(store, "preferred_dataset", None)
     rows = []
@@ -3264,7 +3261,7 @@ async def _list_thread_datasets(hass: HomeAssistant, call: ServiceCall) -> dict 
 async def _set_preferred_thread_dataset(
     hass: HomeAssistant, call: ServiceCall
 ) -> dict | None:
-    dataset_store = _thread_store_mod()
+    dataset_store = await _thread_store_mod(hass)
     store = await dataset_store.async_get_store(hass)
     dataset_id = str(call.data.get("dataset_id") or "").strip()
     datasets = getattr(store, "datasets", None) or {}
