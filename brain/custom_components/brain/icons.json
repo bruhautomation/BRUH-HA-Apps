@@ -284,6 +284,18 @@
     },
     "set_preferred_thread_dataset": {
       "service": "mdi:access-point-check"
+    },
+    "create_category": {
+      "service": "mdi:shape-plus-outline"
+    },
+    "update_category": {
+      "service": "mdi:shape-outline"
+    },
+    "delete_category": {
+      "service": "mdi:shape-minus-outline"
+    },
+    "set_entity_category": {
+      "service": "mdi:shape"
     }
   }
 }

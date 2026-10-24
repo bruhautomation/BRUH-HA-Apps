@@ -3277,6 +3277,122 @@ async def _set_preferred_thread_dataset(
 
 
 # ---------------------------------------------------------------------------
+# Categories (the automation, script, scene and helper lists' groupings)
+# ---------------------------------------------------------------------------
+
+CATEGORY_SCOPES = ("automation", "script", "scene", "helpers")
+
+
+def _category_registry(hass: HomeAssistant):
+    try:
+        from homeassistant.helpers.category_registry import async_get
+    except ImportError as err:
+        raise HomeAssistantError(
+            "This Home Assistant has no categories (2024.4 or later).") from err
+    return async_get(hass)
+
+
+def _scope(call: ServiceCall) -> str:
+    scope = str(call.data.get("scope") or "").strip().lower()
+    if scope not in CATEGORY_SCOPES:
+        raise ServiceValidationError(
+            "scope must be one of " + ", ".join(CATEGORY_SCOPES)
+            + f" — the list the category groups; got {scope!r}.")
+    return scope
+
+
+def _category(registry, scope: str, category_id: str):
+    found = registry.async_get_category(scope=scope, category_id=category_id)
+    if found is None:
+        names = ", ".join(
+            f"{c.name} ({c.category_id})"
+            for c in registry.async_list_categories(scope=scope)) or "none"
+        raise ServiceValidationError(
+            f"category_id: no {scope} category has the id {category_id}; "
+            f"they are {names}.")
+    return found
+
+
+async def _create_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    try:
+        entry = registry.async_create(scope=scope, name=call.data["name"],
+                                      icon=call.data.get("icon"))
+    except ValueError as err:  # a name already taken in the scope
+        raise ServiceValidationError(str(err)) from err
+    return {"category_id": entry.category_id, "scope": scope, "name": entry.name}
+
+
+async def _update_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    current = _category(registry, scope, call.data["category_id"])
+    changes = _partial_update(call, ("name", "icon"))
+    try:
+        entry = registry.async_update(scope=scope, category_id=current.category_id,
+                                      **changes)
+    except ValueError as err:
+        raise ServiceValidationError(str(err)) from err
+    return {"category_id": entry.category_id, "scope": scope, "name": entry.name,
+            "icon": getattr(entry, "icon", None)}
+
+
+def _entities_in_category(hass, scope: str, category_id: str) -> list[str]:
+    registry = er.async_get(hass)
+    return sorted(
+        e.entity_id for e in registry.entities.values()
+        if (getattr(e, "categories", None) or {}).get(scope) == category_id)
+
+
+async def _delete_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Delete a category. The automations, scripts, scenes or helpers in it
+    are not deleted — they become uncategorised — and the answer lists them."""
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    entry = _category(registry, scope, call.data["category_id"])
+    result = {"dry_run": _dry_run(call), "category_id": entry.category_id,
+              "name": entry.name, "scope": scope,
+              "uncategorised": _entities_in_category(hass, scope, entry.category_id)}
+    if not result["dry_run"]:
+        registry.async_delete(scope=scope, category_id=entry.category_id)
+    return result
+
+
+async def _set_entity_category(hass: HomeAssistant, call: ServiceCall) -> dict | None:
+    """Put automations, scripts, scenes or helpers in a category, or take
+    them out of one (category_id empty)."""
+    registry = _category_registry(hass)
+    scope = _scope(call)
+    category_id = str(call.data.get("category_id") or "").strip()
+    if category_id:
+        _category(registry, scope, category_id)
+    entities = er.async_get(hass)
+    ids = call.data["entity_id"]
+    ids = [ids] if isinstance(ids, str) else list(ids)
+    plans = []
+    for entity_id in ids:
+        entry = entities.async_get(entity_id)
+        if entry is None:
+            raise ServiceValidationError(
+                f"{entity_id} has no registry entry (no unique id), so Home "
+                "Assistant cannot keep a category for it.")
+        if scope in ("automation", "script", "scene") and _domain(entity_id) != scope:
+            raise ServiceValidationError(
+                f"{entity_id} is not a {scope}, so it is not in the {scope} list.")
+        plans.append(entry)
+    for entry in plans:
+        categories = dict(getattr(entry, "categories", None) or {})
+        if category_id:
+            categories[scope] = category_id
+        else:
+            categories.pop(scope, None)
+        entities.async_update_entity(entry.entity_id, categories=categories)
+    return {"scope": scope, "category_id": category_id or None,
+            "entity_id": [e.entity_id for e in plans]}
+
+
+# ---------------------------------------------------------------------------
 # Backups
 # ---------------------------------------------------------------------------
 
@@ -4442,6 +4558,28 @@ POWER_TOOLS: tuple[PowerTool, ...] = (
     PowerTool("list_thread_datasets", _list_thread_datasets, {}, has_response=True),
     PowerTool("set_preferred_thread_dataset", _set_preferred_thread_dataset, {
         vol.Required("dataset_id"): cv.string,
+    }, has_response=True),
+    # Categories
+    PowerTool("create_category", _create_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("name"): cv.string,
+        vol.Optional("icon"): cv.icon,
+    }, has_response=True),
+    PowerTool("update_category", _update_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("category_id"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("icon"): vol.Any(None, cv.icon),
+    }, has_response=True),
+    PowerTool("delete_category", _delete_category, {
+        vol.Required("scope"): cv.string,
+        vol.Required("category_id"): cv.string,
+        vol.Optional("dry_run", default=False): cv.boolean,
+    }, has_response=True),
+    PowerTool("set_entity_category", _set_entity_category, {
+        vol.Required("entity_id"): _ENTITY_LIST,
+        vol.Required("scope"): cv.string,
+        vol.Optional("category_id"): vol.Any(None, cv.string),
     }, has_response=True),
     # Backups
     PowerTool("list_backups", _list_backups, {}, has_response=True),

@@ -1640,6 +1640,82 @@
           "description": "The network's dataset id, as list_thread_datasets shows it."
         }
       }
+    },
+    "create_category": {
+      "name": "Create category",
+      "description": "Make a category on the automation, script, scene or helper list. Returns its category_id.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list it groups — automation, script, scene or helpers."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The category's name; it must be new on that list."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "An icon for it."
+        }
+      }
+    },
+    "update_category": {
+      "name": "Update category",
+      "description": "Rename a category or change its icon. Only the fields given change.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The new name."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "The new icon."
+        }
+      }
+    },
+    "delete_category": {
+      "name": "Delete category",
+      "description": "Delete a category. What was in it is not deleted, only left uncategorised, and the answer lists it. Set dry_run to preview.",
+      "fields": {
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "When on, only report what would be left uncategorised."
+        }
+      }
+    },
+    "set_entity_category": {
+      "name": "Set category",
+      "description": "Put automations, scripts, scenes or helpers in a category, or take them out of one by leaving the category empty.",
+      "fields": {
+        "entity_id": {
+          "name": "Entities",
+          "description": "The automations, scripts, scenes or helpers."
+        },
+        "scope": {
+          "name": "List",
+          "description": "Which list the category is on — automation, script, scene or helpers."
+        },
+        "category_id": {
+          "name": "Category",
+          "description": "The category's id; empty takes them out of their category."
+        }
+      }
     }
   },
   "issues": {

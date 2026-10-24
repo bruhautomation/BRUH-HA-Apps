@@ -2188,3 +2188,116 @@ set_preferred_thread_dataset:
       selector:
         text: {}
       required: true
+create_category:
+  name: Create category
+  description: Make a category on the automation, script, scene or helper list. Returns its category_id.
+  fields:
+    scope:
+      name: List
+      description: Which list it groups — automation, script, scene or helpers.
+      selector:
+        select:
+          options:
+          - automation
+          - script
+          - scene
+          - helpers
+      required: true
+    name:
+      name: Name
+      description: The category's name; it must be new on that list.
+      selector:
+        text: {}
+      required: true
+    icon:
+      name: Icon
+      description: An icon for it.
+      selector:
+        icon: {}
+update_category:
+  name: Update category
+  description: Rename a category or change its icon. Only the fields given change.
+  fields:
+    scope:
+      name: List
+      description: Which list the category is on — automation, script, scene or helpers.
+      selector:
+        select:
+          options:
+          - automation
+          - script
+          - scene
+          - helpers
+      required: true
+    category_id:
+      name: Category
+      description: The category's id.
+      selector:
+        text: {}
+      required: true
+    name:
+      name: Name
+      description: The new name.
+      selector:
+        text: {}
+    icon:
+      name: Icon
+      description: The new icon.
+      selector:
+        icon: {}
+delete_category:
+  name: Delete category
+  description: Delete a category. What was in it is not deleted, only left uncategorised, and the answer
+    lists it. Set dry_run to preview.
+  fields:
+    scope:
+      name: List
+      description: Which list the category is on — automation, script, scene or helpers.
+      selector:
+        select:
+          options:
+          - automation
+          - script
+          - scene
+          - helpers
+      required: true
+    category_id:
+      name: Category
+      description: The category's id.
+      selector:
+        text: {}
+      required: true
+    dry_run:
+      name: Dry run
+      description: When on, only report what would be left uncategorised.
+      selector:
+        boolean: {}
+      default: false
+set_entity_category:
+  name: Set category
+  description: Put automations, scripts, scenes or helpers in a category, or take them out of one by leaving
+    the category empty.
+  fields:
+    entity_id:
+      name: Entities
+      description: The automations, scripts, scenes or helpers.
+      selector:
+        entity:
+          multiple: true
+      required: true
+    scope:
+      name: List
+      description: Which list the category is on — automation, script, scene or helpers.
+      selector:
+        select:
+          options:
+          - automation
+          - script
+          - scene
+          - helpers
+      required: true
+    category_id:
+      name: Category
+      description: The category's id; empty takes them out of their category.
+      selector:
+        text: {}
