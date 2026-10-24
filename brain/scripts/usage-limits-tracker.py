@@ -1294,6 +1294,7 @@ def _new_file_mode():
                 if line.startswith("Umask:"):
                     return 0o666 & ~int(line.split()[1], 8)
     except (OSError, ValueError, IndexError):
+        # No /proc here: the umask nearly every process starts with.
         pass
     return 0o666 & ~0o022
 
