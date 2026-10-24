@@ -171,6 +171,102 @@ def _chore_kind(eid: str, st: dict, device: dict | None = None,
     return chores.cycling_kind([n for n in names if n.strip()], siblings)
 
 
+# A dehumidifier is measured like any machine and is a chore of its own: it
+# stops when its tank is full, and a damp room is the only thing that says
+# so (`checks/chores.dehumidifier`). Recognised by its name — the sensor's,
+# or its device's — in whole words, or by a `humidifier` entity on the same
+# device that Home Assistant registered as a dehumidifier.
+DEHUMIDIFIER_WORDS = frozenset({"dehumidifier", "dehumidifiers", "dehumidiser",
+                                "dehumidisers"})
+DEHUMIDIFIER = "dehumidifier"
+
+
+def _words(text: str) -> set[str]:
+    import re  # noqa: PLC0415
+    return set(re.findall(r"[a-z]+", str(text or "").lower()))
+
+
+def dehumidifiers(states: dict, entities=None, devices=None) -> set[str]:
+    """The power sensors that measure a dehumidifier."""
+    states = states or {}
+    by_id = {d.get("id"): d for d in devices or [] if isinstance(d, dict)}
+    device_of = {r.get("entity_id"): r.get("device_id")
+                 for r in entities or [] if isinstance(r, dict)}
+    registered = set()
+    for eid, dev in device_of.items():
+        if not dev or not str(eid or "").startswith("humidifier."):
+            continue
+        attrs = (states.get(eid) or {}).get("attributes") or {}
+        if str(attrs.get("device_class") or "") == "dehumidifier":
+            registered.add(dev)
+    out = set()
+    for eid, st in states.items():
+        if not isinstance(st, dict) or not is_power(eid, st.get("attributes") or {}):
+            continue
+        dev = by_id.get(device_of.get(eid)) or {}
+        names = [str((st.get("attributes") or {}).get("friendly_name") or ""),
+                 eid.replace("_", " "), str(dev.get("name_by_user") or ""),
+                 str(dev.get("name") or "")]
+        if any(DEHUMIDIFIER_WORDS & _words(n) for n in names) \
+                or device_of.get(eid) in registered:
+            out.add(eid)
+    return out
+
+
+def humidity_for(eid: str, states: dict, entities=None, devices=None) -> str:
+    """The humidity sensor for the room a dehumidifier stands in, or "".
+
+    One on the same device first, then one in the same area (the
+    entity's own, else its device's) — by id, so two passes agree."""
+    states = states or {}
+    rows = {r.get("entity_id"): r for r in entities or [] if isinstance(r, dict)}
+    by_id = {d.get("id"): d for d in devices or [] if isinstance(d, dict)}
+
+    def area(e: str) -> str:
+        row = rows.get(e) or {}
+        return str(row.get("area_id")
+                   or (by_id.get(row.get("device_id")) or {}).get("area_id") or "")
+
+    def humid(e: str) -> bool:
+        attrs = (states.get(e) or {}).get("attributes") or {}
+        return (e.startswith("sensor.")
+                and str(attrs.get("device_class") or "") == "humidity")
+
+    mine = rows.get(eid) or {}
+    same_device = sorted(e for e, r in rows.items() if humid(e)
+                         and mine.get("device_id")
+                         and r.get("device_id") == mine.get("device_id"))
+    if same_device:
+        return same_device[0]
+    where = area(eid)
+    if not where:
+        return ""
+    same_area = sorted(e for e in rows if humid(e) and area(e) == where)
+    return same_area[0] if same_area else ""
+
+
+def runs_from_rh(power_points: list, humidity_points: list,
+                 shape: dict) -> tuple[float, int] | None:
+    """The humidity this machine measurably starts running at: a low
+    quartile of the readings just before each of its own runs began, and
+    how many runs it was read from. None below `MIN_DRAWS` runs read."""
+    readings = _readings(power_points)
+    rh = _readings(humidity_points)
+    if not readings or not rh:
+        return None
+    threshold = float(shape.get("threshold_w") or 0)
+    runs = [r for r in segments(readings, threshold)
+            if (r[1] - r[0]) / 60.0 >= MIN_RUN_MIN]
+    values = []
+    for start, _end in runs:
+        before = [v for t, v in rh if start - 3 * BUCKET_S <= t <= start]
+        if before:
+            values.append(before[-1])
+    if len(values) < MIN_DRAWS:
+        return None
+    return round(percentile(values, 25.0), 1), len(values)
+
+
 def _device_context(states: dict, entities, devices) -> tuple[dict, dict]:
     """`{eid: device row}` and `{eid: [sibling sensor states]}` off the
     registries, or two empty maps when they were not handed in."""
@@ -214,13 +310,14 @@ def select(states: dict, entities=None, devices=None) -> dict:
     out = []
     offline = []
     device_of, siblings = _device_context(states or {}, entities, devices)
+    dry = dehumidifiers(states or {}, entities, devices)
     for eid, st in (states or {}).items():
         if not isinstance(st, dict):
             continue
         if not is_power(eid, st.get("attributes") or {}):
             continue
         chore = bool(_chore_kind(eid, st, device_of.get(eid),
-                                 siblings.get(eid, ())))
+                                 siblings.get(eid, ()))) or eid in dry
         if st.get("state") in ("unavailable", "unknown", None):
             if not chore:
                 continue
@@ -625,8 +722,43 @@ async def build(session, states: dict, now: float | None = None,
         if name:
             shape["name"] = str(name)[:60]
         payload["entities"][eid] = shape
+    await _note_dehumidifiers(session, payload, series, states, entities,
+                              devices, start)
     save(payload, path)
     return payload
+
+
+async def _note_dehumidifiers(session, payload: dict, series: dict,
+                              states: dict, entities, devices,
+                              start: dt.datetime) -> None:
+    """Mark each profiled dehumidifier and the humidity it starts at.
+
+    One more fetch, of the humidity sensors only, and only when a
+    dehumidifier was profiled. A humidity history that cannot be read
+    leaves the kind on and no level, which the check reads as nothing to
+    say."""
+    dry = dehumidifiers(states, entities, devices) & set(payload["entities"])
+    rooms = {}
+    for eid in sorted(dry):
+        shape = payload["entities"][eid]
+        shape["kind"] = DEHUMIDIFIER
+        rh = humidity_for(eid, states, entities, devices)
+        if rh:
+            shape["humidity_entity"] = rh
+            rooms[eid] = rh
+    if not rooms:
+        return
+    try:
+        humid = await fetch(session, sorted(set(rooms.values())), start)
+    except Exception as exc:  # noqa: BLE001 — a level is a nicety
+        log.info("dehumidifier humidity history failed: %s", exc)
+        return
+    for eid, rh in rooms.items():
+        level = runs_from_rh(series.get(eid) or [], (humid or {}).get(rh) or [],
+                             payload["entities"][eid])
+        if level:
+            payload["entities"][eid]["runs_from_rh"] = level[0]
+            payload["entities"][eid]["rh_runs"] = level[1]
 
 
 __all__ = [
@@ -634,6 +766,7 @@ __all__ = [
     "MAX_ENTITIES", "MAX_SETTLE_MIN", "MIN_DRAWS", "MIN_RUN_MIN",
     "MIN_SETTLE_MIN", "MIN_SPAN_RATIO", "MIN_SPAN_W", "RUNNING", "STORE",
     "THRESHOLD_FRACTION", "age_days", "build", "candidates", "fetch",
+    "DEHUMIDIFIER", "dehumidifiers", "humidity_for", "runs_from_rh",
     "is_power", "load", "noise_floor", "percentile", "profile", "progress",
     "save", "segments", "select", "settle_minutes", "state_at",
 ]

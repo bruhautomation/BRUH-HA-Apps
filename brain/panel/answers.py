@@ -100,6 +100,7 @@ CHECK_SITUATIONS = {
     "base.unusual": "stuck",
     "chore.waiting": "chore_check",
     "chore.job_done": "chore_check",
+    "chore.dehumidifier": "chore_check",
     "evening.left_open": "chore_check",
     # Names and rooms are what `tidy` proposes, so "Fix it" on these two is
     # the tidy run — a table to tick through — rather than a plan run that

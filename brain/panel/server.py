@@ -15886,7 +15886,7 @@ async def h_appliances(request: web.Request) -> web.Response:
     rows = []
     for eid, shape in sorted((store.get("entities") or {}).items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(
+                     "chore_kind": shape.get("kind") or checks.chores.kind_of(
                          shape.get("name") or "")})
     return web.json_response({
         "built_at": store.get("built_at", 0),
@@ -16103,7 +16103,8 @@ async def _appliance_detail(now: float) -> dict:
     rows = []
     for eid, shape in sorted(shapes.items()):
         rows.append({"entity_id": eid, **shape,
-                     "chore_kind": checks.chores.kind_of(shape.get("name") or ""),
+                     "chore_kind": (shape.get("kind")
+                                    or checks.chores.kind_of(shape.get("name") or "")),
                      "now": appliances.state_at(shape, live.get(eid) or [], now)
                      if live else {}})
     return {"built_at": store.get("built_at", 0),

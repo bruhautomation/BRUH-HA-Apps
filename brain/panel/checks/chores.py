@@ -519,7 +519,95 @@ def job_done(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# A dehumidifier that stopped while the room is still damp
+# ---------------------------------------------------------------------------
+#
+# A dehumidifier is not a machine that finishes and waits: it stops when the
+# air is dry, and it stops when its tank is full. Power alone cannot tell the
+# two apart, and the room's humidity can — so the appliance store records,
+# for a machine it knows is a dehumidifier (`appliances.dehumidifiers`), the
+# humidity in its room and the level it measurably starts running at, read
+# off its own runs. A machine switched on, at standby for `DRY_STOPPED_H`,
+# in a room `DRY_MARGIN` points above that level is a tank to empty. It
+# clears itself when the machine runs again or the air dries. Floors: no
+# level is no row (nothing measured it), a plug switched off is somebody's
+# choice, and more than `MAX_ROWS` at once is a measurement gone wrong.
+DRY_STOPPED_H = 3.0
+DRY_MARGIN = 5.0
+
+
+def dehumidifier(snap: dict, now: float) -> list[dict]:
+    """Dehumidifiers at standby in a room damper than they run at."""
+    import appliances  # noqa: PLC0415
+
+    store = snap.get("appliances") or {}
+    shapes = store.get("entities") or {}
+    recent = store.get("recent") or {}
+    house = House(snap)
+    hits = []
+    for eid, shape in shapes.items():
+        if shape.get("kind") != appliances.DEHUMIDIFIER:
+            continue
+        level = shape.get("runs_from_rh")
+        rh_eid = str(shape.get("humidity_entity") or "")
+        if not isinstance(level, (int, float)) or not rh_eid:
+            continue
+        if not house.enabled(eid) or not house.should_report(
+                eid, "chore.dehumidifier"):
+            continue
+        try:
+            humidity = float((house.states.get(rh_eid) or {}).get("state"))
+        except (TypeError, ValueError):
+            continue
+        if humidity < float(level) + DRY_MARGIN:
+            continue
+        switches = [house.states.get(o) or {} for o in house.siblings(eid)
+                    if domain_of(o) == "switch"]
+        if switches and not any(st.get("state") == "on" for st in switches):
+            continue
+        points = recent.get(eid) or []
+        reading = appliances.state_at(shape, points, now)
+        if reading.get("state") not in (appliances.IDLE, appliances.FINISHED):
+            continue
+        watts = reading.get("watts")
+        if not isinstance(watts, (int, float)) or watts >= float(
+                shape.get("threshold_w") or 0):
+            continue
+        since = float(reading.get("finished_at") or reading.get("since") or 0)
+        if not since or now - since < DRY_STOPPED_H * 3600:
+            continue
+        hits.append((since, eid, humidity, float(level), rh_eid))
+    if len(hits) > MAX_ROWS:
+        house.gave_up("chore.dehumidifier", [{"entity_id": h[1]} for h in hits],
+                      f"{len(hits)} dehumidifiers stopped at once — past "
+                      f"{MAX_ROWS} that is a measurement gone wrong")
+        return []
+    out = []
+    for since, eid, humidity, level, rh_eid in sorted(hits):
+        hours = int((now - since) // 3600)
+        device = house.device_of(eid)
+        name = house.device_name(device) if device else house.name(eid)
+        out.append({
+            "text": f"{name} has stopped while the air is still damp",
+            "detail": (f"It has drawn only standby power for {hours} hours, "
+                       f"while {house.name(rh_eid)} reads {humidity:.0f}% — "
+                       f"it usually starts running at about {level:.0f}%. "
+                       "A full tank stops it like this."
+                       + house.placed(eid, name)),
+            "fix": ("Empty its tank, or check it is switched on at the unit. "
+                    "This clears itself when it runs again."),
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": eid,
+        })
+    return out
+
+
 CHECKS = [
+    {"id": "chore.dehumidifier",
+     "title": "Dehumidifier stopped in a damp room",
+     "needs": ("states", "registry", "appliances"), "run": dehumidifier},
     {"id": "chore.waiting",
      "title": "Finished and still full",
      "needs": ("states", "registry", "appliances"), "run": waiting},
