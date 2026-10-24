@@ -586,6 +586,22 @@ def isolation_args() -> list:
 _area_lock = threading.Lock()
 
 
+
+def _new_file_mode():
+    """The mode `open()` would give a new file here: 0666 less the umask.
+
+    Read from /proc rather than by setting and restoring the umask, which
+    would race any other thread creating a file in between.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("Umask:"):
+                    return 0o666 & ~int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0o666 & ~0o022
+
 def _write_atomic(path: str, text: str) -> None:
     """Write `text` to `path` through a scratch name only this writer holds.
 
@@ -594,7 +610,7 @@ def _write_atomic(path: str, text: str) -> None:
     the second raised
     `FileNotFoundError` (`panel/atomic_write.py`'s reason, one process
     over). `mkstemp` in the target's own directory keeps the rename on one
-    filesystem; the replaced file's mode is kept, 0644 for a new one, which
+    filesystem; the replaced file's mode is kept, open()'s for a new one, which
     is what `open()` gave — Core and the other listeners read these. Raises
     OSError for the caller to decide about; the scratch file never stays.
     """
@@ -602,7 +618,7 @@ def _write_atomic(path: str, text: str) -> None:
     try:
         mode = os.stat(path).st_mode & 0o777
     except OSError:
-        mode = 0o644
+        mode = _new_file_mode()
     fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
                                suffix=".tmp", dir=directory)
     try:

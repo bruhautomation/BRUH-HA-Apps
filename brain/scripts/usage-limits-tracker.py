@@ -1281,6 +1281,22 @@ def fetch_usage_limits(token):
 # Output
 # ---------------------------------------------------------------------------
 
+
+def _new_file_mode():
+    """The mode `open()` would give a new file here: 0666 less the umask.
+
+    Read from /proc rather than by setting and restoring the umask, which
+    would race any other thread creating a file in between.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("Umask:"):
+                    return 0o666 & ~int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0o666 & ~0o022
+
 def _write_json_atomic(path, payload, indent=None, create_dir=True):
     """Write JSON through a scratch name only this writer holds → True.
 
@@ -1288,7 +1304,7 @@ def _write_json_atomic(path, payload, indent=None, create_dir=True):
     create it, the first rename moves it and the second fails — and one
     write is lost (`panel/atomic_write.py`'s reason). `mkstemp` in the
     target's own directory keeps the rename same-filesystem; the mode of
-    the file being replaced is kept (0644 for a new one, which is what
+    the file being replaced is kept (what open() gives a new one, which is what
     `open()` gave), because the panel and Home Assistant read these.
     Never raises: a failed write leaves whatever was there.
     """
@@ -1302,7 +1318,7 @@ def _write_json_atomic(path, payload, indent=None, create_dir=True):
         try:
             mode = stat.S_IMODE(os.stat(path).st_mode)
         except OSError:
-            mode = 0o644
+            mode = _new_file_mode()
         fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
                                    suffix=".tmp", dir=directory)
         with os.fdopen(fd, "w") as fh:
