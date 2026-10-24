@@ -2411,12 +2411,18 @@ async def _hourly(hass: HomeAssistant, statistic_id: str, start) -> list[dict]:
     return out
 
 
+async def _settled(answer):
+    """The recorder's queue calls return None on one core and a coroutine
+    on another; wait for the second and pass the first through."""
+    if asyncio.iscoroutine(answer):
+        return await answer
+    return answer
+
+
 async def _adjust(hass, statistic_id, start, adjustment, unit) -> None:
     get_instance, _ = _recorder_parts()
-    answer = get_instance(hass).async_adjust_statistics(
-        statistic_id, start, adjustment, unit)
-    if asyncio.iscoroutine(answer):
-        await answer
+    await _settled(get_instance(hass).async_adjust_statistics(
+        statistic_id, start, adjustment, unit))
 
 
 async def _adjust_statistic_sum(hass: HomeAssistant, call: ServiceCall) -> dict | None:
@@ -2500,10 +2506,8 @@ async def _clear_orphaned_statistics(
               "count": len(orphans)}
     if result["dry_run"] or not orphans:
         return result
-    answer = get_instance(hass).async_clear_statistics(
-        [o["statistic_id"] for o in orphans])
-    if asyncio.iscoroutine(answer):
-        await answer
+    await _settled(get_instance(hass).async_clear_statistics(
+        [o["statistic_id"] for o in orphans]))
     return result
 
 
