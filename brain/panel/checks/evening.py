@@ -142,7 +142,7 @@ def left_open(snap: dict, now: float) -> list[dict]:
 
 
 CHECKS = [
-    {"id": "evening.left_open",
+    {"id": "evening.left_open", "area": "devices",
      "title": "Open at bedtime, and usually shut",
      "needs": ("states", "registry", "closures"), "run": left_open},
 ]
