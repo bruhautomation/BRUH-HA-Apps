@@ -265,6 +265,16 @@ PROMPT_COVERED = 24
 PROMPT_DETAIL = 240
 PROMPT_IGNORED = 20
 PROMPT_FIXED = 20
+# What the household turned down about what a card covers, listed apart
+# and outside the newest-twenty cut (`prompt_block`'s ``covers``).
+PROMPT_TURNED_DOWN = 12
+# A card's finding or opportunity naming the entity of a settled Wrong is
+# the same thing said again when it carries this share of that Wrong's
+# words (`turned_down`).
+TURNED_DOWN_SHARE = 0.5
+_TURNED_DOWN_STOP = frozenset(
+    "the a an and or of to is it its on in at for from this that with be "
+    "been has have was were are by as so if when".split())
 
 _WS_RE = re.compile(r"\s+")
 _PUNCT_RE = re.compile(r"[^\w\s]")
@@ -4057,6 +4067,49 @@ def _covered(row: dict, covers: dict, names: dict) -> bool:
     return False
 
 
+def _words(text: str) -> set[str]:
+    out = set()
+    for w in normalize(text).split():
+        if len(w) < 2 or w in _TURNED_DOWN_STOP:
+            continue
+        out.add(w[:-1] if len(w) > 3 and w.endswith("s") else w)
+    return out
+
+
+def turned_down(text: str, entities=()) -> dict | None:
+    """The settled Wrong a card's finding or suggestion says again, or None.
+
+    The same words are the same report whatever they name; a report naming
+    the entity a Wrong was about is the same report when it carries most
+    of that Wrong's words ("make the double-tap scene leave the hallway
+    light on" after "the hallway double-tap scene turns the hallway light
+    off" was waved away). A different problem on the same entity is not:
+    "the hallway light has been unavailable since Tue" shares the name and
+    nothing else, and still files. Never raises: a ledger that cannot be
+    read turns nothing down, the direction in which being wrong shows a
+    card."""
+    try:
+        key = normalize(text)
+        if not key:
+            return None
+        named = {str(e) for e in entities or () if e}
+        said = _words(text)
+        for entry in _load_settled():
+            if entry.get("kind") != "ignored":
+                continue
+            if entry.get("key") == key or normalize(entry.get("text")) == key:
+                return entry
+            eid = str(entry.get("entity_id") or "")
+            if not eid or eid not in named:
+                continue
+            theirs = _words(entry.get("text") or "")
+            if theirs and len(theirs & said) / len(theirs) >= TURNED_DOWN_SHARE:
+                return entry
+    except Exception:  # noqa: BLE001 — "could not read" turns nothing down
+        return None
+    return None
+
+
 def prompt_block(exclude_sources=(), own=None, figures: bool = False,
                  covers: dict | None = None) -> str:
     """What the analyst needs to know about findings before it reports more.
@@ -4116,7 +4169,29 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False,
                 break
         return out
 
-    ignored = _settled("ignored", PROMPT_IGNORED)
+    # What the household turned down about what this card covers, read off
+    # the ledger by entity rather than by age: on a house that answers
+    # things, the newest twenty across every device had long since pushed
+    # out the one about this card's own light.
+    declined: list[dict] = []
+    if covers is not None:
+        names = _names_now()
+        seen_keys: set[str] = set()
+        for entry in settled_listing():
+            if entry.get("kind") != "ignored" or not entry.get("entity_id"):
+                continue
+            key = normalize(entry.get("text") or "")
+            if not key or key in seen_keys:
+                continue
+            if _covered(entry, covers, names):
+                seen_keys.add(key)
+                declined.append(entry)
+            if len(declined) >= PROMPT_TURNED_DOWN:
+                break
+    declined_keys = {normalize(e.get("text") or "") for e in declined}
+    ignored = [(t, n) for t, n in _settled("ignored",
+                                            PROMPT_IGNORED + len(declined))
+               if normalize(t) not in declined_keys][:PROMPT_IGNORED]
     fixed = _settled("fixed", PROMPT_FIXED)
     parts: list[str] = []
     if own:
@@ -4169,6 +4244,21 @@ def prompt_block(exclude_sources=(), own=None, figures: bool = False,
         parts.append(
             "PROBLEMS ALREADY ON THE FINDINGS LIST — do NOT report these again:")
         parts += [f"- {f['text']}" for f in live]
+    if declined:
+        names = _names_now()
+        parts.append(
+            "\nWHAT THE HOUSEHOLD HAS ALREADY TURNED DOWN ABOUT WHAT THIS CARD "
+            "COVERS — do not raise these again, as a finding, an opportunity "
+            "or a change suggested in the summary, unless something new "
+            "happened; where they said why, that reason stands:")
+        for entry in declined:
+            eid = str(entry.get("entity_id") or "")
+            row = names.get(eid)
+            name = (row.get("name") if isinstance(row, dict) else row) or ""
+            about = f" ({name}, {eid})" if name else f" ({eid})"
+            note = str(entry.get("note") or "").strip()[:MAX_NOTE]
+            parts.append(f"- {entry.get('text', '')}{about}"
+                         + (f"\n  They said: {note}" if note else ""))
     if ignored:
         parts.append(
             "\nPROBLEMS THE HOMEOWNER SAID WERE WRONG OR NOT PROBLEMS HERE — "

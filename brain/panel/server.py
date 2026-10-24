@@ -5666,6 +5666,18 @@ async def _generate(insight_id: str) -> None:
         model_findings = _model_findings(obj.get("findings"))
         # A device the card names as offline is a finding too, or links one.
         model_findings += await _card_device_faults(obj, model_findings)
+        # What the household already turned down is not filed again under
+        # new words: the prompt says so, and this is the half that does not
+        # depend on the run having read it (`findings_store.turned_down`).
+        kept_findings = []
+        for f in model_findings:
+            if findings_store.turned_down(str(f.get("text") or ""),
+                                          [f.get("entity_id")]):
+                log.info("%s: dropping a finding the household turned "
+                         "down: %s", insight_id, f.get("text"))
+                continue
+            kept_findings.append(f)
+        model_findings = kept_findings
         # Gated like every other producer. This run read the house — and
         # it was asked to write a card, not to decide whether what it
         # noticed on the way past belongs on a list of decisions, which
@@ -5696,9 +5708,16 @@ async def _generate(insight_id: str) -> None:
             if cleared:
                 log.info("%s: %d finding(s) it no longer reports cleared",
                          insight_id, len(cleared))
+        suggested = []
+        for opp in _card_opportunities(obj.get("opportunities")):
+            if findings_store.turned_down(opp.get("text") or "",
+                                          opp.get("entities") or ()):
+                log.info("%s: dropping a suggestion the household turned "
+                         "down: %s", insight_id, opp.get("text"))
+                continue
+            suggested.append(opp)
         opportunities = await _offer_card_opportunities(
-            insight_id, _card_opportunities(obj.get("opportunities")),
-            previous_opportunities)
+            insight_id, suggested, previous_opportunities)
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
