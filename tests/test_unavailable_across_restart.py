@@ -16,8 +16,8 @@ from __future__ import annotations
 import asyncio
 import sys
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -135,7 +135,7 @@ class TestTheSnapshotAsksOnlyWhatItNeeds(unittest.TestCase):
             return [[row(eid, "unavailable", 7 * DAY), row(eid, "unavailable", RESTART)]
                     for eid in ids]
 
-        with mock.patch("ha_data._rest_get", fake_get):
+        with unittest.mock.patch("ha_data._rest_get", fake_get):
             got = asyncio.run(snapshot._unavailable_history(
                 None, snap["states"], NOW))
         self.assertEqual(got, {eid: iso(7 * DAY) for eid in ids})
@@ -144,7 +144,7 @@ class TestTheSnapshotAsksOnlyWhatItNeeds(unittest.TestCase):
     def test_nothing_to_ask_costs_no_request(self):
         async def fake_get(*_a, **_k):
             raise AssertionError("asked")
-        with mock.patch("ha_data._rest_get", fake_get):
+        with unittest.mock.patch("ha_data._rest_get", fake_get):
             self.assertEqual(asyncio.run(snapshot._unavailable_history(
                 None, house()["states"], NOW)), {})
 

@@ -25,7 +25,8 @@ sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 
 import appliances  # noqa: E402
 import checks  # noqa: E402
-from checks import chores  # noqa: E402
+
+chores = checks.chores
 
 NOW = 1_790_000_000.0
 STEP = 300.0

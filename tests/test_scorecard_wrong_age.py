@@ -18,8 +18,8 @@ Driven through the real writers into the real scorecard and the real
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -48,7 +48,7 @@ class Case(unittest.TestCase):
         self.tmp.cleanup()
 
     def at(self, when):
-        return mock.patch.object(findings_store.time, "time", return_value=when)
+        return unittest.mock.patch.object(findings_store.time, "time", return_value=when)
 
     def wrong(self, n: int, when: float, source: str = SOURCE) -> None:
         """Six sensors marked Wrong, through the tab's own door."""

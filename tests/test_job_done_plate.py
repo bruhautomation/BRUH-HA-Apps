@@ -25,7 +25,8 @@ sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
 sys.path.insert(0, str(BASE_DIR / "tests"))
 
 import checks  # noqa: E402
-from checks import chores  # noqa: E402
+
+chores = checks.chores
 from test_job_status_chore import EID, NOW, iso, printer_house  # noqa: E402
 
 PLATE = "binary_sensor.workshop_printer_plate_clear"
