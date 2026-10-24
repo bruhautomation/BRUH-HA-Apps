@@ -183,6 +183,9 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .cu-back{position:absolute;right:0;bottom:0;font-size:13px;color:var(--teal);min-height:32px;padding:0 4px 0 18px;background:linear-gradient(90deg,transparent,var(--bg) 14px)}
 .cu-hint{position:absolute;right:0;top:10px;padding:2px 8px 2px 24px;pointer-events:none;background:linear-gradient(90deg,transparent,var(--bg) 18px)}
 @media (max-width:700px){.cu{--rp:min(32%,124px);--ty:62px}.cu-vp{height:88px}.cu-when{flex-direction:column;align-items:flex-end;gap:1px;top:6px}.cu-when b{font-size:14px}.cu-when>span{font-size:12px;max-width:100%}.cu-day{display:none}.cu-day2{display:inline}.cu-what{flex-direction:column;align-items:flex-start;gap:1px;top:6px}.cu-l1{max-width:100%}.cu-name{font-size:14px}.cu-l2{font-size:12px;max-width:100%}.cu-hint{display:none}}
+/* Coming up unfolded under a card (a Next chip): sized by the card's row, not the window. */
+.upcslot{container-type:inline-size}.upcslot .cu-back,.upcslot .cu-hint{background:none}
+@container (max-width:700px){.cu{--rp:min(32%,124px);--ty:62px}.cu-vp{height:88px}.cu-when{flex-direction:column;align-items:flex-end;gap:1px;top:6px}.cu-when b{font-size:14px}.cu-when>span{font-size:12px;max-width:100%}.cu-day{display:none}.cu-day2{display:inline}.cu-what{flex-direction:column;align-items:flex-start;gap:1px;top:6px}.cu-l1{max-width:100%}.cu-name{font-size:14px}.cu-l2{font-size:12px;max-width:100%}.cu-hint{display:none}}
 [data-board]{position:relative}
 [data-sec],[data-tile],[data-glab],[data-gbg]{will-change:transform,width,height}
 .flh{position:absolute;left:0;top:0;display:flex;flex-direction:column;justify-content:flex-end;padding:0 4px 16px;border-radius:18px;transition:background-color .4s ease}

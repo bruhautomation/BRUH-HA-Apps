@@ -196,7 +196,8 @@ async def handle(kind: str, p: dict) -> dict:
         # No scope off the wire: a request from the panel is a dashboard
         # request, and its words decide whether it may reach the house.
         st = tell.start(p.get("target") or {}, str(p.get("text") or ""), str(p.get("previous") or ""),
-                        shot=str(p.get("shot") or ""), view=p.get("view"))
+                        shot=str(p.get("shot") or ""), view=p.get("view"),
+                        context=str(p.get("context") or ""))
         await asyncio.to_thread(publish_state)
         return {"ok": "error" not in st, **st}
     if kind == "tell_answer":
@@ -313,7 +314,8 @@ async def handle(kind: str, p: dict) -> dict:
     if kind == "converse":
         # Ask's conversation with brAIn (converse.py): no commit, nothing
         # on the dashboard; the session rides back for the next turn.
-        st = converse.start(str(p.get("text") or ""), str(p.get("session") or ""))
+        st = converse.start(str(p.get("text") or ""), str(p.get("session") or ""),
+                           str(p.get("context") or ""))
         return {"ok": "error" not in st, **st}
     if kind == "habit":
         eid = str(p.get("entity") or "")

@@ -135,7 +135,7 @@ class MorphPanel extends HTMLElement {
     this.s = {
       edit: false, page: 'home', view: null, fading: null, previews: {}, memberPreview: null,
       tell: null, secEdit: null, ask: null, story: {}, confirm: {}, hold: null, add: null,
-      sugNo: null, toast: null, yaml: null, hist: null,
+      sugNo: null, toast: null, yaml: null, hist: null, persona: undefined, upcHost: null, upcShown: null,
       unfold: {}, pending: {}, replyOpen: {}, todoOpen: null, thenAt: null, converse: null,
     };
     // How the person is touching the page, for the quiet-moment gate.
@@ -283,6 +283,9 @@ class MorphPanel extends HTMLElement {
     this.$ = (sel) => root.querySelector(sel);
     this._bootAt = Date.now();
     this.rootEl = this.$('[data-morph-root]');
+    // Coming up's element is kept, because it may be moved into a card's
+    // tile (a Next chip, `morph-coming-up`) and the tile can go.
+    this._upcEl = this.$('[data-region="upcoming"]');
     this.engine = new Engine(this.rootEl);
     this.engine.scrollEl = this.$('.scroll');
     this.engine.onSettle = () => this.audit();
@@ -409,9 +412,6 @@ class MorphPanel extends HTMLElement {
     const dash = this.dash;
     this.prepareThen();
     this.region('top', this.topHtml(dash));
-    // Coming up is not rebuilt under a finger, or while it is gliding to
-    // where it was let go: the rebuild would land it before it arrives.
-    if (!this.upcFrozen()) this.region('upcoming', dash.coming_up !== false ? this.upcomingHtml() : '');
     this.region('scenes', (dash.scenes || []).length ? this.scenesHtml(dash) : '');
     this.region('rooms', this.roomLineHtml(dash));
     this.region('notes', this.admin() ? this.problemsHtml() : '');
@@ -646,7 +646,7 @@ class MorphPanel extends HTMLElement {
   }
 
   region(name, html) {
-    const el = this.$(`[data-region="${name}"]`);
+    const el = name === 'upcoming' ? this.upcRegion() : this.$(`[data-region="${name}"]`);
     if (!el) return;
     if (this.cache.get('r:' + name) === html) return;
     // A box somebody is typing in survives the rebuild: same key, same
@@ -798,8 +798,8 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
   // (upcoming.js). The cursor is kept as a TIME (`upcAt`, null for now), so
   // something you stopped on stays under the line as the minutes pass.
   upcomingHtml() {
-    const reg = this.$('[data-region="upcoming"]');
-    const w = (reg && reg.clientWidth) || (this.rootEl && this.rootEl.clientWidth) || window.innerWidth;
+    const reg = this.upcRegion();
+    const w = (reg && reg.isConnected && reg.clientWidth) || (this.rootEl && this.rootEl.clientWidth) || window.innerWidth;
     const now = Date.now();
     const m = upc.model(this.hass, now, w < 640 ? 0.9 : 1.25, this.dash ? then.past(this.hass, this.watchIds(), now).concat(this.predictionEvents(now)) : []);
     if (!m.stacks.length && !m.durs.length && !this.s.edit) { this._upc = null; return ''; }
@@ -831,11 +831,64 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     return out;
   }
 
+  // A card asks for Coming up with a `morph-coming-up` event (bubbling,
+  // composed) — a house's Now card's Next chip. It opens under the tile the
+  // event came from, the same press again folds it, `detail.open` says
+  // which outright, and `detail.shown` is written back so the chip can
+  // draw itself pressed.
+  onComingUp(e) {
+    const path = e.composedPath ? e.composedPath() : [];
+    const tile = path.find((n) => n && n.nodeType === 1 && n.hasAttribute('data-tile'));
+    const host = tile ? tile.getAttribute('data-tile') : null;
+    const d = e.detail && typeof e.detail === 'object' ? e.detail : null;
+    const here = this.upcShownNow() && this.s.upcHost === host;
+    const open = d && typeof d.open === 'boolean' ? d.open : !here;
+    if (open) { this.s.upcHost = host; this.s.upcShown = true; } else this.s.upcShown = false;
+    if (d) { try { d.shown = open; } catch (er) { /* a frozen detail */ } }
+    this.schedule();
+  }
+
+  upcShownNow() { return !!(this.dash && this.dash.coming_up !== false && this.s.upcShown !== false); }
+
+  // The model item Coming up sits under: the card the chip was pressed in,
+  // while it is on the board.
+  upcHostItem(model) {
+    const host = this.s.upcHost;
+    if (!host || !this.upcShownNow()) return null;
+    for (const sec of model.sections) for (const g of sec.groups) for (const it of g.items) if (it.id === host) return it;
+    return null;
+  }
+
+  // Back under the story before any tile is redrawn: a tile that no longer
+  // hosts it drops its slot, and the strip must not go with it.
+  homeUpcoming() {
+    const el = this.upcRegion(); if (!el) return;
+    const slot = el.parentElement && el.parentElement.hasAttribute('data-upc-slot') ? el.parentElement : null;
+    const hostTile = slot && slot.closest('[data-tile]');
+    if (slot && this._upcHosting && hostTile && hostTile.getAttribute('data-tile') === this._upcHosting) return;
+    const top = this.$('[data-region="top"]');
+    if (el.isConnected && !slot) return;
+    if (top) top.after(el);
+  }
+
+  // Into the host's slot, then drawn (or emptied) at its width. Coming up
+  // is not rebuilt under a finger, or while it is gliding to where it was
+  // let go: the rebuild would land it before it arrives.
+  placeUpcoming(dash) {
+    const el = this.upcRegion(); if (!el) return;
+    if (this._upcHosting) {
+      const tile = this.$(`[data-tile="${CSS.escape(this._upcHosting)}"]`);
+      const slot = tile && tile.querySelector('[data-upc-slot]');
+      if (slot && el.parentElement !== slot) slot.appendChild(el);
+    }
+    if (!this.upcFrozen()) this.region('upcoming', dash.coming_up !== false && this.s.upcShown !== false ? this.upcomingHtml() : '');
+  }
+
   upcCursor(m) { return this.s.upcAt == null ? 0 : upc.clampC(m, (this.s.upcAt - m.base) / 60000); }
 
   upcFrozen() { return !!(this.upcD || this._upcWc != null || (this._upcGlide && performance.now() < this._upcGlide)); }
 
-  upcRegion() { return this.$('[data-region="upcoming"]'); }
+  upcRegion() { return this._upcEl || this.$('[data-region="upcoming"]'); }
 
   // Puts the reading point on `c` (minutes from now): glides there, then
   // lets the next render draw it at rest. Left away from now, it drifts back.
@@ -1411,6 +1464,12 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
   renderBoard(dash) {
     const board = this.$('[data-board]');
     const model = this.buildModel(dash);
+    // Coming up unfolds under the card whose Next chip opened it, across
+    // that card's row, and in its own place under the story otherwise.
+    const hostIt = this.upcHostItem(model);
+    this._upcHosting = hostIt ? hostIt.id : null;
+    if (hostIt) hostIt.full = true;
+    this.homeUpcoming();
     this.engine.model = model;
     this.engine.openId = this.s.view ? this.s.view.id : null;
     this.engine.openMode = this.s.view ? this.s.view.mode : '';
@@ -1494,6 +1553,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     // Only the board's own bookkeeping keys: a control inside a card may
     // carry a data-key of its own (a range's attribute name), and it is not
     // the board's to remove.
+    this.placeUpcoming(dash);
     board.querySelectorAll('[data-key]').forEach((el) => {
       if (/^(fl|sec|g|t):/.test(el.dataset.key) && !want.has(el.dataset.key)) {
         if (el.dataset.key.startsWith('t:')) this.llCards.delete(el.dataset.key.slice(2));
@@ -1735,6 +1795,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const hb = holding ? `<span class="holdbar" style="background:${this.s.edit ? 'var(--violet)' : ctx.accent}"></span>` : '';
     let hbEl = mt.querySelector('.holdbar');
     if (hb && !hbEl) mt.insertAdjacentHTML('afterbegin', hb); else if (!hb && hbEl) hbEl.remove();
+    if (id === this._upcHosting) faceHtml += '<div class="upcslot" data-key="upcslot" data-upc-slot data-morph-keep></div>';
     this.setHtml(face, faceHtml);
     this.setHtml(moreEl, moreHtml);
     if (T.host) this.mountLovelace(face, card);
@@ -2260,6 +2321,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     root.addEventListener('pointermove', (e) => this.scrub(e));
     root.addEventListener('pointerout', (e) => this.scrubEnd(e));
     root.addEventListener('wheel', (e) => this.upcWheel(e), { passive: false });
+    root.addEventListener('morph-coming-up', (e) => this.onComingUp(e));
   }
 
   // Anything outside the open thing folds it back (§1.10).
@@ -2304,11 +2366,15 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     if (t.closest && t.closest('[data-ctl], button, input, textarea, select, summary, a')) return;
     const vp = !this.s.edit && t.closest && t.closest('[data-upc-vp]');
     if (vp) { this.upcDown(e, vp); return; }
+    // Coming up unfolded under a card is not part of that card: a press on
+    // it is not a tap on the card, and a hold in Edit holds the strip.
+    const strip = t.closest && t.closest('[data-region="upcoming"]');
+    if (strip && !this.s.edit) return;
     // hold-to-tell on the top regions, floors and section heads (Edit only)
     const holdable = t.closest && t.closest('[data-hold]');
     const head = t.closest && t.closest('.sechead');
     if (this.s.edit && head) { this.secDown(head.getAttribute('data-sec-head'), e); return; }
-    if (this.s.edit && holdable && !t.closest('.mtile')) {
+    if (this.s.edit && holdable && (!t.closest('.mtile') || strip)) {
       const key = holdable.dataset.hold;
       const [kind, id] = key.includes(':') ? key.split(':') : [key, ''];
       this.holdStart('top:' + key, { kind, id }, e);
@@ -2633,7 +2699,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
         this._salDirty = true; this.schedule(); return;
       }
       case 'menu': this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true })); return;
-      case 'page': this.s.page = v; this.s.edit = false; this.s.view = null; this.cache.clear(); if (v === 'settings') this.loadHistory(); this.schedule(); return;
+      case 'page': this.s.page = v; this.s.edit = false; this.s.view = null; this.cache.clear(); if (v === 'settings') { this.loadHistory(); this.loadPersona(); } this.schedule(); return;
       case 'edit':
         this.s.edit = !this.s.edit; this.s.view = null; this.s.tell = null; this.s.secEdit = null; this.s.yaml = null;
         this.engine.invalidate(); this.cache.clear(); if (!this.s.edit) this.load(); this.schedule(); return;
@@ -3055,6 +3121,34 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     this.schedule();
   }
 
+  // brAIn's personality (/config/.brain/personality.json), read each time
+  // Settings opens so an edit made in brAIn shows here. Morph keeps none of
+  // its own: `undefined` is still reading, `personality: null` is not set.
+  async loadPersona() {
+    try { this.s.persona = await this.hass.callWS({ type: 'morph/personality' }); } catch (e) { this.s.persona = { brain: null, personality: null }; }
+    this.schedule();
+  }
+
+  personaHtml() {
+    const r = this.s.persona;
+    if (r === undefined) return '<div class="setsec"><h2>Personality</h2><p class="sm">Reading…</p></div>';
+    const p = r && r.personality;
+    if (!p) {
+      const why = r && r.brain === false
+        ? 'The personality lives in brAIn, and brAIn is not installed here.'
+        : 'The personality lives in brAIn and is not set yet. Give brAIn a name and a way of speaking in brAIn’s Settings › Personality; it shows here once it is.';
+      return `<div class="setsec"><h2>Personality</h2><p class="sm">${esc(why)}</p></div>`;
+    }
+    const paras = (p.persona || '').split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean)
+      .map((x) => `<p class="sm" style="white-space:pre-line">${esc(x)}</p>`).join('');
+    const grown = (p.growth || []).slice().reverse();
+    const shown = grown.slice(0, 8);
+    const day = (g) => { const d = new Date(g.date + 'T12:00:00'); return isNaN(d) ? g.date : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }); };
+    const growth = shown.length ? `<span class="label">How it has grown</span>${shown.map((g) => `<div class="hrow"><span class="lx" style="min-width:0"><span>${esc(g.text)}</span>${g.date ? `<span class="small">${esc(day(g))}</span>` : ''}</span></div>`).join('')}${grown.length > shown.length ? `<p class="small">And ${grown.length - shown.length} earlier.</p>` : ''}` : '';
+    return `<div class="setsec" data-persona><h2>Personality</h2>${p.name ? `<p class="sm"><b>${esc(p.name)}</b></p>` : ''}${paras}${growth}
+<p class="small">The personality lives in brAIn: change it in brAIn’s Settings › Personality. Talking to it here goes through brAIn, in Ask.</p></div>`;
+  }
+
   // This house's changes to Morph's own code (/config/morph/frontend/,
   // the add-on's morphcode.py): each one in use or paused by an update,
   // with the way back to Morph's own.
@@ -3088,6 +3182,7 @@ ${this.versionHtml(st)}
 <p class="sm">Morph is brAIn’s face: what brAIn notices, asks and proposes is drawn here where it belongs, and Ask is brAIn’s chat. Say what should change — the dashboard, Morph itself, or the house — and every change has an Undo.</p>
 <span class="label">Model for changes</span>${pick('tell_model', [['', 'brAIn’s default'], ['sonnet', 'Sonnet'], ['opus', 'Opus'], ['haiku', 'Haiku']])}
 <span class="label">How long a hold takes</span>${pick('hold_ms', [[400, 'Quick'], [540, 'Normal'], [800, 'Slow']])}</div>
+${this.personaHtml()}
 <div class="setsec"><h2>Learning</h2>
 ${sw('learning', 'Learn and suggest improvements', 'Morph notices how you use the dashboard and asks brAIn how it could be better. Each suggestion is one of brAIn’s cases, in the room it is about; reply to it in your own words. Nothing changes until you say yes.')}
 <span class="label">How often</span>${pick('learning_hours', [[12, 'Twice a day'], [24, 'Daily'], [72, 'Every 3 days'], [168, 'Weekly']])}

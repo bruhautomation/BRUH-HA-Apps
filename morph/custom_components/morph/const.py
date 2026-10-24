@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 DOMAIN = "morph"
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
 PANEL_URL = "morph"
 PANEL_TITLE = "Morph"
