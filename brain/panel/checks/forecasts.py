@@ -178,7 +178,7 @@ def decline(snap: dict, now: float) -> list[dict]:
                       [{"entity_id": h[1]} for h in together],
                       "several sensors of the same kind were drifting the "
                       "same way at once — that is the weather or the season "
-                      "moving, not one device")
+                      "moving, not one device", kind="drift")
     hits = [h for h in hits if h not in together
             and house.should_report(h[1], "forecast.decline")]
 
