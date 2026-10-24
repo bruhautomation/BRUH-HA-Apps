@@ -357,14 +357,14 @@ class TestTheSchedule(unittest.TestCase):
         snap = house(LOUNGE, self.written(names))
         obj = scenes.schedule(snap, "Living room", 7 * 60, 22 * 60)
         targets = [b["sequence"][0]["target"]["entity_id"]
-                   for b in obj["config"]["action"][0]["choose"]]
+                   for b in obj["config"]["actions"][0]["choose"]]
         self.assertEqual(targets[0], "scene.sunrise_living_room")
         self.assertEqual(targets[3], "scene.small_hours_living_room")
 
     def test_the_measured_hours_are_the_measured_ones(self):
         snap = house(LOUNGE, self.written())
         obj = scenes.schedule(snap, "Living room", 6 * 60 + 40, 23 * 60 + 15)
-        times = [t["at"] for t in obj["config"]["trigger"]]
+        times = [t["at"] for t in obj["config"]["triggers"]]
         self.assertEqual(times[0], "06:40:00")
         self.assertEqual(times[3], "23:15:00")
         self.assertEqual(obj["schedule"]["measured"], ["morning", "night"])
@@ -375,7 +375,7 @@ class TestTheSchedule(unittest.TestCase):
         obj = scenes.schedule(snap, "Living room", None, None)
         self.assertEqual(obj["schedule"]["measured"], [])
         self.assertIn("has not measured enough days", obj["why"])
-        self.assertEqual(obj["config"]["trigger"][0]["at"], "07:00:00")
+        self.assertEqual(obj["config"]["triggers"][0]["at"], "07:00:00")
 
     def test_the_middle_two_are_stated_as_the_guesses_they_are(self):
         snap = house(LOUNGE, self.written())

@@ -149,7 +149,7 @@ class TestWhatIsComposed(unittest.TestCase):
         self.assertIn("climate.set_hvac_mode", services)
         self.assertIn("cover.open_cover", services)
         self.assertIn("notify.mobile_app_phone", services)
-        step = next(s for s in smoke["config"]["action"]
+        step = next(s for s in smoke["config"]["actions"]
                     if s.get("service") == "light.turn_on")
         self.assertEqual(step["data"], {"brightness_pct": 100})
         self.assertNotIn("color_name", step["data"])
@@ -162,7 +162,7 @@ class TestWhatIsComposed(unittest.TestCase):
     def test_a_motion_sensor_is_not_a_smoke_detector(self):
         smoke = by_class(playbooks.build(house()))["smoke"]
         self.assertNotIn("binary_sensor.hall_motion",
-                         smoke["config"]["trigger"][0]["entity_id"])
+                         smoke["config"]["triggers"][0]["entity_id"])
 
     def test_leak_closes_the_water_and_names_what_it_closes(self):
         leak = by_class(playbooks.build(house()))["leak"]
@@ -185,7 +185,7 @@ class TestWhatIsComposed(unittest.TestCase):
         freeze = by_class(playbooks.build(house()))["freeze"]
         services = [c["service"] for c in every_action(freeze)]
         self.assertEqual(services, ["notify.mobile_app_phone"])
-        triggers = freeze["config"]["trigger"]
+        triggers = freeze["config"]["triggers"]
         self.assertEqual(triggers[0]["entity_id"], "sensor.hall_temp")
         self.assertEqual(triggers[0]["below"], playbooks.FREEZE_C)
         self.assertEqual(triggers[1]["entity_id"], "climate.hall")
@@ -210,7 +210,7 @@ class TestWhatIsComposed(unittest.TestCase):
         snap = house()
         snap["thermal"]["rooms"]["sensor.hall_temp"]["unit"] = "°F"
         freeze = by_class(playbooks.build(snap))["freeze"]
-        self.assertEqual(freeze["config"]["trigger"][0]["below"],
+        self.assertEqual(freeze["config"]["triggers"][0]["below"],
                          playbooks.FREEZE_F)
 
     def test_no_modelled_room_means_no_freeze_playbook(self):
@@ -459,7 +459,7 @@ class TestNotifyTargets(unittest.TestCase):
 
     def test_the_message_names_the_room_the_sensor_is_in(self):
         smoke = by_class(playbooks.build(house()))["smoke"]
-        step = next(s for s in smoke["config"]["action"]
+        step = next(s for s in smoke["config"]["actions"]
                     if str(s.get("service", "")).startswith("notify."))
         self.assertIn("area_name(trigger.entity_id)", step["data"]["message"])
 

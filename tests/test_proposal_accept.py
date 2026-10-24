@@ -814,7 +814,7 @@ class TestOneOffIntents(AcceptCase):
         row = rows[0]
         self.assertEqual(row["kind"], "intent")
         self.assertEqual(row["config"]["mode"], "single")
-        self.assertEqual(row["config"]["action"][-1]["service"],
+        self.assertEqual(row["config"]["actions"][-1]["service"],
                          "automation.turn_off")
         self.assertIn(SENTENCE, self.prompts[0])
         self.assertIn("Porch", self.prompts[0])
@@ -843,7 +843,7 @@ class TestOneOffIntents(AcceptCase):
         self.assertEqual(row["source"], "sentence")
         self.assertIsNone(row["intent"])
         self.assertTrue(row["config"]["id"].startswith("brain_asked_"))
-        self.assertEqual([a["service"] for a in row["config"]["action"]],
+        self.assertEqual([a["service"] for a in row["config"]["actions"]],
                          ["light.turn_on"], "a standing rule never disarms itself")
         self.assertEqual(row["spoken"]["sentence"],
                          "whenever the front door opens, turn the porch light on")

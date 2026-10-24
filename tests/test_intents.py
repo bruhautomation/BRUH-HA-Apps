@@ -210,13 +210,13 @@ class TestTheTwoAdditions(IntentCase):
         remember to delete."""
         row = self.build()
         self.assertNotIn("refused", row)
-        last = row["config"]["action"][-1]
+        last = row["config"]["actions"][-1]
         self.assertEqual(last["service"], "automation.turn_off")
         # Itself, by `this` — never an id worked out in advance, which is
         # a guess at a slug somebody else (a restored orphan of the same
         # sentence) may already hold.
         self.assertEqual(last["target"]["entity_id"], "{{ this.entity_id }}")
-        self.assertEqual(len(row["config"]["action"]), 2)
+        self.assertEqual(len(row["config"]["actions"]), 2)
 
     def test_the_card_s_first_guess_is_the_writer_s_slug(self):
         """Until Core's registry says otherwise (`_registry_entity_id`),
@@ -253,7 +253,7 @@ class TestTheTwoAdditions(IntentCase):
 
     def test_the_condition_key_is_present_even_when_empty(self):
         row = self.build()
-        self.assertEqual(row["config"]["condition"], [])
+        self.assertEqual(row["config"]["conditions"], [])
 
     def test_both_spellings_of_the_trigger_key_are_read(self):
         answer = {"once": True, "plain": "x",
