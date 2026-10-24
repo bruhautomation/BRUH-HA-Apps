@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import re
 
+from numfmt import count
+
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
 from ._util import (DAY, SOFTWARE_DOMAINS, House, after_restart,
                     counted_names, domain_of, evidence_for, num,
@@ -658,10 +660,13 @@ def zwave_silent_devices(snap, now: float) -> set[str]:
 
 
 def _span(seconds: float) -> str:
+    """'45 minutes', '1 hour', '3 days': the noun agrees with its count."""
+    if seconds < 3600:
+        return count(max(1, int(seconds // 60)), "minute")
     hours = seconds / 3600
     if hours < 48:
-        return f"{int(hours)} hours"
-    return f"{int(hours / 24)} days"
+        return count(int(hours), "hour")
+    return count(int(hours / 24), "day")
 
 
 def zwave_silent(snap: dict, now: float) -> list[dict]:

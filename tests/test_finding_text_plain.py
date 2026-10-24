@@ -79,7 +79,9 @@ RAW_STATE_RE = re.compile(r"\b(?:" + "|".join(RAW_STATES) + r")\b")
 QUOTED_RAW_RE = re.compile(r"[“\"'](?:finish|" + "|".join(RAW_STATES)
                            + r")[”\"']")
 IP_RE = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d]|\.\d)")
-PROTOCOL_RE = re.compile(r"\b(?:ARP|ICMP|mDNS|DHCP|SSDP|UDP|TCP|MQTT)\b")
+# MQTT is left out: it is the name Home Assistant gives that integration,
+# so a person sees the word on their own Integrations page.
+PROTOCOL_RE = re.compile(r"\b(?:ARP|ICMP|mDNS|DHCP|SSDP|UDP|TCP)\b")
 ONE_PLURAL_RE = re.compile(r"\b1 (?:hours|minutes|days|seconds|weeks)\b")
 
 
