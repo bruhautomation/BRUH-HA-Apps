@@ -10328,7 +10328,9 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 # The checks whose answer about a device the overnight pass honours: the
 # offline checks. A device somebody set aside there is not reported again
 # in the log's words.
-SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen")
+SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
+                        "net.wifi_hung", "net.zwave_silent",
+                        "net.zigbee_silent")
 
 
 def _sre_set_aside(now: float) -> set[str]:

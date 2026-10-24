@@ -2,6 +2,36 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.11
+
+### Added
+
+- **brAIn watches your Wi-Fi through UniFi.** A device UniFi says is connected while every one of its own entities has stopped answering for two hours is reported, grouped by access point; a device that drops off ten or more times in a week is reported; every UniFi tracker dropping together again and again is one card about the integration. Home Assistant restarting is never counted as a device dropping. (#403)
+- **brAIn watches the Z-Wave and Zigbee meshes.** A Z-Wave battery device silent for more than three of its wake-up intervals (a day when the interval is unknown), a Z-Wave device with a very weak or slow link, a weak Zigbee router, and a Zigbee device not heard from for hours are reported, read from what the network itself last heard rather than what Home Assistant last changed, which a restart resets. Devices that are disabled or labelled not in use are left alone. (#415)
+- **Integrations are audited.** An integration that has failed to set up for more than a day (never an ignored discovery or one you disabled), a low-battery warning from any integration, and an error repeated more than 100 times in a day in Home Assistant's log, named by the integration and device behind it, are reported. (#416)
+
+## 3.8.10
+
+### Fixed
+
+- **A rate-limited credential renewal backs off instead of retrying all day.** When Anthropic answers a renewal with "too many requests", brAIn waits 15 minutes, then 30, then an hour and longer (never less than the server asks), keeps that wait across a restart, and says the renewal is rate limited and when it tries next rather than asking you to sign in again. Each sign-in is renewed at most once per pass. (#422, #318)
+- **"Findings are still waiting for a look" says when the budget figure is brAIn's own estimate**, because your account's figures were not being reported. (#82)
+- **The terminal keeps your full Claude sign-in.** Once the access token lapsed after a few hours, the terminal handed Claude Code the shared token that can only run Claude, so Remote Control refused and the sign-in never refreshed. A sign-in that can still renew itself is now left to renew; `ha login --status` reads "expired, refreshes itself on next use" and warns when the only usable login is the limited token. (#397)
+- **Voice's room map no longer fails to save when two refreshes run at once.** Every writer uses its own scratch file. (#422)
+
+## 3.8.9
+
+### Added
+
+- **A 3D printer's heater left hot while nothing prints is reported.** While the printer prints, its nozzle and bed are no longer compared with their usual range for the hour; once it has been idle or finished for 45 minutes with a heater still hot, brAIn says so. An answer given about the printing case does not silence this one. (#382, #380, #406)
+
+### Fixed
+
+- **A computer's processor or drive temperature is not judged against a usual range or called impossible**, including drives on integrations brAIn did not know and a stale record from an older nightly pass. (#383, #399)
+- **A broken probe is not excused as the season.** Hours whose lowest or highest reading was impossible are left out of the nightly measurement, so a probe that swings to −150° is reported by the impossible-readings check rather than waved through as weather. (#384)
+- **"Why didn't you tell me" gives the real reason.** A reading set aside as the season, as another check's, or as explained by something in the house is recorded as that, and "too many at once" only when that limit fired. (#385)
+- **Heating and cooling equipment probes are not measured as rooms.** A probe on a coil, line, flue or exhaust, or one that jumps at the same hour every morning, is left out of the heat-loss model, so a room is measured from its air sensor or not at all. (#409)
+
 ## 3.8.8
 
 ### Added

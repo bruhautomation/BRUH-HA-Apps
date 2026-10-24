@@ -39,6 +39,9 @@ PRODUCER_URGENCY = {
     "check:dev.implausible": "now",
     "check:sys.addon_down": "now",
     "check:sys.disk_space": "now",
+    # A printer heater still hot with nothing printing is a heater left
+    # on, and that is worth hearing before morning.
+    "check:base.heater_idle": "now",
     # This one fires INSIDE quiet hours by construction — it only speaks
     # around the hour this house goes to bed, which is the hour the
     # window starts. Anything but `now` holds it until morning, which is

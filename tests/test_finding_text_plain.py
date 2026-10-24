@@ -107,6 +107,7 @@ SWEEP_MODULES = (
     "test_not_a_house_reading",
     "test_never_fired_safety",
     "test_battery_rechargeable",
+    "test_network_checks",
 )
 
 # A MAC is allowed here and nowhere else (module docstring).

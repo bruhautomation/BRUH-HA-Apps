@@ -310,7 +310,8 @@ class TestShouldReport(StoreCase):
 # dict carrying a "text" and an "entity_id" that is not the empty string —
 # asks `should_report` (or reads its answer through `gave_up`'s caller).
 CHECK_MODULES = ("automations", "baseline", "chores", "dashboards", "devices",
-                 "evening", "forecasts", "registry", "system", "thermal")
+                 "evening", "forecasts", "integrations", "network",
+                 "registry", "system", "thermal")
 
 
 def _files_entity_rows(fn: ast.AST) -> bool:

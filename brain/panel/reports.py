@@ -455,6 +455,25 @@ def _why_looks_waited(runs, resident) -> str:
     return " ".join(parts)
 
 
+def _estimated_budget_note(resident, usage) -> str:
+    """The sentence a budget hold owes when the budget is a guess, or "".
+
+    When the account's own figures are not being reported the budget is
+    brAIn's estimate of its own runs, and a house held its looks for ten
+    hours on "the session usage budget is spent" with nothing saying the
+    number behind it was an estimate (`budget_state`'s `source`, the
+    fallback that is silent being read as the real thing).
+    """
+    said = str((resident or {}).get("last_error") or "") \
+        if isinstance(resident, dict) else ""
+    if "budget" not in said or not isinstance(usage, dict):
+        return ""
+    if usage.get("source") != "estimate":
+        return ""
+    return ("That budget figure is brAIn's own estimate of its runs, because "
+            "the account's real usage figures are not being reported.")
+
+
 def _rate_limited_row(runs: dict, usage: dict) -> tuple[str, str, str] | None:
     """The fault row for a day the account's usage limit refused a large
     share of brAIn's runs, or None. Pure over the journal summary and the
@@ -1012,17 +1031,21 @@ def _faults(diag) -> list[dict]:
     waiting = int(findings.get("waiting_for_look") or 0)
     oldest = int(findings.get("waiting_for_look_oldest_s") or 0)
     if waiting >= WAITING_LOOK_MIN and oldest >= WAITING_LOOK_AFTER_S:
+        estimated = _estimated_budget_note(diag.get("resident"),
+                                           diag.get("usage"))
         _row(out, "Looks",
              f"{waiting} findings are still waiting for a look",
              f"The oldest has waited {oldest // 3600} h "
              f"{oldest % 3600 // 60} min. "
-             + _why_looks_waited(diag.get("journal"), diag.get("resident")),
+             + _why_looks_waited(diag.get("journal"), diag.get("resident"))
+             + (" " + estimated if estimated else ""),
              title="New findings waiting to be checked",
              sentence=f"brAIn checks each new finding before showing it, and "
                       f"{plain_words.plural(waiting, 'finding has', 'findings have')} "
                       f"waited, the oldest {oldest // 3600} h. They are "
                       "checked as soon as brAIn can run again; nothing to "
-                      "do unless this stays for a day.")
+                      "do unless this stays for a day."
+                      + (" " + estimated if estimated else ""))
 
     # Refusals a producer carried because nothing on the tab could show
     # them. Only the condition miner's are that: a pattern brAIn can see and

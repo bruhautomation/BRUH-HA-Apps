@@ -173,7 +173,26 @@ NOT_AIR_WORDS = ("coil", "discharge", "compressor", "evaporator",
 # model fitted to it is a model of the machine. Whole words, because
 # "returned" and "supplyroom" are not ducts.
 NOT_ROOM_AIR_WORDS = NOT_AIR_WORDS + ("duct", "ducts", "plenum",
-                                      "air handler", "air handling")
+                                      "air handler", "air handling",
+                                      # The rest of a heating or cooling
+                                      # machine: its refrigerant pipework,
+                                      # its flue, its burner.
+                                      "refrigerant", "line", "lineset",
+                                      "line set", "suction", "flue",
+                                      "furnace", "heat exchanger",
+                                      "exhaust")
+# The same claim made by what a reading DOES rather than what it is called:
+# a probe on a heat pump's coil reads a room's temperature until the machine
+# starts, then jumps by twenty degrees inside the hour, at the same clock
+# hour every day. No room warms that fast — a heater in a small room adds a
+# few degrees an hour — and nothing about the weather happens on a timer.
+# A rise this large across two hourly means, Celsius (scaled for °F)...
+EQUIPMENT_JUMP_C = 8.0
+# ...on at least this many days, and this share of the days measured...
+EQUIPMENT_JUMP_MIN_DAYS = 5
+EQUIPMENT_JUMP_SHARE = 0.5
+# ...nearly all of them within an hour of the same clock hour.
+EQUIPMENT_SAME_HOUR_SHARE = 0.7
 _NOT_ROOM_AIR_RE = re.compile(
     r"(?<![a-z0-9])(?:" + "|".join(
         re.escape(w).replace(r"\ ", r"[\s_]+") for w in NOT_ROOM_AIR_WORDS)
@@ -751,6 +770,55 @@ def _measures_a_machine(eid: str, st: dict, world=None) -> bool:
     if measures is not None:
         return measures in NOT_AIR_READINGS
     return bool(_NOT_ROOM_AIR_RE.search(_name_of(eid, st)))
+
+
+def equipment_jumps(rows: list, tz: dt.tzinfo, unit: str) -> str:
+    """Why this reading is a machine's rather than a room's, or "".
+
+    Read off the hourly means the nightly pass already fetched: each local
+    day's largest rise across one or two hours, and the clock hour it
+    arrived at. A reading that rises by `EQUIPMENT_JUMP_C` or more on most
+    days, at nearly the same hour each time, is a machine starting on its
+    schedule. Pure over what it is handed, so it never fetches.
+    """
+    import circular  # noqa: PLC0415 — panel-local, a leaf
+
+    series = sorted(_hourly_map(rows).items())
+    if len(series) < 48:
+        return ""
+    bar = EQUIPMENT_JUMP_C * (1.8 if unit == "°F" else 1.0)
+    by_time = dict(series)
+    best: dict = {}
+    days: set = set()
+    for ts, value in series:
+        day = dt.datetime.fromtimestamp(ts, tz).date()
+        days.add(day)
+        for ahead in (3600, 7200):
+            later = by_time.get(ts + ahead)
+            if later is None:
+                continue
+            rise = later - value
+            if rise > best.get(day, (0.0, 0))[0]:
+                # The hour the reading ARRIVED high, which is when the
+                # machine had started.
+                best[day] = (rise, dt.datetime.fromtimestamp(
+                    ts + ahead, tz).hour)
+    jumps = [(rise, hour) for rise, hour in best.values() if rise >= bar]
+    if (len(jumps) < EQUIPMENT_JUMP_MIN_DAYS
+            or len(jumps) < EQUIPMENT_JUMP_SHARE * len(days)):
+        return ""
+    minutes = [hour * 60.0 for _rise, hour in jumps]
+    centre = circular.circular_median(minutes)
+    near = [m for m in minutes
+            if circular.circular_distance(m, centre) <= 60.0]
+    if len(near) < EQUIPMENT_SAME_HOUR_SHARE * len(jumps):
+        return ""
+    rises = sorted(rise for rise, _hour in jumps)
+    typical = rises[len(rises) // 2]
+    hour = int(round(centre / 60.0)) % 24
+    return (f"it jumps by about {typical:.0f}{unit} within an hour or two "
+            f"at about {hour:02d}:00 on most days — faster than any room "
+            "warms, so it measures equipment, not the room")
 
 
 def is_derived(eid: str, st: dict, world=None) -> bool:
@@ -1412,6 +1480,12 @@ async def build(session, states: dict, registries: dict | None = None,
         payload["coldest"] = round(min(outdoor_map.values()), 2)
         payload["outdoor_hours"] = len(outdoor_map)
     for eid in ids:
+        # A reading that behaves like a machine starting on a schedule is
+        # left out by what it does, whatever it is called (`equipment_jumps`).
+        jumps = equipment_jumps(rows.get(eid) or [], tz, unit)
+        if jumps:
+            _not_measured(eid, jumps)
+            continue
         entry, why = build_room_why(rows.get(eid) or [], outdoor_rows, tz,
                                     unit)
         if not entry:

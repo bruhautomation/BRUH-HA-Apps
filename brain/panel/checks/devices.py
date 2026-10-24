@@ -11,6 +11,10 @@ import re
 
 import numfmt
 
+from ._registry_facts import (FEATURE_PLATFORMS,
+                              SELF_PLATFORMS, SETTINGS_CATEGORIES,
+                              entry_not_loaded as _entry_not_loaded,
+                              is_node_status)
 from ._util import (SOFTWARE_DOMAINS, House, after_restart, age_days,
                     counted_names, domain_of, evidence_for, join_names, num,
                     parse_ts, spell_integration, when)
@@ -140,9 +144,6 @@ def reads_a_battery_voltage(house: House, eid: str, attrs: dict) -> bool:
 # integration reloaded, a statistics backfill), and fifty rows would be
 # reporting the measurement rather than the home.
 FROZEN_MAX_ROWS = 5
-# A Zigbee device quieter than this has dropped off the mesh. Sleepy
-# sensors check in daily at the very least; a week is not a long sleep.
-ZIGBEE_SILENT_DAYS = 7
 
 # Sane physical ranges by device class and unit. A reading outside these is
 # a broken sensor, not a hot day.
@@ -189,13 +190,21 @@ nozzle extruder hotend hot_end heatbreak heatsink heat_sink
 oven grill griddle bbq barbecue smoker fryer hob stove burner kettle
 boiler flue exhaust chimney furnace radiator manifold
 flow return coolant condenser compressor refrigerant superheat
-cpu gpu chip core soc die vrm nvme ssd drive disk
-processor package cputemp coretemp k10temp acpitz tctl tdie pch
+processor
 engine motor inverter transformer inlet outlet
 sauna steam hot_water hotwater dhw cylinder immersion
 sous_vide sousvide probe meat roast food griddle
 tank kiln soldering iron laser
 """.split())
+# A computer's own parts: its chips, its drives. A subset of the words
+# above, named apart because `base.unusual` asks it — a processor's
+# temperature follows its load, never the hour of the house's week.
+_COMPUTER_WORDS = frozenset("""
+cpu gpu chip core soc die vrm nvme ssd drive disk
+hdd sata composite pkg x86 chipset apu dimm mainboard motherboard
+processor package cputemp coretemp k10temp acpitz tctl tdie pch
+""".split())
+_HOT_WORDS = _HOT_WORDS | _COMPUTER_WORDS
 # `bed`, `chamber`, `plate` and `tool` are only hot next to one of these
 # — a heated bed is a printer's, a chamber is its enclosure and `tool0`
 # is OctoPrint's name for the hotend, while a bedroom sensor and a
@@ -216,11 +225,14 @@ _PAIR_WORDS = frozenset({"printer", "print", "3d", "bambu", "prusa", "ender",
 PRINTER_PLATFORMS = frozenset({
     "octoprint", "prusalink", "bambu_lab", "moonraker", "klipper",
     "elegoo_printer", "anycubic_cloud", "creality_cloud", "duet3d",
+    # BRUH Bambu Studio's own integration: a status and two heaters per
+    # printer, and nothing on it is a room.
+    "bruh_bambu",
 })
 COMPUTER_PLATFORMS = frozenset({
     "systemmonitor", "glances", "hddtemp", "openhardwaremonitor",
     "librehardwaremonitor", "proxmoxve", "synology_dsm", "qnap", "unraid",
-    "truenas", "netdata", "hp_ilo",
+    "truenas", "netdata", "hp_ilo", "scrutiny",
 })
 HOT_PLATFORMS = PRINTER_PLATFORMS | COMPUTER_PLATFORMS
 # What a DEVICE's own name, model or maker may add. Narrower than the
@@ -296,6 +308,50 @@ def measures_something_hot(eid: str, name: str, world=None,
         world, eid, lambda: _hot_by_name(eid, name, device_names))
 
 
+def computer_temperature(house, eid: str) -> bool:
+    """Whether this temperature is a computer's chip or drive.
+
+    The providing integration first (a system monitor's temperatures are
+    all a chip's or a drive's), then the chip and drive words on the
+    entity, or a computer word on its device. A confident `world_model`
+    reading of room air answers no, as it does for the hot gate.
+    """
+    st = house.states.get(eid) or {}
+    attrs = st.get("attributes") or {}
+    if str(attrs.get("device_class") or "") != "temperature":
+        return False
+    name = str(attrs.get("friendly_name") or "")
+    platform, device_names = heat_context(house, eid)
+    if platform in COMPUTER_PLATFORMS:
+        return True
+    if not measures_something_hot(eid, name, house.world, house):
+        return False
+    return bool(_words(eid, name) & _COMPUTER_WORDS
+                or _words(*device_names) & (_HOT_DEVICE_WORDS - _PAIR_WORDS))
+
+
+def printer_heater(house, eid: str) -> bool:
+    """Whether this temperature is a 3D printer's heater or enclosure.
+
+    A heater (`measures_something_hot`) on a printer: the providing
+    integration is a printer's, or a printer word is on the entity or its
+    device. Shared by `base.unusual`, which leaves these to
+    `base.heater_idle`, and that check, which judges them by whether the
+    printer is printing — the one thing an hour-of-the-week band cannot see.
+    """
+    st = house.states.get(eid) or {}
+    attrs = st.get("attributes") or {}
+    if str(attrs.get("device_class") or "") != "temperature":
+        return False
+    name = str(attrs.get("friendly_name") or "")
+    if not measures_something_hot(eid, name, house.world, house):
+        return False
+    platform, device_names = heat_context(house, eid)
+    if platform in PRINTER_PLATFORMS:
+        return True
+    return bool(_words(eid, name, *device_names) & _PAIR_WORDS)
+
+
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
 # usage figures, the health verdict, the open-findings count — and the
 # device checks reported them as hardware: "brAIn Usage Limits has been
@@ -306,7 +362,7 @@ def measures_something_hot(eid: str, name: str, world=None,
 # it does with the switch named. A check that files a finding about the
 # add-on's own sensor is the add-on filing a bug report against itself
 # under somebody else's remedy.
-SELF_PLATFORMS = frozenset({"brain"})
+
 
 
 def _live_hardware(house: House):
@@ -320,28 +376,7 @@ def _live_hardware(house: House):
         yield eid, st
 
 
-def is_node_status(entity_id: str, reg: dict) -> bool:
-    """Whether this is the node status sensor Z-Wave JS publishes.
 
-    Read off what the integration REGISTERED — its translation key
-    `node_status`, or its unique id `<home id>.<node id>.node_status` —
-    and never off the entity id alone. The entity id is derived from a
-    name: it is in the house's own language, it is whatever somebody
-    renamed it to, and a second device of the same name gets `_2` on the
-    end. Reading the suffix missed a node the controller had declared
-    dead for days, and its frozen 0% battery was filed in its place. The
-    suffix stays as the answer for a registry row that carries neither
-    field (an older Core), which is what this always did.
-    """
-    if not entity_id.startswith("sensor."):
-        return False
-    if reg.get("platform") != "zwave_js":
-        return False
-    if reg.get("translation_key") == "node_status":
-        return True
-    if str(reg.get("unique_id") or "").endswith(".node_status"):
-        return True
-    return entity_id.endswith("_node_status")
 
 
 def _zwave_dead_nodes(house: House) -> list[dict]:
@@ -413,22 +448,7 @@ DERIVED_PLATFORMS = frozenset({
 # per device here is the same fault said once per device under a remedy
 # (batteries, Wi-Fi) that cannot reach it. An entry somebody unloaded is a
 # decision, and not news either.
-ENTRY_NOT_LOADED = frozenset({
-    "setup_error", "setup_retry", "migration_error", "not_loaded",
-    "failed_unload",
-})
-# What a device's settings page carries. An unavailable firmware or "cloud
-# connection" entity on a device that still answers is not the device
-# having gone away.
-SETTINGS_CATEGORIES = frozenset({"diagnostic", "config"})
-# Integrations whose entities are features somebody switches on or off on
-# the device itself. The companion app publishes a sensor per phone feature
-# (kiosk mode, a camera, an activity reading) and one that is turned off in
-# the app reads unavailable for ever while the phone goes on reporting
-# everything else — a setting, not a fault. On a device that still answers
-# such an entity says nothing; a phone that has gone quiet altogether is
-# still reported as the device.
-FEATURE_PLATFORMS = frozenset({"mobile_app"})
+
 
 
 def _down(st: dict | None) -> bool:
@@ -446,14 +466,7 @@ def _members(house: House, eid: str) -> list[str]:
     return [m for m in raw if isinstance(m, str) and "." in m and m != eid]
 
 
-def _entry_not_loaded(snap: dict, reg: dict) -> bool:
-    entry_id = reg.get("config_entry_id")
-    if not entry_id:
-        return False
-    for entry in snap.get("config_entries") or []:
-        if isinstance(entry, dict) and entry.get("entry_id") == entry_id:
-            return str(entry.get("state") or "") in ENTRY_NOT_LOADED
-    return False
+
 
 
 def _device_answers(house: House, dev_id: str) -> bool:
@@ -538,6 +551,13 @@ def unavailable(snap: dict, now: float) -> list[dict]:
     # row, with a mesh fix on it. Reporting the same box twice under two
     # different fixes is how a list stops being read.
     dead_devices = _zwave_dead_devices(house)
+    # A Wi-Fi client UniFi still holds while its entities are gone is
+    # `net.wifi_hung`'s row (named by its access point), and a Zigbee
+    # device gone quiet is `net.zigbee_silent`'s or `dev.zha_unseen`'s —
+    # the same box under one fix, never two.
+    from . import network  # noqa: PLC0415 — network imports this module
+    claimed = (network.wifi_hung_devices(house, now)
+               | network.zigbee_quiet_devices(house, now))
     by_device: dict[str, list[tuple[str, float]]] = {}
     loose: list[tuple[str, float]] = []
     derived: list[tuple[str, float]] = []
@@ -567,7 +587,7 @@ def unavailable(snap: dict, now: float) -> list[dict]:
             continue
         dev = house.device_of(eid)
         if dev:
-            if dev["id"] in dead_devices:
+            if dev["id"] in dead_devices or dev["id"] in claimed:
                 continue
             by_device.setdefault(dev["id"], []).append((eid, age))
         else:
@@ -868,8 +888,17 @@ def battery_low(snap: dict, now: float) -> list[dict]:
     # the same box under a second fix — `dev.unavailable`'s rule, through
     # the same helper so the two cannot disagree about which box that is.
     dead_devices = _zwave_dead_devices(house)
+    # A Z-Wave battery node the mesh has not heard from is
+    # `net.zwave_silent`'s row: the battery it shows is the last thing it
+    # said, and its own row already says to check it.
+    from . import network  # noqa: PLC0415 — network imports this module
+    dead_devices = dead_devices | network.zwave_silent_devices(house, now)
     out = []
+    flagged: list[tuple[str, dict]] = []
     for eid, st in _live_hardware(house):
+        if _is_low_battery_flag(eid, st):
+            flagged.append((eid, st))
+            continue
         if not _is_battery(st):
             continue
         dev = house.device_of(eid)
@@ -925,6 +954,50 @@ def battery_low(snap: dict, now: float) -> list[dict]:
                 "fixable": False,
                 "entity_id": eid,
             })
+    out.extend(_flag_rows(house, flagged, dead_devices))
+    return out
+
+
+def _is_low_battery_flag(eid: str, st: dict) -> bool:
+    """A low-battery flag: a binary sensor of class battery, on meaning low.
+
+    Some integrations report a battery only this way (a smoke alarm, a lock,
+    a Z-Wave node's notification), so a check reading percentages alone
+    never saw them run down.
+    """
+    attrs = st.get("attributes") or {}
+    return domain_of(eid) == "binary_sensor" \
+        and attrs.get("device_class") == "battery"
+
+
+def _flag_rows(house: House, flagged: list, dead_devices: set) -> list[dict]:
+    """`dev.battery_low`'s rows for a low-battery flag that is on, where the
+    device has no percentage of its own (that one already speaks)."""
+    out = []
+    for eid, st in flagged:
+        if st.get("state") != "on":
+            continue
+        dev = house.device_of(eid)
+        if dev and dev["id"] in dead_devices:
+            continue
+        if any(_is_battery(house.states.get(o) or {})
+               for o in house.siblings(eid)):
+            continue
+        if rechargeable(house, eid):
+            continue
+        if not house.should_report(eid, "dev.battery_low"):
+            continue
+        who = house.device_name(dev) if dev else house.name(eid)
+        out.append({
+            "text": f"{who} battery is low",
+            "detail": f"It has reported a low battery since "
+                      f"{when(st.get('last_changed'))}."
+                      + house.placed(eid, who),
+            "fix": "Replace the battery.",
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": eid,
+        })
     return out
 
 
@@ -1008,9 +1081,18 @@ def out_of_range(state: dict, entity_id: str = "", world=None,
                             entity_id, world, house)
 
 
-def recently_impossible(baseline: dict | None, now: float) -> dict | None:
+def recently_impossible(baseline: dict | None, now: float,
+                        bounds: tuple[float, float] | None = None
+                        ) -> dict | None:
     """What the nightly pass threw away as impossible for this sensor, when
-    the last of it was inside `IMPOSSIBLE_RECENT_DAYS`, or None."""
+    the last of it was inside `IMPOSSIBLE_RECENT_DAYS`, or None.
+
+    ``bounds`` is the range this sensor's kind can read as the pass reading
+    it NOW knows it (`bounds_for` with the registries). A record a pass
+    with less to go on left — one that took a chip's 90 °C for a room's —
+    is not evidence once the same values are possible: given the bounds,
+    a record whose lowest and highest both sit inside them is no record.
+    """
     seen = (baseline or {}).get("impossible") if isinstance(
         baseline, dict) else None
     if not isinstance(seen, dict):
@@ -1020,6 +1102,12 @@ def recently_impossible(baseline: dict | None, now: float) -> dict | None:
         return None
     if now - float(last) > IMPOSSIBLE_RECENT_DAYS * 86400:
         return None
+    if bounds:
+        low, high = bounds
+        values = [num(seen.get(k)) for k in ("lowest", "highest")]
+        values = [v for v in values if v is not None]
+        if values and all(low <= v <= high for v in values):
+            return None
     return seen
 
 
@@ -1065,7 +1153,7 @@ def implausible(snap: dict, now: float) -> list[dict]:
         else:
             # Reading sanely now, after a night it could not have read:
             # still the sensor, and the night was kept out of its baseline.
-            seen = recently_impossible(stored.get(eid), now)
+            seen = recently_impossible(stored.get(eid), now, bounds)
             lowest = num((seen or {}).get("lowest"))
             if lowest is None:
                 continue
@@ -1286,17 +1374,19 @@ def zha_unseen(snap: dict, now: float) -> list[dict]:
     """ZHA records `last_seen` per device, which is the honest question for
     a Zigbee mesh: a sleepy sensor is `available` between check-ins, so
     availability alone says nothing, and silence is what matters.
+
+    A week is this check's; hours are `net.zigbee_silent`'s. One classifier
+    (`network.zigbee_quiet`) decides which, over one list of the devices a
+    check may speak about, so a device is never in both.
     """
+    from . import network  # noqa: PLC0415 — network imports this module
+    house = House(snap)
     rows = []
-    for dev in snap.get("zha_devices") or []:
-        if not isinstance(dev, dict):
+    for dev, reg, _entity in network.zigbee_devices(house):
+        if network.zigbee_quiet(dev, now) != "dropped":
             continue
-        age = age_days(dev.get("last_seen"), now)
-        if age is None or age < ZIGBEE_SILENT_DAYS:
-            continue
-        name = str(dev.get("user_given_name") or dev.get("name")
-                   or dev.get("ieee") or "a Zigbee device")
-        rows.append((age, name))
+        age = age_days(dev.get("last_seen"), now) or 0.0
+        rows.append((age, network.zigbee_name(dev, reg, house)))
     if not rows:
         return []
     rows.sort(reverse=True)

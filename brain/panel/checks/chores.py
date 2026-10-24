@@ -342,6 +342,75 @@ def says_a_job(st) -> bool:
     return False
 
 
+# A machine at rest says one of these: what a printer's own status reads
+# between jobs. Beside `JOB_FINISHED`, the only words that mean nothing is
+# running; any other word a status that speaks the job vocabulary says
+# (`prepare`, `heatbed_preheating`, `pause`, `changing_filament`) is the
+# machine working.
+JOB_IDLE = frozenset({"idle", "standby", "ready", "operational", "stopped",
+                      "failed", "failure", "cancelled", "canceled",
+                      "offline", "sleep", "sleeping"})
+# Words that say nothing about whether it is working.
+JOB_UNKNOWN = frozenset({"unavailable", "unknown", "", "removed", "none"})
+_WORKING_WORDS = frozenset({"pause", "paused", "prepare", "preparing",
+                            "heating", "preheating", "slicing", "init"})
+
+
+def _status_word(st) -> str:
+    """The job word a sibling status says now, or "" when it is not one.
+
+    A sibling is a status when its own word is in the job vocabulary, or
+    its options (an enum's) carry a running word — never any sensor with
+    text in it, because a printer publishes its active spool's name too.
+    """
+    if not isinstance(st, dict):
+        return ""
+    word = job_state(st.get("state"))
+    if (word in JOB_FINISHED or word in JOB_IDLE or _running(word)
+            or word in _WORKING_WORDS):
+        return word
+    options = (st.get("attributes") or {}).get("options")
+    if isinstance(options, (list, tuple)) and any(
+            _running(job_state(o)) for o in options):
+        return word
+    return ""
+
+
+def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
+    """``(state, since, status_entity)`` for the machine `eid` belongs to.
+
+    ``state`` is ``"working"`` when any status on the device says it is,
+    ``"idle"`` when every status there says finished or idle (``since`` the
+    latest of their changes), and ``""`` when nothing on the device speaks
+    the job vocabulary or a status cannot be read — "could not tell", which
+    no caller may read as idle.
+    """
+    statuses = []
+    for other in sorted(house.siblings(eid)):
+        if domain_of(other) != "sensor":
+            continue
+        st = house.states.get(other)
+        word = _status_word(st)
+        if word or (isinstance(st, dict)
+                    and job_state(st.get("state")) in JOB_UNKNOWN
+                    and says_a_job(st)):
+            statuses.append((other, word, st))
+    if not statuses:
+        return "", None, ""
+    idle_since, name = None, ""
+    for other, word, st in statuses:
+        if word in JOB_UNKNOWN:
+            return "", None, ""
+        if word not in JOB_FINISHED and word not in JOB_IDLE:
+            return "working", None, other
+        changed = parse_ts(st.get("last_changed"))
+        if changed is None:
+            return "", None, ""
+        if idle_since is None or changed > idle_since:
+            idle_since, name = changed, other
+    return "idle", idle_since, name
+
+
 def cycling_kind(names, sibling_states) -> str:
     """Which cycling machine this is, `"machine"` for one known only by its
     status, or "" when nothing says it cycles.

@@ -340,6 +340,7 @@ USAGE_TRACKER_STATES = (
     "http_403",
     "oauth_token_lacks_usage_scope",
     "oauth_token_awaiting_refresh",
+    "oauth_renewal_rate_limited",
     "http_429",
     "network_error",
     "invalid_response",
@@ -392,6 +393,15 @@ class BrainUsageTrackerSensor(SensorEntity):
                                         reported that one's scope refusal,
                                         which is why signing in again
                                         seemed never to help
+      ``oauth_renewal_rate_limited``
+                                        the account sign-in's access token
+                                        has lapsed and Anthropic is rate
+                                        limiting the tracker's renewal of
+                                        it — nothing is wrong with the
+                                        sign-in; the tracker waits longer
+                                        each time it is refused and the
+                                        figures come back once one goes
+                                        through
       ``http_403``                      refused permission, no reason
                                         given — usually the same thing,
                                         unattributed

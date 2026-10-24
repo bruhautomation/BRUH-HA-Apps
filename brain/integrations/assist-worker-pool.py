@@ -34,6 +34,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -585,6 +586,56 @@ def isolation_args() -> list:
 _area_lock = threading.Lock()
 
 
+
+def _new_file_mode():
+    """The mode `open()` would give a new file here: 0666 less the umask.
+
+    Read from /proc rather than by setting and restoring the umask, which
+    would race any other thread creating a file in between.
+    """
+    try:
+        with open("/proc/self/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("Umask:"):
+                    return 0o666 & ~int(line.split()[1], 8)
+    except (OSError, ValueError, IndexError):
+        # No /proc here: the umask nearly every process starts with.
+        pass
+    return 0o666 & ~0o022
+
+def _write_atomic(path: str, text: str) -> None:
+    """Write `text` to `path` through a scratch name only this writer holds.
+
+    A scratch name derived from the target was one name for every writer:
+    two refreshes at once both created it, the first rename moved it, and
+    the second raised
+    `FileNotFoundError` (`panel/atomic_write.py`'s reason, one process
+    over). `mkstemp` in the target's own directory keeps the rename on one
+    filesystem; the replaced file's mode is kept, open()'s for a new one, which
+    is what `open()` gave — Core and the other listeners read these. Raises
+    OSError for the caller to decide about; the scratch file never stays.
+    """
+    directory = os.path.dirname(path) or "."
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = _new_file_mode()
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".",
+                               suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            # Already renamed or gone with its directory.
+            pass
+        raise
+
+
 def refresh_area_map() -> bool:
     if not SUPERVISOR_TOKEN:
         return False
@@ -617,15 +668,19 @@ def refresh_area_map() -> bool:
     else:
         cut = False
     exposed = apply_exposure(rendered, force=True)
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    _mark_map_cut(cut)
-    for path, text in ((AREA_MAP_FULL_FILE, rendered),
-                       (AREA_MAP_EXPOSED_FILE, exposed),
-                       (AREA_MAP_FILE, exposed if EXPOSED_ONLY else rendered)):
-        tmp = path + ".tmp"
-        with open(tmp, "w") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        _mark_map_cut(cut)
+        for path, text in ((AREA_MAP_FULL_FILE, rendered),
+                           (AREA_MAP_EXPOSED_FILE, exposed),
+                           (AREA_MAP_FILE, exposed if EXPOSED_ONLY else rendered)):
+            _write_atomic(path, text)
+    except OSError as exc:
+        # A refresh is a cache warm-up: the map already on disk (or none)
+        # serves the next turn, so a write that fails is said and returned,
+        # never raised into whichever thread asked.
+        debug_log([f"[{{ts}}] AREA-MAP write FAILED: {exc}"])
+        return False
     return True
 
 
@@ -833,13 +888,9 @@ def save_last_profile(custom: str, model: str, denied_csv: str = "",
     """Remember the agent profile so the next pool start pre-warms with it."""
     try:
         os.makedirs(CACHE_DIR, exist_ok=True)
-        tmp = LAST_PROFILE_FILE + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(
-                {"system_prompt": custom, "model": model, "denied": denied_csv,
-                 "access": access}, fh
-            )
-        os.replace(tmp, LAST_PROFILE_FILE)
+        _write_atomic(LAST_PROFILE_FILE, json.dumps(
+            {"system_prompt": custom, "model": model, "denied": denied_csv,
+             "access": access}))
     except OSError:
         # The cache only saves the next spare a rebuild. Losing it costs
         # startup time, not correctness.
@@ -1556,10 +1607,7 @@ def publish_endpoint(port: int) -> None:
         "protocol_version": 1,
         "ts": time.time(),
     }
-    tmp = API_ENDPOINT_FILE + ".tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh)
-    os.replace(tmp, API_ENDPOINT_FILE)
+    _write_atomic(API_ENDPOINT_FILE, json.dumps(data))
 
 
 def pool_counts(pool) -> dict:
@@ -1596,10 +1644,7 @@ def write_pool_status(pool) -> None:
     when the HTTP endpoint isn't reachable)."""
     try:
         status = {"ts": time.time(), **health_status(pool)}
-        tmp = POOL_STATUS_FILE + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(status, fh)
-        os.replace(tmp, POOL_STATUS_FILE)
+        _write_atomic(POOL_STATUS_FILE, json.dumps(status))
     except OSError:
         # The status file feeds a health sensor. The pool keeps serving without it.
         pass
