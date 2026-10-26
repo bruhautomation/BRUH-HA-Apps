@@ -26075,6 +26075,12 @@ def make_app() -> web.Application:
         if relabelled:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
+        # ...and what Morph sent before the listener claimed its tasks as
+        # Morph's: filed as Automation or as the person's own (marker-guarded).
+        morphs = await asyncio.to_thread(
+            conversations.relabel_morph, chat_session.WORK_DIR)
+        if morphs:
+            log.info("listed %d conversation(s) Morph started under Morph", morphs)
         await _options_sync()
         _publish_permission_mode()
         # Every failed run of any kind becomes one readable file: hooked on

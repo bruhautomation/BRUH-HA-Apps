@@ -4,6 +4,10 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## Unreleased
 
+### Added
+
+- **A Morph pill in Ask.** Change requests, the learning pass and conversations from Morph's Ask line are listed under **Morph**, not among your own chats or under Automation, including the ones already there. A Morph conversation can still be carried on in the chat. (#427)
+
 ### Fixed
 
 - **Long messages in the chat are shown whole.** A request Morph sends brAIn ends with your own words after pages of context, and the chat cut every message and reply at 4,000 characters, so your request was never on screen. Messages and replies are never cut now; a long one is folded with **Show all**. (#426)

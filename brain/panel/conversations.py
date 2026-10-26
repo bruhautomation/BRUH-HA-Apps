@@ -530,6 +530,66 @@ def backfill_sources(cwd: str, limit: int = MAX_FILTER_SCAN) -> int:
     return count
 
 
+# What Morph sends brAIn opens with Morph's own fixed words (read off
+# `morph/service/tell.py`, `learning.py` and `converse.py`, whitespace
+# folded the way `_first_prompt` folds it): a change request, the learning
+# pass, and a conversation from its Ask line — the last either bare or led
+# by a card's context. Morph's tasks now say who sent them
+# (`"source": "morph"`, claimed by the automation listener); these label
+# the ones already on disk, which were filed as Automation or as nobody's.
+MORPH_OPENERS = (
+    "MORPH · a change request for this house's dashboard",
+    "MORPH · learning pass.",
+    "Someone typed this into the Ask line of Morph,",
+    "The card they were using sent this with their words. It is context for "
+    "the question, not what they said:",
+)
+# Relabelled from these only: an unclaimed row ("") and one the listener
+# claimed as Automation before it knew Morph's tasks from anybody else's.
+MORPH_RELABEL_FROM = ("", "automation")
+MORPH_RELABEL_MARKER = os.environ.get("BRAIN_MORPH_RELABEL_MARKER",
+                                      "/data/.run-sources-morph-relabelled")
+
+
+def relabel_morph(cwd: str, limit: int = MAX_FILTER_SCAN) -> int:
+    """Label the Morph transcripts already on disk as Morph's, once.
+
+    Marker-guarded like ``backfill_sources``, and separately: that marker
+    exists on every house that booted since 1.28.2, so this repair could
+    never ride under it. Returns how many were labelled."""
+    marker = Path(os.environ.get("BRAIN_MORPH_RELABEL_MARKER", MORPH_RELABEL_MARKER))
+    if marker.exists():
+        return 0
+    count = 0
+    directory = project_dir(cwd)
+    if directory is not None:
+        paths = []
+        for path in _iter_sessions(directory):
+            try:
+                if path.stat().st_size < 200:
+                    continue
+            except OSError:
+                continue
+            paths.append(path)
+            if len(paths) >= limit:
+                break
+        claimed = run_sources.lookup(p.stem for p in paths)
+        for path in paths:
+            if claimed.get(path.stem, "") not in MORPH_RELABEL_FROM:
+                continue
+            if title_of(path).startswith(MORPH_OPENERS) or \
+                    _first_prompt(path).startswith(MORPH_OPENERS):
+                if run_sources.record(path.stem, "morph"):
+                    count += 1
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(f"{int(time.time())}\n", encoding="utf-8")
+    except OSError:
+        # It runs again next boot: a row already labelled Morph is skipped.
+        pass
+    return count
+
+
 # Where a deleted conversation waits out the toast. On /data with the rest
 # of our state, so the move stays on one filesystem in the shipped layout —
 # and shutil.move copes if a custom CLAUDE_CONFIG_DIR puts it on another.
