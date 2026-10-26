@@ -412,6 +412,95 @@ def machine_status(house: House, eid: str) -> tuple[str, float | None, str]:
     return "idle", idle_since, name
 
 
+def status_entity(house: House, eid: str) -> str:
+    """The job status entity on `eid`'s device, or "" when there is none.
+
+    The same test `machine_status` reads its statuses with, so a reason
+    resolved against "the printer's status" names the entity that
+    function will later read.
+    """
+    for other in sorted(house.siblings(eid)):
+        if domain_of(other) != "sensor":
+            continue
+        st = house.states.get(other)
+        if _status_word(st) or says_a_job(st):
+            return other
+    return ""
+
+
+# --- a reason that names when the machine is meant to be like that ------
+# "Normal while the printer is printing. Only unusual if hot while the
+# printer is idle" is not "never tell me about the nozzle": it says the
+# report is wanted in ONE of the machine's two states. Read in words, in
+# the cheap direction — a reason this cannot place is asked about rather
+# than guessed (`server._record_exception`), so a miss costs a question and
+# never a silenced check.
+_IDLE_PHRASES = ("not printing", "not running", "not working", "not in use",
+                 "isn't printing", "isnt printing", "isn't running",
+                 "nothing printing", "nothing is printing", "between prints",
+                 "not on", "switched off", "turned off")
+_IDLE_WORDS = frozenset({"idle", "idling", "standby", "finished", "done",
+                         "off", "stopped", "asleep", "sleeping", "unused"})
+_WORKING_WORDS_SAID = frozenset({"printing", "running", "working", "washing",
+                                 "drying", "busy", "heating", "printer's",
+                                 "print", "printed", "cycle", "on", "use"})
+_ONLY_CLAUSE = re.compile(
+    r"\bonly\b[^.;!?]*?\b(?:when|whenever|if|while|once|after|during)\b"
+    r"([^.;!?]*)|\bunless\b([^.;!?]*)", re.I)
+_NORMAL_CLAUSE = re.compile(
+    r"\b(?:normal|fine|ok|okay|expected|usual)\b[^.;!?]*?"
+    r"\b(?:while|when|whenever|during)\b([^.;!?]*)", re.I)
+
+
+def _state_said(clause: str) -> str:
+    text = " ".join(re.split(r"[^a-z']+", str(clause or "").lower()))
+    if any(p in text for p in _IDLE_PHRASES):
+        return "idle"
+    words = set(text.split())
+    if words & _IDLE_WORDS:
+        return "idle"
+    if words & _WORKING_WORDS_SAID:
+        return "working"
+    return ""
+
+
+def report_while(reason: str) -> str:
+    """`"idle"` or `"working"`: the machine state in which the person said
+    the report IS wanted, or "" when the words do not say one.
+
+    "Only unusual if hot while it is idle" and "fine unless it is idle" say
+    idle; "normal while it is printing", with no "only" clause, says the
+    report is wanted in the other state, idle.
+    """
+    for match in _ONLY_CLAUSE.finditer(str(reason or "")):
+        said = _state_said(match.group(1) or match.group(2) or "")
+        if said:
+            return said
+    for match in _NORMAL_CLAUSE.finditer(str(reason or "")):
+        said = _state_said(match.group(1) or "")
+        if said:
+            return "working" if said == "idle" else "idle"
+    return ""
+
+
+def condition_holds(house: House, eid: str, reason: str) -> bool | None:
+    """Whether a correction whose reason names a machine state stands the
+    check down NOW. None when the reason names no state brAIn can read on
+    this device — the rule is then the plain one it always was.
+
+    True while the machine is in the state the person said was normal;
+    False in the state they said they want to hear about, and False when
+    the status cannot be read, because "could not tell" excepts nothing.
+    """
+    wanted = report_while(reason)
+    if not wanted or not status_entity(house, eid):
+        return None
+    state, _since, _status = machine_status(house, eid)
+    if not state:
+        return False
+    return state != wanted
+
+
 def cycling_kind(names, sibling_states) -> str:
     """Which cycling machine this is, `"machine"` for one known only by its
     status, or "" when nothing says it cycles.

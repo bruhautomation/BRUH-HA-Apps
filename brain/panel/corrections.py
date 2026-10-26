@@ -582,6 +582,52 @@ def offer_row(the_plan: dict, note: str, *, entity_name: str = "",
     }
 
 
+def condition_offer_row(finding: dict, note: str, *, entity_name: str = "",
+                        check_title: str = "", finding_key: str = "",
+                        about: str = "", now: float | None = None
+                        ) -> dict | None:
+    """The question asked when a reason names a condition brAIn cannot read.
+
+    "Only a problem when the heating is on" said about a device with no
+    status for brAIn to watch: a plain rule would stand the check down in
+    both states, the one the person asked to hear about included, so no
+    rule is written and they are asked instead whether to stop flagging it
+    for this device at all. Yes writes the press's own rule
+    (:func:`accept_offer`, scope ``entity_check``); No leaves the check
+    raising it.
+    """
+    check_id = check_of(finding)
+    entity_id = str(finding.get("entity_id") or "")
+    if not check_id or not entity_id or check_id in NEVER_CHECKS:
+        return None
+    now = time.time() if now is None else float(now)
+    name = entity_name or "this device"
+    rule = f"“{check_title}”" if check_title else "this"
+    text = f"Stop flagging {rule} for {name} at all?"
+    offer = {
+        "key": _offer_key(text), "scope": "entity_check", "check": check_id,
+        "entity_id": entity_id, "area_id": "", "expires": "", "until": "",
+        "text": note.strip()[:MAX_REASON] or "Not a problem here",
+        "about": about, "finding_key": finding_key, "created": int(now),
+    }
+    _save_offer(offer, now)
+    return {
+        "text": text,
+        "claim": textclip.clip(
+            f"You said this is only a problem some of the time, and brAIn "
+            f"cannot tell from {name} when that is. Should it stop "
+            "flagging it altogether?", 240),
+        "detail": (f"Your words: “{textclip.clip(note.strip(), MAX_REASON)}”. "
+                   "brAIn kept them as a fact and wrote no rule, so it will "
+                   "go on raising this; Yes stops it for this device, No "
+                   "keeps it."),
+        "kind": "question", "severity": "info", "stakes": "low",
+        "source": SOURCE, "source_title": SOURCE_TITLE, "fixable": False,
+        "memory_hint": textclip.clip(note.strip(), 240),
+        "entity_id": entity_id,
+    }
+
+
 def _load_offers() -> list[dict]:
     try:
         with open(OFFERS_FILE, encoding="utf-8") as fh:
@@ -645,6 +691,8 @@ def accept_offer(case_text: str, *, protected=(),
         subject = f"area:{offer['area_id']}"
     elif scope == "check":
         subject = f"check:{check_id}"
+    elif scope == "entity_check" and offer.get("entity_id"):
+        subject = str(offer["entity_id"])
     else:
         return {"ids": [], "why": "that offer is not one brAIn can widen"}
     got, _ = facts_store.add(
@@ -763,7 +811,8 @@ def summary(now: float | None = None) -> dict:
 __all__ = [
     "conditional", "conditional_confirmation","LIFETIMES", "NEVER_CHECKS", "NEVER_CLASSES", "NEVER_DOMAINS",
            "SCHEMA", "SCOPES", "SEASONS", "SOURCE", "SYSTEM", "WIDE_SCOPES",
-           "accept_offer", "apply_plan", "check_of", "confirmation",
+           "accept_offer", "apply_plan", "check_of", "condition_offer_row",
+           "confirmation",
            "expires_for", "find_offer", "house_southern", "is_offer",
            "never_covered", "offer_key_for", "offer_row", "plan", "prompt",
            "resume_date", "scope_map", "season_resume", "summary",

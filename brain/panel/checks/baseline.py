@@ -104,7 +104,7 @@ PRINTER_PLATFORMS = devices.PRINTER_PLATFORMS
 JOB_WORDS = frozenset({"progress", "layer", "layers", "remaining",
                        "elapsed", "eta", "job"})
 # A setpoint is what somebody asked for, and it moves when they change it.
-SETPOINT_WORDS = frozenset({"target", "setpoint", "setpoints"})
+SETPOINT_WORDS = devices.SETPOINT_WORDS
 # A counter that resets every midnight is high at 23:00 and zero at 00:05
 # by construction.
 DAILY_WORDS = frozenset({"today", "yesterday", "daily"})
@@ -249,6 +249,8 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
     # tank or a probe in a room is still a reading worth a band.
     if devices.computer_temperature(house, eid):
         return "a computer's own temperature, which follows its load"
+    if devices.is_setpoint(house, eid, st):
+        return "a setpoint somebody chose"
     if str(attrs.get("device_class") or "") in SPAN_CLASSES:
         return "a span, not a quantity"
     if str(attrs.get("unit_of_measurement") or "").strip() in SPAN_UNITS:
@@ -260,8 +262,6 @@ def not_a_house_reading(house: House, eid: str, st: dict) -> str:
         said = " ".join(words)
         if found & MACHINE_WORDS or any(p in said for p in MACHINE_PHRASES):
             return "a part of a machine, which swings with its cycle"
-        if found & SETPOINT_WORDS or "set point" in " ".join(words):
-            return "a setpoint somebody chose"
         if found & DAILY_WORDS:
             return "a counter that resets daily"
         if found & JOB_WORDS and found & devices._PAIR_WORDS:  # noqa: SLF001

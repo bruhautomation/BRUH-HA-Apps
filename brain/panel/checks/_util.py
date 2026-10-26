@@ -502,6 +502,24 @@ class House:
                     return {**rule, "scope": "device", "via": other}
         return None
 
+    def _applies_now(self, entity_id: str, rule: dict) -> bool:
+        """Whether a rule whose reason names a machine state stands down now.
+
+        "Normal while the printer is printing — only unusual if hot while it
+        is idle" was stored as a rule with no condition and stood the check
+        down in both states. The reason is the rule's own text, so it is
+        read here against the device's job status (`chores.condition_holds`):
+        the rule holds in the state the person called normal and not in the
+        one they asked to hear about. A reason that names no state this
+        device reports stands down as it always did.
+        """
+        text = str((rule or {}).get("text") or "")
+        if not text:
+            return True
+        from . import chores  # noqa: PLC0415 — chores imports this module
+        holds = chores.condition_holds(self, entity_id, text)
+        return True if holds is None else holds
+
     def withheld_by(self, entity_id: str, check_id: str) -> dict | None:
         """The correction that stands this check down for this entity, or None.
 
@@ -527,15 +545,15 @@ class House:
                              ((facts or {}).get(eid) or ())}
                 if isinstance(facts, dict) else None)
         rules = (table.get("entity") or {}).get(entity_id) or {}
-        if check_id in rules:
+        if check_id in rules and self._applies_now(entity_id, rules[check_id]):
             return {**rules[check_id], "scope": "entity_check"}
         if self._never_covered(entity_id, check_id):
             return None
-        if "*" in rules:
+        if "*" in rules and self._applies_now(entity_id, rules["*"]):
             return {**rules["*"], "scope": "entity"}
         hit = self._device_rule(entity_id, check_id,
                                 lambda eid: (table.get("entity") or {}).get(eid))
-        if hit:
+        if hit and self._applies_now(entity_id, hit):
             return hit
         area = self.area_id_of(entity_id)
         if area:
