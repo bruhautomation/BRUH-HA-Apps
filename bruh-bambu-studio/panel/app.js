@@ -289,6 +289,16 @@ async function nextFrame(id) {
     url = null;
     if (old) setTimeout(() => URL.revokeObjectURL(old), 1000);
     cam.failures = 0;
+    // The box takes the stream's own shape, so the picture is neither
+    // stretched, cropped nor letterboxed (cameras differ: 16:9, 4:3).
+    if (next.naturalWidth && next.naturalHeight) {
+      const ratio = `${next.naturalWidth} / ${next.naturalHeight}`;
+      if (cam.ratio !== ratio) {
+        cam.ratio = ratio;
+        const wrap = cam.node.closest(".camwrap");
+        if (wrap) wrap.style.aspectRatio = ratio;
+      }
+    }
     cam.node.classList.add("has-frame");
     cam.node.classList.remove("no-frame");
     if (cam.on) cam.note.hidden = true;
@@ -319,9 +329,9 @@ function cameraBlock(p) {
   }
   const tone = stateTone(p);
   const word = p.online ? (STATE_WORDS[p.state] || p.state || "Connecting") : "Offline";
+  // The stage is the job's to say (it is in the job block), not the picture's.
   const overlay = el("div", { class: "camover" },
     el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word),
-    p.stage && p.printing ? el("span", { class: "pill ghost" }, p.stage) : null,
     watchBadge(p),
     el("span", { class: "grow" }),
     el("button", { type: "button", class: "iconbtn", title: p.chamber_light ? "Light off" : "Light on",
@@ -333,13 +343,48 @@ function cameraBlock(p) {
       onclick: () => { cam.on = !cam.on; if (cam.on) scheduleFrame(p.id, 0); renderPrinters(true); } },
     icon(cam.on ? "pause" : "play")),
     el("button", { type: "button", class: "iconbtn", title: "Full screen", "aria-label": "Show the camera full screen",
-      onclick: () => (cam.node.requestFullscreen ? cam.node.requestFullscreen() : null) }, icon("full")));
+      onclick: () => fullScreen(cam.node) }, icon("full")));
+  // Progress is the job's ring: nothing but controls is drawn over the
+  // picture (a progress line along its bottom read as a green bar in it).
   const wrap = el("div", { class: "camwrap" }, cam.node, overlay);
-  if (p.printing || (p.state === "finish" && p.progress != null)) {
-    wrap.append(el("div", { class: "cambar" }, el("i", { style: `width:${Math.max(0, Math.min(100, p.progress || 0))}%` })));
-  }
+  if (cam.ratio) wrap.style.aspectRatio = cam.ratio;
   if (!cam.on) { cam.note.textContent = "Camera paused."; cam.note.hidden = false; }
   return wrap;
+}
+
+// Full screen on the element, or, where the ingress frame refuses the
+// Fullscreen API, the element filling the window until Escape or its own
+// Leave button.
+function fullScreen(node, onChange) {
+  const leave = () => {
+    node.classList.remove("filled");
+    document.body.classList.remove("has-filled");
+    document.removeEventListener("keydown", onKey);
+    if (onChange) onChange(false);
+  };
+  const onKey = (e) => { if (e.key === "Escape") leave(); };
+  if (document.fullscreenElement === node || node.classList.contains("filled")) {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else leave();
+    return;
+  }
+  const fill = () => {
+    node.classList.add("filled");
+    document.body.classList.add("has-filled");
+    document.addEventListener("keydown", onKey);
+    if (onChange) onChange(true);
+  };
+  if (node.requestFullscreen && document.fullscreenEnabled !== false) {
+    node.requestFullscreen().then(() => {
+      if (onChange) {
+        onChange(true);
+        const off = () => { if (document.fullscreenElement !== node) { document.removeEventListener("fullscreenchange", off); onChange(false); } };
+        document.addEventListener("fullscreenchange", off);
+      }
+    }, fill);
+  } else {
+    fill();
+  }
 }
 
 function ring(pct) {
@@ -381,8 +426,7 @@ function readings(p) {
     tile("nozzle", "Nozzle", temp(p.nozzle_c), p.nozzle_target_c ? `→ ${Math.round(p.nozzle_target_c)}°` : "off"),
     tile("bed", "Bed", temp(p.bed_c), p.bed_target_c ? `→ ${Math.round(p.bed_target_c)}°` : "off"),
     p.chamber_c != null ? tile("chamber", "Chamber", `${Math.round(p.chamber_c)}°`) : null,
-    tile("fan", "Part fan", fanText, fans.aux != null ? `aux ${fans.aux}%` : null),
-    p.speed ? tile("speed", "Speed", p.speed[0].toUpperCase() + p.speed.slice(1)) : null);
+    tile("fan", "Part fan", fanText, fans.aux != null ? `aux ${fans.aux}%` : null));
 }
 
 function spool(t, active, p) {
@@ -478,10 +522,9 @@ async function loadStorage(p) {
   try {
     const r = await api(`api/printer/storage?printer=${encodeURIComponent(p.id)}`);
     const jobs = r.files.filter((f) => f.printable);
+    const queue = [];
     const grid = el("div", { class: "pfiles" }, jobs.map((f) => el("div", { class: "pfile" },
-      f.picture ? el("img", { src: f.picture, alt: "", loading: "lazy",
-        onerror: (e) => { e.target.replaceWith(el("div", { class: "nopic" }, "3MF")); } })
-        : el("div", { class: "nopic" }, f.name.split(".").pop().toUpperCase()),
+      storagePicture(f, queue),
       el("b", { title: f.name }, f.name.replace(/(\.gcode)?\.3mf$/i, "")),
       el("span", { class: "hint" }, [f.size ? `${(f.size / 1e6).toFixed(1)} MB` : null, f.date].filter(Boolean).join(" · ")),
       el("div", { class: "row wrap" },
@@ -497,10 +540,42 @@ async function loadStorage(p) {
     node.replaceChildren(
       jobs.length ? grid : el("p", { class: "hint" }, "No print jobs on the printer's storage."),
       el("div", { class: "row" }, el("button", { type: "button", onclick: () => loadStorage(p) }, "Read again")));
+    loadPictures(queue, node);
   } catch (e) {
     node.dataset.loaded = "";
     node.replaceChildren(el("p", { class: "warn" }, e.message),
       el("button", { type: "button", onclick: () => loadStorage(p) }, "Try again"));
+  }
+}
+
+// A file's picture on the printer: a quiet plate while it loads or when the
+// file has none, never a word that reads as an error. The pictures are read
+// one at a time (the printer serves one storage session well), and one that
+// failed (storage busy, a slow answer) is asked again rather than left blank.
+const PLATE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l9 4 9-4-9-4-9 4zm9-14L3 7l9 4 9-4-9-4zm-9 9l9 4 9-4-2.2-1L12 13.9 5.2 11 3 12z"/></svg>';
+
+function storagePicture(f, queue) {
+  const box = el("div", { class: "nopic", "aria-hidden": "true" });
+  box.innerHTML = PLATE_SVG;
+  if (f.picture) { box.classList.add("loading"); queue.push({ url: f.picture, box }); }
+  return box;
+}
+
+async function loadPictures(queue, node) {
+  for (const item of queue) {
+    for (let attempt = 0; attempt < 4 && node.isConnected; attempt += 1) {
+      if (attempt) await new Promise((r) => setTimeout(r, 1500 * attempt));
+      let r;
+      try { r = await fetch(item.url, { cache: "no-store" }); } catch (_) { continue; }
+      if (r.status === 404) break;  // the file has no picture
+      if (!r.ok || !(r.headers.get("content-type") || "").startsWith("image/")) continue;
+      const img = el("img", { src: URL.createObjectURL(await r.blob()), alt: "" });
+      try { await img.decode(); } catch (_) { continue; }
+      item.box.replaceWith(img);
+      item.box = null;
+      break;
+    }
+    if (item.box) item.box.classList.remove("loading");
   }
 }
 
@@ -732,7 +807,7 @@ function watchBlock(p) {
         onchange: (e) => watchSet(p, { enabled: e.target.checked }) }), el("i", {})));
   if (!w.enabled) {
     return el("section", { class: "watch off" }, head,
-      el("p", { class: "hint" }, "Watches the camera while it prints. brAIn looks at the moments a print is most likely to fail — read from the print's own file — compares what it sees with what it should be, warns you, and pauses a print that has failed. Free checks run all the time: a covered lens, a sudden change on the plate, the printer's own alerts, and whether the plate has been cleared."));
+      el("p", { class: "hint" }, "Watches the camera while it prints: brAIn looks at the moments a print is most likely to fail, warns you, and pauses a print that has failed."));
   }
   const last = w.last;
   const plate = w.plate || {};
@@ -763,24 +838,33 @@ function watchBlock(p) {
 function printerCard(p) {
   const meta = [p.model, p.nozzle_diameter ? `${p.nozzle_diameter} mm nozzle` : null, p.host,
     p.wifi ? `Wi-Fi ${p.wifi}` : null].filter(Boolean).join(" · ");
-  const head = el("header", { class: "phead" },
-    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint" }, meta)),
-    el("button", { type: "button", title: "Ask for a full report (after changing a spool)",
-      onclick: () => command(p, "refresh") }, icon("refresh"), "Refresh"),
-    el("button", { type: "button", title: "Drop the connection and open a new one",
-      onclick: () => command(p, "reconnect") }, icon("link"), "Reconnect"),
-    el("button", { type: "button", class: "danger", title: "Remove this printer", "aria-label": `Remove ${p.name}`,
-      onclick: async () => {
+  // Removing a printer is rare and cannot be undone by a press, so it is in
+  // the card's menu, not a ✕ beside Refresh.
+  const menu = el("details", { class: "pmenu", "data-k": "menu" },
+    el("summary", { "aria-label": `More for ${p.name}` }, "⋯"),
+    el("div", { class: "pmenupop" },
+      el("button", { type: "button", class: "danger", onclick: async () => {
         if (!confirm(`Remove ${p.name} from BRUH Bambu Studio?`)) return;
         await api(`api/printers/${encodeURIComponent(p.id)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
         refresh();
-      } }, icon("close")));
-  const body = el("div", { class: "pbody" }, head,
-    p.connection_error ? el("p", { class: "warn" }, p.connection_error,
-      el("button", { type: "button", onclick: () => command(p, "reconnect") }, "Reconnect")) : null,
-    jobBlock(p), watchBlock(p), hmsBlock(p), controlsBlock(p), readings(p), amsBlock(p),
-    storageBlock(p), manualBlock(p));
-  return el("article", { class: `printer ${stateTone(p)}`, "data-id": p.id }, cameraBlock(p), body);
+      } }, icon("close"), "Remove printer")));
+  const head = el("header", { class: "phead" },
+    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint" }, meta)),
+    el("button", { type: "button", class: "quiet", title: "Ask for a full report (after changing a spool)",
+      onclick: () => command(p, "refresh") }, icon("refresh"), "Refresh"),
+    el("button", { type: "button", class: "quiet", title: "Drop the connection and open a new one",
+      onclick: () => command(p, "reconnect") }, icon("link"), "Reconnect"),
+    menu);
+  // What the printer is doing now on the left (the picture, the job and its
+  // controls, the temperatures and the filament); what watches it and what
+  // is stored on it on the right. One column on a phone, in that order.
+  const now = el("div", { class: "pnow" }, cameraBlock(p),
+    el("div", { class: "pnowbody" },
+      p.connection_error ? el("p", { class: "warn" }, p.connection_error,
+        el("button", { type: "button", onclick: () => command(p, "reconnect") }, "Reconnect")) : null,
+      jobBlock(p), hmsBlock(p), controlsBlock(p), readings(p), amsBlock(p)));
+  const more = el("div", { class: "pmore" }, watchBlock(p), storageBlock(p), manualBlock(p));
+  return el("article", { class: `printer ${stateTone(p)}`, "data-id": p.id }, head, now, more);
 }
 
 function renderPrinters(force = false) {
@@ -1012,11 +1096,15 @@ async function importLink(e) {
 }
 
 function filePicture(f) {
-  const kind = f.name.split(".").pop().toUpperCase();
   const src = f.design ? `api/design/parts/${encodeURIComponent(f.design)}/thumb`
     : `api/thumb?path=${encodeURIComponent(f.path)}`;
+  // A file with no picture gets the same quiet plate as one on a printer.
   return el("img", { class: "fthumb", src, alt: "", loading: "lazy",
-    onerror: (e) => { e.target.replaceWith(el("div", { class: "fthumb nopic" }, kind)); } });
+    onerror: (e) => {
+      const box = el("div", { class: "fthumb nopic", "aria-hidden": "true" });
+      box.innerHTML = PLATE_SVG;
+      e.target.replaceWith(box);
+    } });
 }
 
 function filamentChips(f) {
@@ -1270,3 +1358,8 @@ let first = "studio";
 try { first = localStorage.getItem("bambu.view") || "studio"; } catch (_) { /* storage refused */ }
 refresh().then(() => show(first));
 setInterval(refresh, 4000);
+
+// A card's ⋯ menu closes on a press anywhere else, as a menu does.
+document.addEventListener("click", (e) => {
+  document.querySelectorAll("details.pmenu[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+});

@@ -225,27 +225,48 @@ fieldset.trays { border: 1px solid var(--line); border-radius: 10px; display: gr
 
 /* ---- Printers --------------------------------------------------------- */
 .printers { display: grid; gap: 18px; }
-.printer { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+/* A printer: its name across the top, then what it is doing now (the
+   picture, the job, its controls, temperatures and filament) beside what
+   watches it and what is stored on it. */
+.printer { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  grid-template-areas: "head head" "now more"; column-gap: 18px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
-  overflow: hidden; box-shadow: var(--shadow); }
+  box-shadow: var(--shadow); padding: 14px 18px 18px; }
+.printer > .phead { grid-area: head; margin-bottom: 12px; }
+.pnow { grid-area: now; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.pnowbody { display: grid; gap: 14px; min-width: 0; }
+.pmore { grid-area: more; display: grid; gap: 14px; align-content: start; min-width: 0; }
+.pmore > details.more:first-of-type { border-top: 0; padding-top: 0; }
+.quiet { border-color: transparent; background: transparent; color: var(--muted); padding: 0 10px; }
+.quiet:hover { background: var(--sunk); color: var(--ink); }
+.pmenu { position: relative; margin: 0; }
+.pmenu > summary { list-style: none; display: grid; place-items: center; width: 40px; height: 40px;
+  min-height: 0; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; color: var(--muted); }
+.pmenu > summary::-webkit-details-marker { display: none; }
+.pmenu[open] > summary, .pmenu > summary:hover { background: var(--sunk); color: var(--ink); }
+.pmenupop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 4; display: grid; gap: 4px;
+  min-width: 200px; padding: 6px; border-radius: 12px; background: var(--surface);
+  border: 1px solid var(--line); box-shadow: var(--shadow); }
+.pmenupop button { justify-content: flex-start; border-color: transparent; }
 .printer.live { border-color: color-mix(in srgb, var(--live) 45%, var(--line)); }
 .printer.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
-.camwrap { position: relative; background: #05080b; aspect-ratio: 16 / 9; align-self: start;
-  position: sticky; top: calc(var(--bar-h) + 8px); }
-.printer > .camwrap { border-radius: 0 0 14px 0; }
+/* The camera box takes the stream's own shape once a frame is in (app.js
+   sets aspect-ratio from the picture), 16:9 until then, on the panel's
+   own surface: no letterbox bars, no stretch, no crop. */
+.camwrap { position: relative; background: var(--sunk); aspect-ratio: 16 / 9; border-radius: 14px;
+  overflow: hidden; }
 .cam { position: absolute; inset: 0; display: grid; place-items: center; }
-.cam:fullscreen { background: #000; }
+.cam:fullscreen, .cam.filled { background: #000; }
+.cam.filled { position: fixed; inset: 0; z-index: 50; }
 .camimg { width: 100%; height: 100%; object-fit: contain; display: none; }
 .cam.has-frame .camimg { display: block; }
 .camback { display: none; }
-.camnote { position: absolute; margin: 0; padding: 0 24px; text-align: center; color: #9fb0bf; font-size: 14px; }
+.camnote { position: absolute; margin: 0; padding: 0 24px; text-align: center; color: var(--muted); font-size: 14px; }
 .cam.has-frame .camnote:not([hidden]) { bottom: 44px; padding: 6px 12px; border-radius: 8px;
   background: rgba(5, 8, 11, .7); color: #e8eef3; }
 .camnote[hidden] { display: none; }
 .camover { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px;
   padding: 10px; background: linear-gradient(rgba(5, 8, 11, .65), transparent); }
-.cambar { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: rgba(255, 255, 255, .15); }
-.cambar > i { display: block; height: 100%; background: var(--live); transition: width .6s; }
 .iconbtn { width: 40px; height: 40px; min-height: 0; padding: 0; border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, .2); background: rgba(5, 8, 11, .55); color: #e8eef3; }
 .camover .iconbtn[aria-pressed="true"] { background: #f6c945; color: #2a1f00; border-color: #f6c945; }
@@ -266,8 +287,7 @@ button { gap: 6px; }
 .pill.ghost { font-weight: 500; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pill.live .dot { animation: none; } }
-.pbody { padding: 16px 18px 18px; display: grid; gap: 14px; align-content: start; min-width: 0; }
-.phead { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.phead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .phead h2 { font-size: 20px; }
 .phead .hint { margin: 2px 0 0; }
 .job { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: 14px; background: var(--sunk); }
@@ -284,7 +304,7 @@ button { gap: 6px; }
 .fact b { font-size: 15px; }
 .fact span { font-size: 12px; color: var(--muted); }
 .jobpic { flex: none; width: 64px; height: 64px; border-radius: 10px; object-fit: contain; background: var(--surface); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
 .tile { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--line); min-width: 0; }
 .ticon { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px;
@@ -305,8 +325,8 @@ button { gap: 6px; }
 .humid .ic { width: 14px; height: 14px; color: var(--accent); }
 .humid.h4, .humid.h5 { color: var(--warn); }
 .humid.h4 .ic, .humid.h5 .ic { color: var(--warn); }
-.spools { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
-.spool { position: relative; display: grid; justify-items: center; gap: 2px; padding: 10px 6px 8px;
+.spools { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 6px; }
+.spool { position: relative; display: grid; justify-items: center; gap: 2px; padding: 10px 4px 8px; min-width: 0;
   min-height: 0; border-radius: 12px; background: var(--surface); border: 1px solid var(--line);
   text-align: center; }
 .spool.active { border-color: var(--live); box-shadow: 0 0 0 2px color-mix(in srgb, var(--live) 30%, transparent); }
@@ -328,7 +348,12 @@ details.more > summary { font-weight: 600; }
 .pfiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
 .pfile { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
 .pfile img, .nopic { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 8px; background: var(--sunk); }
-.nopic { display: grid; place-items: center; color: var(--muted); font-weight: 700; font-size: 13px; }
+/* A quiet plate: while a picture loads, or for a file that has none. */
+.nopic { display: grid; place-items: center; color: color-mix(in srgb, var(--muted) 45%, transparent); }
+.nopic svg { width: 40%; max-width: 56px; fill: currentColor; }
+.nopic.loading svg { animation: breathe 1.4s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .nopic.loading svg { animation: none; } }
 .pfile b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pfile .row { margin-top: 2px; }
 .pfile button { flex: 1; padding: 0 8px; }
@@ -376,8 +401,8 @@ label[hidden], [hidden] { display: none !important; }
 .row.end { justify-content: flex-end; }
 
 @media (max-width: 900px) {
-  .printer { grid-template-columns: 1fr; }
-  .camwrap, .printer > .camwrap { position: relative; top: 0; border-radius: 0; }
+  .printer { grid-template-columns: 1fr; grid-template-areas: "head" "now" "more"; padding: 12px 14px 16px; }
+  .pmore { margin-top: 14px; }
 }
 @media (max-width: 560px) {
   .frow { flex-wrap: wrap; }
@@ -385,7 +410,11 @@ label[hidden], [hidden] { display: none !important; }
   .fthumb { width: 60px; height: 60px; }
   .seg button { padding: 0 9px; }
   .phead > .grow { flex-basis: 100%; }
-  .phead > button:last-child { margin-left: auto; }
+  /* The camera already shows the plate on a phone. */
+  .jobpic { display: none; }
+  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tile { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px; }
+  .ticon { width: 28px; height: 28px; }
 }
 /* The Studio tab on a touch screen (touchscreen.js): noVNC hosted on this
    page, sized by its zoom and moved by a translate inside a clipped port,
@@ -428,6 +457,7 @@ label[hidden], [hidden] { display: none !important; }
   input, select, textarea { font-size: 16px; }
   button, .button, .tab { min-height: 44px; }
   .iconbtn { width: 44px; height: 44px; }
+  .pmenu > summary { width: 44px; height: 44px; padding: 0; }
   .seg button { min-height: 44px; }
   summary { min-height: 44px; padding-block: 11px; box-sizing: border-box; }
   .viewhelp { width: 44px; height: 44px; }

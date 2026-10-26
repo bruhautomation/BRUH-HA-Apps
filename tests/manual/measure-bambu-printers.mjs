@@ -20,6 +20,15 @@
  *    brAIn saw beside what the print should be, the plan of looks over the
  *    layers, the history, or Resume not answering that alert;
  *  - a printer with detection off not offering the switch that turns it on;
+ *  - the camera box not keeping the stream's own shape (a square stream in a
+ *    16:9 box, letterboxed), or anything but controls drawn over the picture
+ *    (the progress line that ran across the bottom of the feed);
+ *  - a picture on the printer that failed once (the printer's storage busy)
+ *    never shown, or a file with no picture drawn as a word ("GCODE");
+ *  - something said twice on the card: the speed as a tile beside its own
+ *    switch, the stage over the camera and in the job;
+ *  - an AMS's four trays not on one row at a phone's width;
+ *  - removing a printer as a bare ✕ beside Refresh;
  *  - a control under the touch floor, sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -93,6 +102,7 @@ const HISTORY = { ok: true, checks: [
   { n: 1, layer: 2, decision: 'ok', summary: 'The first layer is down evenly.', confidence: 0.88,
     why: 'The first layer is down.', at: Date.now() / 1000 - 4000, image_url: null }], alerts: [], errors: [] };
 const WATCH = [];
+const THUMB_FAILED = new Set();
 
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -111,7 +121,14 @@ async function run(label, viewport, touch) {
     if (path === 'api/printer/camera') {
       // Slowly, so a card that blanks while the next frame loads is caught.
       await new Promise((r) => setTimeout(r, 250));
+      // The X1C's camera is square, so a box that keeps 16:9 shows bars.
+      if (url.searchParams.get('printer') === 'x1') return route.fulfill({ body: PICTURE, contentType: 'image/png' });
       return route.fulfill({ body: FRAME, contentType: 'image/jpeg' });
+    }
+    if (path === 'api/printer/thumb' && !THUMB_FAILED.has(label)) {
+      // The printer's storage is busy the first time it is asked.
+      THUMB_FAILED.add(label);
+      return route.fulfill({ status: 502, json: { ok: false, error: 'Could not read the picture: timed out' } });
     }
     if (path === 'api/watch/action' || path === 'api/watch/settings') {
       WATCH.push({ label, path, ...route.request().postDataJSON() });
@@ -165,6 +182,37 @@ async function run(label, viewport, touch) {
     return blank;
   });
   if (blanks) say(`the camera picture was blank in ${blanks} of 100 samples (it flashes)`);
+  // The picture box keeps the stream's own shape, at every width.
+  await page.waitForFunction(() => {
+    const img = document.querySelector('.printer[data-id="x1"] .camimg');
+    return img && img.naturalWidth > 0;
+  }, null, { timeout: 10000 }).catch(() => say("the X1C's camera picture never appeared"));
+  await page.waitForTimeout(100);
+  for (const id of ['a1', 'x1']) {
+    const fit = await page.evaluate((pid) => {
+      const img = document.querySelector(`.printer[data-id="${pid}"] .camimg`);
+      const box = img && img.closest('.camwrap').getBoundingClientRect();
+      return img && img.naturalWidth ? { box: box.width / box.height, img: img.naturalWidth / img.naturalHeight } : null;
+    }, id);
+    if (!fit) say(`${id}: no camera box to measure`);
+    else if (Math.abs(fit.box - fit.img) > 0.02) {
+      say(`${id}: the camera box is ${fit.box.toFixed(2)}:1 for a ${fit.img.toFixed(2)}:1 stream`);
+    }
+  }
+  if (await card.locator('.camwrap .cambar').count()) say('a bar is drawn across the bottom of the camera picture');
+  const overPicture = await page.evaluate(() => [...document.querySelectorAll('.printer[data-id="a1"] .camwrap *')]
+    .filter((e) => e.offsetParent && getComputedStyle(e).position === 'absolute'
+      && !e.closest('.camover') && !e.matches('.cam, .camimg, .camback, .camnote')).map((e) => e.className));
+  if (overPicture.length) say(`drawn over the camera picture: ${overPicture.join(', ')}`);
+  if ((await card.locator('.tile', { hasText: 'Speed' }).count()) && (await card.locator('.seg[aria-label="Speed"]').count())) {
+    say('the speed is shown as a tile beside its own switch');
+  }
+  const stageTimes = await card.evaluate((c) => (c.innerText.match(/Changing filament/g) || []).length);
+  if (stageTimes !== 1) say(`the stage is said ${stageTimes} times`);
+  const rows = await card.locator('.amsunit').first().locator('.spool').evaluateAll((els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().top))).size);
+  if (rows !== 1) say(`the AMS's four trays take ${rows} rows`);
+  if (await card.locator('.phead > button[aria-label^="Remove"]').count()) say('Remove is a bare ✕ beside Refresh');
+  if (!(await card.locator('.phead details.pmenu').count())) say('the printer has no ⋯ menu for removing it');
   const before = await card.locator('.camimg').elementHandle();
   await page.evaluate(() => refresh());
   await page.waitForTimeout(300);
@@ -186,8 +234,10 @@ async function run(label, viewport, touch) {
   const pic = await page.waitForFunction(() => {
     const i = document.querySelector('.printer[data-id="a1"] .pfile img');
     return i && i.complete && i.naturalWidth > 0;
-  }, null, { timeout: 5000 }).then(() => true).catch(() => false);
-  if (!pic) say("a job on the printer has no picture");
+  }, null, { timeout: 12000 }).then(() => true).catch(() => false);
+  if (!pic) say("a job on the printer has no picture (a read that failed once was never tried again)");
+  const words = await card.locator('.pfile .nopic').evaluateAll((els) => els.map((e) => e.textContent.trim()).filter(Boolean));
+  if (words.length) say(`a file with no picture is drawn as words: ${words.join(', ')}`);
 
   // Print failure detection.
   const watch = card.locator('section.watch');
