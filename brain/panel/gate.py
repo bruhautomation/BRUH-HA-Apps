@@ -187,6 +187,55 @@ def floors(cons: dict, channel: str, exposed_only: bool) -> tuple[str, str] | No
     return None
 
 
+# Making a lock, an alarm or a garage door reachable from a voice assistant
+# or the Home app opens a way into the house, so it is the one change to
+# who-can-reach-what that the person's own words must name. Asked after the
+# floors and before the switch, so "Let brAIn act without asking" does not
+# reach it; only YOLO mode, which is the owner's opt-in to no restrictions,
+# answers before this.
+EXPOSURE_TOOL = "set_assistant_exposure"
+_SECURITY_EXPOSE_DOMAINS = ("lock", "alarm_control_panel")
+
+
+def _said(words) -> str:
+    text = " ".join(str(w) for w in words or []).lower()
+    return " " + re.sub(r"[^a-z0-9]+", " ", text) + " "
+
+
+def _named_in(eid: str, said: str, states: dict) -> bool:
+    obj = eid.split(".", 1)[-1].replace("_", " ")
+    name = str((((states or {}).get(eid) or {}).get("attributes") or {})
+               .get("friendly_name") or "").lower()
+    name = re.sub(r"[^a-z0-9]+", " ", name).strip()
+    eid_words = re.sub(r"[^a-z0-9]+", " ", eid).strip()
+    return any(f" {x} " in said for x in (obj, name, eid_words) if x)
+
+
+def exposure_floor(cons: dict, args: dict, words, states: dict) -> tuple[str, str] | None:
+    """A refusal for exposing a security entity nobody named, or None."""
+    if cons.get("tool") != EXPOSURE_TOOL:
+        return None
+    args = args if isinstance(args, dict) else {}
+    exposing = list(consequence._entity_values(args.get("homekit_add_entity_ids")))
+    if args.get("expose") is True:
+        exposing += consequence._entity_values(args.get("entity_ids"))
+    said = _said(words)
+    for raw in exposing:
+        eid = str(raw).strip().lower()
+        domain = eid.split(".", 1)[0]
+        attrs = ((states or {}).get(eid) or {}).get("attributes") or {}
+        klass = str(attrs.get("device_class") or "")
+        security = domain in _SECURITY_EXPOSE_DOMAINS or (
+            # A cover whose kind could not be read is treated as a door.
+            domain == "cover" and (not klass or klass in
+                                   consequence.SECURITY_COVER_CLASSES))
+        if security and not _named_in(eid, said, states):
+            return "deny", (f"exposing {eid} to an assistant opens a way into "
+                            "the house, and brAIn does that only when the "
+                            "homeowner names it themselves")
+    return None
+
+
 # Shell commands a run under a contract may use: they read. Anything with
 # a metacharacter is refused whole, because a pipe or a redirect is how a
 # read becomes a write.

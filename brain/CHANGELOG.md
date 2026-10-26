@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.21
+
+### Added
+
+- **brAIn can see and change which entities reach your voice assistants and HomeKit.** The chat and the terminal can list, for Assist, Alexa and Google Assistant through Home Assistant Cloud, and each HomeKit Bridge, the lights, switches, fans, covers, thermostats, locks, media players, scenes and scripts in use that are missing and the entries that are unavailable or gone, with each bridge's accessories counted against HomeKit's 150; and change them in bulk, through the bridge's own settings for HomeKit. A lock, an alarm or a garage door is exposed only when you name it yourself. (#431)
+
+### Changed
+
+- **After an update, brAIn closes the "Is this fixed now?" questions it can answer itself.** A report whose fault brAIn measures and has not seen since the fixed release was installed is answered yes, saying brAIn checked rather than that you confirmed it; a question about a fix that was reopened or fixed again later is withdrawn. Only what brAIn cannot tell is left for you. A checks pass also runs again a quarter of an hour after an update, so findings left by the restart clear. (#425)
+- **Scenes you ask for are written straight away when brAIn may act without asking.** With YOLO mode, or *Let brAIn act without asking*, on, asked-for scenes go straight into your scenes (Undo with `brain undo`) and brAIn says what it wrote; with both off they stay a card. The same now holds for an automation asked for in a phone reply or a reply under a card, for `brain.intent` under YOLO mode, and for the rule a "change this automation" card offers. (#429)
+- **New scenes follow the names your house already uses.** When your scenes are named like "Kitchen - Dim", brAIn's are named the same way, and a mood a room already has a scene for is not made again. (#429)
+
+### Fixed
+
+- **`brain findings` lists hundreds of findings.** It stopped with "Argument list too long" once a few hundred were open. (#425)
+- **A personality imported from Morph is read whole.** Traits, voice rules, likes and a nested description are kept as lines, and growth written under other names or as plain sentences is kept; a house whose earlier import kept only two lines is repaired once at startup, unless the personality has been edited since. (#390)
+
 ## 3.8.20
 
 ### Fixed
