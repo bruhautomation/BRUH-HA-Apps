@@ -711,7 +711,7 @@ async def _run(state: dict) -> None:
                 await asyncio.sleep(brain.POLL_S)
         await asyncio.to_thread(_follow, state, seen)
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
-        summary = str((data or {}).get("summary") or text or "").strip()[:1200]
+        summary = wording.clip((data or {}).get("summary") or text, 1200)
         asked = clean_question((data or {}).get("question"))
         if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed":
             # brAIn was asked to make this house's change work on the Morph
@@ -854,7 +854,7 @@ def clean_question(q) -> dict | None:
         if not isinstance(o, dict):
             continue
         label = str(o.get("label") or "").strip()[:LABEL_CHARS]
-        request = str(o.get("request") or "").strip()[:REQUEST_CHARS]
+        request = wording.clip(o.get("request"), REQUEST_CHARS)
         if label and request:
             opts.append({"label": label, "request": request, "home_assistant": o.get("home_assistant") is True})
     if not text or not 2 <= len(opts) <= 3:

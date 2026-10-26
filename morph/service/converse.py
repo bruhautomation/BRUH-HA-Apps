@@ -74,8 +74,8 @@ def start(words: str, session: str = "", context: str = "") -> dict:
              "started": time.time(), "session_in": session}
     if context:
         state["context"] = context
-    if fitted["context_cut"] or fitted["words_cut"]:
-        state["cut"] = "context" if not fitted["words_cut"] else "start"
+    if fitted["context_cut"]:
+        state["cut"] = "context"
     tell._save(state)
     _RUNNING[tid] = asyncio.get_running_loop().create_task(_run(state))
     return state
