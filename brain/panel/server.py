@@ -3791,8 +3791,8 @@ def _morph_diagnostics() -> dict:
             "writable": morph_bridge.writable()}
 
 
-# Where a typed sentence comes from: the ask bar and Morph's Ask line. A
-# phone reply, the Respond box and `brain.intent` keep the card.
+# Where a typed sentence comes from: the ask bar, Morph's Ask line and a
+# phone reply. The Respond box and `brain.intent` keep the card.
 TYPED_INTENT_VIAS = ("panel", "morph", "reply")
 # The prefix of a drafted rule a card offered from a request somebody made
 # (an "automation_edit" card): a person's request, unlike a scheduled

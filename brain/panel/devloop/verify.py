@@ -122,12 +122,12 @@ def proof(entry: dict | None, rec: dict | None, data: dict, *,
         return ("moot", "the report is no longer on brAIn's list")
     if entry.get("verdict") != "fixed":
         return ("moot", "the report was reopened, so the fix is being "
-                        "looked at again")
+                        + "looked at again")
     asked_for = str(rec.get("fixed_in") or "")
     fixed_in = str(entry.get("fixed_in") or "")
     if asked_for and fixed_in and asked_for != fixed_in:
         return ("moot", f"it was fixed again in {fixed_in}, and that fix is "
-                        "asked about on its own")
+                        + "asked about on its own")
     stream = str(entry.get("stream") or "")
     if not STREAMS.get(stream, {}).get("clears") or not looked:
         return None
