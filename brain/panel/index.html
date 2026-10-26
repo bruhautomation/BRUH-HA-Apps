@@ -805,7 +805,7 @@
       <!-- Not a view toggle: the face is a saved setting (terminal_ui), the
            same one ⚙ → Terminal & chat changes, so the item says so rather
            than looking like a tab somebody can peek into and back out of. -->
-      <span class="tmlabel"><span id="termModeLabel">Classic terminal</span>
+      <span class="tmlabel"><span id="termModeLabel">Switch to terminal</span>
         <span class="tmsub">Ask opens this way from now on</span></span>
     </button>
   </div>
@@ -1154,11 +1154,14 @@
           </div>
 
           <h4 class="sethead">Ask tab</h4>
-          <label for="setTerminalUi">Opens as</label>
+          <!-- Named for both faces: somebody looking for this types
+               "terminal" or "chat", and "Opens as" matched neither. -->
+          <label for="setTerminalUi">Chat or terminal</label>
           <select id="setTerminalUi" class="sel selin">
             <option value="chat">Chat — Claude Code as messages</option>
-            <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
+            <option value="classic">Terminal — the full Claude Code terminal</option>
           </select>
+          <p class="hint tight">How Ask opens. ⋯ on Ask switches it too.</p>
           <label for="setChatSessions">Conversations kept running at once</label>
           <select id="setChatSessions" class="sel selin">
             <option value="1">1 — one at a time</option>
@@ -1503,7 +1506,7 @@
             <h5 class="setsubhead"><label for="devLook">What do you want to fix?</label></h5>
             <p class="hint tight">Say it the way you would to a person. One Claude run works out
               what is really wrong and files the issue that would fix it.</p>
-            <textarea id="devLook" rows="3" maxlength="500" autocomplete="off"
+            <textarea id="devLook" rows="3" maxlength="4000" autocomplete="off"
               placeholder="e.g. The settings page is too crowded. I can never find the model picker."></textarea>
             <div class="row">
               <button id="devLookRun" class="btn primary" aria-label="Turn this into an issue and file it">Send</button>

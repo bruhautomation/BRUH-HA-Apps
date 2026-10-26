@@ -340,6 +340,39 @@ def running_at_least(version, fixed_in) -> bool | None:
     return have >= need
 
 
+MAX_INSTALLED = 20
+
+
+def _note_installed(data: dict, product: str, version: str, now: float) -> None:
+    """When a sweep first saw this house running a release: the earliest
+    moment brAIn can say a fix was installed, which is what "not reported
+    since the fix arrived" is measured from (`verify.proof`). Kept per
+    add-on and capped; a release already noted keeps its first sighting."""
+    if not version_tuple(version):
+        return
+    seen = data.setdefault("installed", {}).setdefault(product, {})
+    if not isinstance(seen, dict):
+        seen = data["installed"][product] = {}
+    if version not in seen:
+        seen[version] = float(now)
+        if len(seen) > MAX_INSTALLED:
+            for old in sorted(seen, key=lambda v: seen[v])[:-MAX_INSTALLED]:
+                seen.pop(old, None)
+
+
+def installed_at(data: dict, product: str, fixed_in: str) -> float | None:
+    """The first time a sweep saw this house on ``fixed_in`` or later for
+    ``product``; None when no sweep has (or the release is not a number),
+    which no caller may read as "installed long ago"."""
+    seen = ((data or {}).get("installed") or {}).get(product) or {}
+    if not isinstance(seen, dict):
+        return None
+    times = [float(at) for ver, at in seen.items()
+             if isinstance(at, (int, float))
+             and running_at_least(ver, fixed_in) is True]
+    return min(times) if times else None
+
+
 def product_of(entry: dict) -> str:
     """Which BRUH add-on a report is about: brAIn unless the row said."""
     product = str((entry or {}).get("product") or "")
@@ -450,9 +483,11 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                        or "?") if product in PRODUCTS else version
         entry.update({
             "stream": stream, "rolling": rolling,
-            "where": where[:200], "what": what[:300],
-            "detail": str(row.get("detail") or "")[:400],
-            "body": str(row.get("body") or "")[:20_000],
+            # Cut on a word, never mid-word (`clip`): these are what the
+            # issue says, and a slice ended the owner's words mid-word.
+            "where": clip(where, 200), "what": clip(what, 300),
+            "detail": clip(str(row.get("detail") or ""), 400),
+            "body": clip(str(row.get("body") or ""), 20_000),
             "health": f"{health.get('state') or '?'}"
                       + (f" — {health.get('reason')}" if health.get("reason") else ""),
             "abridged": abridged,
@@ -496,12 +531,14 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
         for name, ver in products.items():
             if name in PRODUCTS and ver:
                 known[name] = str(ver)[:40]
+                _note_installed(data, name, str(ver)[:40], now)
     _prune(items)
     data["swept_at"] = now
     # The release this house runs, read by `awaiting_update` and the
     # scorecard: the one number that says whether a fix has arrived.
     if version_tuple(version):
         data["version"] = version
+        _note_installed(data, "brAIn", version, now)
     data.setdefault("last_run", {})[stream] = now
     _save(data)
     aliases.save()
@@ -662,7 +699,7 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
         return aliases.apply(scrub(text))
 
     where, what = clean(entry.get("where", "")), clean(entry.get("what", ""))
-    title = f"[{where}] {what}"[:120] if where else what[:120]
+    title = clip(f"[{where}] {what}" if where else what, 120)
     lines = [
         github.MARKER.format(fp=entry.get("fp", "")),
         ("Filed by brAIn's development loop from a house that switched it "
@@ -1216,11 +1253,15 @@ OWNER_NOTE_CHARS = 400
 
 
 def owner_answer(fp: str, accepted: bool, note: str = "",
-                 now: float | None = None) -> bool:
-    """Record the owner's answer to "is this fixed?" on the queue entry;
-    the next send pass posts it (`_post_owner_answers`). Recorded and not
-    posted here because posting needs the token and the lock the send
-    pass already holds, and a press must not wait on GitHub."""
+                 now: float | None = None, *, by: str = "owner") -> bool:
+    """Record the answer to "is this fixed?" on the queue entry; the next
+    send pass posts it (`_post_owner_answers`). Recorded and not posted
+    here because posting needs the token and the lock the send pass
+    already holds, and a press must not wait on GitHub.
+
+    ``by`` is who answered: ``owner`` (a press) or ``brain`` (brAIn proved
+    it from what it measures, `verify.proof`), and the comment says which
+    — brAIn's answer never reads as the owner confirming anything."""
     if not FP_RE.match(fp or ""):
         return False
     with _LOCK:
@@ -1230,7 +1271,8 @@ def owner_answer(fp: str, accepted: bool, note: str = "",
             return False
         entry["owner"] = {"verdict": "held" if accepted else "not_fixed",
                           "note": clip(str(note or ""), OWNER_NOTE_CHARS),
-                          "at": now or time.time(), "posted": False}
+                          "at": now or time.time(), "posted": False,
+                          "by": "brain" if by == "brain" else "owner"}
         _save(data)
     return True
 
@@ -1273,7 +1315,15 @@ def _post_owner_answers(token: str, repo: str, items: dict, aliases: Aliases,
         product = product_of(entry)
         version = (running_for(entry, running, products)
                    or str(entry.get("version") or "?"))
-        if owner.get("verdict") == "held":
+        if owner.get("verdict") == "held" and owner.get("by") == "brain":
+            # brAIn's own proof, said as brAIn's: the owner has not
+            # answered, and nothing here may read as them confirming it.
+            words = scrub(str(owner.get("note") or "")).strip()
+            text = f"brAIn checked on {product} {version}" + (
+                f": {words}" if words else ".")
+            text += " (Not answered by the owner.)"
+            reopen = False
+        elif owner.get("verdict") == "held":
             text, reopen = f"The owner confirms this is fixed on {product} {version}.", False
         else:
             words = aliases.apply(scrub(str(owner.get("note") or "")))

@@ -2,7 +2,7 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 3.8.22
 
 ### Added
 
@@ -12,6 +12,46 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 - **Every card says who acts.** A card brAIn can handle says "brAIn can fix this." and leads with **Go ahead**, which opens the change it would make for you to check first; a card that needs you says "This needs you." and leads with Add to To Do; a question says "brAIn needs an answer." (#451)
 - **Repairs, your phone and Morph use the card's own words.** The Repairs dialog shows the card's title, its who-acts line and the same presses as Needs you (Add to To Do, Ignore, Snooze, Dismiss); Morph's cards also get Snooze, Check again and Ignore. Where you have named your assistant, its fixed sentences use that name. (#452)
+
+## 3.8.21
+
+### Added
+
+- **brAIn can see and change which entities reach your voice assistants and HomeKit.** The chat and the terminal can list, for Assist, Alexa and Google Assistant through Home Assistant Cloud, and each HomeKit Bridge, the lights, switches, fans, covers, thermostats, locks, media players, scenes and scripts in use that are missing and the entries that are unavailable or gone, with each bridge's accessories counted against HomeKit's 150; and change them in bulk, through the bridge's own settings for HomeKit. A lock, an alarm or a garage door is exposed only when you name it yourself. (#431)
+
+### Changed
+
+- **After an update, brAIn closes the "Is this fixed now?" questions it can answer itself.** A report whose fault brAIn measures and has not seen since the fixed release was installed is answered yes, saying brAIn checked rather than that you confirmed it; a question about a fix that was reopened or fixed again later is withdrawn. Only what brAIn cannot tell is left for you. A checks pass also runs again a quarter of an hour after an update, so findings left by the restart clear. (#425)
+- **Scenes you ask for are written straight away when brAIn may act without asking.** With YOLO mode, or *Let brAIn act without asking*, on, asked-for scenes go straight into your scenes (Undo with `brain undo`) and brAIn says what it wrote; with both off they stay a card. The same now holds for an automation asked for in a phone reply or a reply under a card, for `brain.intent` under YOLO mode, and for the rule a "change this automation" card offers. (#429)
+- **New scenes follow the names your house already uses.** When your scenes are named like "Kitchen - Dim", brAIn's are named the same way, and a mood a room already has a scene for is not made again. (#429)
+
+### Fixed
+
+- **`brain findings` lists hundreds of findings.** It stopped with "Argument list too long" once a few hundred were open. (#425)
+- **A personality imported from Morph is read whole.** Traits, voice rules, likes and a nested description are kept as lines, and growth written under other names or as plain sentences is kept; a house whose earlier import kept only two lines is repaired once at startup, unless the personality has been edited since. (#390)
+
+## 3.8.20
+
+### Fixed
+
+- **One device is one card about it dropping off.** A Wi-Fi device reported by a check on its switch, by a card on its UniFi tracker and inside a several-device card is now one card with the others' evidence on it, and the UniFi integration losing its controller is one card whichever check saw it. (#440)
+- **Offline cards come off once the device is back.** A card from the overnight check or an insight card saying something is offline or not reachable is cleared once everything it names has reported for two hours, and a card whose own details say the device came back is not kept. (#441)
+- **A look's count always matches the card's.** When a check refreshes a card's numbers, a look that quoted the old ones is no longer shown beside them. (#443)
+- **Log errors are filed on the right thing.** An error is filed only on something of the integration that logged it, or the automation the log names, never on an unrelated device whose name appears in the message. (#434)
+- **A log-error card says what the error was.** It quotes the message, how often it happened and when it last did, a card that cannot is held back, and a fix that has nothing to do with the error is replaced by one that does. (#444)
+## 3.8.19
+
+### Added
+
+- **A Morph pill in Ask.** Change requests, the learning pass and conversations from Morph's Ask line are listed under **Morph**, not among your own chats or under Automation, including the ones already there. A Morph conversation can still be carried on in the chat. (#427)
+
+### Fixed
+
+- **Long messages in the chat are shown whole.** A request Morph sends brAIn ends with your own words after pages of context, and the chat cut every message and reply at 4,000 characters, so your request was never on screen. Messages and replies are never cut now; a long one is folded with **Show all**. (#426)
+- **brAIn can take a picture of one card.** Its screenshots of Morph started at the top of the dashboard and stopped at a fixed height, so a card further down could never be photographed. brAIn can now name a card or room, scroll to it, crop the picture to it, and open it first to see how it looks opened. (#454)
+- **A report brAIn files for you keeps your words.** A report from the chat was cut to 300 characters, ending mid-word, and your own words to 500. Your words and brAIn's findings reach the issue whole now, and anything shortened ends on a whole word.
+- **Switching between the chat and the terminal is in ⋯ on both.** The terminal face hid the switch back to the chat, and ⚙ called the setting *Opens as*. ⋯ on Ask says **Switch to chat** or **Switch to terminal**, and ⚙'s search finds **Chat or terminal** by either word. (#450)
+- **A rule's report is dated by its newest Wrong.** A report about a rule people marked Wrong was re-filed a day after every update while its count stayed the same, so a fix could never read as held; it now says it came back only when somebody marks the rule Wrong again.
 
 ## 3.8.18
 

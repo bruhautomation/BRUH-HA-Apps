@@ -2871,6 +2871,28 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A long turn is folded, never cut: a request another add-on hands brAIn
+   ends with the person's own words after pages of context. The whole text
+   is in the bubble; the fold only limits its height until Show all. */
+.msg.user .bubble.folded {
+  max-height: 16em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.msg.user.long { flex-direction: column; align-items: flex-end; gap: 4px; }
+.bubblemore {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+@media (pointer: coarse) { .bubblemore { min-height: 44px; } }
 .msg.bot { color: var(--ink); overflow-wrap: break-word; }
 .msg.bot > *:first-child { margin-top: 0; }
 .msg.bot > *:last-child { margin-bottom: 0; }
@@ -6788,7 +6810,9 @@ button.kfactsubj:hover { color: var(--accent-2);
    that conversation in a new terminal window; below the breakpoint ⋯ → Your
    chats is the list page, as it is for the chat face. The chat face's own
    menu items (its session details and model picker) and the switch back to
-   it are not offered: the terminal has /model and /status itself. */
+   it are not offered: the terminal has /model and /status itself. The switch
+   to the chat face IS offered: it was hidden here too, and a house running
+   the terminal face could find the way to the chat nowhere on the screen. */
 @media (min-width: 900px) {
   body.term-classic:not(.term-immersive) #viewTerminal.active { display: flex; }
   body.term-classic:not(.term-immersive) #viewTerminal.active .chatrail { display: flex; }
@@ -6804,7 +6828,6 @@ button.kfactsubj:hover { color: var(--accent-2);
   body.term-classic.ask-list #viewTerminal.active #termFrame { display: none; }
   body.term-classic.ask-list .crhead { padding-right: 108px; }
 }
-body.term-classic #termMode,
 body.term-classic #chatInfo,
 body.term-classic #chatModelPick { display: none; }
 

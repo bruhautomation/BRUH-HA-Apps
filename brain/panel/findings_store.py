@@ -799,6 +799,12 @@ def shown_look(record: dict, entry: dict) -> dict:
         return {**record, "reason": ""}
     if _names_another_entity(record["reason"], entry):
         return {**record, "reason": ""}
+    if quotes_other_counts(record["reason"], entry.get("detail")):
+        # The check refreshed the row's numbers after the look wrote its
+        # reason (`refresh_details`): "49 drops" beside a detail saying 36
+        # is two answers on one card (#443). Not shown until a look writes
+        # one about the row as it is — which costs no run of its own.
+        return {**record, "reason": ""}
     said = house_reason(record["reason"])
     if said == record["reason"]:
         return record
@@ -1155,6 +1161,35 @@ def clean_thread(value) -> list[dict]:
     return _clean_thread(value)
 
 
+_INTEGRATION_RE = re.compile(r"^[a-z0-9_]{1,64}$")
+MAX_ABOUT = 8
+
+
+def _subject_fields(entry: dict) -> dict:
+    """What a row is about beyond its one entity, only where it says.
+
+    ``integration`` is the domain of an integration the row is about AS A
+    WHOLE (the UniFi integration losing its controller, an integration
+    logging an error that names nothing of its own) — the key every check
+    that saw the same outage is folded on (`_fold_devices`). ``about`` is
+    the entities a row names that its evidence does not (the overnight
+    check's evidence names its records), which the returned-device sweep
+    reads (`clear_returned`). Absent rather than empty, `_case_fields`'
+    rule."""
+    out: dict = {}
+    integration = str(entry.get("integration") or "").strip()
+    if _INTEGRATION_RE.match(integration):
+        out["integration"] = integration
+    about = []
+    for e in entry.get("about") or []:
+        e = _entity_shaped(e) if isinstance(e, str) else ""
+        if e and e not in about:
+            about.append(e)
+    if about:
+        out["about"] = about[:MAX_ABOUT]
+    return out
+
+
 def _case_fields(entry: dict) -> dict:
     """The Resident's half of a row — only the keys it actually carries.
 
@@ -1296,6 +1331,7 @@ def _shape(entry: dict) -> dict:
     items = clean_items(entry.get("items"))
     if items:
         out["items"] = items
+    out.update(_subject_fields(entry))
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
@@ -1589,6 +1625,7 @@ def coerce(obj: dict) -> dict | None:
     items = clean_items(obj.get("items"))
     if items:
         entry["items"] = items
+    entry.update(_subject_fields(obj))
     return entry
 
 
@@ -1897,20 +1934,29 @@ def _may_host(host: dict, entry: dict) -> bool:
             or host.get("status") == entry.get("status"))
 
 
-def _take_in(host: dict, entry: dict) -> None:
-    """``entry``'s device and severity onto ``host``."""
+def _take_in(host: dict, entry: dict, counts: bool = False) -> None:
+    """``entry``'s device and severity onto ``host``. With ``counts``, a
+    value that counts what the host's detail counts with another number is
+    left out (`quotes_other_counts`): the card keeps one count."""
     evidence = _clean_evidence(host.get("evidence"))
     have = {e["entity"] for e in evidence}
     eid = str(entry.get("entity_id") or "")
     extra = []
+
+    def value(text) -> str:
+        text = str(text or "")
+        if counts and quotes_other_counts(text, host.get("detail")):
+            return ""
+        return text
+
     if eid and eid not in have:
         extra.append({"entity": eid,
-                      "value": str(entry.get("claim") or entry.get("text") or ""),
+                      "value": value(entry.get("claim") or entry.get("text")),
                       "when": ""})
         have.add(eid)
     for ev in _clean_evidence(entry.get("evidence")):
         if ev["entity"] not in have:
-            extra.append(ev)
+            extra.append({**ev, "value": value(ev.get("value"))})
             have.add(ev["entity"])
     if extra:
         host["evidence"] = _clean_evidence(evidence + extra)
@@ -1970,6 +2016,134 @@ def _fold_shared(items: list[dict]) -> set[int]:
     return gone
 
 
+# One device, one drop card (#440). The folds above key on an ENTITY, and
+# one Wi-Fi switch was three open rows: a check's on its switch, a card's
+# on its UniFi tracker, and a third inside a four-device "connected but not
+# reachable" card — three entities, one box. So a row about a device going
+# offline, dropping off or not answering is folded on the DEVICE its
+# entities are on (`DISPLAY_NAMES`' ``device``, which the panel fills from
+# `checks.network.device_keys`: the registry's device, and for a UniFi
+# client's tracker the device it is a client of). A row naming several
+# devices takes in a row about any of them; two rows about one device are
+# one, the house check's first (its text is the key it re-reports and
+# clears under), else the older. And a row about an integration AS A
+# WHOLE (``integration``: the UniFi integration losing its controller)
+# takes in every other row about that integration as a whole, whichever
+# check saw it. The folded row's evidence goes onto the card, less any
+# count the card's own detail now contradicts — one device, one count.
+# The refusals are `_fold_shared`'s.
+DROP_CHECKS = frozenset({
+    "check:net.wifi_hung", "check:net.wifi_flapping", "check:net.zwave_silent",
+    "check:net.zigbee_silent", "check:dev.unavailable", "check:dev.zha_unseen",
+    "check:dev.zwave_dead", "check:net.unifi_dropped"})
+# A model-written row's claim that something is not there. Read off the
+# title or the claim only, for rows no check id can classify.
+OFFLINE_RE = re.compile(
+    r"\b(?:offline|unavailable|unreachable|not (?:reachable|responding|"
+    r"answering|reporting|connected)|stopped (?:reporting|responding|"
+    r"answering)|(?:keeps?|kept) (?:dropping|disconnecting|going offline)|"
+    r"dropp(?:ing|ed|s) (?:off|out)|drops off|disconnect(?:ed|s|ing)?|"
+    r"(?:lost|losing|loses) (?:its |the )?(?:connection|controller)|"
+    r"gone (?:quiet|silent)|went (?:quiet|silent))\b", re.I)
+
+
+def is_drop_report(entry: dict) -> bool:
+    """Whether a row reports something being offline or dropping off."""
+    source = str(entry.get("source") or "")
+    if source in DROP_CHECKS:
+        return True
+    if source.startswith("check:"):
+        return False
+    return bool(OFFLINE_RE.search(str(entry.get("claim") or "")
+                                  or str(entry.get("text") or "")))
+
+
+def _row_devices(entry: dict, names: dict) -> set[str]:
+    """The keys a row is folded on: ``int:<domain>`` for a row about an
+    integration as a whole, else the devices its entities are on."""
+    integration = str(entry.get("integration") or "")
+    if integration:
+        return {f"int:{integration}"}
+    if not is_drop_report(entry):
+        return set()
+    out = set()
+    for eid in _devices_named(entry) | set(entry.get("about") or ()):
+        row = names.get(eid)
+        dev = row.get("device") if isinstance(row, dict) else ""
+        if dev:
+            out.add(f"dev:{dev}")
+    return out
+
+
+def _fold_devices(items: list[dict]) -> set[int]:
+    """Fold the rows one device's (or one integration's) outage was filed
+    as (above). Returns the ids that left; ``items`` is changed in place."""
+    names = _names_now()
+    rows = []
+    for f in items:
+        if (f.get("status") in CROSS_FOLD_STATUSES
+                and str(f.get("kind") or "") in SHARED_CAUSE_KINDS):
+            keys = _row_devices(f, names)
+            if keys:
+                rows.append((f, keys))
+    if len(rows) < 2:
+        return set()
+    # The widest first, then a house check, then the oldest: the order in
+    # which a row becomes the card the others are folded into.
+    rows.sort(key=lambda r: (-len(r[1]),
+                             not str(r[0].get("source") or "").startswith("check:"),
+                             int(r[0].get("ts") or 0)))
+    hosts: list[tuple[dict, set]] = []
+    gone: set[int] = set()
+    for f, keys in rows:
+        host = next((h for h, hk in hosts if keys <= hk and _may_host(h, f)),
+                    None)
+        if host is not None and _may_fold_away(f):
+            _take_in(host, f, counts=True)
+            gone.add(int(f.get("ts") or 0))
+            continue
+        hosts.append((f, keys))
+    if gone:
+        items[:] = [f for f in items if int(f.get("ts") or 0) not in gone]
+        log.info("folded %d finding(s) into the card about their device",
+                 len(gone))
+    return gone
+
+
+# A number and the words after it — "36 separate times", "49 drops" — so a
+# sentence's counts can be read against another's by what they count.
+_COUNTED_RE = re.compile(r"(?<![\d.:])(\d+(?:\.\d+)?)(?![\d:])"
+                         r"((?:\s+[A-Za-z][A-Za-z'-]*){1,2})")
+
+
+def _counts(text) -> dict[str, set[str]]:
+    """``{counted word: {numbers}}`` a sentence carries."""
+    out: dict[str, set[str]] = {}
+    for m in _COUNTED_RE.finditer(str(text or "")):
+        for word in m.group(2).split():
+            word = word.lower().strip("'-")
+            if len(word) > 3 and word.endswith("s"):
+                word = word[:-1]
+            if len(word) >= 3:
+                out.setdefault(word, set()).add(m.group(1))
+    return out
+
+
+def quotes_other_counts(sentence, detail) -> bool:
+    """Whether ``sentence`` counts something the row's ``detail`` counts
+    too, with a number the detail does not carry (#443): a look that said
+    "49 drops" beside a detail now saying "36 separate times" is two
+    answers to one question on one card."""
+    said = _counts(sentence)
+    if not said:
+        return False
+    now = _counts(detail)
+    for word, numbers in said.items():
+        if word in now and not numbers <= now[word]:
+            return True
+    return False
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -2026,6 +2200,11 @@ def add_many(objs: list[dict]) -> list[dict]:
                 else ("text", "claim", "detail", "fix", "todo_text")))
         if entry is None:
             continue
+        if (_sweepable(entry, None) and is_drop_report(entry)
+                and says_recovered(entry.get("detail"))):
+            # Its own detail says the trouble has stopped: a card titled as
+            # if it were still happening is not filed (#441).
+            continue
         if normalize(entry["text"]) in seen and not _names_unanswered(
                 entry, live, answered):
             continue
@@ -2076,6 +2255,8 @@ def add_many(objs: list[dict]) -> list[dict]:
         items.append(entry)
         created.append(_shape(entry))
     gone = _fold_shared(items) if created or refreshed else set()
+    if created or refreshed:
+        gone |= _fold_devices(items)
     if gone:
         created = [c for c in created if int(c.get("ts") or 0) not in gone]
     if created or refreshed or gone:
@@ -2310,7 +2491,7 @@ def refine(ts: int, case: dict, run_id: str = "",
         # The run that looked may have named every device a cause reaches,
         # or found this row to be one of them — then it is the shared row
         # that carries it, and there is nothing of this one left to show.
-        gone = _fold_shared(items)
+        gone = _fold_shared(items) | _fold_devices(items)
         _write(items)
         return None if int(ts) in gone else _shape(entry)
     return None
@@ -3671,37 +3852,130 @@ def _changed_at(value) -> float:
     return stamp.timestamp()
 
 
+# How long every entity a row names must have been reporting before a row
+# saying it is offline comes off (#441): long enough that a device coming
+# back for a minute between two drops does not end the card.
+RETURN_SETTLE_S = 2 * 3600
+# The producers whose rows the sweep never takes: a house check re-checks
+# its own rows every pass (`clear_resolved`), and these are about harm or
+# are somebody's own words.
+RETURN_EXCLUDED = frozenset({"safety", "security", "correction"})
+
+# A detail saying the trouble has stopped: "has reported since Saturday",
+# "came back", "is back online". The negation window is read separately
+# (`_says_recovered`), so "has not reported since Thursday" is no recovery.
+_RECOVERED_RE = re.compile(
+    r"\b(?:(?:has|have|had) (?:been )?report(?:ed|ing)(?: again)? since|"
+    r"report(?:ed|ing|s) again|came back|come back|comes back|"
+    r"(?:is|was|has been|are|were) back(?: online| up)?\b|back online|"
+    r"reconnected|recovered|(?:available|online|reachable|responding) again)",
+    re.I)
+_NEGATION_RE = re.compile(r"\b(?:not|never|no longer|hasn't|haven't|hadn't|"
+                          r"didn't|isn't|wasn't)\s+(?:\w+\s+){0,2}$", re.I)
+
+
+def says_recovered(detail) -> bool:
+    """Whether a row's own detail says the problem has stopped: its LAST
+    word on the matter is a recovery, unnegated (#441)."""
+    text = str(detail or "")
+    last_back = -1
+    for m in _RECOVERED_RE.finditer(text):
+        if not _NEGATION_RE.search(text[max(0, m.start() - 30):m.start()]):
+            last_back = m.start()
+    if last_back < 0:
+        return False
+    downs = [m.start() for m in OFFLINE_RE.finditer(text)
+             if not _NEGATION_RE.search(text[max(0, m.start() - 30):m.start()])]
+    return not downs or max(downs) < last_back
+
+
+def _sweepable(entry: dict, sources) -> bool:
+    source = str(entry.get("source") or "")
+    if source in RETURN_EXCLUDED or source.startswith("check:"):
+        return False
+    return sources is None or source in sources
+
+
+def _named_entities(entry: dict) -> set[str]:
+    """Every entity a row names: its own, its evidence's and ``about``."""
+    out = _devices_named(entry) | set(entry.get("about") or ())
+    eid = _reported_missing(entry)
+    if eid:
+        out.add(eid)
+    return out
+
+
+def _all_back(entry: dict, states: dict, now: float) -> bool:
+    """Whether every entity a row says is offline has been reporting a real
+    state for `RETURN_SETTLE_S` since the row was filed (#441). An entity
+    the states do not hold was not looked at, so the row stays."""
+    named = _named_entities(entry)
+    if not named:
+        return False
+    filed = float(entry.get("ts") or now)
+    for eid in named:
+        live = states.get(eid)
+        if (not isinstance(live, dict) or live.get("state") in (None, "")
+                or _no_reading(live.get("state"))):
+            return False
+        since = max(_changed_at(live.get("last_changed")), filed)
+        if now - since < RETURN_SETTLE_S:
+            return False
+    return True
+
+
 @_mutates
 def clear_returned(states, now: float | None = None,
-                   sources: tuple[str, ...] = (RESIDENT_SOURCE,)) -> list[dict]:
-    """Take off the list a Resident case about a device that came back.
+                   sources: tuple[str, ...] | None = None) -> list[dict]:
+    """Take off the list a row about a device that came back.
 
     ``states`` is ``{entity_id: {state, last_changed}}`` — the snapshot a
-    checks pass already fetched, never a read of its own. A row whose
-    evidence says its entity gave no reading is cleared once that entity
-    reports a real state that CHANGED after the row was filed:
-    `clear_resolved`'s ending, so no memory line and no ledger entry, and
-    if it goes again the next look says so in today's words. A state that
-    has not moved since the filing proves nothing, an entity the states do
-    not hold was not looked at, and a row a person touched (put back,
-    snoozed, a chat's advice, a reply on its thread) is theirs. Never
-    `fixing`/`fixed`, never another producer's row.
+    checks pass already fetched, never a read of its own. Two ways a row
+    is over, both `clear_resolved`'s ending (no memory line, no ledger
+    entry, and if it goes again the next look says so in today's words):
+
+      * a Resident case whose evidence says its entity gave no reading,
+        once that entity reports a real state that CHANGED after the row
+        was filed;
+      * a row from any producer that does not re-check its own rows — the
+        Resident, the overnight check, an insight card (#441) — that says
+        something is offline, unavailable or not reachable (its evidence,
+        or failing that its title), once EVERY entity it names has
+        reported a real state for `RETURN_SETTLE_S` after the filing. A
+        house check is left to `clear_resolved`, which re-runs the rule.
+
+    And a row whose own detail says the trouble has stopped while its
+    title says it is still happening (`says_recovered`) does not keep that
+    title: it is over by its own account. Never `fixing`/`fixed`, never a
+    row a person touched (put back, snoozed, a chat's advice, a reply on
+    its thread), never the harm family (`RETURN_EXCLUDED`).
     """
-    if not isinstance(states, dict) or not states:
-        return []
+    if not isinstance(states, dict):
+        states = {}
     now = time.time() if now is None else now
     items = _load()
     kept, gone = [], []
     for entry in items:
-        eid = (_reported_missing(entry)
-               if str(entry.get("source") or "") in sources
-               and entry.get("status") in RETURN_CLEARS
-               and not _person_touched(entry, now) else "")
-        live = states.get(eid) if eid else None
-        if (isinstance(live, dict) and live.get("state") not in (None, "")
-                and not _no_reading(live.get("state"))
-                and _changed_at(live.get("last_changed"))
-                > float(entry.get("ts") or now)):
+        if (entry.get("status") not in RETURN_CLEARS
+                or not _sweepable(entry, sources)
+                or _person_touched(entry, now)):
+            kept.append(entry)
+            continue
+        over = False
+        if str(entry.get("source") or "") == RESIDENT_SOURCE:
+            eid = _reported_missing(entry)
+            live = states.get(eid) if eid else None
+            over = (isinstance(live, dict)
+                    and live.get("state") not in (None, "")
+                    and not _no_reading(live.get("state"))
+                    and _changed_at(live.get("last_changed"))
+                    > float(entry.get("ts") or now))
+        down = bool(_reported_missing(entry)) or is_drop_report(entry)
+        if not over and down and states:
+            over = _all_back(entry, states, now)
+        if not over and down and says_recovered(entry.get("detail")):
+            over = True
+        if over:
             gone.append(_shape(entry))
             continue
         kept.append(entry)

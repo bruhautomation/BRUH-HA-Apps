@@ -820,7 +820,11 @@ for (const width of WIDTHS) {
     if (touch && box.h < MIN_TARGET) note(where, `the search box is ${box.h}px tall`);
     for (const [words, sec, target] of [['subscription', 'usage', 'setPlan'],
                                         ['say aloud', 'notifications', 'setSpeakFirst'],
-                                        ['conversations running', 'permissions', 'setChatSessions']]) {
+                                        ['conversations running', 'permissions', 'setChatSessions'],
+                                        // How Ask opens: the face a person switches, found by
+                                        // either word they would type for it.
+                                        ['terminal', 'permissions', 'setTerminalUi'],
+                                        ['chat', 'permissions', 'setTerminalUi']]) {
       await page.fill('#setSearch', words);
       const hits = await page.evaluate(() => [...document.querySelectorAll('#setSearchResults .setresult')]
         .filter((b) => b.offsetParent !== null).map((b) => ({ text: b.textContent, sec: b.dataset.sec,
