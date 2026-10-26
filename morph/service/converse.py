@@ -74,8 +74,8 @@ def start(words: str, session: str = "", context: str = "") -> dict:
              "started": time.time(), "session_in": session}
     if context:
         state["context"] = context
-    if fitted["context_cut"] or fitted["words_cut"]:
-        state["cut"] = "context" if not fitted["words_cut"] else "start"
+    if fitted["context_cut"]:
+        state["cut"] = "context"
     tell._save(state)
     _RUNNING[tid] = asyncio.get_running_loop().create_task(_run(state))
     return state
@@ -91,7 +91,7 @@ async def _run(state: dict) -> None:
                                 memory=True, kind="conversation",
                                 session_id=state.get("session_in") or "")
         state["phase"] = "waiting"
-        tell._step(state, "Handed to brAIn")
+        tell._step(state, f"Handed to {brain.who()}")
         deadline = time.time() + brain.CLAIM_GRACE_S
         while not brain.claimed(tid):
             if time.time() > deadline:
@@ -103,7 +103,7 @@ async def _run(state: dict) -> None:
                 return
             await asyncio.sleep(brain.POLL_S)
         state["phase"] = "working"
-        tell._step(state, "brAIn is thinking")
+        tell._step(state, f"{brain.who()} is thinking")
         deadline = time.time() + TIMEOUT_S + 60
         res = None
         seen = 0
@@ -116,11 +116,11 @@ async def _run(state: dict) -> None:
                 await asyncio.sleep(brain.POLL_S)
         if res is None:
             state["phase"] = "failed"
-            state["say"] = "brAIn did not answer in time."
+            state["say"] = f"{brain.who()} did not answer in time."
         else:
             _, text, error = brain.answer_data(res)
             state["session_id"] = str(res.get("session_id") or "")[:80]
-            state["say"] = (text or "").strip()[:4000] or ("brAIn could not answer: " + error if error else "No answer.")
+            state["say"] = (text or "").strip()[:4000] or (f"{brain.who()} could not answer: " + error if error else "No answer.")
             state["phase"] = "failed" if error else "done"
         tell._save(state)
     except Exception as exc:  # noqa: BLE001 — a conversation that breaks says so

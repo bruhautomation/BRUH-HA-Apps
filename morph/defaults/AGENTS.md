@@ -160,7 +160,9 @@ that copy is in use.
   Next chip opened it). `coming_up:` only switches it.
 - **The personality** is brAIn's (`/config/.brain/personality.json`, edited in
   brAIn's Settings › Personality); Morph's Settings shows it and keeps none of
-  its own. Never write a personality into Morph's files.
+  its own. Never write a personality into Morph's files. An old
+  `frontend/personality.js` is retired: never import, read or write it — Morph
+  pauses it, and any copy that still reads it, until it is removed.
 - **What leads the page.** The verdict at the top, the **Now** row, which rooms
   are open and which are one folded line, and each card's "because" line are
   worked out by Morph (`salience.js`) from the house's state and what brAIn

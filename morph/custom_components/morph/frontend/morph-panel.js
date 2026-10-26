@@ -81,6 +81,9 @@ const USAGE_KEEP = 400;
 // its own file changed in the update, or another of Morph's modules it
 // builds on did.
 function pausedWhy(r) {
+  // An older change that read the household's personality from a file of its
+  // own (morphcode.RETIRED): the personality is brAIn's now.
+  if (r && r.why === 'personality') return r.kind === 'new' ? 'Morph no longer reads this old personality file; the personality is brAIn’s now.' : 'It reads the old personality file, which Morph no longer uses, so Morph’s own is running.';
   if (r && r.why === 'others' && (r.moved || []).length) return `Morph was updated and its ${r.moved.slice(0, 3).join(', ')}${r.moved.length > 3 ? ' and more' : ''} changed, which this change builds on. Morph’s own ${r.name} is running until brAIn checks the change still fits.`;
   return 'Morph’s own version is running until you update your change.';
 }
@@ -316,6 +319,7 @@ class MorphPanel extends HTMLElement {
       }
       this._salDirty = true;
       this.loadModules((d.mirror && d.mirror.card_modules) || []);
+      if (!this._personaAsked) { this._personaAsked = true; this.loadPersona(); }
       this.schedule();
     } catch (e) {
       if (!this.data || this.data.error) this.data = { error: String((e && e.message) || e) };
@@ -393,7 +397,7 @@ class MorphPanel extends HTMLElement {
     if (this.rootEl.className !== cls) this.rootEl.className = cls;
     this.region('thenrule', this.s.thenAt ? `<div class="thenrule" style="width:${(Math.min(1, (Date.now() - this.s.thenAt) / 86400000) * 100).toFixed(1)}%"></div>` : '');
     this.region('bar', this.barHtml());
-    this.region('lede', this.updateHtml() + (this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell brAIn what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
+    this.region('lede', this.updateHtml() + (this.s.edit && this.s.page === 'home' ? `<div class="lede">Editing · <b>hold anything to tell ${esc(this.who())} what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
     if (this.s.page === 'settings') {
       ['top', 'upcoming', 'scenes', 'rooms', 'notes'].forEach((r) => this.region(r, ''));
       this.$('[data-region="board"]').hidden = true;
@@ -784,9 +788,9 @@ class MorphPanel extends HTMLElement {
       const a = this.s.ask;
       const sugs = !a ? (edit ? TELL_SUGS.dashboard : ['Why is it warm upstairs?', 'What’s left on?', 'Is everything locked?']) : [];
       const conv = this.s.converse;
-      const busyWords = conv && conv.state ? ((conv.state.steps || []).slice(-1)[0] || {}).t || 'brAIn is thinking' : 'Thinking';
+      const busyWords = conv && conv.state ? ((conv.state.steps || []).slice(-1)[0] || {}).t || `${this.who()} is thinking` : 'Thinking';
       ask = `<div data-ask="1" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
-<label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? 'Tell brAIn how to change this dashboard…' : 'Ask or tell the house…'}" aria-label="${edit ? 'Tell brAIn how to change this dashboard' : 'Ask or tell the house'}"></label>
+<label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? `Tell ${esc(this.who())} how to change this dashboard…` : 'Ask or tell the house…'}" aria-label="${edit ? `Tell ${esc(this.who())} how to change this dashboard` : 'Ask or tell the house'}"></label>
 ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
 ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="small">${esc(a.q)}</span><p>${esc(a.busy ? busyWords + '…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go showme" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}${a.undo ? `<div class="row"><button type="button" class="wd strong" data-act="undo-commit" data-v="${esc(a.undo)}">Undo</button></div>` : ''}${!a.busy && this.admin() && a.kind !== 'tell' ? `<div class="row"><button type="button" class="wd" data-act="ask-tell" style="font-size:14px;min-height:34px">Change the dashboard instead</button></div>` : ''}</div>` : ''}</div>`;
@@ -1721,11 +1725,11 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       const color = caseColor(c);
       mt.style.cssText = `background:${mix(color, 6, 'var(--surface)')};box-shadow:inset 3px 0 0 ${color};cursor:auto;touch-action:auto;user-select:text`;
       const pend = this.s.pending[c ? c.id : ''];
-      const pending = pend && c && (c.thread || []).length <= pend.n ? (Date.now() - pend.at > 90000 ? 'brAIn has not answered yet.' : pend.word || 'Sent. brAIn answers here.') : '';
+      const pending = pend && c && (c.thread || []).length <= pend.n ? (Date.now() - pend.at > 90000 ? `${this.who()} has not answered yet.` : pend.word || `Sent. ${this.who()} answers here.`) : '';
       if (pend && !pending) delete this.s.pending[c.id];
       const x = this.salOf(id);
       const why = ms && ms.id === '__now' && x.why ? `<p class="because" style="color:${x.why.color}">${esc(x.why.text)}</p>` : '';
-      this.setHtml(face, c ? caseFace(c, { pending, family: this.viewer().device === 'family', replyOpen: !!this.s.replyOpen[c.id], admin: this.admin() }) + why : '');
+      this.setHtml(face, c ? caseFace(c, { pending, family: this.viewer().device === 'family', replyOpen: !!this.s.replyOpen[c.id], admin: this.admin(), who: this.who(), name: (eid) => (this.hass.states[eid] ? friendly(this.hass, eid) : '') }) + why : '');
       this.setHtml(moreEl, '');
       return;
     }
@@ -1757,7 +1761,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     try {
       ctx.accent = card.color ? hue(card.color) : T.accent(ctx);
       const slide = !this.s.edit && !this.s.thenAt && T.slide ? T.slide(ctx) : null;
-      ctx.hint = this.s.edit ? (open ? '' : 'tap to edit · hold to tell brAIn') : (open || T.noOpen || this.s.thenAt) ? '' : slide ? 'slide · tap · hold for more' : T.tap(ctx) ? 'tap · hold for more' : 'tap for more';
+      ctx.hint = this.s.edit ? (open ? '' : `tap to edit · hold to tell ${this.who()}`) : (open || T.noOpen || this.s.thenAt) ? '' : slide ? 'slide · tap · hold for more' : T.tap(ctx) ? 'tap · hold for more' : 'tap for more';
       faceHtml = T.face(ctx);
       // The because line (§11): one sentence, in the item's meaning colour,
       // on a card the list lifted or put at the top of its room. Hold it to
@@ -1953,7 +1957,7 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
       acts.push('<button type="button" class="wd" data-act="tell-more">Tell it more</button>');
     }
     const sugs = (TELL_SUGS[kind] || []).map((s) => `<button type="button" class="wd" data-act="tell-sug" data-v="${esc(s)}" style="font-size:13px;min-height:34px">${esc(s)}</button>`).join('');
-    const head = `<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell brAIn</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>`;
+    const head = `<div class="row" style="min-width:0">${SPARK}<span style="font-size:13px;font-weight:600;white-space:nowrap">Tell ${esc(this.who())}</span><span class="small" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0">${esc(t.path || '')}</span></div>`;
     const scope = composing ? `<span class="small">${kind === 'code' ? 'Changes Morph’s own code for this house.' : 'Changes this dashboard only.'} Home Assistant is changed only if you ask (“make a sensor for…”), and nothing goes to GitHub unless you say yes.</span>` : '';
     if (composing) {
       return `<div data-ctl="1" data-tell="1" class="tell rise" style="margin-top:6px">${head}${turns}${this.shotHtml(t.shot, t.turns && t.turns.length ? 'How it looks now — brAIn sees this' : 'What brAIn will see')}
@@ -1974,7 +1978,7 @@ ${near.length ? `<div class="flab">From ${esc(sec.title)}<div class="row" style=
 <span style="font-size:14px">“${esc(t.text)}”</span>${picture}
 <div class="steps">${steps || '<div class="step"><i style="background:var(--violet)"></i><span>Handing it to brAIn…</span></div>'}</div>${working}
 ${done ? `<p class="rise" style="font-size:14px;line-height:1.5${st.unchanged || st.phase === 'failed' ? ';color:var(--amber)' : ''}">${esc(st.say || '')}</p>${this.whatHtml(st, kind)}${st.saw ? `<p class="sm">brAIn saw: ${esc(st.saw)}</p>` : ''}${st.needs_person ? `<p class="sm" style="color:var(--amber)">Left for you: ${esc(st.needs_person)}</p>` : ''}${this.questionHtml(st, t)}${this.issueHtml(st)}<div class="row" style="flex-wrap:wrap;gap:0 18px">${acts.join('')}</div>` : ''}
-${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`;
+${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receives</summary><pre>${esc(st.payload)}</pre></details>` : ''}</div>`;
   }
 
   // What a request touched, one line per place it could have: the
@@ -2039,9 +2043,9 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   }
 
   phaseWords(st) {
-    if (st.phase === 'sending') return 'Handing it to brAIn';
-    if (st.phase === 'waiting') return 'Waiting for brAIn to pick it up';
-    return 'brAIn is working on it';
+    if (st.phase === 'sending') return `Handing it to ${this.who()}`;
+    if (st.phase === 'waiting') return `Waiting for ${this.who()} to pick it up`;
+    return `${this.who()} is working on it`;
   }
 
   elapsed(started) {
@@ -2071,7 +2075,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       const live = this.tellStatus[a.id] || {};
       if (['done', 'failed'].includes(live.phase)) return '';
       const step = ((live.steps || []).slice(-1)[0] || {}).t || a.step || '';
-      return `<div class="activity"><span class="pulse"></span><span class="lx"><b>brAIn is working on “${esc(a.text)}”</b><span>${esc([a.path, step].filter(Boolean).join(' · '))} · <span data-since="${Number(a.started) || ''}"></span></span></span><button type="button" class="wd" data-act="activity-open" data-v="${esc(a.id)}">Show</button></div>`;
+      return `<div class="activity"><span class="pulse"></span><span class="lx"><b>${esc(this.who())} is working on “${esc(a.text)}”</b><span>${esc([a.path, step].filter(Boolean).join(' · '))} · <span data-since="${Number(a.started) || ''}"></span></span></span><button type="button" class="wd" data-act="activity-open" data-v="${esc(a.id)}">Show</button></div>`;
     }).join('');
     const L = st.learning || {};
     const learn = L.running ? '<div class="activity"><span class="pulse"></span><span class="lx"><b>Morph is learning from how this dashboard is used</b><span>brAIn is reading the last month of use; suggestions appear where they belong.</span></span></div>' : '';
@@ -2666,17 +2670,17 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       }
       case 'case': {
         const r = await this.caseRequest(el.dataset.case, v, '');
-        this.toast(r && r.ok ? ({ dismiss: 'Dismissed.', todo: 'Added to To Do.', fix: 'brAIn is working out a plan.', apply: 'brAIn is making the change.' }[v] || 'Told brAIn.') : (r && r.error) || 'brAIn did not take that.');
+        this.toast(r && r.ok ? ({ dismiss: 'Dismissed.', todo: 'Added to To Do.', snooze: 'Snoozed.', not_applicable: 'Closed.', fix: `${this.who()} is working out a plan.`, apply: `${this.who()} is making the change.` }[v] || `Told ${this.who()}.`) : (r && r.error) || `${this.who()} did not take that.`);
         return;
       }
       case 'case-reply': {
         const text = String(el.value || '').trim(); if (!text) return;
         const cid = el.dataset.case;
         const c = this.caseById(cid);
-        this.s.pending[cid] = { at: Date.now(), n: (c && c.thread ? c.thread.length : 0), word: 'Sent. brAIn answers here.' };
+        this.s.pending[cid] = { at: Date.now(), n: (c && c.thread ? c.thread.length : 0), word: `Sent. ${this.who()} answers here.` };
         el.value = '';
         const r = await this.caseRequest(cid, 'reply', text);
-        if (!r || !r.ok) { delete this.s.pending[cid]; this.toast((r && r.error) || 'brAIn did not take that.'); }
+        if (!r || !r.ok) { delete this.s.pending[cid]; this.toast((r && r.error) || `${this.who()} did not take that.`); }
         this.schedule(); return;
       }
       case 'case-open-reply': this.s.replyOpen[el.dataset.case] = true; this.schedule(); return;
@@ -2986,7 +2990,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     try { r = await this.hass.callWS({ type: 'morph/request', kind: 'converse', payload: { text: q, session: this.s.convSession || '' } }); } catch (e) { r = null; }
     if (!r || !r.ok || !r.id) {
       if (quiet) return false;
-      this.s.ask = { q, answer: (r && r.error) || 'brAIn did not take that.' }; this.schedule(); return false;
+      this.s.ask = { q, answer: (r && r.error) || `${this.who()} did not take that.` }; this.schedule(); return false;
     }
     this.s.converse = { id: r.id, q, state: r };
     this.s.ask = { q, busy: true };
@@ -3001,7 +3005,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       c.state = st;
       if (st.phase === 'done' || st.phase === 'failed' || st.phase === 'missing') {
         if (st.session_id) this.s.convSession = st.session_id;
-        this.s.ask = { q: c.q, answer: st.say || (st.phase === 'failed' ? 'brAIn could not answer.' : 'No answer.') };
+        this.s.ask = { q: c.q, answer: st.say || (st.phase === 'failed' ? `${this.who()} could not answer.` : 'No answer.') };
         this.s.converse = null;
         this.liftNamed(this.s.ask.answer);
         this.schedule();
@@ -3124,9 +3128,28 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
   // brAIn's personality (/config/.brain/personality.json), read each time
   // Settings opens so an edit made in brAIn shows here. Morph keeps none of
   // its own: `undefined` is still reading, `personality: null` is not set.
+  // The household's name for the assistant (brAIn's personality), which is
+  // how Morph's own words name it; "brAIn" until one is set (#452).
+  who() {
+    const p = this.s.persona && this.s.persona.personality;
+    const n = p && typeof p.name === 'string' ? p.name.trim() : '';
+    return n || 'brAIn';
+  }
+
   async loadPersona() {
     try { this.s.persona = await this.hass.callWS({ type: 'morph/personality' }); } catch (e) { this.s.persona = { brain: null, personality: null }; }
     this.schedule();
+  }
+
+  // A house that customised Morph before the personality was brAIn's may
+  // still hold the old personality file, or a copy of Morph's code that
+  // reads it (#391). Morph pauses both; this is the one sentence saying
+  // what to do about them, where somebody looking at the personality is.
+  oldPersonaHtml() {
+    const st = (this.data && this.data.state) || {};
+    const old = (st.code || []).filter((r) => r.why === 'personality');
+    if (!old.length) return '';
+    return `<p class="sm" data-old-persona style="color:var(--amber)">Morph no longer reads the personality an older change to Morph kept for itself: remove that change under Changes to Morph itself.</p>`;
   }
 
   personaHtml() {
@@ -3137,7 +3160,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       const why = r && r.brain === false
         ? 'The personality lives in brAIn, and brAIn is not installed here.'
         : 'The personality lives in brAIn and is not set yet. Give brAIn a name and a way of speaking in brAIn’s Settings › Personality; it shows here once it is.';
-      return `<div class="setsec"><h2>Personality</h2><p class="sm">${esc(why)}</p></div>`;
+      return `<div class="setsec"><h2>Personality</h2>${this.oldPersonaHtml()}<p class="sm">${esc(why)}</p></div>`;
     }
     const paras = (p.persona || '').split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean)
       .map((x) => `<p class="sm" style="white-space:pre-line">${esc(x)}</p>`).join('');
@@ -3145,7 +3168,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const shown = grown.slice(0, 8);
     const day = (g) => { const d = new Date(g.date + 'T12:00:00'); return isNaN(d) ? g.date : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }); };
     const growth = shown.length ? `<span class="label">How it has grown</span>${shown.map((g) => `<div class="hrow"><span class="lx" style="min-width:0"><span>${esc(g.text)}</span>${g.date ? `<span class="small">${esc(day(g))}</span>` : ''}</span></div>`).join('')}${grown.length > shown.length ? `<p class="small">And ${grown.length - shown.length} earlier.</p>` : ''}` : '';
-    return `<div class="setsec" data-persona><h2>Personality</h2>${p.name ? `<p class="sm"><b>${esc(p.name)}</b></p>` : ''}${paras}${growth}
+    return `<div class="setsec" data-persona><h2>Personality</h2>${this.oldPersonaHtml()}${p.name ? `<p class="sm"><b>${esc(p.name)}</b></p>` : ''}${paras}${growth}
 <p class="small">The personality lives in brAIn: change it in brAIn’s Settings › Personality. Talking to it here goes through brAIn, in Ask.</p></div>`;
   }
 
@@ -3160,7 +3183,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     // as well as each file's own.
     const paused = rows.filter((r) => r.status === 'paused');
     const all = paused.length > 1 ? `<div class="row" style="gap:12px;flex-wrap:wrap"><button type="button" class="wd go" data-act="code-merge-all" data-v="all">Update all ${paused.length}</button><span class="small">Merges every paused change into the new version, in one change you can undo.</span></div>` : '';
-    return head + all + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Update</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join('');
+    return head + all + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' && !(r.why === 'personality' && r.kind === 'new') ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Update</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join('');
   }
 
   settingsHtml() {

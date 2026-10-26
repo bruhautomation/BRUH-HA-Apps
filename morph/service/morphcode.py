@@ -47,6 +47,26 @@ BASE_FILE = ".base.json"
 # NEW file, which mixes this house's change with everything the release
 # changed; with it, making the change again is a three-way merge.
 BASE_DIR = ".base"
+# A house module Morph has replaced and no longer reads: the household's
+# personality lived in the old frontend/personality.js, read by the house's
+# own copy of morph-panel.js, until brAIn kept it (/config/.brain/personality.json,
+# which Morph's own Settings reads). A copy that is in use is what the page
+# runs, so a copy still importing the old file went on showing the old
+# personality whatever Morph shipped (#391). The retired file, and any copy
+# that reads it, is paused: Morph's own runs, and Settings says why.
+RETIRED = ("personality.js",)
+_READS_RETIRED = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(n) for n in RETIRED) + r")\b")
+BRAIN_PERSONALITY = "/config/.brain/personality.json"
+
+
+def _retired(p: Path) -> bool:
+    """The retired module itself, or a copy that still reads it."""
+    if p.name in RETIRED:
+        return True
+    try:
+        return bool(_READS_RETIRED.search(p.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return False
 
 
 def code_dir() -> Path:
@@ -188,7 +208,9 @@ def status() -> list[dict]:
         fresh = rec is None or rec.get("own") != _sha(p)
         moved = [] if fresh else [n for n in moved_others(rec, shipped_now) if n != p.name]
         row = {"name": p.name, "kind": "new" if not shipped.exists() else "changed", "at": (rec or {}).get("at")}
-        if fresh:
+        if _retired(p):
+            row["status"], row["why"] = "paused", "personality"
+        elif fresh:
             row["status"] = "active"
         elif shipped.exists() and rec.get("base") != now:
             row["status"] = "paused"
@@ -268,6 +290,25 @@ def _redo_part(name: str, version: str, history: list[str] | None, row: dict) ->
     check against modules that moved. Shared by the per-file press and by
     Merge all, so the two cannot describe one copy differently."""
     mine = f"/config/morph/frontend/{name}"
+    if row.get("why") == "personality":
+        if name in RETIRED:
+            return (f"Remove Morph's old {name}.",
+                    [f"{mine} held this household's personality before brAIn kept it. The personality is "
+                     f"brAIn's now ({BRAIN_PERSONALITY}, changed in brAIn's Settings › Personality), and "
+                     f"Morph's own Settings reads it there. Make sure the personality in {mine} is what "
+                     f"{BRAIN_PERSONALITY} holds (say so if it differs, and change nothing there), then "
+                     f"delete {mine}. Never write a personality into Morph's files."])
+        head = f"Make my change to Morph's {name} again without the old personality file."
+        return (head, [
+            f"{mine} still reads the old /config/morph/frontend/personality.js, which Morph no longer uses: the "
+            f"personality is brAIn's ({BRAIN_PERSONALITY}), and Morph's own {name} reads it there in "
+            f"Settings › Personality. So the change is paused and Morph's own is running.",
+            f"- This house's version: {mine}",
+            f"- Morph's own {name}: {paths.SHIPPED / name}",
+            f"Start from Morph's own {name} and carry over only the rest of this house's change. Never "
+            f"import, read or write personality.js, and never copy a personality into Morph's files. If "
+            f"the personality was the whole change, delete {mine} and say so: Morph then runs its own.",
+        ])
     if row.get("why") == "others":
         moved = row.get("moved") or []
         head = f"Make my change to Morph's {name} work on the new Morph ({version})."
