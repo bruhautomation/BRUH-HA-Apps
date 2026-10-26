@@ -49,7 +49,7 @@ def write_a1_profiles(root: Path) -> Path:
     put("machine", "fdm_machine_common", type="machine", **{"from": "system"},
         instantiation="false", printer_model="", machine_start_gcode="")
     put("machine", "fdm_bbl_3dp_001_common", type="machine", inherits="fdm_machine_common",
-        instantiation="false", nozzle_diameter=["0.4"])
+        instantiation="false", nozzle_diameter=["0.4"], printable_area=["0x0", "256x0", "256x256", "0x256"], printable_height="256")
     put("machine", f"{A1} template machine_start_gcode", instantiation="false",
         machine_start_gcode=START)
     put("machine", f"{A1} template change_filament_gcode", instantiation="false",
