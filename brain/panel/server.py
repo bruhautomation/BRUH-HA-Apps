@@ -26314,6 +26314,11 @@ def make_app() -> web.Application:
         moved = await asyncio.to_thread(personality.migrate_from_morph)
         if moved:
             log.info("personality: %s", moved)
+        # And an earlier import that kept only the top-level strings of
+        # Morph's persona is read again, once, while nobody has edited it.
+        repaired = await asyncio.to_thread(personality.repair_from_morph)
+        if repaired:
+            log.info("personality: %s", repaired)
         await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
