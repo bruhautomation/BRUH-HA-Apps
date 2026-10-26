@@ -2315,15 +2315,19 @@ def bruh_addon_status(addon=""):
     return _panel_get(f"/api/bruh_addons{query}")
 
 
-def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light"):
+def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light",
+                     element="", press=""):
     """One screen of brAIn or another BRUH add-on, photographed now — so
     the chat can LOOK at what somebody is describing. Redacted, guarded
     against every write, and kept nowhere (the panel's
     `/api/devloop/screenshot`). With no ``screen`` it lists the screens.
+    ``element`` (or ``screen#id``) is one card or section: scrolled into
+    view, cropped to, and tapped or held open first with ``press``.
     The measured layout problems ride beside the picture."""
     answer = _panel_send("POST", "/api/devloop/screenshot", {
         "addon": addon or "brAIn", "screen": screen or "", "width": width,
-        "scheme": scheme}, timeout=180)
+        "scheme": scheme, "element": element or "", "press": press or ""},
+        timeout=180)
     if not isinstance(answer, dict) or answer.get("error") or "png" not in answer:
         return answer
     raw = base64.b64decode(answer.pop("png"))
@@ -7703,7 +7707,11 @@ TOOLS = [
             "(calendar events, addresses, credentials blanked), nothing on the "
             "screen can change anything while it is taken, and the layout "
             "problems a script can measure (off the edge, too small to tap, "
-            "overlaps, low contrast) come back beside it. Read-only."
+            "overlaps, low contrast) come back beside it. To look at ONE card "
+            "or room of Morph's dashboard, however far down the page, name its "
+            "id from dashboard.yaml: screen \"morph-dashboard#<id>\" or "
+            "element; the picture is cropped to it, and press open holds it "
+            "open first (tap presses it). Read-only."
         ),
         "inputSchema": {
             "type": "object",
@@ -7715,6 +7723,13 @@ TOOLS = [
                 "width": {"type": "integer", "minimum": 320, "maximum": 1920,
                           "description": "Window width in px (390 phone, 1200 laptop)"},
                 "scheme": {"type": "string", "enum": ["light", "dark"]},
+                "element": {"type": "string",
+                            "description": ("A card's or section's id (as in Morph's "
+                                            "dashboard.yaml): photograph just that, "
+                                            "scrolled into view")},
+                "press": {"type": "string", "enum": ["tap", "open"],
+                          "description": ("Press the element first: open holds it so it "
+                                          "opens, tap presses it once")},
             },
         },
     },
@@ -7749,9 +7764,13 @@ TOOLS = [
             "asks you to fix or report a problem whose cause is in an "
             "add-on's own code (a traceback in its log, a screen that is "
             "wrong), AFTER you have looked (bruh_addon_status, the logs) and "
-            "after any workaround you can make here. Put what you found in "
-            "`what` and the log lines or readings in `evidence`; put the "
-            "owner's own words in `asked`. Needs the development loop on "
+            "after any workaround you can make here. Three fields, three "
+            "jobs: `asked` is the owner's exact words, copied verbatim and "
+            "whole — it is the requirement; `what` is a short summary of the "
+            "problem (it becomes the issue's title line); `evidence` carries "
+            "your diagnosis and what it rests on — the cause you found, the "
+            "log lines, errors and readings. Nothing is dropped: a long "
+            "field is kept in the issue's body. Needs the development loop on "
             "(⚙ › Developer); if it is off, say so. Never for a problem in "
             "the house's own configuration, which you fix directly."
         ),
@@ -7763,11 +7782,16 @@ TOOLS = [
                 "title": {"type": "string",
                           "description": "Under 80 characters, naming the part that is broken"},
                 "what": {"type": "string",
-                         "description": "One or two sentences: the real problem you found"},
+                         "description": ("A short summary, one or two sentences: the real "
+                                         "problem. Not the owner's words and not the "
+                                         "diagnosis — those have their own fields")},
                 "evidence": {"type": "string",
-                             "description": "The log lines, error or readings that show it"},
+                             "description": ("Your diagnosis and its evidence: the cause "
+                                             "you found, and the log lines, errors or "
+                                             "readings that show it")},
                 "asked": {"type": "string",
-                          "description": "The owner's own words, if they asked"},
+                          "description": ("The owner's exact words, verbatim and whole, "
+                                          "if they asked — never paraphrased or shortened")},
                 "done_when": {"type": "string",
                               "description": "How a developer can tell it is fixed"},
                 "ui": {"type": "boolean",
