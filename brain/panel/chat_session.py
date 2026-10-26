@@ -2243,10 +2243,13 @@ def _normalise(event: dict, interrupted: bool = False) -> list[dict]:
                 continue
             btype = block.get("type")
             if btype == "text" and block.get("text"):
-                out.append({"type": "text", "text": _clip(block["text"], MAX_RESULT_CHARS * 4)})
+                # The conversation's own words are drawn whole, never cut
+                # for the screen (`conversations._speech` — the replay's
+                # rule, so a live answer and the same answer reloaded agree).
+                out.append({"type": "text", "text": conversations._speech(block["text"])})
             elif btype == "thinking" and block.get("thinking"):
                 out.append({"type": "thinking",
-                            "text": _clip(block["thinking"], MAX_RESULT_CHARS)})
+                            "text": conversations._speech(block["thinking"])})
             elif btype == "tool_use":
                 args = block.get("input") if isinstance(block.get("input"), dict) else {}
                 # The one tool call that is a message to the person rather

@@ -71,6 +71,13 @@ SPEECH = ("user", "text", "thinking")
 # be held in memory whole on a Pi; comfortably more than REPLAY_EVENTS can
 # spend, so the budget is what decides what you see, not this.
 MAX_SCAN_EVENTS = 5000
+# The display clip for TOOL traffic only — a tool's input and its result
+# are working, not the conversation, and a 10 MB log pushed into a browser
+# is a cost. What a person said and what Claude said back are never cut
+# here (`_speech`): a request another add-on hands brAIn ends with the
+# person's own words after pages of context, and cutting the turn at this
+# number put the one sentence that was the point of the conversation off
+# the screen for good. The panel folds a long turn behind a press instead.
 MAX_TEXT = 4000
 # How many sessions a filtered listing will look at before giving up. Only
 # reached when the filter is rejecting nearly everything, which is exactly
@@ -810,7 +817,7 @@ def _replay(entry: dict) -> list[dict]:
         if injected is not None:
             return injected
         if _is_prompt(entry):
-            return [{"type": "user", "text": _clip(_message_text(entry))}]
+            return [{"type": "user", "text": _speech(_message_text(entry))}]
         return []
 
     if etype == "assistant":
@@ -820,9 +827,9 @@ def _replay(entry: dict) -> list[dict]:
                 continue
             kind = block.get("type")
             if kind == "text" and block.get("text"):
-                out.append({"type": "text", "text": _clip(block["text"])})
+                out.append({"type": "text", "text": _speech(block["text"])})
             elif kind == "thinking" and block.get("thinking"):
-                out.append({"type": "thinking", "text": _clip(block["thinking"])})
+                out.append({"type": "thinking", "text": _speech(block["thinking"])})
             elif kind == "tool_use":
                 args = block.get("input") if isinstance(block.get("input"), dict) else {}
                 out.append({
@@ -835,6 +842,12 @@ def _replay(entry: dict) -> list[dict]:
         return out
 
     return []
+
+
+def _speech(text) -> str:
+    """A turn of the conversation itself, whole. Never cut for display:
+    see ``MAX_TEXT``."""
+    return str(text or "")
 
 
 def _clip(text: str) -> str:

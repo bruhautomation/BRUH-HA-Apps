@@ -1154,11 +1154,14 @@
           </div>
 
           <h4 class="sethead">Ask tab</h4>
-          <label for="setTerminalUi">Opens as</label>
+          <!-- Named for both faces: somebody looking for this types
+               "terminal" or "chat", and "Opens as" matched neither. -->
+          <label for="setTerminalUi">Chat or terminal</label>
           <select id="setTerminalUi" class="sel selin">
             <option value="chat">Chat — Claude Code as messages</option>
-            <option value="classic">Classic — the full terminal (ttyd + tmux)</option>
+            <option value="classic">Terminal — the full Claude Code terminal</option>
           </select>
+          <p class="hint tight">How Ask opens. ⋯ on Ask switches it too.</p>
           <label for="setChatSessions">Conversations kept running at once</label>
           <select id="setChatSessions" class="sel selin">
             <option value="1">1 — one at a time</option>

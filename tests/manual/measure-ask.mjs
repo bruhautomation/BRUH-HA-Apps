@@ -568,6 +568,85 @@ for (const { width, touch } of CASES) {
   if (width < 900 && !ids.includes('chatOpen')) note(where, '⋯ offers no way to your chats');
   const said = (items.find((i) => i.id === 'chatNew') || {}).said || '';
   if (said && !/terminal window/i.test(said)) note(where, `the new-window item says "${said}"`);
+  // The way back to the chat face is in ⋯ too, named for where it goes —
+  // the house that runs the terminal face could not find it anywhere.
+  const mode = (items.find((i) => i.id === 'termMode') || {}).said || '';
+  if (!mode) note(where, '⋯ offers no switch to the chat');
+  else if (!/\bchat\b/i.test(mode)) note(where, `the switch in ⋯ says "${mode}", not chat`);
+  await context.close();
+}
+
+// And the chat face: ⋯ holds the switch to the terminal, named.
+for (const { width, touch } of CASES) {
+  const where = `${width}px chat ⋯`;
+  const context = await browser.newContext({
+    viewport: { width, height: 860 }, hasTouch: touch, isMobile: touch });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => document.body.classList.remove('ask-list'));
+  const menu = page.locator('#termMenu');
+  if (!(await menu.isVisible())) { note(where, '⋯ is not on screen'); await context.close(); continue; }
+  await menu.click();
+  await page.waitForTimeout(150);
+  const it = await page.evaluate(() => {
+    const n = document.querySelector('#termMenuPop #termMode');
+    if (!n) return null;
+    const r = n.getBoundingClientRect();
+    return { shown: r.width > 0 && r.height > 0, said: (n.innerText || '').trim(), h: r.height };
+  });
+  if (!it || !it.shown) note(where, '⋯ offers no switch to the terminal');
+  else {
+    if (!/terminal/i.test(it.said)) note(where, `the switch in ⋯ says "${it.said}", not terminal`);
+    if (touch && it.h < MIN_TARGET) note(where, `the switch is ${it.h}px tall`);
+  }
+  await context.close();
+}
+
+// A turn somebody (or another add-on, for them) sent can be pages long — a
+// dashboard change request ends with the person's own words after the
+// whole dashboard. It is never cut: it is folded, and one press shows it
+// all, the last line included.
+for (const { width, touch } of CASES) {
+  const where = `${width}px long turn`;
+  const context = await browser.newContext({
+    viewport: { width, height: 860 }, hasTouch: touch, isMobile: touch });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => note(where, `page error: ${e.message}`));
+  await page.addInitScript(STUB);
+  await page.goto(`file://${path.join(PANEL, 'index.html')}`);
+  await openView(page, 'terminal');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.body.classList.remove('ask-list'));
+  const LAST = 'Asked: make the hallway card show the lamp and the door together';
+  const r = await page.evaluate((last) => {
+    const long = Array.from({ length: 900 }, (_, i) => `line ${i} of the dashboard as it stands`)
+      .join('\n') + '\n\n' + last;
+    chatRender({ type: 'user', text: long });
+    const row = [...document.querySelectorAll('#chatLog .msg.user')].pop();
+    const bubble = row && row.querySelector('.bubble');
+    const more = row && row.querySelector('.bubblemore');
+    return { len: long.length, text: bubble ? bubble.textContent : '',
+             more: more ? { said: more.textContent.trim(), h: more.getBoundingClientRect().height } : null,
+             tall: bubble ? bubble.getBoundingClientRect().height : 0 };
+  }, LAST);
+  if (!r.text.endsWith(LAST)) note(where, 'the long turn does not end with the person\'s words');
+  if (r.text.length < r.len - 2) note(where, `the long turn is cut (${r.text.length} of ${r.len})`);
+  if (!r.more) note(where, 'a long turn has no Show all');
+  else {
+    if (!/show all/i.test(r.more.said)) note(where, `the fold's press says "${r.more.said}"`);
+    if (touch && r.more.h < MIN_TARGET) note(where, `Show all is ${r.more.h}px tall`);
+    if (r.tall > 700) note(where, `the folded turn is ${Math.round(r.tall)}px tall`);
+    await page.locator('#chatLog .msg.user .bubblemore').last().click();
+    const opened = await page.evaluate(() => {
+      const b = [...document.querySelectorAll('#chatLog .msg.user .bubble')].pop();
+      return b.getBoundingClientRect().height;
+    });
+    if (opened <= r.tall) note(where, 'Show all did not open the turn');
+  }
   await context.close();
 }
 
