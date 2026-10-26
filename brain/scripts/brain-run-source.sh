@@ -22,7 +22,7 @@ BRAIN_RUN_SOURCES="${BRAIN_RUN_SOURCES:-/data/run-sources.jsonl}"
 # agree on what a valid source IS.
 _brain_known_source() {
     case "$1" in
-        voice|automation|memory|study|card|fix|doctor|replay|curiosity|triage|resident|maintenance|gate|followup) return 0 ;;
+        voice|automation|morph|memory|study|card|fix|doctor|replay|curiosity|triage|resident|maintenance|gate|followup) return 0 ;;
         *) return 1 ;;
     esac
 }

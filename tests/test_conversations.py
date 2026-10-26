@@ -261,11 +261,12 @@ class ConversationsCase(unittest.TestCase):
         for bad in ("../secret", "/etc/passwd", "a/../../secret", ""):
             self.assertEqual(self.mod.transcript(self.cwd, bad), [], bad)
 
-    def test_a_giant_message_is_clipped(self):
+    def test_a_giant_message_comes_back_whole(self):
+        # A person's own words are never cut for display (#426): a long one
+        # is folded in the panel, not shortened here.
         self._write("aaa", [user_entry("x" * 99999)])
         events = self.mod.transcript(self.cwd, "aaa")
-        self.assertLess(len(events[0]["text"]), self.mod.MAX_TEXT + 100)
-        self.assertIn("truncated", events[0]["text"])
+        self.assertEqual(events[0]["text"], "x" * 99999)
 
 
 class BackfillCase(ConversationsCase):
