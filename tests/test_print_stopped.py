@@ -20,7 +20,6 @@ sys.path.insert(0, str(BASE_DIR / "tests"))
 
 import checks  # noqa: E402
 import urgency  # noqa: E402
-from checks import chores  # noqa: E402
 from test_house_checks import NOW, house, iso  # noqa: E402
 
 STATUS = "sensor.attic_printer_status"
@@ -58,7 +57,7 @@ def printer(status="pause", *, problem="on", detection="failure",
 
 
 def rows(snap):
-    return chores.print_stopped(snap, NOW)
+    return checks.chores.print_stopped(snap, NOW)
 
 
 class TestAStoppedPrint(unittest.TestCase):

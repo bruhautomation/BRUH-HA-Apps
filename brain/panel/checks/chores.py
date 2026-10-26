@@ -40,6 +40,7 @@ import re
 
 import numfmt
 
+from . import _util
 from ._util import (CouldNotLook, House, clock, domain_of, parse_ts,
                     state_words)
 
@@ -550,6 +551,9 @@ def condition_holds(house: House, eid: str, reason: str) -> bool | None:
         return False
     return state != wanted
 
+
+
+_util.CONDITION_HOLDS = condition_holds
 
 def cycling_kind(names, sibling_states) -> str:
     """Which cycling machine this is, `"machine"` for one known only by its

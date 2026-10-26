@@ -103,8 +103,6 @@ SPAN_UNITS = frozenset({"ms", "s", "min", "h", "d", "w"})
 PRINTER_PLATFORMS = devices.PRINTER_PLATFORMS
 JOB_WORDS = frozenset({"progress", "layer", "layers", "remaining",
                        "elapsed", "eta", "job"})
-# A setpoint is what somebody asked for, and it moves when they change it.
-SETPOINT_WORDS = devices.SETPOINT_WORDS
 # A counter that resets every midnight is high at 23:00 and zero at 00:05
 # by construction.
 DAILY_WORDS = frozenset({"today", "yesterday", "daily"})

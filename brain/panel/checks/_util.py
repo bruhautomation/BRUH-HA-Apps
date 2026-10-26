@@ -313,6 +313,11 @@ def _names_room(name: str, area: str) -> bool:
 DEVICE_QUIET = frozenset({"dev.battery_low", "dev.frozen", "dev.unavailable"})
 
 
+
+# How a correction that names a machine state is read against that state
+# (`chores.condition_holds`), set by `checks.chores` when it is imported.
+CONDITION_HOLDS = None
+
 class House:
     """Lookups over a snapshot that several checks want."""
 
@@ -524,8 +529,11 @@ class House:
         text = str((rule or {}).get("text") or "")
         if not text:
             return True
-        from . import chores  # noqa: PLC0415 — chores imports this module
-        holds = chores.condition_holds(self, entity_id, text)
+        # `chores` registers the reader (`CONDITION_HOLDS`): it imports this
+        # module, so asking for it here would be an import cycle. The package
+        # imports every check, so it is always set once `checks` is loaded.
+        reader = CONDITION_HOLDS
+        holds = reader(self, entity_id, text) if reader else None
         return True if holds is None else holds
 
     def withheld_by(self, entity_id: str, check_id: str) -> dict | None:
