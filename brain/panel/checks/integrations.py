@@ -184,11 +184,16 @@ def _device_named(house: House, group: dict) -> tuple[str, str]:
                 continue
             dev = house.device_of(eid)
             dev_id = str((house.registry.get(eid) or {}).get("device_id") or "")
-            if _platform(house, eid) != domain and not (
-                    dev_id and _of_domain(house, dev_id, domain)):
-                # An address another integration's device answers on: not
-                # this integration's line about it.
-                continue
+            if _platform(house, eid) != domain:
+                own = _of_domain(house, dev_id, domain) if dev_id else []
+                if not own:
+                    # An address another integration's device answers on:
+                    # not this integration's line about it.
+                    continue
+                # Found through another integration's entity on the same
+                # device (a router's tracker reports the address): the row
+                # is filed under the logging integration's own entity.
+                eid = own[0]
             return (house.device_name(dev) if dev else house.label(eid)), eid
     low = " " + message.lower() + " "
     for dev_id, dev in sorted(house.devices.items()):
