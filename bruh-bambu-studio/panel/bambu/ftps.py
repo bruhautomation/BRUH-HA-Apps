@@ -200,14 +200,14 @@ class Storage:
             try:
                 sock.settimeout(previous)
             except OSError:
-                pass
+                pass  # a socket the server has since closed needs no timeout
         return b"".join(chunks)
 
     def _reopen(self) -> None:
         try:
             self.ftp.close()
         except (OSError, EOFError, ftplib.Error):
-            pass
+            pass  # closing a session that is already gone changes nothing
         self.ftp = None
 
 

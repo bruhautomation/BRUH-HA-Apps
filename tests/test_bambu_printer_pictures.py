@@ -29,7 +29,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(__file__))
 import bambu_env  # noqa: E402
 
-ftps, thumbs = bambu_env.load("bambu.ftps", "thumbs")
+bambu_pkg, ftps, thumbs = bambu_env.load("bambu", "bambu.ftps", "thumbs")
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x01" * 400
 
@@ -74,6 +74,10 @@ class TestPictures(unittest.TestCase):
         patch = mock.patch.object(thumbs, "CACHE", self.tmp / "cache")
         patch.start()
         self.addCleanup(patch.stop)
+        # thumbs imports bambu.ftps when it reads a printer: the panel's own.
+        modules = mock.patch.dict(sys.modules, {"bambu": bambu_pkg, "bambu.ftps": ftps})
+        modules.start()
+        self.addCleanup(modules.stop)
         self.data = job(self.tmp / "rotor.gcode.3mf")
 
     def test_a_short_read_is_an_error_and_is_not_remembered_as_no_picture(self):
