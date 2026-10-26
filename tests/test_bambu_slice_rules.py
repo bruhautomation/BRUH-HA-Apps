@@ -38,7 +38,7 @@ def write_profiles(root: Path) -> Path:
         (base / kind / f"{name}.json").write_text(json.dumps({"name": name, "type": kind, **data}))
 
     put("machine", "fdm_machine_common", instantiation="false", printer_model="",
-        nozzle_diameter=["0.4"])
+        nozzle_diameter=["0.4"], printable_area=["0x0", "256x0", "256x256", "0x256"], printable_height="256")
     put("machine", "Bambu Lab A1 0.4 nozzle", inherits="fdm_machine_common",
         instantiation="true", printer_model="Bambu Lab A1", setting_id="GM001")
     # The profile's own default pattern is grid: 100 % over it is the -18.

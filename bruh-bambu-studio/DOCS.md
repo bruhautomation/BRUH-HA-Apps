@@ -99,7 +99,13 @@ A **Bambu Studio project** (`.3mf` saved from Bambu Studio) carries its
 printer, process and filament settings, so it slices exactly as it would in
 the app. A **bare model** (`.stl`, `.step`, `.obj`) carries none, so slicing
 one needs a machine and a process profile named the way Bambu Studio lists
-them (`bruh_bambu.list_files` lists them under `profiles`). When in doubt, open
+them (`bruh_bambu.list_files` lists them under `profiles`). The machine may
+also be one of your printers by the name you gave it: its **model** (set on
+the Printers tab) picks the profile, never the words in its name, so a
+printer called "Loft A1 mini shelf" that is an A1 slices for the A1's
+256 mm bed. Every profile is handed to the slicer complete, with the bed
+size its Bambu Studio family carries; a profile that does not say how big
+the bed is is refused rather than sliced for a bed of the wrong size. When in doubt, open
 the model in Bambu Studio, set it up, and save it as a project into
 `/share/bambu`. **Print** (and `bruh_bambu.print_file`) does not need this: it
 chooses the profiles itself from the printer's model and the tray's material.
