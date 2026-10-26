@@ -64,6 +64,7 @@ import atomic_write
 import model_plan
 import prompt_kit
 import textclip
+import triage
 
 # ---------------------------------------------------------------------------
 # The jobs, by name
@@ -606,6 +607,12 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
             already = str(row.get("already") or "").strip().lower()
+            if already not in ALREADY and triage.says_duplicate(
+                    said[idx]["why"]):
+                # The word written as a sentence ("already an open problem
+                # for you"): the same claim, so the same fold — shown, it
+                # was the row's own reason for not being there (#448).
+                already = "duplicate"
             if already in ALREADY:
                 # Not news, whatever verdict rode beside it: the row is
                 # set aside, which is what `ignore` does to a filed row.

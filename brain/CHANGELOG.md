@@ -7,6 +7,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - **New findings no longer wait until midnight for brAIn's check on a busy house.** Changes to protected devices pulled checks forward until the day's allowance ran out by late morning; they now use only checks the regular ten-minute look will not need, so every new finding is checked within two looks all day. (#82)
+- **A finding brAIn's check calls a repeat of another open finding is set aside, not shown with that as its reason.** Cards no longer say "…is already an open problem for you" about themselves, and those cards keep their what-to-do. (#448)
 
 ## 3.8.18
 

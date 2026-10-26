@@ -722,7 +722,8 @@ def house_reason(reason) -> str:
                 *triage.LEGACY_STOCK):
         return ""
     kept = [s for s in _SENTENCE_SPLIT_RE.split(said)
-            if s.strip() and not _ROUTING_RE.search(s)]
+            if s.strip() and not _ROUTING_RE.search(s)
+            and not triage.says_duplicate(s)]
     return " ".join(kept).strip()
 
 
@@ -749,6 +750,20 @@ def _names_another_entity(reason, entry: dict) -> bool:
     return False
 
 
+def _names_itself(reason, entry: dict) -> bool:
+    """Whether a look's reason contains the row's own sentence — its text
+    or claim, three words or more, normalised — rather than a conclusion
+    about the house."""
+    said = normalize(str(reason or ""))
+    if not said:
+        return False
+    for text in ((entry or {}).get("text"), (entry or {}).get("claim")):
+        own = normalize(str(text or ""))
+        if len(own.split()) >= 3 and own in said:
+            return True
+    return False
+
+
 def shown_look(record: dict, entry: dict) -> dict:
     """``record`` (a cleaned triage block) as a surface a person reads
     shows it: an echo blanked (`without_echo`) and the reason cut to what
@@ -769,6 +784,11 @@ def shown_look(record: dict, entry: dict) -> dict:
             and not record.get("elevated_by_person")):
         return {**record, "reason": ""}
     if _names_another_entity(record["reason"], entry):
+        return {**record, "reason": ""}
+    # A reason that names the very row it is on ("<this row's title>, which
+    # brAIn is following") reads the finding back with a word added, and
+    # says nothing the card does not (#448).
+    if _names_itself(record["reason"], entry):
         return {**record, "reason": ""}
     said = house_reason(record["reason"])
     if said == record["reason"]:

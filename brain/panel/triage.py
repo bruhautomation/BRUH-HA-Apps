@@ -50,6 +50,7 @@ the promise that a row nothing ever came back for surfaces anyway.
 from __future__ import annotations
 
 import math
+import re
 
 import time
 
@@ -223,6 +224,27 @@ MAX_PER_DAY = 200
 HOT_LOOKS_PER_DAY = 150
 
 
+# A look's sentence that says the row REPEATS another open finding — the
+# `duplicate` a look is asked to give as a word (`resident.ALREADY`) and
+# sometimes writes as prose instead. On the row it is about it is a
+# sentence about the list, not the house ("…is already an open problem for
+# you"), so it is read as the word it stands for and never shown (#448).
+DUPLICATE_RE = re.compile(
+    r"\b(?:duplicat\w*"
+    r"|already (?:an? |the )?(?:open|existing|known|separate|reported)"
+    r" (?:problem|finding|card|case|issue|row|report)"
+    r"|already (?:covered|handled|tracked|captured) (?:by|in|under)"
+    r"|same (?:problem|issue|finding|fault|thing|report|card) as"
+    r" (?:an?|the|another)"
+    r"|repeats? (?:an?|another|the) (?:open |other )?"
+    r"(?:finding|card|case|problem|report))\b", re.I)
+
+
+def says_duplicate(reason) -> bool:
+    """Whether a look's reason only says the row repeats another one."""
+    return bool(DUPLICATE_RE.search(str(reason or "")))
+
+
 def timer_looks_left(seconds_left_today: float, interval_s: float) -> int:
     """How many looks the timer alone will still want before midnight."""
     interval = max(1.0, float(interval_s))
@@ -247,7 +269,7 @@ def hot_look_allowed(runs_today: int, timer_left: int) -> bool:
             and runs + max(0, int(timer_left)) < MAX_PER_DAY)
 
 __all__ = [
-    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "hot_look_allowed", "timer_looks_left", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
+    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "hot_look_allowed", "timer_looks_left", "DUPLICATE_RE", "says_duplicate", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
     "SHOW_AFTER_S", "STALE_S",
     "NOTE_EXCLUDED", "NOTE_SOURCES",
     "UNJUDGED", "VERDICTS", "WAITING", "gate", "is_note", "waiting_too_long",
