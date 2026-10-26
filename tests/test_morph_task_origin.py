@@ -10,7 +10,6 @@ Morph writes into brAIn's task folder except ``brain.submit``.
 import asyncio
 import importlib
 import re
-import shutil
 import time
 import unittest
 from pathlib import Path
@@ -18,7 +17,6 @@ from pathlib import Path
 from morph_env import MorphEnv
 from test_morph_loops import DOC, FakeBrain, fast
 
-HAS_GIT = shutil.which("git") is not None
 SERVICE = Path(__file__).resolve().parent.parent / "morph" / "service"
 
 
@@ -27,7 +25,6 @@ def _answer(task):
                      "lessons": [], "code_reports": []}}
 
 
-@unittest.skipUnless(HAS_GIT, "git is not installed")
 class TestEveryTaskSaysItCameFromMorph(unittest.TestCase):
 
     def setUp(self):

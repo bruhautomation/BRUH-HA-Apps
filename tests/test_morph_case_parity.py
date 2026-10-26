@@ -14,7 +14,6 @@ from __future__ import annotations
 import html
 import json
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
@@ -25,7 +24,6 @@ from morph_env import FRONTEND
 
 ROOT = Path(__file__).resolve().parent.parent
 BRAIN_PANEL = ROOT / "brain" / "panel"
-HAS_NODE = shutil.which("node") is not None
 CASES_JS = json.dumps((FRONTEND / "cases.js").as_uri())
 
 NAMES = {"light.hall_lamp": "Hall lamp", "sensor.loft_battery": "Loft sensor",
@@ -104,7 +102,6 @@ def _text(fragment: str) -> str:
     return html.unescape(re.sub(r"<[^>]+>", "", fragment)).strip()
 
 
-@unittest.skipUnless(HAS_NODE, "node is needed to draw Morph's cards")
 class TestTheSameCaseReadsTheSame(unittest.TestCase):
 
     @classmethod

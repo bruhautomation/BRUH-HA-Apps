@@ -12,14 +12,12 @@ brAIn to leave the old file behind; nothing Morph ships reads it.
 from __future__ import annotations
 
 import re
-import shutil
 import unittest
 from pathlib import Path
 
 from morph_env import MorphEnv
 from test_morph_loops import DOC
 
-HAS_GIT = shutil.which("git") is not None
 ROOT = Path(__file__).resolve().parent.parent
 MORPH = ROOT / "morph"
 PANEL_JS = MORPH / "custom_components" / "morph" / "frontend" / "morph-panel.js"
@@ -32,7 +30,6 @@ OLD_LOADER = """
 """
 
 
-@unittest.skipUnless(HAS_GIT, "git is not installed")
 class TestACopyThatReadsTheOldFileIsPaused(unittest.TestCase):
 
     def setUp(self):
