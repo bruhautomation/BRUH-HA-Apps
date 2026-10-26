@@ -538,7 +538,10 @@ class TestLogFlood(unittest.TestCase):
         self.assertIn("Shelly", row["text"])
         self.assertIn("150 times", row["detail"])
         self.assertIn("Plug 1", row["detail"])
-        self.assertEqual(row["entity_id"], "device_tracker.plug_1_client")
+        # Filed under the logging integration's own entity on that device,
+        # never the router's tracker that happened to report the address
+        # (#434): a Shelly error is about the Shelly switch.
+        self.assertEqual(row["entity_id"], "switch.plug_1")
 
     def test_a_secret_in_a_message_is_scrubbed(self):
         text = "\n".join(log_line(60 + i, "homeassistant.components.foo",

@@ -2,6 +2,15 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.20
+
+### Fixed
+
+- **One device is one card about it dropping off.** A Wi-Fi device reported by a check on its switch, by a card on its UniFi tracker and inside a several-device card is now one card with the others' evidence on it, and the UniFi integration losing its controller is one card whichever check saw it. (#440)
+- **Offline cards come off once the device is back.** A card from the overnight check or an insight card saying something is offline or not reachable is cleared once everything it names has reported for two hours, and a card whose own details say the device came back is not kept. (#441)
+- **A look's count always matches the card's.** When a check refreshes a card's numbers, a look that quoted the old ones is no longer shown beside them. (#443)
+- **Log errors are filed on the right thing.** An error is filed only on something of the integration that logged it, or the automation the log names, never on an unrelated device whose name appears in the message. (#434)
+- **A log-error card says what the error was.** It quotes the message, how often it happened and when it last did, a card that cannot is held back, and a fix that has nothing to do with the error is replaced by one that does. (#444)
 ## 3.8.19
 
 ### Added
