@@ -295,7 +295,7 @@ for (const { width, touch, top, fits } of CASES) {
       } else {
         const { line, kind } = card.who[0];
         const fits = { brain: ['Go ahead', 'Apply'], you: ['Add to To Do', 'Done'],
-                       answer: ['Yes', 'Send'] }[kind];
+                       answer: ['Yes', 'Send'], told: ['Done', 'Restore'] }[kind];
         if (!fits) note(where, `${id} who-acts line is "${line}" (${kind})`);
         else if (!fits.includes(lead.label)) {
           note(where, `${id} says "${line}" over a primary "${lead.label}"`);
@@ -819,7 +819,7 @@ for (const width of [390, 1190]) {
   const tidy = (id, claim, src) => kase({
     id, severity: 'info', chip: 'tidy', group: 'tidy', situation: 'generic', claim,
     source: src, source_title: 'Registry check', origin: { store: 'findings', key: Number(id.slice(2)) },
-    answers: [A('fix', 'Fix', `/api/finding/${id.slice(2)}/fix`, { primary: true }),
+    answers: [A('fix', 'Go ahead', `/api/finding/${id.slice(2)}/fix`, { primary: true }),
               A('not_now', 'Snooze', `/api/case/${id}/not_now`),
               A('wrong', 'Ignore', `/api/case/${id}/wrong`, { note: true })] });
   const cases = [FEED[1], sec, FEED[0],

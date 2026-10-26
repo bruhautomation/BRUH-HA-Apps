@@ -89,7 +89,7 @@ export const FEED = [
     origin: { store: 'findings', key: 1101 },
     triage: { verdict: 'elevated', reason: 'A real drift.', run_id: 'look-1', at: NOW - 600 },
     evidence: [{ entity: 'sensor.garage_freezer', value: '-12.4 °C', when: '15 Sep 08:10' }],
-    answers: trio('f:1101', A('fix', 'Fix', '/api/finding/1101/fix', { primary: true, instruct: true,
+    answers: trio('f:1101', A('fix', 'Go ahead', '/api/finding/1101/fix', { primary: true, instruct: true,
       prefill: 'Check the door seal on sensor.garage_freezer, then the compressor relay.', ask: 'What should brAIn change? Edit its suggestion or write your own.' }), true),
     more: [ask(1101), done(1101)],
   }),
@@ -148,7 +148,7 @@ export const FEED = [
               + 'as an operation it can carry out, so there is nothing to approve' },
     source: 'check:reg.no_area', source_title: 'Registry check',
     origin: { store: 'findings', key: 1106 },
-    answers: trio('f:1106', A('fix', 'Fix', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
+    answers: trio('f:1106', A('fix', 'Go ahead', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
     more: [ask(1106)],
   }),
   // A chore: the machine finished. Real, and nothing is broken, so it is
@@ -442,7 +442,7 @@ window.fetch = async (url, opts) => {
 // "Doesn't apply", a question's way of saying it was irrelevant, and
 // "Respond", the first press on a finding card, which opens the line to
 // brAIn under its row.
-export const VOCAB = new Set(['Respond', 'Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
+export const VOCAB = new Set(['Respond', 'Apply', 'Fix', 'Go ahead', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
   'Delete', 'Yes', 'No', 'Cancel', 'Change', "Doesn't apply"]);

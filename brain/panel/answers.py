@@ -24,7 +24,7 @@ Four rules.
 **Every card has one primary, then Snooze · Ignore, always those words
 and that order** (docs/design/ui-redesign-2026-10.md, "One queue, one
 card"), so a row of buttons can be read without reading the words. The
-primary is the one press that fits the card: *Fix* where brAIn could
+primary is the one press that fits the card: *Go ahead* where brAIn could
 work out a change (a read-only run that changes nothing), *Apply* once a
 plan is on the card, *Add to To Do* where it needs a person's hands, *Done*
 on a chore check, *Send* on a house-book question. A problem also shows
@@ -415,7 +415,15 @@ def _done(key, primary: bool = False) -> dict:
         done="Done — recorded")
 
 
-def _plan(key, primary: bool = False, fix: str = "") -> dict:
+# The press that lets brAIn make the change itself (#451): "hey I can fix
+# this, go ahead?" in the owner's words. Behind the ⋯, where a plan run
+# already concluded a person's hands are needed, the same press is "Fix" —
+# a second try, never the card's answer.
+GO_AHEAD = "Go ahead"
+
+
+def _plan(key, primary: bool = False, fix: str = "",
+          label: str = GO_AHEAD) -> dict:
     """**Fix**: a short box holding the card's own suggested change, which
     the person may edit or replace, then the read-only plan run with what
     they sent as the agreed change (`_run_plan`'s `change`, the same brief
@@ -427,7 +435,7 @@ def _plan(key, primary: bool = False, fix: str = "") -> dict:
     tells the panel to open the box; the wire id stays `fix`, because the
     HA mirror, Repairs and the notification actions read it."""
     answer = _answer(
-        "fix", "Fix",
+        "fix", label,
         "Say what to change — brAIn's suggestion is already in the box. It "
         "shows exactly what it will change, and nothing changes until you "
         "press Apply.",
@@ -551,7 +559,7 @@ def answers(case: dict) -> list[dict]:
 
     if sit == "tidy":
         return _problem_row(case, _answer(
-            "fix", "Fix", "brAIn suggests names, rooms and aliases in this "
+            "fix", GO_AHEAD, "brAIn suggests names, rooms and aliases in this "
             "house's own style, as one card to review. Nothing changes "
             "until you press Apply on it.", route="/api/tidy/run",
             primary=True, done="Suggesting — they arrive as one card here"))
@@ -832,7 +840,7 @@ def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
         plan = case.get("plan") or {}
         if (case.get("fixable") and sit not in HANDS and sit != "watching"
                 and (plan_refused(plan) or sit == "fix_failed")):
-            add(_plan(key, fix=case.get("fix")))
+            add(_plan(key, fix=case.get("fix"), label="Fix"))
         return out
     for item in overflow or []:
         if item.get("verb") == "trial":
@@ -913,7 +921,7 @@ def request_view(row: dict, name: str = DEFAULT_NAME) -> dict:
 
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
-           "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
+           "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
            "SITUATIONS", "WHO", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
            "answers", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
            "morph_question", "plan_is_legacy", "plan_refused", "request_answers",
