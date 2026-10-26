@@ -458,7 +458,18 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
     for key in keys:
         if isinstance(out.get(key), str) and out[key]:
             out[key] = plain(out[key], names, tz)
+            # A step or an account holding a hole where a value belongs
+            # ("a template", "<entity>", "TODO") is refused and the row
+            # keeps what it had (#446): `refine` writes nothing over an
+            # empty value, and a new row simply has none.
+            if key in PLACEHOLDER_REFUSED and house_words.placeholder(
+                    out[key]):
+                out[key] = ""
     return out
+
+
+# The fields a placeholder is refused in.
+PLACEHOLDER_REFUSED = ("detail", "fix", "todo_text")
 
 
 def _queue_now(now: float) -> int | None:
@@ -3360,7 +3371,7 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
     # in the house's words.
     fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
-    if not fix or by not in FIX_AUTHORS:
+    if not fix or by not in FIX_AUTHORS or house_words.placeholder(fix):
         return None
     items = _load()
     for entry in items:
