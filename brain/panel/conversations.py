@@ -542,7 +542,7 @@ MORPH_OPENERS = (
     "MORPH · learning pass.",
     "Someone typed this into the Ask line of Morph,",
     "The card they were using sent this with their words. It is context for "
-    "the question, not what they said:",
+    + "the question, not what they said:",
 )
 # Relabelled from these only: an unclaimed row ("") and one the listener
 # claimed as Automation before it knew Morph's tasks from anybody else's.
