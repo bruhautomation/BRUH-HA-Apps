@@ -688,6 +688,18 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
       t = await persona();
       if (!/brAIn is not installed/.test(t)) fail(name, `a house without brAIn is not told where the personality lives: "${t}"`);
       await p.evaluate(() => { window.__persona = undefined; window.__noBrain = false; });
+      // #391: a house still holding the old personality file, or an older
+      // copy of Morph's panel that reads it, is told in one sentence what to
+      // do; the old file offers Remove, never Update.
+      await p.evaluate(() => { window.__fixture.state.code = [{ name: 'morph-panel.js', status: 'paused', why: 'personality', kind: 'changed', at: 1 }, { name: 'personality.js', status: 'paused', why: 'personality', kind: 'new', at: 1 }]; window.__panel.load(); });
+      await reopen();
+      t = await persona();
+      const old = await p.evaluate(() => { const r = window.__panel.shadowRoot; return { said: (r.querySelectorAll('.settings [data-old-persona]') || []).length, update: !!r.querySelector('.settings [data-act="code-redo"][data-v="personality.js"]'), remove: !!r.querySelector('.settings [data-act="code-reset"][data-v="personality.js"]') }; });
+      if (old.said !== 1 || !/no longer reads the personality/.test(t || '')) fail(name, `a house with the old personality file is not told what to do in Settings › Personality: "${(t || '').slice(0, 160)}"`);
+      if (old.update || !old.remove) fail(name, 'the old personality file offers Update instead of only Remove');
+      await p.evaluate(() => { window.__fixture.state.code = []; window.__panel.load(); });
+      await reopen();
+      if (await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('.settings [data-old-persona]'))) fail(name, 'the old-personality sentence stays after the old file is gone');
     }
   }
 

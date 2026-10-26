@@ -81,6 +81,9 @@ const USAGE_KEEP = 400;
 // its own file changed in the update, or another of Morph's modules it
 // builds on did.
 function pausedWhy(r) {
+  // An older change that read the household's personality from a file of its
+  // own (morphcode.RETIRED): the personality is brAIn's now.
+  if (r && r.why === 'personality') return r.name === 'personality.js' ? 'Morph no longer reads this old personality file; the personality is brAIn’s now.' : 'It reads the old personality file, which Morph no longer uses, so Morph’s own is running.';
   if (r && r.why === 'others' && (r.moved || []).length) return `Morph was updated and its ${r.moved.slice(0, 3).join(', ')}${r.moved.length > 3 ? ' and more' : ''} changed, which this change builds on. Morph’s own ${r.name} is running until brAIn checks the change still fits.`;
   return 'Morph’s own version is running until you update your change.';
 }
@@ -3129,6 +3132,17 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     this.schedule();
   }
 
+  // A house that customised Morph before the personality was brAIn's may
+  // still hold the old personality file, or a copy of Morph's code that
+  // reads it (#391). Morph pauses both; this is the one sentence saying
+  // what to do about them, where somebody looking at the personality is.
+  oldPersonaHtml() {
+    const st = (this.data && this.data.state) || {};
+    const old = (st.code || []).filter((r) => r.why === 'personality');
+    if (!old.length) return '';
+    return `<p class="sm" data-old-persona style="color:var(--amber)">Morph no longer reads the personality an older change to Morph kept for itself: remove that change under Changes to Morph itself.</p>`;
+  }
+
   personaHtml() {
     const r = this.s.persona;
     if (r === undefined) return '<div class="setsec"><h2>Personality</h2><p class="sm">Reading…</p></div>';
@@ -3137,7 +3151,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
       const why = r && r.brain === false
         ? 'The personality lives in brAIn, and brAIn is not installed here.'
         : 'The personality lives in brAIn and is not set yet. Give brAIn a name and a way of speaking in brAIn’s Settings › Personality; it shows here once it is.';
-      return `<div class="setsec"><h2>Personality</h2><p class="sm">${esc(why)}</p></div>`;
+      return `<div class="setsec"><h2>Personality</h2>${this.oldPersonaHtml()}<p class="sm">${esc(why)}</p></div>`;
     }
     const paras = (p.persona || '').split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean)
       .map((x) => `<p class="sm" style="white-space:pre-line">${esc(x)}</p>`).join('');
@@ -3145,7 +3159,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     const shown = grown.slice(0, 8);
     const day = (g) => { const d = new Date(g.date + 'T12:00:00'); return isNaN(d) ? g.date : d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }); };
     const growth = shown.length ? `<span class="label">How it has grown</span>${shown.map((g) => `<div class="hrow"><span class="lx" style="min-width:0"><span>${esc(g.text)}</span>${g.date ? `<span class="small">${esc(day(g))}</span>` : ''}</span></div>`).join('')}${grown.length > shown.length ? `<p class="small">And ${grown.length - shown.length} earlier.</p>` : ''}` : '';
-    return `<div class="setsec" data-persona><h2>Personality</h2>${p.name ? `<p class="sm"><b>${esc(p.name)}</b></p>` : ''}${paras}${growth}
+    return `<div class="setsec" data-persona><h2>Personality</h2>${this.oldPersonaHtml()}${p.name ? `<p class="sm"><b>${esc(p.name)}</b></p>` : ''}${paras}${growth}
 <p class="small">The personality lives in brAIn: change it in brAIn’s Settings › Personality. Talking to it here goes through brAIn, in Ask.</p></div>`;
   }
 
@@ -3160,7 +3174,7 @@ ${st.payload ? `<details class="payload"><summary>What brAIn receives</summary><
     // as well as each file's own.
     const paused = rows.filter((r) => r.status === 'paused');
     const all = paused.length > 1 ? `<div class="row" style="gap:12px;flex-wrap:wrap"><button type="button" class="wd go" data-act="code-merge-all" data-v="all">Update all ${paused.length}</button><span class="small">Merges every paused change into the new version, in one change you can undo.</span></div>` : '';
-    return head + all + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Update</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join('');
+    return head + all + rows.map((r) => `<div class="hrow"><span class="who">${esc(r.status === 'paused' ? 'Paused' : 'In use')}</span><span class="lx" style="min-width:0"><span>${esc(r.name)}${r.kind === 'new' ? ' (new)' : ''}</span><span class="small">${esc(r.status === 'paused' ? pausedWhy(r) : r.at ? 'Changed ' + ago(new Date(r.at * 1000).toISOString()) : 'Changed just now')}</span></span>${r.status === 'paused' && !(r.why === 'personality' && r.name === 'personality.js') ? `<button type="button" class="wd go" data-act="code-redo" data-v="${esc(r.name)}">Update</button>` : ''}<button type="button" class="wd" data-act="code-reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join('');
   }
 
   settingsHtml() {
