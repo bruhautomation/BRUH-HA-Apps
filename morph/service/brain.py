@@ -24,6 +24,8 @@ from pathlib import Path
 import paths
 
 CLAIM_GRACE_S = 30
+# Who sent a task, as brAIn reads it (its chat lists Morph's under Morph).
+ORIGIN = "morph"
 POLL_S = 1.0
 
 
@@ -74,9 +76,12 @@ def submit(task_id: str, prompt: str, *, schema: dict | None = None, tools: str 
     Morph wrote around it: brAIn's action gate judges a change against a
     person's words, and Morph's own instructions are not those. A Tell
     always carries the key (empty when nobody typed anything); a learning
-    pass, which changes nothing, carries none."""
+    pass, which changes nothing, carries none.
+
+    ``origin`` is on every task: it is how brAIn tells a conversation Morph
+    started from the person's own without reading the prompt's wording."""
     task = {"id": task_id, "prompt": prompt, "ts": int(time.time()), "timeout": int(timeout),
-            "source": "morph", "tools": tools}
+            "source": "morph", "origin": ORIGIN, "tools": tools}
     if person_words is not None:
         task["person_words"] = str(person_words)
     if schema:
