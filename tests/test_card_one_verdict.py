@@ -57,7 +57,10 @@ class TestTheSchemaAndTheContract(unittest.TestCase):
         prop = categories.CARD_SCHEMA["properties"]["verdict"]
         self.assertEqual(prop["type"], "string")
         self.assertEqual(tuple(prop["enum"]), card_verdict.VERDICTS)
-        self.assertIn("verdict", categories.CARD_SCHEMA["required"])
+        # Offered, not required: a reply without one is read off its own
+        # first sentence (`TestThroughThePanel`), and a CLI that validates
+        # the schema must not refuse a card over it.
+        self.assertNotIn("verdict", categories.CARD_SCHEMA["required"])
 
     def test_the_contract_names_it_and_keeps_it_out_of_the_summary(self):
         contract = categories._CARD_CONTRACT

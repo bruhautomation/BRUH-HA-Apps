@@ -410,7 +410,8 @@ CARD_SCHEMA = {
         "title": {"type": "string"},
         # The card's one judgement, drawn by the panel as one chip
         # (`card_verdict.VERDICTS`, the same words). It used to be written
-        # into the prose six different ways, one per card.
+        # into the prose six different ways, one per card. Not required: a
+        # reply without one is read off its own first sentence instead.
         "verdict": {"type": "string",
                     "enum": ["all fine", "worth a look", "needs action"],
                     "description": "The card's one judgement; the summary never says it again."},
@@ -473,14 +474,14 @@ CARD_SCHEMA = {
         "live": {"type": "array", "items": {"type": "string"}},
         "html": {"type": "string"},
     },
-    "required": ["title", "summary", "verdict", "highlights", "html"],
+    "required": ["title", "summary", "highlights", "html"],
     "additionalProperties": False,
 }
 
 
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
-OUTPUT CONTRACT (strict JSON; title, summary, verdict, highlights and html are required):
+OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 {"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
