@@ -195,6 +195,35 @@ def _answers(row: dict) -> tuple:
     return tuple(out)
 
 
+def _labels(row: dict, labels: dict | None = None) -> tuple:
+    """What each answer is CALLED, as `(action, label)` pairs: the label
+    the add-on put on the row's own answer, else the add-on's one table of
+    press words (`labels` on the mirror, `answers.REQUEST_LABELS`). Empty
+    from an older add-on, and the dialog then uses its translated words."""
+    table = labels if isinstance(labels, dict) else {}
+    out: dict[str, str] = {}
+    for item in row.get("answers") or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get("action") or "")
+        label = str(item.get("label") or table.get(action) or "")
+        if action and label and action not in out:
+            out[action] = label[:60]
+    if out and table.get("dismiss"):
+        out["dismiss"] = str(table["dismiss"])[:60]
+    return tuple(out.items())
+
+
+def _go_ahead(row: dict) -> str:
+    """Where the press that lets brAIn act is, on a card it can fix: Home
+    Assistant cannot start a fix that has to show its change first."""
+    if str(row.get("who_kind") or "") != "brain":
+        return ""
+    name = str(row.get("assistant") or "brAIn").strip() or "brAIn"
+    return (f" Go ahead is on {name}'s Needs you, which shows exactly what it "
+            "will change before anything does.")
+
+
 def _placeholders(row: dict) -> tuple:
     """What the Repairs entry says about a finding, as a stable tuple.
 
@@ -208,7 +237,14 @@ def _placeholders(row: dict) -> tuple:
     as text that failed to load.
     """
     return (
-        ("text", str(row.get("text") or "brAIn reported a problem")[:255]),
+        # The card's own title on Needs you, where the add-on sent one.
+        ("text", str(row.get("title") or row.get("text")
+                     or "brAIn reported a problem")[:255]),
+        # The card's who-acts line, the same words Needs you shows.
+        ("who", str(row.get("who") or "").strip()
+         or "Answer it here or on Needs you."),
+        ("assistant", str(row.get("assistant") or "").strip() or "brAIn"),
+        ("where", _go_ahead(row)),
         ("detail", str(row.get("detail") or "").strip()
          or "brAIn gave no extra detail."),
         ("fix", str(row.get("fix") or "").strip()
@@ -297,6 +333,8 @@ class FindingsWatcher:
         # ts -> the (severity, placeholders) last raised for it; see
         # `_placeholders` for why the comparison is worth keeping.
         self._issues: dict[int, tuple] = {}
+        # The add-on's table of press words, off the last mirror read.
+        self._press_words: dict | None = None
 
     def prime(self) -> None:
         """Adopt the current list without announcing it.
@@ -321,6 +359,8 @@ class FindingsWatcher:
         if state is None:
             return
         current, snoozed = _rows(state)
+        labels = state.get("labels")
+        self._press_words = labels if isinstance(labels, dict) else None
         self._announce(current, snoozed)
         # Reconciled on every pass, including the one that primes the
         # watermark: an issue is state, and the first poll after a restart
@@ -417,7 +457,8 @@ class FindingsWatcher:
                 continue
             if str(row.get("status") or "open") not in REPAIR_STATUSES:
                 continue
-            wanted[ts] = (severity, _placeholders(row), _answers(row))
+            wanted[ts] = (severity, _placeholders(row), _answers(row),
+                          _labels(row, self._press_words))
             if len(wanted) >= MAX_REPAIR_ISSUES:
                 break
         return wanted
@@ -442,7 +483,7 @@ class FindingsWatcher:
         for ts, spec in wanted.items():
             if self._issues.get(ts) == spec:
                 continue
-            severity, placeholders, answers = spec
+            severity, placeholders, answers, labels = spec
             ir.async_create_issue(
                 self.hass,
                 DOMAIN,
@@ -461,7 +502,12 @@ class FindingsWatcher:
                 # second, fixed list: a battery gets *Add to to-do*, a
                 # change brAIn made gets *Got it*.
                 data={"ts": int(ts), "text": placeholders[0][1],
-                      "answers": list(answers)},
+                      "answers": list(answers),
+                      # ...in the add-on's own words for each press, so the
+                      # dialog says Add to To Do · Snooze · Ignore as the
+                      # card does rather than a second vocabulary.
+                      "labels": dict(labels),
+                      "assistant": dict(placeholders).get("assistant", "brAIn")},
             )
             self._issues[ts] = spec
         self._forget_answered(current)

@@ -6087,6 +6087,12 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
 .qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
+/* Who acts: one line, ink and weight rather than a colour, so it reads as
+   the card's answer to "whose move is this" and never as a status chip. */
+.qcard .qwho {
+  margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: 600; color: var(--ink);
+}
 .qfixhead {
   font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--ink-3);
 }

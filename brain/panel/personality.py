@@ -146,6 +146,25 @@ def load(path: str | None = None) -> dict:
         return normalise({})
 
 
+DEFAULT_NAME = "brAIn"
+
+
+def assistant_name(data: dict | None = None, path: str | None = None) -> str:
+    """What brAIn's own fixed words call the assistant, to a person.
+
+    The household's chosen name when one is set, else "brAIn". One helper
+    for every sentence brAIn builds about itself in words somebody reads —
+    the who-acts line on a card, a Repairs dialog, a notification's title —
+    so a house that named its assistant does not meet two of them. Never
+    raises: an unreadable file is no name."""
+    try:
+        name = (data if isinstance(data, dict) else load(path)).get("name")
+    except Exception:  # noqa: BLE001 — a name is a nicety, never a failure
+        name = ""
+    name = " ".join(str(name or "").split())
+    return name or DEFAULT_NAME
+
+
 def is_set(data: dict | None) -> bool:
     data = data or {}
     return bool(data.get("name") or data.get("persona"))

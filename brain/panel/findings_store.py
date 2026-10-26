@@ -77,6 +77,7 @@ from pathlib import Path
 import answers
 import atomic_write
 import house_words
+import personality
 import textclip
 import triage
 
@@ -474,6 +475,22 @@ def _queue_now(now: float) -> int | None:
         else None
 
 
+def _outside_view(row: dict, assistant: str) -> dict:
+    """What Home Assistant shows of this row so it reads as the card on
+    Needs you (#452): the card's own title, its who-acts line and the
+    presses it can carry back, each label off `answers.REQUEST_LABELS`
+    (`answers.request_view` — one derivation for the card and the dialog).
+    """
+    view = answers.request_view(row, assistant)
+    out = {"answers": view["answers"], "assistant": assistant}
+    if view["title"]:
+        out["title"] = view["title"]
+    if view["who"]:
+        out["who"] = view["who"]
+        out["who_kind"] = view["who_kind"]
+    return out
+
+
 def _publish_state(items: list[dict]) -> None:
     """Mirror a summary of the live list onto the shared volume.
 
@@ -511,10 +528,17 @@ def _publish_state(items: list[dict]) -> None:
     waiting = [s for s in shaped if triage.waiting_too_long(s, now)]
     open_rows = [s for s in live if s["status"] in UNSETTLED_STATUSES] + waiting
     queue = _queue_now(now)
+    assistant = personality.assistant_name()
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         atomic_write.write_json(STATE_FILE, {
             "ts": int(now),
+            # The household's name for the assistant, for the sentences
+            # Home Assistant builds about it (the Repairs dialog), and what
+            # every press is called — the one table (`answers.REQUEST_LABELS`)
+            # the dialog's menu reads its words from.
+            "assistant": assistant,
+            "labels": dict(answers.REQUEST_LABELS),
             "open": len(open_rows) if queue is None else queue,
             "findings_open": len(open_rows),
             "waiting_look": len(waiting),
@@ -543,7 +567,7 @@ def _publish_state(items: list[dict]) -> None:
                  # a notification's buttons are these, so a battery is
                  # *Add to to-do · Replaced it · Not a problem* on every
                  # surface rather than three different questions.
-                 "answers": answers.request_answers(s),
+                 **_outside_view(s, assistant),
                  **{k: s[k] for k in ("kind", "claim") if s.get(k)},
                  # An Urgent card (`notify_router.is_urgent`): the
                  # integration raises a Repairs entry for it ahead of

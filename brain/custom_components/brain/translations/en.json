@@ -1746,25 +1746,25 @@
       "description": "{reason} A report is ready under ⚙ → Problems in the brAIn panel."
     },
     "finding": {
-      "title": "brAIn: {text}",
+      "title": "{text}",
       "fix_flow": {
         "step": {
           "init": {
-            "title": "brAIn found a problem",
-            "description": "**{text}**\n\n{detail}\n\n**What to do:** {fix}\n\nReported by {source_title}. These are the same answers the brAIn panel offers on its Home tab — brAIn records what you say and stops raising it.",
+            "title": "{text}",
+            "description": "**{who}**{where}\n\n{detail}\n\n**Fix:** {fix}\n\nReported by {source_title}.",
             "menu_options": {
               "confirm": "Yes",
-              "todo": "Add it to my to-do list",
-              "fixed": "I've fixed it",
-              "wrong": "Not a problem here",
-              "snooze": "Remind me tomorrow",
-              "ack": "Got it",
-              "dismiss": "Dismiss — clear it from brAIn too (it comes back if it happens again)"
+              "todo": "Add to To Do",
+              "fixed": "Done",
+              "wrong": "Ignore",
+              "snooze": "Snooze",
+              "ack": "Done",
+              "dismiss": "Dismiss"
             }
           },
           "wrong": {
-            "title": "Not a problem here",
-            "description": "**{text}**\n\nIf you say why, brAIn records it as a correction and stops making the same mistake in new words. Leaving it blank is fine.",
+            "title": "Ignore",
+            "description": "**{text}**\n\nIf you say why, {assistant} records it as a correction and stops making the same mistake in new words. Leaving it blank is fine.",
             "data": {
               "note": "Why is this not a problem? (optional)"
             }

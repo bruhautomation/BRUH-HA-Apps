@@ -6155,7 +6155,7 @@ function statusChip(kind) {
 
 // The shell every card on Today is built from. `meta` is plain text after
 // the chip — an item's state is words, never a second chip.
-function qCard({ id, chip, meta, title, body, counted = true }) {
+function qCard({ id, chip, meta, title, body, counted = true, who = null }) {
   const card = el("article", "card-x qcard");
   if (id) card.dataset.caseId = id;
   card.dataset.chip = CHIP_WORDS[chip] ? chip : "problem";
@@ -6165,8 +6165,22 @@ function qCard({ id, chip, meta, title, body, counted = true }) {
   (meta || []).filter(Boolean).forEach((t) => line.appendChild(el("span", "item-state", t)));
   card.appendChild(line);
   card.appendChild(el("h3", "card-title", prettyText(title || "")));
+  const whoLine = qWho(who);
+  if (whoLine) card.appendChild(whoLine);
   if (body) card.appendChild(el("p", "card-body", prettyText(body)));
   return card;
+}
+
+// Who acts, in one line straight under the title: "brAIn can fix this.",
+// "This needs you." or "brAIn needs an answer." Decided on the server off
+// the card's own primary press (`answers.who_acts`), so the line and the
+// button under it cannot disagree — the owner's "it's kind of unclear when
+// I need to do something vs it". A card with no press carries none.
+function qWho(who) {
+  if (!who || !who.line) return null;
+  const p = el("p", "qwho", who.line);
+  p.dataset.who = who.who || "";
+  return p;
 }
 
 // "Fix", then what to do in two lines. Who would do it is said by the
@@ -6361,7 +6375,7 @@ const IGNORE_VERBS = new Set(["wrong", "decline", "drop", "no"]);
 function makeCase(row) {
   const card = qCard({
     id: row.id, chip: row.chip || (row.urgent ? "urgent" : "problem"),
-    meta: caseMeta(row), title: row.claim, body: row.detail,
+    meta: caseMeta(row), title: row.claim, body: row.detail, who: row.who,
   });
   card.dataset.situation = row.situation || "";
 
@@ -6858,7 +6872,7 @@ function makeLooseFinding(f) {
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
-    title: f.text, body: f.detail,
+    title: f.text, body: f.detail, who: f.who,
   });
   const gap = f.source === "house_book";
   if (f.fix && !gap) card.appendChild(qFix(f.fix));
@@ -6917,7 +6931,8 @@ function makeLooseFinding(f) {
 
 function makeLooseQuestion(h) {
   const card = qCard({ id: `h:${h.ts}`, chip: "question",
-    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "" });
+    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "",
+    who: h.who });
   const actions = el("div", "card-actions");
   const btns = [];
   btns.card = card;
@@ -6995,7 +7010,7 @@ function makeSuggestion(row) {
   const replay = (row.playbook || row.scene) ? ""
     : (spoken && spoken.case ? spoken.case : propReplayLine(row));
   const card = qCard({ id: `p:${row.ts}`, chip: "suggestion", meta,
-    title: row.title || "A suggestion", body: row.why || replay });
+    title: row.title || "A suggestion", body: row.why || replay, who: row.who });
   if (trial) card.appendChild(el("p", "qfixtext", propTrialLine(row)));
 
   const more = qDetails();
@@ -7197,7 +7212,7 @@ function makeTidyCard(t) {
   rows.forEach((r) => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   const card = qCard({ id: t.key, chip: "tidy", meta: ["Change ready"],
     title: tidyTitle(counts, rows.length),
-    body: "Change any you'd do differently, or untick it, under Details." });
+    body: "Change any you'd do differently, or untick it, under Details.", who: t.who });
   const reach = rows.filter((r) => (r.reach || []).length).length;
   if (reach) {
     card.appendChild(el("p", "qfixtext", reach === 1
@@ -7289,7 +7304,7 @@ function makeUpdateCard(u) {
   const advice = u.advice || {};
   const card = qCard({ id: u.key, chip: advice.verdict === "wait" ? "problem" : "tidy",
     meta: [UPDATE_WORDS[advice.verdict] || "Assessed", `${u.installed || "?"} → ${u.latest || "?"}`],
-    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "" });
+    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "", who: u.who });
   const more = qDetails();
   qDetailLine(more, "From the release notes", advice.note_quote || "");
   qDetailLine(more, "From your configuration", advice.config_quote || "");

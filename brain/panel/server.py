@@ -3080,6 +3080,18 @@ async def _apply_morph_request(req: dict) -> dict:
             ok, why = await _morph_undo(case_id)
         elif action == "not_applicable":
             ok, why, _ = await _morph_end(case_id, "not_applicable")
+        elif action == "recheck":
+            # Check again: the panel's own press, through the same helper.
+            if finding is None:
+                why = "only a check's report can be checked again"
+            else:
+                out = await _recheck_finding(finding)
+                ok = bool(out.get("checked"))
+                why = "" if ok else str(out.get("why") or "it could not run")
+        elif action == "wrong":
+            # Ignore, with the reason Morph's box carried as the note: the
+            # case's own `wrong`, which reaches `_end_finding` for a report.
+            ok, why, _ = await _morph_end(case_id, "wrong", req.get("text", ""))
     except web.HTTPException as exc:
         ok, why = False, exc.text or "refused"
     result["ok"], result["why"] = ok, "" if ok else why
@@ -3614,6 +3626,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             if cases.on_feed(c)]
     side = morph_bridge.threads()
     names = dict(_NAMES)
+    assistant = personality.assistant_name()
     out = []
     for case in rows:
         split = cases.split_id(case["id"])
@@ -3624,17 +3637,20 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001
             urgent = False
         situation = cases.situation(case)
+        case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
             todo_text=(findings_store.todo_text_of(row, names)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
-            answers=morph_bridge.morph_answers(cases.answers(case)),
+            answers=morph_bridge.morph_answers(case_answers),
             area_id=_morph_case_area(case),
             urgent=urgent,
             finding_status=str(case.get("finding_status") or ""),
-            morph_key=str((row or {}).get("morph_key") or "")))
+            morph_key=str((row or {}).get("morph_key") or ""),
+            chip=answers_mod.chip(case, urgent),
+            who=answers_mod.who_acts(case, assistant, case_answers)))
     live = {c["id"] for c in out}
     said = []
     for cid, turns in side.items():
@@ -19218,6 +19234,7 @@ def _cases_payload(now: float | None = None) -> dict:
     now = time.time() if now is None else now
     rows = [c for c in cases.list_cases(now=now) if cases.on_feed(c)]
     names: dict[str, dict] = {}
+    assistant = personality.assistant_name()
     for case in rows:
         # The presses, decided once (`answers.py`) and rendered as handed:
         # `answers` is the visible row, `more` what sits behind the ⋯, and
@@ -19226,6 +19243,10 @@ def _cases_payload(now: float | None = None) -> dict:
         case["answers"] = cases.answers(case)
         case["more"] = cases.more(case)
         case["situation"] = cases.situation(case)
+        # Who acts, in one line, read off the primary just chosen
+        # (`answers.who_acts`): "brAIn can fix this." over Go ahead, "This
+        # needs you." over Add to To Do, "brAIn needs an answer." over Yes.
+        case["who"] = answers_mod.who_acts(case, assistant, case["answers"])
         # Today's card: the one status chip (`answers.chip`, with the
         # Urgent rule `notify_router.is_urgent` owns), and whether "Ignore
         # all like this" can mute the producer — absent for the producers
@@ -19390,11 +19411,29 @@ async def h_history_clear(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _who_for(verb: str, situation: str = "", name: str = "") -> dict:
+    """The who-acts line for a card the panel draws without a case — a
+    finding still waiting for its first look, a guess, a suggestion, the
+    tidy table, an assessed update — from the primary press that card
+    leads with. One derivation (`answers.who_line`) for every card on
+    Needs you, so a sentence can never sit over a button it disagrees
+    with."""
+    who = answers_mod.WHO_OF_VERB.get(verb, "")
+    return {"who": who, "press": "",
+            "line": answers_mod.who_line(
+                who, name or personality.assistant_name(), situation)}
+
+
 def _today_payload() -> dict:
     """Today's two cards no store owns, in the shape the panel renders."""
     cards = _today_cards()
     tidy_card = cards["tidy"]
-    out: dict = {"tidy": None, "updates": cards["updates"]}
+    name = personality.assistant_name()
+    # An assessed update leads with Add to To Do: installing one is the
+    # person's press in Home Assistant's own Updates, never brAIn's.
+    updates = [{**u, "who": _who_for("todo", name=name)}
+               for u in cards["updates"]]
+    out: dict = {"tidy": None, "updates": updates}
     if tidy_card:
         proposal = tidy_card["proposal"]
         out["tidy"] = {"key": tidy_card["key"],
@@ -19402,7 +19441,8 @@ def _today_payload() -> dict:
                        "refused": proposal.get("refused") or [],
                        "areas": proposal.get("areas") or [],
                        "at": int(proposal.get("at") or 0),
-                       "undo_days": tidy.UNDO_DAYS}
+                       "undo_days": tidy.UNDO_DAYS,
+                       "who": _who_for("apply", name=name)}
     return out
 
 
@@ -19459,6 +19499,16 @@ def _findings_payload() -> dict:
     # loose card beside the case list that had correctly hidden it.
     open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
+    # The who-acts line for a card drawn straight off these rows (one the
+    # case list does not cover): a house-book question asks for an answer,
+    # anything else leads with Add to To Do; a guess asks Yes or No.
+    name = personality.assistant_name()
+    for row in payload.get("findings") or []:
+        gap = (row.get("kind") == "question"
+               and row.get("source") == answers_mod.HOUSE_BOOK_SOURCE)
+        row["who"] = _who_for("answer" if gap else "todo", name=name)
+    for row in open_claims:
+        row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)
     # rather than this listing's own sum: the tab's badge was painted from
     # here on one poll and from `/api/status` on the next, two derivations
@@ -20387,6 +20437,15 @@ async def h_finding_elevate(request: web.Request) -> web.Response:
 
 async def h_finding_recheck(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
+    return web.json_response(await _recheck_finding(finding))
+
+
+async def _recheck_finding(finding: dict) -> dict:
+    """Check again on one finding: the check that filed it runs now.
+
+    Lifted out of the route so Morph's Check again (`_apply_morph_request`)
+    is the same press, `_end_finding`'s rule. Refuses with an HTTP error in
+    the sentences the route has always answered with."""
     source = str(finding.get("source") or "")
     check_id = source[6:] if source.startswith("check:") else ""
     if not check_id or checks.get_check(check_id) is None:
@@ -20418,9 +20477,8 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         # exception the rule raised.
         why = (result["skipped"].get(check_id)
                or result["errors"].get(check_id) or "it could not run")
-        return web.json_response({
-            "checked": False, "cleared": False, "why": why,
-            **(await asyncio.to_thread(_findings_payload))})
+        return {"checked": False, "cleared": False, "why": why,
+                **(await asyncio.to_thread(_findings_payload))}
 
     found = result["findings"]
     keys = {findings_store.normalize(f["text"]) for f in found}
@@ -20448,12 +20506,12 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         return len(created), len(cleared), _findings_payload()
 
     created, cleared, payload = await asyncio.to_thread(apply)
-    return web.json_response({
+    return {
         "checked": True, "cleared": not still, "created": created,
         # Everything else that check was reporting and no longer is. The
         # row pressed is not counted twice: it is already in `cleared`.
         "also_cleared": max(cleared - (0 if still else 1), 0),
-        "why": "", **payload})
+        "why": "", **payload}
 
 
 # ---------------------------------------------------------------------------
@@ -20473,8 +20531,11 @@ def _proposals_payload() -> dict:
         asleep = cases.snoozes()
     except Exception:  # noqa: BLE001 — nothing snoozed shows the card
         asleep = {}
+    name = personality.assistant_name()
     for row in rows:
         row["snoozed_until"] = int(asleep.get(f"p:{int(row.get('ts') or 0)}", 0))
+        # A suggestion leads with Apply: brAIn writes it in.
+        row["who"] = _who_for("accept", "opportunity", name)
     return {"proposals": rows, "counts": proposals.counts(rows),
             # What is waiting to happen, what already has, and the
             # sentences brAIn would not arm. Not proposals — nobody owes
