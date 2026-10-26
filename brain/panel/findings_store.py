@@ -391,13 +391,16 @@ def _check_title(source: str) -> str:
     return str(spec.get("title") or "")
 
 
+def _rule_titled(source: str, title: str) -> str:
+    """`_titled`, with a check named by its own catalog title — what the
+    scorecard and `source_titles` (the mute question, the fault list,
+    History's muted rows) call a rule."""
+    return _check_title(source) or _titled(source, title)
+
+
 def _titled(source: str, title: str) -> str:
-    """The title a reader shows for `source`: a check's own catalog title,
-    never its group's, and never the bare "Custom"."""
+    """The title a reader shows for `source`, never the bare "Custom"."""
     title = str(title or "")
-    named = _check_title(source)
-    if named:
-        return named
     if title.strip() in _OLD_RESIDENT_TITLES and str(source) == RESIDENT_SOURCE:
         return RESIDENT_TITLE
     if title.strip() not in _NO_TITLE or not str(source).startswith("custom-"):
@@ -3067,7 +3070,8 @@ def scorecard() -> list[dict]:
             continue
         row = by.setdefault(src, {
             "source": src,
-            "title": _titled(src, str(e.get("source_title") or "")) or src,
+            "title": _rule_titled(src, str(e.get("source_title") or ""))
+            or src,
             "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
             "last_wrong_ts": 0, "example": "", "example_ts": -1})
         # One report the rule filed, newest first — what the mute question
@@ -3451,12 +3455,12 @@ def source_titles() -> dict[str, str]:
     out: dict[str, str] = {}
     for entry in _load_settled():
         src = str(entry.get("source") or "")
-        title = _titled(src, str(entry.get("source_title") or ""))
+        title = _rule_titled(src, str(entry.get("source_title") or ""))
         if src and title and src not in out:
             out[src] = title
     for entry in _load():
         src = str(entry.get("source") or "")
-        title = _titled(src, str(entry.get("source_title") or ""))
+        title = _rule_titled(src, str(entry.get("source_title") or ""))
         if src and title:
             out[src] = title
     return out

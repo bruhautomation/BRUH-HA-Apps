@@ -64,10 +64,10 @@ class TestTheRuleHasOneName(Store):
         [row] = findings_store.scorecard()
         self.assertEqual(row["title"], TITLE)
 
-    def test_a_shaped_row_names_the_rule(self):
-        row, _ = findings_store.add("The attic thermometer reads -150",
-                                    source=RULE, source_title=GROUP)
-        self.assertEqual(findings_store.get(row["ts"])["source_title"], TITLE)
+    def test_the_producers_list_names_the_rule(self):
+        findings_store.add("The attic thermometer reads -150",
+                           source=RULE, source_title=GROUP)
+        self.assertEqual(findings_store.source_titles()[RULE], TITLE)
 
     def test_the_mute_question_names_the_rule(self):
         self.wrongs()
