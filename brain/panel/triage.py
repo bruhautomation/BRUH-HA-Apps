@@ -49,6 +49,8 @@ the promise that a row nothing ever came back for surfaces anyway.
 """
 from __future__ import annotations
 
+import math
+
 import time
 
 # What a row can be in once something has (or has not) looked at it. The
@@ -216,13 +218,36 @@ MAX_PER_DAY = 200
 # an odd hour is — so a busy house could spend the whole day's looks by
 # mid-morning on the interval alone, and every row filed after that waited
 # out `STALE_S` and was shown as if nothing had looked. Past this share a
-# hot signal waits for the timer like any other, which keeps the rest of
-# the day's looks for the timer and for the rows a rule filed; a TRIPPED
-# safety sensor is the one hot signal the share never holds.
+# hot signal waits for the timer like any other; a TRIPPED safety sensor is
+# the one hot signal the share never holds.
 HOT_LOOKS_PER_DAY = 150
 
+
+def timer_looks_left(seconds_left_today: float, interval_s: float) -> int:
+    """How many looks the timer alone will still want before midnight."""
+    interval = max(1.0, float(interval_s))
+    return max(0, math.ceil(max(0.0, float(seconds_left_today)) / interval))
+
+
+def hot_look_allowed(runs_today: int, timer_left: int) -> bool:
+    """Whether a hot signal may pull a look forward now.
+
+    **Only out of looks the timer will not need.** `HOT_LOOKS_PER_DAY`
+    alone was meant to keep "the rest of the day's looks for the timer",
+    and the arithmetic never did: 150 hot looks a minute apart and then a
+    look every ten minutes reach `MAX_PER_DAY` by late morning, and every
+    row a rule filed after that waited until midnight with every look that
+    did run succeeding (reports #82, five times). So a pull-forward is
+    allowed only while the day's runs plus the timer's own looks still to
+    come stay under the cap — the cap then stands only against a runaway,
+    never against the timer.
+    """
+    runs = max(0, int(runs_today))
+    return (runs < HOT_LOOKS_PER_DAY
+            and runs + max(0, int(timer_left)) < MAX_PER_DAY)
+
 __all__ = [
-    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
+    "HOT_LOOKS_PER_DAY", "LEGACY_STOCK", "hot_look_allowed", "timer_looks_left", "MAX_PER_DAY", "MAX_REASON", "RUN_FAILED",
     "SHOW_AFTER_S", "STALE_S",
     "NOTE_EXCLUDED", "NOTE_SOURCES",
     "UNJUDGED", "VERDICTS", "WAITING", "gate", "is_note", "waiting_too_long",

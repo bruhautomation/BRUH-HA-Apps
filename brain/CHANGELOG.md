@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Fixed
+
+- **New findings no longer wait until midnight for brAIn's check on a busy house.** Changes to protected devices pulled checks forward until the day's allowance ran out by late morning; they now use only checks the regular ten-minute look will not need, so every new finding is checked within two looks all day. (#82)
+
 ## 3.8.18
 
 ### Added
