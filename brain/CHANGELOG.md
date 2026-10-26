@@ -2,7 +2,7 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 3.8.19
 
 ### Added
 
@@ -14,6 +14,21 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 - **brAIn can take a picture of one card.** Its screenshots of Morph started at the top of the dashboard and stopped at a fixed height, so a card further down could never be photographed. brAIn can now name a card or room, scroll to it, crop the picture to it, and open it first to see how it looks opened. (#454)
 - **A report brAIn files for you keeps your words.** A report from the chat was cut to 300 characters, ending mid-word, and your own words to 500. Your words and brAIn's findings reach the issue whole now, and anything shortened ends on a whole word.
 - **Switching between the chat and the terminal is in ⋯ on both.** The terminal face hid the switch back to the chat, and ⚙ called the setting *Opens as*. ⋯ on Ask says **Switch to chat** or **Switch to terminal**, and ⚙'s search finds **Chat or terminal** by either word. (#450)
+## 3.8.18
+
+### Added
+
+- **A print the printer stopped itself is a card.** When a print is paused or fails while the printer's own problem sensor or failure detection is set, brAIn files one finding saying how far the print got, how long it has been stopped and whether the bed is still hot. A pause you pressed yourself raises nothing, quiet hours hold it until morning, and it clears when the print resumes or finishes. (#432)
+
+### Changed
+
+- **A finished washing machine or dryer is not called "still full".** Power shows the machine stopped and nothing has run since, so that is what the card says; "still full" is said only when a door sensor on the same machine has stayed shut since. A card you already answered in the old words stays answered. (#442)
+
+### Fixed
+
+- **A printer's nozzle, its bed and a computer's processor are no longer called impossible readings.** The device a sensor is on, and the other integrations on that device, now decide this before brAIn's own guess at what the sensor measures, and a target temperature is never judged as a reading. A broken probe reading an impossible value still files. (#433)
+- **"Only unusual while the printer is idle" is kept as that condition.** A reason that names when a report is wanted is read against the machine's own status, so the card still comes back in that state; a condition brAIn cannot watch writes no rule, and brAIn asks you whether to stop flagging it altogether. (#435)
+- **An alarm about a fault is not offered for deletion for never firing.** An automation that only sends a message when a reading goes past a threshold, or a rarely-on sensor turns on, is meant never to fire, like a smoke alarm. (#445)
 
 ## 3.8.17
 

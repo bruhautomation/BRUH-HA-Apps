@@ -139,6 +139,33 @@ def _compatible(kind: str, machine: str) -> list[tuple[str, dict]]:
     return out
 
 
+def machine_profile(name: str, printer: str = "") -> dict:
+    """The flattened machine profile, or LookupError when it does not say
+    how big the bed is.
+
+    The command line falls back to a 200 mm bed for a machine that carries
+    no printable_area: it recentres the part on that bed and refuses
+    anything wider ("nothing is fully on the plate", exit -50), on an A1
+    whose bed is 256 mm. So a profile whose chain gives no area or height is
+    refused here, naming the printer, rather than sliced on a default.
+    """
+    data = flatten("machine", name)
+    area = data.get("printable_area")
+    height = data.get("printable_height")
+    if not (isinstance(area, list) and len(area) >= 3) or str(height or "").strip() in ("", "0"):
+        who = printer or name
+        raise LookupError(f"Bambu Studio's {name} profile does not say how big {who}'s bed "
+                          "is, so it would slice for a bed of the wrong size. Updating "
+                          "Bambu Studio on the Studio tab reinstalls its profiles.")
+    return data
+
+
+def names(kind: str) -> list[str]:
+    """Every profile name of one kind, as the files themselves name it."""
+    base = _base()
+    return sorted(_index(str(base), kind)) if base is not None else []
+
+
 def machine_for(model: str, nozzle: str = "0.4") -> str:
     prefix = MACHINE_NAMES.get(str(model or ""))
     if not prefix:
@@ -228,7 +255,7 @@ def prepare(model: str, settings: dict | None, outdir: Path,
     outdir.mkdir(parents=True, exist_ok=True)
     paths = {}
     process_data, adjusted = reconciled(flatten("process", process), settings)
-    for key, data in (("machine", flatten("machine", machine)), ("process", process_data)):
+    for key, data in (("machine", machine_profile(machine)), ("process", process_data)):
         path = outdir / f"{key}.json"
         path.write_text(json.dumps(data, indent=1))
         paths[key] = str(path)
@@ -276,7 +303,7 @@ def project_settings(model: str, settings: dict | None,
     process = process_for(machine, (settings or {}).get("layer_height"))
     names = [filament_for(machine, f.get("material") or material) for f in wanted]
     out: dict = {}
-    out.update(flatten("machine", machine))
+    out.update(machine_profile(machine))
     process_data, _notes = reconciled(flatten("process", process), settings)
     out.update(process_data)
     merged: dict = {}

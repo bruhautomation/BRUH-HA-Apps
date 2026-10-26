@@ -1956,7 +1956,8 @@ def add_many(objs: list[dict]) -> list[dict]:
     items = _load()
     live = {normalize(f.get("text", "")) for f in items}
     seen = set(live)
-    seen |= suppressing_keys()
+    suppressing = suppressing_keys()
+    seen |= suppressing
     answered = answered_items()
     subjects = {k for k in (_folds_by_subject(f) for f in items) if k}
     subjects |= _subjects_answered_wrong()
@@ -1998,6 +1999,12 @@ def add_many(objs: list[dict]) -> list[dict]:
             continue
         if normalize(entry["text"]) in seen and not _names_unanswered(
                 entry, live, answered):
+            continue
+        # A check that reworded its sentence names the words it used to
+        # file under (`was`): an answer a person gave to the old wording is
+        # an answer to this report, and the new words must not ask again.
+        if any(normalize(w) in suppressing for w in (obj.get("was") or ())
+               if isinstance(w, str)):
             continue
         about = str(entry.get("entity_id") or "")
         if (about and entry.get("source") == TRIPPED_CHECK_SOURCE

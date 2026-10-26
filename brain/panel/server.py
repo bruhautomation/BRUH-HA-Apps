@@ -12418,6 +12418,11 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
     try:
+        _MACHINE_STATUS.clear()
+        _MACHINE_STATUS.update(_machine_status_map(snapshot))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("machine-status note failed: %s", exc)
+    try:
         _USED_BY.clear()
         _USED_BY.update(_used_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
@@ -12428,6 +12433,35 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("controlled-by note failed: %s", exc)
     _note_world(snapshot)
+
+
+# Which entities sit on a device that reports a job status (a printer's
+# "Print status", a washer's operation state): `{entity_id: status_entity}`.
+# What a reason like "only unusual while the printer is idle" can be read
+# against (`chores.condition_holds`), so a press with such a reason knows,
+# before writing, whether brAIn can watch the condition or has to ask.
+_MACHINE_STATUS: dict[str, str] = {}
+
+
+def _machine_status_map(snapshot: dict) -> dict[str, str]:
+    from checks import chores as _chores  # noqa: PLC0415
+    house = House(snapshot)
+    out: dict[str, str] = {}
+    by_device: dict[str, list[str]] = {}
+    for row in house.entities:
+        if row.get("device_id") and row.get("entity_id"):
+            by_device.setdefault(row["device_id"], []).append(
+                str(row["entity_id"]))
+    for members in by_device.values():
+        status = _chores.status_entity(house, members[0]) if len(
+            members) > 1 else ""
+        if not status and len(members) > 1:
+            status = _chores.status_entity(house, members[1])
+        if status:
+            for eid in members:
+                if eid != status:
+                    out[eid] = status
+    return out
 
 
 # Which automations and scripts NAME each entity: `{entity_id: [label]}`.
@@ -19912,11 +19946,52 @@ def _record_condition(finding: dict, note: str) -> list[str]:
     return [row["id"]] if row else []
 
 
+def _unwatchable_condition(finding: dict, note: str) -> bool:
+    """A check's Wrong whose reason names a condition brAIn cannot watch.
+
+    "Only unusual while the printer is idle" on a device whose job status
+    brAIn reads is written as a rule and read against that status
+    (`House._applies_now`). The same shape of reason about a device with no
+    status, or in words that name no state, would be a rule standing the
+    check down in the state the person asked to hear about too — so it is
+    kept as a fact and the person is asked instead.
+    """
+    source = str(finding.get("source") or "")
+    if not source.startswith("check:") or not corrections.conditional(note):
+        return False
+    from checks import chores as _chores  # noqa: PLC0415
+    eid = str(finding.get("entity_id") or "")
+    return not (_chores.report_while(note) and _MACHINE_STATUS.get(eid))
+
+
+def _ask_about_condition(finding: dict, note: str) -> list[str]:
+    """The fact and the question for `_unwatchable_condition`. Returns the
+    fact's id, which the undo token carries."""
+    ids = _record_condition(finding, note)
+    try:
+        eid = str(finding.get("entity_id") or "")
+        check_id = corrections.check_of(finding)
+        row = corrections.condition_offer_row(
+            finding, note,
+            entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
+            check_title=str((checks.get_check(check_id) or {}).get("title")
+                            or finding.get("source_title") or ""),
+            finding_key=findings_store.normalize(finding.get("text") or ""),
+            about=str(finding.get("claim") or finding.get("text") or ""))
+        if row:
+            findings_store.add_case(row)
+    except Exception as exc:  # noqa: BLE001 — `_record_exception`'s rule
+        log.debug("could not ask about a condition: %s", exc)
+    return ids
+
+
 def _record_exception(finding: dict, note: str) -> list[str]:
     """Best effort, `file_incident`'s rule: an ending must not fail on it.
 
     Returns the ids of the facts it wrote, which the undo token carries.
     """
+    if _unwatchable_condition(finding, note):
+        return _ask_about_condition(finding, note)
     rule, subjects = _exception_rule(finding)
     if not rule or not subjects:
         return []
@@ -22271,13 +22346,29 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
-    if base_ids and _is_resident_condition(finding, note):
-        # A condition, already kept as a fact: there is no rule to widen
+    if base_ids and (_is_resident_condition(finding, note)
+                     or (str(finding.get("source") or "").startswith("check:")
+                         and corrections.conditional(note))):
+        # A condition: kept as a fact, or written as a rule read against
+        # the machine's own status. Either way there is nothing to widen
         # and nothing for a model to scope.
         eid = str(finding.get("entity_id") or "")
         name = str((_NAMES.get(eid) or {}).get("name") or "")
-        return {"plan": None, "ids": [], "offer": None,
-                "sentence": corrections.conditional_confirmation(name)}
+        from checks import chores as _chores  # noqa: PLC0415
+        wanted = _chores.report_while(note)
+        if (str(finding.get("source") or "").startswith("check:")
+                and wanted and _MACHINE_STATUS.get(eid)):
+            state = "idle" if wanted == "idle" else "running"
+            sentence = (f"Got it — brAIn will only flag that for "
+                        f"{name or 'it'} while it is {state}.")
+        elif str(finding.get("source") or "").startswith("check:"):
+            sentence = ("Got it — brAIn kept your reason and will go on "
+                        "raising this, because it cannot tell when that "
+                        "condition holds. It has asked on your list whether "
+                        "to stop altogether.")
+        else:
+            sentence = corrections.conditional_confirmation(name)
+        return {"plan": None, "ids": [], "offer": None, "sentence": sentence}
     if not base_ids or not note.strip() or not engine.get_auth():
         return None
     if not _correction_day_ok(now):

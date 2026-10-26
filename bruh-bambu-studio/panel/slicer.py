@@ -22,6 +22,7 @@ CPU, so it is a job: started, polled, never awaited by a request.
 from __future__ import annotations
 
 import difflib
+import json
 import os
 import re
 import shutil
@@ -35,7 +36,9 @@ from pathlib import Path
 
 import installer
 import library
+import store
 from bambu import threemf
+from design import profiles
 
 TIMEOUT_S = 1800
 # The command line gets a profile folder of its own. Sharing the window's
@@ -392,10 +395,54 @@ def _output_for(source: Path) -> Path:
     return library.unique(library.ROOT / library.SLICED / f"{stem}.gcode.3mf")
 
 
+def machine_named(text: str) -> tuple[str, str]:
+    """(Bambu Studio machine profile, the printer it is for) for what a
+    request named: a profile by its own name, or one of the house's printers.
+
+    A printer is matched by the name a person gave it, its serial or its id,
+    and its profile comes from its MODEL — never from the words in its name,
+    because "Loft A1 mini shelf" may be an A1, and the A1 mini's 180 mm bed
+    under a 256 mm part is a slice that fails or lands in the wrong place.
+    """
+    text = str(text or "").strip()
+    if text in profiles.names("machine"):
+        return text, ""
+    wanted = text.casefold()
+    for row in store.load():
+        if wanted in (str(row.get("name") or "").strip().casefold(),
+                      str(row.get("id") or "").casefold(),
+                      str(row.get("serial") or "").casefold()):
+            if not row.get("model"):
+                raise LookupError(f"Set {row.get('name') or 'this printer'}'s model on the "
+                                  "Printers tab so its slicer profile can be chosen.")
+            return profiles.machine_for(row["model"]), str(row.get("name") or "")
+    printers = [str(r.get("name")) for r in store.load() if r.get("name")]
+    try:
+        profile_path("machine", text)
+    except LookupError as exc:
+        if printers:
+            raise LookupError(f"{exc} Or name one of the printers: "
+                              f"{'; '.join(printers)}.") from None
+        raise
+    return text, ""
+
+
+def _write(path: Path, data: dict) -> Path:
+    path.write_text(json.dumps(data, indent=1))
+    return path
+
+
 def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = "",
           filaments: list[str] | None = None, arrange: bool = False,
           orient: bool = False, env: dict | None = None, copies: int = 1) -> dict:
-    """Check the request, then slice on a thread. Returns the job."""
+    """Check the request, then slice on a thread. Returns the job.
+
+    Every profile named is FLATTENED before the CLI sees it, the way a
+    designed part's are (design/profiles.py): handed a system profile as it
+    is, the command line does not follow its `inherits` chain, so the A1's
+    bed size, which its family profile holds, never arrived and the CLI
+    sliced for its own 200 mm default.
+    """
     source = library.path_of(source_rel)
     if not source.is_file():
         raise FileNotFoundError(f"No file {source_rel!r} in the library.")
@@ -405,18 +452,35 @@ def start(source_rel: str, *, plate: int = 0, machine: str = "", process: str = 
             "A bare model has no printer or process settings in it. Name a machine "
             "and a process profile (bambu status lists them), or save it as a "
             "project from Bambu Studio first.")
-    m = profile_path("machine", machine) if machine else None
-    p = profile_path("process", process) if process else None
-    f = [profile_path("filament", name) for name in (filaments or [])]
-    return start_paths(source, plate=plate, machine=m, process=p, filaments=f,
-                       arrange=arrange, orient=orient, env=env, copies=copies)
+    m_name, printer = machine_named(machine) if machine else ("", "")
+    for kind, name in [("process", process)] + [("filament", f) for f in filaments or []]:
+        if name and name not in profiles.names(kind):
+            profile_path(kind, name)  # refuses naming the near ones
+    m_data = profiles.machine_profile(m_name, printer) if m_name else None
+    p_data = profiles.reconciled(profiles.flatten("process", process), None)[0] if process else None
+    f_data = [profiles.flatten("filament", name) for name in filaments or []]
+    work = Path(tempfile.mkdtemp(prefix="slice-"))
+    try:
+        settings = work / "settings"
+        settings.mkdir()
+        m = _write(settings / "machine.json", m_data) if m_data else None
+        p = _write(settings / "process.json", p_data) if p_data else None
+        f = [_write(settings / f"filament_{i}.json", d) for i, d in enumerate(f_data, start=1)]
+        return start_paths(source, plate=plate, machine=m, process=p, filaments=f,
+                           arrange=arrange, orient=orient, env=env, copies=copies, work=work)
+    except BaseException:
+        shutil.rmtree(work, ignore_errors=True)
+        raise
 
 
 def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
                 process: Path | None = None, filaments: list[Path] | None = None,
                 arrange: bool = False, orient: bool = False, env: dict | None = None,
-                out: Path | None = None, copies: int = 1) -> dict:
-    """Slice with settings files already chosen (a designed part's own)."""
+                out: Path | None = None, copies: int = 1, work: Path | None = None) -> dict:
+    """Slice with settings files already chosen (a designed part's own).
+
+    `work` is the scratch folder the run uses and removes afterwards; one
+    the caller made may already hold the settings files."""
     run = installer.apprun()
     if run is None:
         raise RuntimeError("Bambu Studio is not installed yet — it downloads on first start.")
@@ -424,7 +488,7 @@ def start_paths(source: Path, *, plate: int = 0, machine: Path | None = None,
     job = {"id": uuid.uuid4().hex[:12], "kind": "slice", "state": "running",
            "source": library.relative(source), "output": None, "error": "",
            "started": time.time(), "finished": None, "info": None, "log": []}
-    work = Path(tempfile.mkdtemp(prefix="slice-"))
+    work = work or Path(tempfile.mkdtemp(prefix="slice-"))
     handed, way = source, None
     if int(copies) > 1:
         way = copies_way(source)
