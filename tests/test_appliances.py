@@ -454,7 +454,10 @@ class TestTheChore(unittest.TestCase):
         self.assertEqual(len(got), 1)
         row = got[0]
         self.assertIn("dishwasher", row["text"].lower())
-        self.assertIn("still full", row["text"].lower())
+        # Power says the cycle finished, never that the machine is full
+        # (#442): with no door sensor that is a guess the card must not make.
+        self.assertIn("finished", row["text"].lower())
+        self.assertNotIn("full", row["text"].lower())
         self.assertEqual(row["entity_id"], "sensor.dishwasher_power")
         self.assertFalse(row["fixable"])
 
