@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A case in Morph reads the way it does in brAIn.** Each card wears brAIn's chip (Urgent, Problem, Tidy-up, Suggestion or Question), shows brAIn's detail under the title, names devices instead of their ids, and carries brAIn's own presses and labels — Fix or Apply or Add to To Do, Dismiss, Snooze, Doesn't apply — in brAIn's order. Morph's own words call the assistant by the name set in brAIn's personality. (#452)
+- **Every request Morph hands brAIn says it came from Morph**, so brAIn can list Morph's conversations on their own. (#427)
+
+### Fixed
+
+- **A long request reaches brAIn with your words whole.** Morph no longer cuts the start of a long message; only the context sent with it gives way, cut at a line or a word and marked. Suggestions and answers Morph writes are cut between words too. (#428)
+- **An older change that kept its own personality no longer overrides brAIn's.** A copy of Morph's panel that still reads the old personality file, and the file itself, are paused, and Settings › Personality says to remove them. (#391)
+
 ## 1.1.2
 
 ### Changed

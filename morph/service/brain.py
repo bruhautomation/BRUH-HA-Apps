@@ -58,6 +58,19 @@ def status() -> dict:
     return {"state": "ok", "sentence": "brAIn is ready.", "last_answer_at": last.get("at")}
 
 
+NAME_MAX = 60
+
+
+def who() -> str:
+    """The household's name for the assistant, from brAIn's personality
+    (``/config/.brain/personality.json``), or "brAIn" without one. Morph's
+    own words — the steps a Tell or a conversation shows — use it, so the
+    assistant has one name wherever it is looked at (#452)."""
+    data = paths.read_json(paths.BRAIN_SHARED / "personality.json", {})
+    name = " ".join(str(data.get("name") or "").split()) if isinstance(data, dict) else ""
+    return name[:NAME_MAX] or "brAIn"
+
+
 def new_id(prefix: str = "morph") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 

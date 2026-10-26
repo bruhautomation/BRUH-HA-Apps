@@ -84,6 +84,9 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .case{display:flex;flex-direction:column;gap:6px;padding:12px 14px 6px 16px}
 .case .claim{font-size:15px;line-height:1.45;color:var(--text)}
 .case .caseask{font-size:14px;line-height:1.45;color:var(--muted)}
+.casechip{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.01em}
+.casechip i{width:7px;height:7px;border-radius:50%;background:var(--chip,var(--amber));flex-shrink:0}
+.case .casebody{font-size:14px;line-height:1.45;color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .caseplan{display:flex;flex-direction:column;gap:2px;padding:6px 0}
 .thread{display:flex;flex-direction:column;gap:4px;padding:2px 0}
 .turnline{font-size:14px;line-height:1.45}
@@ -91,7 +94,7 @@ section.sec[data-state="asleep"] .mtile{opacity:1}
 .replyrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .morph .replyin{flex:1 1 200px;min-width:0;background:transparent;border:0;border-bottom:1px solid var(--cc,var(--line2));border-radius:0;padding:8px 0;font-size:16px;color:var(--text);outline:none}
 .replyin::placeholder{color:var(--quiet)}
-.casewords{display:inline-flex;gap:0 14px}
+.casewords{display:inline-flex;flex-wrap:wrap;gap:0 14px}
 .casewords .wd{font-size:13px;min-height:40px}
 .todolist{display:flex;flex-direction:column;padding:2px 10px 8px}
 .todorow{display:flex;align-items:center;gap:12px;min-height:44px;padding:6px 6px;border-top:1px solid var(--line);cursor:pointer;touch-action:pan-y;user-select:none;-webkit-user-select:none;transition:transform .2s var(--ease)}

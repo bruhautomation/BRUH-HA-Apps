@@ -404,6 +404,32 @@ async function vision(p, name) {
   if (v.todo < 1) fail(where, 'To Do is not on the page');
   if (v.marks) fail(where, `${v.marks} Tell marks are on the page; Ask is the one door`);
   if (v.yes.length) fail(where, `a case carries ${v.yes.join(', ')}: a reply is read, not pressed`);
+  // #452: a case reads as it does on brAIn's Needs you — the chip word,
+  // brAIn's detail, brAIn's labels for every press Morph can carry (Snooze
+  // put back), and the assistant called by the household's name.
+  const same = await p.evaluate(() => {
+    const root = window.__panel.shadowRoot;
+    const card = (id) => {
+      const c = root.querySelector(`[data-case-card="${id}"]`);
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      const btns = [...c.querySelectorAll('button[data-act="case"]')];
+      return { chip: (c.querySelector('.casechip') || {}).textContent || '', body: (c.querySelector('.casebody') || {}).textContent || '',
+        presses: btns.map((b) => b.textContent.trim()), out: btns.filter((b) => { const q = b.getBoundingClientRect(); return q.right > r.right + 1 || q.height < 40; }).map((b) => b.textContent.trim()),
+        aria: (c.querySelector('.replyin') || { getAttribute: () => '' }).getAttribute('aria-label') || '' };
+    };
+    return { freezer: card('f:1791000000'), guess: card('h:1791000100') };
+  });
+  const want = { freezer: ['Problem', ['Add to To Do', 'Dismiss', 'Snooze']], guess: ['Question', ['Snooze', "Doesn't apply"]] };
+  for (const [k, [chip, presses]] of Object.entries(want)) {
+    const c = same[k];
+    if (!c) { fail(where, `the ${k} case is not on the page`); continue; }
+    if (c.chip.trim() !== chip) fail(where, `the ${k} case wears "${c.chip}" where brAIn's Needs you says ${chip}`);
+    if (JSON.stringify(c.presses) !== JSON.stringify(presses)) fail(where, `the ${k} case's presses are ${JSON.stringify(c.presses)}, brAIn's are ${JSON.stringify(presses)}`);
+    if (c.out.length) fail(where, `the ${k} case's ${c.out.join(', ')} spill out of the card or are under the touch target`);
+    if (!/Juniper/.test(c.aria) || /brAIn/.test(c.aria)) fail(where, `the ${k} case's reply line does not name the household's assistant: "${c.aria}"`);
+  }
+  if (same.freezer && !/latch may not catch/.test(same.freezer.body)) fail(where, "the freezer case does not show brAIn's detail");
   // A reply is a turn, answered in the card.
   await p.evaluate(() => { const i = window.__panel.shadowRoot.querySelector('.replyin[data-case="h:1791000100"]'); i.focus(); i.value = 'yes, a plug timer'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true })); });
   await settle(p, 1400);
@@ -420,6 +446,11 @@ async function vision(p, name) {
   if (!/asked Morph to add it/.test(told.toast)) fail(where, `brAIn's last word on the ended case was not said: "${told.toast}"`);
   await p.evaluate(() => { if (window.__panel.s.tell) window.__panel.closeTell(); });
   await settle(p, 600);
+  // Snooze reaches brAIn as a snooze, and the case goes as brAIn's list drops it.
+  await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-case-card="h:1791000100"] button[data-act="case"][data-v="snooze"]'); if (b) b.click(); });
+  await settle(p, 800);
+  const sn = await p.evaluate(() => (window.__caseReqs || []).filter((x) => x.action === 'snooze').map((x) => x.case));
+  if (!sn.includes('h:1791000100')) fail(where, 'Snooze on a case did not reach brAIn as a snooze');
   atRest(`${name} after a reply`, await snapshot(p));
 }
 
