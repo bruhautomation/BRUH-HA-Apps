@@ -23,6 +23,7 @@ import reports
 from textclip import clip
 
 from . import STREAMS
+from .siblings import PRODUCTS
 
 # The owner's own words are the requirement, so they keep a generous limit
 # and are never cut mid-word (`clip`). They were sliced at 500: four
@@ -35,7 +36,6 @@ WHAT_CHARS = 300
 FINDING_CHARS = 8000
 WHY_CHARS = 6000
 DONE_CHARS = 1500
-from .siblings import PRODUCTS
 
 # --------------------------------------------------------------- faults
 

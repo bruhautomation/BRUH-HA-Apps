@@ -58,7 +58,6 @@ import threading
 import time
 
 import atomic_write
-from textclip import clip
 import reports
 from textclip import clip
 
