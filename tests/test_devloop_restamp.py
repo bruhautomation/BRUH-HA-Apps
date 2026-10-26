@@ -193,5 +193,69 @@ class TestAQuietRuleIsHistory(unittest.TestCase):
         self.assertEqual(card[0]["last_wrong_ts"], 300)
 
 
+class TestARuleIsDatedByItsNewestWrong(_Case):
+    """A Wrongs count is a record, not a reading: it is re-read every pass
+    and does not fall for a fortnight, so a rule fixed on a release whose
+    Wrongs all predate the fix was reopened a day after every update. The
+    row is dated by its newest Wrong, through the real fault list."""
+
+    def setUp(self):
+        super().setUp()
+        upstream.reports.faults = self._faults  # the real rows this time
+        self.last_wrong = 0.0
+
+    def _diag(self, version: str) -> dict:
+        diag = diagnostics(version=version)
+        diag.pop("daemons"), diag.pop("expected_daemons"), diag.pop("journal")
+        diag["health"] = {"state": "ok"}
+        diag["findings"] = {"scorecard": [
+            {"source": "check:dev.frozen", "title": "Sensors frozen",
+             "wrong": 4, "confirmed": 1, "total": 5,
+             "last_wrong_ts": self.last_wrong}]}
+        return diag
+
+    def pass_(self, now: float, version: str = "2.17.0"):
+        diag = self._diag(version)
+        diag["generated_at"] = now
+        upstream.sweep(diag, NAMES, now=now)
+        upstream.send_due(now=now)
+
+    def _producer_issue(self) -> int:
+        for n, issue in enumerate(self.gh.issues, 1):
+            if issue["title"].startswith("[Producer"):
+                return n
+        self.fail([i["title"] for i in self.gh.issues])
+
+    def test_an_unchanged_count_on_a_newer_release_is_not_reopened(self):
+        self.switch_on()
+        t = time.time() - 10 * 24 * HOUR
+        self.last_wrong = t - HOUR
+        self.pass_(t)
+        n = self._producer_issue()
+        closed = t + 2 * HOUR
+        self.close(n, "devloop:fixed", closed)
+        self.pass_(closed + upstream.VERDICT_INTERVAL_S + 60)
+        for h in range(3, 40, 3):
+            self.pass_(closed + h * HOUR, version="2.17.1")
+        self.assertEqual(self.gh.issues[n - 1]["state"], "closed")
+        self.assertEqual([c for c in self.reopened() if c[0] == n], [])
+
+    def test_a_new_wrong_after_the_close_reopens_it(self):
+        self.switch_on()
+        t = time.time() - 10 * 24 * HOUR
+        self.last_wrong = t - HOUR
+        self.pass_(t)
+        n = self._producer_issue()
+        closed = t + 2 * HOUR
+        self.close(n, "devloop:fixed", closed)
+        self.pass_(closed + upstream.VERDICT_INTERVAL_S + 60)
+        for h in range(3, 80, 6):
+            self.pass_(closed + h * HOUR, version="2.17.1")
+        self.assertEqual(self.gh.issues[n - 1]["state"], "closed")
+        self.last_wrong = closed + 80 * HOUR
+        self.pass_(closed + 81 * HOUR, version="2.17.1")
+        self.assertEqual(self.gh.issues[n - 1]["state"], "open")
+
+
 if __name__ == "__main__":
     unittest.main()

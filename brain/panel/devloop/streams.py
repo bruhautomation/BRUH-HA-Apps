@@ -112,6 +112,10 @@ def faults(diagnostics: dict, log_text: str = "") -> list[dict]:
         if what and where not in SKIP_WHERE:
             item = {"where": where, "what": what,
                     "detail": str(row.get("detail") or "")}
+            if row.get("seen_at"):
+                # A row read off a record (a producer's newest Wrong) is
+                # dated by it, so an unchanged count is not a recurrence.
+                item["seen_at"] = row["seen_at"]
             body = _evidence_body(
                 row, failures, excerpt if where.startswith(LOGGED_WHERE) else "")
             if body:
@@ -242,6 +246,12 @@ def wrongs(score_rows: list[dict], settled: list[dict]) -> list[dict]:
                     "detail": str(r.get("title") or ""), "body": body,
                     "impact": {"wrong": wrong, "endings": total,
                                "confirmed": int(r.get("confirmed") or 0)}})
+        last_wrong = float(r.get("last_wrong_ts") or 0)
+        if last_wrong > 0:
+            # Dated by the newest Wrong, not by the pass that re-read the
+            # count: a rule fixed on Monday whose Wrongs all predate Monday
+            # has not come back, however often the count is read again.
+            out[-1]["seen_at"] = last_wrong
     return out
 
 
