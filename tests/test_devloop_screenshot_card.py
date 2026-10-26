@@ -158,8 +158,9 @@ def png_size(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", head[16:24])
 
 
+# Not skipped where there is no Chromium: the add-on ships one and CI has
+# one, and a guard proved nowhere is not proved. BRAIN_CHROMIUM names it.
 @pytest.mark.slow
-@unittest.skipUnless(browser(), "no Chromium on this machine")
 class TestOneCardInARealBrowser(unittest.TestCase):
     def capture(self, focus):
         os.environ["BRAIN_CHROMIUM"] = browser()
