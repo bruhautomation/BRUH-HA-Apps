@@ -18539,7 +18539,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                       else f"no BRUH add-on called {body.get('addon')!r} is here"),
             "addons": sorted({t["product"] for t in targets})}, status=404)
     listing = [{"screen": scr["slug"], "label": scr["label"]} for scr in target["screens"]]
-    want = str(body.get("screen") or "").strip().lower()
+    # "morph-dashboard#c_lamp", or `element` beside the screen: one card or
+    # section, scrolled into view and cropped to, tapped or held open first.
+    want, focus, why = screens.parse_focus(body.get("screen"), body.get("element"),
+                                           body.get("press"))
+    if why:
+        return web.json_response({"error": why, "screens": listing}, status=400)
+    want = want.lower()
     if not want:
         return web.json_response({"addon": target["product"], "screens": listing})
     scr = next((x for x in target["screens"]
@@ -18569,7 +18575,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                             "photographed")}, status=503)
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
-    one = {**target, "screens": [scr]}
+    one = {**target, "screens": [{**scr, "focus": focus} if focus else scr]}
     if SCREENSHOT_LOCK is None:
         SCREENSHOT_LOCK = asyncio.Lock()
     if SCREENSHOT_LOCK.locked():
@@ -18583,6 +18589,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                 views=[view], targets=[one], own=False),
                 SCREENSHOT_TIMEOUT_S)
         shots = result.get("shots") or []
+        missing = [e for e in result.get("errors") or []
+                   if isinstance(e, dict) and e.get("missing")]
+        if not shots and missing:
+            # Not a fault: the page simply has no such card. Said, so the
+            # chat can ask for the right one.
+            return web.json_response({"error": _error_text(missing[0]),
+                                      "screens": listing}, status=404)
         if not shots:
             return web.json_response({"error": "; ".join(
                 _error_text(e) for e in result.get("errors") or [])[:300]
@@ -18596,6 +18609,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         shutil.rmtree(tmp, ignore_errors=True)
     return web.json_response({
         "addon": target["product"], "screen": scr["label"], "width": width,
+        **({"element": focus["id"], "press": focus["press"]} if focus else {}),
         "scheme": scheme, "png": base64.b64encode(data).decode(),
         "problems": result.get("problems") or [], "held": shot.get("held") or []})
 

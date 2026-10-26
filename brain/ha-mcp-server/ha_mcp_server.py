@@ -2315,15 +2315,19 @@ def bruh_addon_status(addon=""):
     return _panel_get(f"/api/bruh_addons{query}")
 
 
-def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light"):
+def screenshot_panel(addon="brAIn", screen="", width=390, scheme="light",
+                     element="", press=""):
     """One screen of brAIn or another BRUH add-on, photographed now — so
     the chat can LOOK at what somebody is describing. Redacted, guarded
     against every write, and kept nowhere (the panel's
     `/api/devloop/screenshot`). With no ``screen`` it lists the screens.
+    ``element`` (or ``screen#id``) is one card or section: scrolled into
+    view, cropped to, and tapped or held open first with ``press``.
     The measured layout problems ride beside the picture."""
     answer = _panel_send("POST", "/api/devloop/screenshot", {
         "addon": addon or "brAIn", "screen": screen or "", "width": width,
-        "scheme": scheme}, timeout=180)
+        "scheme": scheme, "element": element or "", "press": press or ""},
+        timeout=180)
     if not isinstance(answer, dict) or answer.get("error") or "png" not in answer:
         return answer
     raw = base64.b64decode(answer.pop("png"))
@@ -7703,7 +7707,11 @@ TOOLS = [
             "(calendar events, addresses, credentials blanked), nothing on the "
             "screen can change anything while it is taken, and the layout "
             "problems a script can measure (off the edge, too small to tap, "
-            "overlaps, low contrast) come back beside it. Read-only."
+            "overlaps, low contrast) come back beside it. To look at ONE card "
+            "or room of Morph's dashboard, however far down the page, name its "
+            "id from dashboard.yaml: screen \"morph-dashboard#<id>\" or "
+            "element; the picture is cropped to it, and press open holds it "
+            "open first (tap presses it). Read-only."
         ),
         "inputSchema": {
             "type": "object",
@@ -7715,6 +7723,13 @@ TOOLS = [
                 "width": {"type": "integer", "minimum": 320, "maximum": 1920,
                           "description": "Window width in px (390 phone, 1200 laptop)"},
                 "scheme": {"type": "string", "enum": ["light", "dark"]},
+                "element": {"type": "string",
+                            "description": ("A card's or section's id (as in Morph's "
+                                            "dashboard.yaml): photograph just that, "
+                                            "scrolled into view")},
+                "press": {"type": "string", "enum": ["tap", "open"],
+                          "description": ("Press the element first: open holds it so it "
+                                          "opens, tap presses it once")},
             },
         },
     },
