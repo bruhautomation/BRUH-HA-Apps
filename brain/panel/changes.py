@@ -248,7 +248,7 @@ def build(*, journal: list[dict], ledger: list[dict], fixes: list[dict],
             if changed is not None and changed > ts + OUTSIDE_EDIT_S:
                 reason = ("The file has been changed since, outside brAIn, "
                           "so putting brAIn's copy back would lose that "
-                          "change. `brain undo` in the terminal can still "
+                          "change. brain undo in the terminal can still "
                           "do it if you mean to.")
         press = None if reason else _press(
             "Undo", f"/api/changes/edit/{ts:.6f}/undo",

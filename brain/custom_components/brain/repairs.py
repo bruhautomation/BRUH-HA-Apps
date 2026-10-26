@@ -42,12 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 # file's: the mirror row carries the answers the panel's own card offers
 # (`answers`, decided once in the add-on's `answers.py`), the watcher
 # stamps them onto the issue, and the flow shows that subset in this
-# order. A battery therefore gets *Add it to my to-do list · I've fixed
-# it · Not a problem here · Remind me tomorrow*, and a change brAIn made
-# gets *Got it* — the same buttons as the panel, because a finding
-# asking two different questions on two surfaces is the confusion the
-# feed's redesign was written against. An issue raised by an older
-# add-on carries no list and gets `DEFAULT_ACTIONS`, the classic three.
+# order — and in the add-on's own words for each (`labels` on the issue,
+# off `answers.REQUEST_LABELS`, the one table the card and a phone read
+# too). A battery therefore gets *Add to To Do · Ignore · Snooze ·
+# Dismiss*, and a change brAIn made gets *Done* — the same buttons as Needs
+# you, because a finding asking two different questions on two surfaces is
+# the confusion the feed's redesign was written against (#452). An issue
+# raised by an older add-on carries no list and gets `DEFAULT_ACTIONS`, the
+# classic three, under the translated words.
 FLOW_ACTIONS = ("confirm", "todo", "fixed", "wrong", "snooze", "ack")
 DEFAULT_ACTIONS = ("fixed", "wrong", "snooze")
 # The one option that answers nothing, last on every menu: it puts the

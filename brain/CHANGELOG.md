@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Added
+
+- **History › Changes brAIn made.** Every change brAIn made in the house — a file it edited, a device it switched, names and rooms it tidied, an automation it added, a fix you approved — newest first, saying what, on what, when and from where, each with an Undo. A change that cannot be put back (a message sent, a file you have changed since, a newer change to the same device) says why instead. (#453)
+
+### Changed
+
+- **Every card says who acts.** A card brAIn can handle says "brAIn can fix this." and leads with **Go ahead**, which opens the change it would make for you to check first; a card that needs you says "This needs you." and leads with Add to To Do; a question says "brAIn needs an answer." (#451)
+- **Repairs, your phone and Morph use the card's own words.** The Repairs dialog shows the card's title, its who-acts line and the same presses as Needs you (Add to To Do, Ignore, Snooze, Dismiss); Morph's cards also get Snooze, Check again and Ignore. Where you have named your assistant, its fixed sentences use that name. (#452)
+
 ## 3.8.18
 
 ### Added

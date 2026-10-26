@@ -320,7 +320,7 @@ export const CHANGES = {
     { id: 'edit:3.000000', kind: 'edit', title: 'Edited automations.yaml',
       at: NOW - 7200, where: 'from a card', press: null, deletable: false,
       reason: 'The file has been changed since, outside brAIn, so putting '
-        + "brAIn's copy back would lose that change. `brain undo` in the "
+        + "brAIn's copy back would lose that change. brain undo in the "
         + 'terminal can still do it if you mean to.' },
     { id: 'call:4.000000', kind: 'call', title: 'Sent a message', at: NOW - 9000,
       where: 'overnight repair', press: null, deletable: false,

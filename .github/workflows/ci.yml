@@ -539,6 +539,12 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-today.mjs
 
+      # History › Changes brAIn made: every change named, with its Undo or
+      # the reason it has none, and nothing sideways at 390 (#453).
+      - name: Measure Changes brAIn made
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-changes.mjs
+
       # The visual standard: four type sizes, sentence case, no browser
       # chrome on a select or a checkbox, and every card on the 4px grid
       # with one edge all the way round — read off every pane and ⚙.
