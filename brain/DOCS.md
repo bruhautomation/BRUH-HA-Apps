@@ -1797,12 +1797,12 @@ measured; ⚙ Diagnostics shows how many machines have a shape.
 
 **The chore** is narrower than the measurement. brAIn will tell you a washing
 machine, a tumble dryer or a dishwasher finished a cycle and nothing has run
-since — and nothing else, matched on the sensor's name. It says the machine is
-still full only when a door sensor on the same machine has stayed shut since
-the cycle ended, because power cannot see whether a drum is empty. That is a deliberate guess in the
-cheap direction: not recognising your machine costs a missing reminder, while
+since — and nothing else, matched on the sensor's name. That is a deliberate
+guess in the cheap direction: not recognising your machine costs a missing reminder, while
 recognising the wrong one means a notification telling you to go and empty
-your television.
+your television. It says the machine is still full only when a door sensor on
+the same machine has stayed shut since the cycle ended, because power cannot
+see whether a drum is empty.
 
 It waits before saying anything (a cycle that ended four minutes ago is
 somebody standing at the machine), it stops asking after about half a day
