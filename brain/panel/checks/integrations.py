@@ -134,25 +134,71 @@ def summarise_log(text: str, now: float, tz: dt.tzinfo | None = None,
     return {"hours": hours, "lines": lines, "groups": out}
 
 
+_ENTITY_ID_RE = re.compile(r"(?<![\w.])([a-z_]+\.[a-z0-9_]+)(?![\w])")
+_CALLER_RE = re.compile(
+    r"^homeassistant\.components\.(automation|script|scene)\.([a-z0-9_]+)$")
+
+
+def _platform(house: House, eid: str) -> str:
+    return str((house.registry.get(eid) or {}).get("platform") or "")
+
+
+def _of_domain(house: House, dev_id: str, domain: str) -> list[str]:
+    """The entities on a device that the integration ``domain`` provides."""
+    return sorted(str(r["entity_id"]) for r in house.entities
+                  if r.get("device_id") == dev_id and r.get("entity_id")
+                  and r.get("platform") == domain)
+
+
 def _device_named(house: House, group: dict) -> tuple[str, str]:
-    """(device name, entity to file under) the message points at: an
-    address a tracker or a device reports, or a device's name said in it."""
+    """(device name, entity to file under) the message points at (#434).
+
+    Resolved from the line itself, and only to something of the
+    integration that logged it: the automation or script its own logger
+    names; an entity id the message writes out that the integration
+    provides; a device at an address the message names, or whose name it
+    says, that carries one of that integration's entities. A word match
+    against another integration's device is never used, and when nothing
+    resolves the row is about the integration and no entity."""
+    logger = str(group.get("logger") or "")
+    domain = str(group.get("domain") or domain_of_logger(logger))
+    m = _CALLER_RE.match(logger)
+    if m:
+        caller = f"{m.group(1)}.{m.group(2)}"
+        if caller in house.states or caller in house.registry:
+            return house.label(caller), caller
+    message = str(group.get("message") or "")
+    for eid in sorted(set(_ENTITY_ID_RE.findall(message))):
+        if (eid in house.states or eid in house.registry) and domain \
+                and _platform(house, eid) == domain:
+            dev = house.device_of(eid)
+            return (house.device_name(dev) if dev else house.label(eid)), eid
+    if not domain:
+        return "", ""
     for ip in group.get("ips") or ():
         for eid, st in sorted(house.states.items()):
             attrs = st.get("attributes") or {}
-            if ip in (str(attrs.get("ip") or ""), str(attrs.get("ip_address") or ""),
-                      str(attrs.get("host") or "")):
-                dev = house.device_of(eid)
-                return (house.device_name(dev) if dev else house.label(eid)), eid
-    message = " " + str(group.get("message") or "").lower() + " "
+            if ip not in (str(attrs.get("ip") or ""),
+                          str(attrs.get("ip_address") or ""),
+                          str(attrs.get("host") or "")):
+                continue
+            dev = house.device_of(eid)
+            dev_id = str((house.registry.get(eid) or {}).get("device_id") or "")
+            if _platform(house, eid) != domain and not (
+                    dev_id and _of_domain(house, dev_id, domain)):
+                # An address another integration's device answers on: not
+                # this integration's line about it.
+                continue
+            return (house.device_name(dev) if dev else house.label(eid)), eid
+    low = " " + message.lower() + " "
     for dev_id, dev in sorted(house.devices.items()):
         name = house.device_name(dev)
-        if len(name) >= 4 and re.search(
-                r"(?<![\w])" + re.escape(name.lower()) + r"(?![\w])", message):
-            for row in house.entities:
-                if row.get("device_id") == dev_id and row.get("entity_id"):
-                    return name, str(row["entity_id"])
-            return name, ""
+        if len(name) < 4 or not re.search(
+                r"(?<![\w])" + re.escape(name.lower()) + r"(?![\w])", low):
+            continue
+        own = _of_domain(house, dev_id, domain)
+        if own:
+            return name, own[0]
     return "", ""
 
 
@@ -211,6 +257,10 @@ def log_flood(snap: dict, now: float) -> list[dict]:
             "severity": "warning",
             "fixable": False,
             "entity_id": entity,
+            # A line that names nothing of the integration's is about the
+            # integration as a whole (#440): one card with every other
+            # check's row about it.
+            **({} if entity else {"integration": domain} if domain else {}),
             "_count": int(top["count"]),
         })
     rows.sort(key=lambda r: -r["_count"])

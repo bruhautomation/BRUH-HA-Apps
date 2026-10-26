@@ -12394,8 +12394,14 @@ def _note_registry(snapshot: dict) -> None:
     try:
         house = House(snapshot)
         names = {}
+        # Which device each entity is ABOUT — a UniFi client's tracker
+        # joined to the device it is a client of — so the findings store
+        # files one device's drops as one card (#440).
+        device_of = checks.network.device_keys(house)
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            if device_of.get(eid):
+                names[eid]["device"] = device_of[eid]
             # What kind of thing it is, for the one reader that has to
             # refuse a safety device before it asks anybody anything
             # (`corrections.never_covered`). Only where it says.
