@@ -491,6 +491,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "report_bug", "timed_action", "note_personality_change",
+    "set_assistant_exposure",
 })
 CONTRACT_PASSTHROUGH = frozenset({"render_template", "get_camera_snapshot"})
 
@@ -5477,6 +5478,443 @@ def set_sensor_display(entity_id, display_precision=_UNSET,
     return _brain_call("set_sensor_display", data)
 
 
+# ============================================================================
+# Which entities reach which assistant — Assist, the cloud's Alexa and
+# Google Assistant, and every HomeKit Bridge
+# ============================================================================
+#
+# Two settings in Home Assistant decide what a voice assistant or a phone's
+# Home app can see, and brAIn could read neither: Settings → Voice
+# assistants → Expose (one switch per entity per assistant, over the
+# WebSocket `homeassistant/expose_entity*` commands), and each HomeKit
+# Bridge's include/exclude filter (its config entry's options, changed only
+# through its options flow). `assistant_exposure` reads both and says what
+# is missing and what is stale; `set_assistant_exposure` changes them in
+# bulk — the expose command for the assistants, and the bridge's own
+# options flow for HomeKit, read form by form and aborted if it cannot be
+# finished, so a filter is never left half-edited.
+
+EXPOSURE_ASSISTANTS = {"conversation": "Assist",
+                       "cloud.alexa": "Alexa (Home Assistant Cloud)",
+                       "cloud.google_assistant": "Google Assistant (Home Assistant Cloud)"}
+# What a person expects to reach from a voice assistant or the Home app.
+EXPOSURE_CONTROLLABLE = ("light", "switch", "fan", "cover", "climate", "lock",
+                         "media_player", "scene", "script")
+# Exposing one of these to a voice assistant opens a way into the house.
+EXPOSURE_SECURITY_DOMAINS = ("lock", "alarm_control_panel")
+EXPOSURE_SECURITY_COVERS = ("garage", "door", "gate")
+HOMEKIT_ACCESSORY_LIMIT = 150
+HOMEKIT_WARN_WITHIN = 10
+# What a HomeKit Bridge can turn into an accessory (Core's homekit
+# SUPPORTED_DOMAINS); used only for an estimate when the bridge's own
+# count cannot be read.
+HOMEKIT_DOMAINS = frozenset({
+    "alarm_control_panel", "automation", "binary_sensor", "button", "camera",
+    "climate", "cover", "device_tracker", "fan", "humidifier",
+    "input_boolean", "input_button", "input_select", "lawn_mower", "light",
+    "lock", "media_player", "person", "remote", "scene", "script", "select",
+    "sensor", "switch", "vacuum", "valve", "water_heater"})
+EXPOSURE_LIST_CAP = 60
+OPTIONS_FLOW_MAX_STEPS = 5
+
+
+def _exposure_reg_rows():
+    rows = _ws_command({"type": "config/entity_registry/list"})
+    return {str(r["entity_id"]): r for r in rows
+            if isinstance(r, dict) and r.get("entity_id")} \
+        if isinstance(rows, list) else None
+
+
+def _exposure_states():
+    states = ha_api_request("/api/states")
+    if not isinstance(states, list):
+        return None
+    return {str(s.get("entity_id")): s for s in states
+            if isinstance(s, dict) and s.get("entity_id")}
+
+
+def _exposure_security(eid, state):
+    domain = eid.split(".", 1)[0]
+    if domain in EXPOSURE_SECURITY_DOMAINS:
+        return True
+    if domain == "cover":
+        klass = str(((state or {}).get("attributes") or {}).get("device_class") or "")
+        return klass in EXPOSURE_SECURITY_COVERS
+    return False
+
+
+def _exposure_live_controllable(states, registry):
+    """Entities a person would expect to reach: a controllable domain, a
+    state that is not unavailable, not hidden, not a settings entity."""
+    out = []
+    for eid, state in sorted(states.items()):
+        if eid.split(".", 1)[0] not in EXPOSURE_CONTROLLABLE:
+            continue
+        if str(state.get("state")) in ("unavailable", "unknown"):
+            continue
+        row = (registry or {}).get(eid) or {}
+        if row.get("hidden_by") or row.get("disabled_by") or row.get("entity_category"):
+            continue
+        out.append(eid)
+    return out
+
+
+def _exposure_assistants(listed):
+    """Assist always; a cloud assistant when the house has Home Assistant
+    Cloud or any entity carries a setting for it."""
+    have = {"conversation"}
+    for settings in (listed.get("exposed_entities") or {}).values():
+        if isinstance(settings, dict):
+            have |= {a for a in settings if a in EXPOSURE_ASSISTANTS}
+    cloud = _ws_command({"type": "config_entries/get", "domain": "cloud"})
+    if isinstance(cloud, list) and cloud:
+        have |= {"cloud.alexa", "cloud.google_assistant"}
+    return [a for a in EXPOSURE_ASSISTANTS if a in have]
+
+
+def _exposure_default(eid, row, expose_new):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "..", "scripts"))
+    import brain_exposed  # noqa: PLC0415 — sibling directory, see `_exposure`
+    return brain_exposed.default_exposed(
+        eid, expose_new=expose_new, hidden=bool((row or {}).get("hidden_by")),
+        category=(row or {}).get("entity_category"),
+        device_class=(row or {}).get("device_class")
+        or (row or {}).get("original_device_class"))
+
+
+def _cap(ids):
+    ids = sorted(ids)
+    return ids[:EXPOSURE_LIST_CAP], len(ids)
+
+
+def _homekit_filter_matches(flt, eid, row):
+    """Core's entityfilter as HomeKit applies it: a listed entity is in
+    whatever else is true; a hidden or settings entity is out unless it is
+    listed; otherwise the include or exclude lists decide."""
+    flt = flt if isinstance(flt, dict) else {}
+    inc_d = set(flt.get("include_domains") or [])
+    inc_e = set(flt.get("include_entities") or [])
+    exc_d = set(flt.get("exclude_domains") or [])
+    exc_e = set(flt.get("exclude_entities") or [])
+    domain = eid.split(".", 1)[0]
+    if eid in inc_e:
+        return True
+    if eid in exc_e:
+        return False
+    row = row or {}
+    if row.get("hidden_by") or row.get("entity_category"):
+        return False
+    if inc_d or inc_e:
+        return domain in inc_d
+    if domain in exc_d:
+        return False
+    return domain in HOMEKIT_DOMAINS
+
+
+def _homekit_bridges():
+    entries = _ws_command({"type": "config_entries/get", "domain": "homekit"})
+    if not isinstance(entries, list):
+        return None
+    out = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("entry_id"):
+            continue
+        diag = ha_api_request(
+            f"/api/diagnostics/config_entry/{entry['entry_id']}")
+        data = diag.get("data") if isinstance(diag, dict) else None
+        data = data if isinstance(data, dict) else {}
+        cfg = data.get("config-entry") if isinstance(data.get("config-entry"), dict) else {}
+        options = cfg.get("options") if isinstance(cfg.get("options"), dict) else None
+        accessories = data.get("accessories")
+        out.append({"entry_id": entry["entry_id"],
+                    "title": str(entry.get("title") or "HomeKit Bridge"),
+                    "state": entry.get("state"),
+                    "disabled": bool(entry.get("disabled_by")),
+                    "options": options,
+                    "accessories": accessories if isinstance(accessories, list) else None})
+    return out
+
+
+def assistant_exposure():
+    """What each assistant and each HomeKit Bridge can reach, and what is
+    missing or stale."""
+    listed = _ws_command({"type": "homeassistant/expose_entity/list"})
+    if not isinstance(listed, dict) or "exposed_entities" not in listed:
+        return {"error": "Home Assistant would not say what is exposed to its "
+                         f"voice assistants ({str(listed)[:120]})."}
+    registry = _exposure_reg_rows()
+    states = _exposure_states()
+    if registry is None or states is None:
+        return {"error": "brAIn could not read the entity list, so it cannot "
+                         "say what is missing."}
+    live = _exposure_live_controllable(states, registry)
+    rows = listed.get("exposed_entities") or {}
+    report = {"assistants": [], "homekit": [], "notes": []}
+    for assistant in _exposure_assistants(listed):
+        new = _ws_command({"type": "homeassistant/expose_new_entities/get",
+                           "assistant": assistant})
+        expose_new = bool(new.get("expose_new")) if isinstance(new, dict) else False
+
+        def exposed(eid, assistant=assistant, expose_new=expose_new):
+            settings = rows.get(eid)
+            if isinstance(settings, dict) and assistant in settings:
+                return bool(settings[assistant])
+            return _exposure_default(eid, registry.get(eid), expose_new)
+
+        missing = [e for e in live if not exposed(e)]
+        stale = []
+        for eid, settings in rows.items():
+            if not (isinstance(settings, dict) and settings.get(assistant)):
+                continue
+            if eid not in states and eid not in registry:
+                stale.append({"entity_id": eid, "why": "no longer exists"})
+            elif str((states.get(eid) or {}).get("state")) == "unavailable":
+                stale.append({"entity_id": eid, "why": "unavailable"})
+        shown, count = _cap(missing)
+        report["assistants"].append({
+            "assistant": assistant, "name": EXPOSURE_ASSISTANTS[assistant],
+            "exposed": sum(1 for e in states if exposed(e)),
+            "missing": [{"entity_id": e,
+                         **({"security": True} if _exposure_security(e, states.get(e)) else {})}
+                        for e in shown],
+            "missing_count": count,
+            "stale": sorted(stale, key=lambda r: r["entity_id"])[:EXPOSURE_LIST_CAP],
+        })
+    bridges = _homekit_bridges()
+    if bridges is None:
+        report["notes"].append("The HomeKit Bridge entries could not be read.")
+    for bridge in bridges or []:
+        options = bridge["options"]
+        entry = {"bridge": bridge["title"], "entry_id": bridge["entry_id"],
+                 "limit": HOMEKIT_ACCESSORY_LIMIT}
+        if options is None:
+            entry["note"] = ("This bridge's settings could not be read (its "
+                             "diagnostics did not answer), so what it "
+                             "includes is not known.")
+            report["homekit"].append(entry)
+            continue
+        flt = options.get("filter") if isinstance(options.get("filter"), dict) else {}
+        entry["mode"] = options.get("mode") or "bridge"
+        entry["filter"] = {k: sorted(v) for k, v in flt.items() if isinstance(v, list)}
+        included = [e for e in states
+                    if _homekit_filter_matches(flt, e, registry.get(e))]
+        accessories = bridge["accessories"]
+        if accessories is not None:
+            entry["accessories"] = sum(
+                1 for a in accessories if isinstance(a, dict) and a.get("aid") != 1)
+            entry["counted"] = "by the bridge"
+        else:
+            entry["accessories"] = len(included)
+            entry["counted"] = "estimated from its filter"
+        left = HOMEKIT_ACCESSORY_LIMIT - entry["accessories"]
+        if left <= HOMEKIT_WARN_WITHIN:
+            entry["warning"] = (
+                f"{entry['accessories']} accessories of HomeKit's "
+                f"{HOMEKIT_ACCESSORY_LIMIT} per bridge"
+                + (": it is over the limit, and HomeKit stops adding them"
+                   if left < 0 else f": {left} left"))
+        missing = [e for e in live if e not in set(included)]
+        shown, count = _cap(missing)
+        entry["missing"] = shown
+        entry["missing_count"] = count
+        stale = []
+        for eid in flt.get("include_entities") or []:
+            if eid not in states and eid not in registry:
+                stale.append({"entity_id": eid, "why": "no longer exists"})
+            elif str((states.get(eid) or {}).get("state")) == "unavailable":
+                stale.append({"entity_id": eid, "why": "unavailable"})
+        entry["stale"] = stale[:EXPOSURE_LIST_CAP]
+        report["homekit"].append(entry)
+    return report
+
+
+def _exposure_ids(value):
+    raw = value if isinstance(value, list) else str(value or "").split(",")
+    return [str(e).strip().lower() for e in raw if str(e).strip()]
+
+
+def _exposure_change_refusal(ids, states):
+    """Why one of these entities may not be changed, or None."""
+    for eid in ids:
+        bad = _entity_or_error(eid, "light.kitchen")
+        if bad:
+            return bad["error"]
+        if _entity_protected(eid):
+            return (f"{eid} is on the protected entities list, so brAIn does "
+                    "not change which assistants can reach it.")
+        if eid in _exposure_tripwires():
+            return "that entity is not one brAIn may act on."
+    return None
+
+
+def _exposure_tripwires():
+    """The tripwire's entities, read at call time like every guard here."""
+    try:
+        return {str(e).lower() for e in _honeytokens()}
+    except Exception:  # noqa: BLE001 — the tripwire guard proper is elsewhere
+        return set()
+
+
+def _flow_fill(form, wanted):
+    """The values to send to one options-flow form: what the change asks
+    for, then each field's own default. None when a required field has
+    neither."""
+    values = {}
+    for field in form.get("data_schema") or []:
+        if not isinstance(field, dict) or not field.get("name"):
+            continue
+        name = field["name"]
+        if name in wanted:
+            values[name] = wanted[name]
+        elif "default" in field:
+            values[name] = field["default"]
+        elif field.get("required"):
+            return None, name
+    return values, ""
+
+
+def _flow_defaults(form):
+    return {f["name"]: f.get("default") for f in form.get("data_schema") or []
+            if isinstance(f, dict) and f.get("name")}
+
+
+def _homekit_edit(entry_id, add, remove, states):
+    """Change one bridge's filter through its own options flow. Returns
+    what it changed, or an error; an unfinished flow is aborted."""
+    started = ha_api_request("/api/config/config_entries/options/flow", "POST",
+                             {"handler": entry_id, "show_advanced_options": False})
+    if not isinstance(started, dict) or not started.get("flow_id"):
+        return {"error": f"the bridge's settings would not open ({str(started)[:160]})"}
+    flow_id = started["flow_id"]
+    form = started
+    done = False
+    try:
+        for _ in range(OPTIONS_FLOW_MAX_STEPS):
+            if form.get("type") == "create_entry":
+                done = True
+                return {"ok": True}
+            if form.get("type") != "form":
+                return {"error": f"the bridge's settings ended unexpectedly "
+                                 f"({str(form.get('type'))})"}
+            defaults = _flow_defaults(form)
+            wanted = {}
+            step = str(form.get("step_id") or "")
+            if step == "init":
+                if str(defaults.get("mode") or "bridge") != "bridge":
+                    return {"error": "this HomeKit entry is a single accessory, "
+                                     "not a bridge, so it has no list to change"}
+                mode = str(defaults.get("include_exclude_mode") or "include")
+                original = set(defaults.get("domains") or [])
+                domains = set(original)
+                if mode == "include":
+                    domains |= {e.split(".", 1)[0] for e in add}
+                wanted = {"domains": sorted(domains)}
+                ctx = {"mode": mode, "domains": domains, "original": original}
+            elif "entities" in defaults:
+                current = set(defaults.get("entities") or [])
+                mode = ctx["mode"]
+                if mode == "include":
+                    picked_domains = {e.split(".", 1)[0] for e in current}
+                    for eid in remove:
+                        domain = eid.split(".", 1)[0]
+                        if domain in ctx["domains"] and domain not in picked_domains:
+                            # The bridge takes the whole domain; leaving one
+                            # out means listing the rest of it.
+                            current |= {e for e in states
+                                        if e.split(".", 1)[0] == domain}
+                            picked_domains.add(domain)
+                    for eid in add:
+                        domain = eid.split(".", 1)[0]
+                        if domain in ctx["original"] and domain not in picked_domains:
+                            # The bridge already takes every one of these;
+                            # naming one would narrow it to that one.
+                            continue
+                        current.add(eid)
+                    current -= set(remove)
+                else:
+                    for eid in add:
+                        if eid.split(".", 1)[0] not in ctx["domains"]:
+                            return {"error": (
+                                f"the bridge leaves out everything in "
+                                f"{eid.split('.', 1)[0]}, so adding {eid} would "
+                                "add every one of them; change it in HomeKit "
+                                "Bridge's own settings")}
+                    current -= set(add)
+                    current |= set(remove)
+                wanted = {"entities": sorted(current)}
+            values, lacking = _flow_fill(form, wanted)
+            if values is None:
+                return {"error": f"the bridge's settings ask for {lacking}, "
+                                 "which brAIn cannot fill in"}
+            form = ha_api_request(
+                f"/api/config/config_entries/options/flow/{flow_id}", "POST", values)
+            if not isinstance(form, dict) or form.get("error"):
+                return {"error": f"the bridge refused the change ({str(form)[:160]})"}
+        return {"error": "the bridge's settings had more steps than brAIn expected"}
+    finally:
+        if not done:
+            ha_api_request(f"/api/config/config_entries/options/flow/{flow_id}",
+                           "DELETE")
+
+
+def set_assistant_exposure(entity_ids=None, expose=None, assistants=None,
+                           homekit_bridge="", homekit_add_entity_ids=None,
+                           homekit_remove_entity_ids=None):
+    """Expose or hide entities for voice assistants in bulk, and add or
+    remove entities from a HomeKit Bridge's list. The HomeKit lists end
+    in ``_entity_ids`` so the action gate reads them as entities."""
+    ids = _exposure_ids(entity_ids)
+    add = _exposure_ids(homekit_add_entity_ids)
+    remove = _exposure_ids(homekit_remove_entity_ids)
+    if not ids and not add and not remove:
+        return {"error": "Name the entities to change: entity_ids for the "
+                         "voice assistants, homekit_add_entity_ids or "
+                         "homekit_remove_entity_ids for a HomeKit Bridge."}
+    states = _exposure_states() or {}
+    why = _exposure_change_refusal(ids + add + remove, states)
+    if why:
+        return {"error": why}
+    done = {}
+    if ids:
+        if not isinstance(expose, bool):
+            return {"error": "Say whether to expose them (expose: true) or "
+                             "hide them (expose: false)."}
+        wanted = _exposure_ids(assistants) or ["conversation"]
+        bad = [a for a in wanted if a not in EXPOSURE_ASSISTANTS]
+        if bad:
+            return {"error": f"{', '.join(bad)} is not an assistant brAIn knows; "
+                             "use " + ", ".join(EXPOSURE_ASSISTANTS)}
+        result = _ws_command({"type": "homeassistant/expose_entity",
+                              "assistants": wanted, "entity_ids": ids,
+                              "should_expose": expose})
+        if isinstance(result, dict) and result.get("error"):
+            return {"error": _ws_error_parts(result["error"])[1]}
+        record_action("homeassistant", "expose_entity",
+                      {"entity_id": ids, "assistants": wanted, "should_expose": expose})
+        done["assistants"] = {"entity_ids": ids, "assistants": wanted,
+                              "exposed": expose}
+    if add or remove:
+        bridges = _homekit_bridges()
+        if not bridges:
+            return {**done, "error": "There is no HomeKit Bridge to change."}
+        name = str(homekit_bridge or "").strip().lower()
+        pick = [b for b in bridges if name and (b["entry_id"] == name
+                                                or b["title"].lower() == name)]
+        if not pick and len(bridges) == 1 and not name:
+            pick = bridges
+        if len(pick) != 1:
+            return {**done, "error": "Name the HomeKit Bridge: "
+                    + ", ".join(b["title"] for b in bridges)}
+        out = _homekit_edit(pick[0]["entry_id"], add, remove, states)
+        if out.get("error"):
+            return {**done, "error": f"{pick[0]['title']}: {out['error']}"}
+        record_action("homekit", "options", {"entity_id": add + remove})
+        done["homekit"] = {"bridge": pick[0]["title"], "added": add,
+                           "removed": remove}
+    return {"ok": True, **done}
+
+
 def list_dashboards(include_resources=False):
     """List Lovelace dashboards (the default dashboard is not in the
     collection — reach it by omitting url_path in get_dashboard)."""
@@ -6724,6 +7162,52 @@ TOOLS = [
                     "type": "integer",
                     "description": "Return only this view (0-based) — for dashboards too large to return whole"
                 }
+            }
+        }
+    },
+    {
+        "name": "assistant_exposure",
+        "description": (
+            "What each voice assistant (Assist, and Alexa and Google "
+            "Assistant through Home Assistant Cloud) and each HomeKit Bridge "
+            "can reach: how many entities each has, the lights, switches, "
+            "fans, covers, thermostats, locks, media players, scenes and "
+            "scripts in use that are missing from it, and entities it still "
+            "lists that are unavailable or no longer exist. Each bridge's "
+            "accessory count is given against HomeKit's 150 per bridge, with "
+            "a warning within 10 of it. Read-only; change it with "
+            "set_assistant_exposure."
+        ),
+        "inputSchema": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "set_assistant_exposure",
+        "description": (
+            "Change what the voice assistants and a HomeKit Bridge can "
+            "reach, in bulk. entity_ids with expose true or false sets "
+            "Settings → Voice assistants → Expose for the named assistants "
+            "(conversation, cloud.alexa, cloud.google_assistant; Assist when "
+            "none is named). homekit_add and homekit_remove change one "
+            "HomeKit Bridge's list through its own settings (name it with "
+            "homekit_bridge when there is more than one). Entities on the "
+            "protected list are refused. Only expose a lock, an alarm or a "
+            "garage door when the homeowner has named it themselves."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "entity_ids": {"type": "array", "items": {"type": "string"},
+                               "description": "Entities to expose or hide for the voice assistants"},
+                "expose": {"type": "boolean",
+                           "description": "true exposes them, false hides them"},
+                "assistants": {"type": "array", "items": {"type": "string"},
+                               "description": "conversation, cloud.alexa, cloud.google_assistant"},
+                "homekit_bridge": {"type": "string",
+                                   "description": "The bridge's name or entry id"},
+                "homekit_add_entity_ids": {"type": "array", "items": {"type": "string"},
+                                           "description": "Entities the bridge should include"},
+                "homekit_remove_entity_ids": {"type": "array", "items": {"type": "string"},
+                                              "description": "Entities the bridge should leave out"}
             }
         }
     },
@@ -8206,6 +8690,9 @@ TOOL_IMPLEMENTATIONS = {
     "get_dashboard": "get_dashboard",
     # What a device shows as — each one brain.* Power Tool through call_service
     "set_device_class": "set_device_class",
+    # Which entities reach the voice assistants and each HomeKit Bridge
+    "assistant_exposure": "assistant_exposure",
+    "set_assistant_exposure": "set_assistant_exposure",
     "show_switch_as": "show_switch_as",
     "stop_showing_switch_as": "stop_showing_switch_as",
     "set_sensor_display": "set_sensor_display",
@@ -8348,7 +8835,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
     "bruh_addon_status", "report_bug", "screenshot_panel", "timed_action",
-    "note_personality_change",
+    "note_personality_change", "assistant_exposure", "set_assistant_exposure",
 })
 VOICE_REFUSED_PREFIXES = ("esphome_",)
 # Tools about ONE entity: allowed only when it is named and exposed.
@@ -8580,7 +9067,8 @@ INSTRUCTIONS = (
     "get_history (up to 7 days), get_statistics (longer). Why something changed: "
     "explain_change. What is normal: what_is_normal. Automations: "
     "get_automation_config, get_automation_trace; test an idea with "
-    "simulate_automation. What needs attention: get_findings; is brAIn OK: "
+    "simulate_automation. Which assistants and HomeKit Bridges reach what: "
+    "assistant_exposure. What needs attention: get_findings; is brAIn OK: "
     "get_health; why it stayed quiet: explain_decision. Memory: recall; "
     "remember_fact. Add-ons start at label_printer_status, minecraft_status, "
     "bright_status, bambu_status, music_assistant_status. A run with only reading tools has "
