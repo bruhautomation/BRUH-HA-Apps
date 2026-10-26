@@ -264,6 +264,67 @@ def _hot_by_name(eid: str, name: str, device_names=()) -> bool:
     return bool(words & _HOT_WHEN_PAIRED and (words | device) & _PAIR_WORDS)
 
 
+# A setpoint is what somebody asked a heater for, not what anything reads:
+# a printer reports the nozzle temperature it was told to reach, and 220 °C
+# is a request, never an impossible reading. Whole words only, so a name
+# that happens to contain one ("Targetedhall") is still a reading.
+SETPOINT_WORDS = frozenset({"target", "setpoint", "setpoints"})
+
+
+def is_setpoint(house, eid: str, st: dict | None = None) -> bool:
+    """Whether this entity reports a target somebody chose, not a reading.
+
+    Shared by `dev.implausible` and `base.unusual` (through
+    `not_a_house_reading`), so the two cannot disagree about which numbers
+    are requests rather than measurements.
+    """
+    st = st if st is not None else (
+        (house.states.get(eid) if house is not None else None) or {})
+    attrs = (st or {}).get("attributes") or {}
+    reg = (house.registry.get(eid) if house is not None else None) or {}
+    for name in (attrs.get("friendly_name"), reg.get("name"),
+                 reg.get("original_name"), eid.split(".", 1)[-1]):
+        words = [w for w in re.split(r"[^a-z0-9]+", str(name or "").lower())
+                 if w]
+        if set(words) & SETPOINT_WORDS or "set point" in " ".join(words):
+            return True
+    return False
+
+
+def machine_of(house, eid: str) -> str:
+    """``"printer"``, ``"computer"`` or "" — what the REGISTRIES say this
+    entity is part of, before any word on the entity or a model's reading.
+
+    One classification for `dev.implausible`'s hot gate, `printer_heater`,
+    `computer_temperature` and so `base.unusual`: the providing integration
+    first, then the integrations of the other entities on the same device
+    (a bridged sensor on a printer's device), then the device's own name,
+    model and maker. These are facts about the hardware, so they answer
+    before `world_model`, whose reading is a guess from a name.
+    """
+    if house is None:
+        return ""
+    platform, device_names = heat_context(house, eid)
+    if platform in PRINTER_PLATFORMS:
+        return "printer"
+    if platform in COMPUTER_PLATFORMS:
+        return "computer"
+    device = (house.registry.get(eid) or {}).get("device_id")
+    if device:
+        others = {str((house.registry.get(o) or {}).get("platform") or "")
+                  for o in house.siblings(eid)}
+        if others & PRINTER_PLATFORMS:
+            return "printer"
+        if others & COMPUTER_PLATFORMS:
+            return "computer"
+    words = _words(*device_names)
+    if words & _PAIR_WORDS:
+        return "printer"
+    if words & (_HOT_DEVICE_WORDS - _PAIR_WORDS):
+        return "computer"
+    return ""
+
+
 def heat_context(house, eid: str) -> tuple[str, tuple[str, ...]]:
     """The providing platform and the device's own names, for the gate.
 
@@ -302,7 +363,7 @@ def measures_something_hot(eid: str, name: str, world=None,
     import world_model  # noqa: PLC0415 — panel-local, a leaf
 
     platform, device_names = heat_context(house, eid)
-    if platform in HOT_PLATFORMS:
+    if platform in HOT_PLATFORMS or machine_of(house, eid):
         return True
     return world_model.measures_heat(
         world, eid, lambda: _hot_by_name(eid, name, device_names))
@@ -321,13 +382,12 @@ def computer_temperature(house, eid: str) -> bool:
     if str(attrs.get("device_class") or "") != "temperature":
         return False
     name = str(attrs.get("friendly_name") or "")
-    platform, device_names = heat_context(house, eid)
-    if platform in COMPUTER_PLATFORMS:
-        return True
+    machine = machine_of(house, eid)
+    if machine:
+        return machine == "computer"
     if not measures_something_hot(eid, name, house.world, house):
         return False
-    return bool(_words(eid, name) & _COMPUTER_WORDS
-                or _words(*device_names) & (_HOT_DEVICE_WORDS - _PAIR_WORDS))
+    return bool(_words(eid, name) & _COMPUTER_WORDS)
 
 
 def printer_heater(house, eid: str) -> bool:
@@ -344,12 +404,12 @@ def printer_heater(house, eid: str) -> bool:
     if str(attrs.get("device_class") or "") != "temperature":
         return False
     name = str(attrs.get("friendly_name") or "")
+    machine = machine_of(house, eid)
+    if machine:
+        return machine == "printer"
     if not measures_something_hot(eid, name, house.world, house):
         return False
-    platform, device_names = heat_context(house, eid)
-    if platform in PRINTER_PLATFORMS:
-        return True
-    return bool(_words(eid, name, *device_names) & _PAIR_WORDS)
+    return bool(_words(eid, name) & _PAIR_WORDS)
 
 
 # brAIn's own integration. Its entities are readings ABOUT this add-on — the
@@ -1143,6 +1203,9 @@ def implausible(snap: dict, now: float) -> list[dict]:
         key = (attrs.get("device_class"), attrs.get("unit_of_measurement"))
         bounds = bounds_for(attrs, eid, house.world, house)
         if not bounds:
+            continue
+        # A target is what the heater was asked for, never a reading.
+        if is_setpoint(house, eid, st):
             continue
         value = num(st.get("state"))
         if value is None:

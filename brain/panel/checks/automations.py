@@ -857,6 +857,81 @@ def _guards_safety(house: House, config: dict) -> bool:
     return False
 
 
+# A fault alarm is the same shape as a smoke alarm: it watches for a value
+# that is wrong — a pump running far too long, drawing too much or too
+# little, cycling too often — and tells somebody. It is DESIGNED never to
+# fire in a healthy house, so "has never fired … or delete it" about one
+# was marked Wrong every time. Read off the config, never the name: every
+# trigger a threshold on a reading (`numeric_state` above or below, a
+# template comparing one, a state held `for:` a while, a binary sensor
+# going on), and every action only a message.
+NOTIFY_DOMAINS = frozenset({"notify", "persistent_notification"})
+_QUIET_STEPS = frozenset({"delay", "wait_template", "wait_for_trigger",
+                          "variables", "condition", "stop"})
+_COMPARES = re.compile(r"[<>]=?|!=|==")
+
+
+def _fault_trigger(house: House, trig: dict) -> bool:
+    kind = _trigger_kind(trig)
+    if kind == "numeric_state":
+        return trig.get("above") is not None or trig.get("below") is not None
+    if kind == "template":
+        return bool(_COMPARES.search(str(trig.get("value_template") or "")))
+    if kind == "state":
+        if trig.get("for"):
+            return True
+        watched = _watched(house, trig)
+        return bool(watched) and all(
+            e.split(".", 1)[0] == "binary_sensor" for e in watched) and str(
+            trig.get("to") if trig.get("to") is not None else "on") == "on"
+    return False
+
+
+def _only_notifies(steps) -> bool:
+    """Whether every step of an action list only sends a message."""
+    found = False
+    for step in listify(steps):
+        if not isinstance(step, dict):
+            return False
+        if "choose" in step or "if" in step or "parallel" in step \
+                or "sequence" in step:
+            branches = []
+            for option in listify(step.get("choose")):
+                if isinstance(option, dict):
+                    branches.append(option.get("sequence"))
+            branches += [step.get("then"), step.get("else"),
+                         step.get("default"), step.get("sequence")]
+            branches += list(listify(step.get("parallel")))
+            for branch in branches:
+                if branch is None:
+                    continue
+                if not _only_notifies(branch):
+                    return False
+                found = True
+            continue
+        service = str(step.get("action") or step.get("service") or "")
+        if service:
+            if service.split(".", 1)[0] not in NOTIFY_DOMAINS:
+                return False
+            found = True
+            continue
+        if step.get("domain") == "mobile_app" and step.get("type") == "notify":
+            found = True
+            continue
+        if not set(step) & _QUIET_STEPS:
+            return False
+    return found
+
+
+def _watches_a_fault(house: House, config: dict) -> bool:
+    """Whether this automation is an alarm about an abnormal reading."""
+    triggers = _triggers(config)
+    if not triggers or not all(_fault_trigger(house, t) for t in triggers):
+        return False
+    return _only_notifies(config.get("actions") if config.get("actions")
+                          is not None else config.get("action"))
+
+
 def never_fired(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     out = []
@@ -872,6 +947,8 @@ def never_fired(snap: dict, now: float) -> list[dict]:
         if item["id"].startswith(BRAIN_PREFIX):
             continue
         if _guards_safety(house, item["config"]):
+            continue
+        if _watches_a_fault(house, item["config"]):
             continue
         attrs = state.get("attributes") or {}
         if attrs.get("last_triggered"):

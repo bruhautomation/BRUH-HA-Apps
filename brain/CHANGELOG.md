@@ -2,6 +2,22 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.18
+
+### Added
+
+- **A print the printer stopped itself is a card.** When a print is paused or fails while the printer's own problem sensor or failure detection is set, brAIn files one finding saying how far the print got, how long it has been stopped and whether the bed is still hot. A pause you pressed yourself raises nothing, quiet hours hold it until morning, and it clears when the print resumes or finishes. (#432)
+
+### Changed
+
+- **A finished washing machine or dryer is not called "still full".** Power shows the machine stopped and nothing has run since, so that is what the card says; "still full" is said only when a door sensor on the same machine has stayed shut since. A card you already answered in the old words stays answered. (#442)
+
+### Fixed
+
+- **A printer's nozzle, its bed and a computer's processor are no longer called impossible readings.** The device a sensor is on, and the other integrations on that device, now decide this before brAIn's own guess at what the sensor measures, and a target temperature is never judged as a reading. A broken probe reading an impossible value still files. (#433)
+- **"Only unusual while the printer is idle" is kept as that condition.** A reason that names when a report is wanted is read against the machine's own status, so the card still comes back in that state; a condition brAIn cannot watch writes no rule, and brAIn asks you whether to stop flagging it altogether. (#435)
+- **An alarm about a fault is not offered for deletion for never firing.** An automation that only sends a message when a reading goes past a threshold, or a rarely-on sensor turns on, is meant never to fire, like a smoke alarm. (#445)
+
 ## 3.8.17
 
 ### Added
