@@ -23,6 +23,17 @@
  *    Delete, an import box under 16px on touch;
  *  - Find printers not listing what it found, a moved printer with no
  *    Update address, or Add not filling the form and leaving the access code;
+ *  - the 3D view not moving the way Fusion 360's does, driven with real
+ *    pointer events: a left drag (and Shift + middle drag, and one finger)
+ *    that does not turn the part about its pivot without changing the
+ *    distance; a middle or right drag (and two fingers) that does not slide
+ *    it; the wheel (and a pinch) that does not zoom toward the point under
+ *    the pointer; a turn past the top that flips the view over; Home or a
+ *    named view that jumps rather than moves, or does not frame the whole
+ *    part; no bed under the part;
+ *  - no Full screen for the 3D view, or one that does not fill the window
+ *    (falling back when the Fullscreen API is refused, as an ingress frame
+ *    may) and leave on Escape; a view that does not follow its box's size;
  *  - sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -96,6 +107,166 @@ const API = {
 };
 const POSTS = [];
 const STL = { 'bodies/Base.stl': box(0, 0, 0, 40, 30, 30), 'bodies/Lid.stl': box(0, 0, 31, 40, 30, 36) };
+
+// The 3D view, driven as a person drives it. Every reading is the viewer's
+// own camera (cameraState) after it settles; a missing method is a finding.
+async function viewerMoves(page, say, touch, ctx) {
+  const can = await page.evaluate(() => ['cameraState', 'pointAt', 'screenOf', 'boxOnScreen', 'settled']
+    .filter((m) => !(design.viewer && typeof design.viewer[m] === 'function')));
+  if (can.length) { say(`the 3D view cannot be read back (${can.join(', ')})`); return; }
+  const settle = () => page.evaluate(() => design.viewer.settled());
+  const cam = () => page.evaluate(() => design.viewer.cameraState());
+  const box = await page.locator('#viewer canvas').boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const close = (a, b, tol) => Math.abs(a - b) <= tol;
+  const moved = (a, b) => Math.hypot(a.target[0] - b.target[0], a.target[1] - b.target[1], a.target[2] - b.target[2]);
+  await page.evaluate(() => design.viewer.view('home'));
+  await settle();
+  if (!(await page.evaluate(() => !!design.viewer.scene.getObjectByName('bed')))) say('there is no bed under the part');
+  const fit = await page.evaluate(() => design.viewer.boxOnScreen());
+  if (fit.max > 1.0 || fit.max < 0.5) say(`Home does not frame the part (it reaches ${fit.max.toFixed(2)} of the view)`);
+
+  if (!touch) {
+    // Left drag: turns, about a pivot, at the same distance.
+    let a = await cam();
+    await page.mouse.move(cx, cy);
+    await page.mouse.down();
+    await page.mouse.move(cx + 120, cy + 10, { steps: 8 });
+    await page.mouse.up();
+    await settle();
+    let b = await cam();
+    if (close(a.az, b.az, 0.05)) say('a left drag did not turn the part');
+    if (!close(a.distance, b.distance, a.distance * 0.01)) say(`a left drag changed the distance (${a.distance.toFixed(1)} → ${b.distance.toFixed(1)})`);
+    // Shift + middle drag turns too.
+    a = b;
+    await page.keyboard.down('Shift');
+    await page.mouse.move(cx, cy);
+    await page.mouse.down({ button: 'middle' });
+    await page.mouse.move(cx - 100, cy, { steps: 8 });
+    await page.mouse.up({ button: 'middle' });
+    await page.keyboard.up('Shift');
+    await settle();
+    b = await cam();
+    if (close(a.az, b.az, 0.05)) say('Shift + middle drag did not turn the part');
+    // Middle drag and right drag slide it.
+    for (const button of ['middle', 'right']) {
+      a = await cam();
+      await page.mouse.move(cx, cy);
+      await page.mouse.down({ button });
+      await page.mouse.move(cx + 80, cy + 40, { steps: 8 });
+      await page.mouse.up({ button });
+      await settle();
+      b = await cam();
+      if (moved(a, b) < a.distance * 0.02) say(`a ${button} drag did not slide the part`);
+      if (!close(a.az, b.az, 0.01) || !close(a.el, b.el, 0.01)) say(`a ${button} drag turned the part instead of sliding it`);
+    }
+    // The wheel zooms toward the point under the pointer.
+    await page.evaluate(() => design.viewer.view('home'));
+    await settle();
+    const px = cx + box.width * 0.18;
+    const py = cy - box.height * 0.1;
+    const point = await page.evaluate(([x, y]) => design.viewer.pointAt(x, y), [px, py]);
+    a = await cam();
+    await page.mouse.move(px, py);
+    for (let i = 0; i < 5; i += 1) await page.mouse.wheel(0, -120);
+    await settle();
+    b = await cam();
+    if (b.distance >= a.distance * 0.95) say('the wheel did not zoom in');
+    const where = await page.evaluate((p) => design.viewer.screenOf(p), point);
+    if (Math.hypot(where[0] - px, where[1] - py) > 4) {
+      say(`the wheel zoomed toward the middle, not the pointer (the point moved ${Math.round(Math.hypot(where[0] - px, where[1] - py))} px)`);
+    }
+    // A long drag up does not flip the view over the top.
+    await page.mouse.move(cx, cy + 150);
+    await page.mouse.down();
+    await page.mouse.move(cx, cy - 400, { steps: 20 });
+    await page.mouse.up();
+    await settle();
+    b = await cam();
+    if (Math.abs(b.el) > Math.PI / 2) say('turning past the top flipped the view');
+    if (b.up[2] < 0.99) say('the view lost Z as up');
+  } else {
+    // One finger turns; two slide; a pinch zooms toward the fingers.
+    const cdp = await ctx.newCDPSession(page);
+    const touchEv = (type, points) => cdp.send('Input.dispatchTouchEvent', { type,
+      touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+    let a = await cam();
+    await touchEv('touchStart', [[cx, cy]]);
+    for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx + i * 12, cy]]);
+    await touchEv('touchEnd', []);
+    await settle();
+    let b = await cam();
+    if (close(a.az, b.az, 0.05)) say('one finger did not turn the part');
+    if (!close(a.distance, b.distance, a.distance * 0.01)) say('one finger changed the distance');
+    a = b;
+    await touchEv('touchStart', [[cx - 40, cy], [cx + 40, cy]]);
+    for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx - 40 + i * 8, cy + i * 6], [cx + 40 + i * 8, cy + i * 6]]);
+    await touchEv('touchEnd', []);
+    await settle();
+    b = await cam();
+    if (moved(a, b) < a.distance * 0.02) say('two fingers did not slide the part');
+    if (!close(a.az, b.az, 0.02)) say('two fingers turned the part');
+    a = b;
+    await touchEv('touchStart', [[cx - 30, cy], [cx + 30, cy]]);
+    for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx - 30 - i * 8, cy], [cx + 30 + i * 8, cy]]);
+    await touchEv('touchEnd', []);
+    await settle();
+    b = await cam();
+    if (b.distance >= a.distance * 0.9) say('a pinch did not zoom in');
+  }
+
+  // Named views: animated, and each frames the part.
+  for (const [name, check] of [['top', (c) => c.el > 1.4], ['front', (c) => Math.abs(c.el) < 0.05],
+    ['right', (c) => Math.abs(c.el) < 0.05], ['iso', (c) => c.el > 0.3 && c.el < 0.9]]) {
+    const button = page.locator(`[data-view3d="${name}"]`);
+    if (!(await button.count())) { say(`there is no ${name} view`); continue; }
+    const before = await cam();
+    await button.click();
+    const soon = await cam();
+    await settle();
+    const after = await cam();
+    if (!check(after)) say(`the ${name} view is not looking from the ${name} (${JSON.stringify(after)})`);
+    if (JSON.stringify(soon) === JSON.stringify(after) && JSON.stringify(before) !== JSON.stringify(after)) {
+      say(`the ${name} view jumps rather than moves`);
+    }
+    const f = await page.evaluate(() => design.viewer.boxOnScreen());
+    if (f.max > 1.0 || f.max < 0.45) say(`the ${name} view does not frame the part (${f.max.toFixed(2)})`);
+  }
+
+  // Full screen, and the fallback when the API is refused.
+  const full = page.locator('#viewFull');
+  if (!(await full.count())) { say('there is no Full screen for the 3D view'); return; }
+  const vw = page.viewportSize();
+  for (const refused of [false, true]) {
+    if (refused) {
+      await page.evaluate(() => { Element.prototype.requestFullscreen = () => Promise.reject(new Error('refused')); });
+    }
+    await full.click();
+    await page.waitForTimeout(400);
+    const r = await page.locator('#viewerWrap').boundingBox();
+    if (!r || r.width < vw.width - 2 || r.height < vw.height - 2) {
+      say(`Full screen${refused ? ' (API refused)' : ''} does not fill the window (${r && `${Math.round(r.width)}×${Math.round(r.height)}`})`);
+    }
+    const canvas = await page.evaluate(() => { const c = document.querySelector('#viewer canvas');
+      return [c.clientWidth, c.clientHeight, document.querySelector('#viewer').clientWidth, document.querySelector('#viewer').clientHeight]; });
+    if (Math.abs(canvas[0] - canvas[2]) > 2 || Math.abs(canvas[1] - canvas[3]) > 2) say('the 3D view did not follow its full screen size');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const back = await page.locator('#viewerWrap').boundingBox();
+    if (back && back.width >= vw.width - 2 && back.height >= vw.height - 2) say(`Escape did not leave full screen${refused ? ' (API refused)' : ''}`);
+  }
+  const ok = await page.evaluate(async () => {
+    const v = document.querySelector('#viewer');
+    v.style.height = '300px';
+    await new Promise((r) => setTimeout(r, 300));
+    const c = v.querySelector('canvas');
+    const fits = Math.abs(c.clientHeight - 300) < 2 && Math.abs(c.height / (window.devicePixelRatio > 2 ? 2 : window.devicePixelRatio || 1) - 300) < 2;
+    v.style.height = '';
+    return fits;
+  });
+  if (!ok) say('the 3D view does not follow the size of its box');
+}
 
 const problems = [];
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
@@ -225,6 +396,8 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
     const lidShown = await page.evaluate(() => design.viewer.group.getObjectByName('Lid').visible);
     if (lidShown) say('tapping a body in the key did not hide it');
   }
+
+  await viewerMoves(page, say, touch, ctx);
 
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Design tab scrolls sideways by ${wide} px`);

@@ -229,7 +229,8 @@ function renderVersions(p) {
   const info = $("#versionInfo");
   info.replaceChildren();
   if (!v) return;
-  info.append(el("p", {}, [v.summary, fmtSize(v.size_mm), v.grams ? `≈ ${v.grams} g PLA` : null].filter(Boolean).join(" · ")));
+  // The size is said once, under the view ("Overall …"), not again here.
+  info.append(el("p", {}, [v.summary, v.grams ? `≈ ${v.grams} g PLA` : null].filter(Boolean).join(" · ")));
   if (v.warnings && v.warnings.length) info.append(el("ul", { class: "warnlist" }, v.warnings.map((w) => el("li", {}, w))));
   if (v.dims) info.append(el("p", {}, Object.entries(v.dims).map(([k, val]) => `${k}: ${val}`).join(" · ")));
   if (v.ok && v.n !== p.current) {
@@ -536,6 +537,13 @@ $("#dpPrinter").addEventListener("change", loadPlan);
 $("#designPrintForm").addEventListener("submit", submitDesignPrint);
 $("#dpCancel").addEventListener("click", () => $("#designPrint").close());
 document.querySelectorAll("[data-view3d]").forEach((b) => b.addEventListener("click", () => design.viewer && design.viewer.view(b.dataset.view3d)));
+// Full screen for the view and its tools (Escape, or the same button, to
+// leave); app.js's fullScreen falls back to filling the window when an
+// ingress frame refuses the Fullscreen API.
+$("#viewFull").addEventListener("click", () => fullScreen($("#viewerWrap"), (on) => {
+  $("#viewFull").setAttribute("aria-pressed", String(on));
+  $("#viewFull").textContent = on ? "‹ Leave full screen" : "Full screen";
+}));
 $("#measureBtn").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));

@@ -11,6 +11,13 @@ reports) says which:
   with "LAN mode live view" switched on in the printer's own settings.
   ffmpeg reads it and hands back JPEGs, two a second.
 
+A frame is kept only when it is a whole JPEG (start and end markers both
+there): a frame cut short decodes with its missing rows painted in, a green
+or grey band across the picture. And a camera that encodes 1080 rows as
+1088 and says so in the frame's header is told its real height (`fit`), so
+the eight rows that are not the picture, a green bar along the bottom when
+decoded, are cropped by the decoder rather than shown.
+
 A camera is opened when somebody looks and closed when nobody has for
 IDLE_S: a stream nobody watches is the printer's CPU and the LAN's
 bandwidth for nothing. The newest frame is all that is kept.
@@ -65,6 +72,41 @@ def read_frame(sock) -> bytes:
     frame = read_exact(sock, size)
     if not frame.startswith(SOI):
         raise ConnectionError("The camera sent something that is not a JPEG.")
+    return frame
+
+
+def whole(frame: bytes) -> bool:
+    """A JPEG with both its ends: the start marker, and the end marker
+    (a camera may pad after it with zero bytes)."""
+    return (isinstance(frame, (bytes, bytearray)) and frame.startswith(SOI)
+            and bytes(frame).rstrip(b"\x00").endswith(EOI))
+
+
+# Start-of-frame markers carry the picture's height and width; C4, C8 and
+# CC share the range and are something else.
+_SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def fit(frame: bytes) -> bytes:
+    """The frame with a padded height corrected: a 16:9 picture whose header
+    says eight rows more than 16:9 (1920 x 1088) is a 1080-row picture in
+    whole 16-row blocks, and its header is told 1080. Only the two height
+    bytes change; anything else, or anything unreadable, is left as it was."""
+    i = 2
+    data = bytes(frame)
+    while i + 9 <= len(data) and data[i] == 0xFF:
+        marker = data[i + 1]
+        if marker == 0xDA:  # start of scan: no frame header before it
+            return frame
+        length = struct.unpack(">H", data[i + 2:i + 4])[0]
+        if marker in _SOF:
+            height, width = struct.unpack(">HH", data[i + 5:i + 9])
+            if height > 8 and (height - 8) * 16 == width * 9:
+                return data[:i + 5] + struct.pack(">H", height - 8) + data[i + 7:]
+            return frame
+        if length < 2:
+            return frame
+        i += 2 + length
     return frame
 
 
@@ -143,6 +185,10 @@ class Camera:
         return not (self.mirror_wanted and self.mirror_wanted())
 
     def _got(self, frame: bytes) -> None:
+        # A frame cut short is dropped and the last whole one stays.
+        if not whole(frame):
+            return
+        frame = fit(frame)
         self.frame, self.frame_at, self.error = frame, time.time(), ""
         if self.mirror is not None and self.mirror_wanted and self.mirror_wanted():
             try:
