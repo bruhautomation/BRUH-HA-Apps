@@ -12424,6 +12424,11 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("names note failed: %s", exc)
     try:
+        _MACHINE_STATUS.clear()
+        _MACHINE_STATUS.update(_machine_status_map(snapshot))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("machine-status note failed: %s", exc)
+    try:
         _USED_BY.clear()
         _USED_BY.update(_used_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
@@ -12434,6 +12439,35 @@ def _note_registry(snapshot: dict) -> None:
     except Exception as exc:  # noqa: BLE001
         log.debug("controlled-by note failed: %s", exc)
     _note_world(snapshot)
+
+
+# Which entities sit on a device that reports a job status (a printer's
+# "Print status", a washer's operation state): `{entity_id: status_entity}`.
+# What a reason like "only unusual while the printer is idle" can be read
+# against (`chores.condition_holds`), so a press with such a reason knows,
+# before writing, whether brAIn can watch the condition or has to ask.
+_MACHINE_STATUS: dict[str, str] = {}
+
+
+def _machine_status_map(snapshot: dict) -> dict[str, str]:
+    from checks import chores as _chores  # noqa: PLC0415
+    house = House(snapshot)
+    out: dict[str, str] = {}
+    by_device: dict[str, list[str]] = {}
+    for row in house.entities:
+        if row.get("device_id") and row.get("entity_id"):
+            by_device.setdefault(row["device_id"], []).append(
+                str(row["entity_id"]))
+    for members in by_device.values():
+        status = _chores.status_entity(house, members[0]) if len(
+            members) > 1 else ""
+        if not status and len(members) > 1:
+            status = _chores.status_entity(house, members[1])
+        if status:
+            for eid in members:
+                if eid != status:
+                    out[eid] = status
+    return out
 
 
 # Which automations and scripts NAME each entity: `{entity_id: [label]}`.
@@ -18545,7 +18579,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                       else f"no BRUH add-on called {body.get('addon')!r} is here"),
             "addons": sorted({t["product"] for t in targets})}, status=404)
     listing = [{"screen": scr["slug"], "label": scr["label"]} for scr in target["screens"]]
-    want = str(body.get("screen") or "").strip().lower()
+    # "morph-dashboard#c_lamp", or `element` beside the screen: one card or
+    # section, scrolled into view and cropped to, tapped or held open first.
+    want, focus, why = screens.parse_focus(body.get("screen"), body.get("element"),
+                                           body.get("press"))
+    if why:
+        return web.json_response({"error": why, "screens": listing}, status=400)
+    want = want.lower()
     if not want:
         return web.json_response({"addon": target["product"], "screens": listing})
     scr = next((x for x in target["screens"]
@@ -18575,7 +18615,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                             "photographed")}, status=503)
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
-    one = {**target, "screens": [scr]}
+    one = {**target, "screens": [{**scr, "focus": focus} if focus else scr]}
     if SCREENSHOT_LOCK is None:
         SCREENSHOT_LOCK = asyncio.Lock()
     if SCREENSHOT_LOCK.locked():
@@ -18589,6 +18629,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                 views=[view], targets=[one], own=False),
                 SCREENSHOT_TIMEOUT_S)
         shots = result.get("shots") or []
+        missing = [e for e in result.get("errors") or []
+                   if isinstance(e, dict) and e.get("missing")]
+        if not shots and missing:
+            # Not a fault: the page simply has no such card. Said, so the
+            # chat can ask for the right one.
+            return web.json_response({"error": _error_text(missing[0]),
+                                      "screens": listing}, status=404)
         if not shots:
             return web.json_response({"error": "; ".join(
                 _error_text(e) for e in result.get("errors") or [])[:300]
@@ -18602,6 +18649,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         shutil.rmtree(tmp, ignore_errors=True)
     return web.json_response({
         "addon": target["product"], "screen": scr["label"], "width": width,
+        **({"element": focus["id"], "press": focus["press"]} if focus else {}),
         "scheme": scheme, "png": base64.b64encode(data).decode(),
         "problems": result.get("problems") or [], "held": shot.get("held") or []})
 
@@ -18879,7 +18927,8 @@ async def h_devloop_look(request: web.Request) -> web.Response:
         body = await request.json()
     except ValueError:
         return web.json_response({"error": "expected JSON"}, status=400)
-    topic = " ".join(str((body or {}).get("topic") or "").split())[:500]
+    topic = textclip.clip(" ".join(str((body or {}).get("topic") or "").split()),
+                          devloop.streams.OWNER_WORDS_CHARS)
     if not topic:
         return web.json_response({"error": "say what you want fixed"},
                                  status=400)
@@ -18920,18 +18969,28 @@ async def h_bruh_addons(request: web.Request) -> web.Response:
     })
 
 
-REPORT_FIELDS = {"title": 100, "what": 300, "asked": 500, "evidence": 6000,
-                 "done_when": 800}
+# What each field of the chat's report may hold. The owner's words (`asked`)
+# are the requirement and keep the stream's generous limit; `what` is
+# brAIn's finding, kept whole in the body while the title line takes a
+# short cut of it. Every cut is `textclip.clip` — a word boundary and an
+# ellipsis. These were bare slices at 300 and 500, and a chat that put the
+# owner's words and its diagnosis into `what` filed a 300-character fragment
+# ending mid-word with nothing else behind it.
+REPORT_FIELDS = {"title": 100, "what": devloop.streams.FINDING_CHARS,
+                 "asked": devloop.streams.OWNER_WORDS_CHARS, "evidence": 6000,
+                 "done_when": devloop.streams.DONE_CHARS}
 
 
 def report_row(body: dict) -> tuple[dict | None, str]:
     """A report the chat wrote, as a `look` row; ``(None, why)`` for one
     that cannot be filed. Pure, so a test can hand it the body."""
     body = body if isinstance(body, dict) else {}
-    fields = {k: (str(body.get(k) or "")[:n] if k == "evidence"
-                  else " ".join(str(body.get(k) or "").split())[:n])
+    # The title is one line; the rest keep their own lines (evidence is
+    # quoted as it was read, and the owner's words as they were typed).
+    fields = {k: textclip.clip(" ".join(str(body.get(k) or "").split()) if k == "title"
+                               else str(body.get(k) or "").strip("\n").rstrip(), n)
               for k, n in REPORT_FIELDS.items()}
-    if not fields["title"] or not fields["what"]:
+    if not fields["title"] or not fields["what"].strip():
         return None, "a report needs a title and what is wrong"
     addon = str(body.get("addon") or "brAIn").strip()
     spec = devloop.siblings.spec_by_name(addon)
@@ -18939,16 +18998,17 @@ def report_row(body: dict) -> tuple[dict | None, str]:
         return None, ("addon must be brAIn or one of: "
                       + ", ".join(devloop.siblings.PRODUCTS))
     parts = []
-    if fields["asked"]:
-        parts.append("The owner said:\n\n> " + fields["asked"])
-    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"])
+    if fields["asked"].strip():
+        parts.append("The owner said:\n\n> " + fields["asked"].strip().replace("\n", "\n> "))
+    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"].strip())
     if fields["evidence"].strip():
         fence = "`" * 3
         parts.append("Evidence brAIn read:\n\n" + fence + "\n"
                      + fields["evidence"].replace(fence, "'" * 3) + "\n" + fence)
-    if fields["done_when"]:
-        parts.append(f"**Done when:** {fields['done_when']}")
-    row = {"where": f"Fix: {fields['title']}", "what": fields["what"],
+    if fields["done_when"].strip():
+        parts.append(f"**Done when:** {fields['done_when'].strip()}")
+    summary = textclip.clip(" ".join(fields["what"].split()), devloop.streams.WHAT_CHARS)
+    row = {"where": f"Fix: {fields['title']}", "what": summary,
            "detail": "", "body": "\n\n".join(parts), "ux": body.get("ui") is True}
     if spec:
         row.update(where=f"{spec['name']} · {row['where']}", product=spec["name"])
@@ -19892,11 +19952,52 @@ def _record_condition(finding: dict, note: str) -> list[str]:
     return [row["id"]] if row else []
 
 
+def _unwatchable_condition(finding: dict, note: str) -> bool:
+    """A check's Wrong whose reason names a condition brAIn cannot watch.
+
+    "Only unusual while the printer is idle" on a device whose job status
+    brAIn reads is written as a rule and read against that status
+    (`House._applies_now`). The same shape of reason about a device with no
+    status, or in words that name no state, would be a rule standing the
+    check down in the state the person asked to hear about too — so it is
+    kept as a fact and the person is asked instead.
+    """
+    source = str(finding.get("source") or "")
+    if not source.startswith("check:") or not corrections.conditional(note):
+        return False
+    from checks import chores as _chores  # noqa: PLC0415
+    eid = str(finding.get("entity_id") or "")
+    return not (_chores.report_while(note) and _MACHINE_STATUS.get(eid))
+
+
+def _ask_about_condition(finding: dict, note: str) -> list[str]:
+    """The fact and the question for `_unwatchable_condition`. Returns the
+    fact's id, which the undo token carries."""
+    ids = _record_condition(finding, note)
+    try:
+        eid = str(finding.get("entity_id") or "")
+        check_id = corrections.check_of(finding)
+        row = corrections.condition_offer_row(
+            finding, note,
+            entity_name=str((_NAMES.get(eid) or {}).get("name") or ""),
+            check_title=str((checks.get_check(check_id) or {}).get("title")
+                            or finding.get("source_title") or ""),
+            finding_key=findings_store.normalize(finding.get("text") or ""),
+            about=str(finding.get("claim") or finding.get("text") or ""))
+        if row:
+            findings_store.add_case(row)
+    except Exception as exc:  # noqa: BLE001 — `_record_exception`'s rule
+        log.debug("could not ask about a condition: %s", exc)
+    return ids
+
+
 def _record_exception(finding: dict, note: str) -> list[str]:
     """Best effort, `file_incident`'s rule: an ending must not fail on it.
 
     Returns the ids of the facts it wrote, which the undo token carries.
     """
+    if _unwatchable_condition(finding, note):
+        return _ask_about_condition(finding, note)
     rule, subjects = _exception_rule(finding)
     if not rule or not subjects:
         return []
@@ -22251,13 +22352,29 @@ async def _scope_correction(finding: dict, note: str,
     writes nothing, because the press's rule it would scope is gone.
     """
     now = time.time()
-    if base_ids and _is_resident_condition(finding, note):
-        # A condition, already kept as a fact: there is no rule to widen
+    if base_ids and (_is_resident_condition(finding, note)
+                     or (str(finding.get("source") or "").startswith("check:")
+                         and corrections.conditional(note))):
+        # A condition: kept as a fact, or written as a rule read against
+        # the machine's own status. Either way there is nothing to widen
         # and nothing for a model to scope.
         eid = str(finding.get("entity_id") or "")
         name = str((_NAMES.get(eid) or {}).get("name") or "")
-        return {"plan": None, "ids": [], "offer": None,
-                "sentence": corrections.conditional_confirmation(name)}
+        from checks import chores as _chores  # noqa: PLC0415
+        wanted = _chores.report_while(note)
+        if (str(finding.get("source") or "").startswith("check:")
+                and wanted and _MACHINE_STATUS.get(eid)):
+            state = "idle" if wanted == "idle" else "running"
+            sentence = (f"Got it — brAIn will only flag that for "
+                        f"{name or 'it'} while it is {state}.")
+        elif str(finding.get("source") or "").startswith("check:"):
+            sentence = ("Got it — brAIn kept your reason and will go on "
+                        "raising this, because it cannot tell when that "
+                        "condition holds. It has asked on your list whether "
+                        "to stop altogether.")
+        else:
+            sentence = corrections.conditional_confirmation(name)
+        return {"plan": None, "ids": [], "offer": None, "sentence": sentence}
     if not base_ids or not note.strip() or not engine.get_auth():
         return None
     if not _correction_day_ok(now):
@@ -26081,6 +26198,12 @@ def make_app() -> web.Application:
         if relabelled:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
+        # ...and what Morph sent before the listener claimed its tasks as
+        # Morph's: filed as Automation or as the person's own (marker-guarded).
+        morphs = await asyncio.to_thread(
+            conversations.relabel_morph, chat_session.WORK_DIR)
+        if morphs:
+            log.info("listed %d conversation(s) Morph started under Morph", morphs)
         await _options_sync()
         _publish_permission_mode()
         # Every failed run of any kind becomes one readable file: hooked on

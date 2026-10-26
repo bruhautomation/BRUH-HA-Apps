@@ -54,6 +54,10 @@ PRODUCER_URGENCY = {
     "check:chore.waiting": "whenever",
     # The same chore read off a printer's or a washer's own status.
     "check:chore.job_done": "whenever",
+    # A print the printer stopped itself: worth hearing about today, and
+    # held through quiet hours rather than dropped — the printer has
+    # already paused it, so nothing is lost by waiting for morning.
+    "check:chore.print_stopped": "today",
     # A dehumidifier with a full tank: a damp room for as long as nobody
     # empties it, and nothing about it is worth waking anybody for.
     "check:chore.dehumidifier": "today",

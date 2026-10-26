@@ -347,7 +347,7 @@ def _sentence(*parts) -> str:
 
 def _row(out: list, where: str, what: str, detail: str = "", *,
          title: str | None = None, sentence: str | None = None,
-         technical: str | None = None) -> None:
+         technical: str | None = None, seen_at: float = 0) -> None:
     """One fault row.
 
     `where`, `what` and `detail` are the machine fields: the report file
@@ -356,7 +356,10 @@ def _row(out: list, where: str, what: str, detail: str = "", *,
     ⚙ › Diagnostics shows — a name, what is not working and what to do, in
     words, and the ids and codes folded under it. A row given no human
     words is one whose machine words already are (`what` and its detail,
-    as a sentence)."""
+    as a sentence). `seen_at` is when the row's evidence last happened,
+    for a row read off a record rather than the house now (a producer's
+    newest Wrong): the development loop dates the row by it, so a count
+    that has not moved since a fix is not the fault coming back."""
     if not what:
         return
     if sentence is None:
@@ -371,6 +374,8 @@ def _row(out: list, where: str, what: str, detail: str = "", *,
                 "title": str(title or where)[:120],
                 "sentence": str(sentence)[:500],
                 "technical": str(technical or "")[:600]})
+    if seen_at and seen_at > 0:
+        out[-1]["seen_at"] = float(seen_at)
 
 
 # The sentence `checks.run_all` writes for a check it could not run because
@@ -1021,7 +1026,8 @@ def _faults(diag) -> list[dict]:
                  f"ignored {wrong} of {total} times", detail,
                  title=friendly, sentence=sentence,
                  technical=f"{source}: {wrong} wrong, "
-                           f"{total - wrong} confirmed")
+                           f"{total - wrong} confirmed",
+                 seen_at=last_wrong)
 
     # Findings nothing has finished looking at. A look that fails leaves its
     # rows on `triaging` or showing "Nothing finished looking at this one",

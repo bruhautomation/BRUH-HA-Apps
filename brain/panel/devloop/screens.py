@@ -108,6 +108,48 @@ CAPTURE_RE = re.compile(r"^\d{10}$")
 
 BLOCK = "▇"
 
+# One card or section photographed on its own (the chat's screenshot of
+# "this card"): named by the id the page keys it with — Morph puts a card's
+# id in `data-tile` and a room's in `data-sec`, inside its shadow root. The
+# picture is cropped to it wherever it is on the page, so a card far down a
+# dashboard is reachable at all (the page capture starts at the top and
+# stops at MAX_HEIGHT); this is the ceiling on one element instead.
+FOCUS_ID_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,120}$")
+FOCUS_PRESSES = ("tap", "open")
+ELEMENT_MAX_HEIGHT = 6000
+FOCUS_MARGIN = 8
+# Long enough to be a hold on every panel this photographs (Morph's is
+# 540 ms), and short enough not to be a second press.
+HOLD_S = 0.9
+
+
+class MissingElement(RuntimeError):
+    """The page has nothing with the id asked for — an answer, not a fault."""
+
+
+def parse_focus(screen: str, element: str = "", press: str = "") -> tuple[str, dict | None, str]:
+    """``(screen, focus, why)`` from what the chat asked for: a screen name
+    that may end in ``#<id>``, an ``element`` id beside it, and a press
+    (``tap`` or ``open``) to make first. ``why`` is the sentence for a
+    request that cannot be read; ``focus`` is None for the whole screen."""
+    screen = str(screen or "").strip()
+    wanted = str(element or "").strip()
+    if "#" in screen:
+        screen, _, after = screen.partition("#")
+        screen = screen.strip()
+        wanted = wanted or after.strip()
+    press = str(press or "").strip().lower()
+    if not wanted:
+        if press:
+            return screen, None, "a press needs a card or section to press (name its id)"
+        return screen, None, ""
+    if not FOCUS_ID_RE.match(wanted):
+        return screen, None, (f"{wanted[:40]!r} is not a card or section id: use the id "
+                              "the dashboard gives it (letters, digits, _ - . : @)")
+    if press and press not in FOCUS_PRESSES:
+        return screen, None, "press must be tap (a press) or open (held, to open it)"
+    return screen, {"id": wanted, "press": press}, ""
+
 # ---------------------------------------------------------------------------
 # Redaction: one function for every string on every frame
 # ---------------------------------------------------------------------------
@@ -330,6 +372,31 @@ _COVER_JS = r"""
   }
   return n;
 })()
+"""
+
+# Find a card or section by its id through every open shadow root, scroll
+# it into view and say where it is now (viewport coordinates). A card's own
+# tile wins over anything else carrying the same id.
+_FOCUS_JS = r"""
+((id) => {
+  const sels = [`.tile[data-tile="${CSS.escape(id)}"]`, `[data-tile="${CSS.escape(id)}"]`,
+                `section[data-sec="${CSS.escape(id)}"]`, `[data-sec="${CSS.escape(id)}"]`,
+                `#${CSS.escape(id)}`];
+  const find = (root, sel) => {
+    const hit = root.querySelector(sel);
+    if (hit) return hit;
+    for (const el of root.querySelectorAll("*")) {
+      if (el.shadowRoot) { const deep = find(el.shadowRoot, sel); if (deep) return deep; }
+    }
+    return null;
+  };
+  let el = null;
+  for (const sel of sels) { el = find(document, sel); if (el) break; }
+  if (!el) return null;
+  el.scrollIntoView({ block: "start", inline: "nearest" });
+  const r = el.getBoundingClientRect();
+  return { x: r.left, y: r.top, w: r.width, h: r.height };
+})
 """
 
 # A guarded page may open no WebSocket: the constructor refuses, the way a
@@ -806,7 +873,11 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
                                 shot = await _one(
                                     cdp, scr["url"], scr["slug"], label, scr.get("script") or "",
                                     width, height, touch, scheme, out_dir, confidential,
-                                    aliases, guard=guard)
+                                    aliases, guard=guard, focus=scr.get("focus"))
+                            except MissingElement as exc:
+                                errors.append({"product": tgt.get("product", "brAIn"),
+                                               "missing": True, "text": str(exc)[:200]})
+                                continue
                             except Exception as exc:  # noqa: BLE001 — one screen
                                 errors.append({"product": tgt.get("product", "brAIn"), "text":
                                                f"{label} at {width}px {scheme}: {exc}"[:200]})
@@ -831,7 +902,7 @@ async def capture(out_dir: Path, *, confidential: list[str], aliases,
 async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                width: int, height: int, touch: bool, scheme: str,
                out_dir: Path, confidential: list[str], aliases, *,
-               guard: list | None = None) -> dict:
+               guard: list | None = None, focus: dict | None = None) -> dict:
     """One screen in its own tab, so nothing a previous screen left open
     (a dialog, a scroll position) is in this picture. With ``guard`` (the
     reads it lets through) every other write is failed in the browser and
@@ -874,7 +945,12 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
                 raise RuntimeError("the screen could not be opened")
             cdp.last_net = time.monotonic()
             await cdp.settle()
-        await cdp.call("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"}, session)
+        if focus:
+            # Found and pressed BEFORE redaction, so what is redacted is the
+            # page as it will be photographed — an opened card included.
+            await _focus_press(cdp, session, focus, label)
+        else:
+            await cdp.call("Runtime.evaluate", {"expression": "window.scrollTo(0, 0)"}, session)
         await _redact_page(cdp, session, confidential, aliases)
         if AFTER_REDACT is not None:
             await AFTER_REDACT(cdp, session)
@@ -882,13 +958,16 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             "expression": f"({_AUDIT_JS})({json.dumps(touch)}, {int(width)})",
             "returnByValue": True}, session)
         audit = (res.get("result") or {}).get("value") or {}
-        full = max(height, min(int(audit.get("height") or height), MAX_HEIGHT))
-        await cdp.call("Emulation.setDeviceMetricsOverride", {
-            "width": width, "height": full, "deviceScaleFactor": 1,
-            "mobile": touch}, session)
-        await asyncio.sleep(0.3)
-        pic = await cdp.call("Page.captureScreenshot", {
-            "format": "png", "captureBeyondViewport": False}, session, timeout=30)
+        if focus:
+            shot_args = await _focus_clip(cdp, session, focus, label, width, height, touch)
+        else:
+            full = max(height, min(int(audit.get("height") or height), MAX_HEIGHT))
+            await cdp.call("Emulation.setDeviceMetricsOverride", {
+                "width": width, "height": full, "deviceScaleFactor": 1,
+                "mobile": touch}, session)
+            await asyncio.sleep(0.3)
+            shot_args = {"format": "png", "captureBeyondViewport": False}
+        pic = await cdp.call("Page.captureScreenshot", shot_args, session, timeout=30)
         name = f"{slug}-{width}-{scheme}.png"
         if not SHOT_RE.match(name):
             raise RuntimeError("bad screen name")
@@ -926,6 +1005,61 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             await cdp.call("Target.closeTarget", {"targetId": tid})
         except Exception:  # noqa: BLE001 — a tab that will not close dies with the browser
             pass
+
+
+async def _find(cdp: CDP, session: str, focus: dict, label: str) -> dict:
+    res = await cdp.call("Runtime.evaluate", {
+        "expression": f"({_FOCUS_JS})({json.dumps(str(focus['id']))})",
+        "returnByValue": True}, session)
+    rect = (res.get("result") or {}).get("value")
+    if not isinstance(rect, dict) or not rect.get("w") or not rect.get("h"):
+        raise MissingElement(f"{label} has no card or section called {focus['id']!r} "
+                             "on screen")
+    return rect
+
+
+async def _focus_press(cdp: CDP, session: str, focus: dict, label: str) -> None:
+    """Scroll the element into view, and tap it or hold it open first when
+    asked. The press is a real pointer down and up at its middle, so the
+    page answers it exactly as it answers a finger — and the write guard
+    and the socket refusal are already on the page, so whatever the press
+    tries to change goes nowhere."""
+    rect = await _find(cdp, session, focus, label)
+    press = focus.get("press") or ""
+    if press not in FOCUS_PRESSES:
+        return
+    x, y = rect["x"] + rect["w"] / 2, rect["y"] + min(rect["h"] / 2, 40)
+    common = {"x": x, "y": y, "button": "left", "clickCount": 1}
+    await cdp.call("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y}, session)
+    await cdp.call("Input.dispatchMouseEvent", {"type": "mousePressed", **common}, session)
+    await asyncio.sleep(HOLD_S if press == "open" else 0.05)
+    await cdp.call("Input.dispatchMouseEvent", {"type": "mouseReleased", **common}, session)
+    cdp.last_net = time.monotonic()
+    await cdp.settle()
+    await asyncio.sleep(0.6)          # an opening card animates into place
+
+
+async def _focus_clip(cdp: CDP, session: str, focus: dict, label: str,
+                      width: int, height: int, touch: bool) -> dict:
+    """The screenshot arguments for one element: the window made tall
+    enough to hold it, the element scrolled to its top, and the picture
+    cropped to it with a little room round it."""
+    rect = await _find(cdp, session, focus, label)
+    tall = int(min(rect["h"] + 2 * FOCUS_MARGIN, ELEMENT_MAX_HEIGHT))
+    await cdp.call("Emulation.setDeviceMetricsOverride", {
+        "width": width, "height": max(height, tall), "deviceScaleFactor": 1,
+        "mobile": touch}, session)
+    await asyncio.sleep(0.3)
+    rect = await _find(cdp, session, focus, label)
+    view_h = max(height, tall)
+    x0 = max(0.0, rect["x"] - FOCUS_MARGIN)
+    y0 = max(0.0, rect["y"] - FOCUS_MARGIN)
+    x1 = min(float(width), rect["x"] + rect["w"] + FOCUS_MARGIN)
+    y1 = min(float(view_h), rect["y"] + rect["h"] + FOCUS_MARGIN)
+    if x1 - x0 < 1 or y1 - y0 < 1:
+        raise MissingElement(f"{label}: {focus['id']!r} has no size on screen")
+    return {"format": "png", "captureBeyondViewport": False,
+            "clip": {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0, "scale": 1}}
 
 
 # ---------------------------------------------------------------------------

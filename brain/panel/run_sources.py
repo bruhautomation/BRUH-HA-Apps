@@ -50,6 +50,15 @@ LEDGER = Path(os.environ.get("BRAIN_RUN_SOURCES", "/data/run-sources.jsonl"))
 SOURCES: dict[str, dict[str, str]] = {
     "voice": {"label": "Voice", "blurb": "Assist asked it something"},
     "automation": {"label": "Automation", "blurb": "an automation ran a task"},
+    # Morph, the dashboard: a change request somebody told it, its learning
+    # pass, and a conversation typed into its Ask line. Every Morph task
+    # carries `"source": "morph"`, and the automation listener claims its
+    # session under that rather than as Automation (a change request) or as
+    # nobody's (a conversation, which then read as the person's own chat in
+    # brAIn). In /config's store, not the engine's: a Morph conversation is
+    # one the person may carry on in brAIn's chat, never a record.
+    "morph": {"label": "Morph", "blurb": "what Morph asked for: changes, its "
+              "learning pass and conversations from its Ask line"},
     "memory": {"label": "Memory", "blurb": "filing the inbox into memory"},
     "study": {"label": "Study", "blurb": "a study session"},
     "card": {"label": "Cards", "blurb":

@@ -176,7 +176,7 @@ ha login --token …    # paste a token minted elsewhere
 ha login --revoke     # withdraw the shared copy
 \`\`\`
 
-The interactive flow needs a terminal, so run it in the panel's classic terminal (**Ask** tab, ⋯ → Classic terminal) —
+The interactive flow needs a terminal, so run it in the panel's classic terminal (**Ask** tab, ⋯ → Switch to terminal) —
 not the separate **Terminal & SSH** add-on, which is a different container whose \`ha\`
 is the Supervisor CLI, an unrelated tool. Without a terminal at all, use \`--share\`,
 \`--token\`, or the panel.
@@ -1602,8 +1602,8 @@ non-root user with your \`/config\` in front of it. Everything above, plus every
 capable engineer with a shell can do: read logs, edit YAML, write scripts, install
 packages, use git, take the long way round a hard problem.
 
-It has two faces, and you switch between them from **⋯ → Classic terminal / Chat**
-on the tab (or in ⚙ Settings). The switch is saved: the Ask tab opens the way you
+It has two faces, and you switch between them from **⋯ → Switch to terminal / Switch to chat**
+on the tab (or ⚙ Settings → **Chat or terminal**). The switch is saved: the Ask tab opens the way you
 left it next time. Both run the same Claude Code, on the same login, in the
 same \`/config\`, with the same permissions — what differs is only how you see it.
 
@@ -2293,11 +2293,13 @@ ten days for it to have run a few times. \`GET /api/appliances\` shows what was
 measured; ⚙ Diagnostics shows how many machines have a shape.
 
 **The chore** is narrower than the measurement. brAIn will tell you a washing
-machine, a tumble dryer or a dishwasher has finished and is still full — and
-nothing else, matched on the sensor's name. That is a deliberate guess in the
-cheap direction: not recognising your machine costs a missing reminder, while
+machine, a tumble dryer or a dishwasher finished a cycle and nothing has run
+since — and nothing else, matched on the sensor's name. That is a deliberate
+guess in the cheap direction: not recognising your machine costs a missing reminder, while
 recognising the wrong one means a notification telling you to go and empty
-your television.
+your television. It says the machine is still full only when a door sensor on
+the same machine has stayed shut since the cycle ended, because power cannot
+see whether a drum is empty.
 
 It waits before saying anything (a cycle that ended four minutes ago is
 somebody standing at the machine), it stops asking after about half a day
