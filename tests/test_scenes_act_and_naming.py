@@ -23,7 +23,7 @@ import asyncio
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
+import unittest.mock as mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -146,8 +146,7 @@ class TestWrittenStraightAway(AcceptCase):
                                lambda: acts), \
                 mock.patch.object(self.server, "yolo_mode", lambda: False):
             out = await self.server._design_scenes("Den")
-            for task in list(self.server._SCENE_TASKS):
-                await task
+            await asyncio.gather(*list(self.server._SCENE_TASKS))
         return out
 
     def scene_rows(self):

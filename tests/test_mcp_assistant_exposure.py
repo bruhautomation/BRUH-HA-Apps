@@ -124,7 +124,7 @@ class Base(unittest.TestCase):
         self.recorded = []
         for p in (patch.object(m, "_ws_command", self.core.ws),
                   patch.object(m, "ha_api_request", self.core.rest),
-                  patch.object(m, "_honeytokens", lambda: frozenset()),
+                  patch.object(m, "_honeytokens", frozenset),
                   patch.object(m, "record_action",
                                lambda *a, **k: self.recorded.append(a))):
             p.start()

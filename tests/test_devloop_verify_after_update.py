@@ -23,7 +23,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest import mock
+import unittest.mock as mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
