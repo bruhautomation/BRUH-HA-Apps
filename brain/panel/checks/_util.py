@@ -105,6 +105,14 @@ def house_tz() -> dt.tzinfo:
         return dt.timezone.utc
 
 
+def clock(value: Any) -> str:
+    """A time of day for a `detail` line ('14:20'), in the house's zone."""
+    ts = parse_ts(value)
+    if ts is None:
+        return "an unknown time"
+    return dt.datetime.fromtimestamp(ts, tz=house_tz()).strftime("%H:%M")
+
+
 def when(value: Any) -> str:
     """A short date for a `detail` line: '3 Sep' / '3 Sep 2025'.
 

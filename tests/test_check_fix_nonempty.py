@@ -39,6 +39,7 @@ EXTRA_MODULES = (
     "test_access_steward", "test_actions", "test_baselines",
     "test_dehumidifier_stopped",
     "test_printer_heaters_and_hot_machines",
+    "test_print_stopped",
 )
 
 

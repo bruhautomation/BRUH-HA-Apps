@@ -40,7 +40,7 @@ import re
 
 import numfmt
 
-from ._util import (CouldNotLook, House, domain_of, house_tz, parse_ts,
+from ._util import (CouldNotLook, House, clock, domain_of, parse_ts,
                     state_words)
 
 # The three machines that finish and then wait for somebody. Matched
@@ -140,12 +140,6 @@ def _door_since(house: House, eid: str, finished: float) -> str:
     return ""
 
 
-def _clock(stamp: float) -> str:
-    """The time of day in the house's own timezone (`when`'s rule)."""
-    import datetime as _dt  # noqa: PLC0415
-    return _dt.datetime.fromtimestamp(stamp, tz=house_tz()).strftime("%H:%M")
-
-
 def waiting(snap: dict, now: float) -> list[dict]:
     """Appliances that finished a while ago and have not run since."""
     import appliances  # noqa: PLC0415
@@ -209,7 +203,7 @@ def waiting(snap: dict, now: float) -> list[dict]:
                 machine=KIND_NAMES[kind]),
             "was": [FULL_TEXT.format(machine=KIND_NAMES[kind])],
             "detail": (f"It stopped drawing power {when} "
-                       f"(at {_clock(finished)}), and nothing has run "
+                       f"(at {clock(finished)}), and nothing has run "
                        f"since{shut}. Measured from {house.name(eid)}: this "
                        f"machine draws about {shape.get('busy_w', 0):.0f}W "
                        f"running against {shape.get('idle_w', 0):.0f}W "
