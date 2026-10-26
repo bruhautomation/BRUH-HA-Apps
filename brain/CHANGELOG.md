@@ -4,11 +4,21 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 
 ## Unreleased
 
+### Added
+
+- **A finding about several things lists every one of them.** The card says how many ("8 entities") with a Show all that opens the whole list by name, and the sentence above no longer stops in the middle of a name. (#437)
+
+### Changed
+
+- **Each rule has one name everywhere.** A card, the list of rules brAIn has been wrong about, the question asking whether to stop a rule and History all call it by its own name ("Impossible sensor readings", not "Device check"), and the question says what kind of report it stops, with an example, and that History › Ignored › Restore turns it back on. (#439)
+
 ### Fixed
 
 - **New findings no longer wait until midnight for brAIn's check on a busy house.** Changes to protected devices pulled checks forward until the day's allowance ran out by late morning; they now use only checks the regular ten-minute look will not need, so every new finding is checked within two looks all day. (#82)
 - **A finding brAIn's check calls a repeat of another open finding is set aside, not shown with that as its reason.** Cards no longer say "…is already an open problem for you" about themselves, and those cards keep their what-to-do. (#448)
 - **A finding's what-to-do never asks you to type a placeholder.** A step holding "a template", `<entity>`, TODO or "…" where a value belongs is not written, and the card keeps the sentence it had. (#446)
+
+
 
 
 

@@ -375,9 +375,29 @@ SOURCE_TITLE = None
 _NO_TITLE = ("", "Custom")
 
 
+def _check_title(source: str) -> str:
+    """A house check's own catalog title, or "" — the one name a rule has
+    (#439). A check row is filed under its GROUP's word ("Device check"),
+    which names a dozen rules at once: the useful battery rule and the
+    impossible-readings rule read the same, and a question about stopping
+    one could not say which."""
+    if not str(source or "").startswith("check:"):
+        return ""
+    try:
+        import checks  # noqa: PLC0415 — the catalog, read lazily
+        spec = checks.get_check(str(source)[len("check:"):]) or {}
+    except Exception:  # noqa: BLE001 — a label, never the read
+        return ""
+    return str(spec.get("title") or "")
+
+
 def _titled(source: str, title: str) -> str:
-    """The title a reader shows for `source`, never the bare "Custom"."""
+    """The title a reader shows for `source`: a check's own catalog title,
+    never its group's, and never the bare "Custom"."""
     title = str(title or "")
+    named = _check_title(source)
+    if named:
+        return named
     if title.strip() in _OLD_RESIDENT_TITLES and str(source) == RESIDENT_SOURCE:
         return RESIDENT_TITLE
     if title.strip() not in _NO_TITLE or not str(source).startswith("custom-"):
@@ -3049,7 +3069,13 @@ def scorecard() -> list[dict]:
             "source": src,
             "title": _titled(src, str(e.get("source_title") or "")) or src,
             "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
-            "last_wrong_ts": 0})
+            "last_wrong_ts": 0, "example": "", "example_ts": -1})
+        # One report the rule filed, newest first — what the mute question
+        # names as an example of what stopping it stops.
+        if str(e.get("text") or "").strip() and int(e.get("ts") or 0) >= \
+                row["example_ts"]:
+            row["example"] = str(e["text"]).strip()[:MAX_TEXT]
+            row["example_ts"] = int(e.get("ts") or 0)
         # Agreeing to do something is agreeing the report was right, so
         # an accepted row scores exactly as a fixed one. The alternative
         # was to count it as nothing until the chore is done, which would
@@ -3070,6 +3096,7 @@ def scorecard() -> list[dict]:
     rows = list(by.values())
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]
+        r.pop("example_ts", None)
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
 

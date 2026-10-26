@@ -15977,7 +15977,7 @@ async function loadDiagAccuracy() {
   try {
     data = await api("api/findings");
   } catch (e) {
-    diagEmpty(host, "Could not read the scorecard: " + e.message);
+    diagEmpty(host, "Could not read how right it's been: " + e.message);
     return;
   }
   host.textContent = "";
@@ -15986,7 +15986,7 @@ async function loadDiagAccuracy() {
   const rows = (data.scorecard || []).filter(
     (r) => r.total >= SET_SCORE_MIN && !mutedIds.has(r.source));
   if (!rows.length && !muted.length) {
-    diagEmpty(host, "Not enough answers yet. A producer is scored once you have "
+    diagEmpty(host, "Not enough answers yet. A rule is scored once you have "
       + `answered ${SET_SCORE_MIN} of its cards.`);
     return;
   }
