@@ -229,7 +229,8 @@ function renderVersions(p) {
   const info = $("#versionInfo");
   info.replaceChildren();
   if (!v) return;
-  info.append(el("p", {}, [v.summary, fmtSize(v.size_mm), v.grams ? `≈ ${v.grams} g PLA` : null].filter(Boolean).join(" · ")));
+  // The size is said once, under the view ("Overall …"), not again here.
+  info.append(el("p", {}, [v.summary, v.grams ? `≈ ${v.grams} g PLA` : null].filter(Boolean).join(" · ")));
   if (v.warnings && v.warnings.length) info.append(el("ul", { class: "warnlist" }, v.warnings.map((w) => el("li", {}, w))));
   if (v.dims) info.append(el("p", {}, Object.entries(v.dims).map(([k, val]) => `${k}: ${val}`).join(" · ")));
   if (v.ok && v.n !== p.current) {
@@ -286,7 +287,10 @@ async function loadModel(p, v) {
     await design.viewer.load(bodies);
     renderBodies(bodies);
     firstHelp();
-    // The size is the version's own line below the view, said once.
+    const size = design.viewer.size();
+    if (size && !$("#measureBtn").getAttribute("aria-pressed").includes("true")) {
+      $("#measureOut").textContent = `Overall ${fmtSize(size)}`;
+    }
     if (v.n === p.current) saveThumb(p);
   } catch (e) { note.hidden = false; note.textContent = `Could not show it: ${e.message}`; }
 }
