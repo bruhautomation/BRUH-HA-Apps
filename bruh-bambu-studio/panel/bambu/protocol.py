@@ -70,6 +70,28 @@ STAGES = {
 # The models whose camera is an RTSPS stream on port 322; the rest (P1, A1)
 # send JPEG frames on port 6000. ipcam.rtsp_url in a report overrides this.
 RTSP_MODELS = {"X1C", "X1", "X1E", "P2S", "H2D", "H2S", "H2C"}
+# The models that take only the AMS Lite, which is open to the room and has
+# no humidity or temperature sensor. Their reports still carry a `humidity`
+# per unit, and a number there is not a reading. The serial prefixes are
+# discover.py's for the same two models (a test holds them equal), for a
+# printer saved before its model was.
+AMS_LITE_MODELS = {"A1", "A1 mini"}
+AMS_LITE_SERIALS = ("030", "039")
+
+
+def ams_lite_only(model: str | None, serial: str | None = None) -> bool:
+    """Whether this printer can only be fed by an AMS Lite."""
+    if model:
+        return str(model) in AMS_LITE_MODELS
+    return str(serial or "")[:3].upper() in AMS_LITE_SERIALS
+
+
+def _unit_is_lite(unit: dict) -> bool:
+    """A report that names its AMS type as the Lite (some firmware does)."""
+    for key in ("ams_type", "type", "product"):
+        if "lite" in str(unit.get(key) or "").lower():
+            return True
+    return False
 
 
 def deep_merge(base: dict, update: dict) -> dict:
@@ -259,12 +281,15 @@ def camera_kind(model: str, rtsp_url) -> str:
     return "rtsp" if str(model or "") in RTSP_MODELS else "jpeg"
 
 
-def summarise(status: dict) -> dict:
+def summarise(status: dict, model: str | None = None, serial: str | None = None) -> dict:
     """The merged report trimmed to what a person, a sensor or brAIn reads.
 
     A field the printer has not sent is None, never 0: a nozzle at 0 °C and
-    a nozzle nobody has heard about are different claims.
+    a nozzle nobody has heard about are different claims. `model` (or the
+    serial, when no model was saved) says whether the AMS is an AMS Lite,
+    whose humidity and temperature are None: it has no sensor for either.
     """
+    lite_only = ams_lite_only(model, serial)
     p = status.get("print") if isinstance(status.get("print"), dict) else {}
     state = str(p.get("gcode_state") or "").strip().lower() or None
     lights = {str(item.get("node")): item.get("mode") == "on"
@@ -276,8 +301,9 @@ def summarise(status: dict) -> dict:
         if not isinstance(unit, dict):
             continue
         uid = _int(unit.get("id")) or 0
-        units.append({"id": uid, "humidity": _int(unit.get("humidity")),
-                      "temp_c": _num(unit.get("temp"))})
+        sensorless = lite_only or _unit_is_lite(unit)
+        units.append({"id": uid, "humidity": None if sensorless else _int(unit.get("humidity")),
+                      "temp_c": None if sensorless else _num(unit.get("temp"))})
         for tray in unit.get("tray") or []:
             if not isinstance(tray, dict) or not tray.get("tray_type"):
                 continue

@@ -116,8 +116,12 @@ class Panel:
                 if camera:
                     camera.stop()
         for pid, row in rows.items():
+            if pid in self.clients:
+                # A model changed on the form reaches the running session.
+                self.clients[pid].model = row.get("model") or ""
             if pid not in self.clients and codes.get(pid):
-                client = PrinterClient(row["host"], row["serial"], codes[pid])
+                client = PrinterClient(row["host"], row["serial"], codes[pid],
+                                       model=row.get("model") or "")
                 self.clients[pid] = client
                 if self.start_clients:
                     client.start()
@@ -1645,7 +1649,10 @@ class DesignPrinting:
                 "external_spool": ({"material": row["external_spool"].get("type"),
                                     "colour": row["external_spool"].get("colour")}
                                    if row.get("external_spool") else None),
-                "ams_humidity": [u.get("humidity") for u in row.get("ams_units") or []],
+                # An AMS Lite has no sensor, so its None is left out rather
+                # than read as a number.
+                "ams_humidity": [u["humidity"] for u in row.get("ams_units") or []
+                                 if u.get("humidity") is not None],
                 "trays": [{"slot": t["slot"], "material": t.get("type"), "colour": t.get("colour"),
                            "remaining_percent": t.get("remaining")} for t in row.get("ams") or []],
             })
