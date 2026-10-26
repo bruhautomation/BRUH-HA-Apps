@@ -362,7 +362,13 @@ function fullScreen(node, onChange) {
     document.removeEventListener("keydown", onKey);
     if (onChange) onChange(false);
   };
-  const onKey = (e) => { if (e.key === "Escape") leave(); };
+  // Escape leaves either way: a browser that hands the key to the page
+  // (a kiosk, a test) would otherwise keep the view full screen.
+  const onKey = (e) => {
+    if (e.key !== "Escape") return;
+    if (document.fullscreenElement === node) document.exitFullscreen().catch(() => {});
+    else leave();
+  };
   if (document.fullscreenElement === node || node.classList.contains("filled")) {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else leave();
@@ -376,11 +382,15 @@ function fullScreen(node, onChange) {
   };
   if (node.requestFullscreen && document.fullscreenEnabled !== false) {
     node.requestFullscreen().then(() => {
-      if (onChange) {
-        onChange(true);
-        const off = () => { if (document.fullscreenElement !== node) { document.removeEventListener("fullscreenchange", off); onChange(false); } };
-        document.addEventListener("fullscreenchange", off);
-      }
+      document.addEventListener("keydown", onKey);
+      if (onChange) onChange(true);
+      const off = () => {
+        if (document.fullscreenElement === node) return;
+        document.removeEventListener("fullscreenchange", off);
+        document.removeEventListener("keydown", onKey);
+        if (onChange) onChange(false);
+      };
+      document.addEventListener("fullscreenchange", off);
     }, fill);
   } else {
     fill();

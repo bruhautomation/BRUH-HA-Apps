@@ -286,10 +286,7 @@ async function loadModel(p, v) {
     await design.viewer.load(bodies);
     renderBodies(bodies);
     firstHelp();
-    const size = design.viewer.size();
-    if (size && !$("#measureBtn").getAttribute("aria-pressed").includes("true")) {
-      $("#measureOut").textContent = `Overall ${fmtSize(size)}`;
-    }
+    // The size is the version's own line below the view, said once.
     if (v.n === p.current) saveThumb(p);
   } catch (e) { note.hidden = false; note.textContent = `Could not show it: ${e.message}`; }
 }
@@ -536,6 +533,13 @@ $("#dpPrinter").addEventListener("change", loadPlan);
 $("#designPrintForm").addEventListener("submit", submitDesignPrint);
 $("#dpCancel").addEventListener("click", () => $("#designPrint").close());
 document.querySelectorAll("[data-view3d]").forEach((b) => b.addEventListener("click", () => design.viewer && design.viewer.view(b.dataset.view3d)));
+// Full screen for the view and its tools (Escape, or the same button, to
+// leave); app.js's fullScreen falls back to filling the window when an
+// ingress frame refuses the Fullscreen API.
+$("#viewFull").addEventListener("click", () => fullScreen($("#viewerWrap"), (on) => {
+  $("#viewFull").setAttribute("aria-pressed", String(on));
+  $("#viewFull").textContent = on ? "‹ Leave full screen" : "Full screen";
+}));
 $("#measureBtn").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));
