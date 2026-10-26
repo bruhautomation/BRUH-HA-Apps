@@ -135,7 +135,7 @@
         },
         "machine": {
           "name": "Machine profile",
-          "description": "Only for a bare model that has to be sliced: the printer profile name as Bambu Studio lists it."
+          "description": "Only for a bare model that has to be sliced: the printer profile name as Bambu Studio lists it, or one of your printers by its name (its model decides the profile)."
         },
         "process": {
           "name": "Process profile",
@@ -193,7 +193,7 @@
         },
         "machine": {
           "name": "Machine profile",
-          "description": "Machine profile."
+          "description": "The printer profile name as Bambu Studio lists it, or one of your printers by its name (its model decides the profile)."
         },
         "process": {
           "name": "Process profile",
