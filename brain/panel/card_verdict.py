@@ -35,6 +35,30 @@ Two more came back after the contract stopped asking for a verdict first:
   title's figures (`title_echo`; a duration of hours and minutes counts as
   the hours it rounds to) is dropped, when another sentence follows it.
 
+And four after the card carried its judgement in a field of its own
+(`verdict`, one of `VERDICTS`, drawn as ONE chip):
+
+* **The verdict written six ways in the prose.** "Verdict: normal.",
+  "Needs action.", "Nothing to fix.", "This needs one change.", "Neither
+  unit is broken." each opened a summary, so a card's judgement was a
+  sentence to read rather than a chip to see. A first sentence that is a
+  verdict and nothing else (`verdict_of_sentence`) is taken off when
+  another sentence follows (`lead_verdict`) and becomes the chip; a card
+  stored before the field existed gets the same reading on the way out
+  (`legacy`), so it never shows two.
+* **A card whose lead is another card's subject.** A hose card opened on
+  the septic pump's figure. A first sentence naming only what another card
+  is about, and nothing the title names, is not the lead (`others`).
+* **A figure that disagrees with an open finding.** "Dropped 7 times since
+  Sat" under a finding counting 14 times in 7 days: the sentence goes and
+  the finding leads (`disagreeing_row`); a card saying a fix is already in
+  place for a finding names it (`claims_fixed`), so the finding's own check
+  is asked again.
+* **All fine about nothing.** A scheduled card whose verdict is all fine,
+  with nothing to act on and nothing changed (`no_change`), is held like a
+  card about nothing; one that is stored anyway folds into the Reports
+  pane's "All quiet" line (`folds_quiet`).
+
 Everything here is pure over the parsed reply and the previous card, so
 the server's `_generate` asks it once and the tests drive it directly. It
 never invents a number or a sentence about the house: a rewrite only ever
@@ -111,6 +135,105 @@ RISE = 1.5
 
 HOLD_WHY = ("nothing happened since the last card, so the last card was kept "
             "rather than replaced with one about nothing")
+QUIET_WHY = ("all fine and nothing changed since the last card, so the last "
+             "card was kept rather than replaced with one saying so again")
+
+# The card's one judgement, and the only words it may take. The panel
+# draws it as one chip; the summary never says it again.
+FINE, LOOK, ACTION = "all fine", "worth a look", "needs action"
+VERDICTS = (FINE, LOOK, ACTION)
+
+
+def clean_verdict(value) -> str:
+    """One of `VERDICTS`, or "" for anything else."""
+    text = str(value or "").strip().lower()
+    return text if text in VERDICTS else ""
+
+
+# A sentence that is a verdict and nothing else, in the shapes cards wrote
+# it. Matched over the WHOLE sentence: "Needs action — the pump ran 9
+# times" is a finding with a lead clause (`strip_reassurance`'s job), not a
+# verdict sentence.
+_ACTION_SENT = re.compile(
+    r"(?:(?:this|it|one thing|something|the \w+(?: \w+)?)\s+)?"
+    r"(?:needs|requires|wants)\s+(?:(?:one|a|some|your)\s+)?"
+    r"(?:action|change|fix|attention|doing|changing|fixing)"
+    r"(?:\s+(?:now|today|soon))?|action (?:needed|required)|act now", re.I)
+_LOOK_SENT = re.compile(
+    r"(?:(?:this is|it is|it's|this one is)\s+)?"
+    r"(?:worth (?:a look|a check|checking|watching)|one to watch|"
+    r"keep an eye on (?:it|this|them))", re.I)
+_FINE_SENT = re.compile(
+    r"(?:all\s+)?(?:normal|fine|ok|okay|good|clear|healthy|steady|as expected)|"
+    r"(?:all|everything|it|this|both|they|each|the \w+(?: \w+)?)\s+"
+    r"(?:is|are|looks?|seems?|reads?|runs?)\s+(?:normal|fine|ok|okay|good|"
+    r"healthy|as expected|working)|"
+    r"nothing (?:to (?:fix|do|report|worry about|act on)|(?:is )?(?:wrong|broken)|"
+    r"(?:needs|requires) (?:action|attention|doing|fixing|changing))|"
+    r"no (?:action|change|fix|attention)(?: is)?(?: needed| required)?|"
+    r"no (?:problems?|issues?|faults?|concerns?)(?: found| here)?|"
+    r"neither (?:\w+\s+){1,3}(?:is|was) (?:broken|faulty|at fault|wrong|failing)|"
+    r"(?:there is|there's) nothing wrong", re.I)
+_VERDICT_LABEL = re.compile(r"(?:the\s+)?verdict\s*[:\-–—]\s*(.+)", re.I)
+
+
+def verdict_of_sentence(sentence: str) -> str:
+    """The verdict a sentence IS, or "" when it says anything else."""
+    text = str(sentence or "").strip().rstrip(".!…").strip()
+    label = _VERDICT_LABEL.fullmatch(text)
+    if label:
+        text = label.group(1).strip().rstrip(".!…").strip()
+        if clean_verdict(text):
+            return clean_verdict(text)
+    for rx, verdict in ((_ACTION_SENT, ACTION), (_LOOK_SENT, LOOK),
+                        (_FINE_SENT, FINE)):
+        if rx.fullmatch(text):
+            return verdict
+    return ""
+
+
+def lead_verdict(summary: str) -> tuple[str, str, bool]:
+    """`(verdict, summary, stripped)`: the verdict the summary's first
+    sentence is, and the summary without it when another sentence follows
+    (a summary that is only an all-clear keeps it, as the contract allows).
+    """
+    parts = _SENTENCE_END.split(str(summary or "").strip(), maxsplit=1)
+    verdict = verdict_of_sentence(parts[0]) if parts and parts[0] else ""
+    if verdict and len(parts) == 2 and parts[1].strip():
+        return verdict, _capital(parts[1]), True
+    return verdict, summary, False
+
+
+def _title_verdict(title: str) -> tuple[str, str]:
+    """`(title without a trailing verdict, the verdict)`: "Sump: normal"."""
+    subject, sep, rest = str(title or "").partition(":")
+    if sep and subject.strip():
+        verdict = verdict_of_sentence(rest)
+        if verdict:
+            return subject.strip(), verdict
+    return title, ""
+
+
+def legacy(card: dict) -> dict:
+    """A stored card read with one verdict: the chip it carries, or — for a
+    card made before the field existed — the verdict its first sentence or
+    its title's tail wrote, taken off the prose. Returns the fields to show
+    (`title`, `summary`, `verdict`); the stored file is not touched."""
+    card = card or {}
+    title = str(card.get("title") or "")
+    summary = str(card.get("summary") or "")
+    given = clean_verdict(card.get("verdict"))
+    said, body, stripped = lead_verdict(summary)
+    plain_title, title_said = _title_verdict(title)
+    out = {"title": plain_title if title_said else title,
+           "summary": body if stripped else summary,
+           "verdict": given or said or title_said}
+    if not given and not said and not title_said:
+        clause, after = lead_clause(summary)
+        if after.strip() and is_reassurance(clause):
+            out["summary"], _ = strip_reassurance(summary)
+            out["verdict"] = FINE
+    return out
 
 
 def _num(text: str) -> float | None:
@@ -347,18 +470,242 @@ def open_row_named(obj: dict, open_rows) -> dict | None:
     return None
 
 
+def initial_verdict(obj: dict) -> str:
+    """The verdict a reply carries: its `verdict` field, else the one its
+    first sentence, its title's tail or its opening clause wrote."""
+    obj = obj or {}
+    given = clean_verdict(obj.get("verdict"))
+    if given:
+        return given
+    said = lead_verdict(str(obj.get("summary") or ""))[0]
+    if said:
+        return said
+    title_said = _title_verdict(str(obj.get("title") or ""))[1]
+    if title_said:
+        return title_said
+    if is_reassurance(lead_clause(str(obj.get("summary") or ""))[0]):
+        return FINE
+    return ""
+
+
 def review(obj: dict, previous: dict | None = None,
-           open_rows=()) -> dict:
-    """What to do with one parsed card (`_review`), with the reassurance
-    and the restated title taken off whatever is to be stored."""
-    got = _review(obj, previous, open_rows)
-    if not got["hold"]:
-        _finish(got["obj"], got["changed"])
+           open_rows=(), others=(), names_in=None) -> dict:
+    """What to do with one parsed card (`_review`), with the reassurance,
+    a verdict sentence and the restated title taken off whatever is to be
+    stored, and the card's one `verdict` set from what it said.
+
+    ``others`` is the entity sets of the other cards on the dashboard and
+    ``names_in`` the panel's reader of which entities a sentence names;
+    with both, a first sentence about another card's subject is not this
+    card's lead. ``fixed``, present only when there is one, is the open rows
+    the card says are already fixed, whose checks the caller asks again.
+    """
+    verdict = initial_verdict(obj)
+    got = _review(obj, previous, open_rows, verdict)
+    fixed = claims_fixed(obj, open_rows)
+    if fixed:
+        # Only when there are some: the answer stays the three keys it
+        # always was for every card that claims nothing.
+        got["fixed"] = fixed
+    if got["hold"]:
+        return got
+    out = got["obj"]
+    _finish(out, got["changed"])
+    _strip_verdict_sentence(out, got["changed"])
+    _not_another_cards_lead(out, got["changed"], others, names_in)
+    changed = got["changed"]
+    if "no verdict over nothing new" in changed:
+        verdict = ""
+    elif verdict != ACTION and any(c in changed for c in (
+            "no fine verdict over an open finding", "no fine verdict over a rise",
+            "a figure that disagrees with an open finding")):
+        verdict = LOOK
+    if verdict:
+        out["verdict"] = verdict
+    else:
+        out.pop("verdict", None)
     return got
 
 
+def _strip_verdict_sentence(out: dict, changed: list[str]) -> None:
+    """No first sentence that is a verdict, and no title ending in one: the
+    chip says it once."""
+    _, body, stripped = lead_verdict(str(out.get("summary") or ""))
+    if stripped:
+        out["summary"] = body
+        changed.append("no verdict sentence leading the summary")
+    title, said = _title_verdict(str(out.get("title") or ""))
+    if said:
+        out["title"] = title[:120]
+        if "no verdict sentence leading the summary" not in changed:
+            changed.append("no verdict sentence leading the summary")
+
+
+def _own_words(out: dict) -> list[str]:
+    return _texts(out) + [str(x) for x in out.get("learned") or []
+                          if isinstance(x, str)]
+
+
+def _not_another_cards_lead(out: dict, changed: list[str], others,
+                            names_in) -> None:
+    """A first sentence naming only what another card is about, and nothing
+    else this card names, is dropped when the card has more to say: a hose
+    card that opened on the septic pump's figure told the pump's story with
+    a number the pump's own card did not have."""
+    if not names_in or not others:
+        return
+    parts = _SENTENCE_END.split(str(out.get("summary") or ""), maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        return
+    try:
+        lead = set(names_in(parts[0]) or ())
+        rest = set(names_in(" ".join([parts[1], str(out.get("title") or "")]
+                                     + _texts(out)[2:])) or ())
+    except Exception:  # noqa: BLE001 — a reader that failed decides nothing
+        return
+    others = [set(o) for o in others if o]
+    if not lead or lead & rest:
+        return
+    if all(any(eid in o for o in others) for eid in lead):
+        out["summary"] = _capital(parts[1])
+        changed.append("another card's subject as the lead")
+
+
+# A count the card or a row states, with what it counts. Only counts: a
+# window ("7 days", "48 h") is the period, and two periods differing is
+# what the card is told to explain in words, not a disagreement.
+_COUNT = re.compile(
+    r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)\s*(times|drops?|dropouts?|runs?|cycles?|"
+    r"openings?|events?|restarts?|overrides?|gal(?:lons?)?|kwh|litres?|liters?)\b",
+    re.I)
+_UNIT = {"drop": "drop", "dropout": "drop", "run": "run", "cycle": "cycle",
+         "opening": "opening", "event": "event", "restart": "restart",
+         "override": "override", "gallon": "gal", "liter": "litre"}
+
+
+def _counts(text: str) -> list[tuple[float, str]]:
+    out = []
+    for m in _COUNT.finditer(text or ""):
+        n = _num(m.group(1))
+        unit = m.group(2).lower().rstrip("s") if m.group(2).lower() not in (
+            "times", "kwh") else m.group(2).lower()
+        if unit.startswith("gal"):
+            unit = "gal"
+        unit = _UNIT.get(unit, unit)
+        if n is not None:
+            out.append((n, unit))
+    return out
+
+
+def _sentences(text: str) -> list[str]:
+    return [p for p in _SENTENCE_END.split(str(text or "").strip()) if p]
+
+
+def disagreeing_row(obj: dict, open_rows) -> tuple[dict | None, str]:
+    """`(row, sentence)`: an open finding the card names whose count a
+    sentence about that device states differently ("dropped 7 times" under
+    a row counting 14), or `(None, "")`."""
+    for row in open_rows or ():
+        if not isinstance(row, dict) or not row.get("text"):
+            continue
+        theirs = _counts(f"{row.get('text') or ''} {row.get('detail') or ''}")
+        if not theirs:
+            continue
+        for sentence in _sentences(obj.get("summary")):
+            if not _names_row([sentence], row):
+                continue
+            mine = _counts(sentence)
+            for n, unit in mine:
+                same = [m for m, u in theirs if u == unit]
+                if same and not any(
+                        abs(n - m) <= 0.02 * max(abs(n), abs(m), 1.0)
+                        for m in same):
+                    return row, sentence
+    return None, ""
+
+
+# A sentence saying a problem has already been dealt with.
+_FIXED_SAYS = re.compile(
+    r"\b(?:now (?:handles|covers|stops|prevents|catches|blocks)|"
+    r"already (?:handles|covers|fixed|in place|done|added|resolved)|"
+    r"(?:has|have) (?:since )?been (?:fixed|added|resolved|replaced|repaired)|"
+    r"(?:is|are) (?:now )?(?:fixed|in place|resolved|repaired)|"
+    r"no longer (?:happens|needed|drops?|fails?|missing))\b", re.I)
+
+
+def claims_fixed(obj: dict, open_rows) -> list[dict]:
+    """The open rows the card says are already fixed: named in its
+    `fixed` field, or named in a sentence saying so."""
+    obj = obj or {}
+    listed = {str(e) for e in obj.get("fixed") or [] if isinstance(e, str)}
+    out = []
+    for row in open_rows or ():
+        if not isinstance(row, dict):
+            continue
+        if row.get("entity_id") and str(row["entity_id"]) in listed:
+            out.append(row)
+            continue
+        if any(_FIXED_SAYS.search(s) and _names_row([s], row)
+               for s in _sentences(obj.get("summary"))):
+            out.append(row)
+    return out
+
+
+# The card's own words for nothing having changed, beyond `_NOTHING_NEW`:
+# "no cooling since 17 Oct", "neither unit has run since".
+_NO_CHANGE = re.compile(
+    r"\b(?:no|nothing)\s+(?:\w+\s+){0,2}since\b|"
+    r"\b(?:has|have|had)(?:n'?t| not)\s+(?:\w+\s+)?(?:run|been|cycled|changed|"
+    r"moved|fired|started|come on)\b[^.]*\bsince\b|"
+    r"\bneither \w+ (?:has|have) (?:\w+ )?(?:run|cycled|changed|fired|started)\b|"
+    r"\bno change\b|\bunchanged\b", re.I)
+
+
+def _figures_of(card: dict) -> dict:
+    return {str(h.get("label")): str(h.get("value"))
+            for h in (card or {}).get("highlights") or []
+            if isinstance(h, dict) and h.get("label")}
+
+
+def no_change(obj: dict, previous: dict | None = None) -> bool:
+    """The card says nothing changed, or shows the figures it showed last
+    time, every one of them."""
+    if nothing_new(obj):
+        return True
+    if any(_NO_CHANGE.search(t) for t in _texts(obj)[:2]):
+        return True
+    now, then = _figures_of(obj), _figures_of(previous or {})
+    return bool(now) and now == then
+
+
+def nothing_to_act(obj: dict) -> bool:
+    """Nothing filed, nothing offered and no figure marked as needing
+    attention."""
+    obj = obj or {}
+    if obj.get("findings") or obj.get("opportunities"):
+        return False
+    return not any(str(h.get("status") or "") in ("warning", "serious", "critical")
+                   for h in obj.get("highlights") or [] if isinstance(h, dict))
+
+
+def quiet_now(obj: dict, previous: dict | None, verdict: str) -> bool:
+    """All fine, nothing to act on, and nothing happened or changed."""
+    return (verdict == FINE and nothing_to_act(obj)
+            and (quiet(obj) or no_change(obj, previous)))
+
+
+def folds_quiet(card: dict) -> bool:
+    """A stored card the Reports pane folds into its "All quiet" line
+    rather than giving a card of its own."""
+    card = card or {}
+    shown = legacy(card)
+    if shown["verdict"] != FINE or not nothing_to_act(card):
+        return False
+    return bool(card.get("quiet")) or quiet(card) or no_change(card, None)
+
+
 def _review(obj: dict, previous: dict | None = None,
-            open_rows=()) -> dict:
+            open_rows=(), verdict: str = "") -> dict:
     """What to do with one parsed card.
 
     `{"obj": the card to store, "hold": "" or why it should not be stored,
@@ -384,6 +731,21 @@ def _review(obj: dict, previous: dict | None = None,
             out["title"] = subject[:120]
         changed.append("no fine verdict over an open finding")
         return {"obj": out, "hold": "", "changed": changed}
+    row, sentence = disagreeing_row(out, open_rows)
+    if row is not None:
+        # A count about a device an open finding counts differently: the
+        # finding's figure stands, and the card leads with it rather than
+        # telling the homeowner two numbers for one thing.
+        kept = [s for s in _sentences(summary) if s != sentence]
+        lead = f"Open finding: {str(row['text']).rstrip('.')}."
+        out["summary"] = " ".join([lead] + kept).strip()
+        changed.append("a figure that disagrees with an open finding")
+        return {"obj": out, "hold": "", "changed": changed}
+    if (previous and clean_verdict(out.get("verdict")) == FINE
+            and quiet_now(out, previous, FINE)):
+        # The field's own all-clear over nothing that changed: the card
+        # about nothing, said in the new words.
+        return {"obj": out, "hold": QUIET_WHY, "changed": []}
     if (fine or title_fine) and nothing_new(out):
         when = when_said((previous or {}).get("generated_at"))
         since = f"Nothing new since {when}" if when else \
@@ -400,7 +762,7 @@ def _review(obj: dict, previous: dict | None = None,
             for h in out.get("highlights") or []]
         changed.append("no verdict over nothing new")
         return {"obj": out, "hold": "", "changed": changed}
-    if previous and quiet(out):
+    if previous and verdict not in (LOOK, ACTION) and quiet(out):
         return {"obj": out, "hold": HOLD_WHY, "changed": []}
     if (fine or title_fine) and rises(out):
         if fine and body:
@@ -412,7 +774,11 @@ def _review(obj: dict, previous: dict | None = None,
     return {"obj": out, "hold": "", "changed": changed}
 
 
-__all__ = ["HOLD_WHY", "RISE", "drop_title_echo", "is_reassurance",
+__all__ = ["ACTION", "FINE", "HOLD_WHY", "LOOK", "QUIET_WHY", "RISE",
+           "VERDICTS", "claims_fixed", "clean_verdict", "disagreeing_row",
+           "drop_title_echo", "folds_quiet", "initial_verdict",
+           "is_reassurance", "lead_verdict", "legacy", "no_change",
+           "nothing_to_act", "quiet_now", "verdict_of_sentence",
            "lead_clause", "nothing_new", "open_row_named", "quiet",
            "strip_reassurance", "title_echo",
            "review", "rises", "says_fine", "strip_verdict", "when_said"]

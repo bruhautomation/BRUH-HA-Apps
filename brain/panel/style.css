@@ -550,6 +550,42 @@ a.btn {
 .card > .xlink { padding: 0 var(--card-pad); }
 .xlink a { color: var(--accent-ink); text-decoration: none; font-weight: 600; }
 .xlink a:hover, .xlink a:focus-visible { text-decoration: underline; }
+/* A card's one judgement: a word and a colour, never the colour alone. */
+.vchip {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  margin: var(--sp-2) var(--card-pad) 0;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: var(--fs-meta);
+  font-weight: 700;
+  width: fit-content;
+}
+.vchip-fine { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good-ink); }
+.vchip-look { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning-ink); }
+.vchip-act { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical-ink); }
+/* Every card that is all fine about nothing changing, folded into one line
+   under the cards that have something to say. */
+.quietline {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-1);
+  font-size: var(--fs-body);
+  color: var(--ink-3);
+  line-height: 1.7;
+}
+.quietline strong { color: var(--ink-2); font-weight: 600; }
+.quietname {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.quietname:hover, .quietname:focus-visible { text-decoration: underline; }
 /* Where a cross-link landed, for a moment. */
 .xflash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
 .card .viz iframe {
@@ -6887,3 +6923,9 @@ body.term-classic #chatModelPick { display: none; }
 .persdate { font-size: 12px; color: var(--ink-3); }
 .persline { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
 .persempty { font-size: 14px; color: var(--ink-3); }
+
+/* The quiet line's names are real targets on touch. After the text floor
+   on purpose: that block must stay the first coarse block in the file. */
+@media (pointer: coarse) {
+  .quietline .quietname { min-height: 44px; padding: 0 4px; }
+}

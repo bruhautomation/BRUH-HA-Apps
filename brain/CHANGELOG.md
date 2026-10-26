@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+### Changed
+- A report shows its judgement as one chip — All fine, Worth a look or Needs action — and its summary no longer opens with a verdict sentence; older reports are shown the same way. (#438)
+- Reports that are all fine about nothing having changed fold into one "All quiet" line under the reports that have something to say, and a scheduled one keeps the last report rather than replacing it. (#449)
+
+### Fixed
+- Two reports about the same device or system no longer tell it with different numbers: a new report is given the other's figures and when they were read, and an older report a newer one covers sits as one line under it. (#436)
+- A report that counts something an open finding also counts uses the finding's figure, and a report saying a problem is already fixed has that finding checked again. (#447)
+
 ## 3.8.18
 
 ### Added

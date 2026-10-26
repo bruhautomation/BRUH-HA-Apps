@@ -408,8 +408,14 @@ CARD_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
+        # The card's one judgement, drawn by the panel as one chip
+        # (`card_verdict.VERDICTS`, the same words). It used to be written
+        # into the prose six different ways, one per card.
+        "verdict": {"type": "string",
+                    "enum": ["all fine", "worth a look", "needs action"],
+                    "description": "The card's one judgement; the summary never says it again."},
         "summary": {"type": "string",
-                    "description": "Opens with the finding itself: the reason, comparison or next step, never the title's figures again; a no-action verdict only where the reader would otherwise worry."},
+                    "description": "Opens with the finding itself: the reason, comparison or next step, never the title's figures again and never a verdict (that is `verdict`); a no-action verdict only where the reader would otherwise worry."},
         "highlights": {
             "type": "array",
             "items": {
@@ -461,50 +467,54 @@ CARD_SCHEMA = {
             },
         },
         "tags": {"type": "array", "items": {"type": "string"}},
+        # The entity ids of open findings the card read as already fixed;
+        # the server asks each one's own check again (`server._generate`).
+        "fixed": {"type": "array", "items": {"type": "string"}},
         "live": {"type": "array", "items": {"type": "string"}},
         "html": {"type": "string"},
     },
-    "required": ["title", "summary", "highlights", "html"],
+    "required": ["title", "summary", "verdict", "highlights", "html"],
     "additionalProperties": False,
 }
 
 
 _CARD_CONTRACT = """THE CARD IS A GLANCE, NOT A REPORT. The highlights ARE the product: concrete numbers with names and times. The title holds the headline; the summary opens with the finding itself — the reason, the comparison or the next step — never the title's figures again. "Nothing to do" only where the reader would otherwise worry, never as the opener. When all is normal, title and summary both say so in one short sentence, with at most two highlights, none with a status, and "html": "".
 
-OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
-{"title": "max 60 chars", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
+OUTPUT CONTRACT (strict JSON; title, summary, verdict, highlights and html are required):
+{"title": "max 60 chars", "verdict": "all fine|worth a look|needs action", "summary": "1-2 sentences, max ~220 chars — the reason or next step, not the title again",
  "highlights": [{"label": "Metric", "value": "42 kWh", "delta": "+12% vs avg (optional)", "status": "good|warning|serious|critical (optional)"}],
  "hypotheses": ["optional, usually none"], "learned": ["optional, max 3"],
  "findings": [{"text": "ONE sentence, under 120 chars", "detail": "the evidence", "fix": "the specific change", "severity": "info|warning|serious|critical", "fixable": true, "entity_id": "sensor.example (optional)"}],
- "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}],
+ "opportunities": [{"text": "optional, max 2", "entities": ["light.example"]}], "fixed": ["entity_ids of listed problems already fixed"],
  "tags": ["2-4 lowercase topic tags"], "live": ["optional entity_ids to keep current"], "html": "one complete self-contained HTML document"}
 
+verdict: one judgement, shown as a chip; the summary never repeats it.
 highlights: 3-6 specific, checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
 tags: what the card is ABOUT, not the category it was asked for.
-hypotheses: usually ZERO, Something you BELIEVE that the data cannot settle and that would change how you read this home, answerable yes or no in one tap; never one the memory document already answers.
+hypotheses: usually ZERO, Something you BELIEVE that the data cannot settle and that would change how you read this home, answerable yes or no; never one memory already answers.
 learned: durable NEW discoveries about this home, one plain factual sentence each, no advice, nothing broken, never a KNOWN FACT or the current snapshot.
-findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; most runs find nothing wrong and an empty list is the honest answer. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
+findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is the usual, honest answer. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. Never something broken (a finding).
-live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first, so the page works with NO live data. Never poll or fetch.
+live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
 THE HTML DOCUMENT:
 - ONE focused visual: a single chart, timeline or state map. No stat tiles duplicating the highlights, no second chart unless the story needs a pair, no prose.
-- It sits directly on the card under the highlights: no outer border, box, background, shadow or padding around it, and no heading repeating the title — at most one short chart title line (13-14px, bold).
-- Self-contained: inline CSS and JS only, no external resources. From 300px (a phone) to 900px wide, so fluid: 100% width, height to content (~220-420px), no fixed pixel width, no horizontal scrolling. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))`. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
-- Interactive: hover tooltips on every mark, hit targets larger than the mark, readable without hovering. Draw-in ≤800ms under prefers-reduced-motion: no-preference.
+- It sits on the card: no outer border, box, background, shadow or padding, and no heading repeating the title — at most one short chart title line (13-14px, bold).
+- Inline CSS and JS only, nothing external. 300px (a phone) to 900px wide: 100% width, height to content (~220-420px), no fixed width, no sideways scroll. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))`. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
+- Hover tooltips on every mark, hit targets bigger than it, readable without hovering. Draw-in ≤800ms under prefers-reduced-motion: no-preference.
 
 DESIGN SYSTEM: brAIn prepends a stylesheet, so use its variables and never hard-code a colour; light and dark (prefers-color-scheme) come free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series in order var(--c1) (blue, #2a78d6 in light) … var(--c8), a different one per series, past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — never a series, always with a label. Dark surface is #0e1e30. Marks: 2px lines; bars from zero, 4px rounded tops; ≥8px hover markers; 2px gaps between stacked segments. ONE y-axis per chart (two scales → two charts). Legend at ≥2 series, direct labels at ≤4.
 
 ANALYSIS RULES:
-- RUTHLESSLY CONCISE. Every sentence carries a number, a name or a time. No hedging, no methodology.
-- Be specific to this home: real names, areas, numbers and times. Convert entity_ids to friendly names in all user-facing text.
-- Read every number against this house's own normal (its usual, last week) and say which side it is on. Never open "fine" or "nothing needs action" over your own figures rising by more than half.
+- RUTHLESSLY CONCISE: every sentence carries a number, a name or a time; no hedging.
+- Be specific to this home: real names, areas, numbers and times. Convert entity_ids to friendly names.
+- Read every number against this house's own normal (its usual, last week) and say which side it is on. Never call it fine with your own figures rising by more than half.
 - Plain words: never a tool or its cap, "baseline", "readings window", "this hour of the week" or a field name; a limit that matters is "at least 10". No unit to look up or made up (°F·h, degree-hours, "2.4x", "min per °F per hour", "kWh of one per kWh of another"): compare like with like in everyday units (minutes, °F, kWh per load), "twice the usual", with the raw value beside any claim about it. No coined measure ("lit spells", "door swings", "safety gap", "coasted"): say what happened ("the light came on 13 times"). A threshold says whose it is ("your usual limit is 350 gal between cycles"), never a bare "flag". A partial day is compared with the same hours of other days.
 - One style: times of day in the house's clock (the prompt says which; data times are local unless suffixed Z), dates "Tue 13 Oct", ranges "13–19 Oct", durations "6 h 42 min", temperatures "66 °F" in whole degrees.
 - REASON LIKE A DETECTIVE: cross-reference related entities to reach what no single sensor states, and cite the chain; "device_context" holds clues.
 - KNOWN FACTS and ANSWERED QUESTIONS in the prompt are established truth: use them, never rediscover or contradict them without new evidence, never re-ask.
 - GO DEEPER: with your previous analysis in the prompt, lead with what CHANGED and go one level deeper on the rest — a repeated headline is a failed run.
-- Each card stands alone: never refer to an earlier card or run ("the last card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.") — say what the figures mean. "More", "again", "still", "new" or "outdated" only with the earlier value stated in the same card; never answer a worry nobody raised here. With no reading newer than the last card, say "nothing new since <date>" and what holds now, with no verdict.
+- Each card stands alone: never refer to an earlier card or run ("the last card", "as before"), never call something a mystery you do not explain here, and never open with a bare verdict ("Normal.", "Needs action.") — say what the figures mean. "More", "again", "still", "new" or "outdated" only with the earlier value stated in the same card; never answer a worry nobody raised here. With no reading newer than the last card, say "nothing new since <date>" and what holds now, with no verdict.
 - Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the owner to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
