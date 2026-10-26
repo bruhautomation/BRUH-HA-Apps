@@ -818,6 +818,130 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# A print the printer stopped itself, on its own failure detection
+# ---------------------------------------------------------------------------
+#
+# A printer that pauses a print because its failure detection saw spaghetti
+# — or fails one outright — goes quiet: nothing is wrong with any device, the
+# heaters may still be on, and the print sits at 10 % until somebody looks.
+# `chore.print_stopped` reads three things off the same device, all of them
+# states the snapshot already holds: the status says paused or failed, and a
+# problem flag (a `problem` binary sensor that is on) or a failure-detection
+# sensor reading failure or warning says the printer did it. A pause with no
+# flag is a person pressing pause and says nothing. Read by what the
+# integration registered (its translation key) first and by name second, so
+# BRUH Bambu Studio's sensors and another printer integration's both count.
+STOPPED_WORDS = frozenset({"pause", "paused", "failed", "failure", "error"})
+PROBLEM_KEYS = frozenset({"print_problem", "print_error", "hms_errors"})
+FAILURE_KEYS = frozenset({"failure_detection"})
+FAILURE_WORDS = frozenset({"failure", "warning"})
+BED_KEYS = frozenset({"bed", "bed_temp", "bed_temperature"})
+PROGRESS_KEYS = frozenset({"progress", "print_progress"})
+# Warm enough that "the bed is still hot" is worth saying.
+BED_WARM = {"°C": 40.0, "°F": 104.0}
+
+
+def _key_or_words(house: House, eid: str, keys, phrase: str) -> bool:
+    reg = house.registry.get(eid) or {}
+    if str(reg.get("translation_key") or "") in keys:
+        return True
+    name = " ".join(_WORD_RE.findall(house.name(eid).lower()))
+    return phrase in name
+
+
+def _flagged(house: House, eid: str) -> str:
+    """The sibling that says the printer stopped this print itself, or ""."""
+    for other in sorted(house.siblings(eid)):
+        st = house.states.get(other) or {}
+        attrs = st.get("attributes") or {}
+        if domain_of(other) == "binary_sensor" and st.get("state") == "on" and (
+                str(attrs.get("device_class") or "") == "problem"
+                or _key_or_words(house, other, PROBLEM_KEYS, "print problem")):
+            return other
+        if domain_of(other) == "sensor" and job_state(
+                st.get("state")) in FAILURE_WORDS and _key_or_words(
+                    house, other, FAILURE_KEYS, "failure detection"):
+            return other
+    return ""
+
+
+def _sibling_reading(house: House, eid: str, keys, word: str):
+    for other in sorted(house.siblings(eid)):
+        if domain_of(other) != "sensor":
+            continue
+        reg = house.registry.get(other) or {}
+        words = set(_WORD_RE.findall(house.name(other).lower()))
+        if str(reg.get("translation_key") or "") in keys or (
+                word in words and "target" not in words):
+            st = house.states.get(other) or {}
+            try:
+                return other, float(st.get("state"))
+            except (TypeError, ValueError):
+                return other, None
+    return "", None
+
+
+def _is_printer(house: House, eid: str) -> bool:
+    from . import devices  # noqa: PLC0415 — devices reads this module's words
+    if devices.machine_of(house, eid) == "printer":
+        return True
+    return bool(job_kind_of(house.name(eid)) == "printer")
+
+
+def print_stopped(snap: dict, now: float) -> list[dict]:
+    """A print the printer paused or failed on its own failure detection."""
+    house = House(snap)
+    out = []
+    for eid in sorted(house.states):
+        if domain_of(eid) != "sensor" or not house.enabled(eid):
+            continue
+        st = house.states.get(eid) or {}
+        if job_state(st.get("state")) not in STOPPED_WORDS:
+            continue
+        if _key_or_words(house, eid, FAILURE_KEYS, "failure detection"):
+            continue
+        if not house.device_of(eid) or not _is_printer(house, eid):
+            continue
+        flag = _flagged(house, eid)
+        if not flag:
+            continue        # paused by a person: nothing to say
+        if not house.should_report(eid, "chore.print_stopped"):
+            continue
+        printer = house.device_name(house.device_of(eid) or {})
+        since = parse_ts(st.get("last_changed"))
+        how_long = (numfmt.ago_minutes(int((now - since) / 60.0))
+                    if since is not None else "at a time brAIn cannot read")
+        word = state_words(st.get("state") or "")
+        bits = [f"{house.name(eid)} has said “{word}” since {how_long}, and "
+                f"{house.name(flag)} says the printer stopped it."]
+        _prog, progress = _sibling_reading(house, eid, PROGRESS_KEYS,
+                                           "progress")
+        if progress is not None:
+            bits.append(f"It stopped at {numfmt.number(progress)} %.")
+        bed, bed_value = _sibling_reading(house, eid, BED_KEYS, "bed")
+        if bed and bed_value is not None:
+            unit = str(((house.states.get(bed) or {}).get("attributes") or {})
+                       .get("unit_of_measurement") or "")
+            warm = BED_WARM.get(unit)
+            hot = warm is not None and bed_value >= warm
+            bits.append(f"The bed is {'still hot at' if hot else 'at'} "
+                        f"{numfmt.quantity(bed_value, unit)}"
+                        + ("." if hot else ", cooled down."))
+        out.append({
+            # Stable while the print stays stopped; how long lives in detail.
+            "text": f"{printer} stopped a print on its own failure detection",
+            "detail": " ".join(bits) + house.placed(eid),
+            "fix": ("Look at the print, then resume it or cancel it from the "
+                    "printer or BRUH Bambu Studio. A cancelled print turns "
+                    "the heaters off; a paused one may keep the bed hot."),
+            "severity": "warning",
+            "fixable": False,
+            "entity_id": eid,
+        })
+    return out
+
+
 CHECKS = [
     {"id": "chore.dehumidifier", "area": "devices",
      "title": "Dehumidifier stopped in a damp room",
@@ -831,6 +955,9 @@ CHECKS = [
     {"id": "chore.job_done", "area": "devices",
      "title": "Finished and waiting",
      "needs": ("states", "registry"), "run": job_done},
+    {"id": "chore.print_stopped", "area": "devices",
+     "title": "Print stopped by the printer",
+     "needs": ("states", "registry"), "run": print_stopped},
 ]
 
 __all__ = ["CHECKS"]
