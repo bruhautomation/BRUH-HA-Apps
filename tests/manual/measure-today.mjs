@@ -599,6 +599,36 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   if (!/^From The garage freezer is drifting warmer/.test(from)) {
     note(where, `the freezer finding links to its card as "${from}"`);
   }
+  // A row about several things: a count line, and Show all opens every
+  // one of them by name (#437).
+  const list = await page.evaluate(() => {
+    const c = document.querySelector('[data-case-id="f:1102"]');
+    const line = c && c.querySelector(':scope > .qitems');
+    if (!line) return null;
+    const btn = line.querySelector('button');
+    const ul = c.querySelector(':scope > .qitemlist');
+    const before = { text: line.textContent.trim(), hidden: !ul || ul.hidden,
+      h: btn ? Math.round(btn.getBoundingClientRect().height) : 0,
+      right: Math.round(line.getBoundingClientRect().right),
+      cardRight: Math.round(c.getBoundingClientRect().right) };
+    if (btn) btn.click();
+    const after = [...c.querySelectorAll(':scope > .qitemlist li')]
+      .filter((li) => li.offsetParent !== null).map((li) => li.textContent.trim());
+    return { before, after, label: btn ? btn.textContent.trim() : '' };
+  });
+  if (!list) note(where, 'the card about several things has no count line');
+  else {
+    if (!/^8 entities/.test(list.before.text)) note(where, `the count line reads "${list.before.text}"`);
+    if (!list.before.hidden) note(where, 'the full list is open before Show all is pressed');
+    if (list.before.h < (touch ? MIN_TARGET : 24)) note(where, `Show all is ${list.before.h}px tall`);
+    if (list.before.right > list.before.cardRight + 1) note(where, 'the count line overflows the card');
+    if (list.after.length !== 8) note(where, `Show all opened ${list.after.length} of 8 items`);
+    if (list.after.some((t) => /^[a-z_]+\.[a-z0-9_]+$/.test(t))) note(where, 'the list shows an id');
+    if (!list.after.includes('the select \u201cupstairs hallway ceiling light scene mode\u201d')) {
+      note(where, `the list cut a long name: ${JSON.stringify(list.after)}`);
+    }
+    if (list.label !== 'Hide') note(where, `the press reads "${list.label}" once open`);
+  }
   await page.evaluate(() => switchView('insights'));
   await page.waitForFunction(() => document.querySelectorAll('#grid .card').length === 3);
   // Each card in view in turn, so a lazy frame loads and reports its size.

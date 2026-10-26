@@ -6169,6 +6169,33 @@ function qCard({ id, chip, meta, title, body, counted = true }) {
   return card;
 }
 
+// A row about several things names only what fits in its sentence; the
+// count line says how many, and Show all opens every one by the name a
+// person reads (`cases._item_list`, #437). Open/closed survives a repaint.
+const itemsOpen = new Set();
+function caseItemsNodes(row) {
+  const labels = row.item_labels || [];
+  if (labels.length < 2) return [];
+  const line = el("p", "qitems");
+  line.appendChild(el("span", null, `${labels.length} ${row.items_noun || "items"}`));
+  const btn = el("button", "btn-secondary qitemsbtn", "Show all");
+  line.appendChild(btn);
+  const list = el("ul", "qitemlist");
+  labels.forEach((t) => list.appendChild(el("li", null, prettyText(t))));
+  const paint = () => {
+    const open = itemsOpen.has(row.id);
+    list.hidden = !open;
+    btn.textContent = open ? "Hide" : "Show all";
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  btn.addEventListener("click", () => {
+    if (itemsOpen.has(row.id)) itemsOpen.delete(row.id); else itemsOpen.add(row.id);
+    paint();
+  });
+  paint();
+  return [line, list];
+}
+
 // "Fix", then what to do in two lines. Who would do it is said by the
 // primary button under it (Plan, Apply or Add to To Do), so the heading is
 // one word.
@@ -6364,6 +6391,7 @@ function makeCase(row) {
     meta: caseMeta(row), title: row.claim, body: row.detail,
   });
   card.dataset.situation = row.situation || "";
+  caseItemsNodes(row).forEach((n) => card.appendChild(n));
 
   const plan = casePlanNode(row);
   const ran = row.finding_status === "fixed" || row.finding_status === "needs_you";

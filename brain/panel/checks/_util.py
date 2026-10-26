@@ -824,11 +824,31 @@ def spell_integration(domain: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in domain.split("_") if w)
 
 
-def join_names(names: Iterable[str], limit: int = 6) -> str:
+# The most characters an inline list of names may take in a finding's
+# sentence. A detail is capped by the store (`findings_store.MAX_DETAIL`)
+# and clamped to three lines on a card, so a list of long names ran past
+# both and was cut mid-name — "the scene “…”, the select…" (#437). A row
+# that lists things carries them whole as `items`; the sentence only has
+# to say enough to read.
+LIST_BUDGET = 260
+
+
+def join_names(names: Iterable[str], limit: int = 6,
+               budget: int = LIST_BUDGET) -> str:
+    """Names joined for a sentence: at most ``limit`` of them and at most
+    ``budget`` characters of them (always the first), then "and N more"."""
     names = list(names)
-    if len(names) <= limit:
-        return ", ".join(names)
-    return ", ".join(names[:limit]) + f" and {len(names) - limit} more"
+    kept: list[str] = []
+    used = 0
+    for name in names[:limit]:
+        cost = len(name) + (2 if kept else 0)
+        if kept and used + cost > budget:
+            break
+        kept.append(name)
+        used += cost
+    if len(kept) == len(names):
+        return ", ".join(kept)
+    return ", ".join(kept) + f" and {len(names) - len(kept)} more"
 
 
 def load_yaml_file(path: str) -> Any:

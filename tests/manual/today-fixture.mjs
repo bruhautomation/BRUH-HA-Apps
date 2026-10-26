@@ -84,6 +84,12 @@ export const FEED = [
               + 'come on until the new sensor first reports.' },
     source: 'check:auto.dead_ref', source_title: 'Automation check',
     origin: { store: 'findings', key: 1102 },
+    // A row about several things carries every one of them by name (#437).
+    item_labels: ['Hall motion', 'the scene \u201cbefore movie\u201d',
+      'the select \u201cupstairs hallway ceiling light scene mode\u201d',
+      'Porch light', 'Landing lamp', 'the sensor \u201cold hall temperature\u201d',
+      'Kitchen speaker', 'the switch \u201cgarden lights\u201d'],
+    items_noun: 'entities',
     answers: trio('f:1102', A('apply', 'Apply', '/api/finding/1102/apply', { primary: true }), true),
     more: [ask(1102)],
   }),
