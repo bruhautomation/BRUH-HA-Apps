@@ -40,7 +40,8 @@ import re
 
 import numfmt
 
-from ._util import CouldNotLook, House, domain_of, parse_ts, state_words
+from ._util import (CouldNotLook, House, domain_of, house_tz, parse_ts,
+                    state_words)
 
 # The three machines that finish and then wait for somebody. Matched
 # against the entity's own name, lower-cased; see the module docstring
@@ -104,6 +105,47 @@ def kind_of(name: str, world=None, entity_id: str = "") -> str:
     return best
 
 
+# What `chore.waiting` says. Power shows a machine stopped and nothing ran
+# since — never whether its drum is empty, which is why "still full" was
+# marked Wrong — so that is said only where a door or contact sensor on the
+# same machine has stayed shut since the cycle ended. `was` carries the old
+# wording, so an answer given to it is an answer to this report.
+FINISHED_TEXT = "{machine} finished a cycle and nothing has run since"
+FULL_TEXT = "{machine} has finished and is still full"
+DOOR_CLASSES = frozenset({"door", "opening"})
+
+
+def _door_of(house: House, eid: str) -> str:
+    for other in sorted(house.siblings(eid)):
+        if domain_of(other) != "binary_sensor":
+            continue
+        attrs = (house.states.get(other) or {}).get("attributes") or {}
+        if str(attrs.get("device_class") or "") in DOOR_CLASSES:
+            return other
+    return ""
+
+
+def _door_since(house: House, eid: str, finished: float) -> str:
+    """``"closed"`` when the machine's door has stayed shut since the cycle
+    ended, ``"opened"`` when it has moved since, "" for no door to read."""
+    door = _door_of(house, eid)
+    if not door:
+        return ""
+    st = house.states.get(door) or {}
+    changed = parse_ts(st.get("last_changed"))
+    if st.get("state") == "off" and changed is not None and changed < finished:
+        return "closed"
+    if st.get("state") in ("on", "off"):
+        return "opened"
+    return ""
+
+
+def _clock(stamp: float) -> str:
+    """The time of day in the house's own timezone (`when`'s rule)."""
+    import datetime as _dt  # noqa: PLC0415
+    return _dt.datetime.fromtimestamp(stamp, tz=house_tz()).strftime("%H:%M")
+
+
 def waiting(snap: dict, now: float) -> list[dict]:
     """Appliances that finished a while ago and have not run since."""
     import appliances  # noqa: PLC0415
@@ -152,22 +194,36 @@ def waiting(snap: dict, now: float) -> list[dict]:
     for finished, kind, eid, shape in hits:
         ago = int((now - finished) / 60.0)
         when = numfmt.ago_minutes(ago)
+        door = _door_since(house, eid, finished)
+        if door == "opened":
+            continue        # its door has been opened since: emptied
+        full = door == "closed"
+        shut = (f"; {house.name(_door_of(house, eid))} has stayed shut"
+                if full else "")
         out.append({
             # Stable across runs — the minutes change every pass and the
-            # store dedupes on this text, so they live in `detail`.
-            "text": f"{KIND_NAMES[kind]} has finished and is still full",
-            "detail": (f"It stopped drawing power {when}, and has not run "
-                       f"since. Measured from {house.name(eid)}: this "
+            # store dedupes on this text, so they live in `detail`. "Still
+            # full" only where a door on the machine says it has stayed
+            # shut: power cannot see whether a drum is empty.
+            "text": (FULL_TEXT if full else FINISHED_TEXT).format(
+                machine=KIND_NAMES[kind]),
+            "was": [FULL_TEXT.format(machine=KIND_NAMES[kind])],
+            "detail": (f"It stopped drawing power {when} "
+                       f"(at {_clock(finished)}), and nothing has run "
+                       f"since{shut}. Measured from {house.name(eid)}: this "
                        f"machine draws about {shape.get('busy_w', 0):.0f}W "
                        f"running against {shape.get('idle_w', 0):.0f}W "
                        "idle, and goes quiet for up to "
                        f"{shape.get('settle_min', 0):.0f} minutes "
                        + ("mid-cycle." if shape.get("measured_settle")
                           else "mid-cycle (not yet measured here).")),
-            "fix": ("Empty it, then tick it off — brAIn cannot see that "
-                    "you have, because an empty machine and a full one "
-                    "draw exactly the same power. It clears itself if the "
-                    "machine runs again."),
+            "fix": ("Empty it if it needs emptying, then tick it off — "
+                    "brAIn cannot see that you have, because an empty "
+                    "machine and a full one draw exactly the same power. "
+                    "It clears itself if the machine runs again."
+                    if not full else
+                    "Empty it, then tick it off. It clears itself when its "
+                    "door is opened or the machine runs again."),
             "severity": "info",
             "fixable": False,
             "entity_id": eid,
@@ -767,7 +823,7 @@ CHECKS = [
      "title": "Dehumidifier stopped in a damp room",
      "needs": ("states", "registry", "appliances"), "run": dehumidifier},
     {"id": "chore.waiting", "area": "devices",
-     "title": "Finished and still full",
+     "title": "Finished and not run since",
      "needs": ("states", "registry", "appliances"), "run": waiting},
     # Needs no key of its own up front: on a house with nothing finished
     # it has nothing to read, and when something has finished and the
