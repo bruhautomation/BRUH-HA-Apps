@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The 3D view moves the way Fusion 360's does.** Drag (or Shift + middle-drag) turns the part about the point you grab, middle-drag or right-drag slides it, the wheel zooms toward the pointer rather than the middle, and a double-click puts a point in the middle. On a phone one finger turns, two fingers slide and a pinch zooms toward your fingers. The view keeps Z up and never flips over the top, and the part sits on a bed that reads like the printer's.
+- **Home and named views that move rather than jump.** Home goes back to the corner view with the whole part in sight, and Top, Front, Right and Iso turn to that side, each framing the whole part.
+- **A bigger 3D view.** **Full screen** fills the screen with the view and its tools (it fills the window where Home Assistant's frame refuses full screen), and Escape or **‹ Leave full screen** leaves. On a desktop the view starts taller and its bottom edge drags to make it taller still.
+
+### Changed
+
+- **The dashboard card is compact.** Each printer is its name and state on one line, the camera, the progress with the time left, failure detection's line (or its alert with the buttons that answer it), the temperatures and Pause or Resume. Stop, speed, the light, Refresh, Reconnect and the AMS trays are behind the printer's ⋯, which opens in the card. A printing printer with an open alert is about 400 px tall, down from about 560.
+- **The printer card on the Printers tab is laid out by what matters now.** The name and Refresh/Reconnect across the top, then the camera, the job and its controls, the temperatures and the filament, with failure detection and the printer's storage beside them on a wide screen. Removing a printer is in the card's ⋯ menu rather than a ✕ beside Refresh. The speed is shown once (its switch), the stage once (in the job), and an AMS's four trays fit on one row on a phone.
+- The Design tab says a version's size once, and the 3MF and STEP downloads look like the buttons beside them.
+
+### Fixed
+
+- **No green bar through the camera.** The progress line drawn along the bottom of the camera picture is gone (the progress ring says it), a frame cut short is never shown (the last whole one stays), and a camera that encodes 1080 rows as 1088 no longer shows the eight extra rows as a green band along the bottom.
+- **The camera picture fits its box.** The box takes the stream's own shape (16:9, 4:3) instead of a fixed 16:9, so nothing is letterboxed, stretched or cropped.
+- **Files on the printer show their pictures.** The pictures were read all at once, and a printer serves one storage session well, so most failed and were shown as "3MF" for good. They are now read one at a time, a read that fails is tried again, a read cut short is never remembered as "no picture", a printer that never answers the end of a read no longer stalls the next one, and pictures remembered as missing by an earlier version are read again. A file with no picture shows a quiet plate, not a word.
+- **An A1's AMS Lite reports no humidity.** The AMS Lite is open to the room and has no humidity or temperature sensor, but the printer's report still carries a number for it, which showed as a humidity chip on the Printers tab, a reading in Home Assistant and a figure brAIn was told. A1 and A1 mini (and any AMS the report itself calls an AMS Lite) now report none; a real AMS on an X1, P1 or H2 keeps its humidity and temperature.
+
 ## 0.3.1
 
 ### Fixed

@@ -111,7 +111,8 @@ const COMMANDS = [];
 
 async function run(label, viewport, touch) {
   const say = (m) => problems.push(`${label}: ${m}`);
-  const ctx = await browser.newContext({ viewport, hasTouch: touch, isMobile: touch });
+  const ctx = await browser.newContext({ viewport, hasTouch: touch, isMobile: touch,
+    colorScheme: process.env.SCHEME === 'dark' ? 'dark' : 'light' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => say(`page error ${e.message}`));
   await page.route('http://panel.test/**', async (route) => {
@@ -301,6 +302,7 @@ async function run(label, viewport, touch) {
   await page.locator('.tab[data-view="files"]').click();
   await page.locator('#fileList .frow').first().waitFor();
   if (!(await page.locator('#fileList .frow img.fthumb').count())) say('a file row has no picture');
+  if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, `files-${label}.png`), fullPage: true });
   await page.locator('#fileList .frow').first().getByRole('button', { name: 'Print' }).click();
   await page.locator('#printDialog[open]').waitFor();
   const dialog = await page.locator('#printDialog').innerText();

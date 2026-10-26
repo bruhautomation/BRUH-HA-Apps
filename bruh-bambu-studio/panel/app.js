@@ -799,7 +799,7 @@ function watchSettings(p, w) {
     toggle("Turn the chamber light on to see", "light", "Only when it is too dark, once per print."),
     toggle("Watch for the plate being cleared", "plate", "After a print, for the Plate clear sensor."),
     el("label", {}, "Alerts go to", notify),
-    el("p", { class: "hint" }, "Each look is a brAIn run, so it looks at the moments a print is most likely to fail — the first layer, where the part narrows, bridges, colour changes, a part getting tall — and after anything doubtful, not every few seconds. A covered lens or a dark chamber stands everything down."));
+    el("p", { class: "hint" }, "Each look is a brAIn run, so it looks only where a print is likely to fail and after anything doubtful, not every few seconds."));
   return box;
 }
 

@@ -315,7 +315,7 @@ button { gap: 6px; }
 .fact b { font-size: 15px; }
 .fact span { font-size: 12px; color: var(--muted); }
 .jobpic { flex: none; width: 64px; height: 64px; border-radius: 10px; object-fit: contain; background: var(--surface); }
-.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
 .tile { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px;
   border: 1px solid var(--line); min-width: 0; }
 .ticon { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 10px;
@@ -329,7 +329,9 @@ button { gap: 6px; }
 .seg button { border: 0; border-radius: 0; min-height: 38px; padding: 0 12px; font-size: 13px; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.amsbox { display: grid; gap: 10px; }
+.amsbox { display: flex; flex-wrap: wrap; gap: 10px; }
+.amsbox > .amsunit { flex: 1 1 260px; min-width: 0; }
+.amsbox > .amsunit.ext { flex: 0 0 auto; }
 .amsunit { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
 .amshead { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
 .humid { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--muted); }
@@ -423,7 +425,7 @@ label[hidden], [hidden] { display: none !important; }
   .phead > .grow { flex-basis: 100%; }
   /* The camera already shows the plate on a phone. */
   .jobpic { display: none; }
-  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tiles { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
   .tile { flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 10px; }
   .ticon { width: 28px; height: 28px; }
 }
