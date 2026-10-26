@@ -2298,15 +2298,18 @@ async function generate(categoryOrId, question, inPlace = false) {
     // costs one fetch) and an offer does not, because naming the four is
     // a Claude run and a request cannot wait on one.
     if (res && ("scenes" in res || (res.refused && "area" in res))) {
+      // The server says which it is doing: offering them, or (with brAIn
+      // acting without asking) writing them now. "Nothing runs until you
+      // accept it" over scenes being written was the toast lying.
       toast(res.refused
         ? res.refused
-        : `Designing four scenes for the ${res.scenes} — ${res.lights} `
-          + "lights. They land on Proposals in a moment, with a preview.");
+        : res.say || `Designing four scenes for the ${res.scenes} — ${res.lights} `
+          + "lights. They land on Today in a moment, with a preview.");
       return;
     }
     if (res && "intent" in res) {
-      toast("Working out what that means — it lands on Proposals in a moment. "
-        + "Nothing runs until you accept it.");
+      toast(res.intent_say || ("Working out what that means — it lands on "
+        + "Today in a moment. Nothing runs until you accept it."));
       return;
     }
     await refreshStatus();
@@ -2323,15 +2326,20 @@ function showRouted(res) {
   const said = [];
   if ((res.queued || []).length) said.push("Making a card for that");
   if ("intent" in res) {
-    said.push("working out the automation — it lands on Proposals, and "
-      + "nothing runs until you accept it");
+    said.push(res.intent_say
+      ? res.intent_say.replace(/\.$/, "")
+      : "working out the automation — it lands on Today, and nothing runs "
+        + "until you accept it");
   }
   if ("learning" in res) {
     said.push(res.learning ? `studying ${res.learning} in the background`
       : "studying what brAIn knows least about");
   }
   if ((res.remembered || []).length) said.push("kept that in memory");
-  if ("scenes" in res) said.push(`designing four scenes for the ${res.scenes}`);
+  if ("scenes" in res) {
+    said.push(res.say ? res.say.replace(/\.$/, "")
+      : `designing four scenes for the ${res.scenes}`);
+  }
   if (res.refused) said.push(res.refused);
   if (res.explain) {
     said.push("looking into why");

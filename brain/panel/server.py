@@ -3381,14 +3381,14 @@ async def _morph_reply(case_id: str, text: str,
                                  subjects=subjects[1:])
             sentences.append("brAIn will remember that.")
         elif kind in ("timed", "one_off"):
-            how, result = await _timed_or_intent(route["text"], surface)
-            sentences.append(_timed_say(how, result) or (
-                "brAIn is working that out as an automation — it will be "
-                "offered here for you to accept."))
+            how, result = await _timed_or_intent(route["text"], surface,
+                                                 typed=True)
+            sentences.append(_timed_say(how, result)
+                             or _intent_say(bool(result), surface, typed=True))
         elif kind == "standing_rule":
-            await asyncio.to_thread(intents.request, route["text"], surface)
-            sentences.append("brAIn is working that out as an automation — "
-                             "it will be offered here for you to accept.")
+            queued = await asyncio.to_thread(intents.request, route["text"],
+                                             surface, typed=True)
+            sentences.append(_intent_say(bool(queued), surface, typed=True))
         elif kind == "explain":
             answer = await _explain_now(route["text"],
                                         route.get("subject", ""), finding)
@@ -3550,10 +3550,7 @@ async def _answer_morph_ask(ask: dict) -> dict:
             say.append("brAIn will study that and file what it learns.")
         elif kind == "scenes":
             out = await _design_scenes(route.get("subject", ""))
-            say.append(str(out.get("refused") or (
-                f"brAIn is designing four lighting moods for the "
-                f"{route.get('subject', '')} — they will be offered for you "
-                "to accept.")))
+            say.append(str(out.get("refused") or out.get("say") or ""))
         elif kind == "explain":
             explained = await _explain_now(text, route.get("subject", ""))
             if explained.get("ok"):
@@ -3796,7 +3793,28 @@ def _morph_diagnostics() -> dict:
 
 # Where a typed sentence comes from: the ask bar and Morph's Ask line. A
 # phone reply, the Respond box and `brain.intent` keep the card.
-TYPED_INTENT_VIAS = ("panel", "morph")
+TYPED_INTENT_VIAS = ("panel", "morph", "reply")
+# The prefix of a drafted rule a card offered from a request somebody made
+# (an "automation_edit" card): a person's request, unlike a scheduled
+# card's own suggestion ("card:").
+ASKED_CARD_VIA = "asked:"
+
+
+def _accepts_at_once(req: dict) -> bool:
+    """Whether a drafted rule is written the moment it is drafted.
+
+    YOLO mode: a plan is applied the moment it is written, so every rule
+    a request asked for is — the ask bar, Morph, a reply, `brain.intent`
+    from an automation — and only a scheduled card's own suggestion
+    (``card:``), which nobody asked for, stays a card. "Let brAIn act
+    without asking" without YOLO: only what a person typed. Read now,
+    never from the request."""
+    via = str(req.get("via") or "")
+    if yolo_mode():
+        return not via.startswith("card:")
+    return (bool(req.get("typed"))
+            and (via in TYPED_INTENT_VIAS or via.startswith(ASKED_CARD_VIA))
+            and _acts_without_asking())
 
 
 async def _one_intent(req: dict, now: float) -> dict | None:
@@ -3911,13 +3929,12 @@ async def _one_intent(req: dict, now: float) -> dict | None:
         if tried is not None:
             log.info("its trial week started, as the request asked")
             row = tried
-    if req.get("typed") and str(req.get("via") or "") in TYPED_INTENT_VIAS \
-            and row.get("status") in proposals.OPEN_STATUSES \
-            and _acts_without_asking():
-        # A person typed it, and has said brAIn may act without asking:
-        # the card would be a second press for what they already said. The
-        # ordinary accept — write, reload, verify, settle, with its Undo —
-        # and on a refusal the card stays, carrying why.
+    if row.get("status") in proposals.OPEN_STATUSES and _accepts_at_once(req):
+        # A person typed it and has said brAIn may act without asking, or
+        # YOLO mode is on: the card would be a second press for what they
+        # already said. The ordinary accept — write, reload, verify,
+        # settle, with its Undo — and on a refusal the card stays,
+        # carrying why.
         payload, status = await _decide_proposal(row["ts"], "accept")
         if status == 200 and isinstance(payload.get("proposal"), dict):
             log.info("accepted at once, as it was typed with brAIn acting "
@@ -3971,7 +3988,8 @@ async def _service_routes(req: dict, now: float) -> int | None:
         elif kind == "automation_edit":
             card_id = _new_card_id()
             done += int(_enqueue(
-                card_id, question=AUTOMATION_EDIT_FRAME.format(text)[:500]))
+                card_id, question=AUTOMATION_EDIT_FRAME.format(text)[:500],
+                asked_change="service"))
         elif kind == "remember":
             # An automation sent it, so it is not a fact a person typed and
             # is not kept the way one is (`facts_store.KEEP_SOURCES`).
@@ -4151,7 +4169,7 @@ def _intent_say(queued: bool, via: str, typed: bool = False) -> str:
     """What the Ask line says about a sentence sent to the intent drop."""
     if not queued:
         return "brAIn could not queue that just now."
-    if typed and _acts_without_asking():
+    if _accepts_at_once({"via": via, "typed": typed}):
         return "brAIn is writing that as an automation now."
     return ("brAIn is drafting that as an automation — it will be offered "
             "for you to accept.")
@@ -5835,7 +5853,7 @@ def _opportunity_sentence(text: str) -> str:
 
 
 async def _offer_card_opportunities(insight_id: str, found: list[dict],
-                                    previous=None) -> list[dict]:
+                                    previous=None, *, asked: str = "") -> list[dict]:
     """Queue what this card says the house is missing, behind the gates.
 
     Returns the card's own record of each: its sentence, its entities,
@@ -5878,8 +5896,13 @@ async def _offer_card_opportunities(insight_id: str, found: list[dict],
                           "cards today")
         else:
             try:
+                # A card a person asked for a change on ("automation_edit")
+                # files its rule as theirs; a card's own suggestion stays
+                # a card's (`_accepts_at_once`).
+                via = (f"{ASKED_CARD_VIA}{insight_id}" if asked
+                       else f"card:{insight_id}")[:32]
                 queued = await asyncio.to_thread(
-                    intents.request, sentence, f"card:{insight_id}"[:32])
+                    intents.request, sentence, via, typed=asked == "typed")
             except Exception as exc:  # noqa: BLE001
                 queued = ""
                 row["why"] = f"it could not be queued ({exc})"
@@ -6122,7 +6145,8 @@ async def _generate(insight_id: str) -> None:
                 continue
             suggested.append(opp)
         opportunities = await _offer_card_opportunities(
-            insight_id, suggested, previous_opportunities)
+            insight_id, suggested, previous_opportunities,
+            asked=str(job.get("asked_change") or ""))
         insight = {
             "id": insight_id,
             "category": cat["id"] if question is None else "custom",
@@ -8448,6 +8472,9 @@ def _enqueue(job_id: str, question: str | None = None, **fields) -> bool:
     # (`_generate`), a pressed one is not. Reset on every queue for the
     # reason the two above are.
     fields.setdefault("scheduled", False)
+    # Whether a person asked this card for a change ("automation_edit"),
+    # which makes the rule it offers theirs; reset for the same reason.
+    fields.setdefault("asked_change", "")
     _set_job(job_id, state="queued", error="", question=question,
              started_at=time.time(), kind=fields.pop("kind", "insight"), **fields)
     QUEUE.put_nowait(job_id)
@@ -9510,8 +9537,10 @@ async def h_generate(request: web.Request) -> web.Response:
             # the expensive half — a Claude run, the checks, the card —
             # has one implementation and one place to be wrong.
             queued = await asyncio.to_thread(intents.request, question,
-                                             "panel")
-            return web.json_response({"queued": [], "intent": queued})
+                                             "panel", typed=True)
+            return web.json_response({
+                "queued": [], "intent": queued,
+                "intent_say": _intent_say(bool(queued), "panel", typed=True)})
         match = LEARN_RE.match(question)
         if match:
             topic = question[match.end():].strip().rstrip("?.!")
@@ -14627,8 +14656,10 @@ async def _name_and_offer(obj: dict, area: str) -> None:
     Everything about which bulb takes which kelvin is composed from the
     registries, because a model choosing that is a guess wearing a config
     and one nobody can check by looking at the card. A failed run leaves
-    the plain names, which are a perfectly good answer.
+    the plain names, which are a perfectly good answer. ``obj["_act"]``
+    (set by `_design_scenes`) writes them straight away instead.
     """
+    act = bool(obj.pop("_act", False))
     try:
         result = await _claude(
             engine.run_claude, scenes.name_prompt(area), scenes.SYSTEM,
@@ -14653,12 +14684,31 @@ async def _name_and_offer(obj: dict, area: str) -> None:
             return
     else:
         obj.pop("_snapshot", None)
-    if await asyncio.to_thread(proposals.add, obj):
-        SCENES_STATE["designed"] += 1
-        log.info("proposed four scenes for the %s", log_safe(area))
+    row = await asyncio.to_thread(proposals.add, obj)
+    if not row:
+        return
+    SCENES_STATE["designed"] += 1
+    log.info("proposed scenes for the %s", log_safe(area))
+    if act and row.get("status") in proposals.OPEN_STATUSES:
+        # Asked for by somebody who has said brAIn may act without asking
+        # (or with YOLO on): the card would be a second press for what they
+        # already said. The ordinary accept — written into scenes.yaml with
+        # its snapshot, reloaded, verified, settled, with its Undo — and on
+        # a refusal the card stays, carrying why.
+        payload, status = await _decide_proposal(row["ts"], "accept")
+        if status == 200:
+            names = [str(c.get("name") or "") for c in obj.get("config") or []]
+            SCENES_STATE["written"] = {"area": area, "names": names,
+                                       "at": int(time.time())}
+            log.info("wrote %d scene(s) for the %s straight away: %s",
+                     len(names), log_safe(area), log_safe(", ".join(names)))
+        else:
+            log.info("could not write the %s scenes at once, so they stay a "
+                     "card: %s", log_safe(area),
+                     log_safe(payload.get("error") or ""))
 
 
-async def _design_scenes(area: str) -> dict:
+async def _design_scenes(area: str, act: bool | None = None) -> dict:
     """Compose four scenes for one area. Returns what to tell the person.
 
     Two phases on purpose. Composing is deterministic and takes one fetch,
@@ -14667,7 +14717,14 @@ async def _design_scenes(area: str) -> dict:
     whether anything is happening. Naming them is a Claude run, so the
     offer lands on the tab afterwards: a request that waited on a model
     is a request ingress cuts.
+
+    ``act`` is whether the scenes are written straight away rather than
+    offered. Every caller is a person asking (the ask bar, Morph's Ask,
+    a reply, the picker), so by default it is "Let brAIn act without
+    asking" (or YOLO mode), read now.
     """
+    if act is None:
+        act = _acts_without_asking()
     area = str(area or "").strip()[:60]
     SCENES_STATE["last"] = area
     SCENES_STATE["at"] = int(time.time())
@@ -14678,7 +14735,7 @@ async def _design_scenes(area: str) -> dict:
     key = area.casefold()
     if key in SCENES_INFLIGHT:
         return {"refused": (f"brAIn is already composing four scenes for "
-                            f"the {area} — they land on the Proposals tab "
+                            f"the {area} — they land on Today "
                             "when the naming run comes back."), "area": area}
     SCENES_INFLIGHT.add(key)
     spawned = False
@@ -14697,18 +14754,39 @@ async def _design_scenes(area: str) -> dict:
             return {"refused": obj["refused"], "area": area}
         if await asyncio.to_thread(proposals.knows, obj):
             return {"refused": (f"brAIn has already offered these four scenes "
-                                f"for the {area} — the answer is on the "
-                                "Proposals tab."), "area": area}
+                                f"for the {area} — the answer is on "
+                                "Today."), "area": area}
         obj["_snapshot"] = snap
-        asyncio.create_task(_name_and_offer_once(obj, area, key))
+        obj["_act"] = bool(act)
+        task = asyncio.create_task(_name_and_offer_once(obj, area, key))
+        _SCENE_TASKS.add(task)
+        task.add_done_callback(_SCENE_TASKS.discard)
         spawned = True
-        return {"scenes": area, "lights": len(obj["scene"]["lights"])}
+        count = len(obj.get("config") or [])
+        return {"scenes": area, "lights": len(obj["scene"]["lights"]),
+                "count": count, "acts": bool(act),
+                "say": _scenes_say(area, count, bool(act))}
     finally:
         # The run that was started owns the claim from here; every other
         # ending — a refusal, a house we could not read, a raise — gives it
         # straight back, or one bad press locks the room out for good.
         if not spawned:
             SCENES_INFLIGHT.discard(key)
+
+
+# The naming-and-writing runs in flight, held so the loop cannot collect
+# one while it waits on Claude (the loop keeps only a weak reference).
+_SCENE_TASKS: set = set()
+
+
+def _scenes_say(area: str, count: int, act: bool) -> str:
+    """What the person is told when they ask for scenes."""
+    many = f"{count} lighting mood{'' if count == 1 else 's'}"
+    if act:
+        return (f"brAIn is writing {many} for the {area} into your scenes "
+                "now.")
+    return (f"brAIn is designing {many} for the {area} — they will be "
+            "offered for you to accept.")
 
 
 def _scene_room_slugs(configs) -> set[str]:
@@ -15233,6 +15311,50 @@ async def run_checks(reason: str = "schedule") -> dict:
     return summary
 
 
+# After an update, a second checks pass a while after the restart. The
+# pass the restart owes runs at CHECKS_FIRST_DELAY_S, while Home Assistant
+# and the add-ons it restarted alongside may still be coming back, and the
+# next scheduled one is hours away — so a device that was briefly missing
+# during the update sat on Today as a finding until then. This pass is
+# what clears it (`clear_resolved`, and `clear_returned` for brAIn's own
+# cases). Keyed on the release, kept on disk, and recorded only once it
+# ran, so a restart between the two does not lose it.
+UPDATE_RECHECK_S = 15 * 60
+UPDATE_VERSION_KEY = "checks_after_update_version"
+UPDATE_STATE: dict = {"started_at": time.time(), "done": False}
+
+
+async def _update_recheck(now: float | None = None) -> bool:
+    """Run the after-update checks pass when one is owed. True when it ran.
+
+    Owed when this release differs from the one the last such pass was
+    recorded under (a first install too: an extra free pass costs
+    nothing, and a house updating from before this existed reads the
+    same way). The house checks' own schedule set to 0 is respected: it
+    means nothing runs them on its own."""
+    now = time.time() if now is None else now
+    if UPDATE_STATE["done"]:
+        return False
+    last = await asyncio.to_thread(schedule_store.get_text, UPDATE_VERSION_KEY)
+    if last == ADDON_VERSION:
+        UPDATE_STATE["done"] = True
+        return False
+    if eff_checks_interval_hours() <= 0:
+        await asyncio.to_thread(schedule_store.set_text, UPDATE_VERSION_KEY,
+                                ADDON_VERSION)
+        UPDATE_STATE["done"] = True
+        return False
+    if now - UPDATE_STATE["started_at"] < UPDATE_RECHECK_S or CHECKS_STATE["running"]:
+        return False
+    await run_checks("update")
+    await asyncio.to_thread(schedule_store.set_text, UPDATE_VERSION_KEY,
+                            ADDON_VERSION)
+    UPDATE_STATE["done"] = True
+    log.info("house checks re-run after the update from %s to %s", last,
+             ADDON_VERSION)
+    return True
+
+
 async def _checks_loop() -> None:
     """Run the checks on the option's interval, and keep the diagnostics
     mirror fresh in between.
@@ -15253,6 +15375,8 @@ async def _checks_loop() -> None:
                 not last or time.time() - last.get("finished_at", 0) >= hours * 3600)
             if due and not CHECKS_STATE["running"]:
                 await run_checks("schedule")
+            elif await _update_recheck():
+                pass
             elif time.time() - DIAG_STATE["published_at"] >= DIAGNOSTICS_PUBLISH_S:
                 await asyncio.to_thread(publish_diagnostics)
             # A rule the scorecard says is wrong here, offered for muting:
@@ -18218,6 +18342,10 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
     installed (`devloop/verify.py`). Files through `findings_store.add_case`
     like every question brAIn asks; deterministic and free, so no gate."""
     now = time.time() if now is None else now
+    # First, answer what brAIn can prove and withdraw what an update made
+    # moot, so a question still on the screen is one only the person can
+    # answer (`verify.proof`).
+    await _devloop_verify_settle(now)
     try:
         data = await asyncio.to_thread(devloop.upstream._load)
         state = await asyncio.to_thread(devloop.verify.load)
@@ -18244,18 +18372,72 @@ async def _devloop_verify_pass(now: float | None = None) -> int:
         return 0
 
 
+async def _devloop_verify_settle(now: float | None = None) -> dict:
+    """The update protocol for "is this fixed?" questions: every open one
+    brAIn can prove from what it measures is answered Yes through the same
+    ending the owner's press takes (the comment says brAIn checked, never
+    that the owner confirmed), and one an update made moot is withdrawn
+    with nothing posted. What it cannot prove stays for the person. Never
+    raises: it is housekeeping in front of the ask."""
+    now = time.time() if now is None else now
+    done = {"answered": 0, "withdrawn": 0}
+    try:
+        data = await asyncio.to_thread(devloop.upstream._load)
+        state = await asyncio.to_thread(devloop.verify.load)
+        rows = [f for f in await asyncio.to_thread(findings_store.list_all)
+                if f.get("source") == devloop.verify.SOURCE
+                and f.get("status") in findings_store.LIVE_STATUSES]
+        for row in rows:
+            fp = devloop.verify.fp_for_finding(state, row)
+            if not fp:
+                continue
+            entry = data["items"].get(fp)
+            stream = str((entry or {}).get("stream") or "")
+            looked = bool(stream) and await asyncio.to_thread(
+                devloop.stream_on, stream)
+            said = devloop.verify.proof(entry, state.get(fp), data,
+                                        looked=looked)
+            if said is None:
+                continue
+            kind, words = said
+            if kind == "held":
+                await _end_devloop_verify(
+                    row, {"label": "accepted"},
+                    f"brAIn checked: {words}", by="brain")
+                done["answered"] += 1
+            else:
+                def withdraw(ts=row["ts"], fp=fp, words=words) -> None:
+                    findings_store.settle_and_clear(
+                        ts, "not_applicable",
+                        note=f"Withdrawn by brAIn: {words}")
+                    st = devloop.verify.load()
+                    devloop.verify.record_moot(st, fp, now)
+                    devloop.verify.save(st)
+                await asyncio.to_thread(withdraw)
+                done["withdrawn"] += 1
+            state = await asyncio.to_thread(devloop.verify.load)
+        if done["answered"] or done["withdrawn"]:
+            log.info("devloop: answered %d fix question(s) from what brAIn "
+                     "measured and withdrew %d made moot",
+                     done["answered"], done["withdrawn"])
+    except Exception as exc:  # noqa: BLE001 — housekeeping, not the loop
+        log.warning("devloop: could not settle the fix questions: %s", exc)
+    return done
+
+
 async def _end_devloop_verify(finding: dict, spec: dict,
-                              note: str) -> tuple[dict, str]:
+                              note: str, *, by: str = "owner") -> tuple[dict, str]:
     """Yes confirms the fix on the issue; No reopens it with the words
-    typed. Neither writes a memory line: it is a fact about brAIn."""
+    typed. Neither writes a memory line: it is a fact about brAIn. ``by``
+    is ``brain`` when brAIn answered from what it measured."""
     state = await asyncio.to_thread(devloop.verify.load)
     fp = devloop.verify.fp_for_finding(state, finding)
     accept = spec.get("label") == "accepted"
 
     def settle() -> dict:
         if fp:
-            devloop.upstream.owner_answer(fp, accept, note)
-            devloop.verify.record_answer(state, fp, accept, time.time())
+            devloop.upstream.owner_answer(fp, accept, note, by=by)
+            devloop.verify.record_answer(state, fp, accept, time.time(), by=by)
             devloop.verify.save(state)
         # Settled under the kind no scorecard counts: the answer is about
         # a fix to brAIn, and must not read as this producer being right
@@ -22095,7 +22277,12 @@ async def _route_ask(question: str, routes: list[dict]) -> dict:
             card_id = _new_card_id()
             asked = (AUTOMATION_EDIT_FRAME.format(text)
                      if kind == "automation_edit" else text)
-            if _enqueue(card_id, question=asked[:500]):
+            # A change somebody asked for: the rule the card offers is
+            # theirs, and is written at once when brAIn may act without
+            # asking (`_accepts_at_once`).
+            extra = ({"asked_change": "typed"} if kind == "automation_edit"
+                     else {})
+            if _enqueue(card_id, question=asked[:500], **extra):
                 out["queued"].append(card_id)
         elif kind in ("timed", "one_off"):
             # Something to do now and undo later is brAIn's to do, listed
@@ -22117,6 +22304,8 @@ async def _route_ask(question: str, routes: list[dict]) -> dict:
             out["explain"] = _start_explain(text, route.get("subject", ""))
         elif kind == "scenes":
             out.update(await _design_scenes(route["subject"]))
+    if out.get("intent"):
+        out["intent_say"] = _intent_say(True, "panel", typed=True)
     return out
 
 
@@ -22192,14 +22381,14 @@ async def _reply_routes(finding: dict, said: str,
                                  subjects=subjects[1:])
             sentences.append("I'll remember that.")
         elif kind in ("timed", "one_off"):
-            how, result = await _timed_or_intent(route["text"], "reply")
-            sentences.append(_timed_say(how, result) or (
-                "I'm working that out as an automation — it'll be on "
-                "Proposals for you to accept."))
+            how, result = await _timed_or_intent(route["text"], "reply",
+                                                 typed=True)
+            sentences.append(_timed_say(how, result)
+                             or _intent_say(bool(result), "reply", typed=True))
         elif kind == "standing_rule":
-            await asyncio.to_thread(intents.request, route["text"], "reply")
-            sentences.append("I'm working that out as an automation — "
-                             "it'll be on Proposals for you to accept.")
+            queued = await asyncio.to_thread(intents.request, route["text"],
+                                             "reply", typed=True)
+            sentences.append(_intent_say(bool(queued), "reply", typed=True))
         elif kind == "explain":
             answer = await _explain_now(route["text"],
                                         route.get("subject", ""), finding)

@@ -290,9 +290,135 @@ def lights_in(snap, area: str, patterns: list[str] | None = None) -> tuple:
     return lights, skipped
 
 
+# ---------------------------------------------------------------------------
+# The house's own scenes: how it names them, and which moods it already has
+# ---------------------------------------------------------------------------
+
+# The separators a house writes between a room and a variant ("Kitchen -
+# Dim", "Relax: Lounge"). A plain space is not one: "Kitchen Lights" is a
+# name, not a room and a variant.
+NAME_SEPARATORS = (" - ", " – ", " — ", ": ", " | ", " / ")
+# A pattern is the house's when at least this many of its scenes follow it.
+PATTERN_MIN = 2
+# What a scene's variant says about its mood, in whole words. A word table
+# rather than a guess: a scene that names none of these is about something
+# else (a film, a party) and duplicates nothing brAIn composes.
+MOOD_WORDS = {
+    "morning": ("morning", "wake", "wake up", "sunrise", "breakfast"),
+    "day": ("day", "daylight", "daytime", "bright", "full", "normal"),
+    "evening": ("evening", "relax", "relaxing", "wind down", "cosy", "cozy",
+                "dim", "dimmed", "warm", "dinner"),
+    "night": ("night", "nightlight", "night light", "sleep", "bedtime",
+              "late night"),
+}
+
+
+def house_scene_names(snap) -> list[str]:
+    """Every scene name the house has: `scenes.yaml` and the scene states
+    (a scene made in the UI is in both; one from an integration only in
+    the states). Ordered and deduped, so the answer is deterministic."""
+    house = _house(snap)
+    out: list[str] = []
+    for cfg in (house.snap.get("scenes") or []):
+        if isinstance(cfg, dict) and str(cfg.get("name") or "").strip():
+            out.append(str(cfg["name"]).strip())
+    for eid, state in sorted((house.states or {}).items()):
+        if eid.startswith("scene."):
+            name = str(((state or {}).get("attributes") or {})
+                       .get("friendly_name") or "").strip()
+            if name:
+                out.append(name)
+    seen: set[str] = set()
+    return [n for n in out if not (n.casefold() in seen or seen.add(n.casefold()))]
+
+
+def _area_names(house: House) -> list[str]:
+    names = {str(a).strip() for a in (house.areas or {}).values() if a}
+    # Longest first, so "Living room" is tried before "Living".
+    return sorted(names, key=lambda a: (-len(a), a.casefold()))
+
+
+def _split(name: str, areas: list[str]) -> tuple[str, str, str, str] | None:
+    """``(area, variant, order, sep)`` when a scene name is a room and a
+    variant joined by one of `NAME_SEPARATORS`, else None."""
+    low = name.casefold()
+    for area in areas:
+        a = area.casefold()
+        for sep in NAME_SEPARATORS:
+            if low.startswith(a + sep.casefold()):
+                variant = name[len(area) + len(sep):].strip()
+                if variant:
+                    return area, variant, "area_first", sep
+            if low.endswith(sep.casefold() + a):
+                variant = name[:len(name) - len(area) - len(sep)].strip()
+                if variant:
+                    return area, variant, "area_last", sep
+    return None
+
+
+def name_pattern(snap) -> tuple[str, str] | None:
+    """How this house names its scenes: ``("area_first", " - ")`` for
+    "Kitchen - Dim", ``("area_last", ": ")`` for "Dim: Kitchen", or None
+    when it follows no pattern brAIn can read. brAIn's own scenes are not
+    counted — the house's habit is what is being copied."""
+    house = _house(snap)
+    areas = _area_names(house)
+    counts: dict[tuple[str, str], int] = {}
+    own = {str(c.get("name") or "").strip().casefold()
+           for c in (house.snap.get("scenes") or [])
+           if isinstance(c, dict) and str(c.get("id") or "").startswith(ID_PREFIX)}
+    for name in house_scene_names(house):
+        if name.casefold() in own:
+            continue
+        split = _split(name, areas)
+        if split:
+            key = (split[2], split[3])
+            counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    best = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+    return best[0] if best[1] >= PATTERN_MIN else None
+
+
+def mood_of(variant: str) -> str:
+    """Which of the four moods a scene's variant names, or ""."""
+    words = " " + re.sub(r"[^a-z0-9]+", " ", str(variant or "").lower()) + " "
+    for mood in MOODS:
+        if any(f" {w} " in words for w in MOOD_WORDS[mood]):
+            return mood
+    return ""
+
+
+def covered_moods(snap, area: str) -> dict[str, str]:
+    """``{mood: the house's scene that already is it}`` for one room.
+
+    A scene is the room's when its name is the room and a variant, and its
+    mood is what the variant says (`MOOD_WORDS`). brAIn's own scenes for
+    the room count by their id. Composing a mood this already has would be
+    a second scene for the same room and the same mood."""
+    house = _house(snap)
+    areas = _area_names(house)
+    want = _slug(area)
+    out: dict[str, str] = {}
+    for mood, name in existing_scenes(house, area).items():
+        out[mood] = name
+    for name in house_scene_names(house):
+        split = _split(name, areas)
+        if not split or _slug(split[0]) != want:
+            continue
+        mood = mood_of(split[1])
+        if mood and mood not in out:
+            out[mood] = name
+    return out
+
+
 def compose(area: str, lights: list[dict],
-            names: dict[str, str] | None = None) -> list[dict]:
-    """Four scene entries for one room. Deterministic, top to bottom."""
+            names: dict[str, str] | None = None,
+            pattern: tuple[str, str] | None = None,
+            moods: tuple[str, ...] | None = None) -> list[dict]:
+    """The scene entries for one room — four, or the ``moods`` still
+    missing. Deterministic, top to bottom. ``pattern`` is the house's own
+    naming (`name_pattern`)."""
     names = names or {}
     nightlights = [light for light in lights
                    if (light["night_light"] if isinstance(
@@ -300,7 +426,7 @@ def compose(area: str, lights: list[dict],
                        else (is_nightlight(light["name"]) or is_nightlight(
                            light["entity_id"].split(".", 1)[-1])))]
     out = []
-    for mood in MOODS:
+    for mood in (moods if moods is not None else MOODS):
         # At night only a light that is for the night stays on — and if
         # the room has none, the whole room goes off, which is what
         # "night" means in a room with no nightlight in it.
@@ -313,7 +439,7 @@ def compose(area: str, lights: list[dict],
         label = str(names.get(mood) or DEFAULT_NAMES[mood]).strip()[:40]
         out.append({
             "id": f"{ID_PREFIX}{_slug(area)}_{mood}",
-            "name": f"{label} — {area}",
+            "name": scene_name(area, mood, label, pattern),
             "entities": entities,
             # Read by the card and by nothing else. It is not part of the
             # scene, so it is stripped before the file is written.
@@ -423,16 +549,41 @@ def build(snap, area: str, patterns: list[str] | None = None,
             "building. Split it into areas and ask again.")
         return out
 
-    entries = compose(area, lights, names)
+    have = covered_moods(house, area)
+    missing = tuple(m for m in MOODS if m not in have)
+    taken = {_slug(n) for n in house_scene_names(house)}
+    pattern = name_pattern(house)
+    if not missing:
+        out["refused"] = (
+            f"the {area} already has a scene for every mood brAIn would make ("
+            + ", ".join(have[m] for m in MOODS) + "), so it made none.")
+        return out
+    entries = [e for e in compose(area, lights, names, pattern, missing)
+               # A name already taken would be Home Assistant's `_2`, which
+               # is a second scene for the same thing.
+               if _slug(e["name"]) not in taken]
+    if not entries:
+        out["refused"] = (f"the {area}'s scenes already carry the names brAIn "
+                          "would use, so it made none.")
+        return out
+    if len(entries) < len(MOODS):
+        out["title"] = (f"{len(entries)} more scene"
+                        f"{'' if len(entries) == 1 else 's'} for the {area}")
     out["config"] = strip(entries)
     out["scene"] = {
         "area": area,
         "lights": lights,
         "skipped": skipped,
         "preview": preview(entries, lights),
-        "moods": list(MOODS),
+        "moods": [e["mood"] for e in entries],
     }
     out["why"] = why_for(area, lights, skipped)
+    kept = [have[m] for m in MOODS if m in have]
+    if kept:
+        out["why"] += (f" The {area} already has {', '.join(kept)}, so brAIn "
+                       "left "
+                       + ("that mood" if len(kept) == 1 else "those moods")
+                       + " out.")
     return out
 
 
@@ -611,14 +762,20 @@ def schedule(snap, area: str, wake_minutes: float | None = None,
     }
 
 
-def scene_name(area: str, mood: str, label: str | None = None) -> str:
+def scene_name(area: str, mood: str, label: str | None = None,
+               pattern: tuple[str, str] | None = None) -> str:
     """The name a scene is written under, and the one the schedule calls.
 
     One implementation, because the automation names an entity id derived
     from the scene's name — and a second answer to "what is this scene
-    called" is a schedule that turns on nothing.
+    called" is a schedule that turns on nothing. ``pattern`` is the
+    house's own naming (`name_pattern`); without one it is brAIn's own.
     """
-    return f"{label or DEFAULT_NAMES[mood]} — {area}"
+    label = label or DEFAULT_NAMES[mood]
+    if pattern:
+        order, sep = pattern
+        return f"{area}{sep}{label}" if order == "area_first" else f"{label}{sep}{area}"
+    return f"{label} — {area}"
 
 
 __all__ = [
@@ -626,6 +783,8 @@ __all__ = [
     "LEVELS", "MAX_LIGHTS", "MIN_LIGHTS", "MOODS", "NAME_MAX_TURNS",
     "areas_with_lights",
     "NAME_TIMEOUT_S", "NIGHT_WORDS", "SOURCE", "SYSTEM", "TEMP_MODES",
+    "MOOD_WORDS", "NAME_SEPARATORS", "covered_moods", "house_scene_names",
+    "mood_of", "name_pattern",
     "build", "capability", "compose", "existing_scenes", "is_nightlight",
     "kelvin_to_rgb", "lights_in", "name_prompt", "preview", "read_names",
     "rgb_to_hsv", "scene_name", "schedule", "strip", "why_for",
