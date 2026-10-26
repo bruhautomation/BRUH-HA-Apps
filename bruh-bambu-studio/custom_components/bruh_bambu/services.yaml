@@ -89,7 +89,8 @@ print_file:
     machine:
       name: Machine profile
       description: 'Only for a bare model that has to be sliced: the printer profile name
-        as Bambu Studio lists it.'
+        as Bambu Studio lists it, or one of your printers by its name (its model decides
+        the profile).'
       example: Bambu Lab X1 Carbon 0.4 nozzle
       selector:
         text: {}
@@ -190,6 +191,8 @@ slice_file:
           mode: box
     machine:
       name: Machine profile
+      description: The printer profile name as Bambu Studio lists it, or one of your printers
+        by its name (its model decides the profile).
       selector:
         text: {}
     process:

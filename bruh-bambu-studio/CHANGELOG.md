@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+### Fixed
+
+- **A bare model sliced for an A1 is sliced for the A1's 256 mm bed.** Slicing an STL with a printer profile named directly handed Bambu Studio the profile without the family settings it builds on, so the bed size never arrived: the slice used a 200 mm bed, moved the part to its middle and refused anything wider. Profiles are now handed over complete, a printer can be named by the name you gave it (its model chooses the profile, not the words in its name), and a profile that does not say how big the bed is is refused, naming the printer. (#430)
+
 ## 0.3.0
 
 ### Added
