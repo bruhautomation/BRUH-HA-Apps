@@ -187,11 +187,31 @@ class TestTheRoutes(FixCase):
         s.intents.STORE = tmp / "intents.json"
         s.proposals.SETTLED_FILE = tmp / "proposals-settled.json"
         s.security.HONEYTOKEN_FILE = tmp / "honeytoken.json"
+        # The server may hold different module objects from the ones this
+        # file imported (several test files pop and re-import panel
+        # modules), so the journal and the ledger are pointed at the same
+        # place through the server's own copies too.
+        self._writer_olds = []
+        for mod in {id(m): m for m in (s.automation_writer,
+                                       s.unfix.automation_writer)}.values():
+            self._writer_olds.append((mod, mod.CONFIG_DIR, mod.JOURNAL_DIR,
+                                      mod.SNAP_DIR, mod.INDEX))
+            (mod.CONFIG_DIR, mod.JOURNAL_DIR, mod.SNAP_DIR, mod.INDEX) = (
+                automation_writer.CONFIG_DIR, automation_writer.JOURNAL_DIR,
+                automation_writer.SNAP_DIR, automation_writer.INDEX)
+        self._ledger_olds = [(m, m.LEDGER_FILE) for m in
+                             {id(m): m for m in (s.actions, s.unfix.actions)}.values()]
+        for mod, _old in self._ledger_olds:
+            mod.LEDGER_FILE = actions.LEDGER_FILE
 
     def tearDown(self):
         s = self.server
         (s.tidy.STORE, s.intents.STORE, s.proposals.SETTLED_FILE,
          s.security.HONEYTOKEN_FILE) = self._change_olds
+        for mod, *old in self._writer_olds:
+            (mod.CONFIG_DIR, mod.JOURNAL_DIR, mod.SNAP_DIR, mod.INDEX) = old
+        for mod, old in self._ledger_olds:
+            mod.LEDGER_FILE = old
         super().tearDown()
 
     def test_the_hook_names_the_face_that_asked(self):

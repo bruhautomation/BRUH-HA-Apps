@@ -333,8 +333,12 @@ class FindingsWatcher:
         # ts -> the (severity, placeholders) last raised for it; see
         # `_placeholders` for why the comparison is worth keeping.
         self._issues: dict[int, tuple] = {}
-        # The add-on's table of press words, off the last mirror read.
+        # The add-on's table of press words, how each row reads on Needs
+        # you, and the household's name for the assistant — off the last
+        # mirror read.
         self._press_words: dict | None = None
+        self._views: dict = {}
+        self._assistant = "brAIn"
 
     def prime(self) -> None:
         """Adopt the current list without announcing it.
@@ -361,6 +365,9 @@ class FindingsWatcher:
         current, snoozed = _rows(state)
         labels = state.get("labels")
         self._press_words = labels if isinstance(labels, dict) else None
+        self._views = state.get("views") if isinstance(
+            state.get("views"), dict) else {}
+        self._assistant = str(state.get("assistant") or "").strip() or "brAIn"
         self._announce(current, snoozed)
         # Reconciled on every pass, including the one that primes the
         # watermark: an issue is state, and the first poll after a restart
@@ -457,7 +464,10 @@ class FindingsWatcher:
                 continue
             if str(row.get("status") or "open") not in REPAIR_STATUSES:
                 continue
-            wanted[ts] = (severity, _placeholders(row), _answers(row),
+            view = self._views.get(str(ts))
+            seen = {**row, **(view if isinstance(view, dict) else {}),
+                    "assistant": self._assistant}
+            wanted[ts] = (severity, _placeholders(seen), _answers(row),
                           _labels(row, self._press_words))
             if len(wanted) >= MAX_REPAIR_ISSUES:
                 break

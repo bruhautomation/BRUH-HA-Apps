@@ -89,7 +89,7 @@ class TestTheDialogIsTheCard(MirrorCase):
                                severity="warning", source="check:auto.dead_ref",
                                source_title="Automations", fixable=True)
         state = findings.read_findings_state(self.hass)
-        mirror = state["findings"][0]
+        mirror = state["views"][str(state["findings"][0]["ts"])]
         self.assertEqual(mirror["who_kind"], "brain")
         self.assertEqual(mirror["who"], "Vesper can fix this.")
         issue = self._issue()

@@ -477,12 +477,12 @@ def _queue_now(now: float) -> int | None:
 
 def _outside_view(row: dict, assistant: str) -> dict:
     """What Home Assistant shows of this row so it reads as the card on
-    Needs you (#452): the card's own title, its who-acts line and the
-    presses it can carry back, each label off `answers.REQUEST_LABELS`
+    Needs you (#452): the card's own title and its who-acts line
     (`answers.request_view` — one derivation for the card and the dialog).
-    """
+    The presses ride on the row as `answers`, each label off
+    `answers.REQUEST_LABELS`."""
     view = answers.request_view(row, assistant)
-    out = {"answers": view["answers"], "assistant": assistant}
+    out = {}
     if view["title"]:
         out["title"] = view["title"]
     if view["who"]:
@@ -539,6 +539,11 @@ def _publish_state(items: list[dict]) -> None:
             # the dialog's menu reads its words from.
             "assistant": assistant,
             "labels": dict(answers.REQUEST_LABELS),
+            # How each live row reads on Needs you — its title and its
+            # who-acts line — keyed by ts beside the rows rather than in
+            # them, so a row keeps the wire shape every reader has read.
+            "views": {str(s["ts"]): _outside_view(s, assistant)
+                      for s in live[:STATE_MAX_ROWS]},
             "open": len(open_rows) if queue is None else queue,
             "findings_open": len(open_rows),
             "waiting_look": len(waiting),
@@ -567,7 +572,7 @@ def _publish_state(items: list[dict]) -> None:
                  # a notification's buttons are these, so a battery is
                  # *Add to to-do · Replaced it · Not a problem* on every
                  # surface rather than three different questions.
-                 **_outside_view(s, assistant),
+                 "answers": answers.request_answers(s),
                  **{k: s[k] for k in ("kind", "claim") if s.get(k)},
                  # An Urgent card (`notify_router.is_urgent`): the
                  # integration raises a Repairs entry for it ahead of
