@@ -18873,7 +18873,8 @@ async def h_devloop_look(request: web.Request) -> web.Response:
         body = await request.json()
     except ValueError:
         return web.json_response({"error": "expected JSON"}, status=400)
-    topic = " ".join(str((body or {}).get("topic") or "").split())[:500]
+    topic = textclip.clip(" ".join(str((body or {}).get("topic") or "").split()),
+                          devloop.streams.OWNER_WORDS_CHARS)
     if not topic:
         return web.json_response({"error": "say what you want fixed"},
                                  status=400)
@@ -18914,18 +18915,28 @@ async def h_bruh_addons(request: web.Request) -> web.Response:
     })
 
 
-REPORT_FIELDS = {"title": 100, "what": 300, "asked": 500, "evidence": 6000,
-                 "done_when": 800}
+# What each field of the chat's report may hold. The owner's words (`asked`)
+# are the requirement and keep the stream's generous limit; `what` is
+# brAIn's finding, kept whole in the body while the title line takes a
+# short cut of it. Every cut is `textclip.clip` — a word boundary and an
+# ellipsis. These were bare slices at 300 and 500, and a chat that put the
+# owner's words and its diagnosis into `what` filed a 300-character fragment
+# ending mid-word with nothing else behind it.
+REPORT_FIELDS = {"title": 100, "what": devloop.streams.FINDING_CHARS,
+                 "asked": devloop.streams.OWNER_WORDS_CHARS, "evidence": 6000,
+                 "done_when": devloop.streams.DONE_CHARS}
 
 
 def report_row(body: dict) -> tuple[dict | None, str]:
     """A report the chat wrote, as a `look` row; ``(None, why)`` for one
     that cannot be filed. Pure, so a test can hand it the body."""
     body = body if isinstance(body, dict) else {}
-    fields = {k: (str(body.get(k) or "")[:n] if k == "evidence"
-                  else " ".join(str(body.get(k) or "").split())[:n])
+    # The title is one line; the rest keep their own lines (evidence is
+    # quoted as it was read, and the owner's words as they were typed).
+    fields = {k: textclip.clip(" ".join(str(body.get(k) or "").split()) if k == "title"
+                               else str(body.get(k) or "").strip("\n").rstrip(), n)
               for k, n in REPORT_FIELDS.items()}
-    if not fields["title"] or not fields["what"]:
+    if not fields["title"] or not fields["what"].strip():
         return None, "a report needs a title and what is wrong"
     addon = str(body.get("addon") or "brAIn").strip()
     spec = devloop.siblings.spec_by_name(addon)
@@ -18933,16 +18944,17 @@ def report_row(body: dict) -> tuple[dict | None, str]:
         return None, ("addon must be brAIn or one of: "
                       + ", ".join(devloop.siblings.PRODUCTS))
     parts = []
-    if fields["asked"]:
-        parts.append("The owner said:\n\n> " + fields["asked"])
-    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"])
+    if fields["asked"].strip():
+        parts.append("The owner said:\n\n> " + fields["asked"].strip().replace("\n", "\n> "))
+    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"].strip())
     if fields["evidence"].strip():
         fence = "`" * 3
         parts.append("Evidence brAIn read:\n\n" + fence + "\n"
                      + fields["evidence"].replace(fence, "'" * 3) + "\n" + fence)
-    if fields["done_when"]:
-        parts.append(f"**Done when:** {fields['done_when']}")
-    row = {"where": f"Fix: {fields['title']}", "what": fields["what"],
+    if fields["done_when"].strip():
+        parts.append(f"**Done when:** {fields['done_when'].strip()}")
+    summary = textclip.clip(" ".join(fields["what"].split()), devloop.streams.WHAT_CHARS)
+    row = {"where": f"Fix: {fields['title']}", "what": summary,
            "detail": "", "body": "\n\n".join(parts), "ux": body.get("ui") is True}
     if spec:
         row.update(where=f"{spec['name']} · {row['where']}", product=spec["name"])

@@ -7749,9 +7749,13 @@ TOOLS = [
             "asks you to fix or report a problem whose cause is in an "
             "add-on's own code (a traceback in its log, a screen that is "
             "wrong), AFTER you have looked (bruh_addon_status, the logs) and "
-            "after any workaround you can make here. Put what you found in "
-            "`what` and the log lines or readings in `evidence`; put the "
-            "owner's own words in `asked`. Needs the development loop on "
+            "after any workaround you can make here. Three fields, three "
+            "jobs: `asked` is the owner's exact words, copied verbatim and "
+            "whole — it is the requirement; `what` is a short summary of the "
+            "problem (it becomes the issue's title line); `evidence` carries "
+            "your diagnosis and what it rests on — the cause you found, the "
+            "log lines, errors and readings. Nothing is dropped: a long "
+            "field is kept in the issue's body. Needs the development loop on "
             "(⚙ › Developer); if it is off, say so. Never for a problem in "
             "the house's own configuration, which you fix directly."
         ),
@@ -7763,11 +7767,16 @@ TOOLS = [
                 "title": {"type": "string",
                           "description": "Under 80 characters, naming the part that is broken"},
                 "what": {"type": "string",
-                         "description": "One or two sentences: the real problem you found"},
+                         "description": ("A short summary, one or two sentences: the real "
+                                         "problem. Not the owner's words and not the "
+                                         "diagnosis — those have their own fields")},
                 "evidence": {"type": "string",
-                             "description": "The log lines, error or readings that show it"},
+                             "description": ("Your diagnosis and its evidence: the cause "
+                                             "you found, and the log lines, errors or "
+                                             "readings that show it")},
                 "asked": {"type": "string",
-                          "description": "The owner's own words, if they asked"},
+                          "description": ("The owner's exact words, verbatim and whole, "
+                                          "if they asked — never paraphrased or shortened")},
                 "done_when": {"type": "string",
                               "description": "How a developer can tell it is fixed"},
                 "ui": {"type": "boolean",

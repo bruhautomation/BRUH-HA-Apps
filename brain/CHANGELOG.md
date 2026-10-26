@@ -11,6 +11,7 @@ All notable changes to **brAIn**, newest first. This project adheres to [Semanti
 ### Fixed
 
 - **Long messages in the chat are shown whole.** A request Morph sends brAIn ends with your own words after pages of context, and the chat cut every message and reply at 4,000 characters, so your request was never on screen. Messages and replies are never cut now; a long one is folded with **Show all**. (#426)
+- **A report brAIn files for you keeps your words.** A report from the chat was cut to 300 characters, ending mid-word, and your own words to 500. Your words and brAIn's findings reach the issue whole now, and anything shortened ends on a whole word.
 - **Switching between the chat and the terminal is in ⋯ on both.** The terminal face hid the switch back to the chat, and ⚙ called the setting *Opens as*. ⋯ on Ask says **Switch to chat** or **Switch to terminal**, and ⚙'s search finds **Chat or terminal** by either word. (#450)
 
 ## 3.8.17
