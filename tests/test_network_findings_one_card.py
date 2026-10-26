@@ -34,7 +34,9 @@ import checks  # noqa: E402
 import findings_store  # noqa: E402
 import sre  # noqa: E402
 from test_house_checks import NOW, house  # noqa: E402
-from test_network_checks import add_ap, add_client  # noqa: E402
+import test_network_checks as tnc  # noqa: E402
+
+add_ap, add_client = tnc.add_ap, tnc.add_client
 from test_sre import collected  # noqa: E402
 from test_subject_fold import FoldCase  # noqa: E402
 
@@ -180,7 +182,6 @@ class TestOneDeviceOneCard(DeviceCase):
         self.assertEqual(rows[0]["source"], "check:net.unifi_dropped")
 
     def test_the_unifi_check_says_its_row_is_about_the_integration(self):
-        import test_network_checks as tnc
         snap = tnc.TestFlapping().wifi_house(tnc.flaps(0))
         for n in (1, 2, 3):
             tracker = [(6.5 * 86400, "home")]
@@ -369,20 +370,20 @@ def one_cause(h, **cause):
                                            "records": recs[:1], **cause}]},
                               dig)
     rows = sre.rows(parsed["causes"], dig, {"anchors": {}}, NOW)
-    return dig, parsed, rows
+    return parsed, rows
 
 
 class TestALogLineIsFiledOnItsOwnIntegrationsThing(unittest.TestCase):
     def test_another_integrations_device_named_in_the_line_is_not_it(self):
         h = lifx_house([log_row("Timed out reaching Back Porch Motion area "
                                 "bulb", LIFX)])
-        _dig, _parsed, [row] = one_cause(h)
+        [row] = one_cause(h)[1]
         self.assertNotEqual(row["entity_id"], "binary_sensor.back_porch_motion")
         self.assertIn(row["entity_id"], ("", "light.study_bulb"))
 
     def test_its_own_device_named_in_the_line_is(self):
         h = lifx_house([log_row("Timed out reaching Study Bulb", LIFX)])
-        _dig, _parsed, [row] = one_cause(h)
+        [row] = one_cause(h)[1]
         self.assertEqual(row["entity_id"], "light.study_bulb")
 
     def test_an_automations_line_is_filed_on_that_automation(self):
@@ -390,13 +391,13 @@ class TestALogLineIsFiledOnItsOwnIntegrationsThing(unittest.TestCase):
             "Printer alert: Error executing script. Referenced entities "
             "sensor.printer_ink are missing or not currently available",
             "homeassistant.components.automation.printer_alert")])
-        _dig, _parsed, [row] = one_cause(h)
+        [row] = one_cause(h)[1]
         self.assertEqual(row["entity_id"], "automation.printer_alert")
 
     def test_a_rule_integration_never_stands_for_itself(self):
         h = lifx_house([log_row("Something broke while loading",
                                 "homeassistant.components.automation")])
-        _dig, _parsed, [row] = one_cause(h)
+        [row] = one_cause(h)[1]
         self.assertEqual(row["entity_id"], "")
 
     def test_the_flood_check_does_not_match_another_integrations_name(self):
@@ -439,7 +440,7 @@ class TestALogFindingSaysWhatFailed(unittest.TestCase):
     def test_the_message_the_count_and_when_are_in_the_detail(self):
         h = vacuum_house([log_row("Failed to update map data: cloud rate "
                                   "limited", VACUUM, count=40)])
-        _dig, parsed, [row] = one_cause(
+        parsed, [row] = one_cause(
             h, detail="", fix="Restart the vacuum on its dock.")
         self.assertIn("Failed to update map data", row["detail"])
         self.assertIn("40 times", row["detail"])
@@ -450,14 +451,14 @@ class TestALogFindingSaysWhatFailed(unittest.TestCase):
     def test_a_fix_about_the_error_is_kept(self):
         h = vacuum_house([log_row("Failed to update map data: cloud rate "
                                   "limited", VACUUM)])
-        _dig, _parsed, [row] = one_cause(
+        _, [row] = one_cause(
             h, fix="Wait for the cloud rate limit to lift, then update the "
                    "map again.")
         self.assertIn("rate limit", row["fix"])
 
     def test_a_line_with_nothing_in_it_is_held_back(self):
         h = vacuum_house([log_row("", VACUUM)])
-        _dig, parsed, rows = one_cause(h)
+        parsed, rows = one_cause(h)
         self.assertEqual(rows, [])
         self.assertEqual(parsed["unstated"], 1)
 
