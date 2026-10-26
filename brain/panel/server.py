@@ -7291,14 +7291,17 @@ async def _gate_decide(body: dict) -> dict:
     if hit:
         return hit
     try:
+        exposure = consequence.tool_kind(tool)[1] == gate.EXPOSURE_TOOL
         view = await asyncio.wait_for(
-            _gate_view(tool, args, exposed_only, states=not switch),
+            _gate_view(tool, args, exposed_only,
+                       states=not switch or exposure),
             GATE_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 — undecided, never allow
         return gate.undecided(channel, f"could not read the house: "
                                        f"{type(exc).__name__}")
     cons = consequence.resolve(tool, args, view)
-    floor = gate.floors(cons, channel, exposed_only)
+    floor = gate.floors(cons, channel, exposed_only) or gate.exposure_floor(
+        cons, args, words, view.states)
     if floor:
         gate.STATE["floor"] += 1
         out = gate._out(floor[0], floor[1], channel, "floor")

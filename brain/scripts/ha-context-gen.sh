@@ -632,6 +632,11 @@ The Home Assistant MCP server is active. You can use it to:
 - Check error logs
 - Render Jinja2 templates
 - Reload configurations after YAML edits
+- See which entities reach Assist, Alexa, Google Assistant and each HomeKit
+  Bridge with \`assistant_exposure\` (what in use is missing, what is stale, and
+  each bridge's accessories against HomeKit's 150), and change them in bulk
+  with \`set_assistant_exposure\`. Expose a lock, an alarm or a garage door
+  only when the homeowner names it.
 
 **What brAIn has already measured about this house — ask before guessing.**
 These read brAIn's own stores; a store that has not measured yet says so in

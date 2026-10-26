@@ -858,6 +858,8 @@ ANALYST_TOOLS = [
     f"{MCP}explain_decision",  # what brAIn decided NOT to say, and why
     f"{MCP}get_areas",
     f"{MCP}get_registry",
+    # Which entities reach the voice assistants and each HomeKit Bridge.
+    f"{MCP}assistant_exposure",
     f"{MCP}get_automations",
     f"{MCP}get_automation_trace",
     f"{MCP}get_automation_config",  # the definition a trace ran — runs have no files
@@ -955,6 +957,9 @@ ANALYST_DENIED = [
     # dashboard, an automation or a voice assistant then stands on.
     f"{MCP}set_device_class", f"{MCP}show_switch_as",
     f"{MCP}stop_showing_switch_as", f"{MCP}set_sensor_display",
+    # Which assistants and HomeKit Bridges reach an entity: a lock exposed
+    # to a voice assistant is a way into the house.
+    f"{MCP}set_assistant_exposure",
     # The platform's own reach past the run — a peer session, a phone, a
     # timer. `--tools ""` already takes the built-ins off an analyst run;
     # they are named here as well because this list is what a study
