@@ -221,10 +221,10 @@ class TestARuleIsDatedByItsNewestWrong(_Case):
         upstream.send_due(now=now)
 
     def _producer_issue(self) -> int:
-        for n, issue in enumerate(self.gh.issues, 1):
-            if issue["title"].startswith("[Producer"):
-                return n
-        self.fail([i["title"] for i in self.gh.issues])
+        found = [n for n, issue in enumerate(self.gh.issues, 1)
+                 if issue["title"].startswith("[Producer")]
+        self.assertTrue(found, [i["title"] for i in self.gh.issues])
+        return found[0]
 
     def test_an_unchanged_count_on_a_newer_release_is_not_reopened(self):
         self.switch_on()
