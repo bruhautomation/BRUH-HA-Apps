@@ -165,6 +165,7 @@ import devloop_archive
 import card_tags
 import card_verdict
 import cases
+import changes
 from checks._util import House
 import chat_session
 import closures
@@ -6911,8 +6912,6 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     `scene.apply` (each domain's own reproduce_state), and then read again,
     because Home Assistant accepting a call is not a light being on. Every
     entity gets its own line: restored, or could not restore and why."""
-    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
-
     finding = _finding_or_404(request)
     if finding.get("status") not in RESTORE_STATUSES:
         raise web.HTTPConflict(text="this finding is being worked on — wait "
@@ -6928,34 +6927,9 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     if not plan["apply"] and not plan["refused"]:
         raise web.HTTPConflict(text="this fix made no service calls brAIn "
                                     "recorded, so there is nothing to put back")
-    error, after = "", {}
-    if plan["apply"]:
-        before = {}
-        for eid in plan["apply"]:
-            try:
-                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
-            except Exception:  # noqa: BLE001 — recorded as unknown
-                before[eid] = {"unknown": True}
-        iv = await asyncio.to_thread(interventions.for_finding,
-                                     int(finding["ts"]))
-        try:
-            await ha_data.call_core_service("scene", "apply",
-                                            {"entities": plan["apply"]})
-        except Exception as exc:  # noqa: BLE001 — reported per entity
-            error = str(exc)
-        typed_fix.append_ledger(typed_fix.ledger_row(
-            "scene", "apply", list(plan["apply"]), before=before,
-            channel="restore", intervention=(iv or {}).get("id", "")),
-            actions.LEDGER_FILE)
-        if not error:
-            await asyncio.sleep(RESTORE_SETTLE_S)
-        for eid in plan["apply"]:
-            try:
-                after[eid] = await ha_data.entity_state(eid)
-            except Exception:  # noqa: BLE001
-                after[eid] = None
-    rows = unfix.restore_report(plan, after, error)
-    text = unfix.restore_text(rows)
+    iv = await asyncio.to_thread(interventions.for_finding,
+                                 int(finding["ts"]))
+    rows, text = await _restore_calls(plan, (iv or {}).get("id", ""))
 
     def note() -> dict:
         findings_store.set_status(int(finding["ts"]), finding["status"],
@@ -6967,6 +6941,176 @@ async def h_finding_restore(request: web.Request) -> web.Response:
              finding["ts"], sum(1 for r in rows if r["restored"]),
              sum(1 for r in rows if not r["restored"]))
     return web.json_response({**payload, "restored": rows, "text": text})
+
+
+async def _restore_calls(plan: dict, intervention: str = "") -> tuple[list, str]:
+    """Carry out a restore plan (`unfix.restore_plan`): `scene.apply` the
+    recorded before-states, record that on the ledger as a restore, and read
+    every entity again — Home Assistant accepting a call is not a light
+    being on. One implementation for a fix's "Put them back" and a row's
+    Undo under History › Changes brAIn made."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    error, after = "", {}
+    if plan["apply"]:
+        before = {}
+        for eid in plan["apply"]:
+            try:
+                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
+            except Exception:  # noqa: BLE001 — recorded as unknown
+                before[eid] = {"unknown": True}
+        try:
+            await ha_data.call_core_service("scene", "apply",
+                                            {"entities": plan["apply"]})
+        except Exception as exc:  # noqa: BLE001 — reported per entity
+            error = str(exc)
+        typed_fix.append_ledger(typed_fix.ledger_row(
+            "scene", "apply", list(plan["apply"]), before=before,
+            channel="restore", intervention=intervention),
+            actions.LEDGER_FILE)
+        if not error:
+            await asyncio.sleep(RESTORE_SETTLE_S)
+        for eid in plan["apply"]:
+            try:
+                after[eid] = await ha_data.entity_state(eid)
+            except Exception:  # noqa: BLE001
+                after[eid] = None
+    rows = unfix.restore_report(plan, after, error)
+    return rows, unfix.restore_text(rows)
+
+
+# -- History › Changes brAIn made ------------------------------------------
+
+def _journal_since(since: float) -> list[dict]:
+    """Every edit-journal line since ``since``, whoever wrote it. Malformed
+    lines are skipped, the tolerance `brain undo` and `unfix` apply."""
+    out: list[dict] = []
+    try:
+        with open(automation_writer.INDEX, "r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                    ts = float(row.get("ts") or 0)
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                if isinstance(row, dict) and ts >= since:
+                    row["ts"] = ts
+                    out.append(row)
+    except OSError:
+        return []
+    return out
+
+
+def _file_mtime(path: str) -> float | None:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def _changes_rows(now: float | None = None) -> list[dict]:
+    """Every change brAIn made, as History rows (`changes.build`), read off
+    the stores the panel already keeps."""
+    now = time.time() if now is None else now
+    since = now - changes.CHANGES_DAYS * 86400
+    fixes = [f for f in findings_store.listing().get("findings") or []
+             if f.get("status") == "fixed"]
+    try:
+        tokens = security.honeytoken_ids()
+    except Exception:  # noqa: BLE001 — a tripwire list that cannot be read
+        tokens = ()
+    return changes.build(
+        journal=_journal_since(since), ledger=actions.read_ledger(since),
+        fixes=fixes, tidy_batches=tidy.load().get("batches") or [],
+        intents=intents.listing(),
+        accepted=list(proposals.settled_keys().values()),
+        names=dict(_NAMES), mtime=_file_mtime, protected=None,
+        honeytokens=tokens, now=now)
+
+
+async def h_changes(request: web.Request) -> web.Response:
+    """History › Changes brAIn made: newest first, a page at a time."""
+    try:
+        limit = int(request.query.get("limit") or changes.PAGE)
+    except ValueError:
+        limit = changes.PAGE
+    try:
+        before = float(request.query["before"]) if request.query.get(
+            "before") else None
+    except ValueError:
+        before = None
+    rows = await asyncio.to_thread(_changes_rows)
+    return web.json_response({**changes.page(rows, limit, before),
+                              "label": changes.label(
+                                  personality.assistant_name())})
+
+
+def _offered(rows: list[dict], rid: str) -> dict:
+    """The row a press named, refused unless the list still offers Undo on
+    it — the button and the route cannot disagree about what is safe."""
+    row = next((r for r in rows if r["id"] == rid), None)
+    if row is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    if not row.get("press"):
+        raise web.HTTPConflict(text=row.get("reason")
+                               or "that change cannot be put back")
+    return row
+
+
+_CHANGE_TS = re.compile(r"^\d{1,12}(\.\d{1,6})?$")
+
+
+async def h_change_edit_undo(request: web.Request) -> web.Response:
+    """Put one journalled file back (`automation_writer.revert`, through
+    `unfix.revert_edits`, the reverter `brain undo` uses) and reload what
+    reads it."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"edit:{float(stamp):.6f}")
+    entry = changes.find_journal(await asyncio.to_thread(
+        _journal_since, float(stamp) - 1), float(stamp))
+    if entry is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    outcome = await asyncio.to_thread(unfix.revert_edits, [entry])
+    failures = []
+    for domain, service in outcome["reloads"]:
+        try:
+            await ha_data.call_core_service(domain, service)
+        except Exception as exc:  # noqa: BLE001 — the bytes are back either way
+            failures.append(f"{domain} would not reload: {exc}")
+    if outcome["failed"]:
+        raise web.HTTPConflict(text="; ".join(
+            why for _p, why in outcome["failed"])[:400])
+    text = unfix.summary(outcome, []).replace("the fix had changed", "brAIn had changed")
+    log.info("change %s put back: %s", stamp, entry.get("path"))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "text": "\n\n".join([text] + failures)})
+
+
+async def h_change_call_undo(request: web.Request) -> web.Response:
+    """Put the devices one service call changed back how they were — the
+    restore press (`unfix.restore_plan` / `_restore_calls`) over that one
+    call's recorded before-state, never-restored rules and all."""
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"call:{float(stamp):.6f}")
+    call = changes.find_call(await asyncio.to_thread(
+        actions.read_ledger, float(stamp) - 1), float(stamp))
+    if call is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    plan = unfix.restore_plan([call], None, tokens)
+    restored, text = await _restore_calls(plan)
+    log.info("change %s: restore — %d back", stamp,
+             sum(1 for r in restored if r["restored"]))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "restored": restored, "text": text})
 
 
 async def _undo_intervention(finding: dict) -> list[str]:
@@ -25939,6 +26083,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/case/{id}/respond", h_case_respond_result)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
     app.router.add_get("/api/history", h_history)
+    app.router.add_get("/api/changes", h_changes)
+    app.router.add_post("/api/changes/edit/{ts}/undo", h_change_edit_undo)
+    app.router.add_post("/api/changes/call/{ts}/undo", h_change_call_undo)
     app.router.add_post("/api/history/clear", h_history_clear)
     app.router.add_get("/api/today", h_today)
     app.router.add_post("/api/today/hide", h_today_hide)

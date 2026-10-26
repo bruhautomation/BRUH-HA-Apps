@@ -7811,11 +7811,25 @@ function makeTodo(item) {
 // ---- History ---------------------------------------------------------------
 
 async function refreshHistory() {
-  try {
-    todayState.history = await api("api/history");
-  } catch (e) {
-    todayState.history = todayState.history || { filters: [], rows: {}, error: e.message };
-  }
+  const [history, changes] = await Promise.all([
+    api("api/history").catch((e) => ({ __error: e.message })),
+    api("api/changes").catch(() => null),
+  ]);
+  if (history && !history.__error) todayState.history = history;
+  else todayState.history = todayState.history || { filters: [], rows: {}, error: (history || {}).__error };
+  // Changes brAIn made (#453): one route serves the list (`/api/changes`),
+  // newest first, each row with its own Undo or the reason it has none.
+  if (changes) todayState.changes = changes;
+}
+
+// The History filters, with "Changes brAIn made" as the fifth.
+function histFilters() {
+  const data = todayState.history || {};
+  const filters = (data.filters || []).slice();
+  const ch = todayState.changes;
+  if (ch) filters.push({ id: "changes", label: ch.label || "Changes brAIn made",
+                         count: ch.total || 0 });
+  return filters;
 }
 
 // What each filter holds, said once above its rows, so the list explains
@@ -7827,17 +7841,20 @@ const HIST_HINTS = {
   ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them; Delete clears the record, not your answer.",
   done: "Things you finished or brAIn fixed. Restore puts one back on To Do; Delete clears the record, not your answer.",
   aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
+  changes: "Everything brAIn changed in the house, newest first. Undo puts one back; a change that can't be put back says why.",
 };
 
 function histRowsShown() {
   const data = todayState.history;
   if (!data) return [];
-  const rows = (data.rows || {})[todayState.histFilter] || [];
+  const rows = todayState.histFilter === "changes"
+    ? ((todayState.changes || {}).rows || [])
+    : (data.rows || {})[todayState.histFilter] || [];
   const q = (todayState.histQuery || "").trim().toLowerCase();
   if (!q) return rows;
   const words = q.split(/\s+/).filter(Boolean);
   return rows.filter((r) => {
-    const hay = `${r.title || ""} ${r.meta || ""}`.toLowerCase();
+    const hay = `${r.title || ""} ${r.meta || ""} ${r.where || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }
@@ -7858,7 +7875,7 @@ function renderHistory() {
   }
   // Land on the first filter that holds something, rather than an empty
   // one, until somebody picks.
-  const filters = data.filters || [];
+  const filters = histFilters();
   if (!todayState.histPicked) {
     const first = filters.find((f) => f.count > 0);
     if (first) todayState.histFilter = first.id;
@@ -7896,6 +7913,25 @@ function renderHistory() {
     return;
   }
   rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
+  const ch = todayState.changes;
+  if (todayState.histFilter === "changes" && ch && ch.more && !todayState.histQuery) {
+    const older = qButton("Show older", false);
+    older.classList.add("histmore");
+    older.addEventListener("click", async () => {
+      older.disabled = true;
+      const last = (ch.rows || [])[ch.rows.length - 1];
+      try {
+        const next = await api(`api/changes?before=${last ? last.at : 0}`);
+        ch.rows = (ch.rows || []).concat(next.rows || []);
+        ch.more = !!next.more;
+        renderHistory();
+      } catch (e) {
+        toast(e.message || "that didn't work");
+        older.disabled = false;
+      }
+    });
+    list.appendChild(older);
+  }
 }
 
 async function deleteHistory(rows, btns) {
@@ -7913,7 +7949,12 @@ async function deleteHistory(rows, btns) {
   }
 }
 
-const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘" };
+const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘", changes: "↺" };
+
+// A change's line under its title: when, and where it came from.
+function changeMeta(r) {
+  return [agoWords(r.at), r.where].filter(Boolean).join(" · ");
+}
 
 function makeHistoryRow(r) {
   const row = el("div", "histrow");
@@ -7921,10 +7962,16 @@ function makeHistoryRow(r) {
   row.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
   const text = el("div", "histtext");
   text.appendChild(el("span", "histtitle", prettyText(r.title)));
-  text.appendChild(el("span", "item-state", r.meta || ""));
+  text.appendChild(el("span", "item-state", r.meta || (r.kind ? changeMeta(r) : "")));
   row.appendChild(text);
-  const press = r.press || {};
   const actions = el("div", "histactions");
+  if (r.kind && !r.press) {
+    // A change that cannot be put back says why, in place of the button.
+    actions.appendChild(el("p", "histreason", r.reason || "This can't be put back."));
+    row.appendChild(actions);
+    return row;
+  }
+  const press = r.press || {};
   const btn = qButton(press.label || "Restore", false);
   const btns = [btn];
   btn.addEventListener("click", async () => {
@@ -7932,16 +7979,19 @@ function makeHistoryRow(r) {
     if (confirmText && !window.confirm(confirmText)) return;
     btns.forEach((b) => { b.disabled = true; });
     try {
+      let said = "";
       for (const step of press.steps || []) {
-        await api(step.route.replace(/^\//, ""), {
+        const out = await api(step.route.replace(/^\//, ""), {
           method: "POST",
           ...(step.body && Object.keys(step.body).length
             ? { body: JSON.stringify(step.body) } : {}),
         });
+        if (out && typeof out.text === "string") said = out.text;
       }
       await Promise.all([refreshToday(), refreshHistory()]);
       renderFindings();
-      toast(press.label === "Undo" ? "Put back" : "Restored");
+      renderHistory();
+      toast(said ? said.split("\n")[0] : press.label === "Undo" ? "Put back" : "Restored");
     } catch (e) {
       toast(e.message || "that didn't work");
       btns.forEach((b) => { b.disabled = false; });
