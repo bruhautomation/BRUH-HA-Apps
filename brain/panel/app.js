@@ -12270,11 +12270,34 @@ function chatReportable(text) {
 // In the transcript it is the card's title, with the rest one press down:
 // that context is what the answer was written against, so it stays
 // readable, but it is not something the person said.
+// Past this a turn is folded behind Show all — never cut. The server sends
+// a conversation's own words whole (`conversations._speech`); a request
+// another add-on wrote for somebody runs to tens of thousands of characters
+// with their words at the very end, and a page of it in the log buried the
+// reply under it.
+const LONG_TURN = 1500;
+
 function chatUserNode(text) {
   const row = el("div", "msg user");
   const t = String(text || "");
   if (!t.startsWith(DISCUSS_PREFIX)) {
-    row.appendChild(el("div", "bubble", t));
+    const bubble = el("div", "bubble", t);
+    row.appendChild(bubble);
+    if (t.length > LONG_TURN) {
+      row.classList.add("long");
+      bubble.classList.add("folded");
+      const more = el("button", "bubblemore",
+        `Show all (${t.length.toLocaleString()} characters)`);
+      more.type = "button";
+      more.setAttribute("aria-expanded", "false");
+      more.addEventListener("click", () => {
+        const open = bubble.classList.toggle("folded") === false;
+        more.textContent = open ? "Show less"
+          : `Show all (${t.length.toLocaleString()} characters)`;
+        more.setAttribute("aria-expanded", String(open));
+      });
+      row.appendChild(more);
+    }
     return row;
   }
   const nl = t.indexOf("\n");
@@ -14513,7 +14536,7 @@ function applyTermMode(mode) {
   chatState.session = classic ? "classic" : "chat";
   document.body.classList.toggle("term-classic", classic);
   const btn = $("#termMode");
-  const label = classic ? "Chat" : "Classic terminal";
+  const label = classic ? "Switch to chat" : "Switch to terminal";
   // Saved, not peeked: the same setting ⚙ → Terminal & chat changes.
   btn.setAttribute("aria-label",
     classic ? "Switch to chat (Ask opens this way from now on)"

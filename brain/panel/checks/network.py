@@ -206,6 +206,43 @@ def _mac_index(house: House) -> dict[str, list[str]]:
     return out
 
 
+def device_keys(snap) -> dict[str, str]:
+    """``{entity id: device id}`` for every entity that is on a device —
+    the device a finding about it is ABOUT (#440).
+
+    The registry's own device for most entities. A Wi-Fi client UniFi
+    tracks is the exception: its tracker is joined to the device it is a
+    client OF through the registry's MAC connection (`unifi_clients`' own
+    join), and that device — the plug, the camera — is the key, so a drop
+    filed on the plug's switch and one filed on its tracker are one
+    device's. Where the MAC names several devices, the one carrying an
+    entity of another integration than UniFi is the device itself. Pure
+    over the snapshot, so the panel and the tests read one answer.
+    """
+    house = snap if isinstance(snap, House) else House(snap)
+    out: dict[str, str] = {}
+    for row in house.entities:
+        if row.get("entity_id") and row.get("device_id"):
+            out[str(row["entity_id"])] = str(row["device_id"])
+    index = _mac_index(house)
+    real: dict[str, bool] = {}
+    for row in house.entities:
+        if row.get("device_id") and row.get("platform") not in UNIFI_PLATFORMS:
+            real[str(row["device_id"])] = True
+    for eid in sorted(house.states):
+        if domain_of(eid) != "device_tracker":
+            continue
+        attrs = (house.states.get(eid) or {}).get("attributes") or {}
+        if not attrs.get("mac"):
+            continue
+        devs = sorted(index.get(norm_mac(attrs.get("mac")), ()))
+        if not devs:
+            continue
+        own = [d for d in devs if real.get(d)]
+        out[eid] = (own or devs)[0]
+    return out
+
+
 def ap_name(house: House, ap_mac: str) -> tuple[str, str]:
     """(name, entity id to file under) of the access point with this MAC."""
     mac = norm_mac(ap_mac)
@@ -544,6 +581,9 @@ def unifi_dropped(snap: dict, now: float) -> list[dict]:
         "severity": "warning",
         "fixable": False,
         "entity_id": "",
+        # The integration as a whole: one card with every other check's row
+        # about the same outage (#440).
+        "integration": "unifi",
     }]
 
 

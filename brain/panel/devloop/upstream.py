@@ -450,9 +450,11 @@ def _ingest(stream: str, rows: list[dict], diagnostics: dict, names: dict,
                        or "?") if product in PRODUCTS else version
         entry.update({
             "stream": stream, "rolling": rolling,
-            "where": where[:200], "what": what[:300],
-            "detail": str(row.get("detail") or "")[:400],
-            "body": str(row.get("body") or "")[:20_000],
+            # Cut on a word, never mid-word (`clip`): these are what the
+            # issue says, and a slice ended the owner's words mid-word.
+            "where": clip(where, 200), "what": clip(what, 300),
+            "detail": clip(str(row.get("detail") or ""), 400),
+            "body": clip(str(row.get("body") or ""), 20_000),
             "health": f"{health.get('state') or '?'}"
                       + (f" — {health.get('reason')}" if health.get("reason") else ""),
             "abridged": abridged,
@@ -662,7 +664,7 @@ def compose(entry: dict, aliases: Aliases | None = None) -> dict:
         return aliases.apply(scrub(text))
 
     where, what = clean(entry.get("where", "")), clean(entry.get("what", ""))
-    title = f"[{where}] {what}"[:120] if where else what[:120]
+    title = clip(f"[{where}] {what}" if where else what, 120)
     lines = [
         github.MARKER.format(fp=entry.get("fp", "")),
         ("Filed by brAIn's development loop from a house that switched it "

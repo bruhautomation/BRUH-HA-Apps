@@ -281,12 +281,17 @@ extract_claude_result() {
 # Claimed after the run rather than before because this path never had to
 # name its own session — --output-format json hands it back for free, and
 # a flag we don't need is a flag that can be unsupported.
+#
+# The second argument is the source, `automation` when none is given. A task
+# Morph sent says so (`"source": "morph"`, every Morph task carries it), and
+# is claimed as Morph — a conversation included, which would otherwise be
+# left unclaimed and read as the person's own chat in brAIn.
 claim_task_session() {
-    local out_file="$1" sid
+    local out_file="$1" source="${2:-automation}" sid
     command -v brain_claim_session > /dev/null 2>&1 || return 0
     sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' \
         "$out_file" 2>/dev/null | tr -cd 'A-Za-z0-9._-')
-    [ -n "$sid" ] && brain_claim_session "$sid" automation
+    [ -n "$sid" ] && brain_claim_session "$sid" "$source"
     return 0
 }
 
@@ -681,8 +686,11 @@ process_task() {
     # A conversation (Morph's Ask): brAIn's chat, by task. The session id is
     # a CLI session uuid or nothing — it becomes an argv entry, so anything
     # that is not plainly one is dropped and the run starts fresh.
-    local task_conversation task_session
+    local task_conversation task_session task_origin
     task_conversation=$(jq -r 'if .kind == "conversation" then "true" else "" end' "$work_file" 2>/dev/null)
+    # Who sent it, for the Chats list: Morph's tasks say so. Read as the
+    # literal word and nothing else, so an unknown source changes nothing.
+    task_origin=$(jq -r 'if .source == "morph" then "morph" else "" end' "$work_file" 2>/dev/null)
     task_session=""
     if [ "$task_conversation" = "true" ]; then
         task_session=$(jq -r 'if (.session_id | type) == "string" then .session_id else empty end' "$work_file" 2>/dev/null)
@@ -935,11 +943,16 @@ ${prompt}"
     result=$(extract_claude_result "$output_file")
     task_data=$(extract_claude_data "$output_file")
     # A conversation is the person's own: its session is left unclaimed, so
-    # brAIn's Chats rail lists it as theirs and it can be picked up there.
+    # brAIn's Chats rail lists it as theirs and it can be picked up there...
     if [ "$task_conversation" = "true" ]; then
         task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
+        # ...unless Morph sent it: then it is listed under Morph, and is
+        # still a conversation the chat can carry on.
+        if [ -n "$task_origin" ]; then
+            claim_task_session "$output_file" "$task_origin"
+        fi
     else
-        claim_task_session "$output_file"
+        claim_task_session "$output_file" "${task_origin:-automation}"
     fi
     stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
     # The envelope is kept until the journal has read it (journal_task
@@ -971,8 +984,11 @@ ${prompt}"
             task_data=$(extract_claude_data "$output_file")
             if [ "$task_conversation" = "true" ]; then
                 task_sid=$(jq -r 'if type == "object" then (.session_id // empty) else empty end' "$output_file" 2>/dev/null || true)
+                if [ -n "$task_origin" ]; then
+                    claim_task_session "$output_file" "$task_origin"
+                fi
             else
-                claim_task_session "$output_file"
+                claim_task_session "$output_file" "${task_origin:-automation}"
             fi
             stderr_output=$(cat "$stderr_file" 2>/dev/null || echo "")
             # The retry's envelope is the one that answers the task. The

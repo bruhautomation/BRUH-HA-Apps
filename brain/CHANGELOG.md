@@ -2,6 +2,29 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.20
+
+### Fixed
+
+- **One device is one card about it dropping off.** A Wi-Fi device reported by a check on its switch, by a card on its UniFi tracker and inside a several-device card is now one card with the others' evidence on it, and the UniFi integration losing its controller is one card whichever check saw it. (#440)
+- **Offline cards come off once the device is back.** A card from the overnight check or an insight card saying something is offline or not reachable is cleared once everything it names has reported for two hours, and a card whose own details say the device came back is not kept. (#441)
+- **A look's count always matches the card's.** When a check refreshes a card's numbers, a look that quoted the old ones is no longer shown beside them. (#443)
+- **Log errors are filed on the right thing.** An error is filed only on something of the integration that logged it, or the automation the log names, never on an unrelated device whose name appears in the message. (#434)
+- **A log-error card says what the error was.** It quotes the message, how often it happened and when it last did, a card that cannot is held back, and a fix that has nothing to do with the error is replaced by one that does. (#444)
+## 3.8.19
+
+### Added
+
+- **A Morph pill in Ask.** Change requests, the learning pass and conversations from Morph's Ask line are listed under **Morph**, not among your own chats or under Automation, including the ones already there. A Morph conversation can still be carried on in the chat. (#427)
+
+### Fixed
+
+- **Long messages in the chat are shown whole.** A request Morph sends brAIn ends with your own words after pages of context, and the chat cut every message and reply at 4,000 characters, so your request was never on screen. Messages and replies are never cut now; a long one is folded with **Show all**. (#426)
+- **brAIn can take a picture of one card.** Its screenshots of Morph started at the top of the dashboard and stopped at a fixed height, so a card further down could never be photographed. brAIn can now name a card or room, scroll to it, crop the picture to it, and open it first to see how it looks opened. (#454)
+- **A report brAIn files for you keeps your words.** A report from the chat was cut to 300 characters, ending mid-word, and your own words to 500. Your words and brAIn's findings reach the issue whole now, and anything shortened ends on a whole word.
+- **Switching between the chat and the terminal is in ⋯ on both.** The terminal face hid the switch back to the chat, and ⚙ called the setting *Opens as*. ⋯ on Ask says **Switch to chat** or **Switch to terminal**, and ⚙'s search finds **Chat or terminal** by either word. (#450)
+- **A rule's report is dated by its newest Wrong.** A report about a rule people marked Wrong was re-filed a day after every update while its count stayed the same, so a fix could never read as held; it now says it came back only when somebody marks the rule Wrong again.
+
 ## 3.8.18
 
 ### Added

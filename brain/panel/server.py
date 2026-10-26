@@ -12394,8 +12394,14 @@ def _note_registry(snapshot: dict) -> None:
     try:
         house = House(snapshot)
         names = {}
+        # Which device each entity is ABOUT — a UniFi client's tracker
+        # joined to the device it is a client of — so the findings store
+        # files one device's drops as one card (#440).
+        device_of = checks.network.device_keys(house)
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            if device_of.get(eid):
+                names[eid]["device"] = device_of[eid]
             # What kind of thing it is, for the one reader that has to
             # refuse a safety device before it asks anybody anything
             # (`corrections.never_covered`). Only where it says.
@@ -18573,7 +18579,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                       else f"no BRUH add-on called {body.get('addon')!r} is here"),
             "addons": sorted({t["product"] for t in targets})}, status=404)
     listing = [{"screen": scr["slug"], "label": scr["label"]} for scr in target["screens"]]
-    want = str(body.get("screen") or "").strip().lower()
+    # "morph-dashboard#c_lamp", or `element` beside the screen: one card or
+    # section, scrolled into view and cropped to, tapped or held open first.
+    want, focus, why = screens.parse_focus(body.get("screen"), body.get("element"),
+                                           body.get("press"))
+    if why:
+        return web.json_response({"error": why, "screens": listing}, status=400)
+    want = want.lower()
     if not want:
         return web.json_response({"addon": target["product"], "screens": listing})
     scr = next((x for x in target["screens"]
@@ -18603,7 +18615,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                             "photographed")}, status=503)
     confidential = screens.confidential_strings(
         states, await asyncio.to_thread(occasions.load))
-    one = {**target, "screens": [scr]}
+    one = {**target, "screens": [{**scr, "focus": focus} if focus else scr]}
     if SCREENSHOT_LOCK is None:
         SCREENSHOT_LOCK = asyncio.Lock()
     if SCREENSHOT_LOCK.locked():
@@ -18617,6 +18629,13 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
                                 views=[view], targets=[one], own=False),
                 SCREENSHOT_TIMEOUT_S)
         shots = result.get("shots") or []
+        missing = [e for e in result.get("errors") or []
+                   if isinstance(e, dict) and e.get("missing")]
+        if not shots and missing:
+            # Not a fault: the page simply has no such card. Said, so the
+            # chat can ask for the right one.
+            return web.json_response({"error": _error_text(missing[0]),
+                                      "screens": listing}, status=404)
         if not shots:
             return web.json_response({"error": "; ".join(
                 _error_text(e) for e in result.get("errors") or [])[:300]
@@ -18630,6 +18649,7 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         shutil.rmtree(tmp, ignore_errors=True)
     return web.json_response({
         "addon": target["product"], "screen": scr["label"], "width": width,
+        **({"element": focus["id"], "press": focus["press"]} if focus else {}),
         "scheme": scheme, "png": base64.b64encode(data).decode(),
         "problems": result.get("problems") or [], "held": shot.get("held") or []})
 
@@ -18907,7 +18927,8 @@ async def h_devloop_look(request: web.Request) -> web.Response:
         body = await request.json()
     except ValueError:
         return web.json_response({"error": "expected JSON"}, status=400)
-    topic = " ".join(str((body or {}).get("topic") or "").split())[:500]
+    topic = textclip.clip(" ".join(str((body or {}).get("topic") or "").split()),
+                          devloop.streams.OWNER_WORDS_CHARS)
     if not topic:
         return web.json_response({"error": "say what you want fixed"},
                                  status=400)
@@ -18948,18 +18969,28 @@ async def h_bruh_addons(request: web.Request) -> web.Response:
     })
 
 
-REPORT_FIELDS = {"title": 100, "what": 300, "asked": 500, "evidence": 6000,
-                 "done_when": 800}
+# What each field of the chat's report may hold. The owner's words (`asked`)
+# are the requirement and keep the stream's generous limit; `what` is
+# brAIn's finding, kept whole in the body while the title line takes a
+# short cut of it. Every cut is `textclip.clip` — a word boundary and an
+# ellipsis. These were bare slices at 300 and 500, and a chat that put the
+# owner's words and its diagnosis into `what` filed a 300-character fragment
+# ending mid-word with nothing else behind it.
+REPORT_FIELDS = {"title": 100, "what": devloop.streams.FINDING_CHARS,
+                 "asked": devloop.streams.OWNER_WORDS_CHARS, "evidence": 6000,
+                 "done_when": devloop.streams.DONE_CHARS}
 
 
 def report_row(body: dict) -> tuple[dict | None, str]:
     """A report the chat wrote, as a `look` row; ``(None, why)`` for one
     that cannot be filed. Pure, so a test can hand it the body."""
     body = body if isinstance(body, dict) else {}
-    fields = {k: (str(body.get(k) or "")[:n] if k == "evidence"
-                  else " ".join(str(body.get(k) or "").split())[:n])
+    # The title is one line; the rest keep their own lines (evidence is
+    # quoted as it was read, and the owner's words as they were typed).
+    fields = {k: textclip.clip(" ".join(str(body.get(k) or "").split()) if k == "title"
+                               else str(body.get(k) or "").strip("\n").rstrip(), n)
               for k, n in REPORT_FIELDS.items()}
-    if not fields["title"] or not fields["what"]:
+    if not fields["title"] or not fields["what"].strip():
         return None, "a report needs a title and what is wrong"
     addon = str(body.get("addon") or "brAIn").strip()
     spec = devloop.siblings.spec_by_name(addon)
@@ -18967,16 +18998,17 @@ def report_row(body: dict) -> tuple[dict | None, str]:
         return None, ("addon must be brAIn or one of: "
                       + ", ".join(devloop.siblings.PRODUCTS))
     parts = []
-    if fields["asked"]:
-        parts.append("The owner said:\n\n> " + fields["asked"])
-    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"])
+    if fields["asked"].strip():
+        parts.append("The owner said:\n\n> " + fields["asked"].strip().replace("\n", "\n> "))
+    parts.append("brAIn looked in the chat and found:\n\n" + fields["what"].strip())
     if fields["evidence"].strip():
         fence = "`" * 3
         parts.append("Evidence brAIn read:\n\n" + fence + "\n"
                      + fields["evidence"].replace(fence, "'" * 3) + "\n" + fence)
-    if fields["done_when"]:
-        parts.append(f"**Done when:** {fields['done_when']}")
-    row = {"where": f"Fix: {fields['title']}", "what": fields["what"],
+    if fields["done_when"].strip():
+        parts.append(f"**Done when:** {fields['done_when'].strip()}")
+    summary = textclip.clip(" ".join(fields["what"].split()), devloop.streams.WHAT_CHARS)
+    row = {"where": f"Fix: {fields['title']}", "what": summary,
            "detail": "", "body": "\n\n".join(parts), "ux": body.get("ui") is True}
     if spec:
         row.update(where=f"{spec['name']} · {row['where']}", product=spec["name"])
@@ -26166,6 +26198,12 @@ def make_app() -> web.Application:
         if relabelled:
             log.info("labelled %d machine conversation(s) from before their "
                      "callers claimed session ids", relabelled)
+        # ...and what Morph sent before the listener claimed its tasks as
+        # Morph's: filed as Automation or as the person's own (marker-guarded).
+        morphs = await asyncio.to_thread(
+            conversations.relabel_morph, chat_session.WORK_DIR)
+        if morphs:
+            log.info("listed %d conversation(s) Morph started under Morph", morphs)
         await _options_sync()
         _publish_permission_mode()
         # Every failed run of any kind becomes one readable file: hooked on

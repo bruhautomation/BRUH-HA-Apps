@@ -25,6 +25,18 @@ from textclip import clip
 from . import STREAMS
 from .siblings import PRODUCTS
 
+# The owner's own words are the requirement, so they keep a generous limit
+# and are never cut mid-word (`clip`). They were sliced at 500: four
+# requests reached the reports repository as a fragment ending mid-word.
+OWNER_WORDS_CHARS = 4000
+# `what` is the issue's title line, so it stays short — and what is past it
+# is kept in the body rather than dropped.
+WHAT_CHARS = 300
+# brAIn's own diagnosis, and the evidence it read.
+FINDING_CHARS = 8000
+WHY_CHARS = 6000
+DONE_CHARS = 1500
+
 # --------------------------------------------------------------- faults
 
 SKIP_WHERE = frozenset({"This list"})
@@ -112,6 +124,10 @@ def faults(diagnostics: dict, log_text: str = "") -> list[dict]:
         if what and where not in SKIP_WHERE:
             item = {"where": where, "what": what,
                     "detail": str(row.get("detail") or "")}
+            if row.get("seen_at"):
+                # A row read off a record (a producer's newest Wrong) is
+                # dated by it, so an unchanged count is not a recurrence.
+                item["seen_at"] = row["seen_at"]
             body = _evidence_body(
                 row, failures, excerpt if where.startswith(LOGGED_WHERE) else "")
             if body:
@@ -242,6 +258,12 @@ def wrongs(score_rows: list[dict], settled: list[dict]) -> list[dict]:
                     "detail": str(r.get("title") or ""), "body": body,
                     "impact": {"wrong": wrong, "endings": total,
                                "confirmed": int(r.get("confirmed") or 0)}})
+        last_wrong = float(r.get("last_wrong_ts") or 0)
+        if last_wrong > 0:
+            # Dated by the newest Wrong, not by the pass that re-read the
+            # count: a rule fixed on Monday whose Wrongs all predate Monday
+            # has not come back, however often the count is read again.
+            out[-1]["seen_at"] = last_wrong
     return out
 
 
@@ -646,7 +668,7 @@ def rejected_block(rejected: list[dict]) -> str:
 def analyst_prompt(stream: str, context: str, topic: str = "",
                    reported: str = "", rejected: str = "") -> str:
     if stream == "look":
-        head = PROMPTS[stream] % {"topic": topic[:500]}
+        head = PROMPTS[stream] % {"topic": clip(topic, OWNER_WORDS_CHARS)}
     elif stream == "design":
         # Bounded once, by `design_context`, in whole lines; this cut only
         # holds the bound for a caller that built the topic some other way.
@@ -884,16 +906,21 @@ def parse_reply(reply, stream: str, topic: str = "") -> tuple[list[dict], str]:
     for r in raw_rows:
         if not isinstance(r, dict):
             continue
-        title = str(r.get("title") or "").strip()[:120]
-        what = str(r.get("what") or "").strip()[:300]
+        title = clip(str(r.get("title") or "").strip(), 120)
+        found = clip(str(r.get("what") or "").strip(), FINDING_CHARS)
+        what = clip(found, WHAT_CHARS)
         if not title or not what:
             continue
-        why = str(r.get("why") or "").strip()[:2000]
-        done = str(r.get("done_when") or "").strip()[:800]
+        why = clip(str(r.get("why") or "").strip(), WHY_CHARS)
+        done = clip(str(r.get("done_when") or "").strip(), DONE_CHARS)
         impact = clip(" ".join(str(r.get("impact") or "").split()), 200)
         parts = []
         if stream == "look" and topic:
-            parts.append("The owner said:\n\n> " + topic[:500].replace("\n", "\n> "))
+            parts.append("The owner said:\n\n> "
+                         + clip(topic, OWNER_WORDS_CHARS).replace("\n", "\n> "))
+        if found != what:
+            # The title line is short; the whole of it is here.
+            parts.append(found)
         if why:
             parts.append(why)
         if done:
@@ -937,15 +964,15 @@ def verbatim_rows(topic: str) -> list[dict]:
     """The owner's words as the issue, for when the run that was meant to
     write it up failed or wrote nothing. A request somebody typed and sent
     is never dropped on the floor."""
-    words = " ".join(str(topic or "").split())[:500]
+    words = clip(" ".join(str(topic or "").split()), OWNER_WORDS_CHARS)
     if not words:
         return []
-    title = words if len(words) <= 70 else words[:69].rsplit(" ", 1)[0] + "…"
+    title = clip(words, 70)
     named = [p for p in PRODUCTS if re.search(rf"\b{re.escape(p)}\b", words, re.I)]
     extra = {"product": named[0]} if len(named) == 1 else {}
     return [{**extra,
              "where": (f"{named[0]} · " if extra else "") + f"Fix: {title}",
-             "what": words, "detail": "",
+             "what": clip(words, WHAT_CHARS), "detail": "",
              "body": "The owner said:\n\n> " + words
                      + "\n\nThe run that should have written this up did not "
                        "answer, so this is their request as they typed it. "
