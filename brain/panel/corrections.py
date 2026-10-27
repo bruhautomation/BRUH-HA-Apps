@@ -349,10 +349,21 @@ def check_of(finding: dict) -> str:
 # including on the day the condition held and the unit stayed off. So it is
 # kept as a fact (`server._end_finding`), the Resident writes no rule for
 # it, and a check's rule is never widened past the press's own.
+# The same condition comes in other words too, and each was a whole-entity
+# mute: "normal while it is running" (the shape `chores.report_while`
+# already reads as a state, so the press and the check must agree it is a
+# condition), "only the ecobee sensor counts" (which of several things
+# matters is not "none of them do"), and "except when …".
+_WHICH_COUNTS = r"\bonly\b(?:\W+\w+){1,6}?\W+(?:counts?|matters?)\b"
+_WHICH_COUNTS_RE = re.compile(_WHICH_COUNTS, re.I)
 _CONDITIONAL_RE = re.compile(
     r"\bonly\b(?:\W+\w+){0,8}?\W+(?:when|whenever|if|while|once|after|"
     r"above|below)\b"
-    r"|\b(?:unless|as long as|provided that)\b", re.I)
+    r"|\b(?:unless|as long as|provided that)\b"
+    r"|\bexcept\s+(?:when|whenever|if|while|during)\b"
+    r"|\b(?:normal|fine|ok|okay|expected|usual)\b(?:\W+\w+){0,6}?\W+"
+    r"(?:while|when|whenever|during)\b"
+    r"|" + _WHICH_COUNTS, re.I)
 
 
 def conditional(note: str) -> bool:
@@ -361,9 +372,15 @@ def conditional(note: str) -> bool:
 
 
 def conditional_confirmation(entity_name: str = "", *,
-                             rule_written: bool = False) -> str:
+                             rule_written: bool = False,
+                             note: str = "") -> str:
     """What a person is told when their reason was a condition."""
     name = entity_name or "it"
+    if not rule_written and _WHICH_COUNTS_RE.search(str(note or "")):
+        # "Only the ecobee counts" names which thing matters, not when.
+        return (f"Got it — brAIn kept that as a fact about {name} and will "
+                "read it the next time it looks, rather than going quiet "
+                "about all of them.")
     if rule_written:
         return (f"Got it — brAIn won't flag that for {name}, and it will "
                 "remember when it is meant to run.")

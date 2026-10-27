@@ -738,6 +738,20 @@ def unusual(snap: dict, now: float) -> list[dict]:
             st.get("attributes") or {}).get("unit_of_measurement")
         if abs(value - found["median"]) < min_move(measured_in):
             continue
+        # A reading on a machine that says it is working moves with the
+        # job — a dishwasher's water mid-wash, a printer's chamber mid-print
+        # — and one band over every hour cannot tell a job from a fault. The
+        # device's own status is the authority (`chores.machine_status`, the
+        # vocabulary `base.heater_idle` and `chore.job_done` read), so while
+        # it says working the band stands down; idle, finished and "could
+        # not tell" are compared exactly as before.
+        state, _since, status = chores.machine_status(house, eid)
+        if state == "working":
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          f"{house.name(status)} says the machine is running "
+                          "— a reading that moves with the job is the "
+                          "machine working", kind="explained")
+            continue
         # Dry air beside the room's own dehumidifier is the machine
         # working. Below the band only: damp air beside a running one is
         # still worth a card.
