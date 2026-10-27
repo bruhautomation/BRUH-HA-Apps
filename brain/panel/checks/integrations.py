@@ -26,6 +26,8 @@ from __future__ import annotations
 import datetime as dt
 import re
 
+import house_words
+
 from ._util import House, spell_integration
 
 # A logger repeating one error more than this in the window is a flood.
@@ -241,9 +243,12 @@ def log_flood(snap: dict, now: float) -> list[dict]:
         device, entity = _device_named(house, top)
         if entity and not house.should_report(entity, "integ.log_flood"):
             continue
-        detail = (f"{who} logged this {int(top['count'])} times in the "
-                  f"last {hours} hours: "
-                  f"\u201c{top.get('message') or 'an error'}\u201d.")
+        # What the error means, never the line: a status code, JSON or a
+        # URL pasted in is the integration developer's text, not the
+        # homeowner's (`house_words.log_meaning`).
+        detail = (f"{who} logged the same error {int(top['count'])} times "
+                  f"in the last {hours} hours: "
+                  f"{house_words.log_meaning(top.get('message') or '')}.")
         if device:
             detail += f" It is about {device}."
         if len(groups) > 1:
