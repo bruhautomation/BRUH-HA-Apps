@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.3
+
+### Fixed
+
+- **A machine's readings are not called unusual while it is running.** A reading on a device whose own status says it is working (a dishwasher's water mid-wash, for example) is no longer compared against the all-hours usual range; idle and finished machines are checked as before. (#477)
+- **A reason with a condition is no longer saved as "never again".** Marking something Wrong with "normal while it is running", "only the ecobee sensor counts" or "except when …" keeps the condition (read against the machine's status, or kept as a fact the next look reads) instead of silencing the whole entity. (#480)
+
 ## 4.0.2
 
 ### Changed
