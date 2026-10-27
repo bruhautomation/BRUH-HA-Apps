@@ -6145,6 +6145,19 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
 .qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
+/* A row about several things: how many, and every one behind Show all
+   (#437). The press is a real target on touch, and the names wrap whole. */
+.qcard .qitems { display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--sp-2); margin: 0; color: var(--ink-3);
+  font-size: var(--fs-body); line-height: var(--lh-body); }
+.qcard .qitems .qitemsbtn { min-height: 32px; padding: 0 var(--sp-3); }
+.qcard .qitemlist { margin: 0; padding-left: var(--sp-5); display: grid;
+  gap: var(--sp-1); font-size: var(--fs-body); line-height: var(--lh-body);
+  color: var(--ink-2); overflow-wrap: anywhere; }
+.qcard .qitemlist[hidden] { display: none; }
+@media (pointer: coarse) {
+  .qcard .qitems .qitemsbtn { min-height: 44px; }
+}
 /* Who acts: one line, ink and weight rather than a colour, so it reads as
    the card's answer to "whose move is this" and never as a status chip. */
 .qcard .qwho {

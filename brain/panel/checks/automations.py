@@ -196,6 +196,7 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
                 "fixable": True,
                 "entity_id": subject,
                 "evidence": evidence_for(dead, "no longer exists"),
+                "items": dead,
             })
     return out
 

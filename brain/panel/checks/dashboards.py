@@ -68,10 +68,11 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
         quoted = [f"'{t}'" for t in titles]
         out.append({
             "text": text[:1].upper() + text[1:],
-            "detail": ("Missing: " + join_names([house.label(r) for r in dead], 8)
+            "detail": ("Missing: " + join_names([house.label(r) for r in dead], 8,
+                                                budget=240)
                        + ". Shown on "
                        + ("the dashboard " if len(titles) == 1 else "the dashboards ")
-                       + join_names(quoted, 8) + ", where "
+                       + join_names(quoted, 8, budget=150) + ", where "
                        + ("it renders" if len(dead) == 1 else "each one renders")
                        + " as a red 'entity not available' tile."),
             "fix": ("Edit " + ("that dashboard" if len(titles) == 1
@@ -82,6 +83,9 @@ def dead_ref(snap: dict, now: float) -> list[dict]:
             "fixable": True,
             "entity_id": dead[0],
             "evidence": evidence_for(dead, "no longer exists"),
+            # Every missing entity, for the card's Show all and so a Wrong
+            # answers each (the sentence names only what fits).
+            "items": dead,
         })
     return out
 

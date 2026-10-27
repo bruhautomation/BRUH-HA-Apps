@@ -376,6 +376,29 @@ SOURCE_TITLE = None
 _NO_TITLE = ("", "Custom")
 
 
+def _check_title(source: str) -> str:
+    """A house check's own catalog title, or "" — the one name a rule has
+    (#439). A check row is filed under its GROUP's word ("Device check"),
+    which names a dozen rules at once: the useful battery rule and the
+    impossible-readings rule read the same, and a question about stopping
+    one could not say which."""
+    if not str(source or "").startswith("check:"):
+        return ""
+    try:
+        import checks  # noqa: PLC0415 — the catalog, read lazily
+        spec = checks.get_check(str(source)[len("check:"):]) or {}
+    except Exception:  # noqa: BLE001 — a label, never the read
+        return ""
+    return str(spec.get("title") or "")
+
+
+def _rule_titled(source: str, title: str) -> str:
+    """`_titled`, with a check named by its own catalog title — what the
+    scorecard and `source_titles` (the mute question, the fault list,
+    History's muted rows) call a rule."""
+    return _check_title(source) or _titled(source, title)
+
+
 def _titled(source: str, title: str) -> str:
     """The title a reader shows for `source`, never the bare "Custom"."""
     title = str(title or "")
@@ -459,7 +482,18 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
     for key in keys:
         if isinstance(out.get(key), str) and out[key]:
             out[key] = plain(out[key], names, tz)
+            # A step or an account holding a hole where a value belongs
+            # ("a template", "<entity>", "TODO") is refused and the row
+            # keeps what it had (#446): `refine` writes nothing over an
+            # empty value, and a new row simply has none.
+            if key in PLACEHOLDER_REFUSED and house_words.placeholder(
+                    out[key]):
+                out[key] = ""
     return out
+
+
+# The fields a placeholder is refused in.
+PLACEHOLDER_REFUSED = ("detail", "fix", "todo_text")
 
 
 def _queue_now(now: float) -> int | None:
@@ -751,7 +785,8 @@ def house_reason(reason) -> str:
                 *triage.LEGACY_STOCK):
         return ""
     kept = [s for s in _SENTENCE_SPLIT_RE.split(said)
-            if s.strip() and not _ROUTING_RE.search(s)]
+            if s.strip() and not _ROUTING_RE.search(s)
+            and not triage.says_duplicate(s)]
     return " ".join(kept).strip()
 
 
@@ -778,6 +813,20 @@ def _names_another_entity(reason, entry: dict) -> bool:
     return False
 
 
+def _names_itself(reason, entry: dict) -> bool:
+    """Whether a look's reason contains the row's own sentence — its text
+    or claim, three words or more, normalised — rather than a conclusion
+    about the house."""
+    said = normalize(str(reason or ""))
+    if not said:
+        return False
+    for text in ((entry or {}).get("text"), (entry or {}).get("claim")):
+        own = normalize(str(text or ""))
+        if len(own.split()) >= 3 and own in said:
+            return True
+    return False
+
+
 def shown_look(record: dict, entry: dict) -> dict:
     """``record`` (a cleaned triage block) as a surface a person reads
     shows it: an echo blanked (`without_echo`) and the reason cut to what
@@ -798,6 +847,11 @@ def shown_look(record: dict, entry: dict) -> dict:
             and not record.get("elevated_by_person")):
         return {**record, "reason": ""}
     if _names_another_entity(record["reason"], entry):
+        return {**record, "reason": ""}
+    # A reason that names the very row it is on ("<this row's title>, which
+    # brAIn is following") reads the finding back with a word added, and
+    # says nothing the card does not (#448).
+    if _names_itself(record["reason"], entry):
         return {**record, "reason": ""}
     if quotes_other_counts(record["reason"], entry.get("detail")):
         # The check refreshed the row's numbers after the look wrote its
@@ -1564,6 +1618,36 @@ def clean_items(value) -> list[str]:
         if len(out) >= MAX_ITEMS:
             break
     return out
+
+
+_ITEM_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+
+
+def item_labels(items) -> tuple[list[str], str]:
+    """``(labels, noun)`` for a row's `items`, as a person reads them.
+
+    The card's count line and its Show all (#437): every item by the name
+    the house gives it, or — for an entity the house has no name for, a
+    reference to one that no longer exists — the id read aloud (`the scene
+    “before movie”`), never the id itself. An item that is not an entity
+    (a device key) is left out; ``noun`` is "entities" when every item is
+    one, else "items"."""
+    keys = clean_items(items)
+    if not keys:
+        return [], ""
+    from checks._util import spoken_id  # noqa: PLC0415 — a leaf, lazy
+    names = _names_now()
+    labels: list[str] = []
+    for key in keys:
+        if not _ITEM_ENTITY_RE.match(key):
+            continue
+        named = names.get(key)
+        if isinstance(named, dict):
+            named = named.get("name")
+        labels.append(str(named).strip() if named and str(named).strip()
+                      and str(named).strip() != key else spoken_id(key))
+    noun = "entities" if len(labels) == len(keys) else "items"
+    return labels, noun
 
 
 def coerce(obj: dict) -> dict | None:
@@ -3196,9 +3280,16 @@ def scorecard() -> list[dict]:
             continue
         row = by.setdefault(src, {
             "source": src,
-            "title": _titled(src, str(e.get("source_title") or "")) or src,
+            "title": _rule_titled(src, str(e.get("source_title") or ""))
+            or src,
             "confirmed": 0, "wrong": 0, "last": "", "last_ts": 0,
-            "last_wrong_ts": 0})
+            "last_wrong_ts": 0, "example": "", "example_ts": -1})
+        # One report the rule filed, newest first — what the mute question
+        # names as an example of what stopping it stops.
+        if str(e.get("text") or "").strip() and int(e.get("ts") or 0) >= \
+                row["example_ts"]:
+            row["example"] = str(e["text"]).strip()[:MAX_TEXT]
+            row["example_ts"] = int(e.get("ts") or 0)
         # Agreeing to do something is agreeing the report was right, so
         # an accepted row scores exactly as a fixed one. The alternative
         # was to count it as nothing until the chore is done, which would
@@ -3219,6 +3310,7 @@ def scorecard() -> list[dict]:
     rows = list(by.values())
     for r in rows:
         r["total"] = r["confirmed"] + r["wrong"]
+        r.pop("example_ts", None)
     rows.sort(key=lambda r: (-r["total"], r["source"]))
     return rows
 
@@ -3550,7 +3642,7 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
     # in the house's words.
     fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
-    if not fix or by not in FIX_AUTHORS:
+    if not fix or by not in FIX_AUTHORS or house_words.placeholder(fix):
         return None
     items = _load()
     for entry in items:
@@ -3573,12 +3665,12 @@ def source_titles() -> dict[str, str]:
     out: dict[str, str] = {}
     for entry in _load_settled():
         src = str(entry.get("source") or "")
-        title = _titled(src, str(entry.get("source_title") or ""))
+        title = _rule_titled(src, str(entry.get("source_title") or ""))
         if src and title and src not in out:
             out[src] = title
     for entry in _load():
         src = str(entry.get("source") or "")
-        title = _titled(src, str(entry.get("source_title") or ""))
+        title = _rule_titled(src, str(entry.get("source_title") or ""))
         if src and title:
             out[src] = title
     return out

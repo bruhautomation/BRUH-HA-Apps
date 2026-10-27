@@ -6248,6 +6248,33 @@ function qCard({ id, chip, meta, title, body, counted = true, who = null }) {
   return card;
 }
 
+// A row about several things names only what fits in its sentence; the
+// count line says how many, and Show all opens every one by the name a
+// person reads (`cases._item_list`, #437). Open/closed survives a repaint.
+const itemsOpen = new Set();
+function caseItemsNodes(row) {
+  const labels = row.item_labels || [];
+  if (labels.length < 2) return [];
+  const line = el("p", "qitems");
+  line.appendChild(el("span", null, `${labels.length} ${row.items_noun || "items"}`));
+  const btn = el("button", "btn-secondary qitemsbtn", "Show all");
+  line.appendChild(btn);
+  const list = el("ul", "qitemlist");
+  labels.forEach((t) => list.appendChild(el("li", null, prettyText(t))));
+  const paint = () => {
+    const open = itemsOpen.has(row.id);
+    list.hidden = !open;
+    btn.textContent = open ? "Hide" : "Show all";
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+  btn.addEventListener("click", () => {
+    if (itemsOpen.has(row.id)) itemsOpen.delete(row.id); else itemsOpen.add(row.id);
+    paint();
+  });
+  paint();
+  return [line, list];
+}
+
 // Who acts, in one line straight under the title: "brAIn can fix this.",
 // "This needs you." or "brAIn needs an answer." Decided on the server off
 // the card's own primary press (`answers.who_acts`), so the line and the
@@ -6455,6 +6482,7 @@ function makeCase(row) {
     meta: caseMeta(row), title: row.claim, body: row.detail, who: row.who,
   });
   card.dataset.situation = row.situation || "";
+  caseItemsNodes(row).forEach((n) => card.appendChild(n));
 
   const plan = casePlanNode(row);
   const ran = row.finding_status === "fixed" || row.finding_status === "needs_you";
@@ -16114,7 +16142,7 @@ async function loadDiagAccuracy() {
   try {
     data = await api("api/findings");
   } catch (e) {
-    diagEmpty(host, "Could not read the scorecard: " + e.message);
+    diagEmpty(host, "Could not read how right it's been: " + e.message);
     return;
   }
   host.textContent = "";
@@ -16123,7 +16151,7 @@ async function loadDiagAccuracy() {
   const rows = (data.scorecard || []).filter(
     (r) => r.total >= SET_SCORE_MIN && !mutedIds.has(r.source));
   if (!rows.length && !muted.length) {
-    diagEmpty(host, "Not enough answers yet. A producer is scored once you have "
+    diagEmpty(host, "Not enough answers yet. A rule is scored once you have "
       + `answered ${SET_SCORE_MIN} of its cards.`);
     return;
   }

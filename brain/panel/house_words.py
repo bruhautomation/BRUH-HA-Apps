@@ -155,6 +155,32 @@ def templates(text: str) -> str:
     return re.sub(r"\s+([.,;:])", r"\1", out).strip()
 
 
+# A hole where a value belongs: what a step somebody is meant to carry out
+# must never hold (#446). "a template" is the store's own words for template
+# code (`templates`), right in prose about a trigger ("its trigger is a
+# template") and a hole only when it stands where a value goes — quoted, or
+# after a colon or an equals sign. Likewise an ellipsis standing for a value.
+_PLACEHOLDER_RE = re.compile(
+    r"[\"'“‘]\s*a (?:template|value|number|time|name|entity)\s*[\"'”’]"
+    r"|[:=]\s*a (?:template|value)\b"
+    r"|\b(?:to|with|use|enter|add|put|type)\s+a template\b"
+    r"|<[A-Za-z][A-Za-z _-]{1,30}>"
+    r"|\bYOUR_\w+"
+    r"|\byour[_-](?:entity|device|sensor|value)\w*"
+    r"|\bTODO\b|\bTBD\b|\bFIXME\b"
+    r"|\b[xX]{3,}\b"
+    r"|[:=]\s*(?:…|\.\.\.)"
+    r"|[\"'“‘(\[]\s*(?:…|\.\.\.)\s*[\"'”’)\]]"
+    r"|\{\{|\{%")
+
+
+def placeholder(text: str) -> str:
+    """The first placeholder ``text`` holds, or "" — a sentence holding one
+    is not a step anybody can carry out."""
+    m = _PLACEHOLDER_RE.search(str(text or ""))
+    return m.group(0) if m else ""
+
+
 # An IPv4 address, optionally with a port, not inside a longer run of dots
 # and digits (a version number like 2026.10.1 is three parts and never
 # matches; four parts each 0-255 is an address).

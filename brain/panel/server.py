@@ -852,6 +852,15 @@ CHECKS_STATE: dict = {"running": False, "last": None}
 TRIAGE_STATE: dict = {"day": "", "runs": 0}
 
 
+def _seconds_left_today(now: float) -> float:
+    """Seconds from ``now`` to the next local midnight — the day
+    `_triage_runs_today` counts in."""
+    local = time.localtime(now)
+    midnight = time.mktime((local.tm_year, local.tm_mon, local.tm_mday + 1,
+                            0, 0, 0, 0, 0, -1))
+    return max(0.0, midnight - now)
+
+
 def _triage_runs_today(now: float) -> int:
     """How many triage runs this local day has spent, rolling the day."""
     day = time.strftime("%Y-%m-%d", time.localtime(now))
@@ -13360,7 +13369,13 @@ async def _resident_pass(now: float) -> dict:
     # a look forward: hot looks a minute apart can otherwise spend the
     # day's allowance by mid-morning, and every row filed after that waits
     # out the hour and is shown as if nothing had looked at it.
-    if hot and _triage_runs_today(now) >= triage.HOT_LOOKS_PER_DAY:
+    # And a pull-forward is spent only out of looks the TIMER will not need
+    # before midnight (`triage.hot_look_allowed`): the share alone let hot
+    # looks and the timer together reach `MAX_PER_DAY` by late morning, and
+    # every row filed after that waited for tomorrow (reports #82).
+    if hot and not triage.hot_look_allowed(
+            _triage_runs_today(now),
+            triage.timer_looks_left(_seconds_left_today(now), RESIDENT_LOOK_S)):
         hot = any(sig.get("safety") and sig.get("hot")
                   for sig in RESIDENT_PENDING)
     # The timer, or a hot signal that has waited out the floor. `hot` is
@@ -13406,6 +13421,7 @@ async def _resident_pass(now: float) -> dict:
     safety_waiting = any(sig.get("safety") and sig.get("hot")
                          for sig in RESIDENT_PENDING)
     if _triage_runs_today(now) >= triage.MAX_PER_DAY and not safety_waiting:
+        RESIDENT_STATE["last_error"] = "the day's looks are spent"
         if not TRIAGE_STATE.get("capped_said"):
             TRIAGE_STATE["capped_said"] = True
             log.warning("the Resident has spent its %d looks for today; %d "
