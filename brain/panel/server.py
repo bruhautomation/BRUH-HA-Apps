@@ -25533,10 +25533,14 @@ def _features_payload() -> dict:
 async def h_features_put(request: web.Request) -> web.Response:
     """PUT {switch: bool, …}: ⚙ › Features."""
     body = await _personality_body(request)
+    why = features.refusal(body)
+    if why:
+        raise web.HTTPBadRequest(text=why)
     try:
         await asyncio.to_thread(features.save, body)
-    except ValueError as exc:
-        raise web.HTTPBadRequest(text=str(exc))
+    except ValueError:
+        log.exception("the switches were refused after they were checked")
+        raise web.HTTPBadRequest(text="brAIn could not save those switches.")
     except OSError:
         log.exception("could not save the switches")
         raise web.HTTPInternalServerError(

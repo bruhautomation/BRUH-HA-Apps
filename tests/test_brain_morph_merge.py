@@ -16,8 +16,8 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock as mock
 from pathlib import Path
-from unittest import mock
 
 from morph_env import MorphEnv
 
@@ -85,6 +85,13 @@ class TestTheSwitches(_Tmp):
         self.dashboard.unlink()
         self.assertTrue(self.features.load()["morph"],
                         "a dashboard file going away does not turn a switch off")
+
+    def test_a_refusal_is_a_sentence_before_anything_is_saved(self):
+        self.assertEqual("", self.features.refusal({"morph": True}))
+        self.assertIn("unknown switch", self.features.refusal({"telemetry": True}))
+        self.assertIn("true or false", self.features.refusal({"morph": 1}))
+        self.assertTrue(self.features.refusal({}))
+        self.assertFalse(self.features_file.exists())
 
     def test_save_takes_only_switches_and_only_true_or_false(self):
         with self.assertRaises(ValueError):

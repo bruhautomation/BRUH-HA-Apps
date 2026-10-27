@@ -130,16 +130,25 @@ def ensure(path: str | None = None) -> dict:
     return publish(path)
 
 
-def save(changes: dict, path: str | None = None) -> dict:
-    """Set some switches. Raises ValueError naming one that is not a
-    switch or not true/false."""
+def refusal(changes) -> str:
+    """Why ``changes`` cannot be saved, in a sentence, or "" when it can.
+    The route answers with this rather than with an exception's text."""
     if not isinstance(changes, dict) or not changes:
-        raise ValueError("send the switches to change, as {name: true|false}")
+        return "send the switches to change, as {name: true|false}"
     for key, value in changes.items():
         if key not in KEYS:
-            raise ValueError(f"unknown switch: {key}")
+            return f"unknown switch: {str(key)[:40]}"
         if not isinstance(value, bool):
-            raise ValueError(f"{key} must be true or false")
+            return f"{key} must be true or false"
+    return ""
+
+
+def save(changes: dict, path: str | None = None) -> dict:
+    """Set some switches. Raises ValueError for anything `refusal` would
+    refuse."""
+    why = refusal(changes)
+    if why:
+        raise ValueError(why)
     if "development_loop" in changes:
         _devloop().save_settings({"enabled": changes["development_loop"]})
     target = path or FILE
