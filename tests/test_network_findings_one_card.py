@@ -17,7 +17,7 @@ and numbers that agree (#440, #441, #443, #434, #444).
   refreshed to 36: such a reason is not shown.
 * #434 — a log finding was filed on an unrelated entity by a name match:
   only the integration's own things, or the automation the logger names.
-* #444 — a log finding said nothing of the error: it states the message,
+* #444 — a log finding said nothing of the error: it states what it means,
   how often and when, or it is held back; its fix follows from the error.
 
 Driven over the real store, the real checks and the real overnight parse.
@@ -437,12 +437,14 @@ def vacuum_house(log):
 
 
 class TestALogFindingSaysWhatFailed(unittest.TestCase):
-    def test_the_message_the_count_and_when_are_in_the_detail(self):
+    def test_the_meaning_the_count_and_when_are_in_the_detail(self):
         h = vacuum_house([log_row("Failed to update map data: cloud rate "
                                   "limited", VACUUM, count=40)])
         parsed, [row] = one_cause(
             h, detail="", fix="Restart the vacuum on its dock.")
-        self.assertIn("Failed to update map data", row["detail"])
+        # What the error means, never the line pasted in.
+        self.assertNotIn("Failed to update map data", row["detail"])
+        self.assertIn("asked too often", row["detail"])
         self.assertIn("40 times", row["detail"])
         self.assertIn("most recently", row["detail"])
         self.assertNotIn("dock", row["fix"].lower())

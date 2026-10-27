@@ -17,7 +17,7 @@ rules. **Asked once per fix**: a report fixed again under a new release
 is asked again, and never otherwise. **Only where the owner can answer**
 (`VERIFY_STREAMS`): their own requests and the chat's unmet ones, never
 a gap or an idea a model wrote, which reads as a quiz about somebody
-else's sentence. **Nothing is written to memory either way** — this is a
+else's sentence. Nothing is written to memory either way — this is a
 fact about brAIn, not the house — and the press settles the question
 under its own kind so the scorecard does not count it as a rule being
 right or wrong. Pure over what it is handed: the server files and
@@ -151,32 +151,82 @@ def proof(entry: dict | None, rec: dict | None, data: dict, *,
                     "since.")
 
 
+# The store's cap on a row's `text` (`findings_store.MAX_TEXT`). A text over
+# it is cut by the store and the rest put at the head of the detail, which
+# is how a card ended "…(Fix: Findings never" over a detail starting "say
+# who acts:". The question is composed to fit, so the store never cuts it.
+TEXT_CHARS = 200
+# A report's place as the streams write it: "Fix: <title>" (a request, a
+# report the chat wrote), "Gap: …", "Idea: …", "Design: …", optionally led
+# by the add-on it is about ("GardenRX · Fix: …"). Anything else is a place
+# ("Chat", "Today") and the report's sentence is its title.
+_KIND_TITLE_RE = re.compile(
+    r"^(?:(?P<addon>[^·]{1,40}?) · )?(?:Fix|Gap|Idea|Design): (?P<title>.+)$")
+# A sentence a developer wrote for a developer: code quotes, a call, a
+# CONSTANT_NAME, a snake_case name (a tool, a setting, a function) or a
+# file. A person checking whether the fix held reads none of it.
+_DEVELOPER_RE = re.compile(
+    r"`|\w\(\)|\b\w+\([^)]*\)|\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b"
+    r"|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[\w-]+\.(?:py|js|mjs|ts|css|sh|json|yaml)\b")
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _title_and_place(entry: dict) -> tuple[str, str]:
+    """``(title, place)``: the report's own title and, when its ``where``
+    is a place rather than a title, that place."""
+    where = " ".join(str(entry.get("where") or "").split())
+    what = " ".join(str(entry.get("what") or "").split()).rstrip(" .")
+    m = _KIND_TITLE_RE.match(where)
+    if m:
+        return m.group("title").strip().rstrip(" ."), ""
+    return what, where
+
+
+def _plain_sentences(text: str) -> str:
+    """``text`` less every sentence written for a developer."""
+    kept = [s for s in _SENTENCE_RE.split(" ".join(str(text or "").split()))
+            if s and not _DEVELOPER_RE.search(s)]
+    return " ".join(kept).strip()
+
+
 def question_row(entry: dict) -> dict:
-    """The question, named by the report's own words and where it was.
+    """The question, named by the report's own title and where it was.
 
     It used to be named by the report's fingerprint with the release as
     its subject — "Was this fixed: 70766c7a7025546b (brAIn 3.8.6)" — which
     is the dedupe key on the screen. The fingerprint stays in the ledger
     (`record_asked`); what a person reads is the report.
+
+    The text is the report's title, cut on a word (with "…" only when it
+    was cut) so the whole row fits the store's cap; the detail is the
+    report itself, less any sentence written for a developer, and where to
+    look. Nothing explains where an answer goes: the buttons say that.
     """
     fixed_in = str(entry.get("fixed_in") or "")
     product = product_of(entry)
-    what = clip(str(entry.get("what") or ""), 160).rstrip(" .")
-    where = clip(str(entry.get("where") or ""), 60).strip()
-    place = f" ({where})" if where else ""
+    title, place = _title_and_place(entry)
+    place = clip(place, 60).strip()
+    in_place = f" ({place})" if place else ""
+    tail = f" — after the {product} {fixed_in} update"
+    room = TEXT_CHARS - len(TEXT_PREFIX) - len(in_place) - len(tail)
+    named = clip(title, max(room, 20))
+    what = _plain_sentences(entry.get("what") or "").rstrip(" .")
+    if not what:
+        what = _plain_sentences(title).rstrip(" .")
+    look = place or (product if product != "brAIn" or not title
+                     or _DEVELOPER_RE.search(title) else title)
+    detail = " ".join(p for p in (
+        f"{what}." if what else "",
+        f"The {product} update installed here was meant to fix it.",
+        f"Where to look: {look}." if look else "") if p)
     return {
         # Stable per fix: the report's words and the release it was fixed
         # in, so the store's dedupe and the settled ledger let the same
         # report be asked about again only under a NEW fix. The release
         # rides at the end, never as the subject.
-        "text": f"{TEXT_PREFIX}{what}{place} — after the {product} "
-                f"{fixed_in} update",
-        "claim": f"Is this fixed now: “{what}”{place}?",
-        "detail": (f"The {product} update installed here was meant to fix "
-                   "it. Yes tells whoever fixed it that the fix held on "
-                   "this house. No sends what you type back with the "
-                   "report and reopens it, so the fix is looked at again. "
-                   "Nothing is written to memory either way."),
+        "text": f"{TEXT_PREFIX}{named}{in_place}{tail}",
+        "claim": f"Is this fixed now: “{clip(title, 160)}”{in_place}?",
+        "detail": detail,
         "kind": "question", "severity": "info", "stakes": "low",
         "fixable": False, "source": SOURCE, "source_title": SOURCE_TITLE,
         "entity_id": "", "evidence": [],

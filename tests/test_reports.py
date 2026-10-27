@@ -80,6 +80,8 @@ REDACTION_SHAPES = [
     ('"refresh_token":"abcdefghijklmnop"', "a refresh_token field, no space"),
     ('"api_key": "abcdefghijklmnop"', "an api_key field"),
     ('"value": "sk-ant-oat01-something-long"', "the panel store's value field"),
+    ("accountId: 884213", "a cloud account id in a log line"),
+    ('"customer_id": "CU-77812"', "a customer id field"),
 ]
 
 

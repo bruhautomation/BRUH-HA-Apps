@@ -318,7 +318,67 @@ def _load() -> list[dict]:
     except (OSError, ValueError):
         return []
     items = data.get("findings") if isinstance(data, dict) else None
-    return [f for f in items if isinstance(f, dict)] if isinstance(items, list) else []
+    if not isinstance(items, list):
+        return []
+    # A row filed before `as_asked` existed is read the way it would be
+    # filed now, so the next write stores it so: the migration is the read.
+    return [as_asked(f) for f in items if isinstance(f, dict)]
+
+
+# ---------------------------------------------------------------------------
+# A question brAIn asks
+# ---------------------------------------------------------------------------
+#
+# A model-written row that IS a question the assistant asks — "Vesper asks:
+# why does the porch light come on at 3am?", "Still open from an earlier
+# conversation" — was filed as a problem: listed among the faults on the
+# Findings tab and by `get_findings`, with To Do and Ignore under it and
+# nowhere to type an answer. Such a row is filed without its "<name> asks:"
+# prefix as a `question`, marked `asked`; Needs you reads it under
+# Questions for you with a typed answer that goes to the memory inbox
+# (`server.h_question_answer`), and `get_findings` leaves it out.
+_ASKS_RE = re.compile(r"^\s*(?P<who>[^:\n]{1,40}?)\s+asks\s*:\s*(?P<q>\S.*)$",
+                      re.S)
+
+
+def _assistant_names() -> set[str]:
+    names = {"brain"}
+    try:
+        # Read per call: the name is a switch the household can flip.
+        names.add(str(personality.assistant_name() or "").strip().casefold())
+    except Exception:  # noqa: BLE001 — no name is brAIn's own
+        pass
+    return names - {""}
+
+
+def asked_question(text) -> str:
+    """The question in ``text`` when it is one the assistant asks
+    ("<its name> asks: …"), without the prefix; "" otherwise."""
+    m = _ASKS_RE.match(str(text or ""))
+    if not m or m.group("who").strip().casefold() not in _assistant_names():
+        return ""
+    return m.group("q").strip()
+
+
+def as_asked(row: dict) -> dict:
+    """``row`` as a question the assistant asks, when its text or claim is
+    one; otherwise ``row`` itself, untouched."""
+    if not isinstance(row, dict):
+        return row
+    if row.get("asked") is True:
+        return row
+    text_q = asked_question(row.get("text"))
+    claim_q = asked_question(row.get("claim"))
+    if not (text_q or claim_q):
+        return row
+    out = dict(row)
+    if text_q:
+        out["text"] = text_q
+    if claim_q:
+        out["claim"] = claim_q
+    out["kind"] = "question"
+    out["asked"] = True
+    return out
 
 
 def _write(items: list[dict]) -> None:
@@ -1270,6 +1330,9 @@ def _case_fields(entry: dict) -> dict:
     kind = entry.get("kind")
     if kind in CASE_KINDS:
         out["kind"] = kind
+    # A question the assistant asks (`as_asked`): answered in words.
+    if entry.get("asked") is True and kind == "question":
+        out["asked"] = True
     # A note (`triage.is_note`): news to read, answered with Got it. Only a
     # literal True, so nothing on the wire can set it by being truthy.
     if entry.get("informational") is True:
@@ -1672,7 +1735,9 @@ def coerce(obj: dict) -> dict | None:
     """
     if not isinstance(obj, dict):
         return None
-    text = str(obj.get("text") or obj.get("finding") or "").strip()
+    obj = as_asked({**obj, "text": str(obj.get("text") or obj.get("finding")
+                                        or "").strip()})
+    text = str(obj.get("text") or "").strip()
     detail = str(obj.get("detail") or "").strip()
     text, detail = split_overlong(text, detail)
     if not normalize(text):

@@ -11628,6 +11628,26 @@ async def h_book_answer(request: web.Request) -> web.Response:
 ANSWER_SECTION = "other"
 
 
+async def h_question_answer(request: web.Request) -> web.Response:
+    """A question brAIn asked about the house answered in words
+    (`findings_store.as_asked`). The answer is required, and it goes
+    through the one door every ending uses: `_end_finding`'s confirm,
+    which files the question and the answer into the memory inbox
+    together."""
+    finding = _finding_or_404(request)
+    if not (finding.get("asked") is True
+            and finding.get("kind") == "question"):
+        raise web.HTTPConflict(text="that is not a question brAIn asked")
+    body = await _json_body(request)
+    note = str(body.get("note") or "").strip()[:findings_store.MAX_NOTE]
+    if not note:
+        raise web.HTTPBadRequest(text="Type the answer first.")
+    note = house_book.redact_text(note)
+    payload, _fact = await _end_finding(finding, FINDING_VERBS["confirm"], note)
+    return web.json_response({**payload, **await asyncio.to_thread(
+        _cases_payload, time.time())})
+
+
 # -- the access review --------------------------------------------------------
 
 async def _run_access(reason: str = "pressed") -> None:
@@ -11818,6 +11838,7 @@ def _maint_routes(app: web.Application) -> None:
     app.router.add_post("/api/house_book/publish", h_book_publish)
     app.router.add_post("/api/house_book/revoke", h_book_revoke)
     app.router.add_post("/api/house_book/question/{ts}/answer", h_book_answer)
+    app.router.add_post("/api/question/{ts}/answer", h_question_answer)
     app.router.add_get("/api/access", h_access)
     app.router.add_post("/api/access/run", h_access_run)
 
@@ -20452,6 +20473,16 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
                 fact, source=spec.get("source", "homeowner"),
                 subject=subjects[0] if subjects else "", subjects=subjects[1:],
                 run_id=str(finding.get("run_id") or ""))
+    elif finding.get("asked") is True and note and spec.get("hint"):
+        # A question brAIn asked, answered in words: the line is the
+        # question and the answer, never "Confirmed by the homeowner:"
+        # around a question nobody confirmed.
+        fact = (f"Asked “{str(finding.get('text') or '').strip()}”, the "
+                f"homeowner answered: {note}")
+        await _submit_memory(
+            fact, source=spec.get("source", "homeowner"),
+            subject=subjects[0] if subjects else "", subjects=subjects[1:],
+            run_id=str(finding.get("run_id") or ""))
     elif spec.get("hint") and hint:
         fact = hint + (f" (The homeowner added: {note})" if note else "")
         await _submit_memory(
@@ -23050,7 +23081,7 @@ async def _scope_correction(finding: dict, note: str,
                         "condition holds. It has asked on your list whether "
                         "to stop altogether.")
         else:
-            sentence = corrections.conditional_confirmation(name)
+            sentence = corrections.conditional_confirmation(name, note=note)
         return {"plan": None, "ids": [], "offer": None, "sentence": sentence}
     if not base_ids or not note.strip() or not engine.get_auth():
         return None

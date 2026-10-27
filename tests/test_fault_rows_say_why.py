@@ -60,6 +60,26 @@ class TestAFailedRunSaysWhatHappened(unittest.TestCase):
         # Whether anything needs doing is said.
         self.assertIn("check", row["sentence"].lower())
 
+    def test_a_partial_voice_turn_says_why_the_worker_ended(self):
+        """"partial; last at Mon 18:51" over a turn that died 14 seconds in
+        said it broke and nothing of how: the row's `extra.ended` (the
+        pool's `Worker.end_reason`) is carried in the detail, the newest
+        row's, and the fingerprint does not move."""
+        rows = reports.faults(_runs(
+            {"source": "voice", "outcome": "error", "ok": False,
+             "error": "partial", "ts": NOW - 120,
+             "extra": {"mode": "spare+partial", "ended": "timeout"}},
+            {"source": "voice", "outcome": "error", "ok": False,
+             "error": "partial", "ts": NOW,
+             "extra": {"mode": "spare+partial",
+                       "ended": "stdout closed, exit 3; stderr: socket hang up"}}))
+        [row] = [r for r in rows if r["where"] == "Run (voice)"]
+        self.assertEqual(row["what"], "ended error (2 times)")
+        self.assertIn("worker ended: stdout closed, exit 3; stderr: socket "
+                      "hang up", row["detail"])
+        self.assertNotIn("timeout", row["detail"])
+        self.assertIn("may or may not have changed", row["detail"])
+
     def test_a_crash_says_the_program_stopped(self):
         rows = reports.faults(_runs(*[
             {"source": "memory", "outcome": "crash", "ok": False,

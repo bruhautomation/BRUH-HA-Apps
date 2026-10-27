@@ -579,6 +579,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     })
     if isinstance(row.get("confidence"), (int, float)):
         case["confidence"] = row["confidence"]
+    # A question the assistant asks (`findings_store.as_asked`): answered
+    # in words, under Questions for you.
+    if row.get("asked") is True:
+        case["asked"] = True
     # What was said about it — a reply typed under the card (the panel's
     # Respond box, Morph's reply line) and brAIn's account of what it did.
     # Absent rather than empty, so a row nobody replied to is the case it

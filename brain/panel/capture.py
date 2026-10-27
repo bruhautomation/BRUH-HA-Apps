@@ -95,13 +95,17 @@ MAX_NOTE = 400
 # Redaction
 # ---------------------------------------------------------------------------
 
-# The same three shapes `brain-report.sh`'s `redact()` and `journal.scrub`
+# The same shapes `brain-report.sh`'s `redact()` and `journal.scrub`
 # look for, kept as one list so a fourth can only be added in one place.
 _TEXT_RULES = (
     (re.compile(r"sk-ant-[A-Za-z0-9_\-]{8,}"), "[redacted]"),
     (re.compile(r"(Bearer[ =:]+)[A-Za-z0-9._\-]{8,}"), r"\1[redacted]"),
     (re.compile(r"eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}"
                 r"\.[A-Za-z0-9_\-]{10,}"), "[redacted]"),
+    # A cloud account's id ("accountId: 884213"): `journal.ACCOUNT_ID_RE`.
+    (re.compile(r'(^|[^A-Za-z0-9_.])((?:account|user|customer|client|member'
+                r'|subscriber|tenant)[_-]?id"?[ \t]*[:=][ \t]*"?)'
+                r'[A-Za-z0-9][A-Za-z0-9._@-]*', re.I), r"\1\2[redacted]"),
 )
 
 # The shell does this one textually, over `"token": "…"` in a JSON file.

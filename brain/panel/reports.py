@@ -120,7 +120,7 @@ def redact(text: str) -> str:
     """`journal.scrub` plus the JSON-field rule the shell has always applied.
 
     One function for the whole file. The shell's `redact()` in
-    `brain-report.sh` is the same four rules in sed, and
+    `brain-report.sh` is the same five rules in sed, and
     `tests/test_reports.py` drives both over one fixture set.
     """
     return _FIELD_RE.sub(r'\1[redacted]"', journal.scrub(text))
@@ -699,11 +699,17 @@ def _faults(diag) -> list[dict]:
         key = (str(row.get("source") or "a run"), str(stage),
                str(row.get("outcome") or "badly"), str(row.get("error") or ""),
                _run_subject(extra))
-        grouped.setdefault(key, [key, 0, 0])
+        grouped.setdefault(key, [key, 0, 0, ""])
         grouped[key][1] += 1
-        grouped[key][2] = max(grouped[key][2], int(row.get("ts") or 0))
+        ts = int(row.get("ts") or 0)
+        if ts >= grouped[key][2]:
+            grouped[key][2] = ts
+            # Why a voice worker ended (`extra.ended`, the pool's
+            # `Worker.end_reason`), the newest row's: "partial" alone said a
+            # turn broke and nothing of how. Detail only — never the key.
+            grouped[key][3] = str(extra.get("ended") or "")[:120]
     distinct = list(grouped.values())
-    for (where, stage, outcome, error, subject), n, last in \
+    for (where, stage, outcome, error, subject), n, last, ended in \
             distinct[:FAULTS_PER_KIND]:
         when = _clock(last)
         # The machine half first (the code or the CLI's line, and when), then
@@ -712,7 +718,8 @@ def _faults(diag) -> list[dict]:
         # neither. `what` stays the fingerprint and does not carry it.
         meaning, action = _run_meaning(outcome, error)
         detail = "; ".join(part for part in (
-            error[:160], f"last at {when}" if when else "") if part)
+            error[:160] + (f" (worker ended: {ended})" if ended else ""),
+            f"last at {when}" if when else "") if part)
         detail = (detail.rstrip(".") + ". " if detail else "") \
             + _sentence(meaning, action)
         _row(out, f"Run ({where}{f' · {stage}' if stage else ''})",
@@ -722,7 +729,7 @@ def _faults(diag) -> list[dict]:
              + (f": {subject}" if subject else ""),
              sentence=_run_sentence(outcome, n, when, error))
     if len(distinct) > FAULTS_PER_KIND:
-        rest = sum(n for _key, n, _last in distinct[FAULTS_PER_KIND:])
+        rest = sum(n for _key, n, _last, _ended in distinct[FAULTS_PER_KIND:])
         _row(out, "Runs", f"{rest} more failed runs in the last day",
              "see the journal below", title="Other background jobs",
              sentence=f"{plain_words.plural(rest, 'more job')} did not "
