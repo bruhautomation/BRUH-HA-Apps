@@ -595,7 +595,6 @@ def parse(answer: dict | None, dig: dict, request: str = "",
 # before it changed (`findings_store.shown_fix`).
 FIX = ("Your answer goes into the house book: the plain-language guide brAIn "
        "writes for anyone looking after this house.")
-OLD_FIX = "Answer it here and the house book will say so."
 
 
 def question_rows(questions: list[dict], asked: list[str],

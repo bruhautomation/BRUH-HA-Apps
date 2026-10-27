@@ -27,16 +27,17 @@ class TestTheQuestionSaysWhatTheBookIs(unittest.TestCase):
 
     def test_the_two_spellings_agree(self):
         self.assertEqual(findings_store._HOUSE_BOOK_FIX, house_book.FIX)
-        self.assertEqual(findings_store._HOUSE_BOOK_OLD_FIX, house_book.OLD_FIX)
 
     def test_an_old_row_reads_as_the_new_sentence(self):
-        old = {"source": "house_book", "fix": house_book.OLD_FIX}
+        old = {"source": "house_book",
+               "fix": "Answer it here and the house book will say so."}
         self.assertEqual(findings_store.shown_fix(old), house_book.FIX)
-        self.assertEqual(old["fix"], house_book.OLD_FIX)  # stored row untouched
+        self.assertIn("Answer it here", old["fix"])  # stored row untouched
 
     def test_another_producer_keeps_its_own_words(self):
-        row = {"source": "resident", "fix": house_book.OLD_FIX}
-        self.assertEqual(findings_store.shown_fix(row), house_book.OLD_FIX)
+        old = "Answer it here and the house book will say so."
+        row = {"source": "resident", "fix": old}
+        self.assertEqual(findings_store.shown_fix(row), old)
 
     def test_the_answer_box_says_what_the_book_is(self):
         case = {"id": "f:1", "kind": "question", "source": "house_book",
