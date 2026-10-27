@@ -176,7 +176,7 @@ ha login --token …    # paste a token minted elsewhere
 ha login --revoke     # withdraw the shared copy
 \`\`\`
 
-The interactive flow needs a terminal, so run it in the panel's classic terminal (**Ask** tab, ⋯ → Classic terminal) —
+The interactive flow needs a terminal, so run it in the panel's classic terminal (**Ask** tab, ⋯ → Switch to terminal) —
 not the separate **Terminal & SSH** add-on, which is a different container whose \`ha\`
 is the Supervisor CLI, an unrelated tool. Without a terminal at all, use \`--share\`,
 \`--token\`, or the panel.
@@ -1602,8 +1602,8 @@ non-root user with your \`/config\` in front of it. Everything above, plus every
 capable engineer with a shell can do: read logs, edit YAML, write scripts, install
 packages, use git, take the long way round a hard problem.
 
-It has two faces, and you switch between them from **⋯ → Classic terminal / Chat**
-on the tab (or in ⚙ Settings). The switch is saved: the Ask tab opens the way you
+It has two faces, and you switch between them from **⋯ → Switch to terminal / Switch to chat**
+on the tab (or ⚙ Settings → **Chat or terminal**). The switch is saved: the Ask tab opens the way you
 left it next time. Both run the same Claude Code, on the same login, in the
 same \`/config\`, with the same permissions — what differs is only how you see it.
 
@@ -2705,7 +2705,7 @@ a store has not measured yet rather than answering with a number it does not hav
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (107 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (109 tools) for
 reading and controlling, **90 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.

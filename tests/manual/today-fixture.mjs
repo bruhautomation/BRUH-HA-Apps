@@ -17,6 +17,24 @@ export const A = (verb, label, route, over = {}) => ({
   note: false, prefill: '', done: label, hint: `${label} — hint`, ...over,
 });
 
+// The who-acts line the server stamps on a card (`answers.who_acts`),
+// read off its primary press the same way, so the fixture is the server's
+// shape: "brAIn can fix this." over Go ahead or Apply, "This needs you."
+// over Add to To Do or Done, "brAIn needs an answer." over Yes or Send.
+export const WHO_OF_VERB = {
+  fix: 'brain', apply: 'brain', accept: 'brain',
+  todo: 'you', done: 'you', complete: 'you',
+  yes: 'answer', confirm: 'answer', answer: 'answer',
+  ack: 'told', elevate: 'told', reopen: 'told',
+};
+export const WHO_LINES = { brain: 'brAIn can fix this.', you: 'This needs you.',
+  answer: 'brAIn needs an answer.', told: 'brAIn made this change.' };
+export const whoFor = (answers) => {
+  const lead = (answers || []).find((a) => a.primary) || (answers || [])[0];
+  const who = lead ? WHO_OF_VERB[lead.verb] : '';
+  return who ? { who, line: WHO_LINES[who], press: lead.label } : null;
+};
+
 export const kase = (over) => ({
   id: '', kind: 'problem', claim: '', detail: '', confidence: null,
   stakes: 'medium', evidence: [], actions: [], status: 'open', source: '',
@@ -27,6 +45,7 @@ export const kase = (over) => ({
   snoozed_until: 0, overflow: [], answers: [], more: [], situation: '',
   chip: 'problem', urgent: false, mutable: true, group: 'problems', unchecked: false,
   ...over,
+  who: over.who !== undefined ? over.who : whoFor(over.answers),
 });
 
 const ask = (key) => ({ verb: 'discuss', label: 'Ask', route: `/api/finding/${key}/discuss`,
@@ -70,7 +89,7 @@ export const FEED = [
     origin: { store: 'findings', key: 1101 },
     triage: { verdict: 'elevated', reason: 'A real drift.', run_id: 'look-1', at: NOW - 600 },
     evidence: [{ entity: 'sensor.garage_freezer', value: '-12.4 °C', when: '15 Sep 08:10' }],
-    answers: trio('f:1101', A('fix', 'Fix', '/api/finding/1101/fix', { primary: true, instruct: true,
+    answers: trio('f:1101', A('fix', 'Go ahead', '/api/finding/1101/fix', { primary: true, instruct: true,
       prefill: 'Check the door seal on sensor.garage_freezer, then the compressor relay.', ask: 'What should brAIn change? Edit its suggestion or write your own.' }), true),
     more: [ask(1101), done(1101)],
   }),
@@ -135,7 +154,7 @@ export const FEED = [
               + 'as an operation it can carry out, so there is nothing to approve' },
     source: 'check:reg.no_area', source_title: 'Registry check',
     origin: { store: 'findings', key: 1106 },
-    answers: trio('f:1106', A('fix', 'Fix', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
+    answers: trio('f:1106', A('fix', 'Go ahead', '/api/finding/1106/fix', { primary: true, instruct: true }), true),
     more: [ask(1106)],
   }),
   // A chore: the machine finished. Real, and nothing is broken, so it is
@@ -193,19 +212,22 @@ export const LOOSE = [
     source: 'check:dev.unavailable', source_title: '',
     source_name: 'Devices that stopped reporting',
     detail: 'Unavailable since 06:40.', fix: 'Check its battery.',
-    entity_id: 'binary_sensor.landing_motion', triage: {}, snoozed_until: 0 },
+    entity_id: 'binary_sensor.landing_motion', triage: {}, snoozed_until: 0,
+    who: { who: 'you', line: 'This needs you.', press: '' } },
 ];
 
 export const PROPOSALS = [
   { ts: 3001000, status: 'proposed', title: 'Turn the porch light off at 23:10',
     why: 'You have done it by hand on nine of the last twelve weekdays.',
     config: { id: 'brain_routine_porch' }, kind: 'routine', snoozed_until: 0,
-    replay: { would_fire: 9, days: 14 } },
+    replay: { would_fire: 9, days: 14 },
+    who: { who: 'brain', line: 'brAIn can set this up.', press: '' } },
   { ts: 3002000, status: 'proposed', title: 'Close the water main on a leak',
     why: 'Three leak sensors and a valve nobody has wired to them.',
     config: { id: 'brain_playbook_leak' }, kind: 'playbook', snoozed_until: 0,
     playbook: { kind: 'leak', no_trial: 'A trial replays a week with no leak in it.',
-                groups: [], skipped: [] } },
+                groups: [], skipped: [] },
+    who: { who: 'brain', line: 'brAIn can set this up.', press: '' } },
 ];
 export const INTENTS = [
   { ts: 4001000, status: 'armed', title: 'Porch light off when the guests leave',
@@ -219,13 +241,15 @@ export const TODAY_EXTRAS = {
               value: 'Landing temperature', why: 'hardware name' },
             { id: 'light.lamp', kind: 'area', label: 'Lamp', area_name: 'Bedroom',
               from_area: '', reach: [] },
-          ] },
+          ],
+          who: { who: 'brain', line: 'brAIn can fix this.', press: '' } },
   updates: [
     { key: 'update:update.core:2026.10.2', entity_id: 'update.core',
       title: 'Home Assistant Core', installed: '2026.10.1', latest: '2026.10.2',
       advice: { verdict: 'safe_tonight', reason: 'Nothing it changes is in your config.',
                 note_quote: 'Fixed a typo in the Hue integration',
-                config_quote: 'hue:' } },
+                config_quote: 'hue:' },
+      who: { who: 'you', line: 'This needs you.', press: '' } },
   ],
 };
 
@@ -284,6 +308,36 @@ export const HISTORY = {
   },
 };
 
+// History › Changes brAIn made (`/api/changes`, `changes.build`): one row
+// per change, each with its Undo or the reason it has none.
+export const CHANGES = {
+  label: 'Changes brAIn made', total: 5, more: false,
+  rows: [
+    { id: 'call:1.000000', kind: 'call', title: 'Turned off Porch light',
+      at: NOW - 120, where: 'by voice', reason: '', deletable: false,
+      press: { label: 'Undo', steps: [{ label: 'Undo', body: {},
+        route: '/api/changes/call/1.000000/undo',
+        confirm: 'Puts each device back how brAIn recorded it before this change, then reads it again to check.' }] } },
+    { id: 'edit:2.000000', kind: 'edit', title: 'Edited scripts.yaml',
+      at: NOW - 3600, where: 'from the chat', reason: '', deletable: false,
+      press: { label: 'Undo', steps: [{ label: 'Undo', body: {},
+        route: '/api/changes/edit/2.000000/undo',
+        confirm: 'Puts this file back exactly as it was before this edit and reloads what reads it.' }] } },
+    { id: 'edit:3.000000', kind: 'edit', title: 'Edited automations.yaml',
+      at: NOW - 7200, where: 'from a card', press: null, deletable: false,
+      reason: 'The file has been changed since, outside brAIn, so putting '
+        + "brAIn's copy back would lose that change. brain undo in the "
+        + 'terminal can still do it if you mean to.' },
+    { id: 'call:4.000000', kind: 'call', title: 'Sent a message', at: NOW - 9000,
+      where: 'overnight repair', press: null, deletable: false,
+      reason: 'A message cannot be unsent.' },
+    { id: 'fix:1104', kind: 'fix', title: 'Fixed: the porch automation pointed at an old sensor',
+      at: NOW - 86400, where: 'from a fix you approved', reason: '', deletable: false,
+      press: { label: 'Undo', steps: [{ label: 'Undo', body: {},
+        route: '/api/finding/1104/unfix', confirm: 'Puts back every file this fix changed.' }] } },
+  ],
+};
+
 // Three insight cards, in `/api/insights`' shape with the server's derived
 // `entities` (what each card names). Not in the default stub — the measures
 // of the queue never open the cards — so a measure passes `{ insights:
@@ -333,7 +387,8 @@ export const COUNTED = FEED.length + LOOSE.length + PROPOSALS.length + 1
 export function stub(over = {}) {
   const data = {
     cases: FEED, names: NAMES, loose: LOOSE, insights: [], proposals: PROPOSALS, intents: INTENTS,
-    extras: TODAY_EXTRAS, todo: TODO, history: HISTORY, firstLookDone: true,
+    extras: TODAY_EXTRAS, todo: TODO, history: HISTORY, changes: CHANGES,
+    firstLookDone: true,
     open: COUNTED, brief: { sent_at: NOW - 7200, text: 'Quiet night. The garage '
       + 'freezer is still drifting; nothing else needs you.' },
     status: { state: 'watching', label: 'Watching', sentence: 'Watching',
@@ -381,6 +436,7 @@ window.fetch = async (url, opts) => {
                     counts: { open: d.proposals.length } });
   }
   if (p.includes('api/history')) return answer(d.history);
+  if (p.includes('api/changes')) return answer(d.changes);
   if (p.includes('api/today')) return answer(d.extras);
   return answer({});
 };
@@ -392,7 +448,7 @@ window.fetch = async (url, opts) => {
 // "Doesn't apply", a question's way of saying it was irrelevant, and
 // "Respond", the first press on a finding card, which opens the line to
 // brAIn under its row.
-export const VOCAB = new Set(['Respond', 'Apply', 'Fix', 'Add to To Do', 'Snooze', 'Ignore',
+export const VOCAB = new Set(['Respond', 'Apply', 'Fix', 'Go ahead', 'Add to To Do', 'Snooze', 'Ignore',
   'Done', 'Restore', 'Undo', 'Ask', 'Send', 'Recheck', 'Check again', 'Dismiss',
   'Run', 'Save', 'Share',
   'Delete', 'Yes', 'No', 'Cancel', 'Change', "Doesn't apply"]);

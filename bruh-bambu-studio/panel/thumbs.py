@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import threading
 import zipfile
 from pathlib import Path
 
@@ -26,6 +27,19 @@ RENDER_TIMEOUT = 90
 MAX_RENDER_BYTES = 200 * 1024 * 1024
 MESHES = (".stl", ".obj", ".amf", ".3mf", ".step", ".stp")
 NONE = b""
+# Printer pictures are cached under this generation: an older release could
+# remember a read that went wrong as "no picture", and those are not trusted.
+PRINTER_CACHE = "printer2"
+# One storage session per printer at a time: a list of jobs asks for every
+# picture at once, and a printer's FTPS server serves one session well and
+# refuses or stalls the rest.
+_PRINTER_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_LOCK = threading.Lock()
+
+
+def _printer_lock(serial: str) -> threading.Lock:
+    with _LOCKS_LOCK:
+        return _PRINTER_LOCKS.setdefault(str(serial), threading.Lock())
 
 
 def png_member(names: list[str], plate: int = 1) -> str | None:
@@ -130,7 +144,7 @@ def library(path: Path, plate: int = 1) -> bytes | None:
 def printer(serial: str, name: str, size: int, open_storage) -> bytes | None:
     """A file on a printer's storage, read in place. `open_storage()` is a
     context manager yielding a bambu.ftps.Storage."""
-    cache = CACHE / "printer" / _key(serial) / f"{_key(name, size)}.png"
+    cache = CACHE / PRINTER_CACHE / _key(serial) / f"{_key(name, size)}.png"
     hit = _cached(cache)
     if hit is not None:
         return hit or None
@@ -138,10 +152,14 @@ def printer(serial: str, name: str, size: int, open_storage) -> bytes | None:
         _store(cache, NONE)
         return None
     from bambu.ftps import RemoteFile
-    with open_storage() as storage:
-        remote = RemoteFile(storage, name, size)
-        data = from_zip(remote, quiet=False)
-        if remote.error is not None:
-            raise OSError(f"Could not read {name} on the printer: {remote.error}")
+    with _printer_lock(serial):
+        hit = _cached(cache)  # another request may have read it meanwhile
+        if hit is not None:
+            return hit or None
+        with open_storage() as storage:
+            remote = RemoteFile(storage, name, size)
+            data = from_zip(remote, quiet=False)
+            if remote.error is not None:
+                raise OSError(f"Could not read {name} on the printer: {remote.error}")
     _store(cache, data or NONE)
     return data

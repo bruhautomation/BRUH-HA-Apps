@@ -588,7 +588,9 @@ class TestATypedRuleWithTheSwitchOn(unittest.IsolatedAsyncioTestCase):
 
     async def test_only_what_a_person_typed_is_accepted(self):
         self.switch = True
-        await self.one(via="reply")
+        # brain.intent from an automation is nobody typing; a phone reply
+        # is a person typing and is accepted (test_scenes_act_and_naming).
+        await self.one(via="service")
         await self.one(typed=False)
         self.assertEqual(self.accepts, [])
 

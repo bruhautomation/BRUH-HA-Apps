@@ -61,17 +61,29 @@ EOF
 # One GET, pretty-printed. python3 is in the image; the panel's JSON is the
 # same payload the tab renders, so what you see here is what it shows.
 list_findings() {
-    local payload
-    payload=$(curl -s -m 10 "$PANEL/api/findings" 2>/dev/null)
-    if [ -z "$payload" ]; then
+    # The payload goes through a FILE, never an argument or an environment
+    # variable: one of those is capped by the kernel at 128 KB, and a few
+    # hundred findings with a sentence of detail each is past it ("Argument
+    # list too long"). The heredoc below is the script itself, so the file
+    # is named as its argument rather than piped in.
+    local payload_file
+    payload_file=$(mktemp) || exit 1
+    trap 'rm -f "$payload_file"' RETURN
+    curl -s -m 10 -o "$payload_file" "$PANEL/api/findings" 2>/dev/null
+    if [ ! -s "$payload_file" ]; then
         echo -e "${RED}The panel is not answering on ${PANEL}.${NC}" >&2
         echo -e "${DIM}Is the add-on running? (brain doctor checks this)${NC}" >&2
+        rm -f "$payload_file"
         exit 1
     fi
-    BRAIN_FINDINGS_JSON="$payload" python3 - << 'PYEOF'
-import json, os, time
+    python3 - "$payload_file" << 'PYEOF'
+import json, os, sys, time
 
-payload = json.loads(os.environ["BRAIN_FINDINGS_JSON"])
+if len(sys.argv) > 1:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        payload = json.load(fh)
+else:
+    payload = json.loads(os.environ["BRAIN_FINDINGS_JSON"])
 findings = payload.get("findings") or []
 guesses = payload.get("hypotheses") or []
 

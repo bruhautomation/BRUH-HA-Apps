@@ -430,9 +430,20 @@ def _host_of(url) -> str:
         return ""
 
 
-def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]:
+def _named_in(message: str, known: set[str], devices: list,
+              integration: str = "",
+              device_domains: dict | None = None) -> tuple[list, list]:
     """``(entity ids, device ids)`` a log message names: ids the house has,
-    and registry devices whose own name appears as whole words."""
+    and registry devices whose own name (or address) appears in it.
+
+    **A device is named only by its own integration's line** (#434). A
+    word match is a guess, and a guess across integrations is how "LIFX is
+    logging the same error" was filed on an unrelated motion sensor whose
+    name happened to be in the message: the device has to carry an entity
+    of the integration the line came from. A line whose integration cannot
+    be told names no device by its name at all — there is nothing to check
+    the guess against. An entity id written out in the message is not a
+    guess and is kept whoever logged it."""
     text = str(message or "")
     ents = sorted({m.group(1) for m in _ID_IN_TEXT.finditer(text)
                    if m.group(1) in known})
@@ -440,6 +451,11 @@ def _named_in(message: str, known: set[str], devices: list) -> tuple[list, list]
     addresses = set(_ADDRESS_RE.findall(text))
     for d in devices or []:
         if not isinstance(d, dict) or not d.get("id"):
+            continue
+        if device_domains is not None and (
+                not integration
+                or integration not in (device_domains.get(str(d["id"]))
+                                       or ())):
             continue
         host = _host_of(d.get("configuration_url"))
         if host and host in addresses:
@@ -465,10 +481,25 @@ def _refers(user_text: str, eid: str) -> bool:
                           user_text))
 
 
+def _device_domains(platforms: dict | None,
+                    entity_devices: dict | None) -> dict | None:
+    """``{device id: {integrations}}`` off the registry's entities, or None
+    when the registry was not handed in (nothing to check a name against,
+    so a caller with no registry keeps the old reading)."""
+    if not platforms or entity_devices is None:
+        return None
+    out: dict[str, set] = {}
+    for eid, dev in entity_devices.items():
+        if dev and platforms.get(eid):
+            out.setdefault(str(dev), set()).add(str(platforms[eid]))
+    return out
+
+
 def _log_records(rows: list, now: float, known: set[str] | None = None,
                  devices: list | None = None, user_text: str | None = None,
                  platforms: dict | None = None,
-                 manifests: list | None = None) -> list[dict]:
+                 manifests: list | None = None,
+                 entity_devices: dict | None = None) -> list[dict]:
     out = []
     for row in rows:
         if not isinstance(row, dict) or row.get("level") not in LOG_LEVELS:
@@ -495,7 +526,9 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
         # phone's model in it is not the device the error is about: the
         # frontend's records name no device by name.
         ents, devs = _named_in(str(first or ""), known or set(),
-                               None if _is_frontend(logger) else devices)
+                               None if _is_frontend(logger) else devices,
+                               rec["integration"],
+                               _device_domains(platforms, entity_devices))
         if ents:
             rec["entities"] = ents
             owners = sorted({(platforms or {}).get(e) for e in ents} - {None, ""})
@@ -711,9 +744,59 @@ def _representatives(entities: list) -> tuple[dict, dict]:
 _DEVICE_KINDS = ("zigbee", "zwave", "automation")
 
 
-def _subjects(records: list[dict], entities: list) -> dict[str, str]:
-    """`{record id: entity}` for every record a representative is known for."""
+# The integrations whose entities are each a rule somebody wrote, not a
+# device: one of them standing for "the integration" is an arbitrary
+# automation, and a cause about automations filed under it was a finding
+# about a rule its config never touched (#434).
+RULE_DOMAINS = frozenset({"automation", "script", "scene", "template"})
+
+
+def log_subjects(rec: dict, platforms: dict, known: set[str]) -> list[str]:
+    """The entities a log record may be filed under, best first (#434).
+
+    Resolved from the line itself and never from a word match against
+    some other integration's thing: the automation, script or scene its
+    own logger names; an entity id the message writes out that belongs to
+    the integration the line came from (or any such id when the logger
+    names no integration, or a rule's id); and nothing else here — a
+    device the message names is already its own integration's
+    (`_named_in`) and is resolved through it by the caller.
+    """
+    out: list[str] = []
+    m = _CALLER_LOGGER.match(str(rec.get("logger") or ""))
+    if m:
+        caller = f"{m.group(1)}.{m.group(2)}"
+        if caller in known:
+            out.append(caller)
+    integration = str(rec.get("integration") or "")
+    for eid in rec.get("entities") or []:
+        domain = eid.split(".", 1)[0]
+        if (not integration or platforms.get(eid) == integration
+                or domain in RULE_DOMAINS):
+            if eid not in out:
+                out.append(eid)
+    return out
+
+
+def _subjects(records: list[dict], entities: list,
+              wide: dict | None = None,
+              known: set[str] | None = None) -> dict[str, str]:
+    """`{record id: entity}` for every record a subject is known for.
+
+    ``wide``, when handed, is filled with ``{record id: integration}`` for
+    the log records filed under their integration's representative rather
+    than under anything the line names: such a row is about the
+    integration as a whole, which is what lets every check that saw the
+    same outage be one card (`findings_store`'s integration fold)."""
     devices, platforms = _representatives(entities)
+    entity_platform = {str(e["entity_id"]): str(e.get("platform") or "")
+                       for e in entities or []
+                       if isinstance(e, dict) and e.get("entity_id")}
+    by_device: dict[str, list[str]] = {}
+    for e in entities or []:
+        if isinstance(e, dict) and e.get("entity_id") and e.get("device_id"):
+            by_device.setdefault(str(e["device_id"]), []).append(
+                str(e["entity_id"]))
     out: dict[str, str] = {}
     for rec in records:
         eid = ""
@@ -724,15 +807,29 @@ def _subjects(records: list[dict], entities: list) -> dict[str, str]:
         elif rec["kind"] == "automation":
             eid = (sorted(rec.get("switches_off") or []) or [""])[0]
         elif rec["kind"] == "log":
-            named = rec.get("entities") or []
+            integration = str(rec.get("integration") or "")
+            named = log_subjects(rec, entity_platform,
+                                 set(entity_platform) | set(known or ()))
             devs = rec.get("devices") or []
-            if len(named) == 1:
+            if len(named) == 1 or (named and named[0].split(".", 1)[0]
+                                   in RULE_DOMAINS
+                                   and _CALLER_LOGGER.match(
+                                       str(rec.get("logger") or ""))):
                 eid = named[0]
             elif not named and len(devs) == 1:
-                eid = devices.get(devs[0], "")
-            if not eid:
-                eid = platforms.get(str(rec.get("integration") or "")
-                                    or str(rec.get("owner") or ""), "")
+                # The device's own entity of the integration that logged,
+                # never another integration's entity on the same box.
+                own = sorted(e for e in by_device.get(devs[0], [])
+                             if not integration
+                             or entity_platform.get(e) == integration)
+                rep = devices.get(devs[0], "")
+                eid = rep if rep in own else (own[0] if own else "")
+            if not eid and not (rec.get("entities") or devs):
+                domain = integration or str(rec.get("owner") or "")
+                if domain and domain not in RULE_DOMAINS:
+                    eid = platforms.get(domain, "")
+                    if eid and wide is not None:
+                        wide[rec["id"]] = domain
         if eid:
             out[rec["id"]] = eid
     return out
@@ -782,7 +879,9 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
     manifests = collected.get("manifests") or []
     logs = _log_records(collected.get("log") or [], now, known,
                         collected.get("devices") or [],
-                        collected.get("user_text"), platforms, manifests)
+                        collected.get("user_text"), platforms, manifests,
+                        {str(e["entity_id"]): str(e.get("device_id") or "")
+                         for e in reg if e.get("device_id")})
     manifest_names = {str(m.get("domain")): str(m.get("name") or "")
                       for m in manifests if isinstance(m, dict)
                       and m.get("domain") and m.get("name")}
@@ -838,11 +937,15 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                             str(d.get("name") or "")} if n]
     entity_devices = {str(e["entity_id"]): str(e.get("device_id") or "")
                       for e in reg if e.get("device_id")}
+    wide: dict[str, str] = {}
     return {"records": records,
             "integration_names": integration_names(
                 records, collected.get("config_entries") or [],
                 collected.get("manifests") or []),
-            "subjects": _subjects(records, collected.get("entities") or []),
+            "subjects": _subjects(records, collected.get("entities") or [],
+                                  wide, known),
+            "wide": wide,
+            "platforms": platforms,
             "entity_device": entity_device,
             "names": names, "device_names": device_names,
             "entity_devices": entity_devices,
@@ -1314,6 +1417,99 @@ def _thing_of(rec: dict, dig: dict) -> str:
     return ""
 
 
+def _ago(hours) -> str:
+    try:
+        h = float(hours)
+    except (TypeError, ValueError):
+        return ""
+    if h < 1:
+        return "within the last hour"
+    if h < 1.5:
+        return "about an hour ago"
+    if h < 36:
+        return f"about {round(h)} hours ago"
+    return f"about {round(h / 24)} days ago"
+
+
+def _log_said(logs: list[dict], dig: dict, detail: str = "",
+              quote: bool = True) -> str | None:
+    """The sentence a log-error finding owes its reader (#444): what the
+    log said, in plain words, how many times and when it last did.
+
+    Taken off the first cited line that has a message, the message with
+    addresses and ids as words (`checks.integrations.shown`) after the
+    redaction the record already had. ``None`` when no cited line says
+    anything; "" when ``detail`` already quotes the line and its count."""
+    from checks.integrations import shown  # noqa: PLC0415 — one wording
+    for rec in logs:
+        message = shown(str(rec.get("message") or "")).strip()
+        if not message:
+            continue
+        count = int(rec.get("count") or 1)
+        when = _ago(rec.get("last_hours_ago"))
+        times = "once" if count == 1 else f"{count} times"
+        tail = f"{times}, most recently {when}" if when else times
+        low = detail.lower()
+        if message[:40].lower() in low:
+            return "" if str(count) in low else f"It was logged {tail}."
+        where = _source_of(rec, dig)
+        who = f"The {where} integration" if where else "Home Assistant"
+        if not quote:
+            # A template warning inside an integration nothing of theirs
+            # refers to: quoting the word sends them looking for a template
+            # of their own, so the line is said by who, how often and when.
+            thing = _thing_of(rec, dig)
+            about = f" about {thing}" if thing else ""
+            return f"{who} logged this{about} {tail}."
+        return f"{who} logged \u201c{textclip.clip(message, 160)}\u201d {tail}."
+    return None
+
+
+# Words a fix may use about anything, which say nothing about which error
+# it answers.
+_GENERIC_FIX_WORDS = frozenset(
+    "check restart reload settings devices device services integration home "
+    "assistant make sure that this with from then again your open error "
+    "errors logs system keep keeps stop stops until after there their them "
+    "they will into once look what when have does should could would".split())
+_FIX_WORD = re.compile(r"[a-z]{4,}")
+
+
+def _fix_follows(fix: str, logs: list[dict], dig: dict) -> bool:
+    """Whether a fix says something the error it answers is about: a word
+    of the logged message, of an entity the message writes out, or of an
+    automation or script that made the failing calls (#444)."""
+    names = dig.get("names") or {}
+    about = []
+    for rec in logs:
+        about.append(str(rec.get("message") or ""))
+        for eid in rec.get("entities") or []:
+            about += [eid, str(names.get(eid) or "")]
+        for c in rec.get("called_by") or []:
+            about.append(str(c.get("name") or ""))
+    said = set(_FIX_WORD.findall(" ".join(about).lower()))
+    words = set(_FIX_WORD.findall(str(fix or "").lower())) - _GENERIC_FIX_WORDS
+    return bool(words & said)
+
+
+def _error_fix(logs: list[dict], dig: dict) -> str:
+    """A fix for the error a log-only cause describes, when the run's own
+    fix said nothing about it."""
+    rec = logs[0]
+    thing, where = _thing_of(rec, dig), _source_of(rec, dig)
+    if thing:
+        return (f"The error is about {thing}: open it in Settings > Devices "
+                "& services, put right what the error says is wrong, then "
+                + (f"reload the {where} integration." if where
+                   else "reload its integration."))
+    if where:
+        return (f"Put right what the error says is wrong in the {where} "
+                "integration's settings in Settings > Devices & services, "
+                "then reload it.")
+    return ("Read the error in Settings > System > Logs and put right what "
+            "it names.")
+
+
 def _source_fix(logs: list[dict], dig: dict) -> str:
     """A fix for what the log lines came from, when the run's own fix was
     about something else."""
@@ -1378,7 +1574,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
     groups = _groups(by_id, entity_device)
     causes_in = (answer or {}).get("causes") if isinstance(answer, dict) else None
     causes, refused, invented = [], 0, 0
-    bundled = rewritten = unrelated = 0
+    bundled = rewritten = unrelated = unstated = unfollowed = 0
     for raw in causes_in if isinstance(causes_in, list) else []:
         if len(causes) >= MAX_CAUSES:
             break
@@ -1402,6 +1598,17 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         # about the cellar node is not filed under the landing plug because
         # that plug is somewhere else in tonight's digest.
         eid = eid if eid in entities and eid in cited else ""
+        if eid and all(by_id[r]["kind"] == "log" for r in real):
+            # A cause about log lines is filed only under what those lines
+            # resolve to (`log_subjects`): an entity the run picked from a
+            # line of another integration's is a guess (#434).
+            platforms = dig.get("platforms") or {}
+            allowed: set[str] = set()
+            for r in real:
+                allowed |= set(log_subjects(by_id[r], platforms,
+                                            set(platforms) | entities))
+            if eid not in allowed:
+                eid = ""
         detail = re.sub(r"\s+", " ", str(raw.get("detail") or "")).strip()
         fix = re.sub(r"\s+", " ", str(raw.get("fix") or "")).strip()
         # One cause, one problem: the one its entity is on, else the one
@@ -1431,6 +1638,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
                 eid = ""
             bundled += 1
         logs = [by_id[r] for r in real if by_id[r]["kind"] == "log"]
+        not_theirs = False
         if (logs and any(r.get("referenced_by_you") is False for r in logs)
                 and not any(r.get("referenced_by_you") for r in logs)
                 and not any(by_id[r]["kind"] == "automation" for r in real)
@@ -1444,6 +1652,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
                     if not _TEMPLATE_WORDS.search(s)]
             detail = " ".join(kept).strip()
             rewritten += 1
+            not_theirs = True
         # A cause names only what its own records are about. A fix telling
         # somebody to reload an integration entry none of them came from,
         # or a title about a sensor its template never reads, is a sentence
@@ -1482,12 +1691,27 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             [by_id[r] for r in real], dig, title, detail, fix)
         title, detail, fix = (plain_slugs(title, dig), plain_slugs(detail, dig),
                               plain_slugs(fix, dig))
+        only_logs = bool(logs) and len(logs) == len(real)
+        said = _log_said(logs, dig, detail, quote=not not_theirs) \
+            if logs else ""
+        if only_logs and said is None:
+            # A finding about log errors that cannot say what the error
+            # was is a card with nothing in it (#444): held back, counted.
+            unstated += 1
+            continue
+        if only_logs and fix and not _fix_follows(fix, logs, dig):
+            # A fix that says nothing the error is about ("restart it on
+            # its dock" under a cloud error) is replaced by one that does.
+            fix = _error_fix(logs, dig)
+            unfollowed += 1
         if logs and not fix:
             fix = _source_fix(logs, dig)
         if not fix:
             # A run that wrote no fix, or one whose every sentence was about
             # another problem: the card still says what to do (#342).
             fix = _record_fix(by_id[real[0]], dig)
+        if said:
+            detail = f"{detail} {said}".strip()
         if logs:
             detail = _with_source(logs, dig, detail)
         causes.append({
@@ -1501,7 +1725,8 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         })
     return {"causes": causes, "refused": refused, "invented": invented,
             "bundled": bundled, "rewritten": rewritten,
-            "unrelated": unrelated}
+            "unrelated": unrelated, "unstated": unstated,
+            "unfollowed": unfollowed}
 
 
 # ---------------------------------------------------------------------------
@@ -1565,6 +1790,22 @@ def rows(causes: list[dict], dig: dict, state: dict,
         evidence = [{"entity": rid, "value": textclip.clip(
                          _record_label(by_id[rid]), 120),
                      "when": ""} for rid in cause["records"][:8]]
+        # A cause every cited line of which is one integration's, filed
+        # under that integration's stand-in rather than under anything a
+        # line names, is about the integration as a whole: it says so, so
+        # it is the same card as another check's row about that outage.
+        wide = dig.get("wide") or {}
+        domains = {wide.get(r) for r in cause["records"]}
+        integration = (next(iter(domains)) if not cause["entity_id"]
+                       and len(domains) == 1 and None not in domains else "")
+        # The entities the cause is about, for the sweep that takes a row
+        # off once every one of them is reporting again (#441): the
+        # evidence names records, not entities.
+        about: list[str] = []
+        for rid in cause["records"]:
+            for e in sorted(_record_entities(by_id[rid])):
+                if e not in about:
+                    about.append(e)
         out.append({
             "text": text,
             "detail": cause["detail"] or cause["title"],
@@ -1577,6 +1818,8 @@ def rows(causes: list[dict], dig: dict, state: dict,
             "kind": "problem",
             "claim": cause["title"],
             "evidence": evidence,
+            **({"integration": integration} if integration else {}),
+            **({"about": about[:8]} if about else {}),
         })
     return out
 

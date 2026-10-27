@@ -472,6 +472,11 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-cardlive.mjs
 
+      # One verdict per card, one card per subject, one line for the quiet.
+      - name: Measure House › Reports
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-reports.mjs
+
       # A chore you cannot finish from the screen it is on is
       # indistinguishable from one nobody has got round to.
       - name: Measure Your list
@@ -498,6 +503,13 @@ jobs:
       - name: Measure the Ask tab
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-ask.mjs
+
+      # What a typed request is told it is doing: with brAIn acting without
+      # asking, scenes and rules are written at once, and a toast saying
+      # "nothing runs until you accept it" was a lie.
+      - name: Measure what a request is told
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-asktoast.mjs
 
       # The tidy and update cards on Today, and the house book: a book
       # sentence with no source reads like a cited one, a tidy row with no
@@ -538,6 +550,12 @@ jobs:
       - name: Measure Today
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-today.mjs
+
+      # History › Changes brAIn made: every change named, with its Undo or
+      # the reason it has none, and nothing sideways at 390 (#453).
+      - name: Measure Changes brAIn made
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-changes.mjs
 
       # The visual standard: four type sizes, sentence case, no browser
       # chrome on a select or a checkbox, and every card on the 4px grid

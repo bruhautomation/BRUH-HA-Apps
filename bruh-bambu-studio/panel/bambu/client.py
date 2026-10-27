@@ -60,8 +60,10 @@ def _make_client(client_id: str):
 
 
 class PrinterClient:
-    def __init__(self, host: str, serial: str, access_code: str):
+    def __init__(self, host: str, serial: str, access_code: str, model: str = ""):
         self.host, self.serial, self.code = host, serial, access_code
+        # The saved model: it says whether the AMS is an AMS Lite.
+        self.model = model
         self.status: dict = {}
         self.connected = False
         self.last_report = 0.0
@@ -208,7 +210,7 @@ class PrinterClient:
         with self._lock:
             status = json.loads(json.dumps(self.status))
             last = self.last_report
-        out = protocol.summarise(status)
+        out = protocol.summarise(status, model=self.model, serial=self.serial)
         stale = bool(last) and time.time() - last > STALE_AFTER_S
         out["online"] = self.connected and not stale
         out["last_report"] = last or None

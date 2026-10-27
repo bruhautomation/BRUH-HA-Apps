@@ -19,6 +19,7 @@ the real one does.
 import os
 import re
 import sys
+import threading
 import time
 import unittest
 import unittest.mock as mock
@@ -64,7 +65,18 @@ def items_in(path: Path) -> list[str]:
 class CopiesTest(A1PrintTest):
     def setUp(self):
         super().setUp()
-        run = mock.patch.object(server, "_print_job", REAL_PRINT_JOB)
+        # The job sets its state before its `after` hook records the print
+        # in the part's folder, so a test that stops on the state would
+        # race that write with its own cleanup: wait for the whole job.
+        self.jobs_done = threading.Event()
+
+        def whole_job(*args, **kwargs):
+            try:
+                REAL_PRINT_JOB(*args, **kwargs)
+            finally:
+                self.jobs_done.set()
+
+        run = mock.patch.object(server, "_print_job", whole_job)
         run.start()
         self.addCleanup(run.stop)
         self.record = self.root / "argv.txt"
@@ -99,6 +111,7 @@ class TestADesignedPartInCopies(CopiesTest):
             deadline = time.time() + 20
             while job["state"] == "running" and time.time() < deadline:
                 time.sleep(0.05)
+            self.assertTrue(self.jobs_done.wait(20), "the print job never finished")
         self.assertIn("2 copies", sentence)
         argv = self.record.read_text().splitlines()
         self.assertNotIn("can not set repetitions", job.get("error", ""))

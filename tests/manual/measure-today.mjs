@@ -30,7 +30,11 @@
 //     holds Recheck and the morning brief;
 //   * the safety banner shows only while something is urgent;
 //   * the badge equals the counted cards;
-//   * To Do hides a snoozed item, History opens on four filters with a
+//   * every answerable card says who acts in ONE line under its title —
+//     "brAIn can fix this." over Go ahead or Apply, "This needs you." over
+//     Add to To Do or Done, "brAIn needs an answer." over Yes — never both
+//     and never neither (#451);
+//   * To Do hides a snoozed item, History opens on five filters with a
 //     duplicate rendered once with its count, and Undo's confirmation says
 //     what it puts back;
 //   * the empty state is one line, "Nothing needs you.";
@@ -120,6 +124,8 @@ const readCards = (page, cut) => page.evaluate((cutSrc) => {
         h: Math.round(b.getBoundingClientRect().height),
         w: Math.round(b.getBoundingClientRect().width),
         t: Math.round(b.getBoundingClientRect().top) })),
+      who: [...c.querySelectorAll(':scope > .qwho')].map((w) => ({
+        line: w.textContent.trim(), kind: w.dataset.who || '' })),
       edge: parseFloat(getComputedStyle(c).borderLeftWidth) || 0,
       edgeColor: getComputedStyle(c).borderLeftColor,
       apply: buttons.some((b) => b.textContent.trim() === 'Apply')
@@ -280,6 +286,25 @@ for (const { width, touch, top, fits } of CASES) {
 
   for (const card of cards) {
     const id = card.id || card.title.slice(0, 30);
+    // Who acts (#451): every answerable card says, in ONE line, whose move
+    // it is, and its primary press is the one that line promises.
+    const lead = card.buttons.find((b) => b.primary);
+    if (lead) {
+      if (card.who.length !== 1) {
+        note(where, `${id} carries ${card.who.length} who-acts lines`);
+      } else {
+        const { line, kind } = card.who[0];
+        const fits = { brain: ['Go ahead', 'Apply'], you: ['Add to To Do', 'Done'],
+                       answer: ['Yes', 'Send'], told: ['Done', 'Restore'] }[kind];
+        if (!fits) note(where, `${id} who-acts line is "${line}" (${kind})`);
+        else if (!fits.includes(lead.label)) {
+          note(where, `${id} says "${line}" over a primary "${lead.label}"`);
+        }
+        if (/can fix|can set/.test(line) && /needs you/.test(line)) {
+          note(where, `${id} says both who acts: "${line}"`);
+        }
+      }
+    }
     if (card.chips.length !== 1) note(where, `${id} carries ${card.chips.length} status chips`);
     if (!['urgent', 'problem', 'tidy', 'suggestion', 'question'].includes(card.chips[0])) {
       note(where, `${id} chip is "${card.chips[0]}"`);
@@ -466,7 +491,7 @@ for (const { width, touch, top, fits } of CASES) {
       press: r.querySelector('button').textContent,
       del: !!r.querySelector('.histdel') })),
   }));
-  if (hist.filters.join('|') !== 'Snoozed|Ignored|Done|Set aside by brAIn') {
+  if (hist.filters.join('|') !== 'Snoozed|Ignored|Done|Set aside by brAIn|Changes brAIn made') {
     note(where, `History filters: ${hist.filters.join(' | ')}`);
   }
   if (!hist.hint) note(where, 'History does not say what a filter holds');
@@ -824,7 +849,7 @@ for (const width of [390, 1190]) {
   const tidy = (id, claim, src) => kase({
     id, severity: 'info', chip: 'tidy', group: 'tidy', situation: 'generic', claim,
     source: src, source_title: 'Registry check', origin: { store: 'findings', key: Number(id.slice(2)) },
-    answers: [A('fix', 'Fix', `/api/finding/${id.slice(2)}/fix`, { primary: true }),
+    answers: [A('fix', 'Go ahead', `/api/finding/${id.slice(2)}/fix`, { primary: true }),
               A('not_now', 'Snooze', `/api/case/${id}/not_now`),
               A('wrong', 'Ignore', `/api/case/${id}/wrong`, { note: true })] });
   const cases = [FEED[1], sec, FEED[0],

@@ -24,7 +24,7 @@ Four rules.
 **Every card has one primary, then Snooze · Ignore, always those words
 and that order** (docs/design/ui-redesign-2026-10.md, "One queue, one
 card"), so a row of buttons can be read without reading the words. The
-primary is the one press that fits the card: *Fix* where brAIn could
+primary is the one press that fits the card: *Go ahead* where brAIn could
 work out a change (a read-only run that changes nothing), *Apply* once a
 plan is on the card, *Add to To Do* where it needs a person's hands, *Done*
 on a chore check, *Send* on a house-book question. A problem also shows
@@ -126,6 +126,14 @@ AUTOMATION_PREFIX = "auto."
 # ending). Spelled here as well because the mirror is built from this
 # module and the integration reads the mirror.
 REQUEST_ACTIONS = ("todo", "fixed", "wrong", "snooze", "ack", "confirm")
+# What each of those presses is CALLED, wherever it is offered — Needs you,
+# Home Assistant's Repairs dialog and a phone's buttons. One table: the
+# dialog said "I've fixed it" and "Not a problem here" while the card said
+# Done and Ignore, which is one decision asked in two vocabularies.
+# `notify_router.ACTION_LABELS` and the Repairs menu are read off this.
+REQUEST_LABELS = {"todo": "Add to To Do", "fixed": "Done", "wrong": "Ignore",
+                  "snooze": "Snooze", "ack": "Done", "confirm": "Yes",
+                  "dismiss": "Dismiss", "reply": "Reply"}
 
 # Morph files its dashboard suggestions here (`server._apply_morph_case`),
 # and a suggestion is a yes/no question only the person can answer. Spelled
@@ -335,7 +343,7 @@ def plan_is_legacy(plan) -> bool:
 MAX_MORE = 3
 
 
-def _wrong(case_id: str, prefill: str = "", label: str = "Ignore",
+def _wrong(case_id: str, prefill: str = "", label: str = REQUEST_LABELS["wrong"],
            hint: str = "") -> dict:
     """The correction. It is `wrong` on every card, always opens the reason
     box (optional — the reason is the half that teaches), and settles the
@@ -359,13 +367,13 @@ def _snooze(case_id: str, question: bool = False) -> dict:
     the next one (`hypotheses.snooze`)."""
     if question:
         return _answer(
-            "not_now", "Snooze",
+            "not_now", REQUEST_LABELS["snooze"],
             "Hide it for now. brAIn asks again later, and asks something "
             "else meanwhile — nothing is recorded either way.",
             route=f"/api/case/{case_id}/not_now", request="snooze",
             done="Snoozed")
     return _answer(
-        "not_now", "Snooze",
+        "not_now", REQUEST_LABELS["snooze"],
         "Hide it for now. Nothing is recorded — it comes back later if it's "
         "still true, sooner the more it matters.",
         route=f"/api/case/{case_id}/not_now", request="snooze",
@@ -392,7 +400,7 @@ def _not_applicable(case_id: str) -> dict:
 
 def _todo(case_id: str, primary: bool = False) -> dict:
     return _answer(
-        "todo", "Add to To Do",
+        "todo", REQUEST_LABELS["todo"],
         "You'll handle it. It goes on To Do, and brAIn won't raise it "
         "again while it's there.",
         route=f"/api/case/{case_id}/do", request="todo", primary=primary,
@@ -401,13 +409,21 @@ def _todo(case_id: str, primary: bool = False) -> dict:
 
 def _done(key, primary: bool = False) -> dict:
     return _answer(
-        "done", "Done",
+        "done", REQUEST_LABELS["fixed"],
         "It's handled. brAIn records that and stops raising it.",
         route=f"/api/finding/{key}/done", request="fixed", primary=primary,
         done="Done — recorded")
 
 
-def _plan(key, primary: bool = False, fix: str = "") -> dict:
+# The press that lets brAIn make the change itself (#451): "hey I can fix
+# this, go ahead?" in the owner's words. Behind the ⋯, where a plan run
+# already concluded a person's hands are needed, the same press is "Fix" —
+# a second try, never the card's answer.
+GO_AHEAD = "Go ahead"
+
+
+def _plan(key, primary: bool = False, fix: str = "",
+          label: str = GO_AHEAD) -> dict:
     """**Fix**: a short box holding the card's own suggested change, which
     the person may edit or replace, then the read-only plan run with what
     they sent as the agreed change (`_run_plan`'s `change`, the same brief
@@ -419,7 +435,7 @@ def _plan(key, primary: bool = False, fix: str = "") -> dict:
     tells the panel to open the box; the wire id stays `fix`, because the
     HA mirror, Repairs and the notification actions read it."""
     answer = _answer(
-        "fix", "Fix",
+        "fix", label,
         "Say what to change — brAIn's suggestion is already in the box. It "
         "shows exactly what it will change, and nothing changes until you "
         "press Apply.",
@@ -543,7 +559,7 @@ def answers(case: dict) -> list[dict]:
 
     if sit == "tidy":
         return _problem_row(case, _answer(
-            "fix", "Fix", "brAIn suggests names, rooms and aliases in this "
+            "fix", GO_AHEAD, "brAIn suggests names, rooms and aliases in this "
             "house's own style, as one card to review. Nothing changes "
             "until you press Apply on it.", route="/api/tidy/run",
             primary=True, done="Suggesting — they arrive as one card here"))
@@ -623,6 +639,74 @@ def answers(case: dict) -> list[dict]:
     else:
         lead = _todo(cid, primary=True)
     return _problem_row(case, lead, prefill=PREFILL.get(sit, ""))
+
+
+# ---------------------------------------------------------------------------
+# Who acts
+# ---------------------------------------------------------------------------
+#
+# "It's kind of unclear when I need to do something vs it": every card on
+# Needs you says, on its face and in one line, whose move it is — and the
+# line is READ OFF the card's own primary press rather than decided a second
+# time, so the sentence and the button under it can never disagree. Where
+# brAIn can make the change itself the card says so and leads with *Go
+# ahead*; where a person's hands are needed it says "This needs you." and
+# leads with *Add to To Do* (or *Done*); a question says brAIn needs an
+# answer. Never both and never neither: one primary is one line.
+WHO = ("brain", "you", "answer", "told")
+# Which primary press means which of `WHO`. A verb that is in none of these
+# is a card nothing can be pressed on, which carries no line.
+WHO_OF_VERB = {
+    "fix": "brain", "apply": "brain", "accept": "brain",
+    "todo": "you", "done": "you", "complete": "you",
+    "yes": "answer", "confirm": "answer", "answer": "answer",
+    "ack": "told", "elevate": "told", "reopen": "told",
+}
+# The words, with the household's chosen name for the assistant in place of
+# `{name}` (`personality.assistant_name`, which the caller passes: this
+# module is a leaf and reads no file). A suggestion is set up rather than
+# fixed, and a change brAIn already made is news rather than a request.
+WHO_LINES = {
+    "brain": "{name} can fix this.",
+    "you": "This needs you.",
+    "answer": "{name} needs an answer.",
+}
+WHO_SPECIAL = {
+    "opportunity": "{name} can set this up.",
+    "change": "{name} made this change.",
+    "acknowledge": "Nothing to do — {name} is letting you know.",
+    "watching": "{name} set this aside.",
+    "chore_done": "You finished this.",
+}
+DEFAULT_NAME = "brAIn"
+
+
+def who_line(who: str, name: str = DEFAULT_NAME, situation_: str = "") -> str:
+    """The sentence for one of `WHO`, or "" for none."""
+    name = " ".join(str(name or "").split()) or DEFAULT_NAME
+    words = WHO_SPECIAL.get(situation_) if situation_ else None
+    if words is None:
+        words = WHO_LINES.get(who, "")
+    return words.replace("{name}", name)
+
+
+def who_acts(case: dict, name: str = DEFAULT_NAME,
+             visible: list[dict] | None = None) -> dict | None:
+    """`{"who", "line"}` for this case, or None when nothing can be pressed
+    on it (a run in flight, whose phase line is what the card says).
+
+    Decided from the primary press `answers` already chose, never from the
+    case a second time."""
+    rows = answers(case) if visible is None else visible
+    lead = next((a for a in rows if a.get("primary")), rows[0] if rows else None)
+    if not lead:
+        return None
+    who = WHO_OF_VERB.get(str(lead.get("verb") or ""))
+    if who is None:
+        return None
+    sit = situation(case)
+    return {"who": who, "line": who_line(who, name, sit),
+            "press": str(lead.get("label") or "")}
 
 
 # The one status chip on a card (docs/design/ui-redesign-2026-10.md,
@@ -756,7 +840,7 @@ def more(case: dict, visible: list[dict], overflow: list[dict]) -> list[dict]:
         plan = case.get("plan") or {}
         if (case.get("fixable") and sit not in HANDS and sit != "watching"
                 and (plan_refused(plan) or sit == "fix_failed")):
-            add(_plan(key, fix=case.get("fix")))
+            add(_plan(key, fix=case.get("fix"), label="Fix"))
         return out
     for item in overflow or []:
         if item.get("verb") == "trial":
@@ -784,8 +868,26 @@ def request_answers(row: dict) -> list[dict]:
     the end of any row that somehow left it off, because "not this
     minute" is the lock-screen answer.
     """
+    case = _request_case(row)
+    if case["finding_status"] in ("planning", "fixing"):
+        return []
+    out = [{"action": a["request"], "label": a["label"]}
+           for a in answers(case) if a.get("request")]
+    actions = {a["action"] for a in out}
+    if (out and "todo" not in actions and case["kind"] == "problem"
+            and situation(case) != "chore_check"):
+        out.insert(0, {"action": "todo", "label": REQUEST_LABELS["todo"]})
+        actions.add("todo")
+    if out and "snooze" not in actions and case["kind"] != "change" \
+            and situation(case) != "acknowledge":
+        out.append({"action": "snooze", "label": REQUEST_LABELS["snooze"]})
+    return out
+
+
+def _request_case(row: dict) -> dict:
+    """A bare store row read as the case `cases.py` would build of it."""
     row = as_morph_question(row)
-    case = {
+    return {
         "id": f"f:{int(row.get('ts') or 0)}",
         "kind": "change" if row.get("status") == "fixed" else (
             row.get("kind") or "problem"),
@@ -796,25 +898,31 @@ def request_answers(row: dict) -> list[dict]:
         "fixable": row.get("fixable", True) is not False,
         "plan": row.get("plan") or {},
         "informational": row.get("informational") is True,
+        "claim": row.get("claim") or row.get("text") or "",
     }
-    if case["finding_status"] in ("planning", "fixing"):
-        return []
-    out = [{"action": a["request"], "label": a["label"]}
-           for a in answers(case) if a.get("request")]
-    actions = {a["action"] for a in out}
-    if (out and "todo" not in actions and case["kind"] == "problem"
-            and situation(case) != "chore_check"):
-        out.insert(0, {"action": "todo", "label": "Add to To Do"})
-        actions.add("todo")
-    if out and "snooze" not in actions and case["kind"] != "change" \
-            and situation(case) != "acknowledge":
-        out.append({"action": "snooze", "label": "Snooze"})
-    return out
+
+
+def request_view(row: dict, name: str = DEFAULT_NAME) -> dict:
+    """What another surface shows of a finding row so it reads as the card
+    on Needs you: the card's own title, its who-acts line and its presses.
+
+    `who` is the PANEL card's line (`who_acts` over the panel's own row of
+    answers), because the dialog and the card are about one decision; where
+    brAIn could act, the press that lets it is on Needs you, where it shows
+    the change first — so the line carries where to press it."""
+    case = _request_case(row)
+    acts = who_acts(case, name) if case["finding_status"] not in (
+        "planning", "fixing") else None
+    return {"title": str(case.get("claim") or "")[:255],
+            "who": (acts or {}).get("line", ""),
+            "who_kind": (acts or {}).get("who", ""),
+            "answers": request_answers(row)}
 
 
 __all__ = ["AUTOMATION_PREFIX", "CHECK_SITUATIONS", "CHIPS", "CHIP_WORDS",
            "CHORE_SITUATIONS", "GROUPS", "GROUP_WORDS", "HANDS", "LEGACY_PLAN_MARK",
-           "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
-           "SITUATIONS", "answers", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
+           "GO_AHEAD", "MAX_MORE", "MAX_VISIBLE", "MORPH_ASK", "MORPH_SOURCE", "PREFILL", "REQUEST_ACTIONS", "SEVERITY_RANK",
+           "SITUATIONS", "WHO", "WHO_LINES", "WHO_OF_VERB", "REQUEST_LABELS",
+           "answers", "request_view", "who_acts", "who_line", "as_morph_question", "chip", "is_security", "feed_key", "group", "more",
            "morph_question", "plan_is_legacy", "plan_refused", "request_answers",
            "situation"]

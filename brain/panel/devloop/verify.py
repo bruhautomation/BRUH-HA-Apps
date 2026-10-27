@@ -33,8 +33,8 @@ from pathlib import Path
 import atomic_write
 from textclip import clip
 
-from . import data_dir
-from .upstream import product_of, running_at_least, running_for
+from . import STREAMS, data_dir
+from .upstream import _date, installed_at, product_of, running_at_least, running_for
 
 log = logging.getLogger("brain.devloop")
 
@@ -99,6 +99,58 @@ def due(items: dict, version: str, state: dict, live_ts: set[int],
     return out
 
 
+def proof(entry: dict | None, rec: dict | None, data: dict, *,
+          looked: bool) -> tuple[str, str] | None:
+    """What brAIn can say about an open question without the owner, from
+    what it measures. Three answers, and None for everything else — what
+    brAIn cannot prove is left for the person.
+
+    * ``("held", evidence)``: the report has a fingerprint the house
+      watches (its stream clears), the fixed release is installed, a sweep
+      of that stream LOOKED after the install (``looked``: the stream is on
+      and could read its add-on), and the report has not been seen since
+      the install. Upstream's "Held" rule, measured from the install
+      rather than from two quiet days, so it is said within the hour.
+    * ``("moot", reason)``: the question is about a fix that is no longer
+      the fix — the report has gone from the queue, was reopened, or was
+      fixed again in a newer release (which is asked about on its own).
+    * None: a request with no fingerprint (the owner's own words, an
+      unmet request), a fix not installed, or nothing read since.
+    """
+    rec = rec or {}
+    if not isinstance(entry, dict):
+        return ("moot", "the report is no longer on brAIn's list")
+    if entry.get("verdict") != "fixed":
+        return ("moot", "the report was reopened, so the fix is being "
+                        + "looked at again")
+    asked_for = str(rec.get("fixed_in") or "")
+    fixed_in = str(entry.get("fixed_in") or "")
+    if asked_for and fixed_in and asked_for != fixed_in:
+        return ("moot", f"it was fixed again in {fixed_in}, and that fix is "
+                        + "asked about on its own")
+    stream = str(entry.get("stream") or "")
+    if not STREAMS.get(stream, {}).get("clears") or not looked:
+        return None
+    if entry.get("unlooked") or not fixed_in:
+        return None
+    product = product_of(entry)
+    running = running_for(entry, str(data.get("version") or ""),
+                          data.get("products"))
+    if running_at_least(running, fixed_in) is not True:
+        return None
+    since = installed_at(data, product, fixed_in)
+    if since is None:
+        return None
+    last_run = float(((data.get("last_run") or {}).get(stream)) or 0)
+    last_seen = float(entry.get("last_seen") or 0)
+    if not (last_seen < since < last_run):
+        return None
+    return ("held", f"it has not been reported since {product} {running} "
+                    f"was installed on {_date(since)} (last seen "
+                    f"{_date(last_seen)}), and brAIn has looked again "
+                    "since.")
+
+
 def question_row(entry: dict) -> dict:
     """The question, named by the report's own words and where it was.
 
@@ -159,9 +211,21 @@ def fp_for_finding(state: dict, finding: dict) -> str:
     return ""
 
 
-def record_answer(state: dict, fp: str, accepted: bool, now: float) -> dict:
+def record_answer(state: dict, fp: str, accepted: bool, now: float,
+                  *, by: str = "owner") -> dict:
     rec = dict(state.get(fp) or {})
     rec["answer"] = "held" if accepted else "not_fixed"
+    rec["by"] = "brain" if by == "brain" else "owner"
+    rec["answered_at"] = int(now)
+    state[fp] = rec
+    return state
+
+
+def record_moot(state: dict, fp: str, now: float) -> dict:
+    """A question withdrawn because the fix it asked about is no longer
+    the fix. Nothing is posted: there is nothing to say about it."""
+    rec = dict(state.get(fp) or {})
+    rec["answer"] = "moot"
     rec["answered_at"] = int(now)
     state[fp] = rec
     return state
@@ -175,5 +239,6 @@ def forget_answer(state: dict, fp: str) -> dict:
     if rec:
         rec["answer"] = ""
         rec.pop("answered_at", None)
+        rec.pop("by", None)
         state[fp] = rec
     return state
