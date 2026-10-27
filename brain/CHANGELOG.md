@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.26
+
+### Fixed
+
+- **A Home Assistant restart no longer files a pile of fault reports.** When Home Assistant itself did not answer (502, refused or timed-out connection), every unread piece of the house and every check that needed it used to be reported separately, about twenty rows for one restart. It is now one row, "Home Assistant did not answer", naming what could not be read. A real reading error still reports on its own. (#457–#476)
+- **A part of the house that could not be looked at never reads "checked, nothing wrong".** When some or all of an area's checks could not read what they needed, the decision trail now says "could not check" and why, instead of a clean bill of health. (#482)
+
 ## 3.8.25
 
 ### Changed
