@@ -344,7 +344,7 @@ _ASKS_RE = re.compile(r"^\s*(?P<who>[^:\n]{1,40}?)\s+asks\s*:\s*(?P<q>\S.*)$",
 def _assistant_names() -> set[str]:
     names = {"brain"}
     try:
-        import personality  # noqa: PLC0415 — read per call: it is a switch
+        # Read per call: the name is a switch the household can flip.
         names.add(str(personality.assistant_name() or "").strip().casefold())
     except Exception:  # noqa: BLE001 — no name is brAIn's own
         pass
