@@ -1319,7 +1319,43 @@ OTHER_CARDS_MAX = 10
 OTHER_CARD_SUMMARY_CHARS = 140
 
 
-def _other_cards_block(insight_id: str) -> str:
+def _card_made(stamp) -> str:
+    """`Tue 13 Oct 13:11`, the window a card's figures were read in."""
+    try:
+        made = time.strptime(str(stamp or "")[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return ""
+    return (time.strftime("%a ", made) + str(made.tm_mday)
+            + time.strftime(" %b %H:%M", made))
+
+
+def _shares_subject(card: dict, covers: dict | None) -> bool:
+    """Whether another card is about a device or system this card covers:
+    an entity this card named, a device one of them belongs to, or — for a
+    card that has domains — one of its domains or device classes."""
+    if not covers:
+        return False
+    theirs = set(_card_entities(card))
+    if not theirs:
+        return False
+    mine = set(covers.get("entities") or ())
+    if theirs & mine:
+        return True
+    if _devices_of(theirs) & _devices_of(mine):
+        return True
+    domains = set(covers.get("domains") or ())
+    if not domains:
+        return False
+    classes = set(covers.get("classes") or ())
+    for eid in theirs:
+        if eid.split(".", 1)[0] in domains:
+            return True
+        if (_NAMES.get(eid) or {}).get("class") in classes:
+            return True
+    return False
+
+
+def _other_cards_block(insight_id: str, covers: dict | None = None) -> str:
     """The other cards on the dashboard, by title and summary, for a run.
 
     A card was written blind to its neighbours, so two cards about one
@@ -1327,30 +1363,61 @@ def _other_cards_block(insight_id: str) -> str:
     files are already on disk (the listing reads them on every poll), so
     this costs one read of each and no Claude turn. Empty when there is
     nothing else, or nothing could be read.
+
+    A card about the same device or system as this one (``covers``,
+    `_shares_subject`) is listed first and in full — its figures and the
+    time they were read — because a water card that quoted the septic
+    pump at 48 gal beside the pump's own card at 50, and a heat card beside
+    an older one still saying the heat pump had not run "by 1:11 PM", were
+    each written without the other's numbers to agree with.
     """
     try:
         cards = load_insights()
     except Exception:  # noqa: BLE001 — a list nobody could read is no list
         return ""
-    rows = []
+    shared, rows = [], []
     for card in cards:
         if not isinstance(card, dict) or card.get("id") == insight_id:
             continue
         title = str(card.get("title") or "").strip()
         if not title:
             continue
+        if _shares_subject(card, covers) and len(shared) < OTHER_CARDS_MAX:
+            figures = "; ".join(
+                f"{h.get('label')}: {h.get('value')}"
+                + (f" ({h.get('delta')})" if h.get("delta") else "")
+                for h in card.get("highlights") or []
+                if isinstance(h, dict) and h.get("label"))
+            made = _card_made(card.get("generated_at"))
+            shared.append(
+                f"- {title}" + (f" (read {made})" if made else "")
+                + f" — {str(card.get('summary') or '').strip()}"
+                + (f"\n  Figures: {figures}" if figures else ""))
+            continue
+        if len(rows) >= OTHER_CARDS_MAX:
+            continue
         summary = textclip.clip(str(card.get("summary") or "").strip(),
                                 OTHER_CARD_SUMMARY_CHARS)
         rows.append(f"- {title}" + (f" — {summary}" if summary else ""))
-        if len(rows) >= OTHER_CARDS_MAX:
-            break
-    if not rows:
+    if not rows and not shared:
         return ""
-    return ("OTHER CARDS ON THIS DASHBOARD, read beside this one. Do not make "
+    parts = []
+    if shared:
+        parts.append(
+            "OTHER CARDS ABOUT THE SAME DEVICE OR SYSTEM AS THIS ONE. Where "
+            "this card speaks of it, quote these figures and say the time "
+            "they were read, or say in one clause why yours differ (a later "
+            "reading, a different window). Never lead with that device "
+            "unless it is this card's own subject, and never name or "
+            "mention another card:\n" + "\n".join(shared))
+    if rows:
+        parts.append(
+            "OTHER CARDS ON THIS DASHBOARD, read beside this one. Do not make "
             "this card about the same device or question as one of them; "
             "where yours touches one, use its figures or say in one clause "
             "why yours differ. Never name or mention another card:\n"
             + "\n".join(rows))
+    return "\n\n".join(parts)
 
 
 def save_insight(insight: dict) -> None:
@@ -6011,7 +6078,8 @@ async def _generate(insight_id: str) -> None:
                        refine=refine or None,
                        clock=await asyncio.to_thread(_clock_style),
                        others=await asyncio.to_thread(
-                           _other_cards_block, insight_id))
+                           _other_cards_block, insight_id,
+                           _card_covers(cat, previous, question)))
 
         result = cost = sent = None
         if eff_gather_mode() == "search":
@@ -6061,11 +6129,21 @@ async def _generate(insight_id: str) -> None:
         # action" over a rise its own figures show, and a scheduled card
         # about nothing at all keeps the card that was there. A press is
         # never held — somebody asked, and the answer is what they get.
-        verdict = card_verdict.review({**obj, "highlights": highlights},
-                                      previous,
-                                      open_rows=_open_rows_for_verdict(cat["id"]))
+        open_rows = _open_rows_for_verdict(cat["id"])
+        verdict = card_verdict.review(
+            {**obj, "highlights": highlights}, previous, open_rows=open_rows,
+            others=await asyncio.to_thread(_other_card_subjects, insight_id),
+            names_in=_entities_named_in)
+        # A card that says a problem on the list is already dealt with —
+        # in its `fixed` field or in words — has that row's own check
+        # asked again, so the row clears or is reworded by the rule that
+        # filed it rather than standing beside a card that contradicts it.
+        # Whether the card was kept or not: what it read is the same.
+        _spawn_fixed_rechecks(verdict.get("fixed") or (), insight_id)
         if verdict["hold"] and job.get("scheduled") and previous:
-            await _keep_previous_card(insight_id, cat, question)
+            # The kept card now stands for a quiet house, so Reports folds
+            # it into its "All quiet" line rather than giving it a card.
+            await _keep_previous_card(insight_id, cat, question, quiet=True)
             REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
                                          "at": int(time.time())}
             CARD_FAILURES.pop(insight_id, None)
@@ -6080,6 +6158,12 @@ async def _generate(insight_id: str) -> None:
                              if k in verdict["obj"]}}
             highlights = obj["highlights"] if isinstance(
                 obj.get("highlights"), list) else highlights
+        # The one judgement, read off the reply's field or its own first
+        # sentence (`card_verdict.review`), and absent where there is none.
+        card_judgement = card_verdict.clean_verdict(
+            verdict["obj"].get("verdict"))
+        quiet_card = card_verdict.quiet_now(
+            {**obj, "highlights": highlights}, previous, card_judgement)
         # Hypotheses, not open questions. propose() enforces the cap and the
         # never-twice rule in code — the prompt states the budget, but a model
         # that ignores it must not be able to grow the queue anyway.
@@ -6177,6 +6261,11 @@ async def _generate(insight_id: str) -> None:
             "highlights": highlights[:6],
             "learned": learned,
             "tags": tags,
+            # Drawn as ONE chip; the prose no longer says it.
+            "verdict": card_judgement,
+            # All fine about nothing that changed: Reports folds it into
+            # its "All quiet" line rather than a card of its own.
+            "quiet": bool(quiet_card),
             "focus_used": cat.get("focus", "") if question is None else "",
             # The entities whose CURRENT state the visualization wants,
             # so a card about something happening now stops being frozen
@@ -6269,7 +6358,8 @@ async def _generate(insight_id: str) -> None:
 
 
 async def _keep_previous_card(insight_id: str, cat: dict,
-                              question: str | None) -> None:
+                              question: str | None,
+                              quiet: bool = False) -> None:
     """A run that had nothing to say leaves the stored card as it was, and
     says when it looked (`checked_at`), so the scheduler counts its age
     from the look and not from the card — otherwise the next tick would
@@ -6281,6 +6371,8 @@ async def _keep_previous_card(insight_id: str, cat: dict,
     if not isinstance(card, dict):
         return
     card["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if quiet:
+        card["quiet"] = True
     if question is None:
         fingerprint = await _current_inputs(cat["id"], cat)
         if fingerprint:
@@ -9425,7 +9517,13 @@ def _open_rows_for_verdict(source: str) -> list[dict]:
             continue
         eid = str(f["entity_id"])
         out.append({"text": f.get("text") or "", "entity_id": eid,
-                    "name": (_NAMES.get(eid) or {}).get("name") or ""})
+                    "name": (_NAMES.get(eid) or {}).get("name") or "",
+                    # Its figures, so a card counting the same thing
+                    # differently is caught (`card_verdict.disagreeing_row`),
+                    # and where it came from, so a card that says it is
+                    # fixed can have the row's own check asked again.
+                    "detail": f.get("detail") or "",
+                    "source": f.get("source") or "", "ts": f.get("ts")})
     return out
 
 
@@ -9530,14 +9628,120 @@ async def _card_device_faults(obj: dict, filed: list[dict]) -> list[dict]:
     return out
 
 
-def _card_covers(cat: dict, previous: dict | None) -> dict:
+def _card_covers(cat: dict, previous: dict | None,
+                 question: str | None = None) -> dict:
     """What a card is about, for the live rows its prompt shows first
     (`findings_store.prompt_block`'s ``covers``): its domains, its device
     classes, and the entities its last version named. An asked card has no
-    domains, which covers everything."""
+    domains, which covers everything; the entities its question names are
+    what it is about the first time it runs."""
+    entities = _card_entities(previous or {})
+    for eid in _card_entities({"summary": question or ""}):
+        if eid not in entities:
+            entities.append(eid)
     return {"domains": list(cat.get("domains") or ()),
             "classes": list(cat.get("device_classes") or ()),
-            "entities": _card_entities(previous or {})}
+            "entities": entities}
+
+
+def _devices_of(entities) -> set[str]:
+    """The devices a set of entities belongs to, off the last checks pass."""
+    out = set()
+    for eid in entities or ():
+        device = (_NAMES.get(eid) or {}).get("device")
+        if device:
+            out.add(str(device))
+    return out
+
+
+def _entities_named_in(text: str) -> set[str]:
+    """The entities a sentence names, by id or by name (`_card_entities`'s
+    reading, for `card_verdict`)."""
+    return set(_card_entities({"summary": text or ""}))
+
+
+def _other_card_subjects(insight_id: str) -> list[set]:
+    """Every other stored card's entities, devices included as a marker:
+    what `card_verdict` reads a lead sentence against."""
+    try:
+        cards = load_insights()
+    except Exception:  # noqa: BLE001 — nothing to compare is no rewrite
+        return []
+    out = []
+    for card in cards:
+        if isinstance(card, dict) and card.get("id") != insight_id:
+            ents = set(_card_entities(card))
+            if ents:
+                out.append(ents)
+    return out
+
+
+def _card_subject(card: dict) -> tuple[set, set]:
+    """`(entities, devices)` a stored card is about."""
+    ents = set(_card_entities(card))
+    return ents, _devices_of(ents)
+
+
+def _superseded(cards: list[dict]) -> dict[str, str]:
+    """`{older card id: newer card id}` for every card whose whole subject a
+    newer card covers: each entity it names is one the newer card names, or
+    belongs to a device the newer card names. A heat card and an older air
+    handler card about the same heat pump are one story; the older is
+    folded under the newer rather than read as current beside it."""
+    subjects = []
+    for card in cards:
+        if not isinstance(card, dict) or not card.get("id") \
+                or not card.get("generated_at"):
+            continue
+        ents, devs = _card_subject(card)
+        if ents:
+            subjects.append((str(card["generated_at"]), str(card["id"]),
+                             ents, devs))
+    subjects.sort(reverse=True)  # newest first
+    out: dict[str, str] = {}
+    for i, (made, cid, ents, _devs) in enumerate(subjects):
+        for newer_made, newer_id, newer_ents, newer_devs in subjects[:i]:
+            if newer_made <= made:
+                continue
+            if all(e in newer_ents or ((_NAMES.get(e) or {}).get("device")
+                                       in newer_devs)
+                   for e in ents):
+                out[cid] = newer_id
+                break
+    return out
+
+
+# Answers to "is this fixed" a card started, held so the loop keeps them.
+_CARD_RECHECKS: set = set()
+
+
+def _spawn_fixed_rechecks(rows, insight_id: str) -> None:
+    """Ask the check behind each open row a card says is already fixed.
+
+    Only a house check's row has a rule to ask (`_rerun_check`), and that
+    rule is what clears or rewords the row: the card's word alone never
+    ends a finding. Each source once per card run."""
+    sources = []
+    for row in rows or ():
+        source = str((row or {}).get("source") or "")
+        if source.startswith("check:") and source not in sources:
+            sources.append(source)
+    for source in sources:
+        async def later(src=source) -> None:
+            try:
+                answer = await _rerun_check(src)
+                log.info("insight %s said a problem was fixed; %s asked "
+                         "again: %s", insight_id, src,
+                         "checked" if answer.get("checked")
+                         else answer.get("why"))
+            except Exception as exc:  # noqa: BLE001 — a recheck, not the card
+                log.debug("could not recheck %s: %s", src, exc)
+        try:
+            task = asyncio.get_running_loop().create_task(later())
+        except RuntimeError:
+            return
+        _CARD_RECHECKS.add(task)
+        task.add_done_callback(_CARD_RECHECKS.discard)
 
 
 def _card_entities(insight: dict) -> list[str]:
@@ -9585,9 +9789,19 @@ async def h_insights(request: web.Request) -> web.Response:
         insights = load_insights()
         # one read of the edits file for the whole list, not one per card
         edits = card_tags.load_edits()
+        superseded = _superseded(insights)
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
             ins["entities"] = _card_entities(ins)
+            # One verdict: the chip, and a card stored before the field
+            # existed read the same way (its verdict sentence taken off
+            # the prose it was written into). The file is not touched.
+            ins["quiet"] = card_verdict.folds_quiet(ins)
+            ins.update(card_verdict.legacy(ins))
+            if not ins.get("verdict"):
+                ins.pop("verdict", None)
+            if ins.get("id") in superseded:
+                ins["superseded_by"] = superseded[ins["id"]]
             # The heading an asked card carries in place of "Custom". A
             # category card is headed by its category, which the panel
             # reads live off the definition so a rename shows at once.
@@ -10069,7 +10283,8 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                        covers=_card_covers(cat, previous)),
                    house=await _house_prompt_block(),
                    clock=await asyncio.to_thread(_clock_style),
-                   others=await asyncio.to_thread(_other_cards_block, cat_id))
+                   others=await asyncio.to_thread(
+                       _other_cards_block, cat_id, _card_covers(cat, previous)))
 
     # The named blocks, in the order `_framing` puts them, each with what
     # it is FOR — because "why is this in my prompt" is the question a
@@ -10483,6 +10698,11 @@ border:0;background:transparent}
 background:#fff3d6;color:#5a3d00}
 @media (prefers-color-scheme: dark){.age{background:#3a2c08;color:#ffe2a3}}
 .age[hidden]{display:none}
+.vd{display:inline-block;margin-top:6px;padding:2px 9px;border-radius:999px;
+font-size:12px;font-weight:700;background:#e3f2e6;color:#1d5a2c}
+.vd.look{background:#fff3d6;color:#5a3d00}.vd.act{background:#fde2dc;color:#7a1d0c}
+@media (prefers-color-scheme: dark){.vd{background:#173a22;color:#bfe8c9}
+.vd.look{background:#3a2c08;color:#ffe2a3}.vd.act{background:#4a1a10;color:#ffc9bd}}
 @media (max-width:420px){.c{padding:10px 12px 10px;gap:8px}
 .h{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px}
 .t{padding:6px 9px}.t .v{font-size:15px}h1{font-size:16px}.s{font-size:13.5px}}
@@ -10546,6 +10766,8 @@ def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
     height = 20                                   # padding
     height += 16                                  # eyebrow
     height += 21 * max(1, -(-len(title) // per_line_title))
+    if card_verdict.legacy(insight).get("verdict"):
+        height += 26                              # the verdict chip
     height += 20 * min(3, max(1, -(-len(summary) // per_line_text)))
     if tiles:
         height += 60 * -(-len(tiles) // per_row)
@@ -10561,8 +10783,20 @@ def _lead_split(summary: str) -> tuple[str, str]:
     return (match.group(1), match.group(2)) if match else ("", summary)
 
 
+# The chip's colours on the dashboard page, one per verdict.
+_VERDICT_CHIP = {card_verdict.FINE: "fine", card_verdict.LOOK: "look",
+                 card_verdict.ACTION: "act"}
+
+
 def _whole_card_page(insight: dict) -> str:
     esc = html_lib.escape
+    # One verdict, as the panel shows it: the chip, and a card stored
+    # before the field existed read the same way.
+    insight = {**insight, **card_verdict.legacy(insight)}
+    verdict = insight.get("verdict") or ""
+    chip = (f'<span class="vd {_VERDICT_CHIP[verdict]}">'
+            f'{esc(verdict[:1].upper() + verdict[1:])}</span>'
+            if verdict in _VERDICT_CHIP else "")
     lead, rest = _lead_split(str(insight.get("summary") or ""))
     summary = (f"<b>{esc(lead)}</b> {esc(rest)}" if lead else esc(rest))
     tiles = []
@@ -10593,7 +10827,7 @@ def _whole_card_page(insight: dict) -> str:
         f"{esc(_card_eyebrow(insight))}</div>"
         # The server's words until the script has the viewer's clock.
         f"<div class=\"upd\" id=\"upd\">Updated {esc(when)}</div></div>"
-        f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
+        f"<h1>{esc(str(insight.get('title') or ''))}</h1>{chip}</div>"
         f"<p class=\"s\">{summary}</p>"
         + (f'<div class="h">{"".join(tiles)}</div>' if tiles else "")
         + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
@@ -12593,6 +12827,8 @@ def _note_registry(snapshot: dict) -> None:
         device_of = checks.network.device_keys(house)
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            # The device it belongs to, so two cards about one heat pump
+            # are told apart from two cards about two (`_card_subject`).
             if device_of.get(eid):
                 names[eid]["device"] = device_of[eid]
             # What kind of thing it is, for the one reader that has to

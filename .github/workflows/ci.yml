@@ -472,6 +472,11 @@ jobs:
         if: matrix.group == 'static-b'
         run: node tests/manual/measure-cardlive.mjs
 
+      # One verdict per card, one card per subject, one line for the quiet.
+      - name: Measure House › Reports
+        if: matrix.group == 'static-b'
+        run: node tests/manual/measure-reports.mjs
+
       # A chore you cannot finish from the screen it is on is
       # indistinguishable from one nobody has got round to.
       - name: Measure Your list
