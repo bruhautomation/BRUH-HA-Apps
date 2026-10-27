@@ -282,11 +282,13 @@ def publish_feed(feed: dict) -> bool:
 # What Morph can press, by the verb `answers.answers` gave the case, and the
 # words Morph's request may carry back (`finding_requests.MORPH_ACTIONS`).
 # Yes, No, Done and the rest are a reply's words, which is how Morph answers
-# them (§14.2); only the presses that need no words are listed here.
-# Snooze is not among them: Morph's face carries Fix/Apply, Dismiss and To
-# Do and nothing else (§13.2), and "remind me next week" is a reply's words.
+# them (§14.2). Snooze, Check again and Ignore ride too (#452): the card in
+# Morph offers the presses Needs you offers, in the same words, so a case
+# reads as one surface wherever it is looked at. Ignore carries its optional
+# reason as the request's `text`, which reaches `_end_finding` as the note.
 _ACTION_OF_VERB = {"fix": "fix", "apply": "apply", "todo": "todo",
-                   "dismiss": "dismiss",
+                   "dismiss": "dismiss", "not_now": "snooze",
+                   "recheck": "recheck", "wrong": "wrong",
                    "not_applicable": "not_applicable"}
 
 
@@ -305,8 +307,11 @@ def morph_answers(case_answers: list) -> list:
 
 def case_row(case: dict, *, todo_text: str, thread: list, ask: str,
              answers: list, area_id: str = "", urgent: bool = False,
-             finding_status: str = "", morph_key: str = "") -> dict:
-    """One case in Morph's shape (contract B)."""
+             finding_status: str = "", morph_key: str = "",
+             chip: str = "", who: dict | None = None) -> dict:
+    """One case in Morph's shape (contract B). `chip` is Needs you's own
+    status chip (`answers.chip`) and `who` its who-acts line, so Morph draws
+    the card the panel draws; Morph derives its own where they are absent."""
     evidence = []
     for ev in case.get("evidence") or []:
         if isinstance(ev, dict) and ev.get("entity"):
@@ -341,6 +346,11 @@ def case_row(case: dict, *, todo_text: str, thread: list, ask: str,
     }
     if morph_key:
         row["morph_key"] = morph_key
+    if chip:
+        row["chip"] = chip
+    if who and who.get("line"):
+        row["who"] = {"who": str(who.get("who") or ""),
+                      "line": str(who["line"])}
     return row
 
 

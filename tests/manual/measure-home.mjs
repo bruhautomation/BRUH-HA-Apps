@@ -46,13 +46,13 @@ const KEPT_IDS = ['viewFindings', 'findList', 'findBadge', 'todayMore', 'todoLis
 
 // What each case in the fixture must lead with, and what it may never offer.
 const ROWS = {
-  'f:1100': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
-  'f:1101': { lead: 'Fix', never: ['Plan', 'Apply'] },
-  'f:1102': { lead: 'Apply', never: ['Fix', 'Plan'] },
-  'h:1103': { lead: 'Yes', exact: ['Yes', 'No', 'Snooze', "Doesn't apply"] },
+  'f:1100': { lead: 'Add to To Do', who: 'This needs you.', never: ['Fix', 'Go ahead', 'Plan', 'Apply'] },
+  'f:1101': { lead: 'Go ahead', who: 'brAIn can fix this.', never: ['Plan', 'Apply'] },
+  'f:1102': { lead: 'Apply', who: 'brAIn can fix this.', never: ['Fix', 'Go ahead', 'Plan'] },
+  'h:1103': { lead: 'Yes', who: 'brAIn needs an answer.', exact: ['Yes', 'No', 'Snooze', "Doesn't apply"] },
   'f:1104': { lead: 'Done', exact: ['Done', 'Undo'] },
-  'f:1105': { lead: 'Add to To Do', never: ['Fix', 'Plan', 'Apply'] },
-  'f:1106': { lead: 'Fix', never: ['Plan', 'Apply'] },
+  'f:1105': { lead: 'Add to To Do', who: 'This needs you.', never: ['Fix', 'Go ahead', 'Plan', 'Apply'] },
+  'f:1106': { lead: 'Go ahead', who: 'brAIn can fix this.', never: ['Plan', 'Apply'] },
 };
 
 const failures = [];
@@ -91,6 +91,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
         heights: [...c.querySelectorAll(':scope > .card-actions button')]
           .map((b) => Math.round(b.getBoundingClientRect().height)),
         menu: !!c.querySelector(':scope > .card-actions .btn.icon'),
+        who: [...c.querySelectorAll(':scope > .qwho')].map((w) => w.textContent.trim()),
         face: face.textContent,
       };
     }));
@@ -101,6 +102,10 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
       note(where, `${id} leads with ${JSON.stringify(card.primary)}, not ${want.lead}`);
     }
     if (card.labels[0] !== want.lead) note(where, `${id}'s first answer is "${card.labels[0]}"`);
+    // Who acts (#451): one line, and it is the one its primary promises.
+    if (want.who && (card.who.length !== 1 || card.who[0] !== want.who)) {
+      note(where, `${id} says who acts as ${JSON.stringify(card.who)}, not "${want.who}"`);
+    }
     if (!card.respondFirst) note(where, `${id}'s row does not open with Respond`);
     if (want.exact && card.labels.join('|') !== want.exact.join('|')) {
       note(where, `${id} offers ${card.labels.join(' · ')}`);
@@ -211,7 +216,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   // Fix opens a box holding the card's own suggestion, by name, which the
   // person may edit; sending it posts that text as the agreed change to the
   // plan route — never a bare press, and never as a note.
-  await page.locator('[data-case-id="f:1101"] .card-actions button:text-is("Fix")').click();
+  await page.locator('[data-case-id="f:1101"] .card-actions button:text-is("Go ahead")').click();
   const fixForm = page.locator('[data-case-id="f:1101"] .findnote');
   if (!(await fixForm.count())) note(where, 'Fix opens no box');
   else {

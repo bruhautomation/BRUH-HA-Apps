@@ -668,7 +668,7 @@ async def _run(state: dict) -> None:
             state["card_type"] = await asyncio.to_thread(card_type, target.get("id") or "")
         picture = shot_path(state.get("shot") or "")
         if picture:
-            _step(state, "Took a picture of it for brAIn")
+            _step(state, f"Took a picture of it for {brain.who()}")
         elif state.get("view"):
             _step(state, "No picture this time — sending what the panel showed as text"
                   + (f" ({state['view']['error']})" if (state.get("view") or {}).get("error") else ""),
@@ -684,7 +684,7 @@ async def _run(state: dict) -> None:
                                 tools="full", timeout=TIMEOUT_S, model=model,
                                 person_words=state.get("person_words", state["text"]))
         state["phase"] = "waiting"
-        _step(state, f"Handed to brAIn as task {tid}")
+        _step(state, f"Handed to {brain.who()} as task {tid}")
         deadline = time.time() + brain.CLAIM_GRACE_S
         while not brain.claimed(tid):
             if time.time() > deadline:
@@ -696,14 +696,14 @@ async def _run(state: dict) -> None:
                 return
             await asyncio.sleep(brain.POLL_S)
         state["phase"] = "working"
-        _step(state, "brAIn is on it")
+        _step(state, f"{brain.who()} is on it")
         deadline = time.time() + TIMEOUT_S + 120
         res = None
         seen = 0
         while res is None:
             if time.time() > deadline:
                 state["phase"] = "failed"
-                state["say"] = "brAIn did not answer in time. Anything it finished is still committed."
+                state["say"] = f"{brain.who()} did not answer in time. Anything it finished is still committed."
                 break
             seen = await asyncio.to_thread(_follow, state, seen)
             res = await asyncio.to_thread(brain.result, tid)
@@ -711,7 +711,7 @@ async def _run(state: dict) -> None:
                 await asyncio.sleep(brain.POLL_S)
         await asyncio.to_thread(_follow, state, seen)
         data, text, error = brain.answer_data(res) if res else (None, "", "timeout")
-        summary = str((data or {}).get("summary") or text or "").strip()[:1200]
+        summary = wording.clip((data or {}).get("summary") or text, 1200)
         asked = clean_question((data or {}).get("question"))
         if target.get("kind") == "code" and not error and data is not None and state.get("phase") != "failed":
             # brAIn was asked to make this house's change work on the Morph
@@ -769,7 +769,7 @@ async def _run(state: dict) -> None:
         # after this (the lesson, the outcome) has landed too.
         phase, say = state.get("phase"), state.get("say")
         if error and phase != "failed":
-            phase, say = "failed", summary or f"brAIn could not finish this ({error})."
+            phase, say = "failed", summary or f"{brain.who()} could not finish this ({error})."
         elif phase != "failed":
             phase, say = outcome(state, summary, commit, back)
         if state.get("unchanged") or back["unreadable"]:
@@ -854,7 +854,7 @@ def clean_question(q) -> dict | None:
         if not isinstance(o, dict):
             continue
         label = str(o.get("label") or "").strip()[:LABEL_CHARS]
-        request = str(o.get("request") or "").strip()[:REQUEST_CHARS]
+        request = wording.clip(o.get("request"), REQUEST_CHARS)
         if label and request:
             opts.append({"label": label, "request": request, "home_assistant": o.get("home_assistant") is True})
     if not text or not 2 <= len(opts) <= 3:

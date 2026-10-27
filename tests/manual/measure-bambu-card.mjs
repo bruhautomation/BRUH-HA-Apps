@@ -53,6 +53,8 @@ const ENTITIES = {
 };
 
 const FRAME = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+// A 16:9 camera picture, for the shape checks.
+const WIDE = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAJCAIAAAC0SDtlAAAAE0lEQVR4nGNwCEggCTGMahgUGgA+BYcBXLYoZwAAAABJRU5ErkJggg==', 'base64');
 const problems = [];
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -152,6 +154,65 @@ for (const [tag, morph] of [['bruh-bambu-card', false], ['morph-bambu-printer', 
   if (small.length) problems.push(`${tag}: ${small.length} control(s) under 40 px`);
   await page.close();
 }
+
+// The card's shape at the widths it is used at.
+const PRINTING_MAX = 420;
+const SEEN = {};
+for (const [tag] of [['bruh-bambu-card'], ['morph-bambu-printer']]) {
+  for (const width of [390, 400, 500]) {
+    const say = (m) => problems.push(`${tag} at ${width}: ${m}`);
+    const page = await browser.newPage({ viewport: { width, height: 1400 }, hasTouch: true, isMobile: width === 390 });
+    page.on('pageerror', (e) => say(`page error ${e.message}`));
+    await page.route('http://card.test/**', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.startsWith('/api/camera_proxy/')) return route.fulfill({ body: WIDE, contentType: 'image/png' });
+      return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1"><style>
+        :root { --surface:#fff; --sunk:#eee; --text:#111; --muted:#666; --line:#ccc;
+          --sky:#1e9fe0; --lime:#3a3; --rose:#c33; } body { margin: 0; padding: 8px; }
+        ha-card { display: block; }</style></head><body></body></html>` });
+    });
+    await page.goto('http://card.test/');
+    await page.evaluate(() => customElements.define('ha-card', class extends HTMLElement {}));
+    await page.addScriptTag({ content: CARD });
+    await page.evaluate(({ t, house, ents }) => {
+      const card = document.createElement(t);
+      card.setConfig({});
+      document.body.append(card);
+      card.hass = { states: house, entities: ents, callService: () => Promise.resolve() };
+    }, { t: tag, house: HOUSE, ents: ENTITIES });
+    await page.waitForTimeout(900);
+    const root = page.locator(tag);
+    const h = await root.evaluate((el) => Math.round(el.shadowRoot.querySelector('.printer').getBoundingClientRect().height));
+    SEEN[`${tag}@${width}`] = h;
+    if (h > PRINTING_MAX) say(`the printing printer is ${h} px tall (at most ${PRINTING_MAX})`);
+    const face = await root.evaluate((el) => {
+      const p = el.shadowRoot.querySelector('.printer');
+      const shown = (n) => { const r = n.getBoundingClientRect(); const cs = getComputedStyle(n);
+        return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'; };
+      const words = [];
+      const walk = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+      for (let t = walk.nextNode(); t; t = walk.nextNode()) {
+        if (t.textContent.trim() && shown(t.parentElement)) words.push(t.textContent.trim());
+      }
+      const cut = [...p.querySelectorAll('*')].filter((n) => shown(n) && n.scrollWidth > n.clientWidth + 1
+        && getComputedStyle(n).overflow !== 'visible' && n.children.length === 0).map((n) => n.textContent.trim());
+      const small = [...el.shadowRoot.querySelectorAll('button, select, summary')].filter(shown)
+        .map((b) => Math.round(b.getBoundingClientRect().height)).filter((x) => x < 44);
+      const pauses = [...p.querySelectorAll('button')].filter((b) => shown(b) && /^Pause/.test(b.textContent.trim())).length;
+      return { words, cut, small, pauses };
+    });
+    const states = face.words.filter((w) => /^(running|printing)$/i.test(w));
+    if (states.length !== 1) say(`the state is said ${states.length} times (${states.join(', ')})`);
+    if (face.words.includes('running')) say('the raw state word "running" is on the card');
+    if (face.pauses > 1) say(`${face.pauses} Pause buttons are on the face of the card`);
+    if (face.cut.length) say(`text cut off: ${face.cut.join(' | ')}`);
+    if (face.small.length) say(`${face.small.length} control(s) a finger presses are under 44 px (${face.small.join(', ')})`);
+    if (process.env.SHOTS) await root.screenshot({ path: `${process.env.SHOTS}/bambu-card-${tag}-${width}.png` });
+    await page.close();
+  }
+}
+console.log(`heights of the printing printer: ${JSON.stringify(SEEN)}`);
 
 await browser.close();
 if (problems.length) {

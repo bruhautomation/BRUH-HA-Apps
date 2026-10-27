@@ -32,6 +32,8 @@ import ssl
 PORT = 990
 USER = "bblp"
 TIMEOUT = 30
+# How long the answer to a transfer cut on purpose is waited for.
+ANSWER_WAIT = 5
 CHUNK = 64 * 1024
 
 # A name on the printer's storage. Plain, flat and short: the printer's
@@ -88,12 +90,15 @@ class Storage:
         self.host, self.code, self.port, self.timeout = host, access_code, port, timeout
         self.ftp: ImplicitFTPS | None = None
 
-    def __enter__(self) -> "Storage":
+    def _connect(self) -> ImplicitFTPS:
         ftp = ImplicitFTPS(timeout=self.timeout)
         ftp.connect(self.host, self.port, timeout=self.timeout)
         ftp.login(USER, self.code)
         ftp.prot_p()
-        self.ftp = ftp
+        return ftp
+
+    def __enter__(self) -> "Storage":
+        self.ftp = self._connect()
         return self
 
     def __exit__(self, *exc):
@@ -157,6 +162,8 @@ class Storage:
         few kilobytes. The server answers the cut transfer with a 426 or
         451, which is expected here and read off the control channel.
         """
+        if self.ftp is None:
+            self.ftp = self._connect()
         self.ftp.voidcmd("TYPE I")
         conn = self.ftp.transfercmd(f"RETR {name}", rest=offset if offset else None)
         chunks, got = [], 0
@@ -173,11 +180,35 @@ class Storage:
             except OSError:
                 pass  # already closed by the far end
             conn.close()
+        # The answer to a cut transfer (426 or 451, or a 226 when the cut came
+        # at the end) is read off the control channel. Some printers never
+        # send one: that wait is bounded, and the session, now out of step,
+        # is closed and the next read opens a fresh one. The bytes already
+        # read are good either way.
+        sock = getattr(self.ftp, "sock", None)
+        previous = sock.gettimeout() if hasattr(sock, "gettimeout") else None
         try:
+            if hasattr(sock, "settimeout"):
+                sock.settimeout(ANSWER_WAIT)
             self.ftp.voidresp()
         except (ftplib.error_temp, ftplib.error_perm, ftplib.error_reply):
             pass  # the transfer was cut on purpose; the server says so
+        except (OSError, EOFError):
+            self._reopen()
+            return b"".join(chunks)
+        if hasattr(sock, "settimeout"):
+            try:
+                sock.settimeout(previous)
+            except OSError:
+                pass  # a socket the server has since closed needs no timeout
         return b"".join(chunks)
+
+    def _reopen(self) -> None:
+        try:
+            self.ftp.close()
+        except (OSError, EOFError, ftplib.Error):
+            pass  # closing a session that is already gone changes nothing
+        self.ftp = None
 
 
 class RemoteFile:
@@ -212,9 +243,15 @@ class RemoteFile:
     def _block(self, index: int) -> bytes:
         if index not in self._blocks:
             start = index * self.BLOCK
+            want = min(self.BLOCK, self.size - start)
             try:
-                self._blocks[index] = self.storage.read_range(
-                    self.name, start, min(self.BLOCK, self.size - start))
+                block = self.storage.read_range(self.name, start, want)
+                if len(block) < want:
+                    # The printer closed the data channel early: a hole in
+                    # the file, not a smaller one. zipfile would call it "not
+                    # a zip" and the file would be remembered as pictureless.
+                    raise OSError(f"the printer sent {len(block)} of {want} bytes")
+                self._blocks[index] = block
             except (OSError, EOFError, ftplib.Error) as exc:
                 # zipfile turns a read error into "not a zip file"; this is
                 # how a caller tells "could not read it" from "has none".

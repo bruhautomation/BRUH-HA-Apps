@@ -157,10 +157,10 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
             got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES[name])]
             self.assertEqual(got, [("todo", "Add to To Do")] + tail, name)
         got = [(a["verb"], a["label"]) for a in answers.answers(SHAPES["generic"])]
-        self.assertEqual(got, [("fix", "Fix")] + tail)
+        self.assertEqual(got, [("fix", "Go ahead")] + tail)
         got = [(a["verb"], a["label"]) for a in answers.answers(
             case(source="check:auto.dead_ref", fixable=True))]
-        self.assertEqual(got, [("fix", "Fix")] + check)
+        self.assertEqual(got, [("fix", "Go ahead")] + check)
 
     def test_dismiss_clears_the_row_and_records_nothing(self):
         got = [a for a in answers.answers(SHAPES["battery"])
@@ -176,7 +176,7 @@ class TestOneRowAndAWayToSayNo(unittest.TestCase):
         """docs/design/ui-redesign-2026-10.md, "Action vocabulary": a
         button's label is one of these words and nothing else — Yes and No
         being the answer to a question rather than a verb."""
-        vocab = {"Apply", "Fix", "Add to To Do", "Snooze", "Ignore", "Done",
+        vocab = {"Apply", "Fix", "Go ahead", "Add to To Do", "Snooze", "Ignore", "Done",
                  "Restore", "Undo", "Ask", "Send", "Recheck", "Check again",
                  "Dismiss", "Run", "Save",
                  "Share", "Delete", "Yes", "No", "Doesn't apply"}
@@ -264,7 +264,7 @@ class TestTheButtonsThatFit(unittest.TestCase):
         legacy = case(finding_status="planned", fixable=True, plan={
             "can_fix": True, "ops_refused": answers.LEGACY_PLAN_MARK + " …"})
         got = answers.answers(legacy)
-        self.assertEqual([(a["verb"], a["label"]) for a in got][0], ("fix", "Fix"))
+        self.assertEqual([(a["verb"], a["label"]) for a in got][0], ("fix", "Go ahead"))
 
     def test_a_change_is_got_it_and_undo_only_inside_a_window(self):
         self.assertEqual(self.verbs(SHAPES["change"]), ["ack"])

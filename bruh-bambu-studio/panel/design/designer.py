@@ -161,7 +161,8 @@ something that will waste a lot (a two-colour checkerboard all the way up),
 say roughly how much and offer the cheaper version. One colour needs no prime
 tower. Check the AMS has every material and colour needed (PRINTERS lists the
 trays, their remaining percent and AMS humidity; humidity 1 is dry and 5 is
-wet — a wet nylon, TPU or PETG tray is worth a warning).
+wet, and an AMS Lite has no sensor so it lists none — a wet nylon, TPU or
+PETG tray is worth a warning).
 
 KEEP THE PERSON IN THE LOOP. Before a print starts, say in `reply` in one or
 two lines: which printer, which tray each body comes from, the settings that

@@ -84,13 +84,15 @@ class TestAConversationKeepsThePersonsWords(unittest.TestCase, _Converse):
         self.assertLessEqual(len(st["context"]) + len(st["text"]), cap)
         self.assertEqual(st["cut"], "context")
 
-    def test_one_text_too_long_keeps_its_end_and_says_so(self):
+    def test_one_text_too_long_still_reaches_brain_whole(self):
+        # A person's words are never cut from the front (#428): the start of
+        # what they typed is where the request usually is.
         text = _context(40000) + QUESTION
         with MorphEnv() as env:
             st, task = self.converse(env, {"text": text})
-            start_cut = env.wording.START_CUT
         self.assertTrue(task["prompt"].endswith(QUESTION))
-        self.assertTrue(st["text"].startswith(start_cut))
+        self.assertIn(text, task["prompt"])
+        self.assertEqual(st["text"], text)
 
 
 class TestATellKeepsThePersonsWords(unittest.TestCase):

@@ -58,6 +58,7 @@ GATED_MCP = frozenset({
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
     "report_bug", "timed_action", "note_personality_change",
+    "set_assistant_exposure",
 })
 # Built-in tools the gate reads only while a change contract is in force:
 # under one, a file edit outside its files is off the contract and a shell

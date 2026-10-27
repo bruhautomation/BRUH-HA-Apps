@@ -58,6 +58,7 @@ import brain
 import paths
 import settings
 import store
+import wording
 
 log = logging.getLogger("morph.learning")
 
@@ -288,7 +289,7 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
         if not isinstance(row, dict) or open_now >= MAX_OPEN:
             continue
         title = str(row.get("title") or "").strip()[:80]
-        change = str(row.get("change") or "").strip()[:1200]
+        change = wording.clip(row.get("change"), 1200)
         if not title or not change:
             continue
         key = _key(title)
@@ -329,7 +330,7 @@ def code_suggestions(reports: list) -> list[dict]:
         out.append({"kind": "code", "title": what[:80],
                     "why": why or ("A change to Morph itself. brAIn can make it here now, then ask "
                                    "whether to send it to Morph's developers."),
-                    "change": f"{what}\n\n{str(rep.get('detail') or '').strip()[:1100]}"})
+                    "change": f"{what}\n\n{wording.clip(rep.get('detail'), 1100)}"})
     return out
 
 

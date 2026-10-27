@@ -2,13 +2,14 @@
 // §13–§14. There is one list and it is brAIn's (`/config/.brain/morph/
 // cases.json`, read by the integration); Morph keeps none of its own.
 //
-// A case card has four parts and nothing else: the claim, the ask (only
-// when brAIn wants something), a reply line, and the words Dismiss and To
-// Do (with Fix leading them where brAIn could make the change). No Yes, no
-// No, no Wrong, no Snooze: a reply is read by brAIn's interpreter, and the
-// words decide the ending — "yes, but call it Sump Pump Current" is one
-// reply. A reply brAIn cannot place is answered with a question, in the
-// card, as a turn.
+// A case card reads the way brAIn's own Needs you reads it (#452): the one
+// status chip (Urgent / Problem / Tidy-up / Suggestion / Question), the
+// title with names where brAIn has ids, the detail, the ask, the thread, a
+// reply line, and brAIn's presses under brAIn's labels — every one Morph can
+// carry back to brAIn's queue (Fix or Apply or Add to To Do, Dismiss,
+// Snooze, Doesn't apply), in brAIn's order. A reply is still read by
+// brAIn's interpreter, so a Yes, a No or "yes, but call it Sump Pump
+// Current" is the reply's words.
 
 import { esc, mix, friendly } from './util.js';
 
@@ -43,33 +44,77 @@ export function placeCase(c, secFor) {
   return best;
 }
 
+// brAIn's chip words (answers.CHIP_WORDS), and the rule that picks one
+// (answers.chip) for a row cases.json sent without its `chip`.
+export const CHIP_WORDS = { urgent: 'Urgent', problem: 'Problem', tidy: 'Tidy-up', suggestion: 'Suggestion', question: 'Question' };
+const CHIP_COLORS = { urgent: 'var(--rose)', problem: 'var(--amber)', tidy: 'var(--quiet)', suggestion: 'var(--violet)', question: 'var(--violet)' };
+const TIDY_SOURCES = ['check:reg.hardware_name', 'check:reg.no_area'];
+export function caseChip(c) {
+  if (c && CHIP_WORDS[c.chip]) return c.chip;
+  if (!c) return 'problem';
+  if (c.urgent) return 'urgent';
+  if (c.kind === 'question') return 'question';
+  if (c.kind === 'opportunity') return 'suggestion';
+  const src = String(c.source || '');
+  if (src === 'safety' || src === 'security' || src.startsWith('check:sec.')) return 'problem';
+  if ((TIDY_SOURCES.includes(src) && c.fixable) || c.severity === 'info') return 'tidy';
+  return 'problem';
+}
+
+// The presses Morph can carry back (the integration's CASE_ACTIONS), with
+// brAIn's own words for each.
+const PRESS_WORDS = { fix: 'Fix', apply: 'Apply', todo: 'Add to To Do', dismiss: 'Dismiss', snooze: 'Snooze', not_applicable: "Doesn't apply" };
+export function casePresses(c) {
+  if (!c || ['planning', 'fixing'].includes(c.status)) return [];
+  const sent = Array.isArray(c.answers) ? c.answers.filter((a) => a && PRESS_WORDS[a.action]) : [];
+  let list = sent.map((a) => ({ action: a.action, label: a.label || PRESS_WORDS[a.action] }));
+  if (!list.length && !(Array.isArray(c.answers) && c.answers.length)) {
+    // A row from a brAIn that sent no presses: brAIn's own rule, roughly.
+    if (c.status === 'planned') list.push({ action: 'apply', label: 'Apply' });
+    else if (c.fixable && c.kind === 'problem') list.push({ action: 'fix', label: 'Fix' });
+    else if (c.kind === 'problem') list.push({ action: 'todo', label: 'Add to To Do' });
+    if (c.kind !== 'question') list.push({ action: 'dismiss', label: 'Dismiss' });
+    if (c.kind === 'change') list.push({ action: 'todo', label: 'Add to To Do' });
+  }
+  // brAIn puts Snooze on every card that can be put off, before the ending
+  // that waves it away; cases.json leaves it out, so Morph puts it back.
+  if (['problem', 'question', 'opportunity'].includes(c.kind) && !list.some((a) => a.action === 'snooze')) {
+    const at = list.findIndex((a) => ['not_applicable', 'wrong'].includes(a.action));
+    list.splice(at < 0 ? list.length : at, 0, { action: 'snooze', label: 'Snooze' });
+  }
+  return list;
+}
+
+// Ids in brAIn's sentence read as the device's name, as brAIn's panel does.
+const named = (text, name) => String(text || '').replace(/\b[a-z_]+\.[a-z0-9_]+\b/g, (id) => (name && name(id)) || id);
+
 const turnHtml = (t) => `<div class="turnline ${t.who === 'you' ? 'you' : 'brain'}">${esc(t.text)}</div>`;
 
-// The card's face. `ui`: {pending, draft, family, replyOpen, admin}.
+// The card's face. `ui`: {pending, draft, family, replyOpen, admin, who,
+// name}: `who` is the household's name for the assistant (brAIn's
+// personality), `name(id)` a device's friendly name.
 export function caseFace(c, ui) {
   const u = ui || {};
+  const who = u.who || 'brAIn';
   const color = caseColor(c);
   const thread = c.thread || [];
   const shown = thread.slice(-THREAD_SHOWN);
   const earlier = thread.length - shown.length;
-  const plan = c.status === 'planned' && c.plan ? `<div class="caseplan"><span class="small">What Apply will change</span>${(c.plan.steps || []).slice(0, 6).map((s) => `<span class="sm">· ${esc(s)}</span>`).join('')}${c.plan.risk ? `<span class="sm"><b>What could go wrong:</b> ${esc(c.plan.risk)}</span>` : ''}</div>` : '';
-  const phase = c.status === 'planning' ? 'brAIn is working out a plan…' : c.status === 'fixing' ? 'brAIn is making the change…' : c.status === 'triaging' ? 'brAIn has not looked at this yet.' : '';
+  const chip = caseChip(c);
+  const plan = c.status === 'planned' && c.plan ? `<div class="caseplan"><span class="small">What Apply will change</span>${(c.plan.steps || []).slice(0, 6).map((s) => `<span class="sm">· ${esc(named(s, u.name))}</span>`).join('')}${c.plan.risk ? `<span class="sm"><b>What could go wrong:</b> ${esc(c.plan.risk)}</span>` : ''}</div>` : '';
+  const phase = c.status === 'planning' ? `${who} is working out a plan…` : c.status === 'fixing' ? `${who} is making the change…` : c.status === 'triaging' ? `${who} has not looked at this yet.` : '';
   const busy = u.pending ? `<div class="working"><span class="pulse"></span><span>${esc(u.pending)}</span></div>` : '';
-  const words = [];
-  if (u.admin !== false) {
-    if (c.status === 'planned') words.push(`<button type="button" class="wd strong" data-act="case" data-v="apply" data-case="${esc(c.id)}">Apply</button>`);
-    else if (c.fixable && c.kind === 'problem' && !['fixing', 'planning'].includes(c.status)) words.push(`<button type="button" class="wd strong" data-act="case" data-v="fix" data-case="${esc(c.id)}">Fix</button>`);
-    words.push(`<button type="button" class="wd" data-act="case" data-v="dismiss" data-case="${esc(c.id)}">Dismiss</button>`);
-    if (c.kind !== 'chore') words.push(`<button type="button" class="wd" data-act="case" data-v="todo" data-case="${esc(c.id)}">To Do</button>`);
-  }
+  const words = u.admin === false ? [] : casePresses(c).map((a, i) => `<button type="button" class="wd${i === 0 && ['fix', 'apply', 'todo'].includes(a.action) ? ' strong' : ''}" data-act="case" data-v="${esc(a.action)}" data-case="${esc(c.id)}">${esc(a.label)}</button>`);
   // A wall tablet shows a question's reply line only once tapped, so a
   // child leaning on the counter cannot answer it (§14.6).
   const hideReply = u.family && c.kind === 'question' && !u.replyOpen;
   const reply = u.admin === false ? '' : hideReply
     ? `<button type="button" class="wd" data-act="case-open-reply" data-case="${esc(c.id)}">Reply</button>`
-    : `<input class="replyin" type="text" data-keep="reply:${esc(c.id)}" data-act-enter="case-reply" data-case="${esc(c.id)}" placeholder="Reply…" aria-label="Reply to brAIn about this" style="--cc:${color}">`;
+    : `<input class="replyin" type="text" data-keep="reply:${esc(c.id)}" data-act-enter="case-reply" data-case="${esc(c.id)}" placeholder="Reply…" aria-label="Reply to ${esc(who)} about this" style="--cc:${color}">`;
+  const detail = c.detail && c.detail !== c.claim ? `<p class="casebody">${esc(named(c.detail, u.name))}</p>` : '';
   return `<div class="case" data-ctl="1" style="--cc:${color}" data-case-card="${esc(c.id)}">
-<p class="claim">${esc(c.claim || c.text || '')}</p>${c.ask ? `<p class="caseask">${esc(c.ask)}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
+<span class="casechip" data-chip="${chip}" style="--chip:${CHIP_COLORS[chip]}"><i></i>${esc(CHIP_WORDS[chip])}</span>
+<p class="claim">${esc(named(c.claim || c.text || '', u.name))}</p>${detail}${c.ask ? `<p class="caseask">${esc(named(c.ask, u.name))}</p>` : ''}${phase ? `<p class="small">${esc(phase)}</p>` : ''}${plan}
 ${thread.length ? `<div class="thread">${earlier ? `<details class="earlier"><summary>earlier</summary>${thread.slice(0, earlier).map(turnHtml).join('')}</details>` : ''}${shown.map(turnHtml).join('')}</div>` : ''}${busy}
 <div class="replyrow">${reply}<span class="casewords">${words.join('')}</span></div></div>`;
 }

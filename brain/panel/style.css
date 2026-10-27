@@ -2907,6 +2907,28 @@ body:not(.term-classic) #viewTerminal.active #termFrame { display: none; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* A long turn is folded, never cut: a request another add-on hands brAIn
+   ends with the person's own words after pages of context. The whole text
+   is in the bubble; the fold only limits its height until Show all. */
+.msg.user .bubble.folded {
+  max-height: 16em;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.msg.user.long { flex-direction: column; align-items: flex-end; gap: 4px; }
+.bubblemore {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+@media (pointer: coarse) { .bubblemore { min-height: 44px; } }
 .msg.bot { color: var(--ink); overflow-wrap: break-word; }
 .msg.bot > *:first-child { margin-top: 0; }
 .msg.bot > *:last-child { margin-bottom: 0; }
@@ -6123,6 +6145,12 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
 .qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
+/* Who acts: one line, ink and weight rather than a colour, so it reads as
+   the card's answer to "whose move is this" and never as a status chip. */
+.qcard .qwho {
+  margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: 600; color: var(--ink);
+}
 .qfixhead {
   font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--ink-3);
 }
@@ -6440,6 +6468,14 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .histrow[data-filter="aside"] .histico { color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .histactions { flex: none; display: flex; align-items: center; gap: var(--sp-1); }
+.histrow[data-filter="changes"] .histico { color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* A change brAIn cannot put back says why where the Undo would be: words a
+   person reads, never a greyed-out button asking to be understood. */
+.histreason { margin: 0; max-width: 32ch; font-size: var(--fs-meta);
+  line-height: var(--lh-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.histrow[data-filter="changes"] .histactions { flex: 0 1 auto; min-width: 0; }
+.histmore { margin: var(--sp-3) auto; display: block; }
 .histdel { color: var(--ink-3); }
 @media (pointer: coarse) { .histdel, .factdel { min-width: 44px; } }
 .histdel:hover { color: var(--critical-ink); }
@@ -6459,6 +6495,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   #viewArchive .histrow { padding: var(--sp-3); flex-wrap: wrap; }
   #viewArchive .histtext { flex: 1 1 calc(100% - 48px); }
   #viewArchive .histactions { margin-left: 44px; }
+  .histreason { max-width: none; }
 }
 
 /* Knowledge: browse by room and device on a rail beside the facts. */
@@ -6809,7 +6846,9 @@ button.kfactsubj:hover { color: var(--accent-2);
    that conversation in a new terminal window; below the breakpoint ⋯ → Your
    chats is the list page, as it is for the chat face. The chat face's own
    menu items (its session details and model picker) and the switch back to
-   it are not offered: the terminal has /model and /status itself. */
+   it are not offered: the terminal has /model and /status itself. The switch
+   to the chat face IS offered: it was hidden here too, and a house running
+   the terminal face could find the way to the chat nowhere on the screen. */
 @media (min-width: 900px) {
   body.term-classic:not(.term-immersive) #viewTerminal.active { display: flex; }
   body.term-classic:not(.term-immersive) #viewTerminal.active .chatrail { display: flex; }
@@ -6825,7 +6864,6 @@ button.kfactsubj:hover { color: var(--accent-2);
   body.term-classic.ask-list #viewTerminal.active #termFrame { display: none; }
   body.term-classic.ask-list .crhead { padding-right: 108px; }
 }
-body.term-classic #termMode,
 body.term-classic #chatInfo,
 body.term-classic #chatModelPick { display: none; }
 

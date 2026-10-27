@@ -80,13 +80,23 @@ def _block(value, limit: int) -> str:
     return _clip(text, limit)
 
 
+# The keys a growth entry may carry its date and its words under. A file
+# somebody wrote by hand names them however they like, and an entry read
+# under none of these is an entry lost.
+GROWTH_DATE_KEYS = ("date", "when", "day", "on", "at")
+GROWTH_TEXT_KEYS = ("text", "note", "change", "entry", "what", "growth",
+                    "summary", "learned")
+
+
 def _date_of(entry: dict) -> str:
-    raw = entry.get("date")
-    if isinstance(raw, str):
-        raw = raw.strip()[:10]
-        if _DATE_RE.match(raw):
-            return raw
-    at = entry.get("at")
+    for key in GROWTH_DATE_KEYS:
+        raw = entry.get(key)
+        if isinstance(raw, str):
+            raw = raw.strip()[:10]
+            if _DATE_RE.match(raw):
+                return raw
+    at = next((entry.get(k) for k in ("at", "when")
+               if isinstance(entry.get(k), (int, float))), None)
     if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0:
         if at > 1e12:  # milliseconds, as a JavaScript Date.now() writes
             at = at / 1000
@@ -105,8 +115,9 @@ def clean_growth(rows) -> list[dict]:
             row = {"text": row}
         if not isinstance(row, dict):
             continue
-        text = _block(row.get("text") or row.get("note") or row.get("change")
-                      or row.get("entry") or "", GROWTH_TEXT_MAX)
+        text = _block(next((row[k] for k in GROWTH_TEXT_KEYS
+                            if isinstance(row.get(k), str) and row[k].strip()),
+                           ""), GROWTH_TEXT_MAX)
         if not text:
             continue
         entry = {"date": _date_of(row), "text": text}
@@ -144,6 +155,25 @@ def load(path: str | None = None) -> dict:
         return normalise(json.loads(raw.decode("utf-8")))
     except (OSError, ValueError):
         return normalise({})
+
+
+DEFAULT_NAME = "brAIn"
+
+
+def assistant_name(data: dict | None = None, path: str | None = None) -> str:
+    """What brAIn's own fixed words call the assistant, to a person.
+
+    The household's chosen name when one is set, else "brAIn". One helper
+    for every sentence brAIn builds about itself in words somebody reads —
+    the who-acts line on a card, a Repairs dialog, a notification's title —
+    so a house that named its assistant does not meet two of them. Never
+    raises: an unreadable file is no name."""
+    try:
+        name = (data if isinstance(data, dict) else load(path)).get("name")
+    except Exception:  # noqa: BLE001 — a name is a nicety, never a failure
+        name = ""
+    name = " ".join(str(name or "").split())
+    return name or DEFAULT_NAME
 
 
 def is_set(data: dict | None) -> bool:
@@ -441,6 +471,41 @@ _PERSONA_TEXT_KEYS = ("persona", "personality", "text", "prompt", "description",
                       "voice", "style", "about")
 
 
+def _render(value, indent: int = 0) -> list[str]:
+    """A parsed object as readable lines, nothing dropped: a string as
+    ``key: value``, a list as ``- item`` lines under its key, a nested
+    object as its own ``key: value`` lines indented under its key."""
+    pad = " " * indent
+    out: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if item is None or item == "" or item == [] or item == {}:
+                continue
+            if isinstance(item, (dict, list)):
+                out.append(f"{pad}{key}:")
+                out += _render(item, indent + 2)
+            else:
+                out.append(f"{pad}{key}: {_scalar(item)}")
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, (dict, list)):
+                inner = _render(item, indent + 2)
+                if inner:
+                    out.append(f"{pad}- {inner[0].strip()}")
+                    out += inner[1:]
+            elif item is not None and item != "":
+                out.append(f"{pad}- {_scalar(item)}")
+    elif value is not None and value != "":
+        out.append(f"{pad}{_scalar(value)}")
+    return out
+
+
+def _scalar(value) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value).strip()
+
+
 def parse_morph(src: str) -> dict:
     """PERSONA and GROWTH out of Morph's module, as the stored shape.
 
@@ -455,15 +520,17 @@ def parse_morph(src: str) -> dict:
         persona = persona_raw
     elif isinstance(persona_raw, dict):
         name = persona_raw.get("name") if isinstance(persona_raw.get("name"), str) else ""
-        for key in _PERSONA_TEXT_KEYS:
-            if isinstance(persona_raw.get(key), str) and persona_raw[key].strip():
-                persona = persona_raw[key]
-                break
-        else:
-            # Several described traits rather than one text: keep them all,
-            # as lines, rather than guessing which one is the persona.
-            persona = "\n".join(f"{k}: {v}" for k, v in persona_raw.items()
-                                if k != "name" and isinstance(v, str) and v.strip())
+        # The one text the object leads with, as itself; every other part
+        # after it, rendered whole. Keeping only the top-level strings is
+        # what reduced a house's persona to two lines: its traits, its
+        # voice rules and its nested description were lists and objects.
+        lead = next((k for k in _PERSONA_TEXT_KEYS
+                     if isinstance(persona_raw.get(k), str)
+                     and persona_raw[k].strip()), "")
+        lines = [persona_raw[lead].strip()] if lead else []
+        rest = {k: v for k, v in persona_raw.items() if k not in ("name", lead)}
+        lines += _render(rest)
+        persona = "\n".join(lines)
     elif persona_raw is not None:
         raise ValueError("PERSONA is neither text nor an object")
     if not name:
@@ -506,6 +573,60 @@ def migrate_from_morph(src_path: str | None = None, path: str | None = None) -> 
         return f"could not save the personality read from Morph ({exc})"
     return (f"moved the personality out of {src_path} into {target} "
             f"({len(data['growth'])} growth entries); Morph's file is left as it was")
+
+
+def _lines(text: str) -> list[str]:
+    return [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+
+
+def repair_from_morph(src_path: str | None = None, path: str | None = None) -> str:
+    """Replace a stored personality that is exactly an earlier, poorer
+    import of Morph's file with a full read of it. Returns what happened,
+    in a sentence for the log, or "". Never raises.
+
+    Only when nothing in the stored file is missing from a fresh read —
+    the same name (or none), every persona line, every growth entry — and
+    the fresh read holds more. Anything the fresh read does not contain is
+    somebody's edit, and an edit is never replaced."""
+    src_path = src_path or MORPH_FILE
+    target = path or STORE
+    if not exists(target) or not os.path.isfile(src_path):
+        return ""
+    try:
+        with open(src_path, "rb") as fh:
+            raw = fh.read(MORPH_READ_MAX_BYTES + 1)
+        if len(raw) > MORPH_READ_MAX_BYTES:
+            return ""
+        fresh = parse_morph(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        return ""
+    stored = load(target)
+    if stored["name"] and stored["name"] != fresh["name"]:
+        return ""
+    fresh_lines = set(_lines(fresh["persona"]))
+    if not set(_lines(stored["persona"])) <= fresh_lines:
+        return ""
+    have = {(g.get("date") or "", g["text"]) for g in fresh["growth"]}
+    have_text = {g["text"] for g in fresh["growth"]}
+    for g in stored["growth"]:
+        if (g.get("date") or "", g["text"]) not in have and g["text"] not in have_text:
+            return ""
+    if (len(fresh_lines) <= len(set(_lines(stored["persona"])))
+            and len(fresh["growth"]) <= len(stored["growth"])):
+        return ""
+    data = {**fresh, "name": stored["name"] or fresh["name"],
+            "updated_at": int(time.time())}
+    try:
+        import atomic_write  # noqa: PLC0415 — panel-local
+        with atomic_write.locked(target):
+            if load(target) != stored:
+                return ""
+            _write(data, target)
+    except OSError as exc:
+        return f"could not repair the personality read from Morph ({exc})"
+    return (f"repaired the personality imported from {src_path}: it now holds "
+            f"{len(fresh_lines)} persona lines and {len(data['growth'])} growth "
+            "entries; Morph's file is left as it was")
 
 
 def section(path: str | None = None) -> str:

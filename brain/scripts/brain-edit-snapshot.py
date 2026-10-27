@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -151,6 +152,12 @@ def main() -> int:
         # A brand-new file has nothing to restore — undo deletes it instead.
         "existed": existed,
     }
+    # Which face asked for the edit, so History › Changes brAIn made can
+    # say "from the chat" or "from a fix" beside it. `brain undo` reads the
+    # fields it knows and ignores this one.
+    channel = _channel()
+    if channel:
+        entry["channel"] = channel
     try:
         with INDEX.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
@@ -159,6 +166,20 @@ def main() -> int:
 
     prune()
     return 0
+
+
+def _channel() -> str:
+    """The channel this run was started on (`BRAIN_CHANNEL`, or voice for a
+    voice launcher that sets only its access level) — the MCP server's own
+    reading of the same variables, so a file edit and a service call from
+    one run name the same face."""
+    word = re.sub(r"[^a-z0-9_-]", "", os.environ.get("BRAIN_CHANNEL", "")
+                  .strip().lower())[:32]
+    if word:
+        return word
+    if os.environ.get("BRAIN_ASSIST_ACCESS") or "BRAIN_EXPOSED_ONLY" in os.environ:
+        return "voice"
+    return ""
 
 
 if __name__ == "__main__":

@@ -23,6 +23,13 @@
  * and, while an alert is open, what brAIn saw with the buttons that answer
  * it — Ignore and Pause for a warning, Resume and Stop for a paused print.
  *
+ * The face of a printer is its name and state, the camera, the progress
+ * with the time left, failure detection's line (or its open alert, with
+ * the buttons that answer it), the temperatures, and Pause or Resume.
+ * Everything else (Stop, speed, the light, Refresh, Reconnect and the AMS
+ * trays) is behind the printer's ⋯, a drawer that opens in the card's own
+ * flow. An open alert brings its own Pause, so the card's goes to the drawer.
+ *
  * Stop takes two presses, the second within four seconds. A dialog would
  * float over the page (Morph forbids that), and one press on a ten-hour
  * print is the press nobody can take back.
@@ -38,6 +45,11 @@ console.info(
 );
 
 const SPEEDS = ['silent', 'standard', 'sport', 'ludicrous'];
+// The status sensor's states in the words a person reads.
+const STATE_WORDS = { idle: 'Idle', prepare: 'Preparing', running: 'Printing', pause: 'Paused',
+  finish: 'Finished', failed: 'Failed', slicing: 'Slicing', offline: 'Offline', unknown: 'Unknown',
+  removed: 'Removed', connecting: 'Connecting' };
+const cap = (w) => String(w || '').replace(/^./, (c) => c.toUpperCase());
 
 function esc(text) {
   return String(text ?? '').replace(/[&<>"']/g, (c) => ({
@@ -72,45 +84,60 @@ const css = (morph) => `
     --b-accent: ${morph ? 'var(--sky)' : 'var(--primary-color, #1e9fe0)'};
     --b-live: ${morph ? 'var(--lime)' : 'var(--success-color, #1f9d55)'};
     --b-bad: ${morph ? 'var(--rose)' : 'var(--error-color, #c62828)'};
+    --b-warn: #c77700;
     font-family: ${morph ? "'Manrope', sans-serif" : 'inherit'}; color: var(--b-text); }
-  .wrap { padding: ${morph ? '4px 2px' : '16px'}; display: grid; gap: 14px; }
-  .printer { display: grid; gap: 8px; }
-  .printer + .printer { border-top: 1px solid var(--b-line); padding-top: 14px; }
-  .head { display: flex; align-items: center; gap: 8px; }
+  .wrap { padding: ${morph ? '4px 2px' : '12px 16px 14px'}; display: grid; gap: 12px; }
+  .printer { display: grid; gap: 6px; min-width: 0; }
+  .printer + .printer { border-top: 1px solid var(--b-line); padding-top: 12px; }
+  .head { display: flex; align-items: center; gap: 8px; min-height: 44px; }
   .name { font-weight: 700; font-size: 16px; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chip { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--b-sunk);
-    text-transform: capitalize; }
-  .chip.live { background: var(--b-live); color: #fff; }
-  .chip.bad { background: var(--b-bad); color: #fff; }
+  .state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--b-muted); white-space: nowrap; }
+  .state i { width: 8px; height: 8px; border-radius: 50%; background: var(--b-muted); }
+  .state.live i { background: var(--b-live); }
+  .state.warn i { background: var(--b-warn); }
+  .state.bad { color: var(--b-bad); }
+  .state.bad i { background: var(--b-bad); }
+  /* The picture at a size a dashboard can carry, in the stream's own shape. */
+  .cam { position: relative; aspect-ratio: 16 / 9; width: min(100%, 320px); justify-self: center;
+    border-radius: 12px; overflow: hidden; background: var(--b-sunk); }
+  .cam img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+  .job { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; }
   .pct { font-family: ${morph ? "'Bricolage Grotesque', sans-serif" : 'inherit'};
-    font-size: 30px; font-weight: 700; line-height: 1; }
-  .row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-  .muted { color: var(--b-muted); font-size: 13px; }
-  .bar { height: 6px; border-radius: 3px; background: var(--b-sunk); overflow: hidden; }
+    font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .pct small { font-size: 14px; font-weight: 500; color: var(--b-muted); margin-left: 6px; }
+  .job .muted { grid-column: 1; }
+  .job > button { grid-row: 1 / span 2; grid-column: 2; }
+  .muted { color: var(--b-muted); font-size: 13px; overflow-wrap: anywhere; }
+  .bar { height: 4px; border-radius: 2px; background: var(--b-sunk); overflow: hidden; }
   .bar > i { display: block; height: 100%; background: var(--b-accent); }
-  .stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
-  .stats b { font-weight: 600; }
+  .stats { display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 13px; color: var(--b-muted); }
+  .stats b { font-weight: 600; color: var(--b-text); }
   .ams { display: flex; gap: 6px; flex-wrap: wrap; }
   .tray { display: inline-flex; align-items: center; gap: 4px; font-size: 12px;
     padding: 2px 8px; border: 1px solid var(--b-line); border-radius: 999px; }
   .tray i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid var(--b-line); }
+  .tray.active { border-color: var(--b-live); box-shadow: 0 0 0 1px var(--b-live); }
   .controls { display: flex; gap: 6px; flex-wrap: wrap; }
-  button, select { font: inherit; font-size: 14px; min-height: 40px; padding: 0 12px;
+  button, select { font: inherit; font-size: 14px; min-height: 44px; padding: 0 14px;
     border-radius: 10px; border: 1px solid var(--b-line); background: var(--b-surface);
     color: var(--b-text); cursor: pointer; }
   button.primary { background: var(--b-accent); border-color: var(--b-accent); color: #fff; }
   button.danger { color: var(--b-bad); }
   button.armed { background: var(--b-bad); border-color: var(--b-bad); color: #fff; }
+  button.more { width: 44px; padding: 0; border-color: transparent; background: transparent;
+    font-size: 20px; line-height: 1; color: var(--b-muted); }
+  button.more[aria-expanded="true"] { background: var(--b-sunk); color: var(--b-text); }
+  /* Everything else, in the card's own flow (nothing floats over a
+     dashboard): shut, it takes no room and nothing in it can be reached. */
+  .drawer { display: grid; grid-template-rows: 0fr; }
+  .drawer > div { min-height: 0; overflow: hidden; display: grid; gap: 8px; }
+  .drawer.shut > div { visibility: hidden; }
+  .drawer:not(.shut) { grid-template-rows: 1fr; padding: 8px 0 2px; border-top: 1px solid var(--b-line); }
   .err { color: var(--b-bad); font-size: 13px; }
-  .cam { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #05080b; }
-  .cam img { width: 100%; height: 100%; object-fit: contain; display: block; }
-  .cam .over { position: absolute; left: 8px; top: 8px; display: flex; gap: 6px; }
-  .cam .over span { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: rgba(5,8,11,.6); color: #fff; }
-  .stage { color: var(--b-muted); font-size: 13px; }
-  .tray.active { border-color: var(--b-live); box-shadow: 0 0 0 1px var(--b-live); }
   .empty { color: var(--b-muted); }
   .watch { display: grid; gap: 6px; padding: 8px 10px; border-radius: 12px; background: var(--b-sunk); font-size: 13px; }
+  .watch.quiet { padding: 0; background: none; color: var(--b-muted); }
   .watch.warn { background: color-mix(in srgb, #f0a63c 20%, var(--b-surface)); }
   .watch.bad { background: color-mix(in srgb, var(--b-bad) 18%, var(--b-surface)); }
   .watch .line { display: flex; align-items: center; gap: 6px; }
@@ -118,6 +145,8 @@ const css = (morph) => `
   .watch.bad svg { color: var(--b-bad); }
   .watch b { font-weight: 700; }
   .watch .say { font-size: 14px; font-weight: 600; }
+  .watch .answer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .watch .answer .muted { flex: 1 1 120px; }
 `;
 
 const SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M11,7H13V13H11V7M11,15H13V17H11V15Z"/></svg>';
@@ -132,13 +161,14 @@ class BruhBambuCard extends HTMLElement {
     this._config = { show_ams: true, show_controls: true, show_camera: true, ...(config || {}) };
     this._cams = this._cams || {};
     this._armed = null;
+    this._open = this._open || new Set();
     this._key = '';
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
   }
 
   static getStubConfig() { return {}; }
 
-  getCardSize() { return 4; }
+  getCardSize() { return 3; }
 
   set hass(hass) {
     this._hass = hass;
@@ -146,7 +176,7 @@ class BruhBambuCard extends HTMLElement {
     const key = JSON.stringify(printers.map((p) => {
       const d = this._detectionOf(p);
       return [p.entity, p.state, p.attrs, d && d.state, d && d.attributes];
-    })) + this._armed;
+    })) + this._armed + [...this._open].join();
     if (key === this._key) return;
     this._key = key;
     this._render(printers);
@@ -176,18 +206,18 @@ class BruhBambuCard extends HTMLElement {
     if (!d || ['off', 'unknown', 'unavailable'].includes(d.state) || this._config.show_detection === false) return '';
     const a = d.attributes;
     const tone = d.state === 'failure' ? 'bad' : ['warning', 'covered', 'dark', 'frozen', 'no_camera'].includes(d.state) ? 'warn' : '';
-    let extra = '';
     if (a.alert_id) {
       const buttons = d.state === 'failure' && a.alert_paused
         ? `<button class="primary" data-alert="resume" data-id="${id}" data-a="${esc(a.alert_id)}">Resume — not a failure</button>
            <button class="${this._armed === `alert:${a.alert_id}` ? 'armed' : 'danger'}" data-alert="stop" data-id="${id}" data-a="${esc(a.alert_id)}">${this._armed === `alert:${a.alert_id}` ? 'Tap again to stop' : 'Stop print'}</button>`
         : `<button data-alert="pause" data-id="${id}" data-a="${esc(a.alert_id)}">Pause print</button>
            <button data-alert="ignore" data-id="${id}" data-a="${esc(a.alert_id)}">Ignore</button>`;
-      extra = `<div class="say">${esc(a.alert)}</div><div class="controls">${buttons}</div>`;
-    } else if (d.state === 'watching' && a.next_look_layer) {
-      extra = `<div class="muted">Next look at layer ${esc(a.next_look_layer)}${a.last_look ? ` · last: ${esc(a.last_look)}` : ''}</div>`;
+      // What brAIn saw first, then the answers beside the detection's state.
+      return `<div class="watch ${tone}"><div class="line">${SHIELD}<div class="say">${esc(a.alert)}</div></div><div class="answer"><span class="muted">Failure detection · ${esc(WATCH_WORDS[d.state] || d.state)}</span>${buttons}</div></div>`;
     }
-    return `<div class="watch ${tone}"><div class="line">${SHIELD}<b>Failure detection</b><span>${esc(WATCH_WORDS[d.state] || d.state)}</span></div>${extra}</div>`;
+    // Nothing to answer: one quiet line, and the next look where it is known.
+    const next = d.state === 'watching' && a.next_look_layer ? ` · next look at layer ${esc(a.next_look_layer)}` : '';
+    return `<div class="watch quiet ${tone}"><div class="line">${SHIELD}<b>Failure detection</b><span>${esc(WATCH_WORDS[d.state] || d.state)}${next}</span></div></div>`;
   }
 
   _cameraOf(p) {
@@ -226,6 +256,12 @@ class BruhBambuCard extends HTMLElement {
           next.className = cam.img.className;
           if (cam.img.isConnected) cam.img.replaceWith(next);
           cam.img = next;
+          // The box keeps the stream's own shape (16:9 or 4:3).
+          if (next.naturalWidth && next.naturalHeight) {
+            cam.ratio = `${next.naturalWidth} / ${next.naturalHeight}`;
+            const box = next.parentElement;
+            if (box) box.style.aspectRatio = cam.ratio;
+          }
         }, () => {})
           .finally(() => { cam.timer = setTimeout(tick, 2000); });
       };
@@ -270,42 +306,72 @@ class BruhBambuCard extends HTMLElement {
     const body = printers.length ? printers.map((p) => {
       const a = p.attrs;
       const live = a.printing;
-      const chipClass = ['offline', 'unknown', 'removed', 'failed'].includes(p.state) ? 'bad' : live ? 'live' : '';
-      const pct = a.progress != null && (live || p.state === 'finish') ? `${a.progress}%` : '';
+      const id = esc(a.bruh_bambu_printer);
+      const offline = p.state === 'offline';
+      const tone = ['offline', 'unknown', 'removed', 'failed'].includes(p.state) ? 'bad'
+        : p.state === 'pause' ? 'warn' : live ? 'live' : '';
+      const open = this._open.has(a.bruh_bambu_printer);
       const trays = [...(Array.isArray(a.ams) ? a.ams : []), ...(a.external_spool ? [a.external_spool] : [])];
       const ams = cfg.show_ams && trays.length
         ? `<div class="ams">${trays.map((t) => `<span class="tray${a.active_tray === t.slot ? ' active' : ''}" title="${esc(t.name || t.type)}"><i style="background:${esc(t.colour || 'transparent')}"></i>${t.slot === 'external' ? 'Ext' : t.slot + 1} ${esc(t.type)}${t.remaining != null ? ` ${t.remaining}%` : ''}</span>`).join('')}</div>` : '';
-      const camId = cfg.show_camera && p.state !== 'offline' ? this._cameraOf(p) : null;
-      const cam = camId ? `<div class="cam" data-cam="${esc(camId)}"><div class="over"><span>${esc(p.state)}</span>${a.stage && live ? `<span>${esc(a.stage)}</span>` : ''}</div></div>` : '';
-      const id = esc(a.bruh_bambu_printer);
-      const controls = cfg.show_controls && p.state !== 'offline' ? `<div class="controls">
-          ${p.state === 'pause' ? `<button class="primary" data-act="resume_print" data-id="${id}">Resume</button>`
-            : live ? `<button data-act="pause_print" data-id="${id}">Pause</button>` : ''}
-          ${live ? `<button class="${this._armed === a.bruh_bambu_printer ? 'armed' : 'danger'}" data-stop="${id}">${this._armed === a.bruh_bambu_printer ? 'Tap again to stop' : 'Stop'}</button>` : ''}
-          ${live ? `<select data-speed="${id}" aria-label="Speed">${SPEEDS.map((s) => `<option ${s === a.speed ? 'selected' : ''}>${s}</option>`).join('')}</select>` : ''}
+      const camId = cfg.show_camera && !offline ? this._cameraOf(p) : null;
+      const cam = camId ? `<div class="cam" data-cam="${esc(camId)}"></div>` : '';
+      const detection = this._detectionOf(p);
+      // An open alert brings its own Pause: the card's moves to the drawer.
+      const alertPause = detection && detection.attributes.alert_id && !(detection.state === 'failure' && detection.attributes.alert_paused);
+      const pauseBtn = cfg.show_controls && !offline ? (p.state === 'pause'
+        ? `<button class="primary" data-act="resume_print" data-id="${id}">Resume</button>`
+        : live ? `<button data-act="pause_print" data-id="${id}">Pause</button>` : '') : '';
+      const armed = this._armed === a.bruh_bambu_printer;
+      const drawerControls = cfg.show_controls ? (offline
+        ? `<div class="controls"><button data-act="reconnect" data-id="${id}">Reconnect</button></div>`
+        : `<div class="controls">
+          ${alertPause ? pauseBtn : ''}
+          ${live ? `<button class="${armed ? 'armed' : 'danger'}" data-stop="${id}">${armed ? 'Tap again to stop' : 'Stop'}</button>` : ''}
+          ${live ? `<select data-speed="${id}" aria-label="Speed">${SPEEDS.map((sp) => `<option value="${sp}" ${sp === a.speed ? 'selected' : ''}>${cap(sp)}</option>`).join('')}</select>` : ''}
           <button data-light="${id}" data-on="${a.chamber_light ? '0' : '1'}">${a.chamber_light ? 'Light off' : 'Light on'}</button>
           <button data-act="refresh" data-id="${id}" title="Ask for a full report (after changing a spool)">Refresh</button>
-        </div>` : cfg.show_controls ? `<div class="controls"><button data-act="reconnect" data-id="${id}">Reconnect</button></div>` : '';
+          ${a.connection_error ? `<button data-act="reconnect" data-id="${id}">Reconnect</button>` : ''}
+        </div>`) : '';
+      const pct = a.progress != null && (live || p.state === 'finish') ? a.progress : null;
+      const left = a.remaining_min != null && live ? `${duration(a.remaining_min)} left · done ${finishAt(a.remaining_min)}` : '';
+      const job = live || pct != null ? `<div class="job">
+          <span class="pct">${pct != null ? `${pct}%` : ''}${left ? `<small>${left}</small>` : ''}</span>
+          <span class="muted">${[a.file, a.layer != null && a.total_layers ? `layer ${a.layer}/${a.total_layers}` : '', live ? a.stage : ''].filter(Boolean).map(esc).join(' · ')}</span>
+          ${alertPause ? '' : pauseBtn}
+        </div>
+        <div class="bar"><i style="width:${Math.max(0, Math.min(100, a.progress || 0))}%"></i></div>`
+        : pauseBtn ? `<div class="controls">${pauseBtn}</div>` : '';
+      const drawer = ams || drawerControls;
       return `<div class="printer">
         <div class="head"><span class="name">${esc(a.printer_name || a.friendly_name)}</span>
-          <span class="chip ${chipClass}">${esc(p.state)}</span></div>
+          <span class="state ${tone}"><i></i>${esc(STATE_WORDS[p.state] || cap(p.state))}</span>
+          ${drawer ? `<button class="more" data-more="${id}" aria-expanded="${open}" aria-label="More for ${esc(a.printer_name || a.friendly_name)}">⋯</button>` : ''}</div>
         ${cam}
+        ${job}
         ${this._watchHtml(p, id)}
-        ${live && a.stage && !cam ? `<div class="stage">${esc(a.stage)}</div>` : ''}
-        ${live || pct ? `<div class="row"><span class="pct">${pct}</span>
-          <span class="muted">${esc(a.file || '')}${a.remaining_min != null && live ? ` · ${duration(a.remaining_min)} left · done ${finishAt(a.remaining_min)}` : ''}${a.layer != null && a.total_layers ? ` · layer ${a.layer}/${a.total_layers}` : ''}</span></div>
-          <div class="bar"><i style="width:${Math.max(0, Math.min(100, a.progress || 0))}%"></i></div>` : ''}
         <div class="stats"><span>Nozzle <b>${temp(a.nozzle_c, a.nozzle_target_c)}</b></span>
           <span>Bed <b>${temp(a.bed_c, a.bed_target_c)}</b></span>
           ${a.chamber_c != null ? `<span>Chamber <b>${Math.round(a.chamber_c)}°</b></span>` : ''}
           ${a.hms_count ? `<span class="err">${a.hms_count} printer message${a.hms_count > 1 ? 's' : ''}</span>` : ''}</div>
-        ${a.connection_error ? `<div class="err">${esc(a.connection_error)}</div>${cfg.show_controls && p.state !== 'offline' ? `<div class="controls"><button data-act="reconnect" data-id="${id}">Reconnect</button></div>` : ''}` : ''}
-        ${ams}${controls}</div>`;
+        ${a.connection_error ? `<div class="err">${esc(a.connection_error)}</div>` : ''}
+        ${drawer ? `<div class="drawer${open ? '' : ' shut'}"${open ? '' : ' aria-hidden="true"'}><div>${drawerControls}${ams}</div></div>` : ''}
+      </div>`;
     }).join('') : `<div class="empty">No printers yet. Add one on the BRUH Bambu Studio panel's Printers tab.</div>`;
     const inner = `<div class="wrap">${cfg.title ? `<div class="name">${esc(cfg.title)}</div>` : ''}${body}
       ${this._error ? `<div class="err">${esc(this._error)}</div>` : ''}</div>`;
     this.shadowRoot.innerHTML = `<style>${css(morph)}</style>${morph ? inner : `<ha-card>${inner}</ha-card>`}`;
-    this.shadowRoot.querySelectorAll('[data-cam]').forEach((box) => box.prepend(this._camImg(box.dataset.cam)));
+    this.shadowRoot.querySelectorAll('[data-cam]').forEach((box) => {
+      box.prepend(this._camImg(box.dataset.cam));
+      const ratio = this._cams[box.dataset.cam] && this._cams[box.dataset.cam].ratio;
+      if (ratio) box.style.aspectRatio = ratio;
+    });
+    this.shadowRoot.querySelectorAll('[data-more]').forEach((b) => b.addEventListener('click', () => {
+      const key = printers.find((p) => esc(p.attrs.bruh_bambu_printer) === b.dataset.more).attrs.bruh_bambu_printer;
+      if (this._open.has(key)) this._open.delete(key); else this._open.add(key);
+      this._key = '';
+      this.hass = this._hass;
+    }));
     this.shadowRoot.querySelectorAll('[data-act]').forEach((b) => b.addEventListener('click', () =>
       this._call(b.dataset.act, { printer: b.dataset.id })));
     this.shadowRoot.querySelectorAll('[data-alert]').forEach((b) => b.addEventListener('click', () => {
