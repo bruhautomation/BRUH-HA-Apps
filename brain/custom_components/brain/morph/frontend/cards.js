@@ -88,7 +88,7 @@ export function stripFace(o) {
   const bg = o.stripBg || (isSwitch && active ? mix(accent, 10) : 'transparent');
   return `<div class="strip" style="box-shadow:inset 0 0 0 1px ${active ? mix(accent, o.edgeMix || 30) : 'var(--line)'};background-color:${bg}">${layer}
 <div class="sline">${icon(o.icon, { color: o.iconColor || (active ? accent : 'var(--quiet)'), active, dur: o.dur, transform: o.iconTransform, partOpacity: o.partOpacity })}
-<span class="nv"><b title="${esc(o.name)}">${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}" style="--ac:${o.actionColor || accent}">${esc(o.armed || o.action)}</span>` : sw}</div></div>`;
+<span class="nv"><b>${esc(o.name)}</b><span style="color:${valColor}">${esc(o.val)}</span></span><span class="flex1"></span>${o.hint ? `<span class="hint">${esc(o.hint)}</span>` : ''}${o.action ? `<span class="actword${o.armed ? ' armed' : ''}" style="--ac:${o.actionColor || accent}">${esc(o.armed || o.action)}</span>` : sw}</div></div>`;
 }
 
 function histBlock(ctx, label) {
@@ -110,7 +110,7 @@ function lightMore(ctx, target) {
   if (modes.includes('color_temp')) {
     const lo = a.min_color_temp_kelvin || 2200, hi = a.max_color_temp_kelvin || 6500;
     const ws = [['Warm', clamp(2700, lo, hi), '#ffb35c'], ['Soft', clamp(3500, lo, hi), '#ffd9a8'], ['Daylight', clamp(5200, lo, hi), '#dfeaff']];
-    parts.push(`${blockLabel('Whites')}<div class="swatches">${ws.map((w) => `<button type="button" class="sw" data-ctl="1" data-act="svc" data-domain="light" data-service="turn_on" data-data="${esc(JSON.stringify({ entity_id: target, color_temp_kelvin: w[1] }))}" aria-label="${w[0]}" title="${w[0]}" style="background:${w[2]}"></button>`).join('')}</div>`);
+    parts.push(`${blockLabel('Whites')}<div class="swatches">${ws.map((w) => `<button type="button" class="sw" data-ctl="1" data-act="svc" data-domain="light" data-service="turn_on" data-data="${esc(JSON.stringify({ entity_id: target, color_temp_kelvin: w[1] }))}" aria-label="${w[0]}" style="background:${w[2]}"></button>`).join('')}</div>`);
   }
   return parts.join('');
 }
@@ -419,7 +419,7 @@ const meter = {
     const today = lastRow && lastRow.t >= d0.getTime() ? lastRow.change : ok ? 0 : null;
     const vals = ok ? week.map((w) => w.change || 0) : [];
     const hi = Math.max(1e-6, ...vals);
-    const bars = ok ? `<div class="cols" style="height:40px;gap:4px">${week.map((w, i) => `<span class="colbar" title="${esc(new Date(w.t).toLocaleDateString([], { weekday: 'short' }) + ' · ' + fmt(vals[i], unit))}" style="flex:1;height:${Math.max(2, vals[i] / hi * 38)}px;background:${mix(ctx.accent, i === vals.length - 1 ? 85 : 45)}"></span>`).join('')}</div>` : '';
+    const bars = ok ? `<div class="cols" style="height:40px;gap:4px">${week.map((w, i) => `<span class="colbar" role="img" aria-label="${esc(new Date(w.t).toLocaleDateString([], { weekday: 'short' }) + ' · ' + fmt(vals[i], unit))}" style="flex:1;height:${Math.max(2, vals[i] / hi * 38)}px;background:${mix(ctx.accent, i === vals.length - 1 ? 85 : 45)}"></span>`).join('')}</div>` : '';
     return `<div class="box" style="box-shadow:inset 0 0 0 1px var(--line)"><div class="row">${icon(/water/.test((st && st.attributes.device_class) || '') ? 'water' : 'bolt', { color: ctx.accent, size: 16 })}<b style="font-size:13px">${esc(ctx.name)}</b><span class="flex1"></span>${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div><div class="rowb"><span class="mid">${today != null ? esc(fmt(today, '')) : '—'}</span><span class="sm">${esc(unit)} today</span></div>${bars}</div>`;
   },
   more: (ctx) => histBlock(ctx),
@@ -478,7 +478,7 @@ const camera = {
     // one streams, and only then says Live.
     const stream = ctx.open && a.access_token ? `/api/camera_proxy_stream/${encodeURIComponent(ctx.card.entity)}?token=${encodeURIComponent(a.access_token)}` : '';
     const pic = stream || src;
-    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b title="${esc(ctx.name)}">${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
+    return `<div class="camtile" style="box-shadow:inset 0 0 0 1px ${st && st.state === 'recording' ? mix(ctx.accent, 30) : 'var(--line)'}"><div class="camhead"><b>${esc(ctx.name)}</b><span class="flex1"></span><span class="small">${esc(sub)}</span></div><div class="campic">${pic ? `<img class="cam" src="${esc(pic)}" alt="${esc(ctx.name)}" loading="lazy" onerror="this.style.visibility='hidden'">` : ''}${live ? `<span class="live"><i${stream ? '' : ' class="still"'}></i>${stream ? 'LIVE' : 'Still'}</span>` : ''}${ctx.hint ? `<span class="hint">${esc(ctx.hint)}</span>` : ''}</div></div>`;
   },
   more: (ctx) => histBlock(ctx, 'Events'),
   tap: () => null,

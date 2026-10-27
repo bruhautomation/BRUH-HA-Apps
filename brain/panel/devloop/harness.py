@@ -150,6 +150,32 @@ async function morphSettled(el) {
   }
   await new Promise((r) => setTimeout(r, 400));
 }
+// One card or room asked for by id (the capture's focus): the id the page
+// keys it with, as dashboard.yaml gave it or with Morph's c_/s_ in front.
+// A room the salience list folded to a line draws none of its tiles, so
+// the room is unfolded first, the way a press on its name unfolds it.
+async function reveal(el, id) {
+  const R = el.shadowRoot;
+  const ids = [id, 'c_' + id, 's_' + id];
+  const drawn = (x) => R && R.querySelector(`[data-tile="${CSS.escape(x)}"]`);
+  const hit = ids.find(drawn);
+  if (hit) return hit;
+  for (const x of ids) {
+    const card = el.findCard && el.findCard(x);
+    const sec = card ? card.sec : (el.sectionById && el.sectionById(x));
+    if (!sec) continue;
+    if (el.unfoldRoom) el.unfoldRoom(sec.id, false);
+    const until = Date.now() + 4000;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 150));
+      const room = R.querySelector(`[data-sec="${CSS.escape(sec.id)}"]`);
+      if ((card ? drawn(x) : room) && !(room && room.classList.contains('folded'))) break;
+    }
+    await new Promise((r) => setTimeout(r, 600));    // the springs settle
+    return x;
+  }
+  return id;
+}
 window.__harnessReady = (async () => {
   const list = await ws({ type: 'get_states' });
   const states = {};
@@ -175,8 +201,12 @@ window.__harnessReady = (async () => {
     // integration's differ, and this page has none of its own to compare.
     el.panel = { config: { version: '', cards_url: H + '/morph_cards' } };
     el.narrow = innerWidth < 870;
+    // The Home tab as an administrator sees it: under brAIn's top bar,
+    // which carries the brand, the sidebar button and the settings.
+    el.shell = true;
     el.hass = hass;
     root.appendChild(el);
+    window.__harnessReveal = (id) => reveal(el, id);
     await morphSettled(el);
     return;
   }

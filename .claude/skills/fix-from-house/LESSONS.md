@@ -102,6 +102,10 @@ Last UX audit: 2026-10-18
   (no browser it can drive); CI runs it. Read it as environmental, never as
   a batch's regression.
 
+- 2026-10-27: An issue filed against an older version is often fixed on `main` already (20 snapshot faults from one Core restart were fixed by 3.8.26): read the CHANGELOG for the issue numbers and the code before dispatching a batch, and close it with the fixing PR.
+- 2026-10-27: CodeQL's "module imported more than once" fires on an `import x` inside a function when the module is imported at the top; a subagent added one for a "read per call" comment. Module attribute access is already per call.
+- 2026-10-27: In a cloud session the full `chromium-1243` hangs on `--dump-dom`; browser tests need `BRAIN_CHROMIUM=/opt/pw-browsers/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell`.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
@@ -116,3 +120,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-23: ~10 h; PRs #471, #477–#487; about 37 reports closed fixed, 7 already fixed or duplicate, 1 declined; held/came-back not counted this run; UX audit and retro not run; slowest step: Opus subagents (8–16 min a batch) and the full suite for the UI batch.
 - 2026-10-24: ~7.5 h; PRs #489–#500; 44 reports closed, all fixed (brAIn 3.8.9–3.8.17, Morph 1.1.2, GardenRX 0.1.3, BRUH Task Manager 0.1.2), none declined, duplicate or handed to a person; rolling #405 and #369 left open; held/came-back not counted this run; UX audit not run; slowest step: a CI Python job hung on a dead xdist worker (40 min), then the Opus subagents (20–50 min a batch).
 - 2026-10-26/27: ~14h, 42 issues fixed in PRs #505–#511 and #515 plus the owner's Bambu requests (#509 and this batch); #369 and #424 left open by design. Held/came-back not counted this run (no Held comments read). Slowest step: batch subagents (20–30 min each) and two lost background test runs.
+- 2026-10-27 (evening): ~5h, 38 reports closed: 28 fixed (21 already fixed in 3.8.26; PRs #521, #522, #523, #524 and this Morph batch), 1 not brAIn (#487), 1 declined (#494). Held/came-back not counted. UX audit not run (last 2026-10-18). Slowest step: the findings subagent (~35 min, two rounds) and CI (~8 min a PR).

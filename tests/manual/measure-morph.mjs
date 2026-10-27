@@ -154,7 +154,13 @@ async function design(p, name, narrow) {
     const upc = r(q('.cu .cu-vp')), upcBox = r(q('[data-region="upcoming"]'));
     const sugs = q('.sugs');
     const ov = q('[data-tile="c_temps"]') || [...root.querySelectorAll('.ov')][0];
+    // Rule 13: nothing carries a title= hover text (a tooltip floats). A
+    // hosted Lovelace card is its own code, not Morph's.
+    const deep = (r0) => [...r0.querySelectorAll('*')].flatMap((el) => [el, ...(el.shadowRoot ? deep(el.shadowRoot) : [])]);
+    const tooltips = deep(root).filter((el) => el.hasAttribute('title') && el.tagName !== 'IFRAME' && !el.closest('[data-ll]'))
+      .map((el) => `${el.tagName.toLowerCase()}${el.className && typeof el.className === 'string' ? '.' + el.className.split(' ')[0] : ''}`);
     return {
+      tooltips,
       muted, valColor: val && getComputedStyle(val).color, mutedRgb,
       valText: val && val.textContent,
       grpText: (q('[data-tile="c_kitchen_cans"] .nv span') || {}).textContent,
@@ -169,6 +175,7 @@ async function design(p, name, narrow) {
     };
   });
   const where = `${name} design`;
+  if (d.tooltips.length) fail(where, `rule 13: ${d.tooltips.length} element(s) carry a title= tooltip: ${[...new Set(d.tooltips)].slice(0, 4).join(', ')}`);
   if (d.valColor !== d.mutedRgb) fail(where, `a light's status line is not quiet text (${d.valColor})`);
   if (!/^\d+% · (Warm|Soft|Daylight|Color)$/.test(d.valText || '')) fail(where, `a light's status line does not say its level and colour: "${d.valText}"`);
   if (!/^(All \d+|\d+ of \d+) · (\d+%|mixed)$|^All \d+ off$/.test(d.grpText || '')) fail(where, `a light group's status line is not the design's: "${d.grpText}"`);
