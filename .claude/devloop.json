@@ -5,8 +5,6 @@
   "version_only_files": [
     "brain/config.yaml",
     "brain/custom_components/brain/manifest.json",
-    "morph/config.yaml",
-    "morph/custom_components/morph/manifest.json",
     "gardenrx/config.yaml",
     "gardenrx/custom_components/gardenrx/manifest.json",
     "bruh-bambu-studio/config.yaml",

@@ -39,6 +39,10 @@ import time
 log = logging.getLogger("brain.personality")
 
 STORE = os.environ.get("BRAIN_PERSONALITY_FILE", "/config/.brain/personality.json")
+# brAIn's switches (features.py): Personality is one of them. Read here
+# directly, not through features.py, because this module is also a CLI and a
+# voice-side import that cannot pull the panel in.
+FEATURES_FILE = os.environ.get("BRAIN_FEATURES_FILE", "/config/.brain/features.json")
 MORPH_FILE = os.environ.get(
     "BRAIN_MORPH_PERSONALITY_FILE", "/config/morph/frontend/personality.js")
 
@@ -160,20 +164,52 @@ def load(path: str | None = None) -> dict:
 DEFAULT_NAME = "brAIn"
 
 
+def enabled(features_file: str | None = None) -> bool:
+    """Whether Personality is switched on (⚙ › Features). A house whose
+    switches were never written keeps what it had, which is on: only an
+    explicit off turns it off. Never raises."""
+    try:
+        with open(features_file or FEATURES_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(data, dict) and data.get("personality") is False)
+
+
 def assistant_name(data: dict | None = None, path: str | None = None) -> str:
     """What brAIn's own fixed words call the assistant, to a person.
 
-    The household's chosen name when one is set, else "brAIn". One helper
+    The household's chosen name when one is set and Personality is
+    switched on, else "brAIn". One helper
     for every sentence brAIn builds about itself in words somebody reads —
     the who-acts line on a card, a Repairs dialog, a notification's title —
     so a house that named its assistant does not meet two of them. Never
     raises: an unreadable file is no name."""
+    if not enabled():
+        return DEFAULT_NAME
     try:
         name = (data if isinstance(data, dict) else load(path)).get("name")
     except Exception:  # noqa: BLE001 — a name is a nicety, never a failure
         name = ""
     name = " ".join(str(name or "").split())
     return name or DEFAULT_NAME
+
+
+_WORD = re.compile(r"\bbrAIn\b")
+
+
+def speak(text, name: str | None = None) -> str:
+    """Prose about to reach a person, with brAIn called by its name.
+
+    With Personality on and a name set, the product's name ("brAIn", in
+    exactly that spelling) is the household's name for it: on a card, in a
+    notification, in Repairs. `brain` in lower case is a command or a path
+    and is never touched. Off, or with no name, the text is unchanged."""
+    s = "" if text is None else str(text)
+    name = assistant_name() if name is None else name
+    if not s or name == DEFAULT_NAME or "brAIn" not in s:
+        return s
+    return _WORD.sub(name, s)
 
 
 def is_set(data: dict | None) -> bool:
@@ -302,7 +338,10 @@ def summary(data: dict | None) -> str:
 
 
 def prompt_block(data: dict | None = None) -> str:
-    """The lines a prompt carries, or "" when no personality is set."""
+    """The lines a prompt carries, or "" when no personality is set or
+    Personality is switched off."""
+    if not enabled():
+        return ""
     data = load() if data is None else data
     if not is_set(data):
         return ""

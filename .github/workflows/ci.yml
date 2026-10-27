@@ -146,7 +146,8 @@ jobs:
           narrow "BRUH Print" bruh-print test_bruh_print_
           narrow "BRUH Bambu Studio" bruh-bambu-studio test_bambu_
           narrow "BRUH Minecraft" bruh-minecraft-server test_minecraft_
-          narrow "Morph" morph test_morph_
+          # Morph is part of brAIn since 4.0, so its test_morph_* files are
+          # brAIn's and always run.
           narrow "GardenRX" gardenrx test_gardenrx_
           narrow "BRUH Task Manager" bruh-task-manager test_task_manager_
 
@@ -162,7 +163,7 @@ jobs:
             print=true
           fi
           morph=false
-          if grep -qE '^(morph/|tests/manual/(morph-fixture|measure-morph)\.mjs)' <<<"$changed"; then
+          if grep -qE '^(brain/morph/|brain/custom_components/brain/morph/|tests/manual/(morph-fixture|measure-morph|measure-shell)\.mjs)' <<<"$changed"; then
             morph=true
           fi
           gardenrx=false
@@ -701,6 +702,13 @@ jobs:
           wait $phone || status=1
           exit $status
 
+      # brAIn's one sidebar entry (4.0): the shell holding brAIn's framed page
+      # and Morph as its Home tab, for an administrator with the dashboard on
+      # and off, and for somebody who is not one.
+      - name: Measure brAIn's shell
+        if: matrix.group == 'morph' && env.GROUP_RUNS == 'true'
+        run: node tests/manual/measure-shell.mjs
+
       # taskmanager: BRUH Task Manager's real panel, twice — at Level 2 and at
       # Level 1 with Protection mode on — against a fake Supervisor and a
       # fake /proc, both under an ingress-shaped prefix. It drives End process
@@ -742,7 +750,6 @@ jobs:
           cp -r bruh-minecraft-server/custom_components/bruh_minecraft \
                 custom_components/bruh_minecraft
           cp -r bright/custom_components/bright custom_components/bright
-          cp -r morph/custom_components/morph custom_components/morph
           cp -r gardenrx/custom_components/gardenrx custom_components/gardenrx
           cp -r bruh-task-manager/custom_components/bruh_task_manager \
                 custom_components/bruh_task_manager
@@ -767,7 +774,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt morph/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -801,9 +808,6 @@ jobs:
             bright/config.yaml \
             bright/build.yaml \
             bright/translations/en.yaml \
-            morph/config.yaml \
-            morph/build.yaml \
-            morph/translations/en.yaml \
             gardenrx/config.yaml \
             gardenrx/build.yaml \
             gardenrx/translations/en.yaml \
@@ -839,17 +843,6 @@ jobs:
             bright/custom_components
             bright/panel
             bright/integrations
-
-      - name: Run shellcheck (morph)
-        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
-        env:
-          SHELLCHECK_OPTS: -s bash -e SC1091
-        with:
-          scandir: ./morph
-          severity: error
-          ignore_paths: >-
-            morph/custom_components
-            morph/service
 
       - name: Run shellcheck (gardenrx)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -888,6 +881,7 @@ jobs:
             brain/ha-mcp-server
             brain/custom_components
             brain/panel
+            brain/morph
 
   hadolint:
     name: Dockerfile lint
@@ -920,12 +914,6 @@ jobs:
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: bruh-bambu-studio/Dockerfile
-          failure-threshold: error
-
-      - name: Lint Morph Dockerfile
-        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
-        with:
-          dockerfile: morph/Dockerfile
           failure-threshold: error
 
       - name: Lint GardenRX Dockerfile
@@ -996,23 +984,6 @@ jobs:
       - name: Check BRight changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bright
 
-      # Morph carries its version in THREE places: config.yaml (what the
-      # store offers), the manifest (what Core loads) and const.py, which
-      # versions the panel's module URL — a const that lags is a browser
-      # holding last release's modules beside this release's integration.
-      - name: Check Morph version parity
-        run: |
-          addon_version=$(grep -E '^version:' morph/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
-          manifest_version=$(python3 -c 'import json; print(json.load(open("morph/custom_components/morph/manifest.json"))["version"])')
-          const_version=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' morph/custom_components/morph/const.py)
-          echo "add-on:         $addon_version"
-          echo "HA integration: $manifest_version"
-          echo "panel modules:  $const_version"
-          if [ "$addon_version" != "$manifest_version" ] || [ "$addon_version" != "$const_version" ]; then
-            echo "::error::Morph's add-on ($addon_version), manifest ($manifest_version) and const.py ($const_version) versions disagree"
-            exit 1
-          fi
-
       - name: Check BRUH Bambu Studio version parity
         run: |
           addon_version=$(grep -E '^version:' bruh-bambu-studio/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
@@ -1026,9 +997,6 @@ jobs:
 
       - name: Check BRUH Bambu Studio changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bruh-bambu-studio
-
-      - name: Check Morph changelog matches shipped version
-        run: .github/scripts/check-changelog-version.sh morph
 
       # GardenRX carries its version in five places: config.yaml (what the
       # store offers), the manifest and const.py (const versions the card
@@ -1091,9 +1059,6 @@ jobs:
 
       - name: Verify BRight version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bright
-
-      - name: Verify Morph version bumped if files changed
-        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" morph
 
       - name: Verify GardenRX version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" gardenrx

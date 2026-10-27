@@ -264,9 +264,9 @@ class TestLearning(unittest.TestCase):
 
     def test_learning_off_means_no_pass_is_due(self):
         env = self.env
-        env.settings.update({"learning": False})
+        env.switch(learning_loop=False)
         self.assertFalse(env.learning.due(time.time() + 10 * 86400))
-        env.settings.update({"learning": True})
+        env.switch(learning_loop=True)
         self.assertTrue(env.learning.due(time.time() + 10 * 86400))
 
 
@@ -282,7 +282,7 @@ class TestDevloopOutbox(unittest.TestCase):
             self.assertTrue(row["where"].startswith("Morph"),
                             "brAIn's stream keeps only rows whose where starts with Morph")
             self.assertEqual(3, row["impact"]["times"])
-            env.settings.update({"report_code_issues": False})
+            env.switch(development_loop=False)
             self.assertEqual([], env.devloop.publish("0.1.0")["rows"])
 
     def test_every_issue_points_at_files_that_exist(self):
@@ -295,8 +295,8 @@ class TestDevloopOutbox(unittest.TestCase):
             rows = env.devloop.rows()
         self.assertEqual(2, len(rows))
         for row in rows:
-            named = re.findall(r"(?:morph|docs|tests)/[\w./-]+\.(?:md|mjs)", row["body"])
-            self.assertIn("morph/defaults/AGENTS.md", named)
+            named = re.findall(r"(?<![\w/])(?:brain|docs|tests)/[\w./-]+\.(?:md|mjs)", row["body"])
+            self.assertIn("brain/morph/defaults/AGENTS.md", named)
             for path in named:
                 self.assertTrue((repo / path).is_file(), path)
             self.assertNotIn("see morph/AGENTS.md", row["body"])

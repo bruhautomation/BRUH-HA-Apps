@@ -1463,6 +1463,8 @@ body.modal-open {
   border: var(--card-border); border-radius: var(--card-radius); background: var(--card-bg);
 }
 .setsec[hidden] { display: none; }
+/* ⚙ › Dashboard's row, while the Morph dashboard is off. */
+.setnavbtn[hidden] { display: none; }
 .setsechead { display: grid; gap: 2px; margin: 0 0 var(--sp-3); justify-items: start; }
 .setsecname { margin: 0; font-size: var(--fs-title, 18px); font-weight: 600; color: var(--ink); }
 .setsecbody { padding: 0; }
@@ -2343,6 +2345,26 @@ body.modal-open {
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 .brandlink.pending .vertext { color: var(--serious-ink); font-weight: 600; }
+
+/* Personality on (`applyName`): the household's name stands where the
+   wordmark was, at the wordmark's height, and the version stays under it. */
+.brandname {
+  display: none; max-width: 14ch; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-size: 20px; line-height: 28px; font-weight: 700;
+  color: var(--ink); letter-spacing: -0.01em;
+}
+html.named .brandlink .wordmark { display: none; }
+html.named .brandname { display: block; }
+
+/* brAIn's shell (`SHELL` in app.js). ☰ is Home Assistant's sidebar, drawn
+   only on a phone. On Home the Morph dashboard is drawn by the shell over
+   this page, so the page under the bars is see-through and holds nothing;
+   a popover or a dialog that opens there comes over the dashboard with the
+   page dimmed behind it. */
+.btn.shellmenu[hidden], .viewtabs .viewtab[hidden] { display: none; }
+html.shell-home, html.shell-home body { background: transparent; }
+html.shell-home main.wrap { visibility: hidden; }
+html.shell-home.shell-raised, html.shell-home.shell-raised body { background: rgba(0, 0, 0, 0.35); }
 
 .wm-ink { fill: var(--wm-ink); }
 .wm-roof { fill: var(--wm-roof); }

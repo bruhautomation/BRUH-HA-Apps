@@ -45,6 +45,11 @@ house can ask for help before you notice anything's wrong.
 
 One install, one sidebar panel, one login. Runs on the Claude **Pro** or **Max**
 subscription — or your own API key.
+
+> **⚠️ Experimental — still being actively developed**
+> brAIn changes often, and parts of it may be unstable between updates —
+> above all the Morph dashboard, new in 4.0. Keep
+> your own dashboards and automations working beside it, and keep a backup.
 `,
   },
   {
@@ -249,12 +254,18 @@ being rebuilt says **stale**, and that one is worth going and fixing.
     body: `
 # The panel
 
-One ingress panel, three tabs, and ⚙ in the bar. Insights and Memory each
-have a control across the top for the sections inside them; Ask has nothing
-under the bar at all.
+One sidebar entry, up to four tabs, and ⚙ in the bar. Insights and Memory
+each have a control across the top for the sections inside them; Ask has
+nothing under the bar at all. The entry is the brAIn integration's own panel
+and carries the household's name for brAIn while Personality is on; brAIn's
+older ingress entry is hidden while it is there and comes back on its own if
+it is not (Home Assistant restarted without the integration, say), so there
+is always exactly one way in. On a phone the tabs are a bar along the bottom
+and ☰ in the header opens Home Assistant's sidebar.
 
 | Tab | What's there |
 | --- | --- |
+| **Home** | The Morph dashboard, while it is switched on in ⚙ › Features. Experimental. |
 | **Insights** | What brAIn has to tell you, in three sections. **Insights** (where the panel opens) is your insight cards, each a headline and how long ago it was updated, with the deep review and suggested cards under them — and, above them, a line saying how many things need you. **Needs you** is the one screen for deciding: a banner only while something is urgent, the status line (**Watching · last look 9 min ago**) with **Recheck** and this morning's brief under its **⋯**, the queue — every problem, question, suggestion, name tidy and assessed update as the same card — and **To Do**. Every card leads with one press (**Plan**, **Apply**, **Add to To Do**, **Yes** or **Done**) beside **Snooze** and **Ignore**; a problem also has **Check again** and **Dismiss** for a card that is old or no longer true. **History** is everything you've already answered — snoozed, ignored, done, or set aside by brAIn — with **Restore** on every row and **Delete** (the bin) on every row but a snooze. Deleting clears the record only: your answer stands, so brAIn does not raise it again. The count on the tab is how many cards are waiting on you. |
 | **Ask** | Full Claude Code, served through the panel — no second sidebar entry, no second login. Two faces: **Chat** (the default: the same session rendered as messages) and **Classic** (ttyd + tmux). Switch with ⋯ on the tab (the choice is saved), or in ⚙ Settings. Press ⤢ to give either the whole screen. |
 | **Memory** | What brAIn holds about the house. **Knowledge** is a box to teach brAIn something and every fact it holds, browsable by room and device (a list beside the facts on a wide screen, a picker on a phone), searchable, filterable by kind and by who taught it, with a bin on every fact. **Timeline** opens on what the house is doing now, then what happened and what caused it — searchable by device and narrowed by room, kind of thing, cause and window (6 hours to 2 days), each filter counted under the others with **Clear all**, fetched fresh every visit and never cached. **House book** is how this house works, chapter by chapter, with **Add info**, an Edit and Delete on every line, and sharing behind ⋯. |
@@ -271,12 +282,16 @@ itself always runs, because it is the ingress target.
 
 ## ⚙ Settings
 
-A list of nine sections, each row saying what it is set to right now — signed
+A list of sections, each row saying what it is set to right now — signed
 in, the model and how much of this session it has used, whether brAIn asks
 before it acts. On a wide screen the list sits beside the section you are in;
 on a phone Settings opens on the list and **‹ Settings** goes back to it. Every
 section is one press away and nothing inside one is folded away.
 
+* **Features** — the four switches: the Morph dashboard, Personality, the
+  learning loop and the development loop (Features).
+* **Dashboard** — the Morph dashboard's own settings, its history and the
+  changes this house made to its code (shown while it is on).
 * **Account** — signed in or not, and when Claude last said the login
   works. **Recheck** asks again now; **Sign in again** opens the sign-in screen;
   **Sign out** asks once before it does anything. **Details** shows which of the
@@ -316,7 +331,9 @@ section is one press away and nothing inside one is folded away.
   problem** lists the problem files and **Share** copies one redacted file for a
   bug report. Nothing here is fetched until you open it.
 * **Developer** — the rehearsal, asking the next "why" question now, corpus
-  capture and **Help develop brAIn**.
+  capture, and the development loop's repository, token, streams and limits
+  (switched on in Features). **Report everything without asking** (it was
+  **Development mode**) turns every stream on with nothing waiting for Send.
 * **Guide** — this guide, in eight groups. Help is no longer a tab.
 
 The page remembers which section you were on. There are no **?** bubbles:
@@ -535,6 +552,440 @@ it lands — and it costs no Claude turns.
 has written up is listed there with a checkbox; **Export report** (**Share**) copies
 the ticked ones, or with none ticked writes a fresh report and copies that. See
 Reports.
+`,
+  },
+  {
+    id: "features",
+    group: "Getting started",
+    title: "Features",
+    body: `
+# Features
+
+**⚙ › Features** is the first section of Settings: four switches, each saying
+what it does and where its work goes. A switch takes effect at once; nothing
+needs a restart.
+
+| Switch | What it does | Where its work goes |
+|---|---|---|
+| **Morph dashboard** | The **Home** tab: a dashboard laid out by what matters in the house right now, which brAIn designs and edits with you. The Morph dashboard below. | Stays in this house |
+| **Personality** | brAIn takes the name and personality you give it in ⚙ › Personality, everywhere: the sidebar, every screen, the chat, voice and notifications. With a name set, nothing says "brAIn" any more — it is "talk to Vesper". Off, the personality you wrote is kept and nothing reads it. | Stays in this house |
+| **Learning loop** (self-improvement) | brAIn improves **itself**, here: it watches how its dashboard is used, suggests changes, keeps this household's lessons and may propose changes to its own dashboard code. Off, brAIn still does what you ask and never changes itself on its own. It works on the Morph dashboard, so it does nothing while that is off. | Stays in this house |
+| **Development loop** | brAIn reports its own faults as issues in your private GitHub repository, where a cloud routine fixes brAIn's code and ships an update. The repository, the token, what it sends and its daily limits are in ⚙ › Developer. | **Leaves this house**, with names, rooms and entity ids replaced by aliases |
+
+The difference between the two loops, in one line each: **self-improvement**
+is brAIn changing itself on this house and nothing leaving it;
+**development** is brAIn reporting back to the repository its code comes
+from, so everybody's brAIn gets the fix. What brAIn learns about your **home**
+— facts, the memory document — is neither, and is under ⚙ › Memory.
+
+A house that upgraded from 3.x starts with the switches matching what it
+had: the Morph dashboard on if the Morph app was installed, Personality on if
+a personality was set, the learning loop on, and the development loop as it
+was.
+`,
+  },
+  {
+    id: "the-morph-dashboard",
+    group: "Getting started",
+    title: "The Morph dashboard",
+    body: `
+# The Morph dashboard
+
+> **⚠️ Experimental — still being actively developed**
+> **The Morph dashboard may be unstable.** Expect missing cards, rough edges
+> and changes between updates that move things around without warning. Keep
+> your usual dashboards beside it rather than replacing them. It only ever
+> writes its own folder (\`/config/morph\`), every change there is a version
+> you can undo, and it changes Home Assistant itself only when you ask for
+> that in words.
+
+Morph was an app of its own until brAIn 4.0. It is part of brAIn now: switch
+it on in ⚙ › Features and it is the **Home** tab, the first tab of brAIn's
+one sidebar entry, with Insights, Ask, Memory and ⚙ beside it in the same
+header. The dashboard runs inside Home Assistant's own frontend, which is
+what gives it the live state, your theme and Lovelace's card helpers, so any
+card you already use can be hosted.
+
+On the first start with the dashboard on, brAIn builds it from your house:
+one section per area, grouped by floor (or Home and Outside when you have no
+floors), and a **Whole house** floor with climate, weather and security.
+Rebuild it any time from ⚙ › Dashboard.
+
+Somebody in the house who is not a Home Assistant administrator sees the
+dashboard alone, without brAIn's other tabs, as they did before. Tell and
+the learning loop need brAIn's **Automation integration** option on.
+
+## Updating, and when to reload
+
+A page left open does not change by itself when Morph's code does. When the
+code on screen is no longer what Home Assistant would serve, a bar at the top
+of the dashboard says so, with **Reload**. That happens after an update, or
+when brAIn changes your copy of Morph's code. When brAIn has been
+updated but Home Assistant is still running the older integration, the bar
+asks you to restart Home Assistant instead, because a reload alone would not
+finish the update. Nothing else needs a reload: changes to the dashboard
+itself appear on their own.
+
+Morph's code is cached by your browser under a name for exactly that
+version, so opening Morph again downloads nothing. While it opens, you see
+the outline of the dashboard rather than a blank page.
+
+## Using the dashboard
+
+| Gesture | Does |
+|---|---|
+| **Tap** | The main thing: toggle a light, play, lock. A garage door and an unlock ask for a second tap. |
+| **Slide** | A level: brightness, fan speed, blind position. |
+| **Hold** | Opens the card in place with its options and its history. |
+| **Tap outside** | Folds everything back. |
+
+An opened card also offers **Details**, which opens Home Assistant's own
+dialog for that entity (its history, attributes, settings and what it is
+related to), and **Device page** for an admin, which goes to the device in
+Home Assistant's settings. On a card that lists several things, tap one row
+first.
+
+History is what Home Assistant records for that kind of thing: a light's day
+as a strip of on and off, a sensor's readings as a line you can scrub, a
+meter's week as bars. Tap a day or a bar to see its hours, and the logbook's
+"who" for each change.
+
+## What leads the page
+
+Morph is brAIn's face: the page is laid out by what matters in the house
+right now, and it can always say why.
+
+- **The verdict.** The first line says what is going on, its first clause in
+  the colour of what it means: rose for something wrong, amber for
+  something worth a look, indigo when the house is at rest.
+- **Now.** Up to three cards (two on a phone) are lifted to the top: a door
+  open longer than it usually is, a machine that finished, a light you
+  usually dim about now. A lifted card is **moved**, not copied; its room
+  keeps a faint trace where it was. Under it, one quiet line says why
+  (**open at this hour on 1 night in 20**, **you usually do this now**). Hold
+  that line for **Keep it here** and **Not this**.
+- **Rooms.** A room with something on, moving or unusual is open; a quiet
+  room folds to one line with its name, its scenes and anything open. Tap a
+  room's name to open it. A room where somebody is asleep is dimmed. The
+  door and motion marks at the right of a room's title go with
+  \`room_marks: false\` in \`dashboard.yaml\`.
+- **Night, away and still.** With the alarm armed for the night (or
+  everyone asleep) the rooms fold and the page shows only what is wrong,
+  usually nothing: **Everything is at rest.** It is not dimmed unless
+  \`night_dim: true\` is in \`dashboard.yaml\`. With everybody away it says so. A
+  family tablet left untouched settles into a page readable across the room.
+- **Then.** Slide Coming up into the past and every card shows the house as
+  it was at that moment; dots behind the line are what happened.
+
+The page rearranges only at a quiet moment: never under your finger, while
+you scroll, while a card is open, or within a few seconds of the last
+change, unless something urgent (a door opening at night) needs it.
+
+What Morph reads to decide is brAIn's: what is normal for each sensor and
+door at this hour, your habits and the house's rhythm (published in
+\`/config/.brain/morph/feed.json\`). Without brAIn, the page still works from
+the house's own state.
+
+**⚙ › Dashboard › This device** says whether this screen is somebody's own (it
+leads with their habits) or the family's (a wall tablet), and **Fold quiet
+rooms** turns folding off.
+
+## brAIn's cases and To Do
+
+A problem or a question brAIn has is drawn **in the room it is about**: the
+claim, what brAIn wants from you, and a reply line. Answer in your own words
+— "yes, but call it Sump Pump Current", "it is meant to be off in winter",
+"put it on my list" — and brAIn reads the reply and ends the case the way
+the words say, or answers with a question in the card. **Fix** (where brAIn
+could make the change), **Dismiss** and **To Do** are there for when a word
+is quicker. A case about nothing on the page is drawn at the top of its
+floor.
+
+**To Do** is brAIn's list, the same one Home Assistant's To-do app shows.
+Tap a line to tick it off; slide it right to snooze it a week; hold it for
+**Delete**.
+
+Morph's own suggestions for the dashboard are brAIn's cases too, answered the
+same way; a yes makes the change as a Tell.
+
+## Ask
+
+The line under the verdict is brAIn's chat with the dashboard in front of it.
+brAIn decides what the words are:
+
+- **A question** is answered under the line, and the page lifts what the
+  answer names. Answer again to carry on: it is one conversation, also in
+  brAIn's Ask tab.
+- **Something to remember or a rule** ("remember the sump pump is in the
+  laundry", "tell me when the dryer is done") is done and said in a line.
+- **A change to the dashboard or to Morph** is a Tell, with Undo.
+
+## Edit mode
+
+Press **Edit** in the top bar.
+
+- **Tap a section** to rename it, recolour it, move it to another floor (or a
+  new one), widen it, add a group, hide it or remove it.
+- **Tap a card** to rename it, resize it, move it, edit its JSON, or remove
+  it.
+- **Drag a section** to reorder it or move it between floors.
+- **Add card** in each section offers the entities in that room first, then
+  any entity, then **Lovelace card** — paste any card's YAML or JSON.
+
+Every save is one commit. The toast after a change offers **Undo**.
+
+## Tell brAIn
+
+In Edit, **hold** anything — a card, a section, a floor, the whole dashboard —
+and say what should change. **Send** hands it over.
+
+You do not need Edit to change the dashboard. Type the change into the Ask
+line ("remove the Coming up timeline", "put the porch light in Entry", "the
+kitchen header is too tall") and brAIn reads it as a change to the dashboard
+or to Morph itself, and makes it as a Tell. If an answer was not what you
+wanted, **Change the dashboard instead** sends the same words as a change.
+
+**brAIn looks first.** The moment you hold something, Morph takes a picture
+of it and shows it in the box (**What brAIn will see**). brAIn reads that
+picture before anything else, so "this is cut off" or "the colours are
+wrong" mean what is on your screen. If the picture cannot be taken (an
+embedded web page, for instance), the box says so and brAIn is given the
+card's text instead.
+
+**It changes Morph.** brAIn acts at once on:
+
+- the dashboard (\`/config/morph/dashboard.yaml\`),
+- Morph's card code (\`/config/morph/cards/\`),
+- Morph itself: its header, its layout, its built-in cards, its styles (see
+  Changing Morph itself).
+
+It changes Home Assistant itself — entity ids, names, areas, automations,
+scripts, helpers — only when you ask for that in words: "change the entity
+ID", "rename the device", "make an automation that…". When a request would
+need a house change you did not ask for, brAIn does the dashboard part and
+says what would have to change under **Left for you**, so you can ask.
+
+**A choice that is yours comes back as buttons.** The commonest one: a card
+that works a number out from other sensors (a difference, a total, an
+efficiency) has no history, because Home Assistant only records entities.
+When you might want that history, brAIn builds the card with the number
+worked out in it and asks: **Calculate it in the card**, or **Make a Home
+Assistant sensor** so it is recorded. The button that changes Home Assistant
+says so, and pressing one sends it as your next request.
+
+**You can see it working.** brAIn's own steps appear in the box as it takes
+them (looking at the picture, reading \`dashboard.yaml\`, checking an entity,
+editing a file) with how long it has been at it. Close the box and the work
+carries on; a strip at the top of the dashboard says what brAIn is doing,
+and **Show** opens it again.
+
+**It is a conversation.** When brAIn answers, Morph commits the dashboard
+half as one change and shows what brAIn did, what it saw, and the card
+**before and after**.
+
+**It says where every change landed.** The result has one line for each
+place a request could reach, whether or not anything happened there:
+**Dashboard**, **Home Assistant**, **Morph's code** (when it changed),
+**brAIn's memory** (facts it queued about the house) and **GitHub** (*Nothing
+sent* unless you say yes to an issue).
+
+**Morph checks the result.** It reads the dashboard back and lists what is
+different on screen on the **Dashboard** line, worked out from the file,
+not from what brAIn said. If nothing changed it says *Nothing on the
+dashboard changed* and quotes brAIn. If brAIn left \`dashboard.yaml\` unreadable
+it says **Not applied** (Morph keeps showing the last version that read) and
+**Undo** puts the file back. If your screen has not caught up, **Refresh**
+loads it. **Keep**, **Undo** and **Tell it more**: Undo reverts
+that commit exactly (and, if you asked for a change in Home Assistant, asks
+brAIn to put that back too); Tell it more keeps the conversation above,
+takes a new picture of how it looks now, and asks what should be different.
+
+**Changing Morph itself, then asking.** When what you asked needs Morph's
+own code changed (a switch in the header, a built-in card that cannot do
+it), brAIn changes it here, in your copy of Morph. The box offers **Reload to
+see it** and **Undo**, and then asks **Would you like to open an issue to
+update Morph's code?** so everybody can have it. Nothing is sent unless you
+press **Open an issue** (see
+When Morph's own code fails).
+
+What still holds whatever you ask: brAIn's \`protected_entities\`, its action
+gate and its edit snapshots (\`brain undo\`). What brAIn learns about the
+house along the way goes into brAIn's own memory, not Morph's lessons.
+
+## Learning
+
+Morph keeps a log of what you use: what you open, toggle and slide, when, and
+what you ask brAIn for. It never leaves your house.
+
+On a schedule (daily by default), Morph asks brAIn — **read-only**, so the
+pass can look at the house but change nothing — how the **dashboard** could
+be better for how it is actually used. This loop is about the dashboard
+only: learning the house is brAIn's own job, so a pass suggests no
+automations or renames and its lessons are rules about how you want your
+dashboard. What comes back:
+
+- **Suggestions**, filed as brAIn's cases and drawn in the room they are
+  about. Answer in words or with the buttons: a yes hands the suggestion to
+  brAIn as an ordinary Tell, Dismiss hides it for now, and a no (with a
+  reason, if you like) means it is never suggested again.
+- **Lessons**, revised each pass in \`/config/morph/LEARNED.md\`. Every Tell
+  and every pass reads them. Each line ends with who wrote it: **(you)**,
+  **(tell)** (brAIn during a Tell) or **(learned)** (a pass). A line you
+  write — or any line with no mark — is never reworded or dropped by Morph.
+  A pass adds a lesson only with two pieces of evidence or a reason you
+  typed; a reason you give for No is read as evidence, not written down as a
+  rule. Edit them in **⚙ › Dashboard** or in the file.
+- **A broken card of your own**: when a file in \`cards/\` will not load,
+  Morph offers **Fix the card code …** as a suggestion, since that code is
+  this house's and a Tell fixes it.
+- **A change to Morph itself**: something the pass thinks Morph's own code
+  should do differently, with **Do it** (brAIn changes your copy of Morph,
+  then asks whether to open an issue), **Send as issue** (only report it) and
+  **No**. Nothing is sent until you press Send or Open an issue.
+
+A pass that fails (brAIn stopped, signed out, out of time) is tried again on
+the next schedule; it does not count as having read what you did.
+
+**⚙ › Dashboard** shows the scorecard: how many suggestions were made,
+done and declined, and how many of brAIn's changes were kept or undone.
+
+This is the **Learning loop** switch in ⚙ › Features: off, nothing here runs on its own, and brAIn still does what you ask.
+
+## Changing Morph itself
+
+Nothing about Morph is out of reach. Morph's own panel is a handful of
+modules in \`/config/custom_components/brain/morph/frontend/\`. To change one, brAIn
+copies it into \`/config/morph/frontend/\` and edits the copy, and Morph serves
+your copy in place of its own after a page reload.
+
+- **It is one change like any other.** It is in History, and Undo puts
+  Morph's own back.
+- **A copy that does not load is not a blank page.** Morph runs its own copy
+  for that page load and says what went wrong.
+- **An update can pause a copy.** If a Morph update changes one of the files
+  you changed, or another of Morph's modules your copy builds on, your change
+  is **paused** and Morph's own runs, because an old copy beside new modules
+  is how a panel breaks. One note says so and names what changed, with two
+  choices: **Update** merges your changes into the new version — every
+  paused file in one press and one change you can undo — and **Not now**
+  keeps Morph's own version running, with your changes paused until you
+  update them later. Where the update rewrote the same code a change was
+  in, brAIn does not guess: it asks how to bring them together, with a
+  button for each way and one for Morph's own, merges everything else, and
+  only that file stays paused until you pick. Your dashboard and your own
+  cards (\`cards/\`) are never touched by an update.
+
+**⚙ › Dashboard** lists every change, whether it is in
+use or paused, with **Update** for a paused one (and **Update all** when
+there are several) and **Remove my change** to go back to Morph's own.
+
+## When Morph's own code fails
+
+A card that fails to draw, a layout that overlaps at rest, or an answer from
+brAIn that Morph could not read is a fault in Morph, not in your dashboard,
+and is recorded on its own. A request that needs Morph's code changed is
+recorded only when you press **Open an issue** or **Send as issue**, in the
+Tell box or on a note. A change brAIn made to Morph's code goes with the
+issue as a patch. brAIn being slow or signed out is not Morph's
+fault and is not recorded. Morph keeps a ledger of these and publishes it to
+\`/config/.morph/devloop/outbox.json\`.
+brAIn's development loop (⚙ › Features › **Development loop**) reads it as its **Morph**
+stream and files each fault once in your private reports repository, where
+the cloud routine fixes it in Morph's code and the fix arrives as an update.
+
+**Report something yourself.** Say it in Ask (*the kitchen header is too
+tall*): brAIn changes your copy, and asks whether to send it on as an
+issue.
+
+Nothing leaves your house unless the **Development loop** switch in ⚙ ›
+Features is on.
+
+## ⚙ › Dashboard
+
+Morph's own Settings page is part of brAIn's ⚙ now, as **Dashboard** (shown
+while the Morph dashboard is on).
+
+| Part | What is there |
+|---|---|
+| **Changes** | The model a Tell uses, and how long a hold takes. |
+| **This device** | Whether this screen is somebody’s own or the family’s (kept in this browser), and **Fold quiet rooms**. |
+| **Appearance** | Theme (auto, dark, medium, light) and reduced motion. |
+| **Learning loop** | How often, which model, **Learn now**, the scorecard and the lessons. Whether it runs at all is the switch in ⚙ › Features. |
+| **Changes to the dashboard's own code** | Every change this house made to Morph's code, in use or paused, with **Remove my change**. A paused one is updated from its note on the Home tab. |
+| **History** | Every change with who made it, and **Undo** or **Restore** for each. |
+| **Rebuild** | **Rebuild from the house** (itself a commit you can undo). |
+
+## The dashboard file
+
+\`/config/morph/\` is a git repository:
+
+| File | What it is |
+|---|---|
+| \`dashboard.yaml\` | The dashboard: floors → sections → groups → cards. |
+| \`AGENTS.md\` | How Morph is built, for brAIn: the schema, the card types, the design rules. |
+| \`LEARNED.md\` | What this household has taught Morph. |
+| \`cards/\` | Custom card code brAIn writes (a Lovelace custom element per file). |
+
+You can edit any of them by hand; Morph commits your edit as *Edited outside
+Morph*. If the file stops parsing, the panel keeps showing the last version
+that did, with the parser's message and line above it, until the file is
+fixed.
+
+A minimal \`dashboard.yaml\`:
+
+\`\`\`yaml
+title: Home
+floors:
+  - title: Ground
+    sections:
+      - title: Kitchen
+        color: amber
+        width: 2
+        groups:
+          - cards:
+              - type: scenes
+                entities: [scene.kitchen_cook, scene.kitchen_off]
+              - entity: light.kitchen_countertop
+              - type: lovelace
+                card:
+                  type: custom:mushroom-entity-card
+                  entity: sensor.fridge_temperature
+\`\`\`
+
+## Moving from the Morph app
+
+brAIn 4.0 does the move itself. What happens, in order:
+
+1. **Update brAIn**, then **restart Home Assistant** once when it asks (the
+   integration changed). brAIn's sidebar entry is now one panel with the
+   household's name for brAIn on it.
+2. On its first start brAIn **stops the Morph app and sets it not to start
+   at boot**, deletes the old \`morph\` integration's files and its leftover
+   entry under Devices & services, and says so in a notification. It never
+   uninstalls it, because uninstalling deletes that app's data and cannot be
+   undone.
+3. **The Morph dashboard switch is already on** (it saw your dashboard), so
+   the Home tab is there. If it is not, switch it on in ⚙ › Features.
+4. **Uninstall the Morph app** from Settings › Add-ons when you are happy.
+   Uninstalling it does not touch \`/config/morph\`.
+
+What comes with you, untouched, because it was never in the Morph app:
+
+- the dashboard, \`/config/morph/dashboard.yaml\`, and **its whole history**
+  (every commit, so every Undo and Restore);
+- your own card code in \`/config/morph/cards/\`;
+- **your changes to Morph's own code** in \`/config/morph/frontend/\`. They are
+  served as before. If 4.0 changed a module one of them is built on, that
+  change is **paused** and a note on the Home tab offers **Update**, which
+  merges it into the new version as one change you can undo;
+- the household's lessons, \`/config/morph/LEARNED.md\`;
+- brAIn's cases, To Do and personality, which were always brAIn's.
+
+What starts again from its default, once: Morph's own settings (theme, how
+long a hold takes, the learning loop's schedule and model, folding quiet
+rooms) and the learning scorecard, which lived in the Morph app's private
+storage. Set them again in ⚙ › Dashboard. Which device is the family's is
+kept in each browser, as before.
 `,
   },
   {
@@ -1403,7 +1854,7 @@ answer waits for it rather than being lost.
     body: `
 # Answering in Morph
 
-Morph, the dashboard add-on, is brAIn's face: it draws brAIn's list and
+Morph, the dashboard on the Home tab, is brAIn's face: it draws brAIn's list and
 measurements and sends back what you do there. It keeps no list of its own,
 so a card answered in Morph is answered everywhere — on Needs you, in
 Repairs and on your phone — within a second or two.
@@ -3733,6 +4184,7 @@ edges.
 | 8099 | The ingress panel. Also reverse-proxies \`/terminal/\`. | Internal; ingress handles it. |
 | 7681 | ttyd, direct access. | **Off by default.** Optional, for a kiosk or a bookmarked full-screen terminal. |
 | 8098 | The assist worker pool's internal API. | Internal only. |
+| 8096 | The Morph dashboard's service: its health check, on loopback only. | Internal only; never published. |
 
 ## About port 7681
 

@@ -36,7 +36,6 @@ INTEGRATIONS = [
     ("bright", "bright"),
     ("bruh-print", "bruh_print"),
     ("bruh-bambu-studio", "bruh_bambu"),
-    ("morph", "morph"),
     ("gardenrx", "gardenrx"),
     ("bruh-task-manager", "bruh_task_manager"),
 ]

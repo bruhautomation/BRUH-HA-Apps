@@ -192,8 +192,11 @@ import extract_requests
 import feedback_store
 import finding_requests
 import findings_store
+import features
 import fixer
+import morph_service
 import personality
+import shell_link
 import healing
 import health
 import house
@@ -8799,6 +8802,18 @@ async def _options_poller() -> None:
             _publish_permission_mode()
         except Exception as exc:  # never let a transient blip kill the loop
             log.debug("add-on options poll failed: %s", exc)
+        await _shell_sync()
+
+
+async def _shell_sync() -> None:
+    """The switches' file, the address of this page for the shell, and
+    which sidebar entry shows (shell_link.py). Never raises: the panel is
+    the ingress target, and a sidebar entry is not worth its loop."""
+    try:
+        await asyncio.to_thread(features.publish)
+        await shell_link.sync(addon_options)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("shell sync failed: %s", exc)
 
 
 async def _check_auth_bg() -> None:
@@ -9343,6 +9358,10 @@ def _status_payload() -> tuple[dict | None, dict]:
         # Whether the development loop is on, so a card or a reply that
         # says brAIn cannot do something can offer "Report to brAIn".
         "devloop": _devloop_on(),
+        # ⚙ › Features, and the name the page calls brAIn by
+        # (Personality on and a name set), for the bar and `speak`.
+        "features": {**features.resolved(), "shell": shell_link.shell_fresh(),
+                     "shell_url": "/" + shell_link.SHELL_URL},
     }
 
 
@@ -9502,6 +9521,7 @@ async def h_status(request: web.Request) -> web.Response:
         # masks.
         "integration": read["integration"],
         "devloop": read["devloop"],
+        "features": read["features"],
         # What brAIn did last and what it will do next. On the poll every
         # viewer already makes, because "is this thing working" is asked
         # of the top bar and not of a tab.
@@ -19023,7 +19043,7 @@ async def _devloop_morph(payload: dict, names: dict) -> dict:
     outbox = MORPH_SHARED / "devloop" / "outbox.json"
     rows = await asyncio.to_thread(devloop.streams.morph, outbox)
     if rows is None:
-        return {"skipped": "Morph is not installed, or has published nothing yet"}
+        return {"skipped": "The Morph dashboard is off, or has published nothing yet"}
     out = await asyncio.to_thread(devloop.upstream.ingest, "morph", rows, payload, names)
 
     def _ack() -> None:
@@ -19452,6 +19472,8 @@ async def h_devloop_put(request: web.Request) -> web.Response:
         await asyncio.to_thread(devloop.save_settings, changes)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
+    # The development loop is a switch in ⚙ › Features too.
+    await asyncio.to_thread(features.publish)
     # Development mode is part of what a new terminal window is told.
     await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response(await asyncio.to_thread(_devloop_payload))
@@ -25337,7 +25359,7 @@ Ask brAIn's own measurements before you guess: what_is_normal (is a reading unus
 
 For a NEW standing automation you can also offer brAIn's replay: describe it in one sentence to the brain.intent service (call_service, domain "brain", service "intent", data {"sentence": "..."}) and brAIn drafts it, replays it over the last month, grades it against what this household actually did and offers it as a card to accept or trial. Offer that when seeing how it would have behaved helps; when they ask you to just make it, make it.
 
-When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft, Morph), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
+When something in another BRUH add-on is broken (GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft), look first with bruh_addon_status and its log. Do what can be done here (restart it, fix its options or the house's own config) and say so. Its code is in its own image and is never patched in place: when the cause is in that code, file it with report_bug — your diagnosis, the log lines and the owner's words — and it is fixed upstream and arrives as an update, which brAIn then checks held. Do the same for a bug in brAIn itself. When the problem is how a screen looks or reads — brAIn's own, another add-on's panel, Morph's dashboard or a Lovelace card — take a picture of it with screenshot_panel and look before you answer, at a phone's width (390) and a laptop's (1200), and file what you saw with report_bug and ui: true.
 
 Protected entities and the household's house rules hold whatever route you take. A refusal is their decision: tell them, and never route around it."""
 
@@ -25497,6 +25519,54 @@ async def _personality_body(request: web.Request) -> dict:
     return body
 
 
+async def h_features_get(request: web.Request) -> web.Response:
+    return web.json_response(await asyncio.to_thread(_features_payload))
+
+
+def _features_payload() -> dict:
+    out = features.resolved()
+    out["shell"] = shell_link.shell_fresh()
+    out["shell_url"] = "/" + shell_link.SHELL_URL
+    return out
+
+
+async def h_features_put(request: web.Request) -> web.Response:
+    """PUT {switch: bool, …}: ⚙ › Features."""
+    body = await _personality_body(request)
+    why = features.refusal(body)
+    if why:
+        raise web.HTTPBadRequest(text=why)
+    try:
+        await asyncio.to_thread(features.save, body)
+    except ValueError:
+        log.exception("the switches were refused after they were checked")
+        raise web.HTTPBadRequest(text="brAIn could not save those switches.")
+    except OSError:
+        log.exception("could not save the switches")
+        raise web.HTTPInternalServerError(
+            text="brAIn could not save that; the add-on log says why.")
+    # Personality and the development loop are both in what a new terminal
+    # window is told.
+    await asyncio.to_thread(_write_terminal_prompt)
+    return web.json_response(await asyncio.to_thread(_features_payload))
+
+
+async def h_morph_state(request: web.Request) -> web.Response:
+    """⚙ › Dashboard: Morph's settings, learning and own-code state."""
+    return web.json_response(await asyncio.to_thread(morph_service.state))
+
+
+async def h_morph_request(request: web.Request) -> web.Response:
+    """POST {kind, payload}: one of ⚙ › Dashboard's presses, to Morph's
+    service through its request folder (morph_service.KINDS)."""
+    body = await _personality_body(request)
+    kind = body.get("kind")
+    payload = body.get("payload") or {}
+    if not isinstance(kind, str) or kind not in morph_service.KINDS or not isinstance(payload, dict):
+        raise web.HTTPBadRequest(text="send {kind, payload} for a dashboard setting")
+    return web.json_response(await asyncio.to_thread(morph_service.request, kind, payload))
+
+
 async def h_personality_get(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(personality.payload))
 
@@ -25515,6 +25585,7 @@ async def h_personality_put(request: web.Request) -> web.Response:
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(
             text="brAIn could not save that; the add-on log says why.")
+    await asyncio.to_thread(features.publish)
     await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response(await asyncio.to_thread(personality.payload))
 
@@ -26761,6 +26832,10 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/new", h_chat_new)
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
+    app.router.add_get("/api/features", h_features_get)
+    app.router.add_put("/api/features", h_features_put)
+    app.router.add_get("/api/morph/state", h_morph_state)
+    app.router.add_post("/api/morph/request", h_morph_request)
     app.router.add_get("/api/personality", h_personality_get)
     app.router.add_put("/api/personality", h_personality_put)
     app.router.add_post("/api/personality/growth", h_personality_growth)
@@ -26815,6 +26890,10 @@ def make_app() -> web.Application:
         repaired = await asyncio.to_thread(personality.repair_from_morph)
         if repaired:
             log.info("personality: %s", repaired)
+        # brAIn's four switches (⚙ › Features), decided once from what the
+        # house already had and published for Morph's service, the
+        # integration and the prompts below to read.
+        await asyncio.to_thread(features.ensure)
         await asyncio.to_thread(_write_terminal_prompt)
         # Startup is the one moment we know nothing is in flight, so it is
         # the only place a fix orphaned by a restart can be told apart from
@@ -26864,6 +26943,7 @@ def make_app() -> web.Application:
             log.info("listed %d conversation(s) Morph started under Morph", morphs)
         await _options_sync()
         _publish_permission_mode()
+        await _shell_sync()
         # Every failed run of any kind becomes one readable file: hooked on
         # the journal so a new run path is covered by having recorded itself.
         journal.on_record(_journal_report_listener)

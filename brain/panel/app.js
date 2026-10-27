@@ -3,6 +3,15 @@
    /api/hassio_ingress/<token>/, so absolute paths would escape the ingress. */
 "use strict";
 
+// Inside brAIn's shell (`?shell=1`, framed by the integration's custom
+// panel): see "brAIn's shell" further down. Up here because any view switch
+// reads it, and one can run before that part of the file has.
+const SHELL = new URLSearchParams(location.search).get("shell") === "1"
+  && window.parent !== window;
+const shellState = { morph: false, narrow: false, raised: false };
+// What the page calls brAIn (Personality: `applyName`).
+let pageName = "brAIn";
+
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => {
   const node = document.createElement(tag);
@@ -583,6 +592,7 @@ function renderAuth() {
   renderUsageChip();
   renderPausedChip();
   syncTermMode();
+  syncHomeTab();
 }
 
 function fmtClock(epoch) {
@@ -3194,7 +3204,7 @@ function renderSettingsForm(data) {
 // Diagnostics should land there every visit; `prefGet` can throw or
 // answer null (an ingress iframe may be refused storage), so Account is the
 // fallback.
-const SET_SECTIONS = ["account", "usage", "permissions", "notifications",
+const SET_SECTIONS = ["features", "dashboard", "account", "usage", "permissions", "notifications",
                       "sources", "memory", "personality", "instructions",
                       "diagnostics", "developer", "guide"];
 const SET_SECTION_KEY = "brain.set.section";
@@ -3209,6 +3219,8 @@ const setWide = () => !SET_WIDE || SET_WIDE.matches;
 // page, not once ever — a reading on screen is the reading, and a second
 // visit asks again.
 const SET_LOADERS = {
+  features: () => loadFeatures(),
+  dashboard: () => loadDashboard(),
   permissions: () => loadSetHouseRules(),
   sources: () => { loadCameras(); loadSetCalendars(); },
   memory: () => loadSetMemory(),
@@ -4552,6 +4564,7 @@ function paintDevloop(data) {
   const s = data.settings || {};
   $("#setDevloop").checked = s.enabled === true;
   $("#devloopBody").hidden = s.enabled !== true;
+  $("#devloopOffNote").hidden = s.enabled === true;
   $("#setDevReview").checked = s.review !== false;
   // Autopilot decides the switches below it, so they are shown and greyed
   // rather than hidden: what it turned on is still something to read.
@@ -12032,6 +12045,13 @@ function syncSegNav(name = currentView) {
   if (sel) sel.value = name;
 }
 function switchView(name) {
+  // Home is the Morph dashboard, drawn by brAIn's shell over this page.
+  // Outside the shell (this page opened on its own) the press opens the
+  // shell, where the dashboard is.
+  if (name === "home" && !SHELL) {
+    try { window.top.location.assign(shellUrl()); } catch (e) { /* a frame we may not navigate */ }
+    return;
+  }
   // The To-do, Proposals and Upkeep panes are Needs you's now: a deep link, a
   // toast or an older caller that names either lands on the one screen
   // holding both.
@@ -12047,6 +12067,11 @@ function switchView(name) {
 
   if (currentView === "settings" && name !== "settings") settingsEntered(false);
   currentView = name;
+  if (SHELL) {
+    document.documentElement.classList.toggle("shell-home", name === "home");
+    shellPost({ show: name === "home" ? "home" : "panel" });
+    shellRaiseCheck();
+  }
   if (name === "settings") settingsEntered(true);
   // The terminal takes the viewport, so the page behind it stops scrolling
   // — two scrollers stacked is why a swipe sometimes moved the wrong one.
@@ -12239,7 +12264,181 @@ function syncBarHeight() {
 (function trackBarHeight() {
   const bar = document.querySelector(".topbar");
   if (!bar || typeof ResizeObserver === "undefined") return;
-  new ResizeObserver(syncBarHeight).observe(bar);
+  new ResizeObserver(() => { syncBarHeight(); shellBars(); }).observe(bar);
+  const tabs = document.querySelector(".viewtabs");
+  if (tabs) new ResizeObserver(shellBars).observe(tabs);
+})();
+
+// ---------------------------------------------------------- brAIn's shell
+//
+// Since 4.0 this page is usually inside brAIn's shell, the integration's
+// custom panel (custom_components/brain/morph/frontend/shell.js), opened
+// with `?shell=1`. The shell draws the Morph dashboard — the Home tab —
+// over this page and between its bars, so this top bar is the one header.
+// The two talk by postMessage, `{type: "brain-shell"}`, with each other
+// only: this page tells the shell the bars' heights, which tab is in front,
+// when a popover or a dialog needs to come over the dashboard (`raise`),
+// and when ☰ is pressed; the shell tells this page whether the dashboard is
+// on, whether it is a phone, and what somebody asked to open from Morph.
+
+// `SHELL` and `shellState` are declared at the top of the file, because
+// a view switch can happen before this point is reached.
+
+function shellPost(body) {
+  if (!SHELL) return;
+  try { window.parent.postMessage({ type: "brain-shell", ...body }, location.origin); }
+  catch (e) { /* the shell is going away */ }
+}
+
+// Where the shell lives, for a Home press from this page on its own.
+function shellUrl() {
+  const f = (state.status && state.status.features) || {};
+  return f.shell_url || "/brain";
+}
+
+function shellBars() {
+  if (!SHELL) return;
+  const bar = document.querySelector(".topbar");
+  const tabs = document.querySelector(".viewtabs");
+  const top = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
+  // On a phone the tabs are a bar fixed along the bottom; the dashboard
+  // ends above it.
+  const fixed = tabs && getComputedStyle(tabs).position === "fixed";
+  const bottom = fixed ? Math.round(tabs.getBoundingClientRect().height) : 0;
+  shellPost({ bars: { top, bottom } });
+}
+
+// A popover or a dialog opened while Home is in front has to come over the
+// dashboard; the page behind it is see-through (`html.shell-home`).
+function shellRaiseCheck() {
+  if (!SHELL) return;
+  const pop = $("#chipPop");
+  const open = currentView === "home" && !!(
+    (pop && !pop.classList.contains("hidden"))
+    || document.querySelector(".modal.open"));
+  if (open === shellState.raised) return;
+  shellState.raised = open;
+  document.documentElement.classList.toggle("shell-raised", open);
+  shellPost({ raise: open });
+}
+
+// The Home tab: there while the dashboard is switched on. Inside the shell
+// the shell says so; on its own, this page reads it off the status poll.
+function syncHomeTab() {
+  const tab = $("#homeTab");
+  if (!tab) return;
+  const f = (state.status && state.status.features) || {};
+  const on = SHELL ? shellState.morph : !!(f.morph && f.shell);
+  tab.hidden = !on;
+  const nav = $("#setNavDashboard");
+  if (nav) nav.hidden = !f.morph;
+  const persOff = $("#persOff");
+  if (persOff && typeof f.personality === "boolean") persOff.hidden = f.personality;
+  if (typeof f.morph === "boolean") setSummary("setSumFeatures", featSummary(f));
+  if (!on && currentView === "home") switchView("insights");
+  applyName();
+}
+
+if (SHELL) {
+  document.documentElement.classList.add("in-shell");
+  setInterval(shellRaiseCheck, 250);
+  $("#shellMenu").addEventListener("click", () => shellPost({ menu: true }));
+  window.addEventListener("message", (ev) => {
+    if (ev.source !== window.parent || ev.origin !== location.origin) return;
+    const d = ev.data;
+    if (!d || d.type !== "brain-shell") return;
+    if (d.state) {
+      shellState.morph = !!d.state.morph;
+      shellState.narrow = !!d.state.narrow;
+      $("#shellMenu").hidden = !shellState.narrow;
+      syncHomeTab();
+      if (d.state.view === "home" && shellState.morph && currentView !== "home") switchView("home");
+      if (d.state.view === "panel" && currentView === "home") switchView("insights");
+      shellBars();
+    }
+    if (d.open && typeof d.open.view === "string") {
+      if (d.open.view === "settings") {
+        openSettings().then(() => { if (d.open.sec) showSettingsSection(d.open.sec); }).catch(() => {});
+      } else {
+        switchView(d.open.view);
+      }
+    }
+  });
+  window.addEventListener("load", () => { shellPost({ ready: true }); shellBars(); });
+  shellPost({ ready: true });
+}
+
+// With Personality on, the page calls brAIn by the household's name: the
+// wordmark gives way to the name, the title says it, and every "brAIn" in
+// the page's words (never in a box being typed in, <code> or <pre>) is the
+// name as it is drawn. The product's name in exactly that spelling;
+// `brain` in lower case is a command or a path and is never touched.
+// `pageName` is declared at the top of the file, beside `SHELL`.
+
+function applyName() {
+  const f = (state.status && state.status.features) || {};
+  const name = f.personality && f.name ? String(f.name) : "brAIn";
+  if (name === pageName) return;
+  const was = pageName;
+  pageName = name;
+  document.documentElement.classList.toggle("named", name !== "brAIn");
+  const nameEl = $("#brandName");
+  if (nameEl) nameEl.textContent = name === "brAIn" ? "" : name;
+  document.title = name;
+  speakAll(document.body, was);
+}
+
+const SPEAK_SKIP = new Set(["TEXTAREA", "INPUT", "CODE", "PRE", "SCRIPT", "STYLE", "SELECT"]);
+const SPEAK_ATTRS = ["placeholder", "aria-label", "title", "data-tip", "alt"];
+
+function speakText(s, from) {
+  return s.split(from).join(pageName);
+}
+
+function speakAll(root, from = "brAIn") {
+  if (!root || pageName === from) return;
+  const walk = (node) => {
+    if (node.nodeType === 3) {
+      if (node.nodeValue.includes(from)) node.nodeValue = speakText(node.nodeValue, from);
+      return;
+    }
+    if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
+    if (node.closest && node.closest(".wordmark")) return;
+    for (const a of SPEAK_ATTRS) {
+      const v = node.getAttribute && node.getAttribute(a);
+      if (v && v.includes(from)) node.setAttribute(a, speakText(v, from));
+    }
+    for (const c of node.childNodes) walk(c);
+  };
+  walk(root);
+}
+
+(function speakAsDrawn() {
+  if (typeof MutationObserver === "undefined") return;
+  new MutationObserver((records) => {
+    if (pageName === "brAIn") return;
+    for (const rec of records) {
+      if (rec.type === "characterData") {
+        const n = rec.target;
+        const p = n.parentElement;
+        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea")) {
+          n.nodeValue = speakText(n.nodeValue, "brAIn");
+        }
+      } else if (rec.type === "attributes") {
+        const v = rec.target.getAttribute(rec.attributeName);
+        if (v && v.includes("brAIn") && !rec.target.closest(".wordmark")) {
+          rec.target.setAttribute(rec.attributeName, speakText(v, "brAIn"));
+        }
+      } else {
+        rec.addedNodes.forEach((n) => {
+          const p = n.parentElement;
+          if (p && (SPEAK_SKIP.has(p.tagName) || p.closest("code, pre, textarea"))) return;
+          speakAll(n);
+        });
+      }
+    }
+  }).observe(document.body, { childList: true, subtree: true, characterData: true,
+    attributes: true, attributeFilter: SPEAK_ATTRS });
 })();
 
 // ---------------------------------------------------------- chat terminal
@@ -17183,4 +17382,244 @@ $("#instrAsk").addEventListener("click", () => {
   lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
   leaveSettings();
   openInTerminal({ prompt: lines.join("\n") });
+});
+
+// -------------------------------------------------------- ⚙ › Features
+//
+// brAIn's four switches (panel/features.py). Each is saved the moment it is
+// pressed and takes effect without a restart; the shell is told, so the
+// Home tab comes or goes at once. The development switch is `#setDevloop`,
+// the devloop's own `enabled`, whose handler is the Developer section's.
+
+let featState = null;
+
+function featSummary(f) {
+  const on = [f.morph && "Morph", f.personality && "Personality",
+    f.learning_loop && "Learning loop", f.development_loop && "Development loop"].filter(Boolean);
+  return on.length ? on.join(" · ") : "Everything off";
+}
+
+function paintFeatures() {
+  const f = featState || {};
+  $("#featMorph").checked = !!f.morph;
+  $("#featPersonality").checked = !!f.personality;
+  $("#featLearning").checked = !!f.learning_loop;
+  $("#setDevloop").checked = !!f.development_loop;
+  $("#setNavDashboard").hidden = !f.morph;
+  setSummary("setSumFeatures", featSummary(f));
+}
+
+async function loadFeatures() {
+  try {
+    featState = await api("api/features");
+  } catch (e) {
+    $("#featNote").textContent = e.message;
+    return;
+  }
+  paintFeatures();
+}
+
+const FEATURE_SAID = {
+  morph: ["The Home tab is on. brAIn builds the first dashboard from your floors and rooms.",
+    "The Morph dashboard is off. Its files and history are kept."],
+  personality: ["brAIn speaks as the personality you gave it.",
+    "brAIn is brAIn again. The personality is kept for when you switch it back on."],
+  learning_loop: ["The learning loop is on: brAIn suggests improvements to itself here.",
+    "The learning loop is off: brAIn changes itself only when you ask."],
+};
+
+document.querySelectorAll("input[data-feature]").forEach((inp) =>
+  inp.addEventListener("change", async () => {
+    const key = inp.dataset.feature;
+    const want = inp.checked;
+    inp.disabled = true;
+    try {
+      featState = await api("api/features", { method: "PUT", body: JSON.stringify({ [key]: want }) });
+      paintFeatures();
+      toast(FEATURE_SAID[key][want ? 0 : 1]);
+      shellPost({ features: true });
+      refreshStatus().catch(() => {});
+    } catch (e) {
+      inp.checked = !want;
+      toast(e.message);
+    } finally {
+      inp.disabled = false;
+    }
+  }));
+// The development switch saves through the devloop's route; the switches'
+// file follows it, and the summary is read again.
+$("#setDevloop").addEventListener("change", () => setTimeout(() => loadFeatures(), 400));
+// A section named in a sentence ("switched on in Features") is a link to
+// it, not a button: it goes somewhere and does nothing.
+document.querySelectorAll("[data-open-sec]").forEach((b) =>
+  b.addEventListener("click", (ev) => { ev.preventDefault(); showSettingsSection(b.dataset.openSec); }));
+
+// -------------------------------------------------------- ⚙ › Dashboard
+//
+// Morph's own Settings page until 4.0. Drawn from Morph's service's mirror
+// and changed through its request folder (`api/morph/*`, morph_service.py).
+// "This device" is the browser's own: the shell and this page share Home
+// Assistant's origin, so Morph reads what is set here as it is set.
+
+let dashState = null;
+let dashHist = null;
+let dashRegenSure = false;
+
+const DASH_PICKS = {
+  tell_model: [["", "brAIn's default"], ["sonnet", "Sonnet"], ["opus", "Opus"], ["haiku", "Haiku"]],
+  hold_ms: [[400, "Quick"], [540, "Normal"], [800, "Slow"]],
+  theme: [["auto", "Follow Home Assistant"], ["dark", "Dark"], ["medium", "Medium"], ["light", "Light"]],
+  learning_hours: [[12, "Twice a day"], [24, "Daily"], [72, "Every 3 days"], [168, "Weekly"]],
+  learn_model: [["", "brAIn's default"], ["haiku", "Haiku"], ["sonnet", "Sonnet"], ["opus", "Opus"]],
+};
+const DASH_WHO = { person: "You", brain: "brAIn", learning: "Learning", outside: "Outside", morph: "Morph" };
+
+function dashDevice() {
+  try { return localStorage.getItem("morph.device") === "family" ? "family" : "personal"; }
+  catch (e) { return "personal"; }
+}
+
+function dashPerson() {
+  try { return localStorage.getItem("morph.person") || ""; } catch (e) { return ""; }
+}
+
+function dashPick(key, label, value) {
+  const opts = DASH_PICKS[key].map(([v, name]) =>
+    `<option value="${esc(String(v))}"${String(v) === String(value) ? " selected" : ""}>${esc(name)}</option>`).join("");
+  return `<label for="dash_${key}">${esc(label)}</label>`
+    + `<select id="dash_${key}" class="sel selin" data-dash-set="${key}" data-num="${typeof DASH_PICKS[key][0][0] === "number"}">${opts}</select>`;
+}
+
+function dashSwitch(key, title, body, on) {
+  return `<div class="setgroup"><div class="setrow top"><label class="check bigcheck">`
+    + `<input class="tog" type="checkbox" data-dash-bool="${key}"${on ? " checked" : ""}>`
+    + `<span><b>${esc(title)}</b><span class="subtext">${esc(body)}</span></span></label></div></div>`;
+}
+
+function renderDashboard() {
+  const body = $("#dashBody");
+  if (!body) return;
+  const st = dashState || {};
+  if (!st.settings) {
+    body.innerHTML = `<p class="hint">The dashboard's service has not answered yet. It starts within
+      a minute of the Morph dashboard being switched on in
+      <a class="linkish" href="#" data-dash-act="features">Features</a>.</p>`;
+    return;
+  }
+  const s = st.settings;
+  const L = st.learning || {};
+  const sc = L.scorecard || {};
+  const learningOn = !!(featState ? featState.learning_loop : s.learning);
+  const code = st.code || [];
+  const parts = [];
+  if (st.version) parts.push(`<p class="hint tight">Morph ${esc(st.version)}${st.head ? ` · dashboard at ${esc(st.head)}` : ""}</p>`);
+  if (st.brain && st.brain.state && st.brain.state !== "ok") parts.push(`<p class="hint">${esc(st.brain.sentence || "")}</p>`);
+  parts.push(`<h4 class="sethead first">Changes</h4>`
+    + dashPick("tell_model", "Model for changes", s.tell_model)
+    + dashPick("hold_ms", "How long a hold takes", s.hold_ms)
+    + `<p class="hint tight">In Edit, hold anything and tell brAIn what to change. Every change is one entry in History below, with an Undo.</p>`);
+  parts.push(`<h4 class="sethead">This device</h4>`
+    + `<label for="dash_device">Whose device this is</label>`
+    + `<select id="dash_device" class="sel selin" data-dash-device="1">`
+    + `<option value="personal"${dashDevice() === "personal" ? " selected" : ""}>Personal — leads with its person's habits</option>`
+    + `<option value="family"${dashDevice() === "family" ? " selected" : ""}>Family — a wall tablet everybody reads</option></select>`
+    + `<p class="hint tight">Kept in this browser. A family device settles into a page you can read from across the room after a minute and a half untouched.</p>`
+    + (dashDevice() === "personal" && (st.people || []).length
+      ? `<label for="dash_person">Whose</label><select id="dash_person" class="sel selin" data-dash-person="1">`
+        + `<option value=""${dashPerson() ? "" : " selected"}>Whoever is signed in</option>`
+        + st.people.map((x) => `<option value="${esc(x.entity_id)}"${dashPerson() === x.entity_id ? " selected" : ""}>${esc(x.name)}</option>`).join("")
+        + `</select>` : "")
+    + dashSwitch("fold_rooms", "Fold quiet rooms", "A room with nothing on, moving or unusual folds to its name, its scenes and its doors.", s.fold_rooms));
+  parts.push(`<h4 class="sethead">Appearance</h4>` + dashPick("theme", "Theme", s.theme)
+    + dashSwitch("reduce_motion", "Reduce motion", "Things move straight to where they belong instead of springing there.", s.reduce_motion));
+  parts.push(`<h4 class="sethead">Learning loop</h4>`
+    + (learningOn ? "" : `<p class="hint">The learning loop is off in <a class="linkish" href="#" data-dash-act="features">Features</a>, so nothing below runs on its own.</p>`)
+    + dashPick("learning_hours", "How often", s.learning_hours)
+    + dashPick("learn_model", "Model for learning", s.learn_model)
+    + `<div class="row"><button type="button" class="btn" data-dash-act="learn"${learningOn ? "" : " disabled"}>Learn now</button>`
+    + `<span class="hint tight">${esc(L.running ? "A pass is running…" : L.last_note || "No pass has run yet.")}${L.last_pass ? " · " + esc(timeAgo(new Date(L.last_pass * 1000).toISOString())) : ""}</span></div>`
+    + `<p class="hint tight">${sc.done || 0} suggestions done · ${sc.declined || 0} declined · ${sc.tells_kept || 0} of ${sc.tells || 0} brAIn changes kept · ${sc.lessons || 0} lessons</p>`
+    + `<label for="dashLessons">What brAIn has learned about this household</label>`
+    + `<textarea id="dashLessons" rows="6" spellcheck="false">${esc((L.lessons || []).map((x) => "- " + (typeof x === "string" ? x : (x && x.text) || "")).join("\n"))}</textarea>`
+    + `<p class="hint tight">One per line, yours to edit. Every change brAIn makes to the dashboard reads them.</p>`
+    + `<div class="row"><button type="button" class="btn" data-dash-act="lessons">Save lessons</button></div>`);
+  const codeRows = code.length ? code.map((r) => `<div class="drow"><span><b>${esc(r.name)}</b>${r.kind === "new" ? " (new)" : ""} · ${esc(r.status === "paused" ? "paused by an update: Morph's own is running" : "in use")}</span>`
+    + `<button type="button" class="btn small" data-dash-act="code_reset" data-v="${esc(r.name)}">Remove my change</button></div>`).join("")
+    : `<p class="hint tight">None. brAIn can change any part of the dashboard's own code; ask in Edit.</p>`;
+  parts.push(`<h4 class="sethead">Changes to the dashboard's own code</h4>${codeRows}`
+    + (code.some((r) => r.status === "paused") ? `<p class="hint tight">A paused change is updated from the note on the Home tab.</p>` : ""));
+  const hist = dashHist == null ? `<p class="hint tight">Reading…</p>`
+    : dashHist.length ? dashHist.map((h) => `<div class="drow"><span><b>${esc(DASH_WHO[h.who] || h.who || "")}</b> · ${esc(h.message || "")} · <span class="hint">${esc(new Date(h.at * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }))}</span></span>`
+      + `<span class="row"><button type="button" class="btn small" data-dash-act="undo_commit" data-v="${esc(h.sha)}">Undo</button>`
+      + `<button type="button" class="btn small" data-dash-act="restore" data-v="${esc(h.sha)}">Restore</button></span></div>`).join("")
+      : `<p class="hint tight">No history yet.</p>`;
+  parts.push(`<h4 class="sethead">History</h4><p class="hint tight">Every change to the dashboard — yours, brAIn's, or a suggestion you approved. Undo reverts one change; Restore puts the whole dashboard back as it was then.</p>${hist}`);
+  parts.push(`<h4 class="sethead">Rebuild</h4><p class="hint tight">The dashboard is /config/morph/dashboard.yaml. Rebuilding makes a fresh one from your floors and rooms; the current one stays in History.</p>`
+    + `<div class="row"><button type="button" class="btn" data-dash-act="regenerate">${dashRegenSure ? "Press again to rebuild" : "Rebuild from the house"}</button></div>`);
+  const active = document.activeElement;
+  const keepLessons = active && active.id === "dashLessons" ? active.value : null;
+  body.innerHTML = parts.join("");
+  if (keepLessons != null) { const ta = $("#dashLessons"); ta.value = keepLessons; ta.focus(); }
+}
+
+async function dashRequest(kind, payload) {
+  try {
+    return await api("api/morph/request", { method: "POST", body: JSON.stringify({ kind, payload: payload || {} }) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+async function loadDashboard() {
+  try { dashState = await api("api/morph/state"); } catch (e) { dashState = {}; }
+  if (!featState) loadFeatures().then(renderDashboard);
+  renderDashboard();
+  const h = await dashRequest("history", { limit: 60 });
+  dashHist = h && h.ok !== false ? (h.log || []) : [];
+  renderDashboard();
+}
+
+$("#dashBody").addEventListener("change", async (ev) => {
+  const t = ev.target;
+  if (t.dataset.dashDevice) {
+    try { localStorage.setItem("morph.device", t.value === "family" ? "family" : "personal"); } catch (e) { /* storage refused */ }
+    toast("Saved for this browser.");
+    renderDashboard();
+    return;
+  }
+  if (t.dataset.dashPerson) {
+    try { if (t.value) localStorage.setItem("morph.person", t.value); else localStorage.removeItem("morph.person"); } catch (e) { /* storage refused */ }
+    toast("Saved for this browser.");
+    return;
+  }
+  const key = t.dataset.dashSet || t.dataset.dashBool;
+  if (!key) return;
+  const value = t.dataset.dashBool ? t.checked : t.dataset.num === "true" ? Number(t.value) : t.value;
+  const r = await dashRequest("settings", { patch: { [key]: value } });
+  if (r.ok) { dashState = { ...dashState, settings: r.settings }; toast("Saved."); } else toast(r.error || "Not saved.");
+  renderDashboard();
+});
+
+$("#dashBody").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-dash-act]");
+  if (!b) return;
+  const act = b.dataset.dashAct;
+  const v = b.dataset.v || "";
+  if (act === "features") { ev.preventDefault(); showSettingsSection("features"); return; }
+  if (act === "regenerate" && !dashRegenSure) { dashRegenSure = true; renderDashboard(); return; }
+  b.disabled = true;
+  let r;
+  if (act === "learn") r = await dashRequest("learn_now");
+  else if (act === "lessons") {
+    const lessons = $("#dashLessons").value.split("\n").map((x) => x.replace(/^[-*]\s*/, "").trim()).filter(Boolean);
+    r = await dashRequest("lessons", { lessons });
+  } else if (act === "code_reset") r = await dashRequest("code_reset", { name: v });
+  else if (act === "undo_commit" || act === "restore") r = await dashRequest(act, { sha: v });
+  else if (act === "regenerate") { dashRegenSure = false; r = await dashRequest("regenerate"); }
+  b.disabled = false;
+  const said = { learn: "Learning pass started — suggestions appear on the Home tab when it answers.",
+    lessons: "Lessons saved.", code_reset: "The dashboard's own copy is back. Reload the Home tab to see it.",
+    undo_commit: "Put back.", restore: "Restored that version. Undo is in History.", regenerate: "Rebuilt from the house." };
+  toast(r && r.ok ? said[act] : (r && r.error) || "That did not work.");
+  loadDashboard();
 });

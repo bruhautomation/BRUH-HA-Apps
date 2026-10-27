@@ -19,7 +19,7 @@ from pathlib import Path
 from morph_env import MorphEnv
 
 ROOT = Path(__file__).resolve().parent.parent
-INTEGRATION = ROOT / "morph" / "custom_components" / "morph"
+INTEGRATION = ROOT / "brain" / "custom_components" / "brain" / "morph"
 QUESTION = "What Sam said: is the back door locked, and did the dryer finish?"
 
 

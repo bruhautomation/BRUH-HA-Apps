@@ -204,7 +204,7 @@ def write_hypothesis_request(hass: HomeAssistant, ts: int, action: str, *,
                  what=f"the answer to guess {ts}")
 
 
-# Morph (brAIn 3.0). Its integration calls `write_morph_request` with the
+# Morph (brAIn 3.0; its panel half is this integration's since 4.0). It calls `write_morph_request` with the
 # body it built; this checks every field and drops it on the same queue, so
 # an answer given on the dashboard is ordered with every other answer.
 # The words are spelled here as well as in the panel's `finding_requests`,

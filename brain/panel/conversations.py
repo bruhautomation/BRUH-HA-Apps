@@ -531,7 +531,7 @@ def backfill_sources(cwd: str, limit: int = MAX_FILTER_SCAN) -> int:
 
 
 # What Morph sends brAIn opens with Morph's own fixed words (read off
-# `morph/service/tell.py`, `learning.py` and `converse.py`, whitespace
+# `brain/morph/service/tell.py`, `learning.py` and `converse.py`, whitespace
 # folded the way `_first_prompt` folds it): a change request, the learning
 # pass, and a conversation from its Ask line — the last either bare or led
 # by a card's context. Morph's tasks now say who sent them

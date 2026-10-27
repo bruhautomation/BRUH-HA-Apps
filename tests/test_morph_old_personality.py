@@ -19,8 +19,9 @@ from morph_env import MorphEnv
 from test_morph_loops import DOC
 
 ROOT = Path(__file__).resolve().parent.parent
-MORPH = ROOT / "morph"
-PANEL_JS = MORPH / "custom_components" / "morph" / "frontend" / "morph-panel.js"
+MORPH = ROOT / "brain" / "morph"
+FRONTEND_DIR = ROOT / "brain" / "custom_components" / "brain" / "morph" / "frontend"
+PANEL_JS = FRONTEND_DIR / "morph-panel.js"
 
 OLD_LOADER = """
   async loadPersona() {
@@ -87,7 +88,7 @@ class TestACopyThatReadsTheOldFileIsPaused(unittest.TestCase):
 class TestNothingMorphShipsReadsIt(unittest.TestCase):
 
     def test_no_shipped_module_or_prompt_reads_or_writes_it(self):
-        for path in list((MORPH / "custom_components" / "morph" / "frontend").glob("*.js")) \
+        for path in list((FRONTEND_DIR).glob("*.js")) \
                 + list((MORPH / "service").glob("*.py")):
             text = path.read_text()
             for m in re.finditer(r"personality\.js\b", text):

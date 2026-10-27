@@ -123,7 +123,7 @@ STREAMS: dict[str, dict] = {
         "label": "Screens: pictures of every BRUH panel and card, redacted, with the layout faults measured",
         "cost": "free", "clears": False, "rolling": True,
         "default_on": False, "default_hours": 168},
-    # Morph — the dashboard add-on brAIn designs — keeps a ledger of its own
+    # Morph — brAIn's dashboard (part of brAIn since 4.0) — keeps a ledger of its own
     # faults (a card that failed to draw, sections that overlapped, a request
     # it could not carry out) and publishes them for this stream to file. It
     # carries no second token, queue or cap: Morph's reports ride this loop's.
@@ -132,12 +132,12 @@ STREAMS: dict[str, dict] = {
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
     # The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print,
-    # BRight, BRUH Minecraft, Morph — watched from outside: each one's
+    # BRight, BRUH Minecraft — watched from outside: each one's
     # Supervisor state, the errors in its log, what Home Assistant logged
     # about its integration, and anything it published about itself
     # (`devloop/siblings.py`). Needs nothing from the add-on it watches.
     "siblings": {
-        "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight, Minecraft and Morph",
+        "label": "Other BRUH add-ons: errors in GardenRX, Bambu Studio, Print, BRight and Minecraft",
         "cost": "free", "clears": True, "rolling": False,
         "default_on": True, "default_hours": 1},
     "look": {

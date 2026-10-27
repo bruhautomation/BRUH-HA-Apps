@@ -17,6 +17,11 @@ changelog. This page is the short version.
 >
 > **Settings → System → Backups**, then copy it off the device.
 
+> ### ⚠️ Experimental — still being actively developed
+> brAIn changes often and parts of it may be unstable between updates — above all the
+> **Morph dashboard**, part of brAIn since 4.0. Keep your own dashboards and automations
+> working beside it.
+
 ## What it is
 
 A Home Assistant add-on that runs Claude Code and a suite of tools inside HA, which builds
@@ -53,6 +58,8 @@ cools" with humidity and temperature charts](https://raw.githubusercontent.com/b
 | **Says when it breaks** | The moment a run fails, a daemon dies or a notification cannot be delivered, brAIn writes the evidence down by itself — one plain-text file under `/share/brain/reports/`, redacted, listed under ⚙ → **Problems** with a Copy button, and mirrored as an entry on Home Assistant's own Repairs page. |
 | **Talks** | A conversation agent for Assist, answering in a few seconds from a pool of pre-warmed workers, with your memory and an area map already in the prompt. |
 | **Runs your devices** | **ESPHome**: edit, validate, flash over the air and stream logs for every device, from the panel or by asking. **Music Assistant**: control players and clear out the stale speakers Home Assistant can't delete. |
+| **Has a dashboard** | Switch on the **Morph dashboard** in ⚙ › Features and brAIn's sidebar entry opens on **Home**: a dashboard laid out by what matters in the house right now, that you change by holding anything and saying what you want. Any Lovelace card can be hosted, and every change is one commit you can undo. Morph was an app of its own until 4.0; brAIn stops the old app for you and your dashboard, its history and your changes come with it. Experimental. |
+| **Is yours** | ⚙ › Features: **Personality** gives brAIn the name and voice you choose, everywhere; the **Learning loop** lets it improve itself here (nothing leaves the house); the **Development loop** sends its own faults, redacted, to your private repository so its code is fixed upstream. |
 | **Has a terminal** | The real Claude Code CLI in your browser, in two shapes: **Chat** renders it as a conversation that reflows to a phone, **Classic** is a true terminal for anything that draws its own screen. Same session behind both. |
 
 ![The Findings tab, headed "What's waiting on you": a "Back door battery has reported nothing

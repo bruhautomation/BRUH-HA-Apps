@@ -245,7 +245,7 @@ class TestPanelBranding(unittest.TestCase):
                 self.assertNotIn(roof, body, f"{svg.name} is wearing a roof")
             if "-logo-" in svg.name:
                 self.assertIn("M159.55,176c0-23.95", body, f"{svg.name} lost the BR ligature")
-        util = (BASE_DIR / "morph" / "custom_components" / "morph" / "frontend" / "util.js").read_text()
+        util = (BASE_DIR / "brain" / "custom_components" / "brain" / "morph" / "frontend" / "util.js").read_text()
         self.assertIn("V12A8 8 0 0 1 12 20", util,
                       "the panel's light mark is not the same drawing as the brand's")
 
@@ -333,7 +333,7 @@ class TestPanelBranding(unittest.TestCase):
     def test_every_view_tab_has_a_pane(self):
         # Named, not counted: a count says nothing about whether the tab
         # added last kept its label.
-        for view in ("insights", "findings", "archive", "activity", "housebook",
+        for view in ("home", "insights", "findings", "archive", "activity", "housebook",
                      "terminal", "memory", "docs"):
             self.assertIn(f'data-view="{view}"', self.html)
             self.assertIn(f'id="view{view.capitalize()}"', self.html)
@@ -345,10 +345,11 @@ class TestPanelBranding(unittest.TestCase):
         for gone in ("todo", "proposals", "upkeep"):
             self.assertNotIn(f'id="view{gone.capitalize()}"', self.html)
             self.assertNotIn(f'data-view="{gone}"', self.html)
-        # Three tabs: what brAIn has to tell you, the conversation, and what
-        # it holds about the house.
+        # Home first (the Morph dashboard, shown while it is switched on),
+        # then what brAIn has to tell you, the conversation, and what it
+        # holds about the house.
         tabs = re.findall(r'class="viewtab[^"]*"[^>]*data-group="(\w+)"', self.html)
-        self.assertEqual(tabs, ["insights", "ask", "memory"])
+        self.assertEqual(tabs, ["home", "insights", "ask", "memory"])
 
     def test_terminal_frame_is_lazy_and_points_at_the_proxy(self):
         self.assertIn('id="termFrame"', self.html)

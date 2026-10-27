@@ -37,6 +37,16 @@ os.environ.setdefault("BRAIN_TERMINAL_HANDOFF",
 # that drives `checks.snapshot.collect` would otherwise stamp the real one.
 os.environ.setdefault("BRAIN_ENTRY_FAILING_FILE",
                       os.path.join(_SANDBOX, "entry-failing.json"))
+# brAIn's switches (features.py) and the shell's files (shell_link.py): a
+# test that starts the panel publishes them, and on a box with a real
+# /config/.brain that turned Personality off for every test after it. The
+# features file sits in a folder that does not exist, so nothing is written
+# and every switch reads as a house that never chose.
+os.environ.setdefault("BRAIN_FEATURES_FILE",
+                      os.path.join(_SANDBOX, "unwritten", "features.json"))
+os.environ.setdefault("BRAIN_SHARED_DIR", os.path.join(_SANDBOX, "unwritten"))
+os.environ.setdefault("BRAIN_INGRESS_HIDDEN_FILE",
+                      os.path.join(_SANDBOX, "ingress_hidden.json"))
 
 
 @pytest.fixture(autouse=True)

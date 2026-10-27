@@ -24,9 +24,9 @@
  *     ASKED about ("send this as an issue?") rather than filed;
  *   * Edit: hold a card and the Tell brAIn prompt opens INSIDE it, Send
  *     hands it over, and the answer ends with Keep · Undo;
- *   * Settings renders, shows brAIn's personality (read again each time it
- *     opens, and says where it lives when there is none), and nothing on
- *     either width scrolls sideways.
+ *   * there is no Settings page and no ⚙ of Morph's own (they are brAIn's
+ *     ⚙ › Dashboard since 4.0), and "See the changes" asks brAIn's shell
+ *     to open that section.
  *
  *   * Coming up is one short strip: dragging it moves the timeline behind
  *     a fixed reading point and the readout says what is at the point, a
@@ -470,7 +470,7 @@ async function night(p, name) {
   const n = await p.evaluate(() => {
     const r = window.__panel.shadowRoot;
     const P = window.__panel;
-    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: !!P.s.ask, page: P.s.page, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
+    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: !!P.s.ask, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
   });
   if (!/form-night/.test(n.cls)) fail(where, `the armed-night house is not in the night form (${n.cls}) ${n.dbg}`);
   if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
@@ -660,7 +660,7 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
   }
   const box = await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-tell]'); return { text: b ? b.innerText : '', figs: b ? b.querySelectorAll('figure.shot img').length : 0 }; });
   if (!/Looking at the screenshot/.test(box.text)) fail(name, 'brAIn\'s own steps are not shown while it works');
-  if (!/brAIn saw:/.test(box.text)) fail(name, 'the finished tell does not say what brAIn saw');
+  if (!/(?:brAIn|Juniper) saw:/.test(box.text)) fail(name, 'the finished tell does not say what brAIn saw');
   if (!/Dashboard/.test(box.text) || !/Cans/.test(box.text)) fail(name, 'the finished tell does not say what is on the dashboard now (read back from the file)');
   if (!/Home Assistant\s*Not changed/.test(box.text) || !/GitHub\s*Nothing sent/.test(box.text)) fail(name, `the finished tell does not say Home Assistant and GitHub were left alone (${box.text.slice(0, 300)})`);
   if (box.figs < 2) fail(name, `the finished tell shows ${box.figs} picture(s), not before and after`);
@@ -688,53 +688,24 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
   if (wide.length) fail(name, `the tell box or the bar (with its toast) is wider than the screen: ${wide.join(', ')}`);
   atRest(`${name} with a two-turn tell open`, await snapshot(p));
 
-  // Settings.
-  await p.evaluate(() => window.__panel.act('page', { dataset: { v: 'settings' } }));
-  await settle(p, 800);
-  const set = await p.evaluate(() => ({ text: window.__panel.shadowRoot.querySelector('.settings').innerText, sideways: window.__panel.shadowRoot.querySelector('.scroll').scrollWidth > window.__panel.shadowRoot.querySelector('.scroll').clientWidth + 1 }));
-  for (const h of ['brAIn', 'Learning', 'Improving Morph itself', 'This device', 'Appearance', 'History', 'Dashboard']) if (!set.text.includes(h)) fail(name, `Settings has no ${h} section`);
-  if (set.sideways) fail(name, 'Settings scrolls sideways');
-  // "What do you want to fix?" is Ask now (vision §13.3), not a box here.
-  if (/What do you want to fix in Morph\?/i.test(set.text)) fail(name, 'Settings still has its own report box beside Ask');
-  // The personality is brAIn's: Settings reads brAIn's file each time it
-  // opens, and says where it lives when there is none.
-  {
-    const persona = () => p.evaluate(() => { const e = window.__panel.shadowRoot.querySelector('.settings'); const h = [...e.querySelectorAll('.setsec')].find((x) => x.querySelector('h2') && x.querySelector('h2').textContent === 'Personality'); return h ? h.innerText : null; });
-    const reopen = async () => { await p.evaluate(() => { window.__panel.act('page', { dataset: { v: 'home' } }); window.__panel.act('page', { dataset: { v: 'settings' } }); }); await settle(p, 600); };
-    let t = await persona();
-    if (t == null) fail(name, 'Settings has no Personality section');
-    else {
-      if (!/Juniper/.test(t) || !/Never lectures/.test(t)) fail(name, `Settings does not show brAIn's personality: "${t.slice(0, 120)}"`);
-      if (t.indexOf('Biscuit') < 0 || t.indexOf('Biscuit') > t.indexOf('good morning')) fail(name, 'the growth is not listed newest first');
-      await p.evaluate(() => { window.__persona = { name: 'Fern', persona: 'Plain.', growth: [] }; });
-      await reopen();
-      t = await persona();
-      if (!/Fern/.test(t) || /Juniper/.test(t)) fail(name, 'an edit made in brAIn does not show when Settings opens again');
-      await p.evaluate(() => { window.__persona = null; });
-      await reopen();
-      t = await persona();
-      if (!/lives in brAIn/.test(t) || !/not set/.test(t)) fail(name, `with no personality set, Settings does not say where it lives: "${t}"`);
-      await p.evaluate(() => { window.__noBrain = true; });
-      await reopen();
-      t = await persona();
-      if (!/brAIn is not installed/.test(t)) fail(name, `a house without brAIn is not told where the personality lives: "${t}"`);
-      await p.evaluate(() => { window.__persona = undefined; window.__noBrain = false; });
-      // #391: a house still holding the old personality file, or an older
-      // copy of Morph's panel that reads it, is told in one sentence what to
-      // do; the old file offers Remove, never Update.
-      await p.evaluate(() => { window.__fixture.state.code = [{ name: 'morph-panel.js', status: 'paused', why: 'personality', kind: 'changed', at: 1 }, { name: 'personality.js', status: 'paused', why: 'personality', kind: 'new', at: 1 }]; window.__panel.load(); });
-      await reopen();
-      t = await persona();
-      const old = await p.evaluate(() => { const r = window.__panel.shadowRoot; return { said: (r.querySelectorAll('.settings [data-old-persona]') || []).length, update: !!r.querySelector('.settings [data-act="code-redo"][data-v="personality.js"]'), remove: !!r.querySelector('.settings [data-act="code-reset"][data-v="personality.js"]') }; });
-      if (old.said !== 1 || !/no longer reads the personality/.test(t || '')) fail(name, `a house with the old personality file is not told what to do in Settings › Personality: "${(t || '').slice(0, 160)}"`);
-      if (old.update || !old.remove) fail(name, 'the old personality file offers Update instead of only Remove');
-      await p.evaluate(() => { window.__fixture.state.code = []; window.__panel.load(); });
-      await reopen();
-      if (await p.evaluate(() => !!window.__panel.shadowRoot.querySelector('.settings [data-old-persona]'))) fail(name, 'the old-personality sentence stays after the old file is gone');
-    }
-  }
-
-  await p.evaluate(() => { window.__panel.act('page', { dataset: { v: 'home' } }); if (window.__panel.s.tell) window.__panel.closeTell(); });
+  // Settings are brAIn's since 4.0 (⚙ › Dashboard): Morph has no page of
+  // its own, no ⚙ in its bar, and its "See the changes" asks the shell to
+  // open brAIn's.
+  const set = await p.evaluate(() => {
+    const r = window.__panel.shadowRoot;
+    let opened = null;
+    const on = (e) => { opened = e.detail; };
+    window.__panel.addEventListener('brain-open', on);
+    window.__panel.act('brain-open', { dataset: { v: 'dashboard' } });
+    window.__panel.removeEventListener('brain-open', on);
+    return { page: !!r.querySelector('.settings'), gear: !!r.querySelector('[data-act="page"][data-v="settings"]'), opened };
+  });
+  if (set.page) fail(name, 'Morph still draws a Settings page of its own');
+  if (set.gear) fail(name, 'Morph\'s bar still has its own ⚙');
+  if (!set.opened || set.opened.view !== 'settings' || set.opened.sec !== 'dashboard') fail(name, `"See the changes" did not ask for brAIn's ⚙ › Dashboard: ${JSON.stringify(set.opened)}`);
+  // Back to the dashboard at rest, as leaving Settings did: out of Edit,
+  // nothing open.
+  await p.evaluate(() => { const P = window.__panel; if (P.s.tell) P.closeTell(); P.s.edit = false; P.s.view = null; P.cache.clear(); P.schedule(); });
   await settle(p, 800);
   await night(p, name);
   if (errors.length) fail(name, `page errors: ${errors.join(' | ')}`);
@@ -877,7 +848,7 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
 // a sentence saying so (boot.js, static.py).
 {
   const { readFileSync } = await import('node:fs');
-  const shipped = readFileSync(new URL('../../morph/custom_components/morph/frontend/styles.js', import.meta.url), 'utf8');
+  const shipped = readFileSync(new URL('../../brain/custom_components/brain/morph/frontend/styles.js', import.meta.url), 'utf8');
   for (const [label, overrides, broken] of [
     ['a working copy', { 'styles.js': shipped.replace('`;\n', '.hello{color:rgb(1, 2, 3)!important}\n`;\n') }, false],
     ['a broken copy', { 'util.js': 'export const esc = (;' }, true],
@@ -906,7 +877,7 @@ for (const [label, define] of [['a defined custom card', true], ['no way to draw
 // room draws, and the fault is reported rather than swallowed.
 {
   const { readFileSync } = await import('node:fs');
-  const own = readFileSync(new URL('../../morph/custom_components/morph/frontend/morph-panel.js', import.meta.url), 'utf8');
+  const own = readFileSync(new URL('../../brain/custom_components/brain/morph/frontend/morph-panel.js', import.meta.url), 'utf8');
   for (const [label, hook, body] of [
     ['its state', '  roomStateOf(sec) {\n', "    if (sec.id === 's_kitchen') roomGlowNotDefined.x = 1;\n"],
     ['its drawing', '  paintSection(el, sec, ms) {\n', "    if (sec.id === 's_kitchen') roomPaintNotDefined.x = 1;\n"],
@@ -959,23 +930,18 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   await btn.first().click();
   await settle(p, 900);
   const waiting = await notes();
-  if (!/Handing it to brAIn/.test(waiting)) fail(`redo ${name}`, `nothing says brAIn is being asked while the service answers (${waiting.slice(0, 120)})`);
+  if (!/Handing it to (?:brAIn|Juniper)/.test(waiting)) fail(`redo ${name}`, `nothing says brAIn is being asked while the service answers (${waiting.slice(0, 120)})`);
   if (await btn.count()) fail(`redo ${name}`, 'Make it again is back while the first press is still being answered');
   await settle(p, 2200);
   await p.evaluate(() => clearInterval(window.__busy));
   const working = await notes();
-  if (!/brAIn is updating your change to Morph’s morph-panel\.js/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
+  if (!/(?:brAIn|Juniper) is updating your change to Morph’s morph-panel\.js/.test(working)) fail(`redo ${name}`, `the note does not say brAIn is at it (${working.slice(0, 120)})`);
   if (!(await p.locator('.note [data-tell]').count())) fail(`redo ${name}`, 'brAIn’s box did not open in the note');
   if (await btn.count()) fail(`redo ${name}`, 'Make it again is still offered while brAIn makes it again');
   await settle(p, 2600);
   const done = await notes();
   if (!/Reload to see it/.test(done) || !/Undo/.test(done)) fail(`redo ${name}`, `the finished redo does not offer Reload and Undo (${done.slice(0, 160)})`);
   if (/is paused/.test(done)) fail(`redo ${name}`, 'the note still says the change is paused after brAIn made it again');
-  await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="settings"]'); b && b.click(); });
-  await settle(p, 700);
-  if (!(await p.evaluate((v) => window.__panel.shadowRoot.textContent.includes('Morph ' + v), VERSION))) fail(`redo ${name}`, 'Settings does not say which Morph is running');
-  await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('[data-act="page"][data-v="home"]'); b && b.click(); });
-  await settle(p, 700);
   // An update that rewrote the code the change was in: brAIn asks rather
   // than guessing, the change stays paused, and the answer is the next request.
   await p.evaluate(() => { window.__redoConflict = true; window.__redoDelay = 0; window.__fixture.state.code = [{ name: 'morph-panel.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
@@ -983,7 +949,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   await p.locator('[data-act="code-redo"]').first().click();
   await settle(p, 2600);
   const asked = await notes();
-  if (!/brAIn needs you to choose how to bring your change/.test(asked)) fail(`redo ${name}`, `a merge brAIn would not guess at does not ask (${asked.slice(0, 200)})`);
+  if (!/(?:brAIn|Juniper) needs you to choose how to bring your change/.test(asked)) fail(`redo ${name}`, `a merge brAIn would not guess at does not ask (${asked.slice(0, 200)})`);
   if (!/It stays paused/.test(asked)) fail(`redo ${name}`, 'the question does not say the change stays paused');
   if ((await p.locator('.note [data-act="tell-answer"]').count()) !== 3) fail(`redo ${name}`, 'the ways to resolve it are not buttons in the note');
   await p.locator('.note [data-act="tell-answer"][data-v="1"]').click();
@@ -995,12 +961,12 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   if (!/Put the theme switch inside the new gear menu/.test(after)) fail(`redo ${name}`, `the answer did not become the next request in the note (${after.slice(0, 200)})`);
   await p.evaluate(() => { window.__redoConflict = false; });
   // A press brAIn could not take says why, in the note, and can be tried again.
-  await p.evaluate(() => { window.__redoDelay = 0; window.__redoError = 'brAIn is installed but its Automation integration is off.'; window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
+  await p.evaluate(() => { window.__redoDelay = 0; window.__redoError = "brAIn's Automation integration is off."; window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }]; window.__panel.s.tell = null; window.__panel.load(); });
   await settle(p, 700);
   await p.locator('[data-act="code-redo"]').first().click();
   await settle(p, 700);
   const refused = await notes();
-  if (!/brAIn did not start: brAIn is installed but its Automation integration is off/.test(refused)) fail(`redo ${name}`, `a refusal is not said in the note (${refused.slice(0, 160)})`);
+  if (!/(?:brAIn|Juniper) did not start: (?:brAIn|Juniper)'s Automation integration is off/.test(refused)) fail(`redo ${name}`, `a refusal is not said in the note (${refused.slice(0, 160)})`);
   if (!(await p.locator('[data-act="code-redo"]').count())) fail(`redo ${name}`, 'a refused press cannot be tried again');
   // Several copies paused: ONE note with Update and Not now, and Update is
   // one press for all of them (owner: one press, not one per file, and two
@@ -1017,7 +983,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   await settle(p, 900);
   const sent = await p.evaluate(() => window.__ws.filter((m) => m.kind === 'code_merge_all').length);
   if (sent !== 1) fail(`merge all ${name}`, `Update sent ${sent} merge requests, not one`);
-  if (!/brAIn is updating your changes to Morph/.test(await notes())) fail(`merge all ${name}`, 'the note does not say brAIn is updating them');
+  if (!/(?:brAIn|Juniper) is updating your changes to Morph/.test(await notes())) fail(`merge all ${name}`, 'the note does not say brAIn is updating them');
   await settle(p, 2600);
   // Not now hides the note and leaves everything paused.
   await p.evaluate(() => { window.__fixture.state.code = [{ name: 'styles.js', status: 'paused', kind: 'changed', at: 1 }, { name: 'cards.js', status: 'paused', kind: 'changed', at: 1 }]; window.__fixture.state.activity = []; window.__panel.s.tell = null; window.__panel.s.redo = null; window.__panel.load(); });
@@ -1068,7 +1034,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   let text = await box();
   if (!/Keep a history of the supply\/return difference/.test(text)) fail(`question ${name}`, `brAIn’s question is not on screen (${text.slice(0, 200)})`);
   if (!/changes Home Assistant/.test(text)) fail(`question ${name}`, 'the answer that changes Home Assistant does not say so');
-  if (!/brAIn’s memory\s*2 facts/.test(text)) fail(`question ${name}`, 'the facts queued for brAIn’s memory are not said');
+  if (!/(?:brAIn|Juniper)’s memory\s*2 facts/.test(text)) fail(`question ${name}`, 'the facts queued for brAIn’s memory are not said');
   const wide = await p.evaluate(() => { const vw = window.innerWidth; return [...window.__panel.shadowRoot.querySelectorAll('[data-tell] *')].filter((e) => e.getBoundingClientRect().right > vw + 1).slice(0, 4).map((e) => `${e.tagName}.${e.className}`); });
   if (wide.length) fail(`question ${name}`, `the result is wider than the screen: ${wide.join(', ')}`);
   await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-act="tell-answer"][data-v="1"]').click());
@@ -1078,7 +1044,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   await settle(p, 3500);
   text = await box();
   if (!/Make a template sensor sensor\.hvac_delta/.test(text)) fail(`question ${name}`, `the answer did not become the next request (${text.slice(0, 200)})`);
-  if (!/Home Assistant\s*sensor\.hvac_delta/.test(text) || !/Undo asks brAIn to put these back/.test(text)) fail(`question ${name}`, `the Home Assistant change is not said with its undo (${text.slice(0, 300)})`);
+  if (!/Home Assistant\s*sensor\.hvac_delta/.test(text) || !/Undo asks (?:brAIn|Juniper) to put these back/.test(text)) fail(`question ${name}`, `the Home Assistant change is not said with its undo (${text.slice(0, 300)})`);
   await ctx.close();
 }
 

@@ -354,7 +354,7 @@ class TestTheLearningPassEvidence(_Base):
 class TestTheDevloopHandoff(_Base):
 
     def test_a_looks_report_is_marked_ux(self):
-        self.env.settings.update({"report_code_issues": True})
+        self.env.switch(development_loop=True)
         self.env.devloop.note_request("The header is too tall on a phone", ui=True)
         self.env.devloop.note_request("Suggestions come back after No", ui=False)
         rows = {r["where"]: r for r in self.env.devloop.rows()}
@@ -363,7 +363,7 @@ class TestTheDevloopHandoff(_Base):
 
     def test_a_code_suggestion_sent_as_an_issue_carries_its_evidence(self):
         L = self.env.learning
-        self.env.settings.update({"report_code_issues": True})
+        self.env.switch(development_loop=True)
         L.add_suggestions(L.code_suggestions([{"what": "The fan card cannot show speed", "detail": "Add it",
                                                "why": "Opened 30 times, slid 0"}]), self.dash)
         sid = L.listing()[0]["id"]
@@ -526,7 +526,7 @@ class TestAgentsMd(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.text = (Path(__file__).resolve().parent.parent / "morph" / "defaults" / "AGENTS.md").read_text()
+        cls.text = (Path(__file__).resolve().parent.parent / "brain" / "morph" / "defaults" / "AGENTS.md").read_text()
 
     def test_the_schema_is_complete(self):
         for key in ("hidden:", "unit", "type: lovelace", "options", "cards:", "sections:"):
@@ -551,7 +551,7 @@ class TestAgentsMd(unittest.TestCase):
                       "the boot.js rule says why")
 
     def test_the_pointers_stay_pointers(self):
-        defaults = Path(__file__).resolve().parent.parent / "morph" / "defaults"
+        defaults = Path(__file__).resolve().parent.parent / "brain" / "morph" / "defaults"
         for name in ("CLAUDE.md", "cards-README.md"):
             self.assertLess(len((defaults / name).read_text().splitlines()), 10, name)
 

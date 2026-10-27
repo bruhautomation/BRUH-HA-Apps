@@ -2020,6 +2020,93 @@ notify_restart_required() {
 }
 
 # ============================================================================
+# Morph: the dashboard, part of brAIn since 4.0
+#
+# Morph was an add-on of its own. Its service (brain/morph/service/morphd.py)
+# runs here now, as root, because it owns /config/morph and runs git in it;
+# it hands the files brAIn edits to the claude user after each commit. It is
+# started whatever ⚙ › Features says and does nothing until the Morph
+# dashboard is switched on, so the switch needs no restart. Its health
+# server binds 127.0.0.1, so it is watched from in here: four misses thirty
+# seconds apart and it is restarted, as is a service that exits.
+# ============================================================================
+
+retire_morph_addon() {
+    # The old integration registers the same websocket commands this one
+    # does, and its add-on would put it back on every start. Its files go;
+    # the add-on is stopped and kept from starting at boot. It is never
+    # uninstalled from here: that deletes its data and cannot be undone.
+    local old_integration="/config/custom_components/morph"
+    if [ -d "${old_integration}" ]; then
+        rm -rf "${old_integration}"
+        bashio::log.info "Removed the retired Morph integration (Morph is part of brAIn now)"
+    fi
+    [ -n "${SUPERVISOR_TOKEN:-}" ] || return 0
+    local slugs slug
+    slugs=$(curl -s -m 10 -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" http://supervisor/addons 2>/dev/null \
+        | jq -r '.data.addons[]? | select(.name == "Morph") | select(.slug | test("(^|_)morph$")) | .slug' 2>/dev/null)
+    for slug in ${slugs}; do
+        curl -s -m 10 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" -d '{"boot":"manual"}' \
+            "http://supervisor/addons/${slug}/options" 2>/dev/null || true
+        curl -s -m 30 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            "http://supervisor/addons/${slug}/stop" 2>/dev/null || true
+        bashio::log.warning "Stopped the Morph app (${slug}): Morph is part of brAIn now. You can uninstall it."
+        local payload
+        payload=$(jq -n \
+            --arg title "Morph is part of brAIn now" \
+            --arg msg "brAIn 4.0 includes the Morph dashboard, so the separate Morph app has been stopped and will not start at boot. Your dashboard and its history are unchanged. Switch it on in brAIn's ⚙ › Features, then uninstall the Morph app from Settings › Add-ons." \
+            --arg nid "brain_morph_retired" \
+            '{"title": $title, "message": $msg, "notification_id": $nid}')
+        curl -s -m 10 -o /dev/null -X POST -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+            -H "Content-Type: application/json" -d "${payload}" \
+            "http://supervisor/core/api/services/persistent_notification/create" 2>/dev/null || true
+    done
+}
+
+start_morph() {
+    if [ ! -f /opt/morph/service/morphd.py ]; then
+        bashio::log.warning "Morph's service is not in this image; the dashboard is unavailable"
+        return 0
+    fi
+    export MORPH_HOME="/opt/morph"
+    export MORPH_DATA="/data/morph"
+    export MORPH_DIR="/config/morph"
+    export MORPH_SHARED="/config/.morph"
+    export MORPH_HEALTH_PORT=8096
+    export MORPH_LOG_LEVEL="$(bashio::config 'log_level' 'info')"
+    if [ -z "${ADDON_VERSION:-}" ]; then
+        ADDON_VERSION="$(bashio::addon.version 2>/dev/null || echo 'dev')"
+        export ADDON_VERSION
+    fi
+    mkdir -p "${MORPH_DATA}" "${MORPH_SHARED}"
+    (
+        while true; do
+            python3 -u /opt/morph/service/morphd.py &
+            local pid=$! misses=0
+            sleep 60
+            while kill -0 "${pid}" 2>/dev/null; do
+                if curl -fsS -m 10 "http://127.0.0.1:${MORPH_HEALTH_PORT}/api/health" >/dev/null 2>&1; then
+                    misses=0
+                else
+                    misses=$((misses + 1))
+                    if [ "${misses}" -ge 4 ]; then
+                        bashio::log.error "Morph's service stopped answering; restarting it"
+                        kill "${pid}" 2>/dev/null
+                        break
+                    fi
+                fi
+                sleep 30
+            done
+            wait "${pid}" 2>/dev/null
+            bashio::log.warning "Morph's service exited; starting it again in 10s"
+            sleep 10
+        done
+    ) &
+    bashio::log.info "Morph's service started (it waits for the dashboard switch in ⚙ › Features)"
+}
+
+# ============================================================================
 # Token Stats Tracker (disabled — token usage sensors removed in v1.9.0)
 # ============================================================================
 
@@ -2442,6 +2529,8 @@ main() {
     start_mcp_watchdog
     setup_assist_scoping
     deploy_custom_integration
+    retire_morph_addon
+    start_morph
     start_usage_limits_tracker
     start_memory_consolidator
     start_study_watcher

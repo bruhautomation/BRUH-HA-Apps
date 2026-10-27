@@ -17,7 +17,11 @@ BRUH-HA-Apps/
 │   ├── translations/en.yaml     # Option labels + help text for the config UI
 │   ├── build.yaml               # Multi-arch build config
 │   ├── Dockerfile               # Container build definition
-│   ├── run.sh                   # Main startup/entrypoint script
+│   ├── run.sh                   # Main startup/entrypoint script (start_morph, retire_morph_addon)
+│   ├── morph/                   # Morph's service (part of brAIn since 4.0; the add-on is retired)
+│   │   ├── service/             # morphd.py (requests, watcher, ticks), store, gitrepo,
+│   │   │                        #   generator, tell, converse, learning, devloop, brain, settings, ha
+│   │   └── defaults/            # AGENTS.md, CLAUDE.md, cards/README.md for /config/morph
 │   ├── panel/                   # The ingress panel: aiohttp server + the UI
 │   │   ├── server.py            # Routes, scheduler, the chat terminal's API
 │   │   ├── actions.py           # The action miner: who or what changed something
@@ -50,6 +54,9 @@ BRUH-HA-Apps/
 │   │   ├── resident.py          # The first look and the investigation: prompts, schemas, the ledger
 │   │   ├── cases.py             # Four stores read as one list with three endings
 │   │   ├── morph_bridge.py      # What Morph reads (feed.json, cases.json) and the Ask line's files
+│   │   ├── morph_service.py     # ⚙ › Dashboard's wire to Morph's service (its request folder)
+│   │   ├── features.py          # ⚙ › Features: the four switches, published to features.json
+│   │   ├── shell_link.py        # The shell's address for this page, and which sidebar entry shows
 │   │   ├── authoring.py         # A rule in a sentence: drafted, simulated over the recorder, then offered
 │   │   ├── dispatch.py          # The notify tier's timing and words, from the household's own sentence
 │   │   ├── deliveries.py        # What was sent to a phone, and what happened to it
@@ -148,6 +155,8 @@ BRUH-HA-Apps/
 │   │   ├── assist-listener.sh   # Classic conversation listener (assist_fast_mode: false)
 │   │   └── automation-listener.sh # Task request file watcher
 │   └── custom_components/       # HA custom integration (deployed at runtime)
+│       └── brain/morph/         # Morph's panel half: the shell panel (frontend/shell.js), the
+│                                #   websocket API (morph/*, brain/shell), static views, frontend/
 │       └── brain/
 │           ├── __init__.py      # Integration setup + service registration
 │           ├── manifest.json    # HA integration metadata
@@ -193,12 +202,6 @@ BRUH-HA-Apps/
 │   │                            #   policy + ending (End process), settings (Level 2 status),
 │   │                            #   runaway, machine, server, and the page
 │   └── custom_components/bruh_task_manager/  # sensors + the runaway binary sensor
-├── morph/                       # Morph: the dashboard add-on
-│   ├── config.yaml / apparmor.txt / run.sh / Dockerfile
-│   ├── service/                 # morphd.py (requests, watcher, ticks), store, gitrepo,
-│   │                            #   generator, tell, converse, learning, devloop, brain, settings, ha
-│   ├── defaults/                # AGENTS.md, CLAUDE.md, cards/README.md for /config/morph
-│   └── custom_components/morph/ # The panel registration, the websocket API, frontend/
 ├── tests/
 │   └── corpus/                  # Houses and what was true of them — the frozen entries,
 │                                #   the schema, the one scorer's corpus shape, and replay.py

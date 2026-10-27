@@ -120,6 +120,10 @@ COPY panel/ /opt/panel/
 
 # Copy custom HA integration (deployed to /config/custom_components at runtime)
 COPY custom_components/ /opt/custom_components/
+# Morph's service and the files it installs in /config/morph (Morph was an
+# add-on of its own until 4.0; run.sh's start_morph runs it). Its panel half
+# is inside the integration above, under brain/morph/.
+COPY morph/ /opt/morph/
 
 # Copy ttyd asset template. run.sh runs scripts/build-mobile-index.py at
 # startup to probe ttyd's bundle filename and render the final index.html

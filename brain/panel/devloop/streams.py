@@ -187,11 +187,12 @@ MORPH_MAX_ROWS = 40
 def morph(outbox: Path) -> list[dict] | None:
     """Morph's own faults, as Morph published them for this loop.
 
-    Morph (the dashboard add-on) keeps the ledger and writes the rows in
+    Morph (brAIn's dashboard, its service in brAIn's container) keeps the ledger and writes the rows in
     this module's own shape to ``/config/.morph/devloop/outbox.json``; this
     reads them, keeps only well-formed rows whose ``where`` names Morph (the
-    cloud routine reads that word to know the fix belongs under ``morph/``),
-    and caps them. ``None`` is "Morph is not installed or could not be read",
+    cloud routine reads that word to know the fix belongs in Morph's half of
+    brAIn, ``brain/morph/`` and ``brain/custom_components/brain/morph/``),
+    and caps them. ``None`` is "the Morph dashboard is off or could not be read",
     which is a different answer from an empty list: only the second may let
     an issue be told it has not been seen since.
     """

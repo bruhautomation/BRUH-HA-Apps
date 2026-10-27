@@ -1,5 +1,7 @@
 # MORPH UI — design doc (2026-10-12; shipping as the `morph/` add-on, 0.1.0)
 
+> **Since brAIn 4.0 Morph is part of brAIn** — its service in `brain/morph/`, its panel half in `brain/custom_components/brain/morph/`, its settings in brAIn's ⚙ › Dashboard, and the whole of it switched on in ⚙ › Features. Where this page speaks of two add-ons, a file wire between them or Morph's own Settings, read [brain-morph-merge.md](brain-morph-merge.md) for what changed; the design itself stands.
+
 **A predictive, organic interface built to handle the complex, beautifully.**
 
 MORPH is a Home Assistant dashboard that lives in the sidebar. The whole page

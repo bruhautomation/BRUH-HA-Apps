@@ -18,7 +18,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-export const FRONTEND = fileURLToPath(new URL('../../morph/custom_components/morph/frontend/', import.meta.url));
+export const FRONTEND = fileURLToPath(new URL('../../brain/custom_components/brain/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
 export const VERSION = '0.5.6';
 export const STAMP = 'f00dfeed0001';
@@ -267,6 +267,10 @@ const hass = {
   async callWS(msg) {
     window.__ws.push(msg);
     const t = msg.type;
+    // brAIn's shell (opts.shell): its own command, and the Supervisor's
+    // ingress session the way Home Assistant's ingress view asks for it.
+    if (t === 'brain/shell') return { admin: ${o.notAdmin ? 'false' : 'true'}, features: { morph: ${o.morph === false ? 'false' : 'true'}, personality: true, learning_loop: true, development_loop: false, name: 'Juniper' }, ingress_url: '/api/hassio_ingress/abcdefghijkl/', slug: 'x_brain' };
+    if (t === 'supervisor/api') return msg.endpoint === '/ingress/session' ? { session: 'sess-test' } : {};
     if (t === 'morph/load') return { mirror: { revision: rev, dashboard: dash, problems: [], card_modules: window.__cardModules || [] }, state: F.state, brain: F.brain, admin: true, now: Date.now() / 1000, code: window.__code || '${STAMP}', integration: window.__integration || '${VERSION}' };
     if (t === 'morph/request') {
       const p = msg.payload || {};
@@ -359,17 +363,31 @@ function push() { const h = { ...hass, states }; el.hass = h; }
 // Home Assistant's order (ha-panel-custom.ts): import the module, create
 // the element it names, set its properties, then put it in the page. The
 // element is boot.js's shell; window.__panel is the panel inside it.
-await import('${ORIGIN}/morph_static/${VERSION}/boot.js');
-const el = document.createElement('morph-boot');
+${o.shell ? `await import('${ORIGIN}/morph_static/${VERSION}/shell.js');
+const el = document.createElement('brain-shell');` : `await import('${ORIGIN}/morph_static/${VERSION}/boot.js');
+const el = document.createElement('morph-boot');`}
 el.panel = { config: { version: '${VERSION}', cards_url: '/morph_cards' } };
 el.narrow = ${o.narrow ? 'true' : 'false'};
 el.hass = hass;
 document.body.appendChild(el);
 window.__shell = el;
-await customElements.whenDefined('morph-panel');
+${o.shell ? `window.__boot = async () => { for (let i = 0; i < 300 && !(el.shadowRoot.querySelector('morph-boot') && el.shadowRoot.querySelector('morph-boot').shadowRoot && el.shadowRoot.querySelector('morph-boot').shadowRoot.querySelector('morph-panel')); i++) await new Promise((r) => setTimeout(r, 20)); const b = el.shadowRoot.querySelector('morph-boot'); return b && b.shadowRoot ? b.shadowRoot.querySelector('morph-panel') : null; };
+window.__panel = ${o.morph === false || o.noWaitMorph ? 'null' : 'await window.__boot()'};` : `await customElements.whenDefined('morph-panel');
 while (!el.shadowRoot.querySelector('morph-panel')) await new Promise((r) => setTimeout(r, 10));
-window.__panel = el.shadowRoot.querySelector('morph-panel');
+window.__panel = el.shadowRoot.querySelector('morph-panel');`}
 window.__push = push;
+</script></body></html>`;
+}
+
+function framedPage() {
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
+<header style="height:56px;background:#123">brAIn's bar</header>
+<script>
+window.__got = [];
+const post = (b) => parent.postMessage({ type: 'brain-shell', ...b }, location.origin);
+window.__post = post;
+addEventListener('message', (ev) => { if (ev.source === parent && ev.data && ev.data.type === 'brain-shell') window.__got.push(ev.data); });
+post({ ready: true }); post({ bars: { top: 56, bottom: 0 } });
 </script></body></html>`;
 }
 
@@ -377,6 +395,10 @@ export async function route(context, opts) {
   await context.route(`${ORIGIN}/**`, async (r) => {
     const url = new URL(r.request().url());
     if (url.pathname === '/' || url.pathname === '/index.html') return r.fulfill({ contentType: 'text/html', body: page(opts) });
+    // brAIn's own page, framed by the shell: a stand-in that speaks the
+    // shell's protocol (app.js's half), so the shell's own behaviour is
+    // what is measured.
+    if (url.pathname === '/api/hassio_ingress/abcdefghijkl/') return r.fulfill({ contentType: 'text/html', body: framedPage() });
     const m = url.pathname.match(/^\/morph_static\/[^/]+\/(?:s\/[0-9a-f]{12}\/)?(.+)$/);
     if (m && m[1] === 'boot.js') {
       // static.py writes the stamp and module list into boot.js, so the

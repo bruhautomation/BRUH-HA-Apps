@@ -111,8 +111,9 @@ PANELS: dict[str, dict] = {
 }
 
 # What is drawn in brAIn's harness page: (product key, slug, label, the
-# harness's name for it). Morph has no panel of its own to open — it is a
-# Home Assistant panel — so the harness is how it is seen at all.
+# harness's name for it). Morph has no panel of its own to open — it is
+# brAIn's Home tab, drawn by Home Assistant — so the harness is how it is
+# seen at all.
 HARNESS: list[tuple[str, str, str, str]] = [
     ("morph", "dashboard", "Dashboard", "morph"),
     ("bruh-print", "card", "Lovelace card", "print-card"),
@@ -130,7 +131,7 @@ CARD_FILES: dict[str, tuple[str, ...]] = {
                           "/config/morph/cards/gardenrx.js"),
 }
 MORPH_FRONTEND = os.environ.get("BRAIN_MORPH_FRONTEND",
-                                "/config/custom_components/morph/frontend")
+                                "/config/custom_components/brain/morph/frontend")
 MORPH_CARDS = os.environ.get("BRAIN_MORPH_CARDS", "/config/morph/cards")
 MODULE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,60}\.js$")
 
@@ -158,7 +159,22 @@ def file_key(key: str) -> str:
     return re.sub(r"[^a-z0-9-]", "-", str(key or "").lower())
 
 
+# Morph is part of brAIn since 4.0, so it is no add-on of the catalog's: it
+# is drawn while its switch (⚙ › Features) is on, at brAIn's own version.
+MORPH_PRODUCT = "Morph"
+
+
+def morph_on() -> bool:
+    try:
+        import features  # noqa: PLC0415 — panel-local
+        return features.on("morph")
+    except Exception:  # noqa: BLE001 — an unreadable switch draws nothing
+        return False
+
+
 def product_for(key: str) -> str:
+    if key == "morph":
+        return MORPH_PRODUCT
     for s in siblings.CATALOG:
         if s["key"] == key:
             return s["name"]
@@ -212,6 +228,8 @@ def locate(get) -> dict:
     {product: why}}``. Never raises: a Supervisor that will not answer is
     a sentence, and every catalog add-on is then unreached."""
     out = {"targets": [], "versions": {}, "unreached": {}}
+    if morph_on():
+        out["versions"][MORPH_PRODUCT] = os.environ.get("ADDON_VERSION", "dev")[:40]
     try:
         listing = get("/addons")
     except Exception as exc:  # noqa: BLE001 — one sentence for all of them
@@ -241,7 +259,7 @@ def locate(get) -> dict:
         out["versions"][name] = str(info.get("version") or "?")[:40]
         panel = PANELS.get(key)
         if not panel:
-            continue          # Morph: drawn in the harness, nothing to open
+            continue          # drawn in the harness, nothing to open
         if info.get("state") != "started":
             out["unreached"][name] = f"it is {info.get('state') or 'not running'}"
             continue

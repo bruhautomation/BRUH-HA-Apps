@@ -10,6 +10,12 @@ having to notice, write up and paste a report.
 feature runs, connects anywhere or sends anything until you switch it on. If you
 never do, brAIn behaves exactly as if it were not there.
 
+It is the **Development loop** switch in ⚙ › Features; the repository, token,
+streams and limits are set in ⚙ › Developer once it is on. It is not the
+**Learning loop** beside it: that one is brAIn improving itself on your house,
+and sends nothing. The development loop is the only one of brAIn's switches
+that sends anything out.
+
 ## What it does
 
 brAIn looks at itself on a schedule you set and files what it finds as
@@ -28,8 +34,8 @@ schedule and its own **Run** button:
 | **Ideas** | Features this house would use, from a read-only Claude run | no | one run |
 | **Design review** | What brAIn actually showed you (cards, findings as worded, what a look concluded), judged as a product: repeated, generic, developer-only or not worth reading. One Claude run reads the words; the Screens issue carries the pictures | no | one run |
 | **Screens** | Pictures of brAIn's own panel and of every other BRUH add-on's — GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft's panels, Morph's dashboard and the add-ons' Lovelace cards, drawn on your house's real data — taken on your box and redacted (see below), at a phone's width in light and dark and at a laptop's, with the layout faults a script can measure: a page that scrolls sideways, something off the edge, a control too small to tap, a field iOS zooms into, text cut off, controls on top of each other, low contrast. One issue per add-on per release, rewritten in place, with the pictures attached and labelled for that add-on | no, weekly | nothing |
-| **Morph** | Problems the Morph dashboard add-on found in its own code: a card that failed to draw, sections that overlapped, a request brAIn could not carry out. Morph publishes them; this stream files them labelled `devloop:morph`, and the cloud half fixes them under `morph/`. Nothing is sent unless Morph is installed and its *Report Morph's own problems* switch is on | yes, hourly | nothing |
-| **Other BRUH add-ons** | GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph, read from outside through the Supervisor: an add-on stopped although set to start at boot, each distinct error in its log (with the lines around it), and what Home Assistant logged about its integration. Each report starts with the add-on's name and is labelled `devloop:<slug>`, which is where the cloud half fixes it, and is checked against that add-on's own version when it comes back fixed. An add-on may also publish its own faults to `/config/.bruh/devloop/<slug>.json` in Morph's row shape | yes, hourly | nothing |
+| **Morph** | Problems the Morph dashboard (brAIn's Home tab) found in its own code: a card that failed to draw, sections that overlapped, a request brAIn could not carry out. Morph publishes them; this stream files them labelled `devloop:morph`, and the cloud half fixes them in `brain/morph/` and `brain/custom_components/brain/morph/`. Nothing is sent unless the Morph dashboard and the Development loop are both switched on in ⚙ › Features | yes, hourly | nothing |
+| **Other BRUH add-ons** | GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft, read from outside through the Supervisor: an add-on stopped although set to start at boot, each distinct error in its log (with the lines around it), and what Home Assistant logged about its integration. Each report starts with the add-on's name and is labelled `devloop:<slug>`, which is where the cloud half fixes it, and is checked against that add-on's own version when it comes back fixed. An add-on may also publish its own faults to `/config/.bruh/devloop/<slug>.json` in Morph's row shape | yes, hourly | nothing |
 
 **What do you want to fix?** is the thirteenth: say it the way you would to a
 person ("the settings page is too crowded", "the brief never mentions the

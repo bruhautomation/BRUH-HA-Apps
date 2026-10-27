@@ -157,12 +157,12 @@ class TestATellIsAConversation(unittest.TestCase):
         self.assertEqual("asked", st["issue"])
         self.assertEqual([], self.env.devloop.rows(), "nothing is filed on the model's say-so")
 
-        self.env.settings.update({"report_code_issues": False})
+        self.env.switch(development_loop=False)
         refused = self.env.tell.answer_issue(st["id"], "send")
         self.assertFalse(refused["ok"])
-        self.assertIn("Report Morph’s own problems", refused["error"])
+        self.assertIn("Development loop is off", refused["error"])
 
-        self.env.settings.update({"report_code_issues": True})
+        self.env.switch(development_loop=True)
         self.assertTrue(self.env.tell.answer_issue(st["id"], "send")["ok"])
         rows = self.env.devloop.rows()
         self.assertEqual([issue["title"]], [r["what"] for r in rows])

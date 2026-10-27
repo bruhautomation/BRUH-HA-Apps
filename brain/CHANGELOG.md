@@ -2,6 +2,29 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.0
+
+Morph is part of brAIn. One app, one sidebar entry, one login: the Morph dashboard is brAIn's **Home** tab. Both are still being actively developed and may be unstable — keep your usual dashboards beside them. To move from the Morph app, see [Moving from the Morph app](DOCS.md#moving-from-the-morph-app).
+
+### Added
+
+- **⚙ › Features**, the first section of Settings: four switches, each saying what it does and whether anything leaves the house. **Morph dashboard** (the Home tab), **Personality**, **Learning loop** (self-improvement: brAIn changes itself here, suggesting and keeping lessons about its dashboard, and nothing leaves the house) and **Development loop** (brAIn reports its own faults to your private GitHub repository so its code is fixed upstream). A switch takes effect at once, with no restart.
+- **The Home tab.** With the Morph dashboard on, brAIn's sidebar entry opens on the dashboard you had, drawn exactly as Morph drew it, with Insights, Ask, Memory and ⚙ in the same header above it. On a phone the tabs stay along the bottom and ☰ opens Home Assistant's sidebar. Somebody who is not an administrator sees the dashboard alone, as before.
+- **⚙ › Dashboard**: Morph's own settings, moved into brAIn: the model for changes, hold time, this device, folding quiet rooms, theme and motion, the learning loop's schedule, model, scorecard and lessons, the changes this house made to the dashboard's own code, the dashboard's history with Undo and Restore, and Rebuild from the house.
+- **Personality is a name everywhere.** With Personality on and a name set, nothing says "brAIn" any more: the sidebar entry, the header (the wordmark gives way to the name), every screen in brAIn and on the dashboard, and notifications use the household's name. Off, the personality you wrote is kept and nothing reads it.
+
+### Changed
+
+- **One sidebar entry.** brAIn's entry is now the integration's own panel, titled with the assistant's name. brAIn hides its older ingress entry while that panel is there, and puts it back by itself if Home Assistant ever starts without the integration, so there is always exactly one way in.
+- **Morph's service runs inside brAIn's container**, waiting while the dashboard switch is off. Its health port (8096) is loopback-only and never published.
+- The Developer section's **Development mode: brAIn works on itself** is now **Report everything without asking**: it sends, so it was never self-improvement. The development loop's on/off switch moved to ⚙ › Features; its repository, token, streams and limits stay in ⚙ › Developer.
+- Notification links open brAIn's sidebar entry while it is registered.
+
+### Removed
+
+- **The separate Morph app.** On its first start brAIn stops the Morph app and sets it not to start at boot, deletes the retired `morph` integration's files and its leftover entry under Devices & services, and says so in a notification. It never uninstalls the app; do that yourself from Settings › Add-ons once you are happy. Your dashboard, its whole history, your cards, your changes to Morph's own code and LEARNED.md are in `/config/morph` and are kept as they are. Morph's own settings (theme, hold time, the learning schedule) and its learning scorecard lived in the Morph app's private storage and start from their defaults once; set them again in ⚙ › Dashboard.
+- Morph's own Settings page and the MORPH brand and ⚙ in its bar: those are brAIn's header and ⚙ now.
+
 ## 3.8.26
 
 ### Fixed
