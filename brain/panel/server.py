@@ -165,6 +165,7 @@ import devloop_archive
 import card_tags
 import card_verdict
 import cases
+import changes
 from checks._util import House
 import chat_session
 import closures
@@ -1318,7 +1319,43 @@ OTHER_CARDS_MAX = 10
 OTHER_CARD_SUMMARY_CHARS = 140
 
 
-def _other_cards_block(insight_id: str) -> str:
+def _card_made(stamp) -> str:
+    """`Tue 13 Oct 13:11`, the window a card's figures were read in."""
+    try:
+        made = time.strptime(str(stamp or "")[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return ""
+    return (time.strftime("%a ", made) + str(made.tm_mday)
+            + time.strftime(" %b %H:%M", made))
+
+
+def _shares_subject(card: dict, covers: dict | None) -> bool:
+    """Whether another card is about a device or system this card covers:
+    an entity this card named, a device one of them belongs to, or — for a
+    card that has domains — one of its domains or device classes."""
+    if not covers:
+        return False
+    theirs = set(_card_entities(card))
+    if not theirs:
+        return False
+    mine = set(covers.get("entities") or ())
+    if theirs & mine:
+        return True
+    if _devices_of(theirs) & _devices_of(mine):
+        return True
+    domains = set(covers.get("domains") or ())
+    if not domains:
+        return False
+    classes = set(covers.get("classes") or ())
+    for eid in theirs:
+        if eid.split(".", 1)[0] in domains:
+            return True
+        if (_NAMES.get(eid) or {}).get("class") in classes:
+            return True
+    return False
+
+
+def _other_cards_block(insight_id: str, covers: dict | None = None) -> str:
     """The other cards on the dashboard, by title and summary, for a run.
 
     A card was written blind to its neighbours, so two cards about one
@@ -1326,30 +1363,61 @@ def _other_cards_block(insight_id: str) -> str:
     files are already on disk (the listing reads them on every poll), so
     this costs one read of each and no Claude turn. Empty when there is
     nothing else, or nothing could be read.
+
+    A card about the same device or system as this one (``covers``,
+    `_shares_subject`) is listed first and in full — its figures and the
+    time they were read — because a water card that quoted the septic
+    pump at 48 gal beside the pump's own card at 50, and a heat card beside
+    an older one still saying the heat pump had not run "by 1:11 PM", were
+    each written without the other's numbers to agree with.
     """
     try:
         cards = load_insights()
     except Exception:  # noqa: BLE001 — a list nobody could read is no list
         return ""
-    rows = []
+    shared, rows = [], []
     for card in cards:
         if not isinstance(card, dict) or card.get("id") == insight_id:
             continue
         title = str(card.get("title") or "").strip()
         if not title:
             continue
+        if _shares_subject(card, covers) and len(shared) < OTHER_CARDS_MAX:
+            figures = "; ".join(
+                f"{h.get('label')}: {h.get('value')}"
+                + (f" ({h.get('delta')})" if h.get("delta") else "")
+                for h in card.get("highlights") or []
+                if isinstance(h, dict) and h.get("label"))
+            made = _card_made(card.get("generated_at"))
+            shared.append(
+                f"- {title}" + (f" (read {made})" if made else "")
+                + f" — {str(card.get('summary') or '').strip()}"
+                + (f"\n  Figures: {figures}" if figures else ""))
+            continue
+        if len(rows) >= OTHER_CARDS_MAX:
+            continue
         summary = textclip.clip(str(card.get("summary") or "").strip(),
                                 OTHER_CARD_SUMMARY_CHARS)
         rows.append(f"- {title}" + (f" — {summary}" if summary else ""))
-        if len(rows) >= OTHER_CARDS_MAX:
-            break
-    if not rows:
+    if not rows and not shared:
         return ""
-    return ("OTHER CARDS ON THIS DASHBOARD, read beside this one. Do not make "
+    parts = []
+    if shared:
+        parts.append(
+            "OTHER CARDS ABOUT THE SAME DEVICE OR SYSTEM AS THIS ONE. Where "
+            "this card speaks of it, quote these figures and say the time "
+            "they were read, or say in one clause why yours differ (a later "
+            "reading, a different window). Never lead with that device "
+            "unless it is this card's own subject, and never name or "
+            "mention another card:\n" + "\n".join(shared))
+    if rows:
+        parts.append(
+            "OTHER CARDS ON THIS DASHBOARD, read beside this one. Do not make "
             "this card about the same device or question as one of them; "
             "where yours touches one, use its figures or say in one clause "
             "why yours differ. Never name or mention another card:\n"
             + "\n".join(rows))
+    return "\n\n".join(parts)
 
 
 def save_insight(insight: dict) -> None:
@@ -3080,6 +3148,18 @@ async def _apply_morph_request(req: dict) -> dict:
             ok, why = await _morph_undo(case_id)
         elif action == "not_applicable":
             ok, why, _ = await _morph_end(case_id, "not_applicable")
+        elif action == "recheck":
+            # Check again: the panel's own press, through the same helper.
+            if finding is None:
+                why = "only a check's report can be checked again"
+            else:
+                out = await _recheck_finding(finding)
+                ok = bool(out.get("checked"))
+                why = "" if ok else str(out.get("why") or "it could not run")
+        elif action == "wrong":
+            # Ignore, with the reason Morph's box carried as the note: the
+            # case's own `wrong`, which reaches `_end_finding` for a report.
+            ok, why, _ = await _morph_end(case_id, "wrong", req.get("text", ""))
     except web.HTTPException as exc:
         ok, why = False, exc.text or "refused"
     result["ok"], result["why"] = ok, "" if ok else why
@@ -3611,6 +3691,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             if cases.on_feed(c)]
     side = morph_bridge.threads()
     names = dict(_NAMES)
+    assistant = personality.assistant_name()
     out = []
     for case in rows:
         split = cases.split_id(case["id"])
@@ -3621,17 +3702,20 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001
             urgent = False
         situation = cases.situation(case)
+        case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
             todo_text=(findings_store.todo_text_of(row, names)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
-            answers=morph_bridge.morph_answers(cases.answers(case)),
+            answers=morph_bridge.morph_answers(case_answers),
             area_id=_morph_case_area(case),
             urgent=urgent,
             finding_status=str(case.get("finding_status") or ""),
-            morph_key=str((row or {}).get("morph_key") or "")))
+            morph_key=str((row or {}).get("morph_key") or ""),
+            chip=answers_mod.chip(case, urgent),
+            who=answers_mod.who_acts(case, assistant, case_answers)))
     live = {c["id"] for c in out}
     said = []
     for cid, turns in side.items():
@@ -5994,7 +6078,8 @@ async def _generate(insight_id: str) -> None:
                        refine=refine or None,
                        clock=await asyncio.to_thread(_clock_style),
                        others=await asyncio.to_thread(
-                           _other_cards_block, insight_id))
+                           _other_cards_block, insight_id,
+                           _card_covers(cat, previous, question)))
 
         result = cost = sent = None
         if eff_gather_mode() == "search":
@@ -6044,11 +6129,21 @@ async def _generate(insight_id: str) -> None:
         # action" over a rise its own figures show, and a scheduled card
         # about nothing at all keeps the card that was there. A press is
         # never held — somebody asked, and the answer is what they get.
-        verdict = card_verdict.review({**obj, "highlights": highlights},
-                                      previous,
-                                      open_rows=_open_rows_for_verdict(cat["id"]))
+        open_rows = _open_rows_for_verdict(cat["id"])
+        verdict = card_verdict.review(
+            {**obj, "highlights": highlights}, previous, open_rows=open_rows,
+            others=await asyncio.to_thread(_other_card_subjects, insight_id),
+            names_in=_entities_named_in)
+        # A card that says a problem on the list is already dealt with —
+        # in its `fixed` field or in words — has that row's own check
+        # asked again, so the row clears or is reworded by the rule that
+        # filed it rather than standing beside a card that contradicts it.
+        # Whether the card was kept or not: what it read is the same.
+        _spawn_fixed_rechecks(verdict.get("fixed") or (), insight_id)
         if verdict["hold"] and job.get("scheduled") and previous:
-            await _keep_previous_card(insight_id, cat, question)
+            # The kept card now stands for a quiet house, so Reports folds
+            # it into its "All quiet" line rather than giving it a card.
+            await _keep_previous_card(insight_id, cat, question, quiet=True)
             REFRESH_HOLDS[insight_id] = {"why": verdict["hold"],
                                          "at": int(time.time())}
             CARD_FAILURES.pop(insight_id, None)
@@ -6063,6 +6158,12 @@ async def _generate(insight_id: str) -> None:
                              if k in verdict["obj"]}}
             highlights = obj["highlights"] if isinstance(
                 obj.get("highlights"), list) else highlights
+        # The one judgement, read off the reply's field or its own first
+        # sentence (`card_verdict.review`), and absent where there is none.
+        card_judgement = card_verdict.clean_verdict(
+            verdict["obj"].get("verdict"))
+        quiet_card = card_verdict.quiet_now(
+            {**obj, "highlights": highlights}, previous, card_judgement)
         # Hypotheses, not open questions. propose() enforces the cap and the
         # never-twice rule in code — the prompt states the budget, but a model
         # that ignores it must not be able to grow the queue anyway.
@@ -6160,6 +6261,11 @@ async def _generate(insight_id: str) -> None:
             "highlights": highlights[:6],
             "learned": learned,
             "tags": tags,
+            # Drawn as ONE chip; the prose no longer says it.
+            "verdict": card_judgement,
+            # All fine about nothing that changed: Reports folds it into
+            # its "All quiet" line rather than a card of its own.
+            "quiet": bool(quiet_card),
             "focus_used": cat.get("focus", "") if question is None else "",
             # The entities whose CURRENT state the visualization wants,
             # so a card about something happening now stops being frozen
@@ -6252,7 +6358,8 @@ async def _generate(insight_id: str) -> None:
 
 
 async def _keep_previous_card(insight_id: str, cat: dict,
-                              question: str | None) -> None:
+                              question: str | None,
+                              quiet: bool = False) -> None:
     """A run that had nothing to say leaves the stored card as it was, and
     says when it looked (`checked_at`), so the scheduler counts its age
     from the look and not from the card — otherwise the next tick would
@@ -6264,6 +6371,8 @@ async def _keep_previous_card(insight_id: str, cat: dict,
     if not isinstance(card, dict):
         return
     card["checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if quiet:
+        card["quiet"] = True
     if question is None:
         fingerprint = await _current_inputs(cat["id"], cat)
         if fingerprint:
@@ -6919,8 +7028,6 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     `scene.apply` (each domain's own reproduce_state), and then read again,
     because Home Assistant accepting a call is not a light being on. Every
     entity gets its own line: restored, or could not restore and why."""
-    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
-
     finding = _finding_or_404(request)
     if finding.get("status") not in RESTORE_STATUSES:
         raise web.HTTPConflict(text="this finding is being worked on — wait "
@@ -6936,34 +7043,9 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     if not plan["apply"] and not plan["refused"]:
         raise web.HTTPConflict(text="this fix made no service calls brAIn "
                                     "recorded, so there is nothing to put back")
-    error, after = "", {}
-    if plan["apply"]:
-        before = {}
-        for eid in plan["apply"]:
-            try:
-                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
-            except Exception:  # noqa: BLE001 — recorded as unknown
-                before[eid] = {"unknown": True}
-        iv = await asyncio.to_thread(interventions.for_finding,
-                                     int(finding["ts"]))
-        try:
-            await ha_data.call_core_service("scene", "apply",
-                                            {"entities": plan["apply"]})
-        except Exception as exc:  # noqa: BLE001 — reported per entity
-            error = str(exc)
-        typed_fix.append_ledger(typed_fix.ledger_row(
-            "scene", "apply", list(plan["apply"]), before=before,
-            channel="restore", intervention=(iv or {}).get("id", "")),
-            actions.LEDGER_FILE)
-        if not error:
-            await asyncio.sleep(RESTORE_SETTLE_S)
-        for eid in plan["apply"]:
-            try:
-                after[eid] = await ha_data.entity_state(eid)
-            except Exception:  # noqa: BLE001
-                after[eid] = None
-    rows = unfix.restore_report(plan, after, error)
-    text = unfix.restore_text(rows)
+    iv = await asyncio.to_thread(interventions.for_finding,
+                                 int(finding["ts"]))
+    rows, text = await _restore_calls(plan, (iv or {}).get("id", ""))
 
     def note() -> dict:
         findings_store.set_status(int(finding["ts"]), finding["status"],
@@ -6975,6 +7057,177 @@ async def h_finding_restore(request: web.Request) -> web.Response:
              finding["ts"], sum(1 for r in rows if r["restored"]),
              sum(1 for r in rows if not r["restored"]))
     return web.json_response({**payload, "restored": rows, "text": text})
+
+
+async def _restore_calls(plan: dict, intervention: str = "") -> tuple[list, str]:
+    """Carry out a restore plan (`unfix.restore_plan`): `scene.apply` the
+    recorded before-states, record that on the ledger as a restore, and read
+    every entity again — Home Assistant accepting a call is not a light
+    being on. One implementation for a fix's "Put them back" and a row's
+    Undo under History › Changes brAIn made."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    error, after = "", {}
+    if plan["apply"]:
+        before = {}
+        for eid in plan["apply"]:
+            try:
+                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
+            except Exception:  # noqa: BLE001 — recorded as unknown
+                before[eid] = {"unknown": True}
+        try:
+            await ha_data.call_core_service("scene", "apply",
+                                            {"entities": plan["apply"]})
+        except Exception as exc:  # noqa: BLE001 — reported per entity
+            error = str(exc)
+        typed_fix.append_ledger(typed_fix.ledger_row(
+            "scene", "apply", list(plan["apply"]), before=before,
+            channel="restore", intervention=intervention),
+            actions.LEDGER_FILE)
+        if not error:
+            await asyncio.sleep(RESTORE_SETTLE_S)
+        for eid in plan["apply"]:
+            try:
+                after[eid] = await ha_data.entity_state(eid)
+            except Exception:  # noqa: BLE001
+                after[eid] = None
+    rows = unfix.restore_report(plan, after, error)
+    return rows, unfix.restore_text(rows)
+
+
+# -- History › Changes brAIn made ------------------------------------------
+
+def _journal_since(since: float) -> list[dict]:
+    """Every edit-journal line since ``since``, whoever wrote it. Malformed
+    lines are skipped, the tolerance `brain undo` and `unfix` apply."""
+    out: list[dict] = []
+    try:
+        with open(automation_writer.INDEX, "r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                    ts = float(row.get("ts") or 0)
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                if isinstance(row, dict) and ts >= since:
+                    row["ts"] = ts
+                    out.append(row)
+    except OSError:
+        return []
+    return out
+
+
+def _file_mtime(path: str) -> float | None:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def _changes_rows(now: float | None = None) -> list[dict]:
+    """Every change brAIn made, as History rows (`changes.build`), read off
+    the stores the panel already keeps."""
+    now = time.time() if now is None else now
+    since = now - changes.CHANGES_DAYS * 86400
+    fixes = [f for f in findings_store.listing().get("findings") or []
+             if f.get("status") == "fixed"]
+    try:
+        tokens = security.honeytoken_ids()
+    except Exception:  # noqa: BLE001 — a tripwire list that cannot be read
+        tokens = ()
+    return changes.build(
+        journal=_journal_since(since), ledger=actions.read_ledger(since),
+        fixes=fixes, tidy_batches=tidy.load().get("batches") or [],
+        intents=intents.listing(),
+        accepted=list(proposals.settled_keys().values()),
+        names=dict(_NAMES), mtime=_file_mtime, protected=None,
+        honeytokens=tokens, now=now)
+
+
+async def h_changes(request: web.Request) -> web.Response:
+    """History › Changes brAIn made: newest first, a page at a time."""
+    try:
+        limit = int(request.query.get("limit") or changes.PAGE)
+    except ValueError:
+        limit = changes.PAGE
+    try:
+        before = float(request.query["before"]) if request.query.get(
+            "before") else None
+    except ValueError:
+        before = None
+    rows = await asyncio.to_thread(_changes_rows)
+    return web.json_response({**changes.page(rows, limit, before),
+                              "label": changes.label(
+                                  personality.assistant_name())})
+
+
+def _offered(rows: list[dict], rid: str) -> dict:
+    """The row a press named, refused unless the list still offers Undo on
+    it — the button and the route cannot disagree about what is safe."""
+    row = next((r for r in rows if r["id"] == rid), None)
+    if row is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    if not row.get("press"):
+        raise web.HTTPConflict(text=row.get("reason")
+                               or "that change cannot be put back")
+    return row
+
+
+_CHANGE_TS = re.compile(r"^\d{1,12}(\.\d{1,6})?$")
+
+
+async def h_change_edit_undo(request: web.Request) -> web.Response:
+    """Put one journalled file back (`automation_writer.revert`, through
+    `unfix.revert_edits`, the reverter `brain undo` uses) and reload what
+    reads it."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"edit:{float(stamp):.6f}")
+    entry = changes.find_journal(await asyncio.to_thread(
+        _journal_since, float(stamp) - 1), float(stamp))
+    if entry is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    outcome = await asyncio.to_thread(unfix.revert_edits, [entry])
+    failures = []
+    for domain, service in outcome["reloads"]:
+        try:
+            await ha_data.call_core_service(domain, service)
+        except Exception as exc:  # noqa: BLE001 — the bytes are back either way
+            failures.append(f"{domain} would not reload: {exc}")
+    if outcome["failed"]:
+        raise web.HTTPConflict(text="; ".join(
+            why for _p, why in outcome["failed"])[:400])
+    text = unfix.summary(outcome, []).replace("the fix had changed", "brAIn had changed")
+    # The number, never the URL's string: what goes into the log is parsed.
+    log.info("change %.6f put back: %s", float(stamp), entry.get("path"))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "text": "\n\n".join([text] + failures)})
+
+
+async def h_change_call_undo(request: web.Request) -> web.Response:
+    """Put the devices one service call changed back how they were — the
+    restore press (`unfix.restore_plan` / `_restore_calls`) over that one
+    call's recorded before-state, never-restored rules and all."""
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"call:{float(stamp):.6f}")
+    call = changes.find_call(await asyncio.to_thread(
+        actions.read_ledger, float(stamp) - 1), float(stamp))
+    if call is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    plan = unfix.restore_plan([call], None, tokens)
+    restored, text = await _restore_calls(plan)
+    log.info("change %.6f: restore — %d back", float(stamp),
+             sum(1 for r in restored if r["restored"]))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "restored": restored, "text": text})
 
 
 async def _undo_intervention(finding: dict) -> list[str]:
@@ -9264,7 +9517,13 @@ def _open_rows_for_verdict(source: str) -> list[dict]:
             continue
         eid = str(f["entity_id"])
         out.append({"text": f.get("text") or "", "entity_id": eid,
-                    "name": (_NAMES.get(eid) or {}).get("name") or ""})
+                    "name": (_NAMES.get(eid) or {}).get("name") or "",
+                    # Its figures, so a card counting the same thing
+                    # differently is caught (`card_verdict.disagreeing_row`),
+                    # and where it came from, so a card that says it is
+                    # fixed can have the row's own check asked again.
+                    "detail": f.get("detail") or "",
+                    "source": f.get("source") or "", "ts": f.get("ts")})
     return out
 
 
@@ -9369,14 +9628,120 @@ async def _card_device_faults(obj: dict, filed: list[dict]) -> list[dict]:
     return out
 
 
-def _card_covers(cat: dict, previous: dict | None) -> dict:
+def _card_covers(cat: dict, previous: dict | None,
+                 question: str | None = None) -> dict:
     """What a card is about, for the live rows its prompt shows first
     (`findings_store.prompt_block`'s ``covers``): its domains, its device
     classes, and the entities its last version named. An asked card has no
-    domains, which covers everything."""
+    domains, which covers everything; the entities its question names are
+    what it is about the first time it runs."""
+    entities = _card_entities(previous or {})
+    for eid in _card_entities({"summary": question or ""}):
+        if eid not in entities:
+            entities.append(eid)
     return {"domains": list(cat.get("domains") or ()),
             "classes": list(cat.get("device_classes") or ()),
-            "entities": _card_entities(previous or {})}
+            "entities": entities}
+
+
+def _devices_of(entities) -> set[str]:
+    """The devices a set of entities belongs to, off the last checks pass."""
+    out = set()
+    for eid in entities or ():
+        device = (_NAMES.get(eid) or {}).get("device")
+        if device:
+            out.add(str(device))
+    return out
+
+
+def _entities_named_in(text: str) -> set[str]:
+    """The entities a sentence names, by id or by name (`_card_entities`'s
+    reading, for `card_verdict`)."""
+    return set(_card_entities({"summary": text or ""}))
+
+
+def _other_card_subjects(insight_id: str) -> list[set]:
+    """Every other stored card's entities, devices included as a marker:
+    what `card_verdict` reads a lead sentence against."""
+    try:
+        cards = load_insights()
+    except Exception:  # noqa: BLE001 — nothing to compare is no rewrite
+        return []
+    out = []
+    for card in cards:
+        if isinstance(card, dict) and card.get("id") != insight_id:
+            ents = set(_card_entities(card))
+            if ents:
+                out.append(ents)
+    return out
+
+
+def _card_subject(card: dict) -> tuple[set, set]:
+    """`(entities, devices)` a stored card is about."""
+    ents = set(_card_entities(card))
+    return ents, _devices_of(ents)
+
+
+def _superseded(cards: list[dict]) -> dict[str, str]:
+    """`{older card id: newer card id}` for every card whose whole subject a
+    newer card covers: each entity it names is one the newer card names, or
+    belongs to a device the newer card names. A heat card and an older air
+    handler card about the same heat pump are one story; the older is
+    folded under the newer rather than read as current beside it."""
+    subjects = []
+    for card in cards:
+        if not isinstance(card, dict) or not card.get("id") \
+                or not card.get("generated_at"):
+            continue
+        ents, devs = _card_subject(card)
+        if ents:
+            subjects.append((str(card["generated_at"]), str(card["id"]),
+                             ents, devs))
+    subjects.sort(reverse=True)  # newest first
+    out: dict[str, str] = {}
+    for i, (made, cid, ents, _devs) in enumerate(subjects):
+        for newer_made, newer_id, newer_ents, newer_devs in subjects[:i]:
+            if newer_made <= made:
+                continue
+            if all(e in newer_ents or ((_NAMES.get(e) or {}).get("device")
+                                       in newer_devs)
+                   for e in ents):
+                out[cid] = newer_id
+                break
+    return out
+
+
+# Answers to "is this fixed" a card started, held so the loop keeps them.
+_CARD_RECHECKS: set = set()
+
+
+def _spawn_fixed_rechecks(rows, insight_id: str) -> None:
+    """Ask the check behind each open row a card says is already fixed.
+
+    Only a house check's row has a rule to ask (`_rerun_check`), and that
+    rule is what clears or rewords the row: the card's word alone never
+    ends a finding. Each source once per card run."""
+    sources = []
+    for row in rows or ():
+        source = str((row or {}).get("source") or "")
+        if source.startswith("check:") and source not in sources:
+            sources.append(source)
+    for source in sources:
+        async def later(src=source) -> None:
+            try:
+                answer = await _rerun_check(src)
+                log.info("insight %s said a problem was fixed; %s asked "
+                         "again: %s", insight_id, src,
+                         "checked" if answer.get("checked")
+                         else answer.get("why"))
+            except Exception as exc:  # noqa: BLE001 — a recheck, not the card
+                log.debug("could not recheck %s: %s", src, exc)
+        try:
+            task = asyncio.get_running_loop().create_task(later())
+        except RuntimeError:
+            return
+        _CARD_RECHECKS.add(task)
+        task.add_done_callback(_CARD_RECHECKS.discard)
 
 
 def _card_entities(insight: dict) -> list[str]:
@@ -9424,9 +9789,19 @@ async def h_insights(request: web.Request) -> web.Response:
         insights = load_insights()
         # one read of the edits file for the whole list, not one per card
         edits = card_tags.load_edits()
+        superseded = _superseded(insights)
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
             ins["entities"] = _card_entities(ins)
+            # One verdict: the chip, and a card stored before the field
+            # existed read the same way (its verdict sentence taken off
+            # the prose it was written into). The file is not touched.
+            ins["quiet"] = card_verdict.folds_quiet(ins)
+            ins.update(card_verdict.legacy(ins))
+            if not ins.get("verdict"):
+                ins.pop("verdict", None)
+            if ins.get("id") in superseded:
+                ins["superseded_by"] = superseded[ins["id"]]
             # The heading an asked card carries in place of "Custom". A
             # category card is headed by its category, which the panel
             # reads live off the definition so a rename shows at once.
@@ -9908,7 +10283,8 @@ async def _prompt_preview(cat: dict, mode: str) -> dict:
                        covers=_card_covers(cat, previous)),
                    house=await _house_prompt_block(),
                    clock=await asyncio.to_thread(_clock_style),
-                   others=await asyncio.to_thread(_other_cards_block, cat_id))
+                   others=await asyncio.to_thread(
+                       _other_cards_block, cat_id, _card_covers(cat, previous)))
 
     # The named blocks, in the order `_framing` puts them, each with what
     # it is FOR — because "why is this in my prompt" is the question a
@@ -10322,6 +10698,11 @@ border:0;background:transparent}
 background:#fff3d6;color:#5a3d00}
 @media (prefers-color-scheme: dark){.age{background:#3a2c08;color:#ffe2a3}}
 .age[hidden]{display:none}
+.vd{display:inline-block;margin-top:6px;padding:2px 9px;border-radius:999px;
+font-size:12px;font-weight:700;background:#e3f2e6;color:#1d5a2c}
+.vd.look{background:#fff3d6;color:#5a3d00}.vd.act{background:#fde2dc;color:#7a1d0c}
+@media (prefers-color-scheme: dark){.vd{background:#173a22;color:#bfe8c9}
+.vd.look{background:#3a2c08;color:#ffe2a3}.vd.act{background:#4a1a10;color:#ffc9bd}}
 @media (max-width:420px){.c{padding:10px 12px 10px;gap:8px}
 .h{grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px}
 .t{padding:6px 9px}.t .v{font-size:15px}h1{font-size:16px}.s{font-size:13.5px}}
@@ -10385,6 +10766,8 @@ def _whole_card_aspect(insight: dict, width: int = DASH_COLUMN_PX) -> int:
     height = 20                                   # padding
     height += 16                                  # eyebrow
     height += 21 * max(1, -(-len(title) // per_line_title))
+    if card_verdict.legacy(insight).get("verdict"):
+        height += 26                              # the verdict chip
     height += 20 * min(3, max(1, -(-len(summary) // per_line_text)))
     if tiles:
         height += 60 * -(-len(tiles) // per_row)
@@ -10400,8 +10783,20 @@ def _lead_split(summary: str) -> tuple[str, str]:
     return (match.group(1), match.group(2)) if match else ("", summary)
 
 
+# The chip's colours on the dashboard page, one per verdict.
+_VERDICT_CHIP = {card_verdict.FINE: "fine", card_verdict.LOOK: "look",
+                 card_verdict.ACTION: "act"}
+
+
 def _whole_card_page(insight: dict) -> str:
     esc = html_lib.escape
+    # One verdict, as the panel shows it: the chip, and a card stored
+    # before the field existed read the same way.
+    insight = {**insight, **card_verdict.legacy(insight)}
+    verdict = insight.get("verdict") or ""
+    chip = (f'<span class="vd {_VERDICT_CHIP[verdict]}">'
+            f'{esc(verdict[:1].upper() + verdict[1:])}</span>'
+            if verdict in _VERDICT_CHIP else "")
     lead, rest = _lead_split(str(insight.get("summary") or ""))
     summary = (f"<b>{esc(lead)}</b> {esc(rest)}" if lead else esc(rest))
     tiles = []
@@ -10432,7 +10827,7 @@ def _whole_card_page(insight: dict) -> str:
         f"{esc(_card_eyebrow(insight))}</div>"
         # The server's words until the script has the viewer's clock.
         f"<div class=\"upd\" id=\"upd\">Updated {esc(when)}</div></div>"
-        f"<h1>{esc(str(insight.get('title') or ''))}</h1></div>"
+        f"<h1>{esc(str(insight.get('title') or ''))}</h1>{chip}</div>"
         f"<p class=\"s\">{summary}</p>"
         + (f'<div class="h">{"".join(tiles)}</div>' if tiles else "")
         + f'<iframe id="v" sandbox="allow-scripts" title="Visualization" '
@@ -12432,6 +12827,8 @@ def _note_registry(snapshot: dict) -> None:
         device_of = checks.network.device_keys(house)
         for eid in set(house.states) | set(house.registry):
             names[eid] = {"name": house.name(eid), "area": house.area_of(eid)}
+            # The device it belongs to, so two cards about one heat pump
+            # are told apart from two cards about two (`_card_subject`).
             if device_of.get(eid):
                 names[eid]["device"] = device_of[eid]
             # What kind of thing it is, for the one reader that has to
@@ -19435,6 +19832,7 @@ def _cases_payload(now: float | None = None) -> dict:
     now = time.time() if now is None else now
     rows = [c for c in cases.list_cases(now=now) if cases.on_feed(c)]
     names: dict[str, dict] = {}
+    assistant = personality.assistant_name()
     for case in rows:
         # The presses, decided once (`answers.py`) and rendered as handed:
         # `answers` is the visible row, `more` what sits behind the ⋯, and
@@ -19443,6 +19841,10 @@ def _cases_payload(now: float | None = None) -> dict:
         case["answers"] = cases.answers(case)
         case["more"] = cases.more(case)
         case["situation"] = cases.situation(case)
+        # Who acts, in one line, read off the primary just chosen
+        # (`answers.who_acts`): "brAIn can fix this." over Go ahead, "This
+        # needs you." over Add to To Do, "brAIn needs an answer." over Yes.
+        case["who"] = answers_mod.who_acts(case, assistant, case["answers"])
         # Today's card: the one status chip (`answers.chip`, with the
         # Urgent rule `notify_router.is_urgent` owns), and whether "Ignore
         # all like this" can mute the producer — absent for the producers
@@ -19607,11 +20009,29 @@ async def h_history_clear(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _who_for(verb: str, situation: str = "", name: str = "") -> dict:
+    """The who-acts line for a card the panel draws without a case — a
+    finding still waiting for its first look, a guess, a suggestion, the
+    tidy table, an assessed update — from the primary press that card
+    leads with. One derivation (`answers.who_line`) for every card on
+    Needs you, so a sentence can never sit over a button it disagrees
+    with."""
+    who = answers_mod.WHO_OF_VERB.get(verb, "")
+    return {"who": who, "press": "",
+            "line": answers_mod.who_line(
+                who, name or personality.assistant_name(), situation)}
+
+
 def _today_payload() -> dict:
     """Today's two cards no store owns, in the shape the panel renders."""
     cards = _today_cards()
     tidy_card = cards["tidy"]
-    out: dict = {"tidy": None, "updates": cards["updates"]}
+    name = personality.assistant_name()
+    # An assessed update leads with Add to To Do: installing one is the
+    # person's press in Home Assistant's own Updates, never brAIn's.
+    updates = [{**u, "who": _who_for("todo", name=name)}
+               for u in cards["updates"]]
+    out: dict = {"tidy": None, "updates": updates}
     if tidy_card:
         proposal = tidy_card["proposal"]
         out["tidy"] = {"key": tidy_card["key"],
@@ -19619,7 +20039,8 @@ def _today_payload() -> dict:
                        "refused": proposal.get("refused") or [],
                        "areas": proposal.get("areas") or [],
                        "at": int(proposal.get("at") or 0),
-                       "undo_days": tidy.UNDO_DAYS}
+                       "undo_days": tidy.UNDO_DAYS,
+                       "who": _who_for("apply", name=name)}
     return out
 
 
@@ -19676,6 +20097,16 @@ def _findings_payload() -> dict:
     # loose card beside the case list that had correctly hidden it.
     open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
+    # The who-acts line for a card drawn straight off these rows (one the
+    # case list does not cover): a house-book question asks for an answer,
+    # anything else leads with Add to To Do; a guess asks Yes or No.
+    name = personality.assistant_name()
+    for row in payload.get("findings") or []:
+        gap = (row.get("kind") == "question"
+               and row.get("source") == answers_mod.HOUSE_BOOK_SOURCE)
+        row["who"] = _who_for("answer" if gap else "todo", name=name)
+    for row in open_claims:
+        row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)
     # rather than this listing's own sum: the tab's badge was painted from
     # here on one poll and from `/api/status` on the next, two derivations
@@ -20604,6 +21035,15 @@ async def h_finding_elevate(request: web.Request) -> web.Response:
 
 async def h_finding_recheck(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
+    return web.json_response(await _recheck_finding(finding))
+
+
+async def _recheck_finding(finding: dict) -> dict:
+    """Check again on one finding: the check that filed it runs now.
+
+    Lifted out of the route so Morph's Check again (`_apply_morph_request`)
+    is the same press, `_end_finding`'s rule. Refuses with an HTTP error in
+    the sentences the route has always answered with."""
     source = str(finding.get("source") or "")
     check_id = source[6:] if source.startswith("check:") else ""
     if not check_id or checks.get_check(check_id) is None:
@@ -20635,9 +21075,8 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         # exception the rule raised.
         why = (result["skipped"].get(check_id)
                or result["errors"].get(check_id) or "it could not run")
-        return web.json_response({
-            "checked": False, "cleared": False, "why": why,
-            **(await asyncio.to_thread(_findings_payload))})
+        return {"checked": False, "cleared": False, "why": why,
+                **(await asyncio.to_thread(_findings_payload))}
 
     found = result["findings"]
     keys = {findings_store.normalize(f["text"]) for f in found}
@@ -20665,12 +21104,12 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         return len(created), len(cleared), _findings_payload()
 
     created, cleared, payload = await asyncio.to_thread(apply)
-    return web.json_response({
+    return {
         "checked": True, "cleared": not still, "created": created,
         # Everything else that check was reporting and no longer is. The
         # row pressed is not counted twice: it is already in `cleared`.
         "also_cleared": max(cleared - (0 if still else 1), 0),
-        "why": "", **payload})
+        "why": "", **payload}
 
 
 # ---------------------------------------------------------------------------
@@ -20690,8 +21129,11 @@ def _proposals_payload() -> dict:
         asleep = cases.snoozes()
     except Exception:  # noqa: BLE001 — nothing snoozed shows the card
         asleep = {}
+    name = personality.assistant_name()
     for row in rows:
         row["snoozed_until"] = int(asleep.get(f"p:{int(row.get('ts') or 0)}", 0))
+        # A suggestion leads with Apply: brAIn writes it in.
+        row["who"] = _who_for("accept", "opportunity", name)
     return {"proposals": rows, "counts": proposals.counts(rows),
             # What is waiting to happen, what already has, and the
             # sentences brAIn would not arm. Not proposals — nobody owes
@@ -26102,6 +26544,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/case/{id}/respond", h_case_respond_result)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
     app.router.add_get("/api/history", h_history)
+    app.router.add_get("/api/changes", h_changes)
+    app.router.add_post("/api/changes/edit/{ts}/undo", h_change_edit_undo)
+    app.router.add_post("/api/changes/call/{ts}/undo", h_change_call_undo)
     app.router.add_post("/api/history/clear", h_history_clear)
     app.router.add_get("/api/today", h_today)
     app.router.add_post("/api/today/hide", h_today_hide)

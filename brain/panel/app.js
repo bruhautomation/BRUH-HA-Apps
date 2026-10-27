@@ -1735,7 +1735,12 @@ function makeCard(catInfo, insight, fallbackId) {
     card.appendChild(phase);
     card.appendChild(el("div", "viz-skel"));
   } else if (shown) {
-    if (shown.summary) card.appendChild(summaryNode(shown.summary));
+    // The card's one judgement, as one chip. The prose no longer says it
+    // (a past run read from history is shown with its verdict sentence
+    // taken off the same way the server does for a stored card).
+    const chip = verdictChip(shown);
+    if (chip) card.appendChild(chip);
+    if (shown.summary) card.appendChild(summaryNode(view ? withoutVerdictLead(shown.summary) : shown.summary));
     if (shown.highlights && shown.highlights.length) {
       const prevData = view ? view.prev : state.prevLatest[id];
       const prevHls = (prevData && prevData.highlights) || [];
@@ -1771,6 +1776,12 @@ function makeCard(catInfo, insight, fallbackId) {
         + (twins.length > 1 ? ` (and ${twins.length - 1} more)` : ""),
         () => openCase(twins[0].id)));
     }
+    // An older card about the same device or system, folded under this one
+    // rather than read beside it as if it were current.
+    (view ? [] : foldedUnder(insight)).forEach((older) => {
+      card.appendChild(crossLink(`Earlier report on this (${timeAgo(older.generated_at)}): `,
+        older.title || "Report", () => openModal(older, false)));
+    });
     card.appendChild(makeFrame(shown, !view));
     // Tags belong to the card, not to the run being viewed — editing them
     // while pinned to March's run must still change the card's tags.
@@ -1834,6 +1845,29 @@ function cardActionButton(icon, label, hint, run) {
   tip(btn, hint);
   btn.addEventListener("click", run);
   return btn;
+}
+
+// The card's one judgement (`verdict`, one of three words the server
+// keeps) drawn as one chip, in words and colour both.
+const VERDICT_CHIPS = {
+  "all fine": ["fine", "All fine"],
+  "worth a look": ["look", "Worth a look"],
+  "needs action": ["act", "Needs action"],
+};
+function verdictChip(insight) {
+  const v = VERDICT_CHIPS[String((insight && insight.verdict) || "")];
+  return v ? el("span", `vchip vchip-${v[0]}`, v[1]) : null;
+}
+// A past run's summary as the stored card is shown: a first sentence that
+// is only a verdict ("Needs action.", "Verdict: normal.") is the chip's.
+const VERDICT_LEAD = /^(?:verdict:\s*[^.!?]{1,30}|needs action|all (?:fine|good|clear|normal)|normal|fine|nothing to (?:fix|do|report)|no action needed|worth a look|this needs (?:one|a) (?:change|fix))[.!]\s+(?=\S)/i;
+function withoutVerdictLead(text) {
+  return String(text || "").replace(VERDICT_LEAD, "");
+}
+// Cards the server says a newer card covers (`superseded_by`).
+function foldedUnder(insight) {
+  if (!insight || !insight.id) return [];
+  return (state.insights || []).filter((i) => i && i.superseded_by === insight.id);
 }
 
 // The summary opens with the answer ("Yes — dehumidify first.") and the
@@ -2113,8 +2147,22 @@ function render() {
     }
   });
   const shown = [];
+  // Folded rather than drawn: an older card a newer one covers (it rides
+  // under the newer as a line), and a card that is all fine about nothing
+  // changing (one "All quiet" line names them all). Never a card a search
+  // found, one still running, one pinned to a past run, or one a finding on
+  // Needs you is about.
+  const byId = new Set(state.insights.map((i) => i.id));
+  const quiet = [];
+  const folds = (i) => {
+    if (!i || q || state.viewing[i.id] || ACTIVE_STATES.includes(jobFor(i.id).state)) return false;
+    if (i.superseded_by && byId.has(i.superseded_by)) return true;
+    if (i.quiet && !casesForInsight(i).length) { quiet.push(i); return true; }
+    return false;
+  };
   customs.forEach((i) => {
     if (i.virtual ? !!q : !matches(i)) return;
+    if (!i.virtual && folds(i)) return;
     // a virtual card has no insight yet — makeCard works off the job id
     shown.push({ ins: i.virtual ? null : i, make: () => makeCard(null, i.virtual ? null : i, i.id) });
   });
@@ -2122,13 +2170,32 @@ function render() {
     const ins = insightFor(c.id);
     // not-yet-generated placeholders only clutter a search
     if (q && !(ins && matches(ins)) && !c.title.toLowerCase().includes(q)) return;
+    if (ins && c.enabled !== false && folds(ins)) return;
     shown.push({ ins, make: () => makeCard(c, ins) });
   });
   // A card whose answer is "all normal" sorts below the ones that need
   // something, so the slot at the top goes to a card worth reading.
   attentionFirst(shown, (e) => cardNeedsSomething(e.ins, casesForInsight(e.ins).length))
     .forEach((e) => grid.appendChild(e.make()));
+  if (quiet.length) grid.appendChild(quietLine(quiet));
   renderSchedule();
+}
+
+// Every card that is all fine about nothing changing, as one line: each
+// name opens that card. A card about nothing is still the house's answer,
+// but four of them took the screen from the one that needed action.
+function quietLine(cards) {
+  const line = el("p", "quietline");
+  line.appendChild(el("strong", null, "All quiet: "));
+  cards.forEach((c, n) => {
+    if (n) line.appendChild(document.createTextNode(", "));
+    const a = el("button", "quietname", c.title || c.category_title || "Report");
+    a.type = "button";
+    a.dataset.id = c.id;
+    a.addEventListener("click", () => openModal(c, true));
+    line.appendChild(a);
+  });
+  return line;
 }
 
 // One compact list of every recurring card: when it runs, when it last did,
@@ -2240,6 +2307,8 @@ function renderIfChanged() {
     // A card's "Also on Needs you" line reads the cases, which arrive on
     // their own fetch — often after the cards are drawn.
     twins: state.insights.map((i) => casesForInsight(i).map((c) => c.id + c.claim).join(",")),
+    // What is folded: the "All quiet" line and the older cards under a newer.
+    folds: state.insights.map((i) => [i.id, i.quiet, i.superseded_by, i.verdict]),
     paused: s && [s.settings && s.settings.auto_enabled, s.usage && s.usage.blocked],
     usage: s && s.usage && [s.usage.used_percent, s.usage.resets_at],
     // The Today strip is rendered by `render`, so what it reads has to be in
@@ -6163,7 +6232,7 @@ function statusChip(kind) {
 
 // The shell every card on Today is built from. `meta` is plain text after
 // the chip — an item's state is words, never a second chip.
-function qCard({ id, chip, meta, title, body, counted = true }) {
+function qCard({ id, chip, meta, title, body, counted = true, who = null }) {
   const card = el("article", "card-x qcard");
   if (id) card.dataset.caseId = id;
   card.dataset.chip = CHIP_WORDS[chip] ? chip : "problem";
@@ -6173,8 +6242,22 @@ function qCard({ id, chip, meta, title, body, counted = true }) {
   (meta || []).filter(Boolean).forEach((t) => line.appendChild(el("span", "item-state", t)));
   card.appendChild(line);
   card.appendChild(el("h3", "card-title", prettyText(title || "")));
+  const whoLine = qWho(who);
+  if (whoLine) card.appendChild(whoLine);
   if (body) card.appendChild(el("p", "card-body", prettyText(body)));
   return card;
+}
+
+// Who acts, in one line straight under the title: "brAIn can fix this.",
+// "This needs you." or "brAIn needs an answer." Decided on the server off
+// the card's own primary press (`answers.who_acts`), so the line and the
+// button under it cannot disagree — the owner's "it's kind of unclear when
+// I need to do something vs it". A card with no press carries none.
+function qWho(who) {
+  if (!who || !who.line) return null;
+  const p = el("p", "qwho", who.line);
+  p.dataset.who = who.who || "";
+  return p;
 }
 
 // "Fix", then what to do in two lines. Who would do it is said by the
@@ -6369,7 +6452,7 @@ const IGNORE_VERBS = new Set(["wrong", "decline", "drop", "no"]);
 function makeCase(row) {
   const card = qCard({
     id: row.id, chip: row.chip || (row.urgent ? "urgent" : "problem"),
-    meta: caseMeta(row), title: row.claim, body: row.detail,
+    meta: caseMeta(row), title: row.claim, body: row.detail, who: row.who,
   });
   card.dataset.situation = row.situation || "";
 
@@ -6866,7 +6949,7 @@ function makeLooseFinding(f) {
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
-    title: f.text, body: f.detail,
+    title: f.text, body: f.detail, who: f.who,
   });
   const gap = f.source === "house_book";
   if (f.fix && !gap) card.appendChild(qFix(f.fix));
@@ -6925,7 +7008,8 @@ function makeLooseFinding(f) {
 
 function makeLooseQuestion(h) {
   const card = qCard({ id: `h:${h.ts}`, chip: "question",
-    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "" });
+    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "",
+    who: h.who });
   const actions = el("div", "card-actions");
   const btns = [];
   btns.card = card;
@@ -7003,7 +7087,7 @@ function makeSuggestion(row) {
   const replay = (row.playbook || row.scene) ? ""
     : (spoken && spoken.case ? spoken.case : propReplayLine(row));
   const card = qCard({ id: `p:${row.ts}`, chip: "suggestion", meta,
-    title: row.title || "A suggestion", body: row.why || replay });
+    title: row.title || "A suggestion", body: row.why || replay, who: row.who });
   if (trial) card.appendChild(el("p", "qfixtext", propTrialLine(row)));
 
   const more = qDetails();
@@ -7205,7 +7289,7 @@ function makeTidyCard(t) {
   rows.forEach((r) => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   const card = qCard({ id: t.key, chip: "tidy", meta: ["Change ready"],
     title: tidyTitle(counts, rows.length),
-    body: "Change any you'd do differently, or untick it, under Details." });
+    body: "Change any you'd do differently, or untick it, under Details.", who: t.who });
   const reach = rows.filter((r) => (r.reach || []).length).length;
   if (reach) {
     card.appendChild(el("p", "qfixtext", reach === 1
@@ -7297,7 +7381,7 @@ function makeUpdateCard(u) {
   const advice = u.advice || {};
   const card = qCard({ id: u.key, chip: advice.verdict === "wait" ? "problem" : "tidy",
     meta: [UPDATE_WORDS[advice.verdict] || "Assessed", `${u.installed || "?"} → ${u.latest || "?"}`],
-    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "" });
+    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "", who: u.who });
   const more = qDetails();
   qDetailLine(more, "From the release notes", advice.note_quote || "");
   qDetailLine(more, "From your configuration", advice.config_quote || "");
@@ -7804,11 +7888,25 @@ function makeTodo(item) {
 // ---- History ---------------------------------------------------------------
 
 async function refreshHistory() {
-  try {
-    todayState.history = await api("api/history");
-  } catch (e) {
-    todayState.history = todayState.history || { filters: [], rows: {}, error: e.message };
-  }
+  const [history, changes] = await Promise.all([
+    api("api/history").catch((e) => ({ __error: e.message })),
+    api("api/changes").catch(() => null),
+  ]);
+  if (history && !history.__error) todayState.history = history;
+  else todayState.history = todayState.history || { filters: [], rows: {}, error: (history || {}).__error };
+  // Changes brAIn made (#453): one route serves the list (`/api/changes`),
+  // newest first, each row with its own Undo or the reason it has none.
+  if (changes) todayState.changes = changes;
+}
+
+// The History filters, with "Changes brAIn made" as the fifth.
+function histFilters() {
+  const data = todayState.history || {};
+  const filters = (data.filters || []).slice();
+  const ch = todayState.changes;
+  if (ch) filters.push({ id: "changes", label: ch.label || "Changes brAIn made",
+                         count: ch.total || 0 });
+  return filters;
 }
 
 // What each filter holds, said once above its rows, so the list explains
@@ -7820,17 +7918,20 @@ const HIST_HINTS = {
   ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them; Delete clears the record, not your answer.",
   done: "Things you finished or brAIn fixed. Restore puts one back on To Do; Delete clears the record, not your answer.",
   aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
+  changes: "Everything brAIn changed in the house, newest first. Undo puts one back; a change that can't be put back says why.",
 };
 
 function histRowsShown() {
   const data = todayState.history;
   if (!data) return [];
-  const rows = (data.rows || {})[todayState.histFilter] || [];
+  const rows = todayState.histFilter === "changes"
+    ? ((todayState.changes || {}).rows || [])
+    : (data.rows || {})[todayState.histFilter] || [];
   const q = (todayState.histQuery || "").trim().toLowerCase();
   if (!q) return rows;
   const words = q.split(/\s+/).filter(Boolean);
   return rows.filter((r) => {
-    const hay = `${r.title || ""} ${r.meta || ""}`.toLowerCase();
+    const hay = `${r.title || ""} ${r.meta || ""} ${r.where || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }
@@ -7851,7 +7952,7 @@ function renderHistory() {
   }
   // Land on the first filter that holds something, rather than an empty
   // one, until somebody picks.
-  const filters = data.filters || [];
+  const filters = histFilters();
   if (!todayState.histPicked) {
     const first = filters.find((f) => f.count > 0);
     if (first) todayState.histFilter = first.id;
@@ -7889,6 +7990,25 @@ function renderHistory() {
     return;
   }
   rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
+  const ch = todayState.changes;
+  if (todayState.histFilter === "changes" && ch && ch.more && !todayState.histQuery) {
+    const older = qButton("Show older", false);
+    older.classList.add("histmore");
+    older.addEventListener("click", async () => {
+      older.disabled = true;
+      const last = (ch.rows || [])[ch.rows.length - 1];
+      try {
+        const next = await api(`api/changes?before=${last ? last.at : 0}`);
+        ch.rows = (ch.rows || []).concat(next.rows || []);
+        ch.more = !!next.more;
+        renderHistory();
+      } catch (e) {
+        toast(e.message || "that didn't work");
+        older.disabled = false;
+      }
+    });
+    list.appendChild(older);
+  }
 }
 
 async function deleteHistory(rows, btns) {
@@ -7906,7 +8026,12 @@ async function deleteHistory(rows, btns) {
   }
 }
 
-const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘" };
+const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘", changes: "↺" };
+
+// A change's line under its title: when, and where it came from.
+function changeMeta(r) {
+  return [agoWords(r.at), r.where].filter(Boolean).join(" · ");
+}
 
 function makeHistoryRow(r) {
   const row = el("div", "histrow");
@@ -7914,10 +8039,16 @@ function makeHistoryRow(r) {
   row.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
   const text = el("div", "histtext");
   text.appendChild(el("span", "histtitle", prettyText(r.title)));
-  text.appendChild(el("span", "item-state", r.meta || ""));
+  text.appendChild(el("span", "item-state", r.meta || (r.kind ? changeMeta(r) : "")));
   row.appendChild(text);
-  const press = r.press || {};
   const actions = el("div", "histactions");
+  if (r.kind && !r.press) {
+    // A change that cannot be put back says why, in place of the button.
+    actions.appendChild(el("p", "histreason", r.reason || "This can't be put back."));
+    row.appendChild(actions);
+    return row;
+  }
+  const press = r.press || {};
   const btn = qButton(press.label || "Restore", false);
   const btns = [btn];
   btn.addEventListener("click", async () => {
@@ -7925,16 +8056,19 @@ function makeHistoryRow(r) {
     if (confirmText && !window.confirm(confirmText)) return;
     btns.forEach((b) => { b.disabled = true; });
     try {
+      let said = "";
       for (const step of press.steps || []) {
-        await api(step.route.replace(/^\//, ""), {
+        const out = await api(step.route.replace(/^\//, ""), {
           method: "POST",
           ...(step.body && Object.keys(step.body).length
             ? { body: JSON.stringify(step.body) } : {}),
         });
+        if (out && typeof out.text === "string") said = out.text;
       }
       await Promise.all([refreshToday(), refreshHistory()]);
       renderFindings();
-      toast(press.label === "Undo" ? "Put back" : "Restored");
+      renderHistory();
+      toast(said ? said.split("\n")[0] : press.label === "Undo" ? "Put back" : "Restored");
     } catch (e) {
       toast(e.message || "that didn't work");
       btns.forEach((b) => { b.disabled = false; });

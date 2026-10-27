@@ -42,12 +42,14 @@ _LOGGER = logging.getLogger(__name__)
 # file's: the mirror row carries the answers the panel's own card offers
 # (`answers`, decided once in the add-on's `answers.py`), the watcher
 # stamps them onto the issue, and the flow shows that subset in this
-# order. A battery therefore gets *Add it to my to-do list · I've fixed
-# it · Not a problem here · Remind me tomorrow*, and a change brAIn made
-# gets *Got it* — the same buttons as the panel, because a finding
-# asking two different questions on two surfaces is the confusion the
-# feed's redesign was written against. An issue raised by an older
-# add-on carries no list and gets `DEFAULT_ACTIONS`, the classic three.
+# order — and in the add-on's own words for each (`labels` on the issue,
+# off `answers.REQUEST_LABELS`, the one table the card and a phone read
+# too). A battery therefore gets *Add to To Do · Ignore · Snooze ·
+# Dismiss*, and a change brAIn made gets *Done* — the same buttons as Needs
+# you, because a finding asking two different questions on two surfaces is
+# the confusion the feed's redesign was written against (#452). An issue
+# raised by an older add-on carries no list and gets `DEFAULT_ACTIONS`, the
+# classic three, under the translated words.
 FLOW_ACTIONS = ("confirm", "todo", "fixed", "wrong", "snooze", "ack")
 DEFAULT_ACTIONS = ("fixed", "wrong", "snooze")
 # The one option that answers nothing, last on every menu: it puts the
@@ -126,10 +128,23 @@ class FindingRepairFlow(RepairsFlow):
     """
 
     def __init__(self, ts: int, text: str = "",
-                 answers=None) -> None:
+                 answers=None, labels=None, assistant: str = "") -> None:
         self._ts = int(ts)
         self._text = text
+        self._assistant = str(assistant or "").strip() or "brAIn"
         self._answers = tuple(str(a) for a in (answers or ()))
+        self._labels = ({str(k): str(v) for k, v in labels.items() if v}
+                        if isinstance(labels, dict) else {})
+
+    def menu_labels(self) -> dict[str, str] | None:
+        """The menu in the add-on's own words for each press — the words
+        the card on Needs you carries (#452) — or None when the issue was
+        raised by an older add-on that sent none, and the dialog falls back
+        to its translated words."""
+        options = self.menu()
+        if not self._labels or any(o not in self._labels for o in options):
+            return None
+        return {o: self._labels[o] for o in options}
 
     def menu(self) -> list[str]:
         """The options this dialog shows, in `FLOW_ACTIONS` order: the
@@ -144,8 +159,9 @@ class FindingRepairFlow(RepairsFlow):
     ) -> data_entry_flow.FlowResult:
         return self.async_show_menu(
             step_id="init",
-            menu_options=self.menu(),
-            description_placeholders={"text": self._text},
+            menu_options=self.menu_labels() or self.menu(),
+            description_placeholders={"text": self._text,
+                                      "assistant": self._assistant},
         )
 
     async def async_step_todo(
@@ -193,7 +209,8 @@ class FindingRepairFlow(RepairsFlow):
             return self.async_show_form(
                 step_id="wrong",
                 data_schema=vol.Schema({vol.Optional("note", default=""): str}),
-                description_placeholders={"text": self._text},
+                description_placeholders={"text": self._text,
+                                      "assistant": self._assistant},
             )
         return await self._answer("wrong", note=str(user_input.get("note") or ""))
 
@@ -263,7 +280,9 @@ async def async_create_fix_flow(
             # mirror — and an issue raised by an older build that carries
             # none still ends the right row, because the ts is in the id.
             return FindingRepairFlow(ts, str((data or {}).get("text") or ""),
-                                     (data or {}).get("answers") or ())
+                                     (data or {}).get("answers") or (),
+                                     (data or {}).get("labels") or None,
+                                     str((data or {}).get("assistant") or ""))
     if issue_id.startswith("user_"):
         # Issues created via brain.create_repair_issue: confirming
         # simply acknowledges and removes the issue.

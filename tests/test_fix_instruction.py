@@ -46,7 +46,7 @@ def fix_of(rows):
 class TestFixOpensTheBox(unittest.TestCase):
     def test_the_primary_is_fix_and_carries_the_suggestion(self):
         lead = answers.answers(case())[0]
-        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Fix"))
+        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Go ahead"))
         self.assertTrue(lead["primary"])
         self.assertTrue(lead["instruct"], "Fix must open the instruction box")
         self.assertEqual(lead["prefill"], FIX)
@@ -57,7 +57,7 @@ class TestFixOpensTheBox(unittest.TestCase):
 
     def test_a_card_with_no_suggestion_still_opens_an_empty_box(self):
         lead = answers.answers(case(fix=""))[0]
-        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Fix"))
+        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Go ahead"))
         self.assertTrue(lead["instruct"])
         self.assertEqual(lead["prefill"], "")
 
@@ -65,7 +65,7 @@ class TestFixOpensTheBox(unittest.TestCase):
         legacy = case(finding_status="planned", plan={
             "can_fix": True, "ops_refused": answers.LEGACY_PLAN_MARK + " …"})
         lead = answers.answers(legacy)[0]
-        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Fix"))
+        self.assertEqual((lead["verb"], lead["label"]), ("fix", "Go ahead"))
         self.assertTrue(lead["instruct"])
         self.assertEqual(lead["prefill"], FIX)
 

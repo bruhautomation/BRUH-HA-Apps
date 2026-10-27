@@ -577,15 +577,26 @@ def escalation_state(path: str | None = None) -> dict:
 # The message
 # ---------------------------------------------------------------------------
 
+def assistant() -> str:
+    """The household's name for the assistant, for a title a person reads
+    (`personality.assistant_name`: "brAIn" until one is chosen)."""
+    try:
+        import personality  # noqa: PLC0415 — a stdlib leaf, read per message
+        return personality.assistant_name()
+    except Exception:  # noqa: BLE001 — a name is never why a message failed
+        return "brAIn"
+
+
 def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
     """One title and one body for however many rows there are."""
     n = len(rows)
+    who = assistant()
     if held:
-        title = ("brAIn held a problem overnight" if n == 1
-                 else f"brAIn held {n} problems overnight")
+        title = (f"{who} held a problem overnight" if n == 1
+                 else f"{who} held {n} problems overnight")
     else:
-        title = ("brAIn found a problem" if n == 1
-                 else f"brAIn found {n} problems")
+        title = (f"{who} found a problem" if n == 1
+                 else f"{who} found {n} problems")
     lines = [f"[{r.get('severity', 'warning')}] {r.get('text', '')}"
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
@@ -622,13 +633,13 @@ def compose_escalation(row: dict, tz: dt.tzinfo | None = None) -> tuple[str, str
     last = number >= len(ESCALATION_S)
     when = dt.datetime.fromtimestamp(
         float(row.get("first_at") or 0), tz or dt.timezone.utc).strftime("%H:%M")
-    title = "brAIn: still open"
+    title = f"{assistant()}: still open"
     lines = [f"[{row.get('severity', 'critical')}] {row.get('text', '')}",
              "",
              f"Still open since {when} — {_ordinal(number)} reminder."]
     if last:
-        lines.append("brAIn will not ask about this again; it stays on the "
-                     "Findings tab.")
+        lines.append(f"{assistant()} will not ask about this again; it stays "
+                     "on Needs you.")
     return title, textclip.clip("\n".join(lines), MESSAGE_MAX)
 
 
@@ -654,7 +665,7 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
     body = textclip.clip(str(title or "a change you accepted").strip(), MESSAGE_MAX)
     if entity_id:
         body = f"{body}\n\nIt is now {entity_id}."
-    return "brAIn made a change you accepted", body[:MESSAGE_MAX]
+    return f"{assistant()} made a change you accepted", body[:MESSAGE_MAX]
 
 
 # ---------------------------------------------------------------------------
@@ -666,9 +677,8 @@ def compose_accepted(title: str, entity_id: str) -> tuple[str, str]:
 # actionable notifications can tell whose button was pressed, and short
 # because it travels in a payload with a length limit nobody documents.
 ACTION_PREFIX = "brain"
-ACTION_LABELS = (("todo", "Add to To Do"), ("fixed", "Done"),
-                 ("wrong", "Ignore"), ("snooze", "Snooze"),
-                 ("reply", "Reply"))
+ACTION_LABELS = tuple((verb, answers.REQUEST_LABELS[verb])
+                      for verb in ("todo", "fixed", "wrong", "snooze", "reply"))
 # The one button that opens a text box rather than pressing a verb: the
 # companion app renders `behavior: textInput` as a reply field on both
 # platforms and fires the same event with `reply_text` filled in. What is
@@ -682,7 +692,7 @@ ACTION_BEHAVIOUR = {"reply": "textInput"}
 # the commonest card is a transient one (a device offline for a minute)
 # that needs no answer at all. It travels as a request like the rest.
 DISMISS_ACTION = "dismiss"
-DISMISS_LABEL = "Dismiss"
+DISMISS_LABEL = answers.REQUEST_LABELS["dismiss"]
 # Android renders the first three buttons and drops the rest; iOS shows
 # them all on a long-press. Dismiss is always within the first three, so it
 # is the one answer every phone can give.
@@ -769,7 +779,7 @@ def actions_for(rows: list[dict], service: str) -> list[dict]:
             out.remove(snooze[0])
             out.append(snooze[0])
     out.insert(min(DISMISS_SLOT, len(out)), dismiss)
-    button = {"action": f"{ACTION_PREFIX}.reply.{int(ts)}", "title": "Reply"}
+    button = {"action": f"{ACTION_PREFIX}.reply.{int(ts)}", "title": answers.REQUEST_LABELS["reply"]}
     button["behavior"] = ACTION_BEHAVIOUR["reply"]
     out.append(button)
     return out[:MAX_BUTTONS]
@@ -896,8 +906,8 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
     if len(rows) == 1 and rows[0].get("title") and rows[0].get("body"):
         return str(rows[0]["title"]), str(rows[0]["body"])
     n = len(rows)
-    title = ("brAIn kept one thing for now" if n == 1
-             else f"brAIn kept {n} things for now")
+    title = (f"{assistant()} kept one thing for now" if n == 1
+             else f"{assistant()} kept {n} things for now")
     lines = [str(r.get("body") or "").strip()
              or f"[{r.get('severity', 'warning')}] {r.get('text', '')}"
              for r in rows[:LINES_MAX]]
@@ -918,16 +928,16 @@ def compose_released(rows: list[dict]) -> tuple[str, str]:
 
 def compose_brief(body: str) -> tuple[str, str]:
     """The morning brief: a paragraph, under a title that says what it is."""
-    return "brAIn this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()} this morning", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 def compose_weekly(body: str) -> tuple[str, str]:
     """The weekly report, likewise."""
-    return "brAIn: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
+    return f"{assistant()}: your week", textclip.clip(str(body or "").strip(), MESSAGE_MAX)
 
 
 __all__ = [
-    "ACCEPTED_URGENCY", "ACTION_LABELS", "ACTION_PREFIX", "DISMISS_ACTION",
+    "ACCEPTED_URGENCY", "ACTION_LABELS", "assistant", "ACTION_PREFIX", "DISMISS_ACTION",
     "DISMISS_LABEL", "MAX_BUTTONS",
     "DEFAULT_MIN_SEVERITY", "DEFAULT_URGENCY", "ESCALATION_FILE",
     "ESCALATION_MAX_ROWS", "ESCALATION_S", "PRODUCER_URGENCY", "QUEUE_FILE",

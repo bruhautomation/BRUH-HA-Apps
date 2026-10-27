@@ -355,8 +355,11 @@ class TestTheCaseRow(unittest.TestCase):
             {"verb": "dismiss", "label": "Dismiss"},
             {"verb": "not_now", "label": "Snooze"},
             {"verb": "wrong", "label": "Ignore"}])
-        # No Snooze: Morph's face is Fix · Dismiss · To Do (§13.2).
-        self.assertEqual([a["action"] for a in got], ["fix", "dismiss"])
+        # The presses Needs you offers, in the same words (#452): Snooze,
+        # Check again and Ignore ride with Fix and Dismiss.
+        self.assertEqual([a["action"] for a in got],
+                         ["fix", "recheck", "dismiss", "snooze", "wrong"])
+        self.assertIn({"action": "snooze", "label": "Snooze"}, got)
 
     def test_the_ask_line(self):
         self.assertEqual(morph_bridge.ask_line(
