@@ -7110,7 +7110,8 @@ async def h_change_edit_undo(request: web.Request) -> web.Response:
         raise web.HTTPConflict(text="; ".join(
             why for _p, why in outcome["failed"])[:400])
     text = unfix.summary(outcome, []).replace("the fix had changed", "brAIn had changed")
-    log.info("change %s put back: %s", stamp, entry.get("path"))
+    # The number, never the URL's string: what goes into the log is parsed.
+    log.info("change %.6f put back: %s", float(stamp), entry.get("path"))
     return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
                               "text": "\n\n".join([text] + failures)})
 
@@ -7131,7 +7132,7 @@ async def h_change_call_undo(request: web.Request) -> web.Response:
     tokens = await asyncio.to_thread(security.honeytoken_ids)
     plan = unfix.restore_plan([call], None, tokens)
     restored, text = await _restore_calls(plan)
-    log.info("change %s: restore — %d back", stamp,
+    log.info("change %.6f: restore — %d back", float(stamp),
              sum(1 for r in restored if r["restored"]))
     return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
                               "restored": restored, "text": text})
