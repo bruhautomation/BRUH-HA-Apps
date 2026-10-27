@@ -182,9 +182,22 @@ _RATE_LIMITED_RE = re.compile(
 _SIGTERM_EXIT_RE = re.compile(r"claude exited (?:143|-15)\b")
 
 
+# A cloud account's own id in a log line or an error ("accountId: 884213",
+# "customerId=CU-77812", `"user_id": "9f8e"`): not a credential, but it is
+# the house's account with somebody, and it names nothing a person needs.
+# The key and its separator are kept so the sentence still reads; the
+# left edge refuses an entity id's tail (`sensor.user_id_badge`).
+# `brain-report.sh`'s `redact()` and `capture._TEXT_RULES` carry the same
+# rule, spelled for sed and for Python.
+ACCOUNT_ID_RE = re.compile(
+    r'(^|[^A-Za-z0-9_.])((?:account|user|customer|client|member|subscriber'
+    r'|tenant)[_-]?id"?[ \t]*[:=][ \t]*"?)[A-Za-z0-9][A-Za-z0-9._@-]*', re.I)
+
+
 def scrub(text: str) -> str:
     """Error text with anything credential-shaped replaced."""
-    return _SECRET_RE.sub("[redacted]", str(text or ""))
+    return ACCOUNT_ID_RE.sub(r"\1\2[redacted]",
+                             _SECRET_RE.sub("[redacted]", str(text or "")))
 
 
 def classify(result: dict, timeout_message: str = "") -> str:

@@ -15,7 +15,8 @@
 //     on a real house;
 //   * the lead group shows what fits — 3 cards on a desktop, 1 on a phone —
 //     and "Show N more" reveals exactly the rest of it; opening the other
-//     groups draws every card;
+//     groups draws every card — except Questions for you, which shows ONE
+//     question and a line saying how many follow;
 //   * a row no look has judged says "Unchecked" on its card and is counted
 //     once, in one line at the top of the queue — never a stock "nothing
 //     looked" sentence on each card, face or Details;
@@ -235,7 +236,25 @@ for (const { width, touch, top, fits } of CASES) {
   }
   await openEverything(page);
   cards = await readCards(page, CUT);
-  if (cards.length !== total) note(where, `${cards.length} cards after Show more, not ${total}`);
+  // Questions are asked one at a time: the group's heading counts them
+  // all, its body holds the first and one line saying how many follow.
+  const asked = groups.find((g) => g.group === 'questions')?.count || 0;
+  const held = Math.max(0, asked - 1);
+  if (cards.length !== total - held) {
+    note(where, `${cards.length} cards after Show more, not ${total - held}`);
+  }
+  {
+    const q = await page.evaluate(() => {
+      const g = document.querySelector('#findList .qgroup[data-group="questions"]');
+      return g ? { cards: g.querySelectorAll('.qcard').length,
+                   next: g.querySelector('.qnextline')?.textContent || '' } : null;
+    });
+    const line = held === 1 ? '1 more question after this one.'
+      : `${held} more questions after this one.`;
+    if (!q) note(where, 'no Questions for you group');
+    else if (q.cards !== 1) note(where, `${q.cards} question cards shown at once, not 1`);
+    else if (held && q.next !== line) note(where, `the questions group says "${q.next}", not "${line}"`);
+  }
   // No press sits on another, Details closed: a closed disclosure's "See
   // what it checked" was reported by the house's own photographs lying
   // over the card's and the To Do row's buttons.
@@ -281,8 +300,8 @@ for (const { width, touch, top, fits } of CASES) {
   if (!unchecked.meta.split(' · ').includes('Unchecked')) note(where, `f:1109 meta reads "${unchecked.meta}"`);
   if (!unchecked.loose.split(' · ').includes('Unchecked')) note(where, `f:2001 meta reads "${unchecked.loose}"`);
   if (unchecked.stock.length) note(where, `a stock "nothing looked" sentence on ${unchecked.stock.join(', ')}`);
-  if (cards.filter((c) => c.counted).length !== COUNTED) {
-    note(where, `${cards.filter((c) => c.counted).length} counted cards, not ${COUNTED}`);
+  if (cards.filter((c) => c.counted).length !== COUNTED - held) {
+    note(where, `${cards.filter((c) => c.counted).length} counted cards, not ${COUNTED - held}`);
   }
 
   for (const card of cards) {
@@ -742,13 +761,32 @@ const OLD_GAP = { ts: 2301, text: 'House book: Where is the stopcock?', severity
   status: 'triaging', waiting_look: true, fixable: false, source: 'house_book',
   source_title: 'House book', detail: 'About the water main.',
   fix: 'Your answer goes into the house book: the plain-language guide brAIn writes for anyone looking after this house.', triage: {}, snoozed_until: 0 };
+// A question brAIn asked about the house is answered the same way, posted
+// to its own route (`findings_store.as_asked`).
+const ASKED = { ts: 2302, text: 'Why does the porch light come on at 3am on weekdays?',
+  kind: 'question', asked: true, severity: 'info', status: 'open', fixable: false,
+  source: 'resident', source_title: 'brAIn', detail: 'Still open from an earlier conversation.',
+  triage: { verdict: 'elevated' }, snoozed_until: 0,
+  who: { who: 'answer', line: 'brAIn needs an answer.', press: 'Send' } };
+// Questions are asked one at a time, so each is answered on a page where
+// it is the one in front: the other questions are left off that page.
+const NOT_QUESTIONS = FEED.filter((c) => c.group !== 'questions');
+const GAP_PAGES = [
+  { id: 'f:1300', words: 'Behind the dryer, a wall switch.',
+    url: 'api/house_book/question/1300/answer',
+    cases: [GAP, CANT, ...NOT_QUESTIONS], loose: [...LOOSE] },
+  { id: 'f:2301', words: 'Under the sink.', url: 'api/house_book/question/2301/answer',
+    cases: [CANT, ...NOT_QUESTIONS], loose: [...LOOSE, OLD_GAP] },
+  { id: 'f:2302', words: 'The dog goes out then.', url: 'api/question/2302/answer',
+    cases: [CANT, ...NOT_QUESTIONS], loose: [...LOOSE, ASKED] },
+];
 for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touch: false }]) {
-  const where = `${width}px gap`;
+ for (const gp of GAP_PAGES) {
+  const where = `${width}px gap ${gp.id}`;
   const { page, context } = await open(width, touch, {
-    cases: [GAP, CANT, ...FEED], loose: [...LOOSE, OLD_GAP], devloop: true,
-    open: COUNTED + 3 });
+    cases: gp.cases, loose: gp.loose, devloop: true, open: COUNTED + 3 });
   await openEverything(page);
-  const faces = await page.evaluate(() => ['f:1300', 'f:2301'].map((id) => {
+  const faces = await page.evaluate((ids) => ids.map((id) => {
     const c = document.querySelector(`[data-case-id="${id}"]`)
       || [...document.querySelectorAll('#findList .qcard')].find((x) => x.dataset.id === id);
     if (!c) return { id, found: false };
@@ -759,10 +797,12 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touc
              disabled: send ? send.disabled : null, fs,
              sendH: send ? send.getBoundingClientRect().height : 0,
              todo: [...c.querySelectorAll('.card-actions button')].some((b) => /To Do/.test(b.textContent)),
-             fixHead: !!c.querySelector(':scope > .qfix') };
-  }));
+             fixHead: !!c.querySelector(':scope > .qfix'),
+             group: c.closest('.qgroup')?.dataset.group || '' };
+  }), [gp.id]);
   for (const f of faces) {
     if (!f.found) { note(where, `${f.id} is not on Today`); continue; }
+    if (f.group !== 'questions') note(where, `${f.id} is under ${f.group}, not Questions for you`);
     if (!f.box || !f.send) note(where, `${f.id} has no answer box and Send on its face`);
     if (f.disabled !== true) note(where, `${f.id}'s Send is pressable with nothing typed`);
     if (touch && f.fs < 16) note(where, `${f.id}'s answer box is ${f.fs}px on touch`);
@@ -770,23 +810,20 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touc
     if (f.todo) note(where, `${f.id} offers Add to To Do for a question`);
     if (f.fixHead) note(where, `${f.id} shows a Fix block over a question`);
   }
-  for (const [id, words] of [['f:1300', 'Behind the dryer, a wall switch.'],
-                             ['f:2301', 'Under the sink.']]) {
-    const sel = `[data-case-id="${id}"] .gapanswer`;
-    if (!await page.locator(sel).count()) continue;
-    await page.fill(`${sel} textarea`, words);
-    await page.click(`${sel} button[data-verb="answer"]`);
-    await page.waitForTimeout(200);
-  }
-  const sent = await posts(page);
-  const want = { 'api/house_book/question/1300/answer': 'Behind the dryer, a wall switch.',
-                 'api/house_book/question/2301/answer': 'Under the sink.' };
-  for (const [url, note_] of Object.entries(want)) {
-    const hit = sent.find((pp) => pp.url.endsWith(url));
-    if (!hit || !hit.body || hit.body.note !== note_) {
-      note(where, `Send did not post {note: "${note_}"} to ${url} (${JSON.stringify(hit)})`);
+  {
+    const sel = `[data-case-id="${gp.id}"] .gapanswer`;
+    if (await page.locator(sel).count()) {
+      await page.fill(`${sel} textarea`, gp.words);
+      await page.click(`${sel} button[data-verb="answer"]`);
+      await page.waitForTimeout(200);
     }
   }
+  const sent = await posts(page);
+  const hit = sent.find((pp) => pp.url.endsWith(gp.url));
+  if (!hit || !hit.body || hit.body.note !== gp.words) {
+    note(where, `Send did not post {note: "${gp.words}"} to ${gp.url} (${JSON.stringify(hit)})`);
+  }
+  if (gp.id !== 'f:1300') { await context.close(); continue; }
   // Report to brAIn, behind the ⋯ of the card that says brAIn can't.
   const menuBtn = page.locator('[data-case-id="f:1301"] .card-actions .btn.icon');
   if (!await menuBtn.count()) {
@@ -808,6 +845,7 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touc
     }
   }
   await context.close();
+ }
 }
 
 // Insights under the "N things need you" strip: nothing between the strip

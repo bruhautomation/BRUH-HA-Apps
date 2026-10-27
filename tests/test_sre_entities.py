@@ -10,7 +10,8 @@ saw the overnight check's causes filed again after moving them to To Do.
 
 When the model names no valid entity the row takes a deterministic one off
 the cited records (the first sorted entity of the cited device; for a log
-line, of the integration it came from), never an invented one. Driven
+line, the entity it names), never an invented one, and never another
+entity that merely belongs to the same integration. Driven
 through `sre.digest` / `sre.rows` and the real `_run_sre`.
 """
 
@@ -72,11 +73,16 @@ class TestTheRowNamesAnEntity(unittest.TestCase):
         [row] = self.rows_for(house, [node])
         self.assertEqual(row["entity_id"], "sensor.cellar_pump_power")
 
-    def test_a_log_cause_takes_its_integrations_entity(self):
+    def test_a_log_cause_naming_nothing_is_filed_on_its_integration(self):
+        # Not on the integration's first entity: that is another device of
+        # the same integration than the one the line may be about (a blind
+        # named in the text, a sibling cover in `entity_id`). The row
+        # carries the integration, which is what it folds on.
         dig = sre.digest(collected(), NOW)
         log_id = next(r["id"] for r in dig["records"] if r["kind"] == "log")
         [row] = self.rows_for(collected(), [log_id])
-        self.assertEqual(row["entity_id"], "switch.landing_plug")
+        self.assertEqual(row["entity_id"], "")
+        self.assertEqual(row.get("integration"), "zha")
 
     def test_a_device_record_is_preferred_over_a_log_line(self):
         house = zwave_house()

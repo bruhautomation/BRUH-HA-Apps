@@ -53,13 +53,14 @@ done
 # --- redaction, applied to the whole file every time --------------------------
 # A regex that is skipped for a file "that can't have a token in it" is the
 # regex that misses the day it does. panel/reports.py's redact() is the same
-# four rules in Python; tests/test_reports.py drives both over one fixture.
+# five rules in Python; tests/test_reports.py drives both over one fixture.
 redact() {
     sed -E -i \
         -e 's/sk-ant-[A-Za-z0-9_-]{8,}/[redacted]/g' \
         -e 's/Bearer[[:space:]]+[A-Za-z0-9._-]{8,}/[redacted]/g' \
         -e 's/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/[redacted]/g' \
         -e 's/("(access_token|refresh_token|token|api_key|oauth_token|value)"[ ]*:[ ]*")[^"]{8,}"/\1[redacted]"/g' \
+        -e 's/(^|[^A-Za-z0-9_.])((account|user|customer|client|member|subscriber|tenant)[_-]?id"?[[:blank:]]*[:=][[:blank:]]*"?)[A-Za-z0-9][A-Za-z0-9._@-]*/\1\2[redacted]/gI' \
         "$1"
 }
 

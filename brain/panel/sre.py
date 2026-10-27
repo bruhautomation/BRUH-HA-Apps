@@ -59,6 +59,7 @@ import os
 import re
 
 import atomic_write
+import house_words
 import prompt_kit
 import textclip
 from checks._util import spell_integration
@@ -432,7 +433,8 @@ def _host_of(url) -> str:
 
 def _named_in(message: str, known: set[str], devices: list,
               integration: str = "",
-              device_domains: dict | None = None) -> tuple[list, list]:
+              device_domains: dict | None = None,
+              own_names: dict | None = None) -> tuple[list, list]:
     """``(entity ids, device ids)`` a log message names: ids the house has,
     and registry devices whose own name (or address) appears in it.
 
@@ -447,6 +449,16 @@ def _named_in(message: str, known: set[str], devices: list,
     text = str(message or "")
     ents = sorted({m.group(1) for m in _ID_IN_TEXT.finditer(text)
                    if m.group(1) in known})
+    # An entity of the logging integration's own, by the name the house
+    # gave it ("Kitchen blind did not respond"): the line names the blind,
+    # not the motor's device name. ``own_names`` holds only that
+    # integration's entities, so this is never a guess across integrations.
+    for eid, name in sorted((own_names or {}).items()):
+        if (eid not in ents and len(name) >= MIN_DEVICE_NAME
+                and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)",
+                              text, re.I)):
+            ents.append(eid)
+    ents = sorted(ents)
     devs = []
     addresses = set(_ADDRESS_RE.findall(text))
     for d in devices or []:
@@ -499,7 +511,8 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
                  devices: list | None = None, user_text: str | None = None,
                  platforms: dict | None = None,
                  manifests: list | None = None,
-                 entity_devices: dict | None = None) -> list[dict]:
+                 entity_devices: dict | None = None,
+                 friendly: dict | None = None) -> list[dict]:
     out = []
     for row in rows:
         if not isinstance(row, dict) or row.get("level") not in LOG_LEVELS:
@@ -525,10 +538,15 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
         # A browser's error line carries the browser's user agent, and a
         # phone's model in it is not the device the error is about: the
         # frontend's records name no device by name.
+        own_names = ({e: str(n) for e, n in (friendly or {}).items()
+                      if n and (platforms or {}).get(e) == rec["integration"]}
+                     if rec["integration"] and not _is_frontend(logger)
+                     else None)
         ents, devs = _named_in(str(first or ""), known or set(),
                                None if _is_frontend(logger) else devices,
                                rec["integration"],
-                               _device_domains(platforms, entity_devices))
+                               _device_domains(platforms, entity_devices),
+                               own_names)
         if ents:
             rec["entities"] = ents
             owners = sorted({(platforms or {}).get(e) for e in ents} - {None, ""})
@@ -780,14 +798,17 @@ def log_subjects(rec: dict, platforms: dict, known: set[str]) -> list[str]:
 
 def _subjects(records: list[dict], entities: list,
               wide: dict | None = None,
-              known: set[str] | None = None) -> dict[str, str]:
+              known: set[str] | None = None,
+              device_rows: list | None = None) -> dict[str, str]:
     """`{record id: entity}` for every record a subject is known for.
 
     ``wide``, when handed, is filled with ``{record id: integration}`` for
-    the log records filed under their integration's representative rather
-    than under anything the line names: such a row is about the
-    integration as a whole, which is what lets every check that saw the
-    same outage be one card (`findings_store`'s integration fold)."""
+    the log records that name nothing of their integration's: such a row
+    is about the integration as a whole and is filed on no entity, which
+    is what lets every check that saw the same outage be one card
+    (`findings_store`'s integration fold). ``device_rows`` (the device
+    registry) says which hub each device hangs off, for a line naming
+    several of one hub's things."""
     devices, platforms = _representatives(entities)
     entity_platform = {str(e["entity_id"]): str(e.get("platform") or "")
                        for e in entities or []
@@ -797,6 +818,29 @@ def _subjects(records: list[dict], entities: list,
         if isinstance(e, dict) and e.get("entity_id") and e.get("device_id"):
             by_device.setdefault(str(e["device_id"]), []).append(
                 str(e["entity_id"]))
+    entity_device = {str(e["entity_id"]): str(e.get("device_id") or "")
+                     for e in entities or []
+                     if isinstance(e, dict) and e.get("entity_id")
+                     and e.get("device_id")}
+    via = {str(d["id"]): str(d.get("via_device_id") or "")
+           for d in device_rows or [] if isinstance(d, dict) and d.get("id")}
+
+    def hub_of(ents: list[str], devs: list[str], integration: str) -> str:
+        """The one hub every named thing hangs off, as that hub's own
+        entity of the logging integration — or "" when they do not share
+        one: several things named is a cause about all of them, and
+        filing it on one of them would be a guess."""
+        boxes = {entity_device.get(e, "") for e in ents} | set(devs)
+        hubs = {via.get(b, "") for b in boxes}
+        if len(boxes) < 2 or len(hubs) != 1 or "" in hubs:
+            return ""
+        hub = hubs.pop()
+        own = sorted(e for e in by_device.get(hub, [])
+                     if not integration
+                     or entity_platform.get(e) == integration)
+        rep = devices.get(hub, "")
+        return rep if rep in own else (own[0] if own else "")
+
     out: dict[str, str] = {}
     for rec in records:
         eid = ""
@@ -824,12 +868,18 @@ def _subjects(records: list[dict], entities: list,
                              or entity_platform.get(e) == integration)
                 rep = devices.get(devs[0], "")
                 eid = rep if rep in own else (own[0] if own else "")
+            elif len(named) > 1 or len(devs) > 1:
+                eid = hub_of(named, devs, integration)
             if not eid and not (rec.get("entities") or devs):
+                # A line that names nothing of the integration's is about
+                # the integration as a whole: it carries the integration
+                # (the fold's key) and NO entity. It used to be filed on the
+                # integration's first entity — another cover of the same
+                # hub than the blind the error was about.
                 domain = integration or str(rec.get("owner") or "")
-                if domain and domain not in RULE_DOMAINS:
-                    eid = platforms.get(domain, "")
-                    if eid and wide is not None:
-                        wide[rec["id"]] = domain
+                if (domain and domain not in RULE_DOMAINS
+                        and platforms.get(domain) and wide is not None):
+                    wide[rec["id"]] = domain
         if eid:
             out[rec["id"]] = eid
     return out
@@ -850,6 +900,16 @@ def subject_of(records: list[str], dig: dict) -> str:
             if (kinds.get(rid) in _DEVICE_KINDS) == wanted and subjects.get(rid):
                 return subjects[rid]
     return ""
+
+
+def _friendly_names(states: dict) -> dict[str, str]:
+    out = {}
+    for eid, st in (states or {}).items():
+        attrs = (st or {}).get("attributes") if isinstance(st, dict) else None
+        friendly = str((attrs or {}).get("friendly_name") or "").strip()
+        if friendly:
+            out[str(eid)] = friendly
+    return out
 
 
 def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
@@ -881,7 +941,8 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                         collected.get("devices") or [],
                         collected.get("user_text"), platforms, manifests,
                         {str(e["entity_id"]): str(e.get("device_id") or "")
-                         for e in reg if e.get("device_id")})
+                         for e in reg if e.get("device_id")},
+                        _friendly_names(collected.get("states") or {}))
     manifest_names = {str(m.get("domain")): str(m.get("name") or "")
                       for m in manifests if isinstance(m, dict)
                       and m.get("domain") and m.get("name")}
@@ -943,7 +1004,7 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                 records, collected.get("config_entries") or [],
                 collected.get("manifests") or []),
             "subjects": _subjects(records, collected.get("entities") or [],
-                                  wide, known),
+                                  wide, known, collected.get("devices")),
             "wide": wide,
             "platforms": platforms,
             "entity_device": entity_device,
@@ -1052,6 +1113,8 @@ SYSTEM = prompt_kit.assemble(
 - A log record carrying "called_by" is a call to an unavailable entity:
   name the automations, scripts and scenes it lists and how many calls
   each made — never "something you set up".
+- Never paste a log line, an HTTP status code or JSON into a cause: say
+  in plain words what the error means, and give each count once.
 - Name where a log line came from: its "integration_name" (or
   integration) and the device it names. Never blame a dashboard, a card
   or the browser unless the record's logger is the frontend.
@@ -1199,12 +1262,44 @@ def _without_words(text: str, pattern) -> str:
                     if not pattern.search(x)).strip()
 
 
+_CALLER_KINDS = ("automation", "script", "scene")
+
+
+def _callers_noun(callers: list[dict]) -> str:
+    """"4 automations, scripts and scenes", "an automation" — how many
+    things still call the entity, by kind, never by name."""
+    kinds = [k for k in _CALLER_KINDS if any(c.get("kind") == k
+                                             for c in callers)]
+    kinds += sorted({str(c.get("kind") or "") for c in callers} - set(kinds)
+                    - {""})
+    n = len(callers)
+    if n == 1:
+        kind = kinds[0] if kinds else "automation"
+        return ("an " if kind[:1] in "aeiou" else "a ") + kind
+    words = [k + "s" for k in kinds] or ["automations"]
+    return f"{n} " + _and(words)
+
+
+def _caller_said(c: dict) -> str:
+    """One caller, named once: with how many calls it made when the
+    logbook counted them, and with nothing about counting when it did not."""
+    calls = c.get("calls")
+    return (f"{c['name']} ({c['kind']}, {_calls_said(calls)})"
+            if calls is not None else f"{c['name']} ({c['kind']})")
+
+
 def _name_the_callers(recs: list[dict], dig: dict, title: str, detail: str,
                       fix: str) -> tuple[str, str, str]:
     """A cause citing a line about calls to an unavailable entity names the
-    automations, scripts and scenes that made them, with how many each —
-    never "something you set up", which is what a model writes when it
-    was not told."""
+    automations, scripts and scenes that made them — never "something you
+    set up", which is what a model writes when it was not told.
+
+    The title is the device and how many things still use it ("Hall
+    pendant is offline and 4 automations, scripts and scenes still use
+    it"), the detail names each of them once, and the fix names them only
+    when there are two or fewer: a list of eight in the title, again in the
+    detail and a third time in the fix was one card saying one list three
+    times."""
     callers, seen, target = [], set(), ""
     names = dig.get("names") or {}
     for rec in recs:
@@ -1214,22 +1309,34 @@ def _name_the_callers(recs: list[dict], dig: dict, title: str, detail: str,
                 callers.append(c)
         if rec.get("called_by") and not target and rec.get("entities"):
             eid = rec["entities"][0]
-            target = names.get(eid) or eid
+            target = names.get(eid) or _spoken(eid)
     if not callers:
         return title, detail, fix
-    listing = ", ".join(f"{c['name']} ({c['kind']}, {_calls_said(c['calls'])})"
-                        for c in callers)
-    said = (f"{target} is unavailable, and these still try to control it: "
-            f"{listing}.")
+    listing = ", ".join(_caller_said(c) for c in callers)
+    noun = _callers_noun(callers)
+    use = "uses" if len(callers) == 1 else "use"
+    said = f"{target} is unavailable, and these still try to control it: {listing}."
     rest = _without_words(detail, _VAGUE_RE)
+    # The model's own sentences naming a caller again are the list said
+    # twice: the sentence above names each of them.
+    rest = _without_words(rest, re.compile(
+        "|".join(re.escape(c["name"]) for c in callers)))
     detail = f"{said} {rest}".strip()
-    who = _and([c["name"] for c in callers])
-    fix = (f"Bring {target} back online, or take it out of {who} if it is "
-           "gone for good.")
-    if _VAGUE_RE.search(title) or target.lower() not in title.lower():
-        title = textclip.clip(f"{who} still control {target}, which is "
-                              "unavailable", MAX_TITLE)
+    if len(callers) <= 2:
+        who = _and([c["name"] for c in callers])
+        fix = (f"Bring {target} back online, or take it out of {who} if it "
+               "is gone for good.")
+    else:
+        fix = (f"Bring {target} back online, or take it out of those "
+               f"{noun} if it is gone for good.")
+    title = textclip.clip(f"{target} is offline and {noun} still {use} it",
+                          MAX_TITLE)
     return title, detail, fix
+
+
+def _spoken(eid: str) -> str:
+    from checks._util import spoken_id  # noqa: PLC0415 — a leaf
+    return spoken_id(eid)
 
 
 def _with_source(logs: list[dict], dig: dict, detail: str) -> str:
@@ -1431,15 +1538,16 @@ def _ago(hours) -> str:
     return f"about {round(h / 24)} days ago"
 
 
-def _log_said(logs: list[dict], dig: dict, detail: str = "",
-              quote: bool = True) -> str | None:
+def _log_said(logs: list[dict], dig: dict, detail: str = "") -> str | None:
     """The sentence a log-error finding owes its reader (#444): what the
-    log said, in plain words, how many times and when it last did.
+    error means, in plain words, how many times and when it last
+    happened.
 
-    Taken off the first cited line that has a message, the message with
-    addresses and ids as words (`checks.integrations.shown`) after the
-    redaction the record already had. ``None`` when no cited line says
-    anything; "" when ``detail`` already quotes the line and its count."""
+    Never the line itself: a status code, a JSON fragment and a URL are
+    the integration developer's words, and a card that pasted them and
+    then said the count again in other words said everything twice and
+    nothing once. The count is left out when ``detail`` already states it.
+    ``None`` when no cited line says anything."""
     from checks.integrations import shown  # noqa: PLC0415 — one wording
     for rec in logs:
         message = shown(str(rec.get("message") or "")).strip()
@@ -1448,20 +1556,16 @@ def _log_said(logs: list[dict], dig: dict, detail: str = "",
         count = int(rec.get("count") or 1)
         when = _ago(rec.get("last_hours_ago"))
         times = "once" if count == 1 else f"{count} times"
-        tail = f"{times}, most recently {when}" if when else times
-        low = detail.lower()
-        if message[:40].lower() in low:
-            return "" if str(count) in low else f"It was logged {tail}."
+        if house_words.says_count(detail, count):
+            times = ""
+        tail = (f" {times}" if times else "") + (
+            f", most recently {when}" if when else "")
         where = _source_of(rec, dig)
         who = f"The {where} integration" if where else "Home Assistant"
-        if not quote:
-            # A template warning inside an integration nothing of theirs
-            # refers to: quoting the word sends them looking for a template
-            # of their own, so the line is said by who, how often and when.
-            thing = _thing_of(rec, dig)
-            about = f" about {thing}" if thing else ""
-            return f"{who} logged this{about} {tail}."
-        return f"{who} logged \u201c{textclip.clip(message, 160)}\u201d {tail}."
+        thing = _thing_of(rec, dig)
+        about = f" about {thing}" if thing else ""
+        return (f"{who} logged an error{about}{tail}: "
+                f"{house_words.log_meaning(message)}.")
     return None
 
 
@@ -1638,7 +1742,6 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
                 eid = ""
             bundled += 1
         logs = [by_id[r] for r in real if by_id[r]["kind"] == "log"]
-        not_theirs = False
         if (logs and any(r.get("referenced_by_you") is False for r in logs)
                 and not any(r.get("referenced_by_you") for r in logs)
                 and not any(by_id[r]["kind"] == "automation" for r in real)
@@ -1652,7 +1755,6 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
                     if not _TEMPLATE_WORDS.search(s)]
             detail = " ".join(kept).strip()
             rewritten += 1
-            not_theirs = True
         # A cause names only what its own records are about. A fix telling
         # somebody to reload an integration entry none of them came from,
         # or a title about a sensor its template never reads, is a sentence
@@ -1692,8 +1794,11 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
         title, detail, fix = (plain_slugs(title, dig), plain_slugs(detail, dig),
                               plain_slugs(fix, dig))
         only_logs = bool(logs) and len(logs) == len(real)
-        said = _log_said(logs, dig, detail, quote=not not_theirs) \
-            if logs else ""
+        if logs:
+            # The run's own sentences that paste a line, a status code or
+            # JSON go: `_log_said` says what the error means.
+            detail = house_words.without_log_text(detail)
+        said = _log_said(logs, dig, detail) if logs else ""
         if only_logs and said is None:
             # A finding about log errors that cannot say what the error
             # was is a card with nothing in it (#444): held back, counted.

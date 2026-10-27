@@ -245,7 +245,8 @@ def situation(case: dict) -> str:
         return "chore_done" if status == "done" else "chore"
     if case.get("informational") is True and fstatus != "fixed":
         return "acknowledge"
-    if kind == "question" and case.get("source") == HOUSE_BOOK_SOURCE:
+    if kind == "question" and (case.get("source") == HOUSE_BOOK_SOURCE
+                               or case.get("asked") is True):
         return "gap"
     if kind == "question" or store == "hypotheses":
         return "question"
@@ -541,6 +542,19 @@ def answers(case: dict) -> list[dict]:
                 "not reversed.", route=f"/api/finding/{key}/unfix",
                 done="Put back — read what it says"))
         return out
+
+    if sit == "gap" and case.get("asked") is True:
+        # A question brAIn asked about the house (`findings_store.as_asked`):
+        # the answer is typed, and it goes into memory beside the question.
+        answer = _answer(
+            "answer", "Send", "Say what you know. It goes into memory with "
+            "the question, in your words.",
+            route=f"/api/question/{key}/answer", primary=True, note=True,
+            done="Filed into memory")
+        answer["ask"] = ("Your answer goes into memory exactly as you write "
+                         "it — never type a code or a password here.")
+        answer["placeholder"] = "The dog goes out then."
+        return [answer, _snooze(cid), _not_applicable(cid)]
 
     if sit == "gap":
         answer = _answer(

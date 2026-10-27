@@ -2168,7 +2168,10 @@ def get_findings(status="open", limit=50):
     result = _panel_get("/api/findings")
     if isinstance(result, dict) and result.get("error"):
         return result
-    rows = (result or {}).get("findings") or []
+    # A question (brAIn's own, a house-book gap) is not a fault: it lives
+    # under Questions for you on Needs you, answered there in words.
+    rows = [r for r in (result or {}).get("findings") or []
+            if not (isinstance(r, dict) and r.get("kind") == "question")]
     if status == "open":
         rows = [r for r in rows if r.get("status") in
                 ("open", "fixing", "fixed", "failed", "needs_you")]

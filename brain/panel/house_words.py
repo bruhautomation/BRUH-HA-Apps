@@ -270,3 +270,95 @@ def plain(text: str, names: Mapping | None = None,
                                    tz, now)), names)
     except Exception:  # noqa: BLE001 — a cleanup must never cost the row
         return text
+
+
+# ---------------------------------------------------------------------------
+# A log line, said rather than quoted
+# ---------------------------------------------------------------------------
+#
+# A finding made of log lines used to paste the line — `Error fetching data:
+# 503, message='Service Unavailable', url=URL('…')` — and then say its
+# count again in other words. The line is somebody else's text, written
+# for the integration's developer: a status code, a JSON fragment and a
+# URL say nothing to the person the card is for. What they need is what
+# the error MEANS, which is one of a handful of things, first match wins.
+
+_LOG_MEANINGS = (
+    (re.compile(r"rate.?limit|too many requests|\b429\b|throttl", re.I),
+     "the service it talks to is turning requests away because it is "
+     + "being asked too often"),
+    (re.compile(r"unauthori[sz]ed|forbidden|access denied|permission denied"
+                r"|invalid (?:auth|credentials?|token|api.?key|password)"
+                r"|(?:authentication|login|sign.?in) (?:failed|refused|error)"
+                r"|\b40[13]\b", re.I),
+     "its sign-in with the device or service is being refused"),
+    (re.compile(r"timed? ?out|timeout|did not respond|not responding|no response",
+                re.I),
+     "a device or service it talks to did not answer in time"),
+    (re.compile(r"connection (?:refused|reset|aborted|error|failed|lost)"
+                r"|cannot connect|can't connect|could not connect|unable to connect"
+                r"|failed to connect|unreachable|no route to host|host is down"
+                r"|name or service not known|disconnected|connect(?:or)?error",
+                re.I),
+     "it could not reach the device or service it talks to"),
+    (re.compile(r"\b5\d\d\b|internal server error|bad gateway"
+                r"|service unavailable|server error", re.I),
+     "the service it talks to had a fault on its own side"),
+    (re.compile(r"missing or not currently available|not currently available"
+                r"|\bunavailable\b", re.I),
+     "something it tried to use is unavailable"),
+    (re.compile(r"\b404\b|not found|no such", re.I),
+     "it asked for something that is no longer there"),
+    (re.compile(r"json|decod|pars(?:e|ing)|unexpected (?:response|data|value)"
+                r"|invalid (?:response|data|value)|[{}]", re.I),
+     "it got an answer it could not make sense of"),
+)
+_LOG_MEANING_ELSE = "something it was doing failed"
+
+
+def log_meaning(message: str) -> str:
+    """What a logged error means, in plain words, never quoting it."""
+    text = str(message or "")
+    for pattern, meaning in _LOG_MEANINGS:
+        if pattern.search(text):
+            return meaning
+    return _LOG_MEANING_ELSE
+
+
+# What marks a sentence as pasting a log rather than saying something: a
+# quoted span, code quotes, an HTTP status said as one, a JSON or key=value
+# fragment, a URL, an exception's class name, a traceback.
+_RAW_LOG_RE = re.compile(
+    r"[“”`]|\"[^\"]{3,}\"|'[^'\s][^']{6,}'"
+    r"|\b(?:HTTP|status(?: code)?|error|code|response)[\s:=]*[1-5]\d\d\b"
+    r"|\b[1-5]\d\d\b(?=\s*[,:)]|\s+(?:error|response|status|Not Found"
+    r"|Unauthori[sz]ed|Forbidden|Internal|Bad Gateway|Service Unavailable"
+    r"|Too Many))"
+    r"|[{}\[\]]|\b\w+='|\w+=URL|https?://"
+    r"|\b[A-Z][A-Za-z]+(?:Error|Exception)\b|Traceback", re.I)
+_LOG_SENTENCES = re.compile(r"(?<=[.!?])\s+")
+
+
+def without_log_text(text: str) -> str:
+    """``text`` less every sentence that pastes a log line, a status code
+    or JSON instead of saying what it means."""
+    if not text:
+        return text
+    kept = [s for s in _LOG_SENTENCES.split(str(text))
+            if s and not _RAW_LOG_RE.search(s)]
+    return " ".join(kept).strip()
+
+
+_COUNT_WORDS = ("zero", "once", "twice", "three", "four", "five", "six",
+                "seven", "eight", "nine", "ten", "eleven", "twelve")
+
+
+def says_count(text: str, count: int) -> bool:
+    """Whether ``text`` already states ``count`` — as a number, or for a
+    small one in words — so a sentence after it does not say it again."""
+    low = str(text or "").lower()
+    if re.search(rf"(?<![\d.,]){int(count)}(?![\d.,]\d)", low):
+        return True
+    if 0 <= count < len(_COUNT_WORDS):
+        return re.search(rf"\b{_COUNT_WORDS[count]}\b", low) is not None
+    return False

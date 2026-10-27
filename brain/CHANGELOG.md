@@ -2,6 +2,23 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.4
+
+### Added
+
+- **Questions get an answer box and come one at a time.** A question brAIn asked ("brAIn asks: …") no longer sits among the faults on the Findings list; it joins **Questions for you** with a box to type the answer into, which goes to memory. That group shows one question at a time with a line saying how many follow. (#486)
+
+### Changed
+
+- **"Is this fixed now" cards read as one sentence.** The card's text is the report's own title, cut at a word if it is long, with the full report and a "Where to look" line in the detail; the explanation of where Yes and No go, and any developer text, is gone. (#478, #484)
+- **An offline device is named first.** A finding about an unavailable device now reads "Hall pendant is offline and 4 automations, scripts and scenes still use it", and each automation or scene is named once. (#483)
+- **Findings from the log say what the error means.** They state each count once and no longer paste log lines, status codes or JSON. (#485)
+
+### Fixed
+
+- **Cloud account ids are redacted** in quoted log text, reports and everything that leaves the house (`accountId`, `customerId`, `user_id` and similar). (#479)
+- **A log finding is filed on the thing it names**, or on the hub when several are involved, never on another device of the same integration. (#481)
+
 ## 4.0.3
 
 ### Fixed

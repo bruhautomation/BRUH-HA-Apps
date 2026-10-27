@@ -120,7 +120,7 @@ def redact(text: str) -> str:
     """`journal.scrub` plus the JSON-field rule the shell has always applied.
 
     One function for the whole file. The shell's `redact()` in
-    `brain-report.sh` is the same four rules in sed, and
+    `brain-report.sh` is the same five rules in sed, and
     `tests/test_reports.py` drives both over one fixture set.
     """
     return _FIELD_RE.sub(r'\1[redacted]"', journal.scrub(text))
