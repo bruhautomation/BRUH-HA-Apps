@@ -7000,7 +7000,7 @@ function makeLooseFinding(f) {
   // So is a question brAIn asked about the house (`findings_store.as_asked`).
   const asked = f.asked === true && f.kind === "question";
   const card = qCard({
-    id: `f:${f.ts}`, chip: f.source === "house_book" || asked ? "question"
+    id: `f:${f.ts}`, chip: f.source === "house_book" ? "question" : asked ? "question"
       : f.severity === "critical" ? "urgent"
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
@@ -7561,8 +7561,8 @@ function todayCards() {
     const t = f.triage || {};
     const security = isSecuritySource(f.source);
     out.push({ id: `f:${f.ts}`,
-      group: f.source === "house_book" || (f.asked === true && f.kind === "question")
-        ? "questions"
+      group: f.source === "house_book" ? "questions"
+        : f.asked === true && f.kind === "question" ? "questions"
         : f.severity === "info" && !security ? "tidy" : "problems",
       urgent: f.severity === "critical", severity: f.severity, security,
       unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),

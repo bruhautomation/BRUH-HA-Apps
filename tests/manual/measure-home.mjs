@@ -181,7 +181,16 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 1200, touc
   };
   // Doesn't apply on a question posts the case's not_applicable, with no
   // reason box: the question was irrelevant, and nothing is recorded.
+  // Questions are asked one at a time (measure-today): the second is on
+  // the page once the first has gone, which is what the server's answer
+  // to the first press does — here the stub keeps it, so it is taken off.
   for (const id of ['h:1103', 'f:1108']) {
+    if (id === 'f:1108') {
+      await page.evaluate(() => {
+        state.cases = (state.cases || []).filter((c) => c.id !== 'h:1103');
+        renderFindings();
+      });
+    }
     const sel = `[data-case-id="${id}"] .card-actions button:text-is("Doesn't apply")`;
     if (!await page.locator(sel).count()) { note(where, `${id} has no Doesn't apply`); continue; }
     await page.locator(sel).click();
