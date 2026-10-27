@@ -219,9 +219,55 @@ fieldset.trays { border: 1px solid var(--line); border-radius: 10px; display: gr
 @media (max-width: 600px) { .viewhelp-pop > [data-input] ~ [data-input] { display: none; } }
 .bodies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .bodies:empty { display: none; }
-.chip.body { display: inline-flex; align-items: center; gap: 6px; text-transform: none; cursor: pointer; }
-.chip.body i { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--line); flex: none; }
-.chip.body[aria-pressed="false"] { opacity: 0.5; text-decoration: line-through; }
+/* A body's pill: its dot changes the colour it prints in, its name hides
+   or shows it. Two buttons, so each press does one thing. */
+.chip.body { display: inline-flex; align-items: center; gap: 0; padding: 0; text-transform: none; }
+.chip.body button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  min-height: 32px; display: inline-flex; align-items: center; }
+.bodydot { padding: 0 4px 0 8px; }
+.bodyname { padding: 0 10px 0 4px; }
+.chip.body i { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--line); flex: none;
+  box-shadow: 0 0 0 2px transparent; }
+.bodydot:hover i, .bodydot:focus-visible i { box-shadow: 0 0 0 2px var(--accent); }
+.chip.body.off .bodyname { opacity: 0.5; text-decoration: line-through; }
+.viewerwrap { position: relative; }
+.colourpop { position: absolute; z-index: 6; width: min(300px, calc(100% - 16px)); padding: 12px;
+  border-radius: 10px; background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); display: grid; gap: 8px; font-size: 14px; }
+.colourpop[hidden] { display: none; }
+.colourpop p { margin: 0; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatch { width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 50%;
+  border: 1px solid var(--line); background: var(--c); cursor: pointer; }
+.anycolour { display: flex; align-items: center; gap: 8px; }
+.anycolour input { width: 44px; height: 32px; padding: 0; border: 0; background: none; }
+.colourpop .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.viewsetting { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 10px; color: #e8eef3;
+  cursor: pointer; }
+.viewsetting small { flex-basis: 100%; color: #b8c6d2; padding-left: 24px; }
+/* Measure: the snap marker and the distance on the line, over the canvas. */
+.measure-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
+.snapmark, .measurelabel { position: absolute; left: 0; top: 0; will-change: transform; }
+.snapmark[hidden], .measurelabel[hidden] { display: none; }
+.snapmark i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; box-sizing: border-box;
+  border: 2px solid #ffd23f; background: rgba(11, 16, 22, 0.5); }
+.snapmark[data-kind="vertex"] i { border-radius: 2px; }
+.snapmark[data-kind="midpoint"] i { border: 0; background: none; width: 0; height: 0; left: -8px; top: -9px;
+  border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #ffd23f; }
+.snapmark[data-kind="edge"] i { border-radius: 50%; width: 10px; height: 10px; left: -5px; top: -5px; }
+.snapmark[data-kind="centre"] i { border-radius: 50%; background: radial-gradient(#ffd23f 2px, rgba(11, 16, 22, 0.5) 3px); }
+.snapmark[data-kind="face"] i { border-radius: 50%; width: 8px; height: 8px; left: -4px; top: -4px; border-width: 1px; }
+.snapmark span { position: absolute; left: 12px; top: 6px; padding: 1px 6px; border-radius: 6px; white-space: nowrap;
+  background: rgba(11, 16, 22, 0.8); color: #ffd23f; font-size: 12px; }
+.measurelabel { padding: 3px 8px; border-radius: 6px; background: #ffd23f; color: #1a1300; font-weight: 700;
+  font-size: 14px; white-space: nowrap; translate: -50% -50%; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
+.measurebox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.measurebox #measureOut { flex: 1 1 100%; margin: 6px 0 0; }
+.measurebox .ax.x { color: #e5484d; } .measurebox .ax.y { color: #46a758; } .measurebox .ax.z { color: #3e8ed0; }
+.measurelist { margin: 0; padding-left: 20px; font-size: 13px; color: var(--muted); flex: 1; }
+.measurelist:empty { display: none; }
+.viewerwrap:fullscreen .bodies, .viewerwrap.filled .bodies,
+.viewerwrap:fullscreen .measurebox, .viewerwrap.filled .measurebox { flex: none; }
 .importbar { display: flex; gap: 8px; margin-top: 12px; }
 .importbar input { flex: 1; min-width: 0; }
 @media (max-width: 900px) {
@@ -475,6 +521,11 @@ label[hidden], [hidden] { display: none !important; }
   summary { min-height: 44px; padding-block: 11px; box-sizing: border-box; }
   .viewhelp { width: 44px; height: 44px; }
   .viewhelp-pop { top: 62px; max-height: calc(100% - 72px); }
+  .chip.body button { min-height: 44px; }
+  .bodydot { min-width: 44px; justify-content: center; padding: 0; }
+  .swatch { width: 44px; height: 44px; }
+  .anycolour input { height: 44px; }
+  .viewsetting { min-height: 44px; }
 }
 /* ---- Print failure detection ------------------------------------------ */
 .watch { display: grid; gap: 12px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line);

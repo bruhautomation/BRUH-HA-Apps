@@ -270,19 +270,16 @@ async function loadModel(p, v) {
   note.hidden = true;
   if (!design.viewer) {
     design.viewer = new window.BambuViewer(holder);
-    design.viewer.onMeasure = (m) => {
-      $("#measureOut").textContent = !m ? "" : m.first ? "Pick the second point."
-        : `${m.distance.toFixed(2)} mm  (ΔX ${m.dx.toFixed(2)} · ΔY ${m.dy.toFixed(2)} · ΔZ ${m.dz.toFixed(2)})`;
-    };
+    design.viewer.setInvertY(invertY());
+    design.viewer.onMeasure = showMeasure;
   }
-  // Each body in the colour it prints in: the script's own COLORS first,
-  // then the filament brAIn suggested for the whole part (versions built
-  // before COLORS existed), and only then the palette that tells bodies apart.
-  const colors = v.colors || {};
-  const partColour = (p.print_settings && p.print_settings.colour) || "";
-  const bodies = Object.entries((v.files && v.files.bodies) || {}).map(([name, path]) => ({
-    name, url: `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(path)}`,
-    color: colors[name] || partColour }));
+  // Each body in the colour it prints in: one the person chose from its
+  // dot first, then the script's own COLORS, then the filament brAIn
+  // suggested for the whole part (versions built before COLORS existed),
+  // and only then the palette that tells bodies apart.
+  const bodies = Object.keys((v.files && v.files.bodies) || {}).map((name) => ({
+    name, url: `api/design/parts/${p.id}/file?v=${v.n}&path=${encodeURIComponent(v.files.bodies[name])}`,
+    color: bodyColour(p, v, name), chosen: chosenColour(p, name) }));
   try {
     await design.viewer.load(bodies);
     renderBodies(bodies);
@@ -295,25 +292,148 @@ async function loadModel(p, v) {
   } catch (e) { note.hidden = false; note.textContent = `Could not show it: ${e.message}`; }
 }
 
-// A key under the view: each body in its colour, and a tap hides or shows
-// it — how somebody looks inside a print-in-place part or at one colour.
+function chosenColour(p, name) {
+  const row = (p.body_colours || {})[name];
+  return (row && row.colour) || "";
+}
+
+function bodyColour(p, v, name) {
+  return chosenColour(p, name) || (v.colors || {})[name] || (p.print_settings && p.print_settings.colour) || "";
+}
+
+// A key under the view: each body in its colour. Its name hides or shows it
+// (how somebody looks inside a print-in-place part or at one colour); its
+// dot changes the colour it prints in.
 function renderBodies(bodies) {
   const box = $("#bodyList");
   const colourOf = window.bambuFilamentColour || (() => null);
   const named = bodies.filter((b) => b.color);
+  design.bodies = bodies;
   if (bodies.length < 2 && !named.length) { box.replaceChildren(); return; }
+  const hidden = new Set([...box.querySelectorAll(".chip.body.off")].map((c) => c.dataset.body));
   box.replaceChildren(...bodies.map((b) => {
-    const chip = el("button", { type: "button", class: "chip body", "aria-pressed": "true",
+    const off = hidden.has(b.name);
+    const dot = el("button", { type: "button", class: "bodydot", "aria-label": `Change the colour of ${b.name}`,
+      title: `Change the colour ${b.name} prints in` },
+    el("i", { style: `background:${colourOf(b.color) || "transparent"}` }));
+    const name = el("button", { type: "button", class: "bodyname", "aria-pressed": String(!off),
       title: `Hide or show ${b.name}` },
-    el("i", { style: `background:${colourOf(b.color) || "transparent"}` }),
     b.color && !b.color.startsWith("#") ? `${b.name} · ${b.color}` : b.name);
-    chip.addEventListener("click", () => {
-      const on = chip.getAttribute("aria-pressed") !== "true";
-      chip.setAttribute("aria-pressed", String(on));
+    const chip = el("span", { class: `chip body${off ? " off" : ""}`, "data-body": b.name }, dot, name);
+    dot.addEventListener("click", (e) => { e.stopPropagation(); openColours(b, dot); });
+    name.addEventListener("click", () => {
+      const on = name.getAttribute("aria-pressed") !== "true";
+      name.setAttribute("aria-pressed", String(on));
+      chip.classList.toggle("off", !on);
       if (design.viewer) design.viewer.setVisible(b.name, on);
     });
     return chip;
   }));
+}
+
+// The colour a body prints in, chosen from its dot: the AMS trays' colours
+// first (the filament that is really loaded), then any colour. It is saved
+// on the part: Print offers the tray closest to it, Open in Bambu Studio
+// names it, and brAIn is told it on the next message.
+function trayColours() {
+  const out = new Map();
+  for (const printer of (state.data && state.data.printers) || []) {
+    for (const t of printer.ams || []) {
+      const m = /^#?([0-9a-f]{6})/i.exec(String(t.colour || ""));
+      if (!m) continue;
+      const hex = `#${m[1].toUpperCase()}`;
+      if (!out.has(hex)) out.set(hex, `${printer.name} AMS ${t.slot + 1}: ${[colourName(hex), t.type].filter(Boolean).join(" ")}`);
+    }
+  }
+  return out;
+}
+
+function closeColours() {
+  $("#colourPop").hidden = true;
+  design.colourFor = null;
+}
+
+function openColours(body, dot) {
+  const pop = $("#colourPop");
+  if (!pop.hidden && design.colourFor === body.name) { closeColours(); return; }
+  design.colourFor = body.name;
+  const p = design.part;
+  const current = (window.bambuFilamentColour && window.bambuFilamentColour(body.color)) || "#cccccc";
+  const swatches = [...trayColours()].map(([hex, words]) => {
+    const b = el("button", { type: "button", class: "swatch", "data-colour": hex, title: words,
+      "aria-label": words, style: `--c:${hex}` });
+    b.addEventListener("click", () => chooseColour(body.name, hex));
+    return b;
+  });
+  const pick = el("input", { type: "color", id: "colourPick", value: current.slice(0, 7), "aria-label": "Any colour" });
+  pick.addEventListener("input", () => design.viewer && design.viewer.setColour(body.name, pick.value));
+  pick.addEventListener("change", () => chooseColour(body.name, pick.value));
+  const reset = el("button", { type: "button", id: "colourReset" }, "Back to brAIn's colour");
+  reset.addEventListener("click", () => chooseColour(body.name, null));
+  reset.hidden = !chosenColour(p, body.name);
+  const close = el("button", { type: "button", id: "colourClose" }, "Close");
+  close.addEventListener("click", closeColours);
+  pop.replaceChildren(
+    el("b", {}, `${body.name}'s colour`),
+    el("p", {}, `What ${body.name} prints in: Print starts from the AMS tray closest to it, and brAIn is told on your next message.`),
+    swatches.length ? el("div", { class: "swatches", role: "group", "aria-label": "Colours in the AMS" }, ...swatches)
+      : el("p", { class: "hint" }, "No AMS trays to offer — pick any colour."),
+    el("label", { class: "anycolour" }, pick, " Any colour"),
+    el("div", { class: "row" }, reset, close));
+  pop.hidden = false;
+  const wrap = $("#viewerWrap").getBoundingClientRect();
+  const d = dot.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(d.left - wrap.left, wrap.width - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${Math.max(8, d.top - wrap.top - pop.offsetHeight - 8)}px`;
+}
+
+async function chooseColour(name, colour) {
+  const p = design.part;
+  if (!p) return;
+  closeColours();
+  if (colour) colour = colour.toUpperCase();
+  try {
+    const r = await api(`api/design/parts/${p.id}`, { json: { body_colours: { [name]: colour } } });
+    design.part = r.part;
+  } catch (e) { toast(e.message, true); }
+  const v = (design.part.versions || []).find((x) => x.n === design.viewing) || {};
+  const shown = bodyColour(design.part, v, name);
+  if (design.viewer) design.viewer.setColour(name, shown || "#cccccc");
+  renderBodies((design.bodies || []).map((b) => (b.name === name ? { ...b, color: shown, chosen: chosenColour(design.part, name) } : b)));
+}
+
+// -- Measure: what was picked, the last few, and Clear ----------------------
+const SNAP_WORDS = { vertex: "corner", midpoint: "midpoint", centre: "face centre", edge: "edge", face: "face" };
+
+function measureWords(m) {
+  const parts = [`${m.distance.toFixed(2)} mm`];
+  if (m.perpendicular != null) parts.push(`square to the face ${m.perpendicular.toFixed(2)} mm`);
+  if (m.angle != null) parts.push(`angle ${m.angle.toFixed(1)}°`);
+  return parts.join(" · ");
+}
+
+function showMeasure(m) {
+  const out = $("#measureOut");
+  const touch = (design.viewer && design.viewer._downType === "touch")
+    || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  if (!m) {
+    out.textContent = design.viewer && design.viewer.measuring ? `${touch ? "Tap" : "Click"} two points on the part.` : "";
+  } else if (m.first) {
+    out.textContent = `First point on a ${SNAP_WORDS[m.kind] || "point"}. Pick the second.`;
+  } else {
+    out.replaceChildren(el("b", {}, measureWords(m)), " ",
+      el("span", { class: "ax x" }, `ΔX ${m.dx.toFixed(2)}`), " ",
+      el("span", { class: "ax y" }, `ΔY ${m.dy.toFixed(2)}`), " ",
+      el("span", { class: "ax z" }, `ΔZ ${m.dz.toFixed(2)}`));
+  }
+  const history = (design.viewer && design.viewer.history) || [];
+  $("#measureList").replaceChildren(...history.slice().reverse().map((h) => el("li", {},
+    `${measureWords(h)} (${h.kinds.map((k) => SNAP_WORDS[k]).join(" to ")})`)));
+  $("#measureClear").hidden = !history.length;
+}
+
+function invertY() {
+  try { return localStorage.getItem("bambu.invertY") === "1"; } catch (_) { return false; }
 }
 
 // The controls, said once: the first time a part is shown on this browser
@@ -549,8 +669,20 @@ $("#measureBtn").addEventListener("click", (e) => {
   e.currentTarget.setAttribute("aria-pressed", String(on));
   if (design.viewer) design.viewer.setMeasuring(on);
   const touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
-  $("#measureOut").textContent = on ? `${touch ? "Tap" : "Click"} two points on the part.` : "";
+  $("#measureOut").textContent = on ? `${touch ? "Tap" : "Click"} two points on the part; it snaps to corners, edges and faces.` : "";
 });
+$("#measureClear").addEventListener("click", () => {
+  if (design.viewer) design.viewer.clearMeasure(true);
+});
+$("#invertY").checked = invertY();
+$("#invertY").addEventListener("change", (e) => {
+  try { localStorage.setItem("bambu.invertY", e.target.checked ? "1" : "0"); } catch (_) { /* storage refused */ }
+  if (design.viewer) design.viewer.setInvertY(e.target.checked);
+});
+document.addEventListener("pointerdown", (e) => {
+  if (!$("#colourPop").hidden && !e.target.closest("#colourPop, .bodydot")) closeColours();
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#colourPop").hidden) closeColours(); });
 $("#wireBtn").addEventListener("click", (e) => {
   const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
   e.currentTarget.setAttribute("aria-pressed", String(on));

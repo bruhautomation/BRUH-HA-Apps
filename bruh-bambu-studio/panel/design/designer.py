@@ -258,6 +258,10 @@ def _turn_prompt(part: dict, words: str, *, fix: str = "") -> str:
         lines.append("There is no version yet.")
     if part.get("print_settings"):
         lines.append(f"Print settings so far: {json.dumps(part['print_settings'])}")
+    chosen = parts.body_colours(part)
+    if chosen:
+        lines.append("The person chose these body colours on the Design tab; write them into "
+                     f"COLORS unless they now ask for others: {json.dumps(chosen)}")
     lines.append(_printers_line())
     if fix:
         lines += ["", "YOUR LAST SCRIPT DID NOT BUILD. Fix it and return the complete corrected "
@@ -383,6 +387,7 @@ def run_turn(part_id: str, words: str) -> None:
             if row["ok"]:
                 part.setdefault("versions", []).append(row)
                 part["current"] = row["n"]
+                parts.settle_body_colours(part, row.get("colors"))
                 parts.say(part, "brain", reply, version=row["n"], questions=questions,
                           build=row["report_summary"])
                 break

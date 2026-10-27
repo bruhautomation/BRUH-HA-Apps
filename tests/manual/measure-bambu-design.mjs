@@ -31,9 +31,23 @@
  *    the pointer; a turn past the top that flips the view over; Home or a
  *    named view that jumps rather than moves, or does not frame the whole
  *    part; no bed under the part;
+ *  - a vertical drag that moves the view against the hand (dragging down
+ *    must lower the view, as Fusion's default does), or an "Invert vertical
+ *    drag" setting that does not flip it back, is not remembered, or is
+ *    under the touch floor;
+ *  - Measure that does not snap like Fusion's: a pointer near a corner, an
+ *    edge's middle, an edge, a face's centre or a face not taking that point
+ *    and showing which; a distance not drawn on the line at its middle, with
+ *    no ΔX/ΔY/ΔZ; a face and a point with no perpendicular distance; two
+ *    faces with no angle; no list of recent measurements; Escape or Clear not
+ *    clearing; a tap on a phone that does not snap;
+ *  - a body's dot that does not open a colour choice (the trays first, then
+ *    any colour), recolour that body, save it to the part, or go back to
+ *    brAIn's colour;
  *  - no Full screen for the 3D view, or one that does not fill the window
  *    (falling back when the Fullscreen API is refused, as an ingress frame
- *    may) and leave on Escape; a view that does not follow its box's size;
+ *    may) and leave on Escape; the body pills and measurements not visible
+ *    and usable in full screen; a view that does not follow its box's size;
  *  - sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -138,8 +152,38 @@ async function viewerMoves(page, say, touch, ctx) {
     let b = await cam();
     if (close(a.az, b.az, 0.05)) say('a left drag did not turn the part');
     if (!close(a.distance, b.distance, a.distance * 0.01)) say(`a left drag changed the distance (${a.distance.toFixed(1)} → ${b.distance.toFixed(1)})`);
+    // Vertical: dragging down lowers the view (the camera follows the hand
+    // down, toward the bed), and the setting turns that round.
+    for (const [invert, sign] of [[false, -1], [true, 1]]) {
+      if (invert) {
+        const flip = page.locator('#invertY');
+        if (!(await flip.count())) { say('there is no Invert vertical drag setting'); break; }
+        await page.locator('#viewHelpBtn').click();
+        await flip.check();
+        const stored = await page.evaluate(() => { try { return localStorage.getItem('bambu.invertY'); } catch (_) { return 'refused'; } });
+        if (stored !== '1') say(`Invert vertical drag is not remembered (${stored})`);
+        await page.locator('#viewHelpBtn').click();
+      }
+      await page.evaluate(() => design.viewer.view('front'));
+      await settle();
+      const before = await cam();
+      await page.mouse.move(cx, cy - 60);
+      await page.mouse.down();
+      await page.mouse.move(cx, cy + 40, { steps: 8 });
+      await page.mouse.up();
+      await settle();
+      const after = await cam();
+      if (Math.sign(after.el - before.el) !== sign || Math.abs(after.el - before.el) < 0.2) {
+        say(`a drag down ${invert ? 'with Invert vertical drag on ' : ''}moved the elevation ${before.el} → ${after.el}, not ${sign < 0 ? 'down' : 'up'}`);
+      }
+    }
+    if (await page.locator('#invertY').count()) {
+      await page.locator('#viewHelpBtn').click();
+      await page.locator('#invertY').uncheck();
+      await page.locator('#viewHelpBtn').click();
+    }
     // Shift + middle drag turns too.
-    a = b;
+    a = await cam();
     await page.keyboard.down('Shift');
     await page.mouse.move(cx, cy);
     await page.mouse.down({ button: 'middle' });
@@ -199,6 +243,16 @@ async function viewerMoves(page, say, touch, ctx) {
     let b = await cam();
     if (close(a.az, b.az, 0.05)) say('one finger did not turn the part');
     if (!close(a.distance, b.distance, a.distance * 0.01)) say('one finger changed the distance');
+    // One finger down lowers the view too.
+    a = b;
+    await touchEv('touchStart', [[cx, cy - 60]]);
+    for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx, cy - 60 + i * 12]]);
+    await touchEv('touchEnd', []);
+    await settle();
+    b = await cam();
+    if (!(b.el < a.el - 0.2)) say(`one finger down moved the elevation ${a.el} → ${b.el}, not down`);
+    const flipBox = await page.locator('#invertY').evaluate((el) => el.closest('label').getBoundingClientRect().height).catch(() => 0);
+    if (flipBox && flipBox < 44) say(`Invert vertical drag is ${flipBox}px tall, under the touch floor`);
     a = b;
     await touchEv('touchStart', [[cx - 40, cy], [cx + 40, cy]]);
     for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx - 40 + i * 8, cy + i * 6], [cx + 40 + i * 8, cy + i * 6]]);
@@ -251,6 +305,35 @@ async function viewerMoves(page, say, touch, ctx) {
     const canvas = await page.evaluate(() => { const c = document.querySelector('#viewer canvas');
       return [c.clientWidth, c.clientHeight, document.querySelector('#viewer').clientWidth, document.querySelector('#viewer').clientHeight]; });
     if (Math.abs(canvas[0] - canvas[2]) > 2 || Math.abs(canvas[1] - canvas[3]) > 2) say('the 3D view did not follow its full screen size');
+    // The body pills come along, visible on the screen and usable.
+    const pills = page.locator('#bodyList .chip.body');
+    const where = refused ? ' (API refused)' : '';
+    if ((await pills.count()) !== 2) say(`full screen${where} shows ${await pills.count()} body pills`);
+    for (let i = 0; i < await pills.count(); i += 1) {
+      const pb = await pills.nth(i).boundingBox();
+      const shown = await pills.nth(i).isVisible();
+      if (!shown || !pb || !r || pb.y < r.y || pb.y + pb.height > r.y + r.height + 1 || pb.y + pb.height > vw.height + 1
+          || pb.x < 0 || pb.x + pb.width > vw.width + 1) {
+        say(`body pill ${i + 1} is not on the screen in full screen${where}`);
+      } else {
+        // On top, not under the full screen view: what is at its middle is it.
+        const top = await pills.nth(i).evaluate((el) => { const b = el.getBoundingClientRect();
+          const at = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+          return !!at && el.contains(at); });
+        if (!top) say(`body pill ${i + 1} is covered in full screen${where}`);
+      }
+    }
+    if ((await pills.count()) && await pills.nth(0).locator('.bodydot').count()) {
+      await pills.nth(0).locator('.bodydot').click();
+      const pop = page.locator('#colourPop');
+      if (!(await pop.isVisible())) say(`a body's dot does not open its colours in full screen${where}`);
+      await page.locator('#colourClose').click().catch(() => say(`the colour choice cannot be closed in full screen${where}`));
+      const name = pills.nth(0).locator('.bodyname');
+      await name.click();
+      const hidden = await page.evaluate(() => !design.viewer.group.getObjectByName('Base').visible);
+      if (!hidden) say(`a body pill does not hide its body in full screen${where}`);
+      await name.click();
+    }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     const back = await page.locator('#viewerWrap').boundingBox();
@@ -266,6 +349,134 @@ async function viewerMoves(page, say, touch, ctx) {
     return fits;
   });
   if (!ok) say('the 3D view does not follow the size of its box');
+}
+
+// Measure, the way Fusion's does: it snaps to what is near the pointer,
+// draws the distance on the line, and says more when faces are picked.
+async function measureTool(page, say, touch) {
+  const can = await page.evaluate(() => ['snapAt', 'measureState']
+    .filter((m) => !(design.viewer && typeof design.viewer[m] === 'function')));
+  if (can.length) { say(`Measure cannot be read back (${can.join(', ')})`); return; }
+  const settle = () => page.evaluate(() => design.viewer.settled());
+  const screen = (p) => page.evaluate((q) => design.viewer.screenOf(q), p);
+  const state = () => page.evaluate(() => design.viewer.measureState());
+  const near = (a, b, tol) => a && b && Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) <= tol;
+  await page.locator('#measureBtn').click();
+  await page.evaluate(() => design.viewer.view('iso'));
+  await settle();
+  const off = touch ? 9 : 5;
+  const pick = async (p, dx = off, dy = off * 0.6) => {
+    const [x, y] = await screen(p);
+    if (touch) await page.touchscreen.tap(x + dx, y + dy);
+    else await page.mouse.click(x + dx, y + dy);
+    await page.waitForTimeout(120);
+  };
+  if (!touch) {
+    for (const [kind, point, want, tol] of [
+      ['vertex', [40, 0, 36], [40, 0, 36], 0.05],
+      ['midpoint', [20, 0, 36], [20, 0, 36], 0.05],
+      ['edge', [9, 0, 36], [9, 0, 36], 2.5],
+      ['centre', [20, 15, 36], [20, 15, 36], 0.05],
+      ['face', [11, 9, 36], [11, 9, 36], 2.5]]) {
+      const [x, y] = await screen(point);
+      const dx = kind === 'edge' ? 0 : kind === 'face' || kind === 'centre' ? 3 : 4;
+      const dy = kind === 'edge' ? 4 : 3;
+      await page.mouse.move(x + dx, y + dy);
+      await page.waitForTimeout(100);
+      const got = await page.evaluate(([px, py]) => design.viewer.snapAt(px, py), [x + dx, y + dy]);
+      const mark = await page.evaluate(() => { const m = document.querySelector('#viewer .snapmark');
+        return m && !m.hidden && getComputedStyle(m).display !== 'none' ? m.dataset.kind : null; });
+      if (!got || got.kind !== kind) say(`near ${kind === 'centre' ? "a face's centre" : `a ${kind}`} Measure snapped to ${got && got.kind}`);
+      else if (!near(got.point, want, tol)) say(`the ${kind} snap took ${got.point.map((v) => v.toFixed(2))}, not ${want}`);
+      if (mark !== kind) say(`the snap marker shows ${mark} near a ${kind}`);
+    }
+  }
+  // Corner to corner: the distance on the line, at its middle.
+  await pick([40, 0, 36]);
+  await pick([0, 0, 36], -off, off * 0.6);
+  let m = await state();
+  const last = m.results[m.results.length - 1];
+  if (!last || Math.abs(last.distance - 40) > 0.01) say(`corner to corner measured ${last && last.distance}, not 40 (no snap)`);
+  else if (Math.abs(last.dx - 40) > 0.01 || last.dy > 0.01 || last.dz > 0.01) say(`ΔX/ΔY/ΔZ read ${last.dx}/${last.dy}/${last.dz}`);
+  const mid = await screen([20, 0, 36]);
+  if (!m.label || !m.label.visible || !/40\.00/.test(m.label.text)) say(`the line carries no distance (${JSON.stringify(m.label)})`);
+  else if (Math.hypot(m.label.x - mid[0], m.label.y - mid[1]) > 40) say(`the distance is drawn ${Math.round(Math.hypot(m.label.x - mid[0], m.label.y - mid[1]))} px from the line's middle`);
+  const out = await page.locator('#measureOut').textContent();
+  if (!/ΔX/.test(out) || !/ΔZ/.test(out)) say(`the measurement does not say ΔX/ΔY/ΔZ (${out})`);
+  // A face, then a corner: how far that corner is from the face's plane.
+  await pick([11, 9, 36], 0, 0);
+  await pick([40, 0, 0], off, -off * 0.6);
+  m = await state();
+  const perp = m.results[m.results.length - 1];
+  if (!perp || perp.perpendicular == null || Math.abs(perp.perpendicular - 36) > 0.05) say(`face to corner gave no 36 mm perpendicular (${JSON.stringify(perp)})`);
+  // Two faces at right angles: the angle between them.
+  await pick([11, 9, 36], 0, 0);
+  await pick([12, 0, 10], 0, 0);
+  m = await state();
+  const ang = m.results[m.results.length - 1];
+  if (!ang || ang.angle == null || Math.abs(ang.angle - 90) > 0.5) say(`two faces at right angles gave ${ang && ang.angle}°`);
+  const listed = await page.locator('#measureList li').count();
+  if (listed < 3) say(`the recent measurements list ${listed}, not the last 3`);
+  await page.keyboard.press('Escape');
+  m = await state();
+  if (m.points.length || (m.label && m.label.visible)) say('Escape did not clear the measurement');
+  const clear = page.locator('#measureClear');
+  if (!(await clear.count())) say('there is no Clear for the measurements');
+  else {
+    const cb = await clear.boundingBox();
+    if (touch && cb && cb.height < 44) say(`Clear is ${cb.height}px tall, under the touch floor`);
+    await clear.click();
+    if (await page.locator('#measureList li').count()) say('Clear did not empty the list');
+  }
+  await page.locator('#measureBtn').click();
+}
+
+// A body's dot opens its colours: the AMS trays first, then any colour.
+async function bodyColours(page, say, touch, label) {
+  const lid = page.locator('#bodyList .chip.body').nth(1);
+  const dot = lid.locator('.bodydot');
+  if (!(await dot.count())) { say("a body's pill has no colour dot to press"); return; }
+  const colourOf = () => page.evaluate(() => `#${design.viewer.group.getObjectByName('Lid').material.color.getHexString()}`);
+  const saved = () => POSTS.filter((p) => p.label === label && p.body.body_colours).map((p) => p.body.body_colours);
+  await dot.click();
+  const pop = page.locator('#colourPop');
+  if (!(await pop.isVisible())) { say("the Lid's dot did not open a colour choice"); return; }
+  if (!/print/i.test(await pop.textContent())) say('the colour choice does not say that the colour is what it prints in');
+  const swatch = pop.locator('.swatch[data-colour="#F2F2F2"]');
+  if (!(await swatch.count())) say("the colour choice does not offer the AMS tray's colour");
+  else {
+    if (touch) {
+      const sb = await swatch.boundingBox();
+      if (sb.width < 44 || sb.height < 44) say(`a tray swatch is ${sb.width}×${sb.height}, under the touch floor`);
+    }
+    await swatch.click();
+    await page.waitForTimeout(200);
+    if ((await colourOf()) !== '#f2f2f2') say(`choosing the tray's colour left the Lid ${await colourOf()}`);
+    const last = saved().pop();
+    if (!last || last.Lid !== '#F2F2F2') say(`choosing a colour did not save it to the part (${JSON.stringify(last)})`);
+    const bg = await dot.locator('i').evaluate((i) => getComputedStyle(i).backgroundColor);
+    if (bg !== 'rgb(242, 242, 242)') say(`the Lid's dot shows ${bg} after the change`);
+    if (await pop.isVisible()) say('the colour choice stayed open after a colour was chosen');
+  }
+  await dot.click();
+  const pick = page.locator('#colourPick');
+  if (!(await pick.count())) say('the colour choice offers no other colour');
+  else {
+    await pick.evaluate((i) => { i.value = '#00ff00'; i.dispatchEvent(new Event('input', { bubbles: true })); i.dispatchEvent(new Event('change', { bubbles: true })); });
+    await page.waitForTimeout(200);
+    if ((await colourOf()) !== '#00ff00') say(`a colour from the picker left the Lid ${await colourOf()}`);
+    if ((saved().pop() || {}).Lid !== '#00FF00') say('a colour from the picker was not saved');
+  }
+  if (!(await pop.isVisible())) await dot.click();
+  const reset = page.locator('#colourReset');
+  if (!(await reset.count())) say("there is no way back to brAIn's colour");
+  else {
+    await reset.click();
+    await page.waitForTimeout(200);
+    if ((await colourOf()) !== '#ff0000') say(`going back to brAIn's colour left the Lid ${await colourOf()}`);
+    if ((saved().pop() || {}).Lid !== null) say("going back to brAIn's colour was not saved");
+  }
+  if (await pop.isVisible()) await page.locator('#colourClose').click();
 }
 
 const problems = [];
@@ -291,6 +502,17 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
     if (route.request().method() === 'POST' && /^api\/design\/parts\/[^/]+\/(message|studio)$/.test(path)) {
       POSTS.push({ label, path, body: route.request().postDataJSON() });
       return route.fulfill({ json: { ok: true, part: PART, studio: {} } });
+    }
+    if (route.request().method() === 'POST' && path === `api/design/parts/${PART.id}`) {
+      const body = route.request().postDataJSON();
+      POSTS.push({ label, path, body });
+      const chosen = { ...(PART.body_colours || {}) };
+      for (const [name, colour] of Object.entries(body.body_colours || {})) {
+        if (colour === null) delete chosen[name];
+        else chosen[name] = { colour: colour.toUpperCase(), over: PART.versions[0].colors[name] || '' };
+      }
+      PART.body_colours = chosen;
+      return route.fulfill({ json: { ok: true, part: PART } });
     }
     if (path === 'api/printers/scan') {
       return route.fulfill({ json: { ok: true, job: { state: 'done', networks: ['192.168.1.0/24'],
@@ -391,13 +613,24 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   const chips = page.locator('#bodyList .chip.body');
   if ((await chips.count()) !== 2) {
     say(`the body key shows ${await chips.count()} bodies, not 2`);
+  } else if (!(await chips.nth(1).locator('.bodyname').count())) {
+    say("a body's pill has no name to press to hide it");
   } else {
-    await chips.nth(1).click();
+    await chips.nth(1).locator('.bodyname').click();
     const lidShown = await page.evaluate(() => design.viewer.group.getObjectByName('Lid').visible);
     if (lidShown) say('tapping a body in the key did not hide it');
+    await chips.nth(1).locator('.bodyname').click();
+    if (touch) {
+      for (const part of ['.bodydot', '.bodyname']) {
+        const bb = await chips.nth(1).locator(part).boundingBox();
+        if (bb && (bb.height < 44 || (part === '.bodydot' && bb.width < 44))) say(`a pill's ${part.slice(5)} is ${Math.round(bb.width)}×${Math.round(bb.height)}, under the touch floor`);
+      }
+    }
   }
 
   await viewerMoves(page, say, touch, ctx);
+  await measureTool(page, say, touch);
+  await bodyColours(page, say, touch, label);
 
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Design tab scrolls sideways by ${wide} px`);
@@ -503,11 +736,35 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   if (process.env.SHOTS) {
     await page.screenshot({ path: `${process.env.SHOTS}/printers-${label}.png`, fullPage: true });
     await page.locator('.tab[data-view="design"]').click();
-    await page.locator('#bodyList .chip.body').nth(1).click();
+    await page.locator('#bodyList .chip.body .bodyname').nth(1).click().catch(() => {});
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${process.env.SHOTS}/design-${label}.png`, fullPage: true });
     await page.locator('#viewHelpBtn').click();
     await page.locator('#viewer').screenshot({ path: `${process.env.SHOTS}/help-${label}.png` });
+    await page.locator('#viewHelpBtn').click();
+    await page.locator('#bodyList .chip.body .bodyname').nth(1).click().catch(() => {});
+    await page.evaluate(() => design.viewer.view('iso'));
+    await page.evaluate(() => design.viewer.settled());
+    await page.locator('#measureBtn').click();
+    for (const [p, dx] of [[[40, 0, 36], 5], [[0, 30, 36], -5]]) {
+      const [x, y] = await page.evaluate((q) => design.viewer.screenOf(q), p);
+      if (touch) await page.touchscreen.tap(x + dx, y + 3); else await page.mouse.click(x + dx, y + 3);
+      await page.waitForTimeout(150);
+    }
+    if (!touch) {
+      const [x, y] = await page.evaluate((q) => design.viewer.screenOf(q), [20, 0, 36]);
+      await page.mouse.move(x + 3, y + 3);
+      await page.waitForTimeout(200);
+    }
+    await page.locator('#viewerWrap').screenshot({ path: `${process.env.SHOTS}/measure-${label}.png` });
+    await page.locator('#bodyList .chip.body .bodydot').nth(1).click().catch(() => {});
+    await page.waitForTimeout(150);
+    await page.locator('#viewerWrap').screenshot({ path: `${process.env.SHOTS}/colour-${label}.png` });
+    await page.keyboard.press('Escape');
+    await page.locator('#viewFull').click();
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: `${process.env.SHOTS}/fullscreen-${label}.png` });
+    await page.keyboard.press('Escape');
   }
   await ctx.close();
 }

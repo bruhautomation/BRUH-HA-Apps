@@ -1282,6 +1282,19 @@ async def h_design_update(request):
         if settings is None:
             return _err("Those print settings could not be read.")
         part["print_settings"] = settings
+    if "body_colours" in body:
+        # A colour chosen from a body's dot on the Design tab: what that body
+        # prints in from now on, until brAIn writes one of its own.
+        chosen = body["body_colours"]
+        if not isinstance(chosen, dict) or not chosen:
+            return _err("Name each body and its colour.")
+        trial = {**part, "body_colours": dict(part.get("body_colours") or {})}
+        try:
+            for name, colour in chosen.items():
+                parts.set_body_colour(trial, name, colour)
+        except ValueError as exc:
+            return _err(str(exc))
+        part["body_colours"] = trial["body_colours"]
     await asyncio.to_thread(parts.save, part)
     return web.json_response({"ok": True, "part": part})
 
@@ -1346,23 +1359,28 @@ def _version_3mf(part: dict, n) -> tuple[int, dict, Path]:
 
 
 def _body_colours(part: dict, row_v: dict, names: list[str] | None) -> dict:
-    """Each body's colour: the script's COLORS, else brAIn's suggestion."""
+    """Each body's colour: the one the person chose on the Design tab, else
+    the script's COLORS, else brAIn's suggestion."""
     fallback = (part.get("print_settings") or {}).get("colour", "")
+    chosen = parts.body_colours(part)
     colours = row_v.get("colors") or {}
-    return {name: colours.get(name) or fallback for name in (names or ["Part"])}
+    return {name: chosen.get(name) or colours.get(name) or fallback for name in (names or ["Part"])}
 
 
 def _plan(part: dict, printer_row: dict, client: PrinterClient | None) -> dict:
     settings = part.get("print_settings") or {}
     trays = (client.summary().get("ams") if client else None) or []
-    plan = {"settings": settings, "trays": trays,
-            "recommended_slot": recommend_tray(trays, settings.get("material", "PLA"),
-                                               settings.get("colour", ""))}
     try:
         _n, row_v, source = _version_3mf(part, None)
         names = painting.bodies(source)
     except PrintRefused:
         row_v, names = {}, None
+    # A one-body part's colour, chosen on the Design tab, is the tray it asks for.
+    chosen = parts.body_colours(part)
+    one = next((chosen[n] for n in (names or []) if n in chosen), "") if len(names or []) <= 1 else ""
+    plan = {"settings": settings, "trays": trays,
+            "recommended_slot": recommend_tray(trays, settings.get("material", "PLA"),
+                                               one or settings.get("colour", ""))}
     # A part whose 3MF names a filament per body is offered a tray per
     # body; an older one prints in one filament.
     if names and len(names) > 1:

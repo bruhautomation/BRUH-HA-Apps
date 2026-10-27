@@ -164,3 +164,55 @@ def file_in(part_id: str, n: int, relative: str) -> Path:
     if not path.startswith(base + os.sep) or not os.path.isfile(path):
         raise LookupError("No such file.")
     return Path(path)
+
+
+# -- a body's colour, chosen on the Design tab's key ------------------------
+# Stored per part as {body: {"colour": "#RRGGBB", "over": <the script's
+# colour it replaced>}}. It is what the body prints in wherever a colour is
+# read (the tray offered, a print with no tray named, Bambu Studio's
+# filament), brAIn is told it on its next turn, and it stands down once a
+# built version writes a colour of its own for that body (settle_body_colours).
+HEX = re.compile(r"^#?([0-9a-fA-F]{6})$")
+BODY_NAME_MAX = 80
+
+
+def clean_colour(value) -> str | None:
+    m = HEX.match(value.strip()) if isinstance(value, str) else None
+    return f"#{m.group(1).upper()}" if m else None
+
+
+def _script_colour(part: dict, body: str) -> str:
+    current = version(part, part.get("current")) or {}
+    return str((current.get("colors") or {}).get(body) or "")
+
+
+def set_body_colour(part: dict, body: str, colour) -> None:
+    """Choose (or, with None, clear) one body's colour. Raises ValueError."""
+    if not isinstance(body, str) or not body.strip() or len(body) > BODY_NAME_MAX:
+        raise ValueError("A body is named by its name.")
+    chosen = part.setdefault("body_colours", {})
+    if colour is None:
+        chosen.pop(body, None)
+        return
+    hexed = clean_colour(colour)
+    if not hexed:
+        raise ValueError("A colour is #RRGGBB.")
+    chosen[body] = {"colour": hexed, "over": _script_colour(part, body)}
+
+
+def body_colours(part: dict) -> dict:
+    """{body: "#RRGGBB"} for the colours the person chose."""
+    return {name: row["colour"] for name, row in (part.get("body_colours") or {}).items()
+            if isinstance(row, dict) and clean_colour(row.get("colour"))}
+
+
+def settle_body_colours(part: dict, colors: dict | None) -> None:
+    """A new version built: a body whose script colour moved off the one the
+    choice replaced is brAIn's now (it either wrote the chosen colour in, or
+    was asked for another), so the choice ends there."""
+    colors = colors or {}
+    chosen = part.get("body_colours") or {}
+    for name in list(chosen):
+        row = chosen[name]
+        if not isinstance(row, dict) or str(colors.get(name) or "") != str(row.get("over") or ""):
+            chosen.pop(name)
