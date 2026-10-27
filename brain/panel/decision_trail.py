@@ -88,6 +88,11 @@ KINDS = {
     # X": every check in that part of Home Assistant looked and found
     # nothing. One row per area per day (the date is in the reason).
     "checked": "brAIn looked and found nothing wrong",
+    # The opposite answer to the same question: some or all of the checks
+    # in that part of Home Assistant could not look (a read failed), so
+    # "nothing wrong" would be a claim nobody made.
+    "unchecked": "brAIn could not check this properly: a read it needed "
+                 "failed",
 }
 
 # The decisions that are STANDING answers rather than events: a re-report
@@ -101,7 +106,8 @@ KINDS = {
 # look's verdict or a notification decision is an event at a time and is
 # written again past the window, as before.
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
-                        "drift", "claimed", "explained", "checked"})
+                        "drift", "claimed", "explained", "checked",
+                        "unchecked"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:

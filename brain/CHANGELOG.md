@@ -25,6 +25,13 @@ Morph is part of brAIn. One app, one sidebar entry, one login: the Morph dashboa
 - **The separate Morph app.** On its first start brAIn stops the Morph app and sets it not to start at boot, deletes the retired `morph` integration's files and its leftover entry under Devices & services, and says so in a notification. It never uninstalls the app; do that yourself from Settings › Add-ons once you are happy. Your dashboard, its whole history, your cards, your changes to Morph's own code and LEARNED.md are in `/config/morph` and are kept as they are. Morph's own settings (theme, hold time, the learning schedule) and its learning scorecard lived in the Morph app's private storage and start from their defaults once; set them again in ⚙ › Dashboard.
 - Morph's own Settings page and the MORPH brand and ⚙ in its bar: those are brAIn's header and ⚙ now.
 
+## 3.8.26
+
+### Fixed
+
+- **A Home Assistant restart no longer files a pile of fault reports.** When Home Assistant itself did not answer (502, refused or timed-out connection), every unread piece of the house and every check that needed it used to be reported separately, about twenty rows for one restart. It is now one row, "Home Assistant did not answer", naming what could not be read. A real reading error still reports on its own. (#457–#476)
+- **A part of the house that could not be looked at never reads "checked, nothing wrong".** When some or all of an area's checks could not read what they needed, the decision trail now says "could not check" and why, instead of a clean bill of health. (#482)
+
 ## 3.8.25
 
 ### Changed
