@@ -201,7 +201,7 @@ for (const { width, touch, top, fits } of CASES) {
     h: Math.round(g.querySelector('.qgrouphead')?.getBoundingClientRect().height || 0),
   })));
   const names = groups.map((g) => g.name).join('|');
-  if (names !== 'Problems|Questions|Chores and suggestions|Tidy-ups') {
+  if (names !== 'Problems|Questions for you|Chores and suggestions|Tidy-ups') {
     note(where, `the queue's groups read ${names || '(none)'}`);
   }
   if (groups.filter((g) => g.open).map((g) => g.group).join('|') !== 'problems') {
@@ -719,7 +719,7 @@ const GAP = kase({
   group: 'questions', severity: 'info', source: 'house_book',
   source_title: 'House book', origin: { store: 'findings', key: 1300 },
   claim: 'Where is the dryer vent booster blower, and can it be switched off by hand?',
-  detail: 'About the dryer vent.', fix: 'Answer it here and the house book will say so.',
+  detail: 'About the dryer vent.', fix: 'Your answer goes into the house book: the plain-language guide brAIn writes for anyone looking after this house.',
   answers: [
     A('answer', 'Send', '/api/house_book/question/1300/answer', { primary: true,
       note: true, done: 'Filed into memory for the house book',
@@ -740,7 +740,7 @@ const CANT = kase({
 const OLD_GAP = { ts: 2301, text: 'House book: Where is the stopcock?', severity: 'info',
   status: 'triaging', waiting_look: true, fixable: false, source: 'house_book',
   source_title: 'House book', detail: 'About the water main.',
-  fix: 'Answer it here and the house book will say so.', triage: {}, snoozed_until: 0 };
+  fix: 'Your answer goes into the house book: the plain-language guide brAIn writes for anyone looking after this house.', triage: {}, snoozed_until: 0 };
 for (const { width, touch } of [{ width: 390, touch: true }, { width: 1190, touch: false }]) {
   const where = `${width}px gap`;
   const { page, context } = await open(width, touch, {

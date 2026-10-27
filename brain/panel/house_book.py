@@ -359,7 +359,11 @@ SYSTEM = prompt_kit.assemble(
 - Then ask up to 3 QUESTIONS about things a reader needs and no source can
   tell you — above all, where a physical shutoff or device is — each
   about one subject you were given. Never ask where something is when it
-  is given with an "area": that is where it is.""",
+  is given with an "area": that is where it is.
+- A question's "why" stands on its own: say what a reader would need the
+  answer for (a house-sitter when the alarm sounds, a leak at night).
+  Never refer to notes, facts or sources by name ("the notes say…"): the
+  homeowner has not seen them.""",
 )
 
 SCHEMA = {
@@ -394,7 +398,11 @@ SCHEMA = {
             "type": "object",
             "properties": {
                 "question": {"type": "string"},
-                "why": {"type": "string"},
+                "why": {"type": "string", "description":
+                        "What a reader would need the answer for, in one "
+                        "sentence that stands on its own: never \"the "
+                        "notes say\" or anything else the homeowner has "
+                        "not seen."},
                 "subject": {"type": "object", "properties": {
                     "kind": {"type": "string", "enum": list(SOURCE_KINDS)},
                     "id": {"type": "string"}}},
@@ -582,6 +590,14 @@ def parse(answer: dict | None, dig: dict, request: str = "",
             "uncited": uncited, "redacted": redacted}
 
 
+# What a gap question's card says to do. The old sentence, "Answer it here
+# and the house book will say so.", is read as this one on rows filed
+# before it changed (`findings_store.shown_fix`).
+FIX = ("Your answer goes into the house book: the plain-language guide brAIn "
+       "writes for anyone looking after this house.")
+OLD_FIX = "Answer it here and the house book will say so."
+
+
 def question_rows(questions: list[dict], asked: list[str],
                   open_count: int) -> list[dict]:
     """Findings rows for the questions not asked before, within the caps."""
@@ -595,7 +611,11 @@ def question_rows(questions: list[dict], asked: list[str],
         out.append({
             "text": f"House book: {q['question']}",
             "detail": q["why"] or f"About {q['label']}.",
-            "fix": "Answer it here and the house book will say so.",
+            # Says what the house book is and never "answer it here": this
+            # sentence reaches surfaces with no box to answer in (the
+            # mirror, a development-loop review), and Needs you draws the
+            # box itself (#502).
+            "fix": FIX,
             "severity": "info",
             "fixable": False,
             "entity_id": entity,
