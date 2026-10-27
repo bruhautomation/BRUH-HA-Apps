@@ -165,6 +165,7 @@ import devloop_archive
 import card_tags
 import card_verdict
 import cases
+import changes
 from checks._util import House
 import chat_session
 import closures
@@ -3080,6 +3081,18 @@ async def _apply_morph_request(req: dict) -> dict:
             ok, why = await _morph_undo(case_id)
         elif action == "not_applicable":
             ok, why, _ = await _morph_end(case_id, "not_applicable")
+        elif action == "recheck":
+            # Check again: the panel's own press, through the same helper.
+            if finding is None:
+                why = "only a check's report can be checked again"
+            else:
+                out = await _recheck_finding(finding)
+                ok = bool(out.get("checked"))
+                why = "" if ok else str(out.get("why") or "it could not run")
+        elif action == "wrong":
+            # Ignore, with the reason Morph's box carried as the note: the
+            # case's own `wrong`, which reaches `_end_finding` for a report.
+            ok, why, _ = await _morph_end(case_id, "wrong", req.get("text", ""))
     except web.HTTPException as exc:
         ok, why = False, exc.text or "refused"
     result["ok"], result["why"] = ok, "" if ok else why
@@ -3611,6 +3624,7 @@ def _morph_cases_payload(now: float | None = None) -> dict:
             if cases.on_feed(c)]
     side = morph_bridge.threads()
     names = dict(_NAMES)
+    assistant = personality.assistant_name()
     out = []
     for case in rows:
         split = cases.split_id(case["id"])
@@ -3621,17 +3635,20 @@ def _morph_cases_payload(now: float | None = None) -> dict:
         except Exception:  # noqa: BLE001
             urgent = False
         situation = cases.situation(case)
+        case_answers = cases.answers(case)
         out.append(morph_bridge.case_row(
             case,
             todo_text=(findings_store.todo_text_of(row, names)
                        if row is not None else ""),
             thread=(row or {}).get("thread") or side.get(case["id"]) or [],
             ask=morph_bridge.ask_line(case, situation),
-            answers=morph_bridge.morph_answers(cases.answers(case)),
+            answers=morph_bridge.morph_answers(case_answers),
             area_id=_morph_case_area(case),
             urgent=urgent,
             finding_status=str(case.get("finding_status") or ""),
-            morph_key=str((row or {}).get("morph_key") or "")))
+            morph_key=str((row or {}).get("morph_key") or ""),
+            chip=answers_mod.chip(case, urgent),
+            who=answers_mod.who_acts(case, assistant, case_answers)))
     live = {c["id"] for c in out}
     said = []
     for cid, turns in side.items():
@@ -6919,8 +6936,6 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     `scene.apply` (each domain's own reproduce_state), and then read again,
     because Home Assistant accepting a call is not a light being on. Every
     entity gets its own line: restored, or could not restore and why."""
-    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
-
     finding = _finding_or_404(request)
     if finding.get("status") not in RESTORE_STATUSES:
         raise web.HTTPConflict(text="this finding is being worked on — wait "
@@ -6936,34 +6951,9 @@ async def h_finding_restore(request: web.Request) -> web.Response:
     if not plan["apply"] and not plan["refused"]:
         raise web.HTTPConflict(text="this fix made no service calls brAIn "
                                     "recorded, so there is nothing to put back")
-    error, after = "", {}
-    if plan["apply"]:
-        before = {}
-        for eid in plan["apply"]:
-            try:
-                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
-            except Exception:  # noqa: BLE001 — recorded as unknown
-                before[eid] = {"unknown": True}
-        iv = await asyncio.to_thread(interventions.for_finding,
-                                     int(finding["ts"]))
-        try:
-            await ha_data.call_core_service("scene", "apply",
-                                            {"entities": plan["apply"]})
-        except Exception as exc:  # noqa: BLE001 — reported per entity
-            error = str(exc)
-        typed_fix.append_ledger(typed_fix.ledger_row(
-            "scene", "apply", list(plan["apply"]), before=before,
-            channel="restore", intervention=(iv or {}).get("id", "")),
-            actions.LEDGER_FILE)
-        if not error:
-            await asyncio.sleep(RESTORE_SETTLE_S)
-        for eid in plan["apply"]:
-            try:
-                after[eid] = await ha_data.entity_state(eid)
-            except Exception:  # noqa: BLE001
-                after[eid] = None
-    rows = unfix.restore_report(plan, after, error)
-    text = unfix.restore_text(rows)
+    iv = await asyncio.to_thread(interventions.for_finding,
+                                 int(finding["ts"]))
+    rows, text = await _restore_calls(plan, (iv or {}).get("id", ""))
 
     def note() -> dict:
         findings_store.set_status(int(finding["ts"]), finding["status"],
@@ -6975,6 +6965,177 @@ async def h_finding_restore(request: web.Request) -> web.Response:
              finding["ts"], sum(1 for r in rows if r["restored"]),
              sum(1 for r in rows if not r["restored"]))
     return web.json_response({**payload, "restored": rows, "text": text})
+
+
+async def _restore_calls(plan: dict, intervention: str = "") -> tuple[list, str]:
+    """Carry out a restore plan (`unfix.restore_plan`): `scene.apply` the
+    recorded before-states, record that on the ledger as a restore, and read
+    every entity again — Home Assistant accepting a call is not a light
+    being on. One implementation for a fix's "Put them back" and a row's
+    Undo under History › Changes brAIn made."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    error, after = "", {}
+    if plan["apply"]:
+        before = {}
+        for eid in plan["apply"]:
+            try:
+                before[eid] = typed_fix.before_of(await ha_data.entity_state(eid))
+            except Exception:  # noqa: BLE001 — recorded as unknown
+                before[eid] = {"unknown": True}
+        try:
+            await ha_data.call_core_service("scene", "apply",
+                                            {"entities": plan["apply"]})
+        except Exception as exc:  # noqa: BLE001 — reported per entity
+            error = str(exc)
+        typed_fix.append_ledger(typed_fix.ledger_row(
+            "scene", "apply", list(plan["apply"]), before=before,
+            channel="restore", intervention=intervention),
+            actions.LEDGER_FILE)
+        if not error:
+            await asyncio.sleep(RESTORE_SETTLE_S)
+        for eid in plan["apply"]:
+            try:
+                after[eid] = await ha_data.entity_state(eid)
+            except Exception:  # noqa: BLE001
+                after[eid] = None
+    rows = unfix.restore_report(plan, after, error)
+    return rows, unfix.restore_text(rows)
+
+
+# -- History › Changes brAIn made ------------------------------------------
+
+def _journal_since(since: float) -> list[dict]:
+    """Every edit-journal line since ``since``, whoever wrote it. Malformed
+    lines are skipped, the tolerance `brain undo` and `unfix` apply."""
+    out: list[dict] = []
+    try:
+        with open(automation_writer.INDEX, "r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                    ts = float(row.get("ts") or 0)
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                if isinstance(row, dict) and ts >= since:
+                    row["ts"] = ts
+                    out.append(row)
+    except OSError:
+        return []
+    return out
+
+
+def _file_mtime(path: str) -> float | None:
+    try:
+        return os.stat(path).st_mtime
+    except OSError:
+        return None
+
+
+def _changes_rows(now: float | None = None) -> list[dict]:
+    """Every change brAIn made, as History rows (`changes.build`), read off
+    the stores the panel already keeps."""
+    now = time.time() if now is None else now
+    since = now - changes.CHANGES_DAYS * 86400
+    fixes = [f for f in findings_store.listing().get("findings") or []
+             if f.get("status") == "fixed"]
+    try:
+        tokens = security.honeytoken_ids()
+    except Exception:  # noqa: BLE001 — a tripwire list that cannot be read
+        tokens = ()
+    return changes.build(
+        journal=_journal_since(since), ledger=actions.read_ledger(since),
+        fixes=fixes, tidy_batches=tidy.load().get("batches") or [],
+        intents=intents.listing(),
+        accepted=list(proposals.settled_keys().values()),
+        names=dict(_NAMES), mtime=_file_mtime, protected=None,
+        honeytokens=tokens, now=now)
+
+
+async def h_changes(request: web.Request) -> web.Response:
+    """History › Changes brAIn made: newest first, a page at a time."""
+    try:
+        limit = int(request.query.get("limit") or changes.PAGE)
+    except ValueError:
+        limit = changes.PAGE
+    try:
+        before = float(request.query["before"]) if request.query.get(
+            "before") else None
+    except ValueError:
+        before = None
+    rows = await asyncio.to_thread(_changes_rows)
+    return web.json_response({**changes.page(rows, limit, before),
+                              "label": changes.label(
+                                  personality.assistant_name())})
+
+
+def _offered(rows: list[dict], rid: str) -> dict:
+    """The row a press named, refused unless the list still offers Undo on
+    it — the button and the route cannot disagree about what is safe."""
+    row = next((r for r in rows if r["id"] == rid), None)
+    if row is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    if not row.get("press"):
+        raise web.HTTPConflict(text=row.get("reason")
+                               or "that change cannot be put back")
+    return row
+
+
+_CHANGE_TS = re.compile(r"^\d{1,12}(\.\d{1,6})?$")
+
+
+async def h_change_edit_undo(request: web.Request) -> web.Response:
+    """Put one journalled file back (`automation_writer.revert`, through
+    `unfix.revert_edits`, the reverter `brain undo` uses) and reload what
+    reads it."""
+    import ha_data  # noqa: PLC0415 — deferred; see `_wait_for_entity`
+
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"edit:{float(stamp):.6f}")
+    entry = changes.find_journal(await asyncio.to_thread(
+        _journal_since, float(stamp) - 1), float(stamp))
+    if entry is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    outcome = await asyncio.to_thread(unfix.revert_edits, [entry])
+    failures = []
+    for domain, service in outcome["reloads"]:
+        try:
+            await ha_data.call_core_service(domain, service)
+        except Exception as exc:  # noqa: BLE001 — the bytes are back either way
+            failures.append(f"{domain} would not reload: {exc}")
+    if outcome["failed"]:
+        raise web.HTTPConflict(text="; ".join(
+            why for _p, why in outcome["failed"])[:400])
+    text = unfix.summary(outcome, []).replace("the fix had changed", "brAIn had changed")
+    # The number, never the URL's string: what goes into the log is parsed.
+    log.info("change %.6f put back: %s", float(stamp), entry.get("path"))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "text": "\n\n".join([text] + failures)})
+
+
+async def h_change_call_undo(request: web.Request) -> web.Response:
+    """Put the devices one service call changed back how they were — the
+    restore press (`unfix.restore_plan` / `_restore_calls`) over that one
+    call's recorded before-state, never-restored rules and all."""
+    stamp = request.match_info["ts"]
+    if not _CHANGE_TS.match(stamp):
+        raise web.HTTPNotFound(text="no such change")
+    rows = await asyncio.to_thread(_changes_rows)
+    _offered(rows, f"call:{float(stamp):.6f}")
+    call = changes.find_call(await asyncio.to_thread(
+        actions.read_ledger, float(stamp) - 1), float(stamp))
+    if call is None:
+        raise web.HTTPNotFound(text="that change is no longer on the list")
+    tokens = await asyncio.to_thread(security.honeytoken_ids)
+    plan = unfix.restore_plan([call], None, tokens)
+    restored, text = await _restore_calls(plan)
+    log.info("change %.6f: restore — %d back", float(stamp),
+             sum(1 for r in restored if r["restored"]))
+    return web.json_response({**changes.page(await asyncio.to_thread(_changes_rows)),
+                              "restored": restored, "text": text})
 
 
 async def _undo_intervention(finding: dict) -> list[str]:
@@ -19435,6 +19596,7 @@ def _cases_payload(now: float | None = None) -> dict:
     now = time.time() if now is None else now
     rows = [c for c in cases.list_cases(now=now) if cases.on_feed(c)]
     names: dict[str, dict] = {}
+    assistant = personality.assistant_name()
     for case in rows:
         # The presses, decided once (`answers.py`) and rendered as handed:
         # `answers` is the visible row, `more` what sits behind the ⋯, and
@@ -19443,6 +19605,10 @@ def _cases_payload(now: float | None = None) -> dict:
         case["answers"] = cases.answers(case)
         case["more"] = cases.more(case)
         case["situation"] = cases.situation(case)
+        # Who acts, in one line, read off the primary just chosen
+        # (`answers.who_acts`): "brAIn can fix this." over Go ahead, "This
+        # needs you." over Add to To Do, "brAIn needs an answer." over Yes.
+        case["who"] = answers_mod.who_acts(case, assistant, case["answers"])
         # Today's card: the one status chip (`answers.chip`, with the
         # Urgent rule `notify_router.is_urgent` owns), and whether "Ignore
         # all like this" can mute the producer — absent for the producers
@@ -19607,11 +19773,29 @@ async def h_history_clear(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _who_for(verb: str, situation: str = "", name: str = "") -> dict:
+    """The who-acts line for a card the panel draws without a case — a
+    finding still waiting for its first look, a guess, a suggestion, the
+    tidy table, an assessed update — from the primary press that card
+    leads with. One derivation (`answers.who_line`) for every card on
+    Needs you, so a sentence can never sit over a button it disagrees
+    with."""
+    who = answers_mod.WHO_OF_VERB.get(verb, "")
+    return {"who": who, "press": "",
+            "line": answers_mod.who_line(
+                who, name or personality.assistant_name(), situation)}
+
+
 def _today_payload() -> dict:
     """Today's two cards no store owns, in the shape the panel renders."""
     cards = _today_cards()
     tidy_card = cards["tidy"]
-    out: dict = {"tidy": None, "updates": cards["updates"]}
+    name = personality.assistant_name()
+    # An assessed update leads with Add to To Do: installing one is the
+    # person's press in Home Assistant's own Updates, never brAIn's.
+    updates = [{**u, "who": _who_for("todo", name=name)}
+               for u in cards["updates"]]
+    out: dict = {"tidy": None, "updates": updates}
     if tidy_card:
         proposal = tidy_card["proposal"]
         out["tidy"] = {"key": tidy_card["key"],
@@ -19619,7 +19803,8 @@ def _today_payload() -> dict:
                        "refused": proposal.get("refused") or [],
                        "areas": proposal.get("areas") or [],
                        "at": int(proposal.get("at") or 0),
-                       "undo_days": tidy.UNDO_DAYS}
+                       "undo_days": tidy.UNDO_DAYS,
+                       "who": _who_for("apply", name=name)}
     return out
 
 
@@ -19676,6 +19861,16 @@ def _findings_payload() -> dict:
     # loose card beside the case list that had correctly hidden it.
     open_claims = hypotheses.awake()
     payload["hypotheses"] = open_claims
+    # The who-acts line for a card drawn straight off these rows (one the
+    # case list does not cover): a house-book question asks for an answer,
+    # anything else leads with Add to To Do; a guess asks Yes or No.
+    name = personality.assistant_name()
+    for row in payload.get("findings") or []:
+        gap = (row.get("kind") == "question"
+               and row.get("source") == answers_mod.HOUSE_BOOK_SOURCE)
+        row["who"] = _who_for("answer" if gap else "todo", name=name)
+    for row in open_claims:
+        row["who"] = _who_for("yes", name=name)
     # The badge's number, and it is THE queue count (`cases.queue_count`)
     # rather than this listing's own sum: the tab's badge was painted from
     # here on one poll and from `/api/status` on the next, two derivations
@@ -20604,6 +20799,15 @@ async def h_finding_elevate(request: web.Request) -> web.Response:
 
 async def h_finding_recheck(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
+    return web.json_response(await _recheck_finding(finding))
+
+
+async def _recheck_finding(finding: dict) -> dict:
+    """Check again on one finding: the check that filed it runs now.
+
+    Lifted out of the route so Morph's Check again (`_apply_morph_request`)
+    is the same press, `_end_finding`'s rule. Refuses with an HTTP error in
+    the sentences the route has always answered with."""
     source = str(finding.get("source") or "")
     check_id = source[6:] if source.startswith("check:") else ""
     if not check_id or checks.get_check(check_id) is None:
@@ -20635,9 +20839,8 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         # exception the rule raised.
         why = (result["skipped"].get(check_id)
                or result["errors"].get(check_id) or "it could not run")
-        return web.json_response({
-            "checked": False, "cleared": False, "why": why,
-            **(await asyncio.to_thread(_findings_payload))})
+        return {"checked": False, "cleared": False, "why": why,
+                **(await asyncio.to_thread(_findings_payload))}
 
     found = result["findings"]
     keys = {findings_store.normalize(f["text"]) for f in found}
@@ -20665,12 +20868,12 @@ async def h_finding_recheck(request: web.Request) -> web.Response:
         return len(created), len(cleared), _findings_payload()
 
     created, cleared, payload = await asyncio.to_thread(apply)
-    return web.json_response({
+    return {
         "checked": True, "cleared": not still, "created": created,
         # Everything else that check was reporting and no longer is. The
         # row pressed is not counted twice: it is already in `cleared`.
         "also_cleared": max(cleared - (0 if still else 1), 0),
-        "why": "", **payload})
+        "why": "", **payload}
 
 
 # ---------------------------------------------------------------------------
@@ -20690,8 +20893,11 @@ def _proposals_payload() -> dict:
         asleep = cases.snoozes()
     except Exception:  # noqa: BLE001 — nothing snoozed shows the card
         asleep = {}
+    name = personality.assistant_name()
     for row in rows:
         row["snoozed_until"] = int(asleep.get(f"p:{int(row.get('ts') or 0)}", 0))
+        # A suggestion leads with Apply: brAIn writes it in.
+        row["who"] = _who_for("accept", "opportunity", name)
     return {"proposals": rows, "counts": proposals.counts(rows),
             # What is waiting to happen, what already has, and the
             # sentences brAIn would not arm. Not proposals — nobody owes
@@ -26102,6 +26308,9 @@ def make_app() -> web.Application:
     app.router.add_get("/api/case/{id}/respond", h_case_respond_result)
     app.router.add_post("/api/case/{id}/{verb}", h_case_verb)
     app.router.add_get("/api/history", h_history)
+    app.router.add_get("/api/changes", h_changes)
+    app.router.add_post("/api/changes/edit/{ts}/undo", h_change_edit_undo)
+    app.router.add_post("/api/changes/call/{ts}/undo", h_change_call_undo)
     app.router.add_post("/api/history/clear", h_history_clear)
     app.router.add_get("/api/today", h_today)
     app.router.add_post("/api/today/hide", h_today_hide)

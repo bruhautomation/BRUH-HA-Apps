@@ -94,14 +94,14 @@ for (const { width, touch } of [{ width: 390, touch: true }, { width: 768, touch
       || !/doing what it was written to do/.test(refused.face)) {
     note(where, 'a refused plan does not say so, with its reason');
   }
-  if (refused && refused.presses.some((p) => p === 'Apply' || p === 'Fix')) {
+  if (refused && refused.presses.some((p) => p === 'Apply' || p === 'Fix' || p === 'Go ahead')) {
     note(where, `a refused plan offers ${refused.presses.join(' · ')}`);
   }
   const legacy = await read(page, 'f:1106');
   if (!legacy || !/This plan is out of date\./.test(legacy.face)) {
     note(where, 'a legacy plan does not say it is out of date');
   }
-  if (legacy && (legacy.presses.includes('Apply') || legacy.primary.join() !== 'Fix')) {
+  if (legacy && (legacy.presses.includes('Apply') || legacy.primary.join() !== 'Go ahead')) {
     note(where, `a legacy plan offers ${legacy.presses.join(' · ')}`);
   }
   for (const [id, re] of [['f:1201', /nothing is changing yet/], ['f:1202', /Applying/]]) {

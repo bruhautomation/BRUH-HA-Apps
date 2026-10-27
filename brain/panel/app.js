@@ -6163,7 +6163,7 @@ function statusChip(kind) {
 
 // The shell every card on Today is built from. `meta` is plain text after
 // the chip — an item's state is words, never a second chip.
-function qCard({ id, chip, meta, title, body, counted = true }) {
+function qCard({ id, chip, meta, title, body, counted = true, who = null }) {
   const card = el("article", "card-x qcard");
   if (id) card.dataset.caseId = id;
   card.dataset.chip = CHIP_WORDS[chip] ? chip : "problem";
@@ -6173,8 +6173,22 @@ function qCard({ id, chip, meta, title, body, counted = true }) {
   (meta || []).filter(Boolean).forEach((t) => line.appendChild(el("span", "item-state", t)));
   card.appendChild(line);
   card.appendChild(el("h3", "card-title", prettyText(title || "")));
+  const whoLine = qWho(who);
+  if (whoLine) card.appendChild(whoLine);
   if (body) card.appendChild(el("p", "card-body", prettyText(body)));
   return card;
+}
+
+// Who acts, in one line straight under the title: "brAIn can fix this.",
+// "This needs you." or "brAIn needs an answer." Decided on the server off
+// the card's own primary press (`answers.who_acts`), so the line and the
+// button under it cannot disagree — the owner's "it's kind of unclear when
+// I need to do something vs it". A card with no press carries none.
+function qWho(who) {
+  if (!who || !who.line) return null;
+  const p = el("p", "qwho", who.line);
+  p.dataset.who = who.who || "";
+  return p;
 }
 
 // "Fix", then what to do in two lines. Who would do it is said by the
@@ -6369,7 +6383,7 @@ const IGNORE_VERBS = new Set(["wrong", "decline", "drop", "no"]);
 function makeCase(row) {
   const card = qCard({
     id: row.id, chip: row.chip || (row.urgent ? "urgent" : "problem"),
-    meta: caseMeta(row), title: row.claim, body: row.detail,
+    meta: caseMeta(row), title: row.claim, body: row.detail, who: row.who,
   });
   card.dataset.situation = row.situation || "";
 
@@ -6866,7 +6880,7 @@ function makeLooseFinding(f) {
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
-    title: f.text, body: f.detail,
+    title: f.text, body: f.detail, who: f.who,
   });
   const gap = f.source === "house_book";
   if (f.fix && !gap) card.appendChild(qFix(f.fix));
@@ -6925,7 +6939,8 @@ function makeLooseFinding(f) {
 
 function makeLooseQuestion(h) {
   const card = qCard({ id: `h:${h.ts}`, chip: "question",
-    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "" });
+    meta: ["A guess to confirm"], title: h.text || h.claim || "", body: h.why || "",
+    who: h.who });
   const actions = el("div", "card-actions");
   const btns = [];
   btns.card = card;
@@ -7003,7 +7018,7 @@ function makeSuggestion(row) {
   const replay = (row.playbook || row.scene) ? ""
     : (spoken && spoken.case ? spoken.case : propReplayLine(row));
   const card = qCard({ id: `p:${row.ts}`, chip: "suggestion", meta,
-    title: row.title || "A suggestion", body: row.why || replay });
+    title: row.title || "A suggestion", body: row.why || replay, who: row.who });
   if (trial) card.appendChild(el("p", "qfixtext", propTrialLine(row)));
 
   const more = qDetails();
@@ -7205,7 +7220,7 @@ function makeTidyCard(t) {
   rows.forEach((r) => { counts[r.kind] = (counts[r.kind] || 0) + 1; });
   const card = qCard({ id: t.key, chip: "tidy", meta: ["Change ready"],
     title: tidyTitle(counts, rows.length),
-    body: "Change any you'd do differently, or untick it, under Details." });
+    body: "Change any you'd do differently, or untick it, under Details.", who: t.who });
   const reach = rows.filter((r) => (r.reach || []).length).length;
   if (reach) {
     card.appendChild(el("p", "qfixtext", reach === 1
@@ -7297,7 +7312,7 @@ function makeUpdateCard(u) {
   const advice = u.advice || {};
   const card = qCard({ id: u.key, chip: advice.verdict === "wait" ? "problem" : "tidy",
     meta: [UPDATE_WORDS[advice.verdict] || "Assessed", `${u.installed || "?"} → ${u.latest || "?"}`],
-    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "" });
+    title: `Update ${u.title || u.entity_id}`, body: advice.reason || "", who: u.who });
   const more = qDetails();
   qDetailLine(more, "From the release notes", advice.note_quote || "");
   qDetailLine(more, "From your configuration", advice.config_quote || "");
@@ -7804,11 +7819,25 @@ function makeTodo(item) {
 // ---- History ---------------------------------------------------------------
 
 async function refreshHistory() {
-  try {
-    todayState.history = await api("api/history");
-  } catch (e) {
-    todayState.history = todayState.history || { filters: [], rows: {}, error: e.message };
-  }
+  const [history, changes] = await Promise.all([
+    api("api/history").catch((e) => ({ __error: e.message })),
+    api("api/changes").catch(() => null),
+  ]);
+  if (history && !history.__error) todayState.history = history;
+  else todayState.history = todayState.history || { filters: [], rows: {}, error: (history || {}).__error };
+  // Changes brAIn made (#453): one route serves the list (`/api/changes`),
+  // newest first, each row with its own Undo or the reason it has none.
+  if (changes) todayState.changes = changes;
+}
+
+// The History filters, with "Changes brAIn made" as the fifth.
+function histFilters() {
+  const data = todayState.history || {};
+  const filters = (data.filters || []).slice();
+  const ch = todayState.changes;
+  if (ch) filters.push({ id: "changes", label: ch.label || "Changes brAIn made",
+                         count: ch.total || 0 });
+  return filters;
 }
 
 // What each filter holds, said once above its rows, so the list explains
@@ -7820,17 +7849,20 @@ const HIST_HINTS = {
   ignored: "Things you told brAIn aren't a problem. It won't raise them again unless you restore them; Delete clears the record, not your answer.",
   done: "Things you finished or brAIn fixed. Restore puts one back on To Do; Delete clears the record, not your answer.",
   aside: "Things brAIn looked at and decided weren't worth your time. Restore if you disagree.",
+  changes: "Everything brAIn changed in the house, newest first. Undo puts one back; a change that can't be put back says why.",
 };
 
 function histRowsShown() {
   const data = todayState.history;
   if (!data) return [];
-  const rows = (data.rows || {})[todayState.histFilter] || [];
+  const rows = todayState.histFilter === "changes"
+    ? ((todayState.changes || {}).rows || [])
+    : (data.rows || {})[todayState.histFilter] || [];
   const q = (todayState.histQuery || "").trim().toLowerCase();
   if (!q) return rows;
   const words = q.split(/\s+/).filter(Boolean);
   return rows.filter((r) => {
-    const hay = `${r.title || ""} ${r.meta || ""}`.toLowerCase();
+    const hay = `${r.title || ""} ${r.meta || ""} ${r.where || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }
@@ -7851,7 +7883,7 @@ function renderHistory() {
   }
   // Land on the first filter that holds something, rather than an empty
   // one, until somebody picks.
-  const filters = data.filters || [];
+  const filters = histFilters();
   if (!todayState.histPicked) {
     const first = filters.find((f) => f.count > 0);
     if (first) todayState.histFilter = first.id;
@@ -7889,6 +7921,25 @@ function renderHistory() {
     return;
   }
   rows.forEach((r) => list.appendChild(makeHistoryRow(r)));
+  const ch = todayState.changes;
+  if (todayState.histFilter === "changes" && ch && ch.more && !todayState.histQuery) {
+    const older = qButton("Show older", false);
+    older.classList.add("histmore");
+    older.addEventListener("click", async () => {
+      older.disabled = true;
+      const last = (ch.rows || [])[ch.rows.length - 1];
+      try {
+        const next = await api(`api/changes?before=${last ? last.at : 0}`);
+        ch.rows = (ch.rows || []).concat(next.rows || []);
+        ch.more = !!next.more;
+        renderHistory();
+      } catch (e) {
+        toast(e.message || "that didn't work");
+        older.disabled = false;
+      }
+    });
+    list.appendChild(older);
+  }
 }
 
 async function deleteHistory(rows, btns) {
@@ -7906,7 +7957,12 @@ async function deleteHistory(rows, btns) {
   }
 }
 
-const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘" };
+const HIST_ICONS = { snoozed: "◷", ignored: "⊘", done: "✓", aside: "↘", changes: "↺" };
+
+// A change's line under its title: when, and where it came from.
+function changeMeta(r) {
+  return [agoWords(r.at), r.where].filter(Boolean).join(" · ");
+}
 
 function makeHistoryRow(r) {
   const row = el("div", "histrow");
@@ -7914,10 +7970,16 @@ function makeHistoryRow(r) {
   row.appendChild(el("span", "histico", HIST_ICONS[todayState.histFilter] || "•"));
   const text = el("div", "histtext");
   text.appendChild(el("span", "histtitle", prettyText(r.title)));
-  text.appendChild(el("span", "item-state", r.meta || ""));
+  text.appendChild(el("span", "item-state", r.meta || (r.kind ? changeMeta(r) : "")));
   row.appendChild(text);
-  const press = r.press || {};
   const actions = el("div", "histactions");
+  if (r.kind && !r.press) {
+    // A change that cannot be put back says why, in place of the button.
+    actions.appendChild(el("p", "histreason", r.reason || "This can't be put back."));
+    row.appendChild(actions);
+    return row;
+  }
+  const press = r.press || {};
   const btn = qButton(press.label || "Restore", false);
   const btns = [btn];
   btn.addEventListener("click", async () => {
@@ -7925,16 +7987,19 @@ function makeHistoryRow(r) {
     if (confirmText && !window.confirm(confirmText)) return;
     btns.forEach((b) => { b.disabled = true; });
     try {
+      let said = "";
       for (const step of press.steps || []) {
-        await api(step.route.replace(/^\//, ""), {
+        const out = await api(step.route.replace(/^\//, ""), {
           method: "POST",
           ...(step.body && Object.keys(step.body).length
             ? { body: JSON.stringify(step.body) } : {}),
         });
+        if (out && typeof out.text === "string") said = out.text;
       }
       await Promise.all([refreshToday(), refreshHistory()]);
       renderFindings();
-      toast(press.label === "Undo" ? "Put back" : "Restored");
+      renderHistory();
+      toast(said ? said.split("\n")[0] : press.label === "Undo" ? "Put back" : "Restored");
     } catch (e) {
       toast(e.message || "that didn't work");
       btns.forEach((b) => { b.disabled = false; });

@@ -118,7 +118,7 @@ TODO_SNOOZE_MAX_DAYS = 90
 # applies anything; every other action is one of the panel's own presses.
 MORPH_KIND = "morph"
 MORPH_ACTIONS = ("reply", "dismiss", "todo", "snooze", "fix", "apply", "undo",
-                 "not_applicable")
+                 "not_applicable", "recheck", "wrong")
 MORPH_TEXT_MAX = 1000
 # A suggestion Morph files as a case of its own, and its withdrawal.
 MORPH_CASE_KIND = "morph_case"

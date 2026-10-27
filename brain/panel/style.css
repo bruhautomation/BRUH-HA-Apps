@@ -6109,6 +6109,12 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
 /* The one card: the parts under the title. */
 .qcard p { margin: 0; }
 .qcard .qfix, .qcard .qplan, .qcard .qplanline { display: grid; gap: var(--sp-1); }
+/* Who acts: one line, ink and weight rather than a colour, so it reads as
+   the card's answer to "whose move is this" and never as a status chip. */
+.qcard .qwho {
+  margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: 600; color: var(--ink);
+}
 .qfixhead {
   font-size: var(--fs-meta); line-height: var(--lh-meta); font-weight: 600; color: var(--ink-3);
 }
@@ -6426,6 +6432,14 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .histrow[data-filter="aside"] .histico { color: var(--warning-ink);
   background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .histactions { flex: none; display: flex; align-items: center; gap: var(--sp-1); }
+.histrow[data-filter="changes"] .histico { color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* A change brAIn cannot put back says why where the Undo would be: words a
+   person reads, never a greyed-out button asking to be understood. */
+.histreason { margin: 0; max-width: 32ch; font-size: var(--fs-meta);
+  line-height: var(--lh-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.histrow[data-filter="changes"] .histactions { flex: 0 1 auto; min-width: 0; }
+.histmore { margin: var(--sp-3) auto; display: block; }
 .histdel { color: var(--ink-3); }
 @media (pointer: coarse) { .histdel, .factdel { min-width: 44px; } }
 .histdel:hover { color: var(--critical-ink); }
@@ -6445,6 +6459,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
   #viewArchive .histrow { padding: var(--sp-3); flex-wrap: wrap; }
   #viewArchive .histtext { flex: 1 1 calc(100% - 48px); }
   #viewArchive .histactions { margin-left: 44px; }
+  .histreason { max-width: none; }
 }
 
 /* Knowledge: browse by room and device on a rail beside the facts. */

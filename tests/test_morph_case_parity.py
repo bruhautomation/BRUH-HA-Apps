@@ -30,7 +30,7 @@ NAMES = {"light.hall_lamp": "Hall lamp", "sensor.loft_battery": "Loft sensor",
          "binary_sensor.shed_door": "Shed door"}
 
 # Presses Morph can carry back to brAIn's queue (finding_requests.MORPH_ACTIONS).
-MORPH_CAN = {"Fix", "Apply", "Add to To Do", "Dismiss", "Snooze", "Doesn't apply"}
+MORPH_CAN = {"Fix", "Go ahead", "Apply", "Add to To Do", "Dismiss", "Snooze", "Doesn't apply"}
 
 
 def _brain():

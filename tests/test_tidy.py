@@ -486,7 +486,7 @@ class TestThePress(unittest.TestCase):
         # Fix, never Apply: the run drafts a table and changes nothing. It
         # takes no instruction — a table of names is the answer, reviewed
         # row by row on its own card.
-        self.assertEqual(got[0]["label"], "Fix")
+        self.assertEqual(got[0]["label"], "Go ahead")
         self.assertFalse(got[0].get("instruct"))
         self.assertEqual([a["verb"] for a in got],
                          ["fix", "recheck", "dismiss", "not_now", "wrong"])
