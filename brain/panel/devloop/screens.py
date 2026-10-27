@@ -1007,9 +1007,31 @@ async def _one(cdp: CDP, url: str, slug: str, label: str, script: str,
             pass
 
 
+# A page that can draw what is not on it yet (the harness's Morph, whose
+# folded rooms carry no tiles) says so with `window.__harnessReveal(id)`:
+# it unfolds what holds the id and answers the id the page keys it with.
+_REVEAL_JS = r"""
+(async (id) => {
+  const reveal = window.__harnessReveal;
+  if (typeof reveal !== "function") return id;
+  try { const got = await reveal(id); return typeof got === "string" && got ? got : id; }
+  catch (e) { return id; }
+})
+"""
+
+
+async def _reveal(cdp: CDP, session: str, focus: dict) -> None:
+    res = await cdp.call("Runtime.evaluate", {
+        "expression": f"({_REVEAL_JS})({json.dumps(str(focus['id']))})",
+        "awaitPromise": True, "returnByValue": True}, session, timeout=NAV_TIMEOUT_S)
+    got = (res.get("result") or {}).get("value")
+    if isinstance(got, str) and FOCUS_ID_RE.match(got):
+        focus["found"] = got
+
+
 async def _find(cdp: CDP, session: str, focus: dict, label: str) -> dict:
     res = await cdp.call("Runtime.evaluate", {
-        "expression": f"({_FOCUS_JS})({json.dumps(str(focus['id']))})",
+        "expression": f"({_FOCUS_JS})({json.dumps(str(focus.get('found') or focus['id']))})",
         "returnByValue": True}, session)
     rect = (res.get("result") or {}).get("value")
     if not isinstance(rect, dict) or not rect.get("w") or not rect.get("h"):
@@ -1024,6 +1046,7 @@ async def _focus_press(cdp: CDP, session: str, focus: dict, label: str) -> None:
     page answers it exactly as it answers a finger — and the write guard
     and the socket refusal are already on the page, so whatever the press
     tries to change goes nowhere."""
+    await _reveal(cdp, session, focus)
     rect = await _find(cdp, session, focus, label)
     press = focus.get("press") or ""
     if press not in FOCUS_PRESSES:

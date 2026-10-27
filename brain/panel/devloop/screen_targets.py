@@ -39,6 +39,7 @@ data, and pressing nothing in it can reach the house.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 
@@ -133,6 +134,11 @@ CARD_FILES: dict[str, tuple[str, ...]] = {
 MORPH_FRONTEND = os.environ.get("BRAIN_MORPH_FRONTEND",
                                 "/config/custom_components/brain/morph/frontend")
 MORPH_CARDS = os.environ.get("BRAIN_MORPH_CARDS", "/config/morph/cards")
+# The house's own copies of Morph's modules, and the service's word on
+# which of them are in use (`morphcode.py`): the Home tab runs a copy in
+# use instead of Morph's own (`static.pick`), so the harness does too.
+MORPH_CODE_DIR = os.environ.get("BRAIN_MORPH_CODE_DIR", "/config/morph/frontend")
+MORPH_CODE_STATE = os.environ.get("BRAIN_MORPH_CODE_STATE", "/config/.morph/code.json")
 MODULE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,60}\.js$")
 
 # The Home Assistant WebSocket commands the harness may ask, all of which
@@ -325,8 +331,29 @@ def module_file(root: str, name: str) -> str:
     return full
 
 
+# The loader and brAIn's shell are never a house's copy (`static.FIXED`).
+MORPH_FIXED = ("boot.js", "shell.js")
+
+
+def morph_copies_in_use() -> set[str]:
+    """The copies the service says are in use; unreadable is none, which
+    draws Morph's own — always a working page."""
+    try:
+        with open(MORPH_CODE_STATE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(r["name"]) for r in data.get("files") or []
+                if isinstance(r, dict) and r.get("status") == "active"}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return set()
+
+
 def morph_module(name: str) -> str:
-    """One of Morph's own frontend modules, or ""."""
+    """One of Morph's frontend modules as the Home tab runs it: the house's
+    copy while it is in use, Morph's own otherwise; or ""."""
+    if name not in MORPH_FIXED and name in morph_copies_in_use():
+        own = module_file(MORPH_CODE_DIR, name)
+        if own:
+            return own
     return module_file(MORPH_FRONTEND, name)
 
 

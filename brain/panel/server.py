@@ -19205,7 +19205,12 @@ async def h_devloop_screenshot(request: web.Request) -> web.Response:
         return web.json_response({"error": why, "screens": listing}, status=400)
     want = want.lower()
     if not want:
-        return web.json_response({"addon": target["product"], "screens": listing})
+        # Every screen there is, not only this one's: asked with nothing,
+        # the tool listed brAIn's own, and the chat concluded Morph's
+        # dashboard and the cards could not be photographed.
+        return web.json_response({"addon": target["product"], "screens": listing,
+                                  "addons": [{"addon": t["product"], "screens": [
+                                      scr["slug"] for scr in t["screens"]]} for t in targets]})
     scr = next((x for x in target["screens"]
                 if want in (x["slug"].lower(), x["label"].lower())
                 or x["slug"].lower().endswith("-" + want)

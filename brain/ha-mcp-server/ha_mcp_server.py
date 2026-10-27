@@ -8181,19 +8181,21 @@ TOOLS = [
         "name": "screenshot_panel",
         "description": (
             "Take a picture of a screen of brAIn or another BRUH add-on "
-            "(GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft; "
-            "Morph's dashboard and the add-ons' Lovelace cards are drawn on "
-            "this house's real data) and LOOK at it. Use it whenever the owner "
+            "(GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft), "
+            "of Morph's dashboard (brAIn's Home tab: addon \"Morph\", screen "
+            "\"dashboard\") or of an add-on's Lovelace card, drawn on this "
+            "house's real data, and LOOK at it. Use it whenever the owner "
             "says something looks wrong, is cut off, is ugly or is confusing, "
             "and to check a screen before and after a change. Call it with no "
-            "screen to list an add-on's screens. width 390 is a phone (touch), "
+            "screen to list every add-on's screens. width 390 is a phone (touch), "
             "1200 a laptop; scheme light or dark. The picture is redacted "
             "(calendar events, addresses, credentials blanked), nothing on the "
             "screen can change anything while it is taken, and the layout "
             "problems a script can measure (off the edge, too small to tap, "
             "overlaps, low contrast) come back beside it. To look at ONE card "
-            "or room of Morph's dashboard, however far down the page, name its "
-            "id from dashboard.yaml: screen \"morph-dashboard#<id>\" or "
+            "or room of Morph's dashboard (an overview tile such as the "
+            "assistant's included, folded room or not), however far down the "
+            "page, name its id from dashboard.yaml: screen \"morph-dashboard#<id>\" or "
             "element; the picture is cropped to it, and press open holds it "
             "open first (tap presses it). Read-only."
         ),
@@ -8201,7 +8203,9 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "addon": {"type": "string",
-                          "description": "brAIn (default) or a BRUH add-on's name"},
+                          "description": ("brAIn (default), Morph (the Home "
+                                          "dashboard and its cards) or a BRUH "
+                                          "add-on's name")},
                 "screen": {"type": "string",
                            "description": "A screen's id or label; omit to list them"},
                 "width": {"type": "integer", "minimum": 320, "maximum": 1920,
