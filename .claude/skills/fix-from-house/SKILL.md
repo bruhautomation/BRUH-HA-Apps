@@ -340,7 +340,7 @@ The prompt also carries, word for word:
 - **Running a measure.** Never `npm install` Playwright or download a
   browser. Link the one already installed and point at its Chromium:
   `mkdir -p node_modules && ln -sfn /opt/node22/lib/node_modules/playwright node_modules/playwright`,
-  then `CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome node tests/manual/measure-<name>.mjs`.
+  then `CHROMIUM_PATH=/opt/pw-browsers/chromium-1243/chrome-linux64/chrome (or whatever `ls /opt/pw-browsers` shows) node tests/manual/measure-<name>.mjs`.
   A measure takes seconds this way. (`node_modules` is git-ignored.)
 - **Run only what the batch can break**, with `tests/affected.py` as
   *Check it* says: never a hand-picked list, which misses the test file
