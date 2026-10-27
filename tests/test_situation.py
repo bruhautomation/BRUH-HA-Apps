@@ -129,7 +129,10 @@ class TestTheFrame(unittest.TestCase):
         self.assertEqual(f["calendar"][0]["title"], "Dinner")
 
     def test_the_fingerprint_ignores_the_minute_and_sees_a_person_leave(self):
-        now = time.time()
+        # A fixed afternoon, 14:20 UTC: on the wall clock, a run in the last
+        # minute of a part of the day (16:59) put `now + 60` in the next
+        # part, and the fingerprint rightly moved.
+        now = 1792160400.0
         a = frame(now)
         b = frame(now + 60)
         self.assertEqual(situation.fingerprint(a), situation.fingerprint(b))
