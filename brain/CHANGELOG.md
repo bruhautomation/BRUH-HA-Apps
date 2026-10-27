@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.5
+
+### Changed
+
+- **The assistant can photograph Morph's Home tiles.** The screenshot tool draws the Home tab the way the house runs it (including the house's own copies of Morph's code), unfolds the room holding a card or section before looking for it, and lists Morph among the screens it offers, so an overview card such as the assistant's can be captured. (#495)
+- **Morph's design rules are checked on every change.** A test now holds the mechanically checkable rules from the design (no hover tooltips, no pop-ups, the fixed spring and background values), which found and removed four hover tooltips in the cards. (#493)
+
 ## 4.0.4
 
 ### Added
