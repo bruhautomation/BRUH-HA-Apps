@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.3
+
+### Added
+
+- **Measure snaps the way Fusion's does.** Near a corner, the middle of an edge, an edge, the centre of a flat face or a face, the pick takes that point, and a marker says which. The distance is drawn on the line at its middle, the ΔX, ΔY and ΔZ legs are dashed in the axes' colours and listed under the view, a face beside a point gives the distance square to the face, and two faces or two edges give the angle between them. The last five measurements stay listed until **Clear**; Escape starts the current one again. On a phone a tap snaps from a little further away.
+- **Change a body's colour from its dot.** The dot on a body's pill under the 3D view offers the AMS trays' colours first, then any colour, and **Back to brAIn's colour**. The colour is saved on the part and is what that body prints in: Print starts from the tray closest to it, Open in Bambu Studio names it, and brAIn is told it on the next message (it stands down once brAIn writes a colour of its own for that body). The name still hides or shows the body.
+- **Invert vertical drag**, in the 3D view's **?**, puts the vertical turn back the old way round. It is remembered on this browser.
+
+### Changed
+
+- **Dragging down lowers the view**, and dragging up raises it, as Fusion 360's turn does by default. One finger on a phone moves the same way.
+
+### Fixed
+
+- **The body pills and the measurements are on screen in full screen**, with the view, rather than left behind under it.
+
 ## 0.3.2
 
 ### Added

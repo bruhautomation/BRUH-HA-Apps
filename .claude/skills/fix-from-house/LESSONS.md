@@ -5,7 +5,7 @@ adds to it. Each bullet is dated, short, and says what failed and why.
 A lesson that every contributor should follow belongs in `CLAUDE.md` as
 well.
 
-Last retro: 2026-10-20
+Last retro: 2026-10-27
 Last UX audit: 2026-10-18
 
 ## Lessons
@@ -80,6 +80,27 @@ Last UX audit: 2026-10-18
 - 2026-10-24: `issue_write` with `labels` REPLACES every label on the issue, so a close that sets `devloop:fixed` drops `from-house` and the stream label. Close with REST instead: POST the comment, POST `labels[]=devloop:fixed` to the labels endpoint, then PATCH `state=closed`.
 - 2026-10-24: Batches that each add MCP tools conflict on the tool lists and the documented count. Merge both sides of every list, re-add a tool's whole `TOOLS` entry from the other side rather than splicing half a dict, and let `test_documented_counts` give the count. The xdist "node down" hang came back once (cancel, read the log, one re-run passed).
 
+- 2026-10-27: Subagents in parallel worktrees share one git stash and one
+  process table. Two batch agents used `git stash` to compare against the old
+  code, and one ran `pkill -f pytest`, which can kill another worktree's run.
+  Every subagent prompt now says: no stash (a WIP commit instead), and never
+  kill processes it did not start.
+- 2026-10-27: The installed Chromium moved to
+  `/opt/pw-browsers/chromium-1243/chrome-linux64/chrome`; the path in the
+  skill's measure recipe is stale. Find it with `ls /opt/pw-browsers` before a
+  measure run rather than trusting a remembered path.
+- 2026-10-27: With other agents loading the box, the affected suite ran past
+  ten minutes and was killed by the background limit. Give a background test
+  run `timeout` 2400000 and write it to a file; the suite itself is ~3 minutes
+  on a quiet machine.
+- 2026-10-27: `test_bambu_copies` raced its own cleanup: the print job was
+  still writing when `tearDown` removed the directory. A test that starts a
+  background job waits for it to finish (an Event set in a `finally`) before
+  it ends.
+- 2026-10-27: `test_devloop_screenshot_card` fails locally in a cloud session
+  (no browser it can drive); CI runs it. Read it as environmental, never as
+  a batch's regression.
+
 ## Loop health
 
 One line per run: date, duration, issues by ending, slowest step.
@@ -97,3 +118,4 @@ One line per run: date, duration, issues by ending, slowest step.
 - 2026-10-20: ~5h, 10 open reports closed: 7 fixed in PRs #464 (Bambu camera), #465 (brAIn 3.4.2 checks and card verdicts) and #467 (Bambu slicing), including #319 in Morph 1.0.5; 3 handed to a person: 2 whose fix contradicts a pinned test (#327, #322) and #330, the release webhook firing before sibling images are pushed, which lives in `.github/`; #326 partly fixed. UX audit not run this run. Held vs came back: not yet reported for these fixes. Slowest step: CI on #464 (a camera measure that sampled a lazily loaded picture), then the full local suite.
 - 2026-10-23: ~10 h; PRs #471, #477–#487; about 37 reports closed fixed, 7 already fixed or duplicate, 1 declined; held/came-back not counted this run; UX audit and retro not run; slowest step: Opus subagents (8–16 min a batch) and the full suite for the UI batch.
 - 2026-10-24: ~7.5 h; PRs #489–#500; 44 reports closed, all fixed (brAIn 3.8.9–3.8.17, Morph 1.1.2, GardenRX 0.1.3, BRUH Task Manager 0.1.2), none declined, duplicate or handed to a person; rolling #405 and #369 left open; held/came-back not counted this run; UX audit not run; slowest step: a CI Python job hung on a dead xdist worker (40 min), then the Opus subagents (20–50 min a batch).
+- 2026-10-26/27: ~14h, 42 issues fixed in PRs #505–#511 and #515 plus the owner's Bambu requests (#509 and this batch); #369 and #424 left open by design. Held/came-back not counted this run (no Held comments read). Slowest step: batch subagents (20–30 min each) and two lost background test runs.

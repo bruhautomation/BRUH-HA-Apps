@@ -148,7 +148,10 @@
                   </ul>
                 </div>
                 <p><b>Home</b> goes back to the corner view with the whole part in sight;
-                  <b>Top, Front, Right, Iso</b> turn to that side. Tap a colour below to hide or show that body.</p>
+                  <b>Top, Front, Right, Iso</b> turn to that side. Tap a body's name below to hide or show it,
+                  and its dot to change its colour.</p>
+                <label class="viewsetting"><input type="checkbox" id="invertY"> Invert vertical drag
+                  <small>dragging down raises the view</small></label>
               </div>
             </div>
             <div class="viewtools" role="toolbar" aria-label="3D view">
@@ -163,9 +166,14 @@
               <button type="button" id="wireBtn" aria-pressed="false" title="Show the triangles the part is made of">Wireframe</button>
               <button type="button" id="viewFull" aria-pressed="false" title="Make the 3D view fill the screen">Full screen</button>
             </div>
-            </div>
             <div class="bodies" id="bodyList"></div>
-            <p class="hint" id="measureOut"></p>
+            <div class="measurebox">
+              <p class="hint" id="measureOut"></p>
+              <ol class="measurelist" id="measureList" aria-label="Recent measurements"></ol>
+              <button type="button" id="measureClear" hidden>Clear</button>
+            </div>
+            <div class="colourpop" id="colourPop" role="dialog" aria-label="Body colour" hidden></div>
+            </div>
             <div class="versions" id="versions"></div>
             <div id="versionInfo" class="hint"></div>
           </div>

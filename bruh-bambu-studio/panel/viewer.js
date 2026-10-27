@@ -8,7 +8,16 @@
 // turntable about a fixed Z-up axis, so it never flips over the top; a turn
 // about the point under the pointer; a slide; and a zoom toward the point
 // under the pointer, never toward the middle. Named views and Home move
-// there rather than jumping, and frame the whole part.
+// there rather than jumping, and frame the whole part. A vertical drag moves
+// the view the way the hand moves (down lowers it toward the bed), and the
+// Design tab's "Invert vertical drag" turns that round (`invertY`).
+//
+// Measure snaps the way Fusion's does: near a corner, the middle of an edge,
+// an edge, the centre of a flat face or a face, the pick takes that point
+// (Viewer._snap, over feature edges and flat regions worked out once per
+// body), a marker says which, and the distance is drawn on the line with
+// its ΔX/ΔY/ΔZ; a face beside a point gives the perpendicular distance, and
+// two faces or edges the angle between them.
 import * as THREE from "three";
 import { STLLoader } from "./vendor/STLLoader.js";
 
@@ -63,6 +72,7 @@ const VIEWS = {  // azimuth about Z from +X, elevation from the bed
   back: [90, 0], left: [180, 0], bottom: [-90, -90],
 };
 const TURN_PER_PX = 0.0085;
+const SNAP_WORDS = { vertex: "Corner", midpoint: "Midpoint", centre: "Centre", edge: "Edge", face: "Face" };
 const ZOOM_PER_WHEEL = 0.0015;
 
 /** A turntable camera with Fusion 360's mouse map and touch gestures. */
@@ -77,6 +87,7 @@ class FusionCamera {
     this.limits = [1, 5000];
     this.pointers = new Map();
     this.mode = null;
+    this.invertY = false;  // true: a drag down raises the view (the old way)
     const on = (type, fn, opts) => dom.addEventListener(type, fn, opts);
     on("pointerdown", (e) => this._down(e));
     on("pointermove", (e) => this._move(e));
@@ -238,7 +249,8 @@ class FusionCamera {
       }
       this._pinch = now;
     } else if (this.mode === "turn") {
-      this.turn(-dx * TURN_PER_PX, dy * TURN_PER_PX, this.pivot);
+      // Down lowers the view: the camera follows the hand toward the bed.
+      this.turn(-dx * TURN_PER_PX, (this.invertY ? dy : -dy) * TURN_PER_PX, this.pivot);
     } else if (this.mode === "slide") {
       this.slide(dx, dy);
     }
@@ -287,8 +299,36 @@ export class Viewer {
     this.scene.add(this.marks);
     this.measuring = false;
     this.points = [];
+    this.history = [];
     this.onMeasure = null;
-    this.renderer.domElement.addEventListener("pointerdown", (e) => { this._down = [e.clientX, e.clientY]; });
+    this._coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    // The snap marker and the distance on the line: DOM over the canvas,
+    // placed every frame, so they stay crisp and readable at any zoom.
+    this.overlay = document.createElement("div");
+    this.overlay.className = "measure-overlay";
+    this.snapMark = document.createElement("div");
+    this.snapMark.className = "snapmark";
+    this.snapMark.hidden = true;
+    this.snapMark.append(document.createElement("i"), document.createElement("span"));
+    this.label = document.createElement("div");
+    this.label.className = "measurelabel";
+    this.label.hidden = true;
+    this.overlay.append(this.snapMark, this.label);
+    container.append(this.overlay);
+    this.renderer.domElement.addEventListener("pointerdown", (e) => {
+      this._down = [e.clientX, e.clientY];
+      this._downType = e.pointerType;
+      this._showSnap(null);
+    });
+    this.renderer.domElement.addEventListener("pointermove", (e) => this._hover(e));
+    this.renderer.domElement.addEventListener("pointerleave", () => this._showSnap(null));
+    this._onKey = (e) => {
+      if (e.key === "Escape" && this.measuring && (this.points.length || this._snapShown)) {
+        this.clearMeasure();
+        this._showSnap(null);
+      }
+    };
+    document.addEventListener("keydown", this._onKey);
     this.renderer.domElement.addEventListener("click", (e) => this._click(e));
     this.renderer.domElement.addEventListener("dblclick", (e) => this._recentre(e));
     this._resize = new ResizeObserver(() => this.resize());
@@ -301,6 +341,7 @@ export class Viewer {
       last = now;
       this.controls.update(dt);
       this.renderer.render(this.scene, this.camera);
+      this._placeOverlay();
     };
     loop(last);
   }
@@ -411,11 +452,13 @@ export class Viewer {
       // Creases drawn faintly in a contrasting shade, so a white part on a
       // light screen and a black one on a dark screen both keep an outline.
       const light = colour.r * 0.3 + colour.g * 0.59 + colour.b * 0.11 > 0.5;
-      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 28),
+      const creases = new THREE.EdgesGeometry(geometry, 28);
+      const edges = new THREE.LineSegments(creases,
         new THREE.LineBasicMaterial({ color: light ? 0x2b3640 : 0xc9d4dd, transparent: true, opacity: 0.35 }));
       edges.name = "edges";
       mesh.add(edges);
       this.group.add(mesh);
+      this._prepare(mesh, creases);
       return mesh;
     }));
     this.box = new THREE.Box3().setFromObject(this.group);
@@ -456,42 +499,306 @@ export class Viewer {
 
   setMeasuring(on) {
     this.measuring = on;
-    if (!on) this.clearMeasure();
+    if (!on) { this.clearMeasure(); this._showSnap(null); }
   }
 
-  clearMeasure() {
+  /** Clear the measurement being made; with `all`, the recent list too. */
+  clearMeasure(all = false) {
     this.points = [];
     this.marks.clear();
+    this.label.hidden = true;
+    if (all) this.history = [];
     if (this.onMeasure) this.onMeasure(null);
+  }
+
+  setInvertY(on) { this.controls.invertY = !!on; }
+
+  get invertY() { return this.controls.invertY; }
+
+  /** Recolour one body in the view. */
+  setColour(name, colour) {
+    const mesh = this.group.getObjectByName(name);
+    const hex = filamentColour(colour);
+    if (!mesh || !hex) return;
+    mesh.material.color.set(hex);
+    const clear = SEE_THROUGH.test(String(colour || ""));
+    mesh.material.transparent = clear;
+    mesh.material.opacity = clear ? 0.55 : 1;
+    mesh.material.needsUpdate = true;
+    const edges = mesh.getObjectByName("edges");
+    const c = mesh.material.color;
+    if (edges) edges.material.color.set(c.r * 0.3 + c.g * 0.59 + c.b * 0.11 > 0.5 ? 0x2b3640 : 0xc9d4dd);
+  }
+
+  // -- snapping: what Fusion's measure would take under the pointer -------
+  // Per body, once: the feature edges (the creases drawn on it), their ends
+  // and middles, and a key per triangle corner so a flat face can be grown
+  // from the triangle under the pointer when it is first asked about.
+  _prepare(mesh, edgesGeometry) {
+    mesh.updateMatrixWorld(true);
+    const m = mesh.matrixWorld;
+    const e = edgesGeometry.attributes.position.array;
+    const segs = [];
+    const ends = new Map();
+    for (let i = 0; i < e.length; i += 6) {
+      const a = new THREE.Vector3(e[i], e[i + 1], e[i + 2]).applyMatrix4(m);
+      const b = new THREE.Vector3(e[i + 3], e[i + 4], e[i + 5]).applyMatrix4(m);
+      segs.push([a, b]);
+      for (const v of [a, b]) ends.set(v.toArray().map((x) => x.toFixed(4)).join(","), v);
+    }
+    const pos = mesh.geometry.attributes.position.array;
+    const world = new Float32Array(pos.length);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.length; i += 3) {
+      v.set(pos[i], pos[i + 1], pos[i + 2]).applyMatrix4(m);
+      world[i] = v.x; world[i + 1] = v.y; world[i + 2] = v.z;
+    }
+    mesh.userData.snap = { segs, verts: [...ends.values()],
+      mids: segs.map(([a, b]) => a.clone().add(b).multiplyScalar(0.5)),
+      world, tris: world.length / 9, region: new Int32Array(world.length / 9).fill(-1),
+      regions: [], byCorner: null };
+  }
+
+  _triangle(snap, t) {
+    const w = snap.world;
+    const p = [0, 1, 2].map((k) => new THREE.Vector3(w[t * 9 + k * 3], w[t * 9 + k * 3 + 1], w[t * 9 + k * 3 + 2]));
+    const n = new THREE.Vector3().subVectors(p[1], p[0]).cross(new THREE.Vector3().subVectors(p[2], p[0]));
+    const area = n.length() / 2;
+    return { p, n: area > 0 ? n.normalize() : n, area };
+  }
+
+  /** The flat face a triangle is part of: its centre and its normal. */
+  _region(snap, t) {
+    if (snap.region[t] >= 0) return snap.regions[snap.region[t]];
+    if (!snap.byCorner) {
+      snap.byCorner = new Map();
+      for (let i = 0; i < snap.tris; i += 1) {
+        for (let k = 0; k < 3; k += 1) {
+          const o = i * 9 + k * 3;
+          const key = `${snap.world[o].toFixed(3)},${snap.world[o + 1].toFixed(3)},${snap.world[o + 2].toFixed(3)}`;
+          if (!snap.byCorner.has(key)) snap.byCorner.set(key, []);
+          snap.byCorner.get(key).push(i);
+        }
+      }
+    }
+    const first = this._triangle(snap, t);
+    const d0 = first.n.dot(first.p[0]);
+    const tol = Math.max(1e-3, Math.abs(d0) * 1e-5);
+    const id = snap.regions.length;
+    const centre = new THREE.Vector3();
+    let area = 0;
+    const queue = [t];
+    snap.region[t] = id;
+    while (queue.length) {
+      const i = queue.pop();
+      const tri = this._triangle(snap, i);
+      centre.addScaledVector(tri.p[0].clone().add(tri.p[1]).add(tri.p[2]).divideScalar(3), tri.area);
+      area += tri.area;
+      for (let k = 0; k < 3; k += 1) {
+        const o = i * 9 + k * 3;
+        const key = `${snap.world[o].toFixed(3)},${snap.world[o + 1].toFixed(3)},${snap.world[o + 2].toFixed(3)}`;
+        for (const j of snap.byCorner.get(key) || []) {
+          if (snap.region[j] >= 0) continue;
+          const other = this._triangle(snap, j);
+          if (other.n.dot(first.n) < 0.9995 || Math.abs(other.n.dot(other.p[0]) - d0) > tol) continue;
+          snap.region[j] = id;
+          queue.push(j);
+        }
+      }
+    }
+    const region = { centre: area > 0 ? centre.divideScalar(area) : first.p[0].clone(), normal: first.n.clone() };
+    snap.regions.push(region);
+    return region;
+  }
+
+  /** Nothing of the part between the camera and this point. */
+  _visible(point) {
+    const from = this.camera.position;
+    const dist = from.distanceTo(point);
+    this.raycaster.set(from, point.clone().sub(from).normalize());
+    const hit = this.raycaster.intersectObjects(this.group.children.filter((m) => m.visible), false)[0];
+    return !hit || hit.distance >= dist - Math.max(0.05, dist * 2e-3);
+  }
+
+  _toScreen(point, rect) {
+    const v = point.clone().project(this.camera);
+    if (v.z > 1 || v.z < -1) return null;
+    return [rect.left + ((v.x + 1) / 2) * rect.width, rect.top + ((1 - v.y) / 2) * rect.height];
+  }
+
+  /** What a pick here takes: {kind, point, normal?, dir?} or null.
+   * Kinds: vertex, midpoint, centre (of a flat face), edge, face. */
+  _snap(clientX, clientY, radius) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.camera.updateMatrixWorld();
+    const r = radius || (this._coarse ? 22 : 12);
+    const meshes = this.group.children.filter((m) => m.visible && m.userData.snap);
+    const best = (list, kind) => {
+      const found = [];
+      for (const [point, extra] of list) {
+        const s = this._toScreen(point, rect);
+        if (!s) continue;
+        const d = Math.hypot(s[0] - clientX, s[1] - clientY);
+        if (d <= r) found.push({ d, kind, point, ...extra });
+      }
+      found.sort((a, b) => a.d - b.d);
+      return found.slice(0, 6).find((c) => this._visible(c.point)) || null;
+    };
+    const all = (key) => meshes.flatMap((m) => m.userData.snap[key].map((p, i) => [p, { mesh: m, i }]));
+    const vertex = best(all("verts"), "vertex");
+    if (vertex) return vertex;
+    const mid = best(meshes.flatMap((m) => m.userData.snap.mids.map((p, i) => {
+      const [a, b] = m.userData.snap.segs[i];
+      return [p, { dir: b.clone().sub(a).normalize() }];
+    })), "midpoint");
+    if (mid) return mid;
+    const ndc = new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const ray = this.raycaster.ray.clone();
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    let region = null;
+    if (hit && hit.faceIndex != null && hit.object.userData.snap) {
+      region = this._region(hit.object.userData.snap, hit.faceIndex);
+      const c = best([[region.centre, { normal: region.normal }]], "centre");
+      if (c) return c;
+    }
+    const near = [];
+    for (const m of meshes) {
+      for (const [a, b] of m.userData.snap.segs) {
+        const sa = this._toScreen(a, rect), sb = this._toScreen(b, rect);
+        if (!sa || !sb) continue;
+        const vx = sb[0] - sa[0], vy = sb[1] - sa[1];
+        const len2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((clientX - sa[0]) * vx + (clientY - sa[1]) * vy) / len2));
+        if (Math.hypot(sa[0] + t * vx - clientX, sa[1] + t * vy - clientY) > r) continue;
+        const onSeg = new THREE.Vector3();
+        ray.distanceSqToSegment(a, b, null, onSeg);
+        const s = this._toScreen(onSeg, rect);
+        if (!s) continue;
+        near.push({ d: Math.hypot(s[0] - clientX, s[1] - clientY), kind: "edge", point: onSeg,
+          dir: b.clone().sub(a).normalize() });
+      }
+    }
+    near.sort((x, y) => x.d - y.d);
+    const edge = near.slice(0, 6).find((c) => c.d <= r && this._visible(c.point));
+    if (edge) return edge;
+    if (hit) return { kind: "face", point: hit.point.clone(), normal: region ? region.normal : null };
+    return null;
+  }
+
+  /** For the measure: what a pick at this point would take. */
+  snapAt(clientX, clientY) {
+    const s = this._snap(clientX, clientY);
+    return s && { kind: s.kind, point: s.point.toArray() };
+  }
+
+  _hover(e) {
+    if (!this.measuring || e.pointerType === "touch" || e.buttons) { this._showSnap(null); return; }
+    this._hoverAt = [e.clientX, e.clientY];
+    if (this._hoverQueued) return;
+    this._hoverQueued = true;
+    requestAnimationFrame(() => {
+      this._hoverQueued = false;
+      if (!this.measuring || !this._hoverAt) return;
+      this._showSnap(this._snap(...this._hoverAt));
+    });
+  }
+
+  _showSnap(snap) {
+    this._snapShown = snap;
+    if (!snap) { this.snapMark.hidden = true; return; }
+    this.snapMark.dataset.kind = snap.kind;
+    this.snapMark.querySelector("span").textContent = SNAP_WORDS[snap.kind];
+    this.snapMark.hidden = false;
+    this._place(this.snapMark, snap.point);
+  }
+
+  _place(node, point) {
+    const rect = this.container.getBoundingClientRect();
+    const s = this._toScreen(point, this.renderer.domElement.getBoundingClientRect());
+    if (!s) { node.style.visibility = "hidden"; return; }
+    node.style.visibility = "";
+    node.style.transform = `translate(${s[0] - rect.left}px, ${s[1] - rect.top}px)`;
+  }
+
+  _placeOverlay() {
+    if (!this.label.hidden && this.points.length === 2) {
+      this._place(this.label, this.points[0].point.clone().add(this.points[1].point).multiplyScalar(0.5));
+    }
+    if (this._snapShown) this._place(this.snapMark, this._snapShown.point);
+  }
+
+  /** What is being measured, for the measure and anybody debugging it. */
+  measureState() {
+    const b = this.label.getBoundingClientRect();
+    return { points: this.points.map((p) => p.point.toArray()), kinds: this.points.map((p) => p.kind),
+      results: this.history.slice(),
+      label: { text: this.label.textContent, visible: !this.label.hidden && this.label.style.visibility !== "hidden",
+        x: b.left + b.width / 2, y: b.top + b.height / 2 } };
+  }
+
+  _result(a, b) {
+    const d = b.point.clone().sub(a.point);
+    const out = { distance: d.length(), dx: Math.abs(d.x), dy: Math.abs(d.y), dz: Math.abs(d.z),
+      kinds: [a.kind, b.kind] };
+    const deg = (c) => (Math.acos(Math.min(1, Math.abs(c))) * 180) / Math.PI;
+    const face = (p) => (p.kind === "face" || p.kind === "centre") && p.normal;
+    if (face(a) && face(b)) {
+      out.angle = deg(a.normal.dot(b.normal));
+      if (out.angle < 0.5) out.perpendicular = Math.abs(d.dot(a.normal));  // parallel: between the planes
+    } else if (face(a) || face(b)) {
+      const [f, other] = face(a) ? [a, b] : [b, a];
+      out.perpendicular = Math.abs(other.point.clone().sub(f.point).dot(f.normal));
+      if (other.dir) out.angle = 90 - deg(other.dir.dot(f.normal));
+    } else if (a.dir && b.dir) {
+      out.angle = deg(a.dir.dot(b.dir));
+    }
+    return out;
   }
 
   _click(e) {
     if (!this.measuring || !this._down) return;
     // A drag is the camera moving, not a point being picked.
     if (Math.hypot(e.clientX - this._down[0], e.clientY - this._down[1]) > 4) return;
-    const point = this._hit(e.clientX, e.clientY);
-    if (!point) return;
-    const hit = { point };
-    if (this.points.length === 2) this.clearMeasure();
-    this.points.push(hit.point.clone());
+    const touch = this._downType === "touch";
+    const pick = this._snap(e.clientX, e.clientY, touch ? 24 : null);
+    if (!pick) return;
+    if (this.points.length === 2) { this.points = []; this.marks.clear(); this.label.hidden = true; }
+    this.points.push(pick);
     const r = Math.max((this.size() || [10])[0] / 120, 0.4);
     const dot = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12),
       new THREE.MeshBasicMaterial({ color: 0xffd23f, depthTest: false }));
-    dot.position.copy(hit.point);
+    dot.position.copy(pick.point);
     dot.renderOrder = 10;
     this.marks.add(dot);
     if (this.points.length === 2) {
-      const [a, b] = this.points;
+      const [a, b] = this.points.map((p) => p.point);
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]),
         new THREE.LineBasicMaterial({ color: 0xffd23f, depthTest: false }));
       line.renderOrder = 10;
       this.marks.add(line);
-      if (this.onMeasure) {
-        this.onMeasure({ distance: a.distanceTo(b), dx: Math.abs(b.x - a.x),
-          dy: Math.abs(b.y - a.y), dz: Math.abs(b.z - a.z) });
-      }
+      // The three components, dashed in the axes' colours: X red, Y green, Z blue.
+      const legs = new THREE.Group();
+      legs.name = "components";
+      const corners = [a, new THREE.Vector3(b.x, a.y, a.z), new THREE.Vector3(b.x, b.y, a.z), b];
+      [0xe5484d, 0x46a758, 0x3e8ed0].forEach((colour, i) => {
+        if (corners[i].distanceTo(corners[i + 1]) < 1e-6) return;
+        const leg = new THREE.Line(new THREE.BufferGeometry().setFromPoints([corners[i], corners[i + 1]]),
+          new THREE.LineDashedMaterial({ color: colour, dashSize: r * 3, gapSize: r * 2, depthTest: false }));
+        leg.computeLineDistances();
+        leg.renderOrder = 9;
+        legs.add(leg);
+      });
+      if (legs.children.length > 1) this.marks.add(legs);
+      const result = this._result(...this.points);
+      this.history.push(result);
+      this.history = this.history.slice(-5);
+      this.label.textContent = `${result.distance.toFixed(2)} mm`;
+      this.label.hidden = false;
+      this._placeOverlay();
+      if (this.onMeasure) this.onMeasure(result);
     } else if (this.onMeasure) {
-      this.onMeasure({ first: true });
+      this.onMeasure({ first: true, kind: pick.kind });
     }
   }
 
@@ -503,6 +810,7 @@ export class Viewer {
   dispose() {
     cancelAnimationFrame(this._frame);
     this._resize.disconnect();
+    document.removeEventListener("keydown", this._onKey);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
