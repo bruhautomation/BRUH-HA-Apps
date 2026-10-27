@@ -134,8 +134,9 @@ def _note(cid, text):
     return {"id": cid, "type": "note", "text": text}
 
 
+# Not skipped where there is no Chromium: the add-on ships one and CI has
+# one, and a claim proved nowhere is not proved. BRAIN_CHROMIUM names it.
 @pytest.mark.slow
-@unittest.skipUnless(browser(), "no Chromium on this machine")
 class TestAFoldedTileIsFound(unittest.TestCase):
     """Morph's real modules, served by the real harness routes and captured
     by the real capture, on a house whose overview rooms are folded."""
