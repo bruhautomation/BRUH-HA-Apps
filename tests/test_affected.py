@@ -248,6 +248,16 @@ class TestQuietFiles(unittest.TestCase):
         self.assertEqual(out.stdout, "")
         self.assertIn("nothing", out.stderr)
 
+    def test_a_note_is_read_by_the_tests_that_glob_its_folder(self):
+        """``docs/notes/*.md`` is read by a glob, never by name, so a
+        change to one note still selects the tests that read them all."""
+        note = "/".join(("docs", "notes", "brain-core.md"))
+        self.assertTrue((REPO / note).is_file())
+        sel = select(note)
+        self.assertFalse(sel.whole)
+        self.assertIn("tests/test_claude_md_index.py", sel.tests)
+        self.assertIn("tests/test_documented_counts.py", sel.tests)
+
     def test_a_ci_script_a_test_runs_is_not_quiet(self):
         sel = select(".github/scripts/check-version-bump.sh")
         self.assertFalse(sel.whole)

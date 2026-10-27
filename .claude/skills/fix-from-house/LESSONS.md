@@ -2,8 +2,9 @@
 
 The fixer (`SKILL.md`) reads this before every run, and the weekly retro
 adds to it. Each bullet is dated, short, and says what failed and why.
-A lesson that every contributor should follow belongs in `CLAUDE.md` as
-well.
+A lesson that every contributor should follow belongs in the area's note
+in `docs/notes/` as well (in `CLAUDE.md` only when it applies to every
+change in the repository).
 
 Last retro: 2026-10-27
 Last UX audit: 2026-10-18
@@ -11,7 +12,7 @@ Last UX audit: 2026-10-18
 ## Lessons
 
 - 2026-10-07: Before the loop's first run. The repository's own `CLAUDE.md`
-  is the record of every mistake this add-on has already made; most fixes
+  (since 2026-10-27, its notes in `docs/notes/`) is the record of every mistake this add-on has already made; most fixes
   are an existing bullet there applied in a new place.
 - 2026-10-07: First UX audit. A `display` set on a class beats the `[hidden]` attribute, so an empty hidden container (`.kclean`) drew as a bar in Memory › Knowledge. When a container is toggled with `hidden`, check that its class does not set `display`.
 - 2026-10-08: Run 1 took 7.5 hours for 10 batches, and "the tests time
@@ -105,10 +106,6 @@ Last UX audit: 2026-10-18
 
 One line per run: date, duration, issues by ending, slowest step.
 
-- 2026-10-08/09: ~10h, 20 issues closed: 16 fixed (PRs #380, #381, #382 and batch 4), 2 already fixed, 1 duplicate, 1 not brAIn; 6 rolling/evidence left open by design. Slowest step: the UI batch subagent (17 min) and waiting on CI.
-- 2026-10-09: ~3h this session (resumed run), 10 issues closed, all fixed (PRs #385, #386, #387 and this batch), 2 of them filed by the UX audit and fixed in the same run; 6 rolling/evidence left open by design. Slowest step: the Opus UI batch subagent (16 min); a worktree branch mix-up cost one re-push.
-- 2026-10-09 06:00: ~15 min, 6 reopened faults closed with no code change: 3 re-stamps of rows still inside their window or count (#137, #117, #116), 1 duplicate count (#5), 1 not brAIn (#4), 1 handed to a person after three fixes did not clear a live count (#82). UX audit skipped: already done today on this same main. Slowest step: reading the reopen history.
-- 2026-10-09 06:30: ~15 min, 1 issue closed with no code change: #146, the frozen-sensor rule's all-time Wrong count, explained by the battery-voltage cause fixed in 2.18.3. UX audit skipped: already done today on this same main. Slowest step: tracing which Wrongs predate the fix.
 - 2026-10-09 16:00: ~3h, 9 issues closed as fixed (PRs #395, #396 and batch 5: #149, #152, #154, #155, #163, #164, #166, #167, #168); rolling/evidence left open by design. Slowest step: the Opus UI subagents (~22–25 min) and re-running CI over the screens Chromium start-up flake.
 - 2026-10-10 20:30: ~1h, 30 issue closures: 9 fixed (PRs #399, #400, #401), 2 of them filed by the UX audit; 15 re-stamped faults closed as before (10 on the 2.18.15 update, 5 more when 2.18.17 landed mid-run); 2 duplicates, 1 not brAIn, 1 declined, 1 handed to a person (the `get_history` half of #172; its panel half fixed). Slowest step: the Opus writing batch (26 min) and #401's two CI cycles on the screens Chromium start-up failure (passed on re-run; no local repro).
 - 2026-10-12 13:30: ~3h, 43 issue closures: 22 fixed in PRs #405, #406, #408, #410 and the last batch (3 filed by the UX audit, 2 the owner's own requests), 16 re-stamped faults closed as before (11, then 5 more after the 2.18.2x updates), 5 handed to a person (#186 healing.py, #196 the MCP server's error log, #210–#212 in the Morph add-on, which the skill does not let the loop touch). Slowest step: the subagents (19–24 min each) and #406's three CI cycles on the screens Chromium start-up and a missing `except` comment.

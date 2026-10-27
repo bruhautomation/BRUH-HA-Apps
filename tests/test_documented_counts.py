@@ -100,6 +100,9 @@ def mcp_tool_count() -> int:
 DOCUMENTED_IN = [
     "README.md",
     "CLAUDE.md",
+    # CLAUDE.md's long notes, moved there word for word.
+    *sorted(str(p.relative_to(BASE_DIR))
+            for p in (BASE_DIR / "docs" / "notes").glob("*.md")),
     "brain/README.md",
     "brain/DOCS.md",
     "brain/panel/docs.js",

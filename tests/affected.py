@@ -419,6 +419,19 @@ def _reads_here(src: str, rel: str) -> bool:
         rf"""["'][^"'\n]*{re.escape(parent)}/""", src) is not None
 
 
+def _globs_here(src: str, rel: str) -> bool:
+    """A read of every file in THIS file's folder: the folder's name as a
+    string literal and a ``glob`` for the file's suffix. ``docs/notes/*.md``
+    is read that way, never by name."""
+    if "/" not in rel:
+        return False
+    parent = rel.rsplit("/", 2)[-2]
+    suffix = Path(rel).suffix
+    return (_reads(src, parent) and suffix != ""
+            and re.search(rf"""glob\(\s*["']\*{re.escape(suffix)}["']""",
+                          src) is not None)
+
+
 def _names_addon(src: str, addon: str) -> bool:
     for name in ADDON_NAMES[addon]:
         n = re.escape(name)
@@ -602,7 +615,7 @@ def select(paths, index: Index | None = None, transitive: bool = False
         # Prose, pictures, CI.
         if _is_quiet(rel) and not (addon and suffix in UI_SUFFIXES):
             found = {t for t, src in index.tests.items()
-                     if _reads_here(src, rel)}
+                     if _reads_here(src, rel) or _globs_here(src, rel)}
             sel.tests |= found
             say(rel, f"{len(found)} test files read it by name" if found
                 else "nothing (prose or CI; no test reads it by name)")
