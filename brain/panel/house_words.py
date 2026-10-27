@@ -285,8 +285,8 @@ def plain(text: str, names: Mapping | None = None,
 
 _LOG_MEANINGS = (
     (re.compile(r"rate.?limit|too many requests|\b429\b|throttl", re.I),
-     ("the service it talks to is turning requests away because it is "
-      "being asked too often")),
+     "the service it talks to is turning requests away because it is "
+     + "being asked too often"),
     (re.compile(r"unauthori[sz]ed|forbidden|access denied|permission denied"
                 r"|invalid (?:auth|credentials?|token|api.?key|password)"
                 r"|(?:authentication|login|sign.?in) (?:failed|refused|error)"
