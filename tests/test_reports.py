@@ -1072,9 +1072,9 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         row that says Home Assistant did not answer; the checks they took
         down get no row of their own; a real reader error still files."""
         for err in ("502, message='Invalid response status', "
-                    "url='ws://supervisor/core/websocket'",
+                    + "url='ws://supervisor/core/websocket'",
                     "Cannot connect to host supervisor:80 ssl:default "
-                    "[Connect call failed ('172.30.32.2', 80)] 503"):
+                    + "[Connect call failed ('172.30.32.2', 80)] 503"):
             diag = {"checks": {
                 "skipped": {"auto.trace_error": "snapshot is missing states, traces",
                             "dev.frozen": "snapshot is missing states",
