@@ -381,12 +381,29 @@ def _row(out: list, where: str, what: str, detail: str = "", *,
 # The sentence `checks.run_all` writes for a check it could not run because
 # the snapshot has no such key. Read as a shape rather than a lookup so a
 # renamed key still folds; anything else is the check's own reason.
-_MISSING_KEY_RE = re.compile(r"^snapshot is missing (\w+)$")
+_MISSING_KEY_RE = re.compile(r"^snapshot is missing (\w+(?:, \w+)*)$")
 
 
-def _missing_snapshot_key(why) -> str:
+def _missing_snapshot_keys(why) -> list[str]:
+    """Every key a "snapshot is missing a, b" skip names (`run_all` joins
+    them with ", "), or []."""
     match = _MISSING_KEY_RE.match(str(why or "").strip())
-    return match.group(1) if match else ""
+    return match.group(1).split(", ") if match else []
+
+
+# A snapshot read that failed because Home Assistant itself did not answer
+# (Core restarting: 502/503/504, refused or reset connection, a timeout).
+# That is one fact about the house, not a fault in brAIn's reader, and it
+# is said once however many keys and checks it took down.
+_HA_DOWN_RE = re.compile(
+    r"(?<!\d)50[234](?!\d)|bad gateway|service unavailable|gateway time"
+    r"|connection (?:refused|reset|aborted|closed)|cannot connect to host"
+    r"|connect call failed|server disconnected|timed? ?out|timeout"
+    r"|broken pipe|remote end closed", re.I)
+
+
+def _ha_did_not_answer(why) -> bool:
+    return bool(_HA_DOWN_RE.search(str(why or "")))
 
 
 # When a day's refused runs become a fault row: a share of the day's runs,
@@ -792,12 +809,18 @@ def _faults(diag) -> list[dict]:
     checks = diag.get("checks") or {}
     snapshot_errors = {str(k): v for k, v in
                        (checks.get("snapshot_errors") or {}).items()}
+    ha_down = {k for k, v in snapshot_errors.items()
+               if _ha_did_not_answer(v)}
     taken_down: dict[str, list[str]] = {}
     own_skips: list[tuple[str, str]] = []
     for cid, why in sorted((checks.get("skipped") or {}).items()):
-        key = _missing_snapshot_key(why)
-        if key and key in snapshot_errors:
-            taken_down.setdefault(key, []).append(cid)
+        keys = _missing_snapshot_keys(why)
+        if keys and all(k in snapshot_errors for k in keys):
+            # On the Home Assistant row when it did not answer, else on
+            # the first real reader error among its keys.
+            home = ("" if not all(k in ha_down for k in keys) else "\0ha")
+            home = home or next(k for k in keys if k not in ha_down)
+            taken_down.setdefault(home, []).append(cid)
         else:
             own_skips.append((cid, why))
     titles = diag.get("check_titles") if isinstance(
@@ -825,7 +848,25 @@ def _faults(diag) -> list[dict]:
         _row(out, "House checks", "the pass itself failed", checks.get("error"),
              sentence="The last pass of house checks failed, so nothing "
                       "was checked. It runs again on its schedule.")
+    if ha_down:
+        skipped = taken_down.get("\0ha") or []
+        first = str(snapshot_errors[sorted(ha_down)[0]] or "")
+        detail = (f"{first} — {len(ha_down)} snapshot read"
+                  f"{'s' if len(ha_down) != 1 else ''} ("
+                  + ", ".join(sorted(ha_down)) + ") failed")
+        if skipped:
+            detail += (f" and {len(skipped)} check"
+                       f"{'s' if len(skipped) != 1 else ''} did not run: "
+                       + ", ".join(skipped))
+        _row(out, "Home Assistant", "did not answer", detail,
+             title="Home Assistant not answering",
+             sentence="Home Assistant did not answer brAIn on its last "
+                      "pass (it may have been restarting), so nothing "
+                      "could be read from it. It tries again on the next "
+                      "pass.")
     for key, why in sorted(snapshot_errors.items()):
+        if key in ha_down:
+            continue
         skipped = taken_down.get(key) or []
         detail = str(why or "")
         if skipped:

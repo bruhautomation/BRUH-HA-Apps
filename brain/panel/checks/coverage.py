@@ -269,24 +269,36 @@ def lines_text(coverage) -> str:
 
 
 def checked_rows(areas: list[dict], now: float, tz=None) -> list[dict]:
-    """The decision trail's "checked, nothing wrong" rows: one per area
-    whose checks looked and found nothing, keyed by the local DATE so the
-    trail holds one per area per day (and folds that day's passes into
-    it). An area that found something, could not look at all or is not in
-    this house writes none — the first is on the Findings tab, the other
-    two are not a look that came back clean."""
+    """The decision trail's rows for an area's look: "checked, nothing
+    wrong" for one whose checks all looked and found nothing, "could not
+    check" (kind ``unchecked``) for one where any check could not look —
+    one per area per day, keyed by the local DATE so the trail folds that
+    day's passes into it. An area that found something or is not in this
+    house writes none — the first is on the Findings tab."""
     import datetime as dt  # noqa: PLC0415
     day = dt.datetime.fromtimestamp(now, tz=tz).date().isoformat()
     out = []
     for a in areas:
-        if a.get("state") not in ("clear", "partial"):
+        state = a.get("state")
+        if state in ("partial", "could_not_look"):
+            # An area whose reads failed is "could not check", naming what
+            # failed, however many of its checks happened to run: never
+            # the "nothing wrong" a clean look earns.
+            blind = _blind_text(a.get("could_not_look") or {})
+            out.append({"kind": "unchecked", "subject": "",
+                        "check": f"area.{a['id']}",
+                        "reason": f"on {day}: could not check "
+                                  f"{a['title'].lower()} properly — could "
+                                  f"not look at {blind}",
+                        "text": f"{a['title']}: could not check — {blind}",
+                        "checks": list(a.get("checks") or [])})
             continue
-        reason = (f"checked on {day}: every check in it looked and found "
-                  "nothing") if a["state"] == "clear" else (
-            f"checked on {day}: found nothing, but could not look at "
-            + _blind_text(a.get("could_not_look") or {}))
+        if state != "clear":
+            continue
         out.append({"kind": "checked", "subject": "",
-                    "check": f"area.{a['id']}", "reason": reason,
+                    "check": f"area.{a['id']}",
+                    "reason": f"checked on {day}: every check in it looked "
+                              "and found nothing",
                     "text": f"{a['title']}: checked, nothing wrong",
                     "checks": list(a.get("checks") or [])})
     return out

@@ -531,6 +531,42 @@ class TestTheTrailCanAnswerDidYouLook(unittest.TestCase):
                          ["checked"])
 
 
+class TestAnAreaThatCouldNotLookNeverSaysNothingWrong(unittest.TestCase):
+    """A pass where Home Assistant answered 502 to the states and registry
+    reads: the devices checks are skipped, the few that need neither run.
+    The trail must not read that as a clean bill of health."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.old = decision_trail.TRAIL_FILE
+        decision_trail.TRAIL_FILE = os.path.join(self.tmp.name, "d.jsonl")
+        self.addCleanup(setattr, decision_trail, "TRAIL_FILE", self.old)
+        decision_trail.clear_memory()
+        self.addCleanup(decision_trail.clear_memory)
+
+    def test_devices_with_502s_is_a_could_not_check_row(self):
+        import datetime as dt
+        snap = house()
+        snap["available"] = {**(snap.get("available") or {}),
+                             "states": False, "registry": False}
+        errs = {"states": "502, message='Invalid response status'",
+                "registry": "502, message='Invalid response status'"}
+        record = coverage.record({}, checks.run_all(snap, NOW), NOW, errs)
+        areas = coverage.area_view(record, checks.CHECKS, NOW)
+        dev = [a for a in areas if a["id"] == "devices"][0]
+        self.assertIn(dev["state"], ("partial", "could_not_look"))
+        decision_trail.note_many(coverage.checked_rows(
+            areas, NOW, dt.timezone.utc), NOW)
+        got = decision_trail.for_subject("area.devices")
+        self.assertEqual(got["kinds"], ["unchecked"])
+        text = " ".join(str(r.get("text") or "") + str(r.get("meaning") or "")
+                        + str(r.get("reason") or "") for r in got["rows"])
+        self.assertNotIn("nothing wrong", text)
+        self.assertIn("could not check", text)
+        self.assertIn("502", text)
+
+
 class TestItIsSaidWhereAPersonReads(unittest.TestCase):
     def test_the_report_text_carries_one_line_per_area(self):
         record = coverage.record({}, checks.run_all(house(), NOW), NOW)

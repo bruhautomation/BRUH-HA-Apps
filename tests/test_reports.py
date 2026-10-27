@@ -1065,6 +1065,39 @@ class TestEverythingThatIsWrongRightNow(unittest.TestCase):
         self.assertIn("Rooms: could not be measured the builder raised",
                       _said(reports.faults(diag)))
 
+    def test_a_home_assistant_outage_is_one_row_not_one_per_key_and_check(self):
+        """HA answering 502 for a moment took down every snapshot read and
+        every check that needed one: twenty rows for one fact, and a brief
+        outage is not a brAIn bug. Transport-level failures fold into ONE
+        row that says Home Assistant did not answer; the checks they took
+        down get no row of their own; a real reader error still files."""
+        for err in ("502, message='Invalid response status', "
+                    + "url='ws://supervisor/core/websocket'",
+                    "Cannot connect to host supervisor:80 ssl:default "
+                    + "[Connect call failed ('172.30.32.2', 80)] 503"):
+            diag = {"checks": {
+                "skipped": {"auto.trace_error": "snapshot is missing states, traces",
+                            "dev.frozen": "snapshot is missing states",
+                            "climate.window": "snapshot is missing thermal",
+                            "evening.left_open": "no bedtime measured yet"},
+                "errors": {},
+                "snapshot_errors": {"registry": err, "states": err,
+                                    "traces": err,
+                                    "thermal": "KeyError: 'rooms'"}}}
+            rows = reports.faults(diag)
+            said = _said(rows)
+            ha = [r for r in rows if r["where"] == "Home Assistant"]
+            self.assertEqual(len(ha), 1, rows)
+            self.assertIn("did not answer", ha[0]["what"])
+            self.assertIn("auto.trace_error", ha[0]["detail"])
+            for k in ("registry", "states", "traces"):
+                self.assertNotIn(f"Snapshot ({k})", said)
+            self.assertNotIn("Check auto.trace_error", said)
+            self.assertNotIn("Check dev.frozen", said)
+            # a genuine reader error and an unrelated skip still file
+            self.assertIn("Snapshot (thermal)", said)
+            self.assertIn("Check evening.left_open: could not run", said)
+
     def test_a_producer_that_is_right_is_not_a_fault(self):
         """`dev.battery_low` is 3 confirmed and 0 wrong: a working rule
         in a section about broken ones is how the section stops being
