@@ -23076,7 +23076,7 @@ async def _scope_correction(finding: dict, note: str,
                         "condition holds. It has asked on your list whether "
                         "to stop altogether.")
         else:
-            sentence = corrections.conditional_confirmation(name)
+            sentence = corrections.conditional_confirmation(name, note=note)
         return {"plan": None, "ids": [], "offer": None, "sentence": sentence}
     if not base_ids or not note.strip() or not engine.get_auth():
         return None

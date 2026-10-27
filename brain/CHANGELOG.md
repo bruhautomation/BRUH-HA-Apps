@@ -2,6 +2,25 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.3
+
+### Fixed
+
+- **A machine's readings are not called unusual while it is running.** A reading on a device whose own status says it is working (a dishwasher's water mid-wash, for example) is no longer compared against the all-hours usual range; idle and finished machines are checked as before. (#477)
+- **A reason with a condition is no longer saved as "never again".** Marking something Wrong with "normal while it is running", "only the ecobee sensor counts" or "except when …" keeps the condition (read against the machine's status, or kept as a fact the next look reads) instead of silencing the whole entity. (#480)
+
+## 4.0.2
+
+### Changed
+
+- **A voice request that broke off partway now says why.** The run journal and the add-on log record how the voice worker ended (an error from the model, a timeout, or the process exiting, with its exit code and the last line it wrote), and the filed report carries it, so the cause no longer has to be guessed. What is spoken is unchanged. (#489, #492)
+
+## 4.0.1
+
+### Fixed
+
+- **A long personality is no longer cut off.** The personality was limited to 4,000 characters when saved, when moved over from the Morph app, and again when shown in Settings, so a longer one ended mid-sentence with "…". It now holds up to 32,000 characters, saves, moves over and shows whole, and the chat and voice prompts carry all of it. (#490, #491)
+
 ## 4.0.0
 
 Morph is part of brAIn. One app, one sidebar entry, one login: the Morph dashboard is brAIn's **Home** tab. Both are still being actively developed and may be unstable — keep your usual dashboards beside them. To move from the Morph app, see [Moving from the Morph app](DOCS.md#moving-from-the-morph-app).
