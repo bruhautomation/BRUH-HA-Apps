@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.2
+
+### Changed
+
+- **A voice request that broke off partway now says why.** The run journal and the add-on log record how the voice worker ended (an error from the model, a timeout, or the process exiting, with its exit code and the last line it wrote), and the filed report carries it, so the cause no longer has to be guessed. What is spoken is unchanged. (#489, #492)
+
 ## 4.0.1
 
 ### Fixed
