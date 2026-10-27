@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.1
+
+### Fixed
+
+- **A long personality is no longer cut off.** The personality was limited to 4,000 characters when saved, when moved over from the Morph app, and again when shown in Settings, so a longer one ended mid-sentence with "…". It now holds up to 32,000 characters, saves, moves over and shows whole, and the chat and voice prompts carry all of it. (#490, #491)
+
 ## 4.0.0
 
 Morph is part of brAIn. One app, one sidebar entry, one login: the Morph dashboard is brAIn's **Home** tab. Both are still being actively developed and may be unstable — keep your usual dashboards beside them. To move from the Morph app, see [Moving from the Morph app](DOCS.md#moving-from-the-morph-app).
