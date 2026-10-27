@@ -491,3 +491,148 @@ def test_a_spoken_turn_tells_the_worker_whose_preference_it_is(tmp_path, monkeyp
     monkeypatch.setenv("BRAIN_ASSIST_LEARNING", "false")
     block = mod.context_preamble({"person": "person.ben", "speaker": "Ben"})
     assert "Ben" in block and "remember_fact" not in block
+
+
+# ---------------------------------------------------------------------------
+# A partial turn says why its worker ended
+# ---------------------------------------------------------------------------
+#
+# "(spare+partial) — partial" and a journal row reading error=partial were
+# all a house had for a turn that died 14 seconds in: nothing said whether
+# the CLI closed the turn with an error, its process went away (and how),
+# or the turn ran out of time. Each of the three endings is driven here and
+# read back off the journal row's `extra.ended` and the add-on's log line.
+
+_TOOL_CALL = [
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Turning it off."},
+        {"type": "tool_use", "id": "t1", "name": "control_light",
+         "input": {}}]}},
+    {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}},
+]
+
+
+def _partial_through_the_pool(mod, monkeypatch, events, timeout=60):
+    """`Pool.process_full` over a bare worker reading `events`: the turn's
+    (text, error), its journal rows and the add-on's log lines."""
+    rows = record_journal(mod)
+    logged: list[str] = []
+    monkeypatch.setattr(mod, "log", logged.append)
+    pool = mod.Pool()
+    worker = _bare_worker(mod, events)
+    worker.lock = threading.Lock()
+    worker.partial = False
+    worker.session_id = "s1"
+    worker.model = "default"
+    worker.created = time.time()
+    worker.profile = None
+    worker.kill = lambda: None
+    worker.alive = lambda: True
+    worker.saw_eof = False
+    worker.died = lambda *a, **k: False
+    pool._take_worker = lambda conv, profile: (worker, "spare")
+    pool.workers["convA"] = worker
+    try:
+        drop_spare(pool)
+        text, error = pool.process_full(request("turn off the hall light",
+                                                timeout=timeout))
+    finally:
+        pool.workers.clear()
+        shutdown(pool)
+    return text, error, rows, logged
+
+
+def _ended(rows) -> str:
+    return str(rows[-1][1].get("ended") or "")
+
+
+def test_why_a_worker_ended_lands_in_the_journal_rows_extra(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    calls: list = []
+    done = threading.Event()
+
+    def record_run(*a, **kw):
+        calls.append((a, kw))
+        done.set()
+    monkeypatch.setattr(mod, "_journal_module",
+                        lambda: types.SimpleNamespace(record_run=record_run))
+    mod.journal_turn("partial", 14.0, None, "default", "s1", "spare+partial",
+                     ended="stdout closed, exit 3")
+    assert done.wait(5)
+    (args, kw), = calls
+    assert args == ("voice", "error")
+    assert kw["error"] == "partial"
+    assert kw["extra"] == {"mode": "spare+partial",
+                           "ended": "stdout closed, exit 3"}
+
+
+def test_a_partial_turn_closed_with_an_error_names_the_subtype(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    text, error, rows, logged = _partial_through_the_pool(
+        mod, monkeypatch, _TOOL_CALL + [
+            {"type": "result", "subtype": "error_during_execution",
+             "is_error": True, "result": ""}])
+    assert (text, error) == (mod.PARTIAL_MESSAGE, "partial")
+    assert "error_during_execution" in _ended(rows)
+    [line] = [x for x in logged if "+partial" in x]
+    assert "error_during_execution" in line, line
+
+
+def test_a_partial_turn_that_ran_out_of_time_says_timeout(tmp_path, monkeypatch):
+    mod = load_pool_module(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "TIMEOUT_MARGIN", 0)
+    monkeypatch.setattr(mod, "LIMIT_FLOOR", 0)
+    text, error, rows, logged = _partial_through_the_pool(
+        mod, monkeypatch, list(_TOOL_CALL), timeout=1)
+    assert (text, error) == (mod.PARTIAL_MESSAGE, "partial")
+    assert "timeout" in _ended(rows)
+    [line] = [x for x in logged if "+partial" in x]
+    assert "partial (" in line and "timeout" in line.split("partial (", 1)[1], line
+
+
+_DYING_CLI = r'''
+import json, sys
+argv = sys.argv[1:]
+if "--input-format" not in argv:
+    sys.exit(0)
+sid = "22222222-2222-2222-2222-222222222222"
+print(json.dumps({"type": "system", "subtype": "init", "session_id": sid}),
+      flush=True)
+sys.stdin.readline()
+print(json.dumps({"type": "assistant", "session_id": sid, "message": {
+    "content": [{"type": "tool_use", "id": "t1", "name": "control_light",
+                 "input": {}}]}}), flush=True)
+print(json.dumps({"type": "user", "session_id": sid, "message": {
+    "content": [{"type": "tool_result", "tool_use_id": "t1",
+                 "content": "ok"}]}}), flush=True)
+print("starting up", file=sys.stderr)
+print("fatal: socket hang up (Bearer abcdefghijklmnopqrstuvwxyz0123)",
+      file=sys.stderr, flush=True)
+sys.exit(3)
+'''
+
+
+def test_a_partial_turn_whose_process_died_names_the_exit_and_stderr(tmp_path, monkeypatch):
+    script = tmp_path / "dying_claude.py"
+    script.write_text(_DYING_CLI)
+    mod = load_pool_module(tmp_path, monkeypatch,
+                           BRAIN_CLAUDE_BIN=f"{sys.executable} {script}")
+    rows = record_journal(mod)
+    logged: list[str] = []
+    monkeypatch.setattr(mod, "log", logged.append)
+    pool = mod.Pool()
+    try:
+        drop_spare(pool)
+        text, error = pool.process_full(request("toggle the hall light"))
+    finally:
+        shutdown(pool)
+    assert (text, error) == (mod.PARTIAL_MESSAGE, "partial")
+    ended = _ended(rows)
+    assert "exit 3" in ended, ended
+    assert "socket hang up" in ended, ended
+    [line] = [x for x in logged if "+partial" in x]
+    assert "exit 3" in line and "socket hang up" in line, line
+    # Redacted before it reaches the log or the row.
+    for said in (ended, line):
+        assert "abcdefghijklmnop" not in said, said

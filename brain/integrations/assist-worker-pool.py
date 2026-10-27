@@ -39,6 +39,7 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Empty, Queue
 
@@ -338,20 +339,27 @@ JOURNAL_OUTCOME = {"timeout": "timeout", "auth": "auth"}
 
 
 def journal_turn(error: str, duration: float, envelope: dict | None,
-                 model: str, run_id: str = "", mode: str = "") -> None:
+                 model: str, run_id: str = "", mode: str = "",
+                 ended: str = "") -> None:
     """One journal row for a voice turn, off the request thread. Never raises.
 
     Voice is the highest-traffic Claude path in a house and it recorded
     nothing: no row, so nothing counted it and nothing reported a failed
     one, and no nudge, so its spend reached the usage figure only on the
-    tracker's half-hour heartbeat."""
+    tracker's half-hour heartbeat.
+
+    `ended` is why the stream worker stopped without answering
+    (`Worker.end_reason`): `extra.ended`, which the fault report's detail
+    carries beside `partial`."""
     def _do() -> None:
         try:
             outcome = "ok" if not error else JOURNAL_OUTCOME.get(error, "error")
+            extra = {key: value for key, value in
+                     (("mode", mode), ("ended", ended)) if value}
             _journal_module().record_run(
                 "voice", outcome, duration_s=duration, envelope=envelope,
                 model="" if model == "default" else model, error=error,
-                run_id=run_id, extra={"mode": mode} if mode else None)
+                run_id=run_id, extra=extra or None)
         except Exception:  # noqa: BLE001 — accounting must not fail a turn
             pass
     threading.Thread(target=_do, daemon=True).start()
@@ -513,6 +521,24 @@ MCP_CONFIG_FILE = os.environ.get("BRAIN_MCP_CONFIG", os.path.join(WORK_DIR, ".mc
 
 def log(msg: str) -> None:
     print(f"[assist-pool] {msg}", flush=True)
+
+
+# How much of a worker's stderr is kept to say why it died: the last few
+# lines, each clipped, and the tail said in at most STDERR_TAIL_CHARS — it
+# goes into a journal row (`extra` values are clipped at 120) and a log line.
+STDERR_TAIL_LINES = 4
+STDERR_TAIL_CHARS = 80
+# The panel journal's `scrub` shape, for when the panel cannot be imported:
+# a stderr tail reaches the add-on log and a filed report, and a credential
+# in either is the one thing neither may carry.
+_STDERR_SECRET_RE = re.compile(
+    r"(sk-ant-[A-Za-z0-9_\-]{8,}|Bearer\s+[A-Za-z0-9._\-]{8,}"
+    r"|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})")
+
+
+def redact_tail(text: str) -> str:
+    """A stderr tail with anything credential-shaped replaced."""
+    return _STDERR_SECRET_RE.sub("[redacted]", str(text or ""))
 
 
 def debug_log(lines: list[str]) -> None:
@@ -959,6 +985,11 @@ class Worker:
         self.acted = False
         self.saw_eof = False  # set by the reader thread at stdout EOF
         self.last_result: dict | None = None
+        # How the last turn ended when it did not answer — `result:<subtype>`,
+        # `eof`, `stdin` or `timeout` — read through `end_reason()`. A
+        # partial turn journaled as just "partial" said nothing of why.
+        self.ended = ""
+        self._stderr_tail: deque = deque(maxlen=STDERR_TAIL_LINES)
 
         system_prompt, model, denied_csv = profile[:3]
         access = resolve_access(profile[3] if len(profile) > 3 else "voice")
@@ -996,11 +1027,24 @@ class Worker:
             cwd=WORK_DIR,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            # Drained by `_drain_stderr` into a short tail, so a worker that
+            # died can say what it said on the way out (`end_reason`).
+            stderr=subprocess.PIPE,
             text=True,
             env=env,
         )
         threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._drain_stderr, daemon=True).start()
+
+    def _drain_stderr(self) -> None:
+        try:
+            for line in self.proc.stderr:  # type: ignore[union-attr]
+                line = line.strip()
+                if line:
+                    self._stderr_tail.append(line[:200])
+        except (OSError, ValueError):
+            # The pipe closed under the reader: what was kept is the tail.
+            pass
 
     def _reader(self) -> None:
         try:
@@ -1066,6 +1110,7 @@ class Worker:
         """
         self.acted = False
         self.last_result = None
+        self.ended = ""
         # The last thing the model SAID this turn, off the whole assistant
         # messages. The CLI's `result` is only the closing message's text,
         # and a turn that says "Turning it off.", calls the tool and closes
@@ -1083,6 +1128,7 @@ class Worker:
             self.proc.stdin.write(json.dumps(msg) + "\n")  # type: ignore[union-attr]
             self.proc.stdin.flush()  # type: ignore[union-attr]
         except (OSError, ValueError):
+            self.ended = "stdin"
             return None
 
         saw_partial = False
@@ -1100,6 +1146,7 @@ class Worker:
         while True:
             remaining = deadline - time.time()
             if remaining <= 0:
+                self.ended = "timeout"
                 return None
             try:
                 event = self._events.get(timeout=min(remaining, 1.0))
@@ -1107,6 +1154,7 @@ class Worker:
                 continue
             etype = event.get("type")
             if etype == "_eof":
+                self.ended = "eof"
                 return None
             if etype == "stream_event":
                 inner = event.get("event") or {}
@@ -1147,6 +1195,7 @@ class Worker:
             elif etype == "result":
                 self.last_result = event
                 if event.get("is_error"):
+                    self.ended = "result:" + str(event.get("subtype") or "error")
                     return None
                 result = event.get("result")
                 if isinstance(result, str) and result:
@@ -1158,7 +1207,36 @@ class Worker:
                 # because nothing happened.
                 if self.acted:
                     return said or QUIET_DONE_MESSAGE
+                self.ended = "result:" + str(event.get("subtype") or "empty")
                 return None
+
+    def end_reason(self) -> str:
+        """Why the last turn ended without an answer, in a few words.
+
+        `result error_during_execution` for a turn the CLI closed with an
+        error, `timeout` for one that ran past its deadline, and for a
+        process that went away `exited 3` (or `exit unknown` when it had
+        not been reaped) with the redacted tail of what it wrote to stderr.
+        Called after `died()`, which waits briefly for the exit status.
+        """
+        ended = getattr(self, "ended", "") or ""
+        if ended.startswith("result:"):
+            return "result " + ended.split(":", 1)[1]
+        if ended == "timeout":
+            return "timeout"
+        if ended not in ("eof", "stdin"):
+            return ended or "unknown"
+        poll = getattr(getattr(self, "proc", None), "poll", None)
+        code = poll() if callable(poll) else None
+        head = ("stdout closed" if ended == "eof" else "stdin closed") \
+            + (f", exit {code}" if code is not None else ", exit unknown")
+        tail = " | ".join(getattr(self, "_stderr_tail", ()) or ())
+        if tail:
+            tail = redact_tail(tail)
+            if len(tail) > STDERR_TAIL_CHARS:
+                tail = "…" + tail[-(STDERR_TAIL_CHARS - 1):]
+            head += f"; stderr: {tail}"
+        return head
 
     def kill(self) -> None:
         try:
@@ -1395,6 +1473,7 @@ class Pool:
 
         start = time.time()
         error = ""
+        ended = ""  # why the stream worker stopped without answering
         envelope: dict | None = None
         run_id = ""
         ran_model = voice_model(model)[0]
@@ -1429,6 +1508,9 @@ class Pool:
                     # may be one bad spawn. Counted rather than concluded
                     # from; the fallback answers this request either way.
                     note_partial_early_death()
+                if response is None:
+                    # After `died()`, which waited for the exit status.
+                    ended = worker.end_reason()
                 if response is not None:
                     if worker.partial:
                         note_partial_ok()
@@ -1484,7 +1566,8 @@ class Pool:
                     "brAIn add-on's log for details."
                 )
         self._count(error, mode)
-        journal_turn(error, duration, envelope, ran_model, run_id, mode)
+        journal_turn(error, duration, envelope, ran_model, run_id, mode,
+                     ended=ended)
 
         debug_log([
             f"[{{ts}}] RESPONSE {req_id}",
@@ -1494,8 +1577,13 @@ class Pool:
             f"  Preview:   {response[:200]}",
             "----------------------------------------------------------------",
         ])
+        # Why the worker ended goes beside the code — "(spare+partial) —
+        # partial" said a turn broke and nothing of how — and beside a
+        # fallback too, which is the same death caught before it acted.
         log(f"request {req_id}: {duration:.1f}s ({mode})"
-            + (f" — {error}" if error else ""))
+            + (f" — {error}" if error else "")
+            + (f" ({ended})" if ended and (error or "fallback" in mode)
+               else ""))
         self.last_request = {
             "ts": time.time(), "duration_s": round(duration, 1), "mode": mode,
             "error": error or None,

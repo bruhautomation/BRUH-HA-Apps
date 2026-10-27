@@ -47,7 +47,8 @@ MORPH_FILE = os.environ.get(
     "BRAIN_MORPH_PERSONALITY_FILE", "/config/morph/frontend/personality.js")
 
 NAME_MAX = 60
-PERSONA_MAX = 4000
+# One ceiling for the persona everywhere it is stored, shown or typed.
+PERSONA_MAX = 32000
 GROWTH_TEXT_MAX = 500
 GROWTH_MAX = 200
 # What a file may be before it is not read at all: a persona and two hundred
@@ -55,9 +56,11 @@ GROWTH_MAX = 200
 READ_MAX_BYTES = 256 * 1024
 MORPH_READ_MAX_BYTES = 512 * 1024
 
-# What a prompt carries: the persona cut to this, and the newest few growth
-# entries. Bounded because it rides every chat turn and every voice turn.
-PROMPT_PERSONA_CHARS = 1500
+# What a prompt carries: the persona whole (it is already capped by PERSONA_MAX,
+# and the household chose it; a clip here showed up as a cut-off persona), and
+# the newest few growth entries. Morph's websocket.py holds its own PERSONA_MAX
+# (it cannot import this module); tests/test_personality_long.py keeps them equal.
+PROMPT_PERSONA_CHARS = PERSONA_MAX
 PROMPT_GROWTH_ENTRIES = 3
 PROMPT_GROWTH_CHARS = 200
 
