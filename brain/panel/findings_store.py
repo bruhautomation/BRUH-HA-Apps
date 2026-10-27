@@ -865,6 +865,13 @@ def shown_look(record: dict, entry: dict) -> dict:
     return {**record, "reason": said}
 
 
+# Spelled here as well as in `house_book` because the store may not import
+# it (house_book files through the store); a test holds the two equal.
+_HOUSE_BOOK_OLD_FIX = "Answer it here and the house book will say so."
+_HOUSE_BOOK_FIX = ("Your answer goes into the house book: the plain-language "
+                   "guide brAIn writes for anyone looking after this house.")
+
+
 def shown_fix(entry: dict) -> str:
     """The "what to do" a surface shows for ``entry``.
 
@@ -883,6 +890,11 @@ def shown_fix(entry: dict) -> str:
     fix = str(entry.get("fix") or "")
     if not fix or entry.get("fix_by"):
         return fix
+    # A house-book question filed before its sentence changed said "Answer
+    # it here", which reads as a promise of a box on every surface without
+    # one (#502). Read as today's sentence; the row itself is untouched.
+    if entry.get("source") == "house_book" and fix == _HOUSE_BOOK_OLD_FIX:
+        return _HOUSE_BOOK_FIX
     if not str(entry.get("source") or "").startswith("check:"):
         return fix
     look = shown_look(_clean_triage(entry.get("triage")), entry)

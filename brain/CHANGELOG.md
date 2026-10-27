@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 3.8.25
+
+### Changed
+
+- **House-book questions read as questions, not problems.** On Needs you they sit under **Questions for you**, apart from what is broken — including one still waiting for brAIn's check, which used to land under Tidy-ups — and the answer box says what the house book is: brAIn's plain-language guide to this house, for a partner or a house-sitter. (#502)
+- **A house-book question no longer says "Answer it here".** That sentence reached places with nowhere to answer; it now says where the answer goes. Questions already on the list read the new way too.
+
+### Fixed
+
+- **A house-book question explains itself.** Its reason says what the answer is needed for, and never points at notes you have not seen ("the notes say the panel status is unclear"). (#502)
+
 ## 3.8.24
 
 ### Added

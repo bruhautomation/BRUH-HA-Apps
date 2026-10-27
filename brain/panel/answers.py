@@ -548,8 +548,10 @@ def answers(case: dict) -> list[dict]:
             "into memory, and the house book uses it next time.",
             route=f"/api/house_book/question/{key}/answer", primary=True,
             note=True, done="Filed into memory for the house book")
-        answer["ask"] = ("Your answer goes into memory exactly as you write "
-                         "it — never type a code or a password here.")
+        answer["ask"] = ("The house book is brAIn's plain-language guide to "
+                         "this house, for a partner or a house-sitter. Your "
+                         "answer goes into it and into memory exactly as you "
+                         "write it — never type a code or a password here.")
         answer["placeholder"] = "Behind the boiler, the red lever."
         # "Doesn't apply" rather than Ignore: Ignore is a Wrong, and a Wrong
         # files "Not a problem in this home: House book: where is…" into
@@ -759,7 +761,7 @@ def is_security(case: dict) -> bool:
 # and a mute question, because a band over stakes then "newest" was the
 # whole order — and a chore or a question is often newer than a fault.
 GROUPS = ("problems", "questions", "chores", "tidy")
-GROUP_WORDS = {"problems": "Problems", "questions": "Questions",
+GROUP_WORDS = {"problems": "Problems", "questions": "Questions for you",
                "chores": "Chores and suggestions", "tidy": "Tidy-ups"}
 # The situations that are a chore rather than a fault: the machine has
 # finished, the door is open at bedtime — real, and nothing is broken.

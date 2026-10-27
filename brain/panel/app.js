@@ -6917,7 +6917,9 @@ const gapDrafts = {};
 function gapAnswerBox(id, route, opts, btns) {
   const form = el("div", "findnote gapanswer");
   form.appendChild(el("p", "findnotehint", opts.hint
-    || "Your answer goes into memory and the house book exactly as you write it."));
+    || "The house book is brAIn's plain-language guide to this house, for a "
+    + "partner or a house-sitter. Your answer goes into it and into memory "
+    + "exactly as you write it."));
   const ta = document.createElement("textarea");
   ta.className = "findnotebox";
   ta.rows = 2;
@@ -6972,8 +6974,10 @@ function gapAnswerBox(id, route, opts, btns) {
 // build the queue" must never render a house with problems as a house
 // with none.
 function makeLooseFinding(f) {
+  // A house-book gap is a question, never a Tidy-up (#502).
   const card = qCard({
-    id: `f:${f.ts}`, chip: f.severity === "critical" ? "urgent"
+    id: `f:${f.ts}`, chip: f.source === "house_book" ? "question"
+      : f.severity === "critical" ? "urgent"
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
@@ -7477,7 +7481,7 @@ function todayHideButtons(key, title, btns, actions) {
 // list arrives in that order (`answers.feed_key`); a card no case covers
 // is placed by the same rule here, and a group is sorted stably so the
 // server's order stands wherever the two agree.
-const GROUP_WORDS = { problems: "Problems", questions: "Questions",
+const GROUP_WORDS = { problems: "Problems", questions: "Questions for you",
   chores: "Chores and suggestions", tidy: "Tidy-ups" };
 const GROUP_ORDER = ["problems", "questions", "chores", "tidy"];
 const SEVERITY_RANK = { critical: 0, serious: 1, warning: 2, info: 3 };
@@ -7532,7 +7536,8 @@ function todayCards() {
     const t = f.triage || {};
     const security = isSecuritySource(f.source);
     out.push({ id: `f:${f.ts}`,
-      group: f.severity === "info" && !security ? "tidy" : "problems",
+      group: f.source === "house_book" ? "questions"
+        : f.severity === "info" && !security ? "tidy" : "problems",
       urgent: f.severity === "critical", severity: f.severity, security,
       unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),
       make: () => makeLooseFinding(f) });
