@@ -587,6 +587,15 @@ def assistant() -> str:
         return "brAIn"
 
 
+def _speak(text, who: str) -> str:
+    """A finding's words with brAIn called by its name (Personality)."""
+    try:
+        import personality  # noqa: PLC0415 — a stdlib leaf, read per message
+        return personality.speak(text, who)
+    except Exception:  # noqa: BLE001 — a name is never why a message failed
+        return "" if text is None else str(text)
+
+
 def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
     """One title and one body for however many rows there are."""
     n = len(rows)
@@ -597,7 +606,7 @@ def compose(rows: list[dict], held: bool = False) -> tuple[str, str]:
     else:
         title = (f"{who} found a problem" if n == 1
                  else f"{who} found {n} problems")
-    lines = [f"[{r.get('severity', 'warning')}] {r.get('text', '')}"
+    lines = [f"[{r.get('severity', 'warning')}] {_speak(r.get('text', ''), who)}"
              for r in rows[:LINES_MAX]]
     if n > LINES_MAX:
         # Counted, never truncated: a list that stops mid-way reads as

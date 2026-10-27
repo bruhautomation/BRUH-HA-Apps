@@ -105,7 +105,9 @@ function readScreen({ min }) {
   const header = [...bar.children]
     .filter((el) => el !== tabbar && !el.classList.contains('spacer') && visible(el))
     .map((el) => el.id || el.getAttribute('class').split(' ')[0]);
-  const tabs = [...document.querySelectorAll('.viewtab')].map((t) => {
+  // A tab that is not shown (Home while the Morph dashboard is off) is not
+  // a tab on this bar.
+  const tabs = [...document.querySelectorAll('.viewtab')].filter((t) => visible(t)).map((t) => {
     const r = t.getBoundingClientRect();
     const label = [...t.querySelectorAll('span:not(.badge)')]
       .filter((s) => visible(s)).map((s) => s.textContent.trim()).join('');

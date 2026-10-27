@@ -31,7 +31,6 @@ ADDONS = {
     "bright": os.path.join(BASE_DIR, "bright"),
     "bruh-print": os.path.join(BASE_DIR, "bruh-print"),
     "bruh-bambu-studio": os.path.join(BASE_DIR, "bruh-bambu-studio"),
-    "morph": os.path.join(BASE_DIR, "morph"),
     "gardenrx": os.path.join(BASE_DIR, "gardenrx"),
     "bruh-task-manager": os.path.join(BASE_DIR, "bruh-task-manager"),
 }
@@ -480,9 +479,6 @@ class TestWatchdog(unittest.TestCase):
                 ADDONS["bruh-print"], "panel", "server.py"),
             "bruh-bambu-studio": os.path.join(
                 ADDONS["bruh-bambu-studio"], "panel", "server.py"),
-            # Morph has no panel of its own (its UI is a Home Assistant
-            # sidebar panel); the service answers the health poll.
-            "morph": os.path.join(ADDONS["morph"], "service", "morphd.py"),
             # GardenRX is a Next.js app: the route is a file under app/api.
             "gardenrx": os.path.join(ADDONS["gardenrx"], "app", "src", "app",
                                      "api", "health", "route.ts"),
@@ -565,8 +561,6 @@ class TestIntegrationManifests(unittest.TestCase):
         "bruh_bambu": os.path.join(
             ADDONS["bruh-bambu-studio"], "custom_components", "bruh_bambu",
             "manifest.json"),
-        "morph": os.path.join(
-            ADDONS["morph"], "custom_components", "morph", "manifest.json"),
         "bruh_task_manager": os.path.join(
             ADDONS["bruh-task-manager"], "custom_components",
             "bruh_task_manager", "manifest.json"),

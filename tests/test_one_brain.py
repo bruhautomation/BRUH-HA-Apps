@@ -147,17 +147,17 @@ class TestThePanelsRepliesAreTheChat(unittest.TestCase):
 
 class TestMorphDoesTheWholeThing(unittest.TestCase):
     def test_the_tell_prompt_reaches_the_house(self):
-        text = (BASE_DIR / "morph" / "service" / "tell.py").read_text()
+        text = (BASE_DIR / "brain" / "morph" / "service" / "tell.py").read_text()
         self.assertNotIn("MORPH ONLY", text)
         self.assertIn("Never stop at the dashboard half", text)
 
     def test_ask_is_told_it_can_change_the_dashboard(self):
-        text = (BASE_DIR / "morph" / "service" / "converse.py").read_text()
+        text = (BASE_DIR / "brain" / "morph" / "service" / "converse.py").read_text()
         self.assertNotIn("cannot change the dashboard", text)
         self.assertIn("same reach as the chat", text)
 
     def test_agents_md_makes_the_sensor_rather_than_asking(self):
-        text = (BASE_DIR / "morph" / "defaults" / "AGENTS.md").read_text()
+        text = (BASE_DIR / "brain" / "morph" / "defaults" / "AGENTS.md").read_text()
         self.assertNotIn("Never make that sensor unasked", text)
         self.assertNotIn("in so many words", text)
         self.assertIn("make a template sensor", " ".join(text.split()))

@@ -185,7 +185,7 @@ class TestNightDimAndRoomMarksAreDashboardKeys(_Env):
         self.assertEqual(dash, again)
 
     def test_the_guide_brain_reads_names_both(self):
-        guide = (FRONTEND.parents[2] / "defaults" / "AGENTS.md").read_text()
+        guide = (FRONTEND.parents[3] / "morph" / "defaults" / "AGENTS.md").read_text()
         self.assertRegex(guide, r"(?m)^night_dim: false\s+#")
         self.assertRegex(guide, r"(?m)^room_marks: true\s+#")
 

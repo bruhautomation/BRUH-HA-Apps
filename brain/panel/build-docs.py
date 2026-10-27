@@ -93,7 +93,8 @@ FOOTER = "];\n"
 # group.
 GROUPS: list[tuple[str, list[str]]] = [
     ("Getting started", [
-        "brain", "setup", "what-to-expect", "the-panel", "what-it-costs",
+        "brain", "setup", "what-to-expect", "the-panel", "features",
+        "the-morph-dashboard", "what-it-costs",
     ]),
     ("Deciding", [
         "the-resident", "it-finds-whats-broken-and-fixes-it", "to-do",

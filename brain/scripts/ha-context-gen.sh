@@ -299,16 +299,19 @@ PYEOF
     # makes the correct update target obvious without a discovery
     # round-trip. Best-effort: emits a visible marker on failure.
     local dashboard_list
-    # Morph is the dashboard add-on brAIn designs. When it is installed, a
-    # request to change "the dashboard" usually means Morph's, and its own
-    # instructions are a file in its folder — so they are named here rather
-    # than copied, and stay current with whatever Morph release is installed.
+    # Morph is the dashboard brAIn designs, part of brAIn since 4.0 and on
+    # while its switch in ⚙ › Features is. Then a request to change "the
+    # dashboard" usually means Morph's, and its own instructions are a file
+    # in its folder — so they are named here rather than copied, and stay
+    # current with the release that is installed.
     local morph_section=""
-    if [ -f /config/morph/AGENTS.md ]; then
+    if [ -f /config/morph/AGENTS.md ] \
+        && jq -e '.morph == true' /config/.brain/features.json >/dev/null 2>&1; then
         morph_section="
 ## Morph — the house's dashboard
 
-Morph is installed: a dashboard in the sidebar that you design and change. It
+The Morph dashboard is on: the Home tab of brAIn's sidebar entry, which you
+design and change. It
 lives in \`/config/morph/\` (\`dashboard.yaml\`, custom card code in
 \`cards/\`). **Read \`/config/morph/AGENTS.md\` before changing it** and follow
 \`/config/morph/LEARNED.md\`, which is what this household has taught it. When
@@ -324,15 +327,15 @@ reverts exactly it.
     local bruh_section="
 ## The other BRUH add-ons
 
-GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and Morph are
-built in the same repository as brAIn. When one is broken, look first: the
+GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft are built
+in the same repository as brAIn. When one is broken, look first: the
 \`bruh_addon_status\` MCP tool (or \`ha addon logs <slug>\`) gives its state,
 version and the errors in its log. Fix what is fixable here — restart it,
 correct its options or the house's own config. **Never patch its code inside
 its container**: the next update wipes it. When the cause is in its code, file
 it with the \`report_bug\` MCP tool (your diagnosis, the log lines, the owner's
 words); a cloud routine fixes it upstream, it arrives as an update, and brAIn
-checks it held. That needs the development loop on (⚙ › Developer).
+checks it held. That needs the development loop on (⚙ › Features).
 
 When the problem is how a screen looks — brAIn's own, another add-on's panel,
 Morph's dashboard or a Lovelace card — **look at it**: the \`screenshot_panel\`

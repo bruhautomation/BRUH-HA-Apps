@@ -1,9 +1,11 @@
-"""brAIn's half of the wire to Morph, the dashboard (Morph 1.0 / brAIn 3.0).
+"""brAIn's half of the wire to Morph, the dashboard (Morph 1.0 / brAIn 3.0;
+part of brAIn since 4.0).
 
 brAIn is the house's mind and Morph is its face (docs/design/morph-vision.md
-§13). The two add-ons share no process and brAIn's panel port stays
-unpublished, so everything between them is a file on the shared volume,
-under ``/config/.brain/morph/``:
+§13). Morph's page runs in Home Assistant's own frontend and its service is
+a process of its own (in brAIn's container since 4.0), and brAIn's panel
+port stays unpublished, so everything between them is a file on the shared
+volume, under ``/config/.brain/morph/``:
 
 * ``feed.json`` — brAIn's measurements (what is normal for each sensor at
   this hour of the week, how often each door is open now, the house's

@@ -1,11 +1,10 @@
-"""Morph as an add-on: its three version numbers, the request vocabulary
-the integration and the service share, and the wire to brAIn's
-development loop.
+"""Morph as part of brAIn (4.0): one version, the request vocabulary the
+integration and the service share, the service brAIn's run.sh starts, the
+retired add-on, and the wire to brAIn's development loop.
 
-The request kinds and the version are each written down in two or three
-places that cannot import each other (a Home Assistant integration, an
-add-on service, a manifest), so the only thing that keeps them equal is a
-test that reads all of them.
+The request kinds are written down in two places that cannot import each
+other (a Home Assistant integration and a service in brAIn's container), so
+the only thing that keeps them equal is a test that reads both.
 """
 import ast
 import json
@@ -20,8 +19,8 @@ import yaml
 from morph_env import MorphEnv
 
 BASE = Path(__file__).resolve().parent.parent
-MORPH = BASE / "morph"
-INTEGRATION = MORPH / "custom_components" / "morph"
+MORPH = BASE / "brain" / "morph"
+INTEGRATION = BASE / "brain" / "custom_components" / "brain" / "morph"
 
 
 def _tuple(path: Path, name: str) -> tuple:
@@ -35,14 +34,29 @@ def _tuple(path: Path, name: str) -> tuple:
 
 class TestOneVersion(unittest.TestCase):
 
-    def test_config_manifest_const_and_changelog_agree(self):
-        config = yaml.safe_load((MORPH / "config.yaml").read_text())["version"]
-        manifest = json.loads((INTEGRATION / "manifest.json").read_text())["version"]
-        const = re.search(r'^VERSION = "([^"]+)"', (INTEGRATION / "const.py").read_text(), re.M)
-        changelog = re.search(r"^## (\S+)", (MORPH / "CHANGELOG.md").read_text(), re.M)
-        self.assertEqual(config, manifest)
-        self.assertEqual(config, const.group(1))
-        self.assertEqual(config, changelog.group(1))
+    def test_morph_is_served_under_brains_own_version(self):
+        """Morph has no version of its own any more: the panel's modules are
+        served under brAIn's, read off the integration's manifest."""
+        const = (INTEGRATION / "const.py").read_text()
+        self.assertIn("VERSION = _version()", const)
+        self.assertIn('"manifest.json"', const)
+        self.assertFalse((BASE / "morph").exists(), "the Morph add-on is retired")
+
+
+class TestBrainRunsTheService(unittest.TestCase):
+
+    def test_run_sh_starts_the_service_and_retires_the_old_add_on(self):
+        run = (BASE / "brain" / "run.sh").read_text()
+        main = run[run.index("main() {"):]
+        self.assertLess(main.index("deploy_custom_integration"), main.index("retire_morph_addon"))
+        self.assertLess(main.index("retire_morph_addon"), main.index("start_morph"))
+        self.assertIn("/opt/morph/service/morphd.py", run)
+        self.assertIn('MORPH_DATA="/data/morph"', run)
+        self.assertIn('old_integration="/config/custom_components/morph"', run)
+        # Stopped and kept from booting, never uninstalled: that deletes its data.
+        self.assertIn('{"boot":"manual"}', run)
+        self.assertNotIn("/uninstall", run)
+        self.assertIn("COPY morph/ /opt/morph/", (BASE / "brain" / "Dockerfile").read_text())
 
 
 class TestTheRequestVocabulary(unittest.TestCase):
@@ -74,11 +88,10 @@ class TestNoHostSurface(unittest.TestCase):
 
     def test_morph_publishes_no_port_and_no_ingress(self):
         """Its page is a Home Assistant sidebar panel served by Core; the
-        service answers only loopback, for run.sh's own health poll."""
-        config = yaml.safe_load((MORPH / "config.yaml").read_text())
-        self.assertFalse(config.get("ingress"))
-        self.assertFalse(config.get("ports"))
-        self.assertFalse(config.get("host_network"))
+        service answers only loopback, for run.sh's own health poll, and
+        brAIn's config publishes nothing for it."""
+        config = yaml.safe_load((BASE / "brain" / "config.yaml").read_text())
+        self.assertNotIn("8096/tcp", config.get("ports") or {})
         src = (MORPH / "service" / "morphd.py").read_text()
         self.assertIn('"127.0.0.1"', src)
         self.assertNotIn('"0.0.0.0"', src)

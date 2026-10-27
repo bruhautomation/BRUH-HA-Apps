@@ -450,7 +450,7 @@ not depend on the current one's result. So while a pull request is in CI:
   | Title begins | Label | Code | How it is built |
   |---|---|---|---|
   | (anything else) | — | `brain/` | `docs/notes/brain-core.md` and the note for the area (`CLAUDE.md` lists them) |
-  | Morph | `devloop:morph` | `morph/` | `docs/notes/morph.md`, `docs/design/morph-ui.md`, `tests/manual/measure-morph.mjs` |
+  | Morph | `devloop:morph` | `brain/morph/` (the service) and `brain/custom_components/brain/morph/` (the panel) — Morph is part of brAIn since 4.0, so a Morph batch is a brAIn batch and carries brAIn's version | `docs/notes/morph.md`, `docs/design/morph-ui.md`, `tests/manual/measure-morph.mjs` |
   | GardenRX | `devloop:gardenrx` | `gardenrx/` | CLAUDE.md's GardenRX entry; `gardenrx/app` is Next.js — read `node_modules/next/dist/docs/` before writing it |
   | BRUH Bambu Studio | `devloop:bruh-bambu-studio` | `bruh-bambu-studio/` | `docs/notes/bambu.md`, `tests/test_bambu_*.py` |
   | BRUH Print | `devloop:bruh-print` | `bruh-print/` | `docs/notes/bruh-print.md`, `tests/manual/measure-print-*.mjs` |
@@ -471,9 +471,8 @@ not depend on the current one's result. So while a pull request is in CI:
 - **Version**, last, just before pushing, so a prepared batch never
   carries a stale number. One patch bump per batch in `brain/config.yaml` and
   `brain/custom_components/brain/manifest.json` (the same number in both,
-  nothing else changed in those two files) — for a Morph batch,
-  `morph/config.yaml`, `morph/custom_components/morph/manifest.json` and
-  `const.py`'s `VERSION`; for another add-on, its `config.yaml`, its
+  nothing else changed in those two files), a Morph batch included; for
+  another add-on, its `config.yaml`, its
   integration's `manifest.json` and a `VERSION` in its `const.py` where one
   exists (GardenRX has one) — and one entry at the top of that add-on's
   `CHANGELOG.md` with a line per fix, saying what changed for

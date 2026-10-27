@@ -146,7 +146,8 @@ for (const { width, touch, top, fits } of CASES) {
   const chrome = await page.evaluate(() => ({
     subtabs: !document.getElementById('subtabs').hidden,
     tab: document.querySelector('.viewtab[data-group="insights"] span')?.textContent || '',
-    tabs: [...document.querySelectorAll('.viewtab')].map((b) =>
+    // The tabs on screen: Home is there only while the Morph dashboard is on.
+    tabs: [...document.querySelectorAll('.viewtab')].filter((b) => !b.hidden).map((b) =>
       b.querySelector('span:not(.badge)')?.textContent || ''),
     badge: document.getElementById('findBadge')?.textContent || '',
     status: document.getElementById('todayStatusText')?.textContent || '',

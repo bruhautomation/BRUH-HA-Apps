@@ -18,6 +18,10 @@ That memory isn't a black box: open it, read it, edit it, correct it. An insight
 
 Most of what it eventually tells you is **measured** rather than guessed — when the house gets up, what a reading normally is at this hour of this week, how fast each room loses heat, what you keep doing by hand — worked out overnight from what Home Assistant already records, with no Claude run at all. Every one of those has a floor under it, so a new install is quiet for a while; the **Knowledge** tab is what says which measurement is waiting on what, and roughly when. And when something does go wrong, brAIn writes the evidence down by itself: one redacted text file per problem, where you can read it and paste it.
 
+Since 4.0 it includes **Morph**, which was an add-on of its own: a dashboard that moves to make room for whatever you look at and that you change by saying what you want, on brAIn's **Home** tab. ⚙ › Features switches it on, along with Personality (brAIn takes the name you give it, everywhere), the Learning loop (brAIn improves itself here; nothing leaves the house) and the Development loop (its own faults, redacted, to your private repository so its code is fixed upstream).
+
+> ⚠️ **Experimental — still being actively developed.** Parts of brAIn, the Morph dashboard above all, may be unstable between updates. Keep your normal dashboards beside it.
+
 One install, one sidebar panel, one login. **Runs on the Claude Pro or Max subscription — or your own API key**.
 
 📖 **[bruhautomation.com/brain](https://bruhautomation.com/brain/)** · [add-on README](brain/)
@@ -111,28 +115,6 @@ Assistant's control.
 - **amd64 only** — Bambu Lab publishes Bambu Studio for Linux on x86-64 only
 
 📖 [add-on README](bruh-bambu-studio/) · [full documentation](bruh-bambu-studio/DOCS.md)
-
-### [Morph](morph/)
-
-> ⚠️ **Experimental — not recommended for general use yet.** Try it beside your
-> normal dashboards, not instead of them.
-
-**A dashboard that moves, and that you change by saying what you want.**
-Morph lives in the sidebar: rooms are sections, cards open in place while
-everything else makes room, and in Edit you hold anything and tell brAIn what
-should change.
-
-- **One grammar** — tap does the main thing, slide sets a level, hold opens
-  the card in place with its history
-- **Any Lovelace card**, hosted inside a section
-- **Tell brAIn** — it acts at once, on the dashboard or the house, and every
-  change is one git commit you can keep or undo
-- **It learns, and asks first** — suggestions from how the dashboard is used,
-  shown in place with Do it, Not now and No
-- **It fixes itself** — Morph's own faults go through brAIn's development loop
-  to be fixed in its code
-
-📖 [add-on README](morph/) · [full documentation](morph/DOCS.md)
 
 ### [GardenRX](gardenrx/)
 

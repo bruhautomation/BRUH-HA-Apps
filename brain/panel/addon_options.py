@@ -88,8 +88,40 @@ def panel_path() -> str | None:
     slug, and a guessed one would open the wrong add-on or nothing.
     `BRAIN_ADDON_SLUG` pins it, for a test or a box that knows better.
     """
+    try:
+        import shell_link  # noqa: PLC0415 — the shell is the one entry while it is there
+        if shell_link.shell_fresh():
+            return "/" + shell_link.SHELL_URL
+    except Exception:  # noqa: BLE001 — a link is a nicety; fall back to ingress
+        pass
     slug = os.environ.get("BRAIN_ADDON_SLUG", "").strip() or _info.get("slug")
     return f"/hassio/ingress/{slug}" if slug else None
+
+
+def ingress() -> dict:
+    """What the Supervisor last said about this add-on's ingress:
+    `ingress_url`, `slug` and `ingress_panel` (whether it is in the
+    sidebar), each only once it has been read."""
+    return {k: _info[k] for k in ("ingress_url", "slug", "ingress_panel") if k in _info}
+
+
+async def set_ingress_panel(on: bool) -> None:
+    """Show or hide this add-on's own sidebar entry. It is the add-on's
+    setting the person can also change on its Info page, and it is NOT in
+    `options`, so it is sent on its own. Raises OptionsError."""
+    if not available():
+        raise OptionsError("no Supervisor token")
+    try:
+        async with aiohttp.ClientSession(timeout=TIMEOUT) as session:
+            async with session.post(
+                    f"{SUPERVISOR_URL}/addons/self/options",
+                    headers=_headers(), json={"ingress_panel": bool(on)}) as resp:
+                body = await resp.json(content_type=None)
+                if resp.status != 200 or body.get("result") != "ok":
+                    raise OptionsError(body.get("message") or f"HTTP {resp.status}")
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
+        raise OptionsError(str(exc)) from exc
+    _info["ingress_panel"] = bool(on)
 
 
 def get(setting: str):
@@ -140,6 +172,13 @@ async def refresh(force: bool = False) -> dict | None:
         slug = (body.get("data") or {}).get("slug")
         if isinstance(slug, str) and slug.strip():
             _info["slug"] = slug.strip()
+        # Where brAIn's own page is, for the shell's frame, and whether the
+        # Supervisor shows it in the sidebar (shell_link.py).
+        data = body.get("data") or {}
+        if isinstance(data.get("ingress_url"), str):
+            _info["ingress_url"] = data["ingress_url"]
+        if isinstance(data.get("ingress_panel"), bool):
+            _info["ingress_panel"] = data["ingress_panel"]
         _options = opts
         _read_at = time.time()
         return dict(opts)

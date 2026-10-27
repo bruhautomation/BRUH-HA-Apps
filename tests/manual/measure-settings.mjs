@@ -100,7 +100,10 @@ const MIN_TEXT = 16;
 // The phone's list grew one row (~60px) when Personality moved in from
 // Morph (886 → 945 measured), so its budget moved by that one row and no
 // more; a section coming back flat is still hundreds of pixels over it.
-const MAX_SCROLL = { 390: 960, 768: 1000, 1200: 1000 };
+// It grew one more row in 4.0 when Features came first (945 → 1005 at 390,
+// 1022 at 768), and moved by that row again; ⚙ › Dashboard's row is hidden
+// while the Morph dashboard is off, as it is here.
+const MAX_SCROLL = { 390: 1020, 768: 1060, 1200: 1000 };
 
 // The verbs a button in ⚙ may say. The doc's vocabulary, plus the few
 // labels it names for this dialog itself (Sign in again, Sign out, Edit,
@@ -135,6 +138,9 @@ const IDS = [
 // The sections, in order, and which one a wide page lands on the first
 // time. A phone lands on the list, with none of them in front.
 const SECTIONS = [
+  { sec: 'features', name: 'Features', open: false },
+  // Shown only while the Morph dashboard is on, and this house has it off.
+  { sec: 'dashboard', name: 'Dashboard', open: false, offHere: true },
   { sec: 'account', name: 'Account', open: true },
   { sec: 'usage', name: 'Model & usage', open: false },
   { sec: 'permissions', name: 'Permissions', open: false },
@@ -567,13 +573,13 @@ for (const width of WIDTHS) {
     if (m.secs[i] && m.secs[i].sec !== want.sec) {
       note(where, `section ${i + 1} is "${m.secs[i].sec}", expected "${want.sec}"`);
     }
-    if (touch && got.h < MIN_TARGET) note(where, `the ${want.sec} control is ${got.h}px, under ${MIN_TARGET}`);
+    if (touch && got.h < MIN_TARGET && !want.offHere) note(where, `the ${want.sec} control is ${got.h}px, under ${MIN_TARGET}`);
     if (got.name.trim() !== want.name) note(where, `the ${want.sec} section is named "${got.name.trim()}"`);
     if (got.button !== want.name || got.buttonFor !== want.sec) {
       note(where, `the control's button for ${want.sec} reads "${got.button}"`);
     }
     if (got.sum.trim().length < 8) note(where, `the ${want.sec} row has no second line`);
-    if (!got.rowShown) note(where, `the ${want.sec} row is not on screen at open`);
+    if (!got.rowShown && !want.offHere) note(where, `the ${want.sec} row is not on screen at open`);
     const wantOpen = narrow ? false : want.open;
     if (got.open !== wantOpen) note(where, `${want.sec} is shown ${got.open} and should be ${wantOpen}`);
     if (got.right > m.bodyRight + 0.5) note(where, `the ${want.sec} row overflows the page`);
@@ -850,8 +856,8 @@ for (const width of WIDTHS) {
     const none = await page.evaluate(() => document.querySelector('#setSearchResults').textContent);
     if (!/No setting matches/.test(none)) note(where, `an empty search says "${none.trim()}"`);
     await page.fill('#setSearch', '');
-    const back = await page.evaluate(() => document.querySelectorAll('#setNav .setnavbtn').length
-      === [...document.querySelectorAll('#setNav .setnavbtn')].filter((b) => b.offsetParent !== null).length);
+    const back = await page.evaluate(() => document.querySelectorAll('#setNav .setnavbtn:not([hidden])').length
+      === [...document.querySelectorAll('#setNav .setnavbtn:not([hidden])')].filter((b) => b.offsetParent !== null).length);
     if (!back) note(where, 'clearing the search did not bring the list back');
   } catch (e) {
     note(where, `driving the search failed: ${String(e.message).split('\n')[0]}`);
@@ -1137,7 +1143,9 @@ for (const width of WIDTHS) {
       DEV_URLS, { timeout: 4000 }).catch(() => note(where, 'opening Developer did not read the rehearsal and captures'));
     const dv = await page.evaluate(() => ({
       buttons: window.__visibleButtons(),
-      shown: ['rehearseRun', 'setCapture', 'setDevloop'].filter(
+      // The development loop's switch is in Features (brAIn 4.0); its
+      // repository and streams stay here.
+      shown: ['rehearseRun', 'setCapture', 'devloopOffNote'].filter(
         (id) => document.getElementById(id).closest('.setsec').hidden),
       bubbles: document.querySelectorAll('#setModal .btn.icon.tiny').length,
     }));

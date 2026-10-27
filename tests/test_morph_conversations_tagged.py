@@ -8,7 +8,7 @@ what "a person typed it" looks like — so the Chats list showed the person
 pages of Morph's change requests as conversations they had had, and a Morph
 conversation could not be told from one started in brAIn.
 
-Every Morph task already carries ``"source": "morph"`` (`morph/service/
+Every Morph task already carries ``"source": "morph"`` (`brain/morph/service/
 brain.py`'s `submit`). The listener honours it: the session is claimed as
 Morph, a conversation included — still in /config's store, so it stays a
 conversation the chat can carry on, never a record. Transcripts already on
@@ -133,7 +133,7 @@ class TestOldTranscriptsAreRelabelled(unittest.TestCase):
         def write(sid, text):
             (self.project / f"{sid}.jsonl").write_text(_user(text + pad))
 
-        sys.path.insert(0, str(BASE_DIR / "morph" / "service"))
+        sys.path.insert(0, str(BASE_DIR / "brain" / "morph" / "service"))
         write("tell-1", "MORPH · a change request for this house's dashboard "
                         "(Morph, in /config/morph).\n\nTHE REQUEST\nAsked: “brighter”")
         write("learn-1", "MORPH · learning pass. Morph is this house's dashboard.")
@@ -170,8 +170,8 @@ class TestOldTranscriptsAreRelabelled(unittest.TestCase):
         import converse
         prompts = [converse.prompt_for("is the door shut"),
                    converse.prompt_for("why", context="The hall card")]
-        tell_src = (BASE_DIR / "morph" / "service" / "tell.py").read_text()
-        learn_src = (BASE_DIR / "morph" / "service" / "learning.py").read_text()
+        tell_src = (BASE_DIR / "brain" / "morph" / "service" / "tell.py").read_text()
+        learn_src = (BASE_DIR / "brain" / "morph" / "service" / "learning.py").read_text()
         for text in prompts:
             folded = " ".join(text.split())
             self.assertTrue(any(folded.startswith(p) for p in self.mod.MORPH_OPENERS), folded)

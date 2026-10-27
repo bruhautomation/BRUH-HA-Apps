@@ -20,7 +20,7 @@ from pathlib import Path
 
 from morph_env import MorphEnv
 
-INTEGRATION = Path(__file__).resolve().parent.parent / "morph" / "custom_components" / "morph"
+INTEGRATION = Path(__file__).resolve().parent.parent / "brain" / "custom_components" / "brain" / "morph"
 PANEL_JS = INTEGRATION / "frontend" / "morph-panel.js"
 UTIL_JS = INTEGRATION / "frontend" / "util.js"
 

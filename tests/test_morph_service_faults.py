@@ -13,7 +13,7 @@ from pathlib import Path
 
 from morph_env import MorphEnv
 
-MORPHD = Path(__file__).resolve().parent.parent / "morph" / "service" / "morphd.py"
+MORPHD = Path(__file__).resolve().parent.parent / "brain" / "morph" / "service" / "morphd.py"
 
 
 def _raise_inside_service(env):
@@ -28,7 +28,7 @@ def _raise_inside_service(env):
 class TestAServiceExceptionIsAFault(unittest.TestCase):
     def test_the_row_names_the_type_the_frame_and_carries_the_traceback(self):
         with MorphEnv() as env:
-            env.settings.update({"report_code_issues": True})
+            env.switch(development_loop=True)
             exc = _raise_inside_service(env)
             env.devloop.note_exception("Tick", exc, now=1_700_000_000.0)
             [row] = env.devloop.rows(now=1_700_000_000.0)
@@ -39,7 +39,7 @@ class TestAServiceExceptionIsAFault(unittest.TestCase):
 
     def test_the_same_fault_on_another_line_is_one_row(self):
         with MorphEnv() as env:
-            env.settings.update({"report_code_issues": True})
+            env.switch(development_loop=True)
             exc = _raise_inside_service(env)
             env.devloop.note_exception("Tick", exc, now=1_700_000_000.0)
             env.devloop.note_exception("Tick", exc, now=1_700_000_100.0)
@@ -56,7 +56,7 @@ class TestAServiceExceptionIsAFault(unittest.TestCase):
 
     def test_nothing_leaves_while_reporting_is_off(self):
         with MorphEnv() as env:
-            env.settings.update({"report_code_issues": False})
+            env.switch(development_loop=False)
             env.devloop.note_exception("Tick", _raise_inside_service(env))
             self.assertEqual(env.devloop.publish("1.0.4")["rows"], [])
 

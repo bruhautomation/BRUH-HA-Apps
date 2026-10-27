@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 HOOK = ROOT / "brain" / "scripts" / "brain-task-progress.sh"
 RUN_SH = ROOT / "brain" / "run.sh"
 LISTENER = ROOT / "brain" / "integrations" / "automation-listener.sh"
-MORPH_PATHS = ROOT / "morph" / "service" / "paths.py"
+MORPH_PATHS = ROOT / "brain" / "morph" / "service" / "paths.py"
 
 HAS_JQ = shutil.which("jq") is not None
 

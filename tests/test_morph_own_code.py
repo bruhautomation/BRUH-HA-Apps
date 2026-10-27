@@ -36,7 +36,7 @@ from test_morph_loops import DOC, FakeBrain, fast, finish
 
 HAS_GIT = shutil.which("git") is not None
 ROOT = Path(__file__).resolve().parent.parent
-COMPONENT = ROOT / "morph" / "custom_components" / "morph"
+COMPONENT = ROOT / "brain" / "custom_components" / "brain" / "morph"
 
 
 @unittest.skipUnless(HAS_GIT, "git is not installed")
@@ -209,7 +209,12 @@ class TestTheIntegrationServesTheCopy(unittest.TestCase):
         self.assertIsNone(self.static.stamped("../const.py", now, **self.kw()))
 
     def test_the_panel_element_is_the_shell_and_load_carries_the_stamp(self):
-        self.assertIn('ELEMENT = "morph-boot"', (COMPONENT / "const.py").read_text())
+        # brAIn's shell is the panel's element since 4.0; it loads Morph's
+        # boot.js, which is still the loader that falls back.
+        self.assertIn('ELEMENT = "brain-shell"', (COMPONENT / "const.py").read_text())
+        shell = (COMPONENT / "frontend" / "shell.js").read_text()
+        self.assertIn("customElements.define('brain-shell'", shell)
+        self.assertIn("import(here + 'boot.js')", shell)
         boot = (COMPONENT / "frontend" / "boot.js").read_text()
         self.assertIn("customElements.define('morph-boot'", boot)
         self.assertIn("const STAMP = '';", boot)
@@ -229,7 +234,7 @@ class TestATellMayChangeMorphItself(unittest.TestCase):
         dash, _ = self.env.store.normalize(DOC)
         self.env.store.write(dash)
         self.env.gitrepo.commit("First", "morph")
-        self.env.settings.update({"report_code_issues": True})
+        self.env.switch(development_loop=True)
 
     def run_brain(self, work):
         fake = FakeBrain(self.env, work)
@@ -277,25 +282,25 @@ class TestATellMayChangeMorphItself(unittest.TestCase):
     def test_a_code_suggestions_do_it_makes_the_change(self):
         sugs = self.env.learning.code_suggestions([{"what": "The header has no theme switch", "detail": "Add one"}])
         self.assertIn("brAIn can make it here", sugs[0]["why"])
-        src = (ROOT / "morph" / "service" / "morphd.py").read_text()
+        src = (ROOT / "brain" / "morph" / "service" / "morphd.py").read_text()
         self.assertNotIn('verb = "send"', src, "Do it on a code suggestion is a Tell, not a filing")
 
 
 class TestBothHalvesAgree(unittest.TestCase):
 
     def test_the_fixed_files_and_the_name_rule_are_one_rule(self):
-        svc = (ROOT / "morph" / "service" / "morphcode.py").read_text()
+        svc = (ROOT / "brain" / "morph" / "service" / "morphcode.py").read_text()
         static = (COMPONENT / "static.py").read_text()
-        for needle in ('NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', 'FIXED = ("boot.js",)'):
+        for needle in ('NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', 'FIXED = ("boot.js", "shell.js")'):
             self.assertIn(needle, svc)
         self.assertIn('NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}\\.js$")', static)
-        self.assertIn('FIXED = ("boot.js",)', static)
+        self.assertIn('FIXED = ("boot.js", "shell.js")', static)
         self.assertIn('CODE_STATE = SHARED / "code.json"', (COMPONENT / "const.py").read_text())
-        self.assertIn('CODE_STATE = SHARED / "code.json"', (ROOT / "morph" / "service" / "paths.py").read_text())
+        self.assertIn('CODE_STATE = SHARED / "code.json"', (ROOT / "brain" / "morph" / "service" / "paths.py").read_text())
 
     def test_the_panel_loads_through_boot(self):
         init = (COMPONENT / "__init__.py").read_text()
-        self.assertIn('module_url=f"{STATIC_BASE}/{VERSION}/boot.js"', init)
+        self.assertIn('"module_url": f"{STATIC_BASE}/{VERSION}/shell.js"', init)
         boot = (COMPONENT / "frontend" / "boot.js").read_text()
         self.assertIn("shipped/morph-panel.js", boot)
         self.assertIn("__morphFallback", boot)

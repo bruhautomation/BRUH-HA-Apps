@@ -164,10 +164,10 @@ class TestWhatDoYouWantToFix(unittest.TestCase):
     def test_nothing_is_sent_while_reporting_is_off_or_the_box_is_empty(self):
         with MorphEnv() as env:
             self.assertFalse(env.devloop.note_request("  ")["ok"])
-            env.settings.update({"report_code_issues": False})
+            env.switch(development_loop=False)
             out = env.devloop.note_request("The fan card is too tall")
             self.assertFalse(out["ok"])
-            self.assertIn("Report Morph’s own problems", out["error"])
+            self.assertIn("Development loop is off", out["error"])
             self.assertEqual([], env.devloop.mine())
 
     def test_a_fault_morph_noted_is_not_the_persons_to_take_back(self):
@@ -224,7 +224,7 @@ class TestAGhostLeavesNoSpring(unittest.TestCase):
 class TestCardCodeIsGuarded(unittest.TestCase):
 
     def test_agents_md_shows_a_guarded_define(self):
-        agents = (Path(__file__).resolve().parent.parent / "morph" / "defaults" / "AGENTS.md").read_text()
+        agents = (Path(__file__).resolve().parent.parent / "brain" / "morph" / "defaults" / "AGENTS.md").read_text()
         self.assertIn('if (!customElements.get("morph-pets")) customElements.define(', agents)
         self.assertNotIn("\ncustomElements.define(", agents)
 

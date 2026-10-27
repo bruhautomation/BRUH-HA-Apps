@@ -143,7 +143,7 @@ REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
 ADDONS = ("brain", "bright", "bruh-print", "bruh-bambu-studio",
-          "bruh-minecraft-server", "morph", "gardenrx", "bruh-task-manager")
+          "bruh-minecraft-server", "gardenrx", "bruh-task-manager")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
@@ -204,9 +204,12 @@ QUIET_DIRS = ("docs/", ".github/", ".claude/")
 # ruff.toml is the linter's, and no pytest test reads it.
 QUIET_NAMES = {".gitignore", ".gitattributes", "ruff.toml"}
 UI_SUFFIXES = {".js", ".css", ".html", ".mjs"}
-# Morph has no panel of its own: its page is the integration's frontend.
-UI_DIRS = ("panel", "lovelace", "ttyd-assets", "custom_components/morph/frontend",
+UI_DIRS = ("panel", "lovelace", "ttyd-assets",
            "custom_components/gardenrx/frontend")
+# Morph's service and its panel half, inside brAIn (Morph has no panel of
+# its own: its page is the integration's frontend).
+MORPH_DIRS = ("brain/morph/", "brain/custom_components/brain/morph/")
+MORPH_FRONTEND = "brain/custom_components/brain/morph/frontend/"
 # What a source-tree sweep reads; prose and pictures are not among them.
 CODE_SUFFIXES = {".py", ".sh", ".js", ".mjs", ".css", ".html", ".yaml",
                  ".yml", ".json", ".conf"}
@@ -472,6 +475,11 @@ def _rel(path: str, repo: Path = REPO) -> str:
 
 
 def _addon_of(rel: str) -> str | None:
+    # Morph is part of brAIn since 4.0 but keeps its own tests
+    # (`test_morph_*`), so its two folders inside brAIn are still placed as
+    # Morph's.
+    if rel.startswith(MORPH_DIRS):
+        return "morph"
     top = rel.split("/", 1)[0]
     return top if top in ADDONS else None
 
@@ -679,8 +687,9 @@ def select(paths, index: Index | None = None, transitive: bool = False
                       and _names_addon(src, addon)}
             why.append("the add-on-wide tests")
 
-        elif addon and suffix in UI_SUFFIXES and any(
-                rel.startswith(f"{addon}/{d}/") for d in UI_DIRS):
+        elif addon and suffix in UI_SUFFIXES and (any(
+                rel.startswith(f"{addon}/{d}/") for d in UI_DIRS)
+                or rel.startswith(MORPH_FRONTEND)):
             measures = _ui_measures(index, rel, addon)
             found |= {t for t, src in index.tests.items()
                       if _reads(src, name)

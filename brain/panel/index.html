@@ -10,6 +10,12 @@
 <body>
 
 <header class="topbar">
+  <!-- Home Assistant's sidebar, on a phone inside brAIn's shell: the shell is
+       a custom panel, and a custom panel draws its own ☰. Shown only there
+       (`shellState`). -->
+  <button id="shellMenu" class="btn icon shellmenu" hidden aria-label="Open the sidebar">
+    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
   <!-- The full wordmark, drawn inline rather than set as icon-plus-text: the
        gable IS the "A", so the lockup can't be assembled from a mark and a
        font. Three colours, all from the brand: the B, R and N follow the
@@ -46,6 +52,9 @@
     <rect class="wm-ink" x="471" y="198" width="15" height="135"/>
     <path class="wm-ink" d="M362,198 L377,198 L486,333 L471,333 Z"/>
   </svg>
+  <!-- The household's name for brAIn, in the wordmark's place while
+       Personality is on (`applyName`). -->
+  <span id="brandName" class="brandname" aria-hidden="true"></span>
   <span id="versionText" class="vertext">v{{VERSION}}</span>
   </a>
 
@@ -59,6 +68,14 @@
        handler, measure and deep link under one binds as it did. The one
        badge counts the decisions waiting on you (`queue_count`). -->
   <nav class="viewtabs" role="tablist">
+    <!-- Home: the Morph dashboard (⚙ › Features), drawn by brAIn's shell
+         over this page, because it hosts Home Assistant's own cards. Here
+         it is a press the shell hears (`shellPost`); outside the shell it
+         opens the shell. Hidden while the dashboard is off. -->
+    <button id="homeTab" class="viewtab" data-view="home" data-group="home" role="tab" hidden>
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span>
+    </button>
     <button class="viewtab active" data-view="insights" data-group="insights" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/></svg>
       <span>Insights</span>
@@ -120,6 +137,7 @@
      place the grouping is spelled, and the docs pane keeps a home here
      for `switchView("docs")`. -->
 <nav id="subtabs" class="subtabs" role="tablist" aria-label="Sections" hidden>
+  <button class="subtab" data-view="home" data-group="home" role="tab">Home</button>
   <button class="subtab" data-view="insights" data-group="insights" role="tab">Insights</button>
   <button class="subtab" data-view="findings" data-group="insights" role="tab">Needs you</button>
   <button class="subtab" data-view="archive" data-group="insights" role="tab">History</button>
@@ -159,6 +177,10 @@
   </div>
   <select id="segNavSel" class="sel segsel" aria-label="Section"></select>
 </nav>
+
+<!-- Home's pane is empty on purpose: inside the shell the Morph dashboard is
+     drawn over it, and this page is see-through behind it. -->
+<div id="viewHome" class="view" aria-hidden="true"></div>
 
 <div id="viewInsights" class="view active">
 
@@ -934,6 +956,10 @@
     </div>
     <div id="setSearchResults" class="setresults" role="list" aria-label="Matching settings" hidden></div>
     <div class="setnavlist" role="tablist" aria-orientation="vertical">
+      <button type="button" class="setnavbtn" data-sec="features" role="tab" aria-controls="setsecFeatures">
+        <span class="setnavname">Features</span><span class="setnavsum" id="setSumFeatures">What brAIn does, and what leaves this house</span></button>
+      <button type="button" class="setnavbtn" data-sec="dashboard" role="tab" aria-controls="setsecDashboard" id="setNavDashboard" hidden>
+        <span class="setnavname">Dashboard</span><span class="setnavsum" id="setSumDashboard">The Morph dashboard on the Home tab</span></button>
       <button type="button" class="setnavbtn" data-sec="account" role="tab" aria-controls="setsecAccount">
         <span class="setnavname">Account</span><span class="setnavsum" id="setSumAccount">Your Claude sign-in</span></button>
       <button type="button" class="setnavbtn" data-sec="usage" role="tab" aria-controls="setsecUsage">
@@ -953,12 +979,99 @@
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
         <span class="setnavname">Diagnostics</span><span class="setnavsum" id="setSumDiagnostics">Run all tests, and what is wrong</span></button>
       <button type="button" class="setnavbtn" data-sec="developer" role="tab" aria-controls="setsecDeveloper">
-        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, run capture, help develop brAIn</span></button>
+        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, run capture, the development loop</span></button>
       <button type="button" class="setnavbtn" data-sec="guide" role="tab" aria-controls="setsecGuide">
         <span class="setnavname">Guide</span><span class="setnavsum" id="setSumGuide">How brAIn works</span></button>
     </div>
   </nav>
   <div class="edit-body setbody">
+      <!-- brAIn's four switches (panel/features.py, /api/features): what
+           brAIn does, each in one sentence, and where its work goes. The
+           first section, because these decide what the rest of brAIn is.
+           The development switch is the devloop's own `enabled` (the
+           `#setDevloop` input moved here from Developer, so its handlers
+           are the ones it always had). -->
+      <section class="setsec" id="setsecFeatures" data-sec="features" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Features</h2>
+        </header>
+        <div class="setsecbody">
+          <p class="hint">Each switch takes effect at once. Only the development loop sends
+            anything out of this house.</p>
+
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="featMorph" class="tog" type="checkbox" data-feature="morph">
+                <span><b>Morph dashboard</b>
+                <span class="subtext">The Home tab: a dashboard laid out by what matters in the
+                  house right now, which brAIn designs and edits with you.</span></span></label>
+            </div>
+            <p class="hint setgroupnote featwarn">Experimental: Morph is still being actively
+              developed and may be unstable. Keep your usual dashboards beside it.</p>
+            <p class="hint setgroupnote featwhere">Stays in this house.</p>
+          </div>
+
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="featPersonality" class="tog" type="checkbox" data-feature="personality">
+                <span><b>Personality</b>
+                <span class="subtext">brAIn takes the name and personality you give it in
+                  Personality, everywhere: the sidebar, every screen, the chat, voice and
+                  notifications.</span></span></label>
+            </div>
+            <p class="hint setgroupnote featwhere">Stays in this house.</p>
+          </div>
+
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="featLearning" class="tog" type="checkbox" data-feature="learning_loop">
+                <span><b>Learning loop (self-improvement)</b>
+                <span class="subtext">brAIn improves itself here: it watches how its dashboard is
+                  used, suggests changes, keeps this household's lessons and may propose changes
+                  to its own dashboard code. Off, it still does what you ask, and never changes
+                  itself on its own.</span></span></label>
+            </div>
+            <p class="hint setgroupnote featwhere">Stays in this house. It works on the Morph
+              dashboard, so it does nothing while that is off.</p>
+          </div>
+
+          <div class="setgroup">
+            <div class="setrow top">
+              <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
+                <span><b>Development loop</b>
+                <span class="subtext">brAIn reports its own faults as issues in your private GitHub
+                  repository, where the cloud routine fixes brAIn's code and ships an
+                  update.</span></span></label>
+            </div>
+            <p class="hint setgroupnote featwhere featout">Leaves this house, with names, rooms and
+              entity ids replaced by aliases. Set the repository in
+              <a class="linkish" href="#" data-open-sec="developer">Developer</a>.</p>
+          </div>
+
+          <p class="hint">What brAIn learns about your home — facts, memory — is not
+            self-improvement and is under
+            <a class="linkish" href="#" data-open-sec="memory">Memory</a>.</p>
+          <p id="featNote" class="hint tight" role="status"></p>
+        </div>
+      </section>
+
+      <!-- Morph's own Settings page until 4.0. Drawn from Morph's service's
+           mirror (`/api/morph/state`) and changed through its request folder
+           (`/api/morph/request`, morph_service.py); shown while the
+           dashboard is switched on. -->
+      <section class="setsec" id="setsecDashboard" data-sec="dashboard" role="tabpanel" hidden>
+        <header class="setsechead">
+          <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
+          <h2 class="setsecname">Dashboard</h2>
+        </header>
+        <div class="setsecbody">
+          <p class="hint featwarn">Experimental: Morph is still being actively developed and may
+            be unstable. Keep your usual dashboards beside it.</p>
+          <div id="dashBody">Open this section to load the dashboard's settings.</div>
+        </div>
+      </section>
+
       <!-- First: everything else here is a preference, and this is the one
            thing that decides whether the add-on works at all. -->
       <section class="setsec" id="setsecAccount" data-sec="account" role="tabpanel" hidden>
@@ -1267,9 +1380,8 @@
            brAIn can be asked to change its own instructions. -->
       <!-- Who brAIn is in this house: a name, a persona and how it has
            grown, kept in brAIn's own config (/config/.brain/personality.json)
-           and carried by the chat, the terminal, voice and Morph. It moved
-           here from Morph's Settings, because everybody uses brAIn and not
-           everybody uses Morph. -->
+           and carried by the chat, the terminal, voice and Morph while the
+           Personality switch (Features) is on. -->
       <section class="setsec" id="setsecPersonality" data-sec="personality" role="tabpanel" hidden>
         <header class="setsechead">
           <button type="button" class="setback" aria-label="All settings">‹ Settings</button>
@@ -1277,6 +1389,9 @@
         </header>
         <div class="setsecbody">
           <p class="hint">Who brAIn is in this house. The chat, the terminal, voice and Morph all speak as it.</p>
+          <p id="persOff" class="hint" hidden>Personality is switched off in
+            <a class="linkish" href="#" data-open-sec="features">Features</a>: what is
+            here is kept, and nothing reads it until it is switched on.</p>
           <label for="persName">Name</label>
           <input id="persName" class="persname" type="text" maxlength="60" autocomplete="off"
             placeholder="brAIn">
@@ -1442,23 +1557,18 @@
           <!-- The development loop (devloop/, brain/DEVLOOP.md). Off for
                everyone; the controls under the switch render only once it
                is on, and nothing is fetched until this section opens. -->
-          <h4 class="sethead">Help develop brAIn</h4>
-          <div class="setgroup">
-            <div class="setrow top">
-              <label class="check bigcheck"><input id="setDevloop" class="tog" type="checkbox">
-                <span><b>File this house's faults as issues in a private GitHub repository</b>
-                <span class="subtext">Off by default. Names, rooms and entity ids are replaced
-                  with aliases before anything is sent.</span></span></label>
-            </div>
-          </div>
+          <h4 class="sethead">Development loop</h4>
+          <p class="hint tight" id="devloopOffNote">The development loop is switched on and off in
+            <a class="linkish" href="#" data-open-sec="features">Features</a>. Its
+            repository, what it sends and its limits are set here once it is on.</p>
           <div id="devloopBody" hidden>
             <div class="setgroup">
               <div class="setrow top">
                 <label class="check bigcheck"><input id="setDevAutopilot" class="tog" type="checkbox">
-                  <span><b>Development mode: brAIn works on itself</b>
-                  <span class="subtext">Off by default. brAIn looks over its own code and how it
-                    behaves here, files what it finds without waiting for Send, and the cloud
-                    fixes and ships it.</span></span></label>
+                  <span><b>Report everything without asking</b>
+                  <span class="subtext">Off by default. Every stream on and nothing waiting for
+                    Send: brAIn looks over its own code and how it behaves here, files what it
+                    finds, and the cloud fixes brAIn's code and ships it.</span></span></label>
               </div>
               <div class="setrow top">
                 <label class="check bigcheck"><input id="setDevReview" class="tog" type="checkbox">

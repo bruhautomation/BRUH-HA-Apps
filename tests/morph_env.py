@@ -10,6 +10,7 @@ that another add-on's tests could hold a module under the same one.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shutil
 import sys
@@ -17,8 +18,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-SERVICE = Path(__file__).resolve().parent.parent / "morph" / "service"
-FRONTEND = SERVICE.parent / "custom_components" / "morph" / "frontend"
+SERVICE = Path(__file__).resolve().parent.parent / "brain" / "morph" / "service"
+FRONTEND = SERVICE.parent.parent / "custom_components" / "brain" / "morph" / "frontend"
 MODULES = ("paths", "wording", "morphcode", "store", "gitrepo", "generator", "brain", "settings",
            "tell", "converse", "learning", "devloop", "ha", "morphd")
 
@@ -41,7 +42,7 @@ class MorphEnv:
             d.mkdir(parents=True)
         # Morph's own panel modules, as Home Assistant serves them; a copy,
         # so a test can play an update by changing one.
-        self.shipped = root / "config" / "custom_components" / "morph" / "frontend"
+        self.shipped = root / "config" / "custom_components" / "brain" / "morph" / "frontend"
         shutil.copytree(FRONTEND, self.shipped)
         env = {
             "MORPH_DIR": str(self.morph_dir),
@@ -54,6 +55,13 @@ class MorphEnv:
             "GIT_CONFIG_NOSYSTEM": "1",
         }
         env.update(self.options)
+        # brAIn's switches (⚙ › Features), which Morph's service reads: the
+        # dashboard on, and the two loops as Morph's own options defaulted to
+        # before they were brAIn's. `switch` changes them.
+        self.brain_shared.mkdir(parents=True, exist_ok=True)
+        self.features = {"morph": True, "personality": True, "learning_loop": True,
+                         "development_loop": True, "name": "brAIn"}
+        (self.brain_shared / "features.json").write_text(json.dumps(self.features))
         self._env = mock.patch.dict(os.environ, env)
         self._env.start()
         self._saved = {n: sys.modules.pop(n) for n in MODULES if n in sys.modules}
@@ -63,6 +71,11 @@ class MorphEnv:
                 continue
             setattr(self, name, importlib.import_module(name))
         return self
+
+    def switch(self, **switches) -> None:
+        """Throw brAIn's switches: ``env.switch(learning_loop=False)``."""
+        self.features.update(switches)
+        (self.brain_shared / "features.json").write_text(json.dumps(self.features))
 
     def brain_on(self) -> None:
         """brAIn's automation listener made its task folder."""

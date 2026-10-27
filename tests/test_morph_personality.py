@@ -17,7 +17,7 @@ from pathlib import Path
 
 from test_morph_usage_and_names import _Connection, _Hass, _load_websocket
 
-INTEGRATION = Path(__file__).resolve().parent.parent / "morph" / "custom_components" / "morph"
+INTEGRATION = Path(__file__).resolve().parent.parent / "brain" / "custom_components" / "brain" / "morph"
 FRONTEND = INTEGRATION / "frontend"
 PANEL_JS = FRONTEND / "morph-panel.js"
 
@@ -99,11 +99,14 @@ class TestTheCommandReadsBrainsFile(unittest.TestCase):
 
 class TestMorphKeepsNoPersonalityOfItsOwn(unittest.TestCase):
 
-    def test_settings_reads_it_through_the_command(self):
+    def test_the_name_is_read_through_the_command_and_the_switches(self):
+        # Morph's Settings page went into brAIn's ⚙ in 4.0; Morph still
+        # reads the name, off brAIn's switches first (`features.name`).
         js = PANEL_JS.read_text()
         self.assertIn("type: 'morph/personality'", js)
         self.assertIn("loadPersona", js)
-        self.assertIn("<h2>Personality</h2>", js)
+        self.assertIn("f.name", js)
+        self.assertNotIn("<h2>Personality</h2>", js)
 
     def test_no_shipped_module_holds_or_imports_a_personality(self):
         self.assertFalse((FRONTEND / "personality.js").exists())
@@ -111,9 +114,18 @@ class TestMorphKeepsNoPersonalityOfItsOwn(unittest.TestCase):
             self.assertNotRegex(f.read_text(), r"personality\.js(?!on)", f.name)
             self.assertNotRegex(f.read_text(), r"\b(PERSONA|GROWTH)\s*=", f.name)
 
-    def test_the_fallbacks_say_where_it_lives(self):
-        js = PANEL_JS.read_text()
-        self.assertIn("The personality lives in brAIn", js)
+    def test_switched_off_it_is_not_handed_on(self):
+        ws = _load_websocket()
+        with tempfile.TemporaryDirectory() as tmp:
+            brain = Path(tmp) / ".brain"
+            brain.mkdir()
+            (brain / "personality.json").write_text(json.dumps(SAVED), encoding="utf-8")
+            (brain / "features.json").write_text(json.dumps({"personality": False}), encoding="utf-8")
+            conn = _Connection()
+            with unittest.mock.patch.object(ws, "BRAIN_SHARED", brain), \
+                    unittest.mock.patch.object(ws, "FEATURES", brain / "features.json"):
+                asyncio.run(ws.ws_personality(_Hass(), conn, {"id": 3, "type": "morph/personality"}))
+            self.assertIsNone(conn.results[-1][1]["personality"])
 
 
 if __name__ == "__main__":

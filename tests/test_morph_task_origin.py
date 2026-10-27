@@ -17,7 +17,7 @@ from pathlib import Path
 from morph_env import MorphEnv
 from test_morph_loops import DOC, FakeBrain, fast
 
-SERVICE = Path(__file__).resolve().parent.parent / "morph" / "service"
+SERVICE = Path(__file__).resolve().parent.parent / "brain" / "morph" / "service"
 
 
 def _answer(task):

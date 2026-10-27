@@ -17,7 +17,7 @@ def config():
 
 class TestManifest(unittest.TestCase):
     def test_it_is_experimental_and_so_are_its_siblings(self):
-        for addon in ("bruh-bambu-studio", "bruh-minecraft-server", "bright", "morph"):
+        for addon in ("bruh-bambu-studio", "bruh-minecraft-server", "bright"):
             with self.subTest(addon=addon):
                 self.assertEqual(
                     yaml.safe_load((BASE_DIR / addon / "config.yaml").read_text())["stage"],

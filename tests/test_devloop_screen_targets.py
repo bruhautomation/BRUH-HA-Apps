@@ -28,6 +28,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 import unittest.mock
 from pathlib import Path
 
@@ -91,13 +92,13 @@ class TestLocate(unittest.TestCase):
         addons = [{"slug": "abc_gardenrx", "name": "GardenRX"},
                   {"slug": "abc_bruh-print", "name": "BRUH Print"},
                   {"slug": "abc_bright", "name": "BRight"},
-                  {"slug": "abc_morph", "name": "Morph"},
                   {"slug": "abc_bruh_minecraft_server", "name": "BRUH Minecraft"}]
         infos = {"abc_gardenrx": info(ingress_port=8101),
                  "abc_bruh-print": info(),
-                 "abc_bright": info(state="stopped"),
-                 "abc_morph": info(version="1.2.0")}
-        out = st.locate(fake_get(addons, infos, fail=("abc_bruh_minecraft_server",)))
+                 "abc_bright": info(state="stopped")}
+        with mock.patch.object(st, "morph_on", return_value=True), \
+                mock.patch.dict(os.environ, {"ADDON_VERSION": "4.0.0"}):
+            out = st.locate(fake_get(addons, infos, fail=("abc_bruh_minecraft_server",)))
         products = {t["product"]: t for t in out["targets"]}
         self.assertEqual(set(products), {"GardenRX", "BRUH Print"})
         self.assertTrue(products["GardenRX"]["url"].endswith(TOKEN + "/"))
@@ -106,7 +107,8 @@ class TestLocate(unittest.TestCase):
         self.assertIn("could not read", out["unreached"]["BRUH Minecraft"])
         self.assertEqual(out["unreached"]["BRUH Bambu Studio"], "not installed")
         self.assertNotIn("Morph", out["unreached"])
-        self.assertEqual(out["versions"]["Morph"], "1.2.0")
+        # Morph is brAIn's (4.0): drawn while its switch is on, at brAIn's version.
+        self.assertEqual(out["versions"]["Morph"], "4.0.0")
         gr = products["GardenRX"]["screens"]
         self.assertEqual(gr[1]["url"], f"http://172.30.33.5:8101{TOKEN}/crops")
         print_screens = products["BRUH Print"]["screens"]
@@ -133,7 +135,7 @@ class TestLocate(unittest.TestCase):
         keys = {s["key"] for s in st.siblings.CATALOG}
         self.assertLessEqual(set(st.PANELS), keys)
         for key, _slug, _label, name in st.HARNESS:
-            self.assertIn(key, keys)
+            self.assertIn(key, keys | {"morph"})
             self.assertIsNotNone(devloop.harness.page(name), name)
 
     def test_the_tabs_named_are_the_panels_own(self):
@@ -517,7 +519,7 @@ class TestTheHarnessDrawsTheRealCode(unittest.TestCase):
         try:
             with unittest.mock.patch("ha_data._ws_calls", fake), \
                  unittest.mock.patch.object(st, "MORPH_FRONTEND",
-                                   str(BASE_DIR / "morph/custom_components/morph/frontend")), \
+                                   str(BASE_DIR / "brain/custom_components/brain/morph/frontend")), \
                  unittest.mock.patch.dict(st.CARD_FILES, {"bruh-print-card.js": (str(card),)}):
                 result = asyncio.run(asyncio.wait_for(run(Path(tmp)), 180))
         finally:
@@ -625,7 +627,7 @@ class TestTheHarnessDrawsTheRealCode(unittest.TestCase):
             with unittest.mock.patch("ha_data._ws_calls", fake), \
                  unittest.mock.patch.object(st, "MORPH_CARDS", str(cards)), \
                  unittest.mock.patch.object(st, "MORPH_FRONTEND",
-                                            str(BASE_DIR / "morph/custom_components/morph/frontend")):
+                                            str(BASE_DIR / "brain/custom_components/brain/morph/frontend")):
                 result = asyncio.run(asyncio.wait_for(run(Path(tmp)), 180))
         finally:
             screens.AFTER_REDACT = old

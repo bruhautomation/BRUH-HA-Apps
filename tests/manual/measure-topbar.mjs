@@ -148,12 +148,16 @@ function probe(floors) {
   // the markup rather than written down: a hard-coded 5 fails on the day a
   // sixth tab is added and says nothing about whether it kept its name,
   // which is the thing being measured.
-  const tabs = bar.querySelectorAll('.viewtab').length;
-  const labelled = [...bar.querySelectorAll('.viewtab span:not(.badge)')]
+  // A tab that is not shown (Home while the Morph dashboard is off) is not
+  // a tab on this bar.
+  const shownTabs = [...bar.querySelectorAll('.viewtab')]
+    .filter((el) => getComputedStyle(el).display !== 'none');
+  const tabs = shownTabs.length;
+  const labelled = shownTabs.flatMap((tab) => [...tab.querySelectorAll('span:not(.badge)')])
     .filter((el) => getComputedStyle(el).display !== 'none').length;
 
   const tr = tabbar.getBoundingClientRect();
-  const tabRects = [...bar.querySelectorAll('.viewtab')].map((t) => t.getBoundingClientRect());
+  const tabRects = shownTabs.map((t) => t.getBoundingClientRect());
   // What a phone header may hold: the logo, the status dot and ⚙.
   const headerItems = [...bar.children]
     .filter((el) => el !== tabbar && !el.classList.contains('spacer'))
@@ -209,6 +213,11 @@ function probe(floors) {
       await page.setContent(html, { waitUntil: 'load' });
       await page.addStyleTag({ path: path.join(PANEL, 'style.css') });
       await page.evaluate(seed, mode);
+      // MEASURE_HOME=1: the bar with the Home tab shown (the Morph
+      // dashboard switched on), which is the widest it gets.
+      if (process.env.MEASURE_HOME === '1') {
+        await page.evaluate(() => { const h = document.querySelector('#homeTab'); if (h) h.hidden = false; });
+      }
 
       const m = await page.evaluate(probe, { touch: MIN_TOUCH, chip: MIN_CHIP });
       const phone = width <= PHONE_MAX;

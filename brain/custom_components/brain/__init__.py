@@ -406,6 +406,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         entry.async_on_unload(_stop_learning)
 
+    if entry_type(entry) != ENTRY_TYPE_INSIGHT and not hass.data[DOMAIN].get("_morph_entry"):
+        # The sidebar entry and Morph's half (custom_components/brain/morph):
+        # once for the process, claimed before anything is awaited for the
+        # same reason as the watcher above, and taken down with the entry
+        # that put it up.
+        hass.data[DOMAIN]["_morph_entry"] = entry.entry_id
+        # A sidebar entry that cannot be put up is logged, never a brAIn that
+        # will not set up: the sensors, voice and the services do not need
+        # it, and brAIn's own ingress entry stays while the shell is absent.
+        try:
+            from . import morph as morph_part
+
+            teardown_morph = await morph_part.async_setup(hass)
+        except Exception:  # noqa: BLE001
+            hass.data[DOMAIN].pop("_morph_entry", None)
+            _LOGGER.exception("brAIn's sidebar panel could not be set up")
+        else:
+            def _stop_morph() -> None:
+                teardown_morph()
+                hass.data[DOMAIN].pop("_morph_entry", None)
+
+            entry.async_on_unload(_stop_morph)
+            await morph_part.async_retire_morph_entries(hass)
+
     if entry_type(entry) != ENTRY_TYPE_INSIGHT:
         # brAIn's measurements, for other conversation agents and the MCP
         # Server integration: three read-only tools, exposure-respecting.

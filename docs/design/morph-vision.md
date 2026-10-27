@@ -1,5 +1,7 @@
 > **Before writing, read AGENTS.md, LEARNED.md and dashboard.yaml in this folder, and use brAIn's tools to sample real data if needed.** Every number below that describes the house (what is normal, who does what when, how fast a room cools) is an example. The real figures come from `what_is_normal`, `habits`, `house_rhythm`, `door_habits`, `room_physics` and `appliance_status`, and nothing in this document may be hard-coded where one of those can answer.
 
+> **Since brAIn 4.0 Morph is part of brAIn** — its service in `brain/morph/`, its panel half in `brain/custom_components/brain/morph/`, its settings in brAIn's ⚙ › Dashboard, and the whole of it switched on in ⚙ › Features. Where this page speaks of two add-ons, a file wire between them or Morph's own Settings, read [brain-morph-merge.md](brain-morph-merge.md) for what changed; the design itself stands.
+
 # Morph — the design vision
 
 *A home dashboard that shows what matters, when it matters, for the people looking at it.*
