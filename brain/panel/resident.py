@@ -61,9 +61,11 @@ import time
 from pathlib import Path
 
 import atomic_write
+import house_words
 import model_plan
 import prompt_kit
 import textclip
+import triage
 
 # ---------------------------------------------------------------------------
 # The jobs, by name
@@ -606,6 +608,12 @@ def parse_first_look(obj, count: int, rows=None) -> dict[int, dict]:
                              str(row.get("why") or "").strip()), MAX_WHY),
                          "forced": False}
             already = str(row.get("already") or "").strip().lower()
+            if already not in ALREADY and triage.says_duplicate(
+                    said[idx]["why"]):
+                # The word written as a sentence ("already an open problem
+                # for you"): the same claim, so the same fold — shown, it
+                # was the row's own reason for not being there (#448).
+                already = "duplicate"
             if already in ALREADY:
                 # Not news, whatever verdict rode beside it: the row is
                 # set aside, which is what `ignore` does to a filed row.
@@ -760,7 +768,10 @@ Answer with ONE JSON object and nothing else. What it means:
   read — the Home Assistant log, the Supervisor log, brAIn's own errors:
   read it and say what it says. Never "watch whether it continues" —
   watching is brAIn's job, and it will look again — and never "press Fix
-  and brAIn reads …": you are the run that reads.
+  and brAIn reads …": you are the run that reads. A fix names real
+  values — the entity, the number, the time, the template written out in
+  full; a step holding a placeholder ("a template", "<entity>", "TODO",
+  "…" for a value) is not written, and the row keeps the one it had.
 - Before you write, run the read-only lookups the question needs: the
   automation's trace, the entity's history and logbook, the registry
   (which device, which room, which integration, what an automation
@@ -1102,14 +1113,14 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
     return {
         "text": claim,
         "claim": claim,
-        "detail": str(obj.get("detail") or "").strip(),
+        "detail": _no_placeholder(obj.get("detail")),
         "kind": kind,
         "confidence": confidence,
         "stakes": stakes,
         "severity": SEVERITY_BY_STAKES[stakes],
-        "fix": str(obj.get("fix") or "").strip(),
+        "fix": _no_placeholder(obj.get("fix")),
         "fix_by": "resident",
-        "todo_text": str(obj.get("todo_text") or "").strip(),
+        "todo_text": _no_placeholder(obj.get("todo_text")),
         "evidence": evidence,
         "actions": actions,
         "memory_hint": str(obj.get("memory_hint") or "").strip(),
@@ -1121,6 +1132,13 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
                      and confidence < ESCALATE_CONFIDENCE
                      and stakes == "high"),
     }
+
+
+def _no_placeholder(value) -> str:
+    """A reply's sentence, or "" when it holds a hole where a value belongs
+    (#446) — the row then keeps the sentence it had."""
+    text = str(value or "").strip()
+    return "" if house_words.placeholder(text) else text
 
 
 def parse_dismissal(obj) -> str | None:

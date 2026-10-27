@@ -476,6 +476,15 @@ def _unchecked(row: dict) -> bool:
             and not record.get("elevated_by_person"))
 
 
+def _item_list(row: dict) -> dict:
+    """`item_labels` and `items_noun` for a row naming two things or more,
+    else nothing."""
+    labels, noun = findings_store.item_labels(row.get("items"))
+    if len(labels) < 2:
+        return {}
+    return {"item_labels": labels, "items_noun": noun}
+
+
 def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
     """A finding, as a case.
 
@@ -539,6 +548,10 @@ def _from_finding(row: dict, snoozes: dict[str, int]) -> dict:
         "changed": [str(c) for c in row.get("changed") or []
                     if isinstance(c, str)],
         "checked_at": int(row.get("checked_at") or 0),
+        # Every item a row about several things names, by the name a person
+        # reads, for the card's count line and Show all (#437): the
+        # sentence names only what fits, and the rest was nowhere.
+        **_item_list(row),
         # A reason that only repeats the row's own text or claim is not a
         # conclusion (`findings_store.echoes`), and one about where the row
         # is listed, or the stock "nothing looked" sentence, says nothing

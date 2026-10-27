@@ -113,13 +113,8 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
                 "claim": (f"{name}: "
                           f"{plain_words.record_words(wrong, total)} — stop "
                           "raising it?"),
-                "detail": (f"You have answered {total} of this rule's cards "
-                           f"and marked {wrong} of them wrong, the latest "
-                           "included. "
-                           "Yes stops brAIn raising it (and takes what it "
-                           "has open off the list); you can start it again "
-                           "from the scorecard. No keeps it, and brAIn will "
-                           "not ask again unless the record gets much worse."),
+                "detail": _detail(name, wrong, total,
+                                  str(row.get("example") or "")),
                 "kind": "question", "severity": "info", "stakes": "low",
                 "fixable": False, "source": SOURCE,
                 "source_title": SOURCE_TITLE, "entity_id": "", "evidence": [],
@@ -128,6 +123,25 @@ def plan(scorecard: list[dict], state: dict, now: float, live_ts: set[int],
         if len(out) >= MAX_PER_PASS:
             break
     return out
+
+
+# Where a stopped rule is started again, in the panel's own words
+# (`today.FILTER_LABELS`, the History row `today.history` writes for a
+# muted rule). "From the scorecard" named a word the person never sees.
+WHERE_TO_RESTORE = ("To start it again, open History, choose Ignored and "
+                    "press Restore on “Everything like this: {name}”.")
+
+
+def _detail(name: str, wrong: int, total: int, example: str) -> str:
+    """What the question says: the record, what kind of report the rule
+    files (one example), what Yes and No do, and where to undo a Yes."""
+    like = f" — like “{example.rstrip('.')}”" if example else ""
+    return (f"You have answered {total} of this rule's cards and marked "
+            f"{wrong} of them wrong, the latest included. Yes stops brAIn "
+            f"raising this rule's reports{like} — and takes what it has open "
+            "off the list. " + WHERE_TO_RESTORE.format(name=name)
+            + " No keeps it, and brAIn will not ask again unless the record "
+            "gets much worse.")
 
 
 def record_asked(state: dict, source: str, ts: int, wrong: int, total: int,
