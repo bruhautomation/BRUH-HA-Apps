@@ -6986,17 +6986,28 @@ function gapAnswerBox(id, route, opts, btns) {
 // card with the three presses every finding has, because "I could not
 // build the queue" must never render a house with problems as a house
 // with none.
+// The words of the answer box under a question brAIn asked (the server's
+// own, `answers.answers` for an `asked` row, when a case covers it).
+const ASKED_ANSWER = {
+  hint: "Your answer goes into memory exactly as you write it — never type "
+    + "a code or a password here.",
+  placeholder: "The dog goes out then.",
+  done: "Filed into memory",
+};
+
 function makeLooseFinding(f) {
   // A house-book gap is a question, never a Tidy-up (#502).
+  // So is a question brAIn asked about the house (`findings_store.as_asked`).
+  const asked = f.asked === true && f.kind === "question";
   const card = qCard({
-    id: `f:${f.ts}`, chip: f.source === "house_book" ? "question"
+    id: `f:${f.ts}`, chip: f.source === "house_book" || asked ? "question"
       : f.severity === "critical" ? "urgent"
       : f.severity === "info" ? "tidy" : "problem",
     meta: [sourceName(f), f.waiting_look || !(f.triage || {}).verdict
       || (f.triage || {}).verdict === "untriaged" ? "Unchecked" : ""],
     title: f.text, body: f.detail, who: f.who,
   });
-  const gap = f.source === "house_book";
+  const gap = f.source === "house_book" || asked;
   if (f.fix && !gap) card.appendChild(qFix(f.fix));
   const more = qDetails();
   qDetailLine(more, "Source", sourceName(f));
@@ -7017,8 +7028,9 @@ function makeLooseFinding(f) {
   if (gap) {
     // A house-book question an older release left waiting for a look is
     // still a question: the box, not the to-do list.
-    card.insertBefore(gapAnswerBox(`f:${f.ts}`,
-      `api/house_book/question/${f.ts}/answer`, {}, btns), more.nextSibling);
+    card.insertBefore(gapAnswerBox(`f:${f.ts}`, asked
+      ? `api/question/${f.ts}/answer` : `api/house_book/question/${f.ts}/answer`,
+      asked ? ASKED_ANSWER : {}, btns), more.nextSibling);
   } else {
     press("Add to To Do", true, () => looseAction(`api/finding/${f.ts}/todo`, null,
       "Added to To Do", btns));
@@ -7549,7 +7561,8 @@ function todayCards() {
     const t = f.triage || {};
     const security = isSecuritySource(f.source);
     out.push({ id: `f:${f.ts}`,
-      group: f.source === "house_book" ? "questions"
+      group: f.source === "house_book" || (f.asked === true && f.kind === "question")
+        ? "questions"
         : f.severity === "info" && !security ? "tidy" : "problems",
       urgent: f.severity === "critical", severity: f.severity, security,
       unchecked: !!(f.waiting_look || !t.verdict || t.verdict === "untriaged"),
@@ -7623,6 +7636,20 @@ function todayGroup(g, items, lead) {
   if (!open) return sec;
   const body = el("div", "qgroupbody");
   sec.appendChild(body);
+  // Questions are asked one at a time: the first is on the page with its
+  // answer, and the next comes when it is answered, snoozed or set aside.
+  // A wall of questions is the open-ended list the hypothesis queue
+  // replaced, and nobody answers the fifth.
+  if (g === "questions") {
+    body.appendChild(items[0].make());
+    const waiting = items.length - 1;
+    if (waiting > 0) {
+      body.appendChild(el("p", "qnextline", waiting === 1
+        ? "1 more question after this one."
+        : `${waiting} more questions after this one.`));
+    }
+    return sec;
+  }
   const moreBtn = todayMoreButton();
   const fits = g === lead && !todayState.showAll ? todayFits() : items.length;
   const shown = Math.min(fits, items.length);
