@@ -11277,7 +11277,15 @@ async def _run_sre(reason: str = "schedule") -> None:
         if answer is None:
             raise RuntimeError("the reply could not be read")
         parsed = sre.parse_causes(answer, dig)
+        # A log error that has stopped, or whose integration works now, is
+        # held before it is filed, and why goes on the decision trail.
+        kept, held = sre.hold_transient(parsed["causes"], dig, now)
+        if held:
+            await asyncio.to_thread(decision_trail.note_many,
+                                    sre.trail_rows(held), now)
+        parsed["causes"] = kept
         rows = sre.rows(parsed["causes"], dig, state, now)
+        summary.update(transient=len(held))
         summary.update(ran=True, causes=len(parsed["causes"]),
                        refused=parsed["refused"], invented=parsed["invented"],
                        bundled=parsed["bundled"],
