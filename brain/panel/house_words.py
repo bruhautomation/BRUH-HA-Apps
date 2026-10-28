@@ -533,3 +533,91 @@ _SELF_RE = re.compile(
 def about_self(*texts) -> bool:
     """Whether a row's words are about brAIn itself."""
     return any(_SELF_RE.search(str(t or "")) for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# "What to do" from what brAIn read
+# ---------------------------------------------------------------------------
+#
+# Fixes told the owner to "check that it is switched on" about a plug brAIn
+# reads, to "restart the router or DNS server" over one device failing while
+# its siblings answered, and to "stop the pump now" on one reading. A fix
+# never asks somebody to look at what brAIn can read, never blames the
+# network when the rest of the integration answers, and is urgent only when
+# two readings agree.
+
+_SELF_CHECK = re.compile(
+    r"\b(?:check|make sure|confirm|verify|see)\b(?:\s+(?:that|whether|if))?"
+    r"[^.!?]{0,60}?\b(?:switched on|turned on|plugged in|powered(?: on)?|"
+    r"has power|still has power|reachable|online|connected|on the network|"
+    r"available)\b"
+    r"|\bcheck (?:its|the|that)?\s*(?:state|status|logs?|traces?|history|"
+    r"settings)\b"
+    r"|\b(?:check|look at|read) (?:the )?(?:errors?|logs?)\b"
+    r"|\bSettings\s*>\s*System\s*>\s*Logs\b"
+    r"|\bwatch (?:whether|if) it (?:continues|happens again)\b", re.I)
+_NETWORK_BLAME = re.compile(
+    r"\b(?:router|dns|modem|internet|isp|access point|wi-?fi network|"
+    r"network switch)\b", re.I)
+_URGENT = re.compile(
+    r",?\s*\b(?:right away|immediately|at once|urgently|"
+    r"as soon as possible|asap|right now|without delay|"
+    r"before it['’]?s too late)\b|,?\s+now(?=\s*[.!,;]|\s*$)", re.I)
+
+
+def _drop_sentences(text: str, pattern) -> str:
+    if not text:
+        return text
+    kept = [s for s in _LOG_SENTENCES.split(str(text))
+            if s and not pattern.search(s)]
+    return " ".join(kept).strip()
+
+
+def without_self_checks(text: str) -> str:
+    """``text`` less every sentence asking somebody to check what brAIn
+    reads itself: a power state, a connection, a log, a setting."""
+    return _drop_sentences(text, _SELF_CHECK)
+
+
+def without_network_blame(text: str) -> str:
+    """``text`` less every sentence sending somebody to the router, DNS or
+    the internet — for a fault whose integration's other devices answer."""
+    return _drop_sentences(text, _NETWORK_BLAME)
+
+
+def _reading(value) -> float | None:
+    m = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    return float(m.group(0)) if m else None
+
+
+def readings_agree(evidence) -> bool:
+    """Whether a row's evidence holds two readings that agree: the last two
+    of one entity, numbers within a tenth of each other (or a degree), or
+    the same words."""
+    rows = [e for e in evidence or [] if isinstance(e, dict)
+            and str(e.get("value") or "").strip()]
+    by_entity: dict[str, list] = {}
+    for e in rows:
+        by_entity.setdefault(str(e.get("entity") or ""), []).append(e)
+    for seen in by_entity.values():
+        if len(seen) < 2:
+            continue
+        a, b = seen[-2], seen[-1]
+        x, y = _reading(a.get("value")), _reading(b.get("value"))
+        if x is not None and y is not None:
+            if (x >= 0) == (y >= 0) and abs(x - y) <= max(
+                    1.0, 0.1 * max(abs(x), abs(y))):
+                return True
+        elif str(a.get("value")).strip().lower() == \
+                str(b.get("value")).strip().lower():
+            return True
+    return False
+
+
+def calm(text: str, readings_agree: bool) -> str:
+    """``text`` with its urgency taken off unless two readings agree."""
+    if readings_agree or not text or not _URGENT.search(text):
+        return text
+    out = _URGENT.sub("", text)
+    out = re.sub(r"\s+([,.;!?])", r"\1", out).replace("!", ".")
+    return re.sub(r"\s{2,}", " ", out).strip()
