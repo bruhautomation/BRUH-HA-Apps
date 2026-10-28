@@ -17,6 +17,13 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { stub as panelStub } from './today-fixture.mjs';
+
+// brAIn's own panel (brain/panel), for opts.realFrame: the shell frames the
+// real page rather than a stand-in, so what one screen shows — one header,
+// no bottom tab bar, one theme — is measured on the real thing.
+export const PANEL = fileURLToPath(new URL('../../brain/panel/', import.meta.url));
+export const BRAIN_VERSION = '4.0.5';
 
 export const FRONTEND = fileURLToPath(new URL('../../brain/custom_components/brain/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
@@ -231,7 +238,7 @@ customElements.define('morph-next', class extends HTMLElement {
   }
 });
 </script>
-<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: state(), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
+<script>window.__calls = []; window.__ws = []; window.__fixture = ${JSON.stringify({ states: house(), dash: dashboard(), state: themed(state(), o.theme), brain: brainFeed(o.brain), dark: o.dark !== false })};</script>
 <script type="module">
 const F = window.__fixture;
 let states = F.states;
@@ -379,6 +386,30 @@ window.__push = push;
 </script></body></html>`;
 }
 
+// Morph's own theme setting (⚙ › Dashboard): 'dark', 'medium', 'light' or
+// 'auto' (Home Assistant's dark mode).
+function themed(st, theme) {
+  if (theme) st.settings = { ...st.settings, theme };
+  return st;
+}
+
+// The real brAIn page, as the add-on's server sends it (the version written
+// in), with the measures' stubbed fetch put in front of app.js and the
+// status poll carrying the switches the shell's page reads.
+function realPanel(opts) {
+  const o = opts || {};
+  const html = readFileSync(path.join(PANEL, 'index.html'), 'utf8').replaceAll('{{VERSION}}', BRAIN_VERSION);
+  const features = { morph: o.morph !== false, personality: true, name: 'Juniper', shell: true, learning_loop: true, development_loop: false };
+  const extra = `<script>${panelStub()}
+(() => { const inner = window.fetch; window.fetch = async (url, opts) => {
+  const r = await inner(url, opts);
+  if (!String(url).includes('api/status')) return r;
+  const body = await r.json();
+  return new Response(JSON.stringify({ ...body, version: ${JSON.stringify(BRAIN_VERSION)}, features: ${JSON.stringify(features)} }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}; })();</script>`;
+  return html.replace('<link rel="stylesheet"', `${extra}\n<link rel="stylesheet"`);
+}
+
 function framedPage() {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0">
 <header style="height:56px;background:#123">brAIn's bar</header>
@@ -398,7 +429,16 @@ export async function route(context, opts) {
     // brAIn's own page, framed by the shell: a stand-in that speaks the
     // shell's protocol (app.js's half), so the shell's own behaviour is
     // what is measured.
-    if (url.pathname === '/api/hassio_ingress/abcdefghijkl/') return r.fulfill({ contentType: 'text/html', body: framedPage() });
+    if (url.pathname === '/api/hassio_ingress/abcdefghijkl/') return r.fulfill({ contentType: 'text/html', body: opts && opts.realFrame ? realPanel(opts) : framedPage() });
+    if (opts && opts.realFrame && url.pathname.startsWith('/api/hassio_ingress/abcdefghijkl/')) {
+      const rel = url.pathname.slice('/api/hassio_ingress/abcdefghijkl/'.length);
+      const types = { css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png' };
+      const ext = rel.split('.').pop();
+      if (!rel.includes('..') && types[ext]) {
+        try { return r.fulfill({ contentType: types[ext], body: readFileSync(path.join(PANEL, rel)) }); } catch (e) { return r.fulfill({ status: 404, body: '' }); }
+      }
+      return r.fulfill({ status: 404, body: '' });
+    }
     const m = url.pathname.match(/^\/morph_static\/[^/]+\/(?:s\/[0-9a-f]{12}\/)?(.+)$/);
     if (m && m[1] === 'boot.js') {
       // static.py writes the stamp and module list into boot.js, so the

@@ -84,7 +84,11 @@ class TestProposeFilesTheAbsoluteDay(unittest.TestCase):
         self.assertIn(YESTERDAY, entry["text"])
         self.assertNotIn("yesterday", entry["text"].lower())
         self.assertNotIn("yesterday", entry["fact"].lower())
-        [row] = hypotheses.list_all("open")
+        # Read at the same fixed moment: a guess expires after a few days,
+        # so reading it at the real clock lost it once the suite ran past
+        # the fixed day it was filed on.
+        with unittest.mock.patch.object(hypotheses.time, "time", return_value=NOW):
+            [row] = hypotheses.list_all("open")
         self.assertIn(YESTERDAY, row["text"])
 
     def test_the_case_says_when_it_was_asked(self):

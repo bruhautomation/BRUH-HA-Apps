@@ -13,12 +13,19 @@
 //
 // The frame and this panel talk by `postMessage`, `{type: "brain-shell"}`,
 // and only with each other (`ev.source` is the frame's window). From the
-// frame: `bars` (the header's and the phone tab bar's heights), `show`
-// (home or panel), `raise` (a popover or a dialog opened while Home is in
-// front: the frame goes over Morph until it closes), `menu` (open Home
-// Assistant's sidebar) and `features` (a switch changed). To the frame:
-// `state` (narrow, whether the dashboard is on, which is in front) and
-// `open` (a view or a Settings section somebody asked for from Morph).
+// frame: `bars` (the header's height; `bottom` is 0 since the tabs moved
+// into the header), `show` (home or panel), `raise` (a popover or a dialog
+// opened while Home is in front: the frame goes over Morph until it
+// closes), `menu` (open Home Assistant's sidebar), `features` (a switch
+// changed) and `home` (Morph's Edit, Done or YAML pressed in brAIn's
+// header). To the frame: `state` (narrow, whether the dashboard is on,
+// which is in front, Morph's theme, and what of Morph's belongs in the
+// header) and `open` (a view or a Settings section asked for from Morph).
+//
+// ONE header (the owner: "there are two headers … merge them"): brAIn's
+// bar, drawn in Morph's theme — dark, medium or light, the theme Morph
+// renders in (`morph-chrome` from the panel, else the one it last used,
+// else Home Assistant's dark mode) — and Morph's own bar is not drawn.
 //
 // The ingress session is this panel's to keep, the way Home Assistant's own
 // ingress view keeps it: made once (`/ingress/session`), checked every
@@ -32,6 +39,8 @@ const here = new URL('.', import.meta.url).href;
 const TYPE = 'brain-shell';
 const VALIDATE_MS = 60000;
 const PROPS = ['hass', 'narrow', 'route', 'panel'];
+// Morph's three grounds (styles.js), for the shell's own background.
+const GROUND = { dark: '#0A0C0E', medium: '#2A2D31', light: '#ECEBE6' };
 
 function setCookie(session) {
   document.cookie = `ingress_session=${session};path=/api/hassio_ingress/;SameSite=Strict${location.protocol === 'https:' ? ';Secure' : ''}`;
@@ -58,11 +67,24 @@ class BrainShell extends HTMLElement {
     this.bars = { top: 0, bottom: 0 };
     this._onMessage = (ev) => this.message(ev);
     this._onOpen = (ev) => this.openInFrame((ev.detail && ev.detail.view) || 'insights', ev.detail && ev.detail.sec);
+    this.chrome = null;
+    this._onChrome = (ev) => { this.chrome = ev.detail || null; this.sync(); };
+  }
+
+  // The theme the one header is drawn in: Morph's, as it renders; the one
+  // it last rendered in; Home Assistant's dark mode.
+  theme() {
+    const t = this.chrome && this.chrome.theme;
+    if (GROUND[t]) return t;
+    try { const saved = localStorage.getItem('morph.theme'); if (GROUND[saved]) return saved; } catch (e) { /* storage refused */ }
+    const h = this._v.hass;
+    return h && h.themes && h.themes.darkMode === false ? 'light' : 'dark';
   }
 
   connectedCallback() {
     window.addEventListener('message', this._onMessage);
     this.addEventListener('brain-open', this._onOpen);
+    this.addEventListener('morph-chrome', this._onChrome);
     if (!this._drawn) this.draw();
     if (this._v.hass && !this.info) this.start();
   }
@@ -70,6 +92,7 @@ class BrainShell extends HTMLElement {
   disconnectedCallback() {
     window.removeEventListener('message', this._onMessage);
     this.removeEventListener('brain-open', this._onOpen);
+    this.removeEventListener('morph-chrome', this._onChrome);
     clearInterval(this._validate);
     this._validate = null;
   }
@@ -77,7 +100,7 @@ class BrainShell extends HTMLElement {
   draw() {
     this._drawn = true;
     this.shadowRoot.innerHTML = `<style>
-:host{display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;background:var(--primary-background-color,#0A0C0E)}
+:host{display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:transparent;z-index:1}
 iframe[hidden]{display:none}
 .home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;--morph-h:calc(100vh - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-top,0px) - var(--brain-bottom,0px))}
@@ -190,7 +213,14 @@ iframe[hidden]{display:none}
     this.style.setProperty('--brain-bottom', `${framed ? this.bars.bottom : 0}px`);
     this.classList.toggle('raised', !!(home && framed && this.raised));
     if (home || framed) this.say('');
-    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel' } });
+    const theme = this.theme();
+    this.style.setProperty('--brain-ground', GROUND[theme]);
+    const c = this.chrome || {};
+    // Morph's Edit belongs in the header while Morph is mounted and the
+    // person may edit it (or is editing it).
+    const edit = !!(morph && this.morph && (c.admin || c.edit));
+    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme,
+                         home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
   }
 
   post(body) {
@@ -224,6 +254,11 @@ iframe[hidden]{display:none}
     }
     if (typeof d.raise === 'boolean') {
       if (d.raise !== this.raised) { this.raised = d.raise; this.sync(); }
+      return;
+    }
+    if (d.home === 'edit' || d.home === 'yaml-toggle') {
+      const panel = this.morph && this.morph.shadowRoot && this.morph.shadowRoot.querySelector('morph-panel');
+      if (panel && typeof panel.chromeAct === 'function') panel.chromeAct(d.home);
       return;
     }
     if (d.menu) { this.dispatchEvent(new Event('hass-toggle-menu', { bubbles: true, composed: true })); return; }
