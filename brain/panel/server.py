@@ -9342,7 +9342,7 @@ findings_store.DISPLAY_NAMES = lambda: _NAMES
 findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
 # Who brAIn is, the one stored answer a model's row reads (`personality.
 # identity`), and brAIn's own upkeep as its own question (`self_care`).
-findings_store.IDENTITY = lambda: personality.identity()
+findings_store.IDENTITY = personality.identity
 findings_store.SELF_CARE = self_care.as_question
 
 
