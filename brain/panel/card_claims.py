@@ -156,5 +156,262 @@ def finding_twin(card_entities: set, rows, device_of=None) -> dict | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# A title's figures, stood behind by its body
+# ---------------------------------------------------------------------------
+#
+# "0 kWh over the last 8 days" over a body that said "all 11 days", "no
+# cooling at 73 °F" over one whose afternoon "passed 65 °F", and "flipped
+# from 43 to clear" with nothing saying what 43 was. Every figure in a
+# title has to be in the summary or a tile with the same value and unit;
+# one that is not, or a bare number, is taken out of the title.
+
+# A measurement's unit, as written → one spelling. A figure in one of these
+# must be said in the same unit; a counted noun ("14 openings") must only be
+# said with the same value.
+_UNITS = (
+    (r"°\s?f\b|℉|fahrenheit", "°F"), (r"°\s?c\b|℃|celsius", "°C"),
+    (r"degrees?|°", "°"), (r"kwh\b", "kWh"), (r"wh\b", "Wh"),
+    (r"kw\b", "kW"), (r"w\b|watts?\b", "W"), (r"%|percent\b", "%"),
+    (r"psi\b", "psi"), (r"bar\b", "bar"), (r"gal(?:lons?)?\b|gal\b", "gal"),
+    (r"(?:litres?|liters?|l)\b", "L"), (r"mm\b", "mm"),
+    (r"(?:inch(?:es)?|in)\b(?=\s*(?:of|$|[,.;]))", "in"),
+    (r"mph\b", "mph"), (r"km/h\b", "km/h"),
+    (r"(?:h|hrs?|hours?)\b", "h"), (r"(?:min(?:ute)?s?)\b", "min"),
+    (r"(?:s|secs?|seconds?)\b", "s"), (r"days?\b", "day"),
+    (r"weeks?\b", "week"), (r"months?\b", "month"), (r"ppm\b", "ppm"),
+    (r"(?:lux|lx)\b", "lux"), (r"db\b", "dB"), (r"v\b|volts?\b", "V"),
+    (r"(?:a|amps?)\b(?!\s+\w)", "A"), (r"(?:am|pm|a\.m\.|p\.m\.)", "clock"),
+    (r"(?:times|x|×)\b", "times"),
+)
+_UNIT_RE = re.compile(r"\s?(?:" + "|".join(f"({p})" for p, _ in _UNITS) + ")",
+                      re.I)
+_MONTH = re.compile(r"\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+                    r"[a-z]*\b", re.I)
+_WEEKDAY = re.compile(r"\b(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+$", re.I)
+_NUMBER = re.compile(r"(?<![\w.:/])(-?\d[\d,]*(?:\.\d+)?)(?![\d:])")
+_CLOCK_RE = re.compile(r"(?<![\w.])(\d{1,2}):(\d{2})(?:\s?(am|pm))?\b", re.I)
+_DURATION_RE = re.compile(
+    r"(?<![\w.])(\d+(?:\.\d+)?)\s?h(?:ours?|rs?)?\s+(\d+)\s?min\b", re.I)
+# Words that frame a figure without saying what it is.
+_STOP = frozenset((
+    "a an the of to in on at for from by over since until till after before "
+    "and or but with within during across per vs versus about around than "
+    "this that last past next its it is was are were be been only just "
+    "all every each some no not nearly almost roughly up down into out off "
+    "then so as").split())
+_LEAD = re.compile(
+    r"(?:\b(?:over|in|for|at|from|since|of|after|before|by|on|within|"
+    r"during|across|around|about|to)\b(?:\s+(?:the|last|past|this|a|an|"
+    r"its|first|nearly|about|almost)\b){0,3}\s*)$", re.I)
+_RANGE_DAY = re.compile(r"\s?[–-]\s?\d{1,2}(?=\s+(?:jan|feb|mar|apr|may|jun|"
+                        r"jul|aug|sep|oct|nov|dec))", re.I)
+_PAIR = re.compile(r"^\s*(?:→|->|–|to)\s*$", re.I)
+_TOL_INT = 0.5
+
+
+def _unit_at(text: str, pos: int) -> tuple[str, int]:
+    m = _UNIT_RE.match(text, pos)
+    if not m:
+        return "", pos
+    for i, (_p, unit) in enumerate(_UNITS, start=1):
+        if m.group(i) is not None:
+            return unit, m.end()
+    return "", pos
+
+
+def _word_after(text: str, pos: int) -> tuple[str, int]:
+    m = re.match(r"\s+([A-Za-z][A-Za-z'-]*)", text[pos:])
+    if not m:
+        return "", pos
+    return m.group(1), pos + m.end()
+
+
+def _word_before(text: str, pos: int) -> str:
+    m = re.search(r"([A-Za-z][A-Za-z'-]*)\s*$", text[:pos])
+    return m.group(1) if m else ""
+
+
+def _figures_in(text: str) -> list[dict]:
+    """Every figure in ``text``: `{value, unit, noun, start, end, bare}`.
+    A clock time and an hours-and-minutes duration are one figure each; a
+    date's day and a year are not figures."""
+    text = str(text or "")
+    out: list[dict] = []
+    taken: list[tuple[int, int]] = []
+    for m in _CLOCK_RE.finditer(text):
+        hour = int(m.group(1)) % 12 if m.group(3) else int(m.group(1))
+        if m.group(3) and m.group(3).lower() == "pm":
+            hour += 12
+        out.append({"value": hour * 60.0 + int(m.group(2)), "unit": "clock",
+                    "noun": "", "start": m.start(), "end": m.end(),
+                    "bare": False})
+        taken.append((m.start(), m.end()))
+    for m in _DURATION_RE.finditer(text):
+        out.append({"value": float(m.group(1)) + int(m.group(2)) / 60.0,
+                    "unit": "h", "noun": "", "start": m.start(),
+                    "end": m.end(), "bare": False})
+        taken.append((m.start(), m.end()))
+    for m in _NUMBER.finditer(text):
+        if any(a <= m.start() < b for a, b in taken):
+            continue
+        raw = m.group(1).replace(",", "")
+        try:
+            value = float(raw)
+        except ValueError:
+            continue
+        if (_MONTH.match(text, m.end()) or _WEEKDAY.search(text[:m.start()])
+                or _RANGE_DAY.match(text, m.end())
+                or re.search(r"\d\s?[–-]\s?$", text[:m.start()])
+                and _MONTH.match(text, m.end())):
+            continue  # a date's day, or the first day of a range of them
+        if re.fullmatch(r"(?:19|20)\d\d", raw):
+            continue  # a year
+        if re.match(r"(?:st|nd|rd|th)\b", text[m.end():]):
+            continue  # an ordinal
+        unit, end = _unit_at(text, m.end())
+        if unit == "clock":
+            hour = int(value) % 12 + (12 if re.match(
+                r"\s?p", text[m.end():], re.I) else 0)
+            value = hour * 60.0
+        noun = ""
+        if not unit:
+            after, after_end = _word_after(text, m.end())
+            if after and after.lower() not in _STOP:
+                noun, end = after.lower().rstrip("s"), after_end
+            else:
+                before = _word_before(text, m.start())
+                if before and before.lower() not in _STOP:
+                    noun = before.lower().rstrip("s")
+        out.append({"value": value, "unit": unit, "noun": noun,
+                    "start": m.start(), "end": end,
+                    "bare": not unit and not noun})
+    out.sort(key=lambda f: f["start"])
+    # "1.2 kWh, down from 49.3": a bare number after a figure with a unit
+    # is said in that unit.
+    for prev, f in zip(out, out[1:]):
+        if f["bare"] and not prev["bare"] and prev["unit"] not in ("", "clock"):
+            f["bare"], f["unit"] = False, prev["unit"]
+    # "openings 14 → 5": the second side of a pair means what the first does.
+    for a, b in zip(out, out[1:]):
+        if _PAIR.match(text[a["end"]:b["start"]]):
+            a["pair"] = b["pair"] = True
+            if a["bare"] != b["bare"]:
+                for f in (a, b):
+                    if f["bare"]:
+                        f["bare"] = False
+                        f["unit"] = f["unit"] or (a["unit"] or b["unit"])
+                        f["noun"] = f["noun"] or (a["noun"] or b["noun"])
+    return out
+
+
+def title_figures(title: str) -> list[dict]:
+    """The figures in a title's claim (its subject is a name: "Bedroom 2"
+    is not a figure), with positions in the WHOLE title."""
+    title = str(title or "")
+    subject, sep, rest = title.partition(":")
+    offset = len(subject) + 1 if sep and rest.strip() else 0
+    claim = title[offset:]
+    figs = []
+    for f in _figures_in(claim):
+        before = _word_before(claim, f["start"])
+        if (not offset and not f["unit"] and before[:1].isupper()
+                and f["noun"] == before.lower().rstrip("s")):
+            continue  # "Plug 3", "Zone 2": a name
+        figs.append({**f, "start": f["start"] + offset,
+                     "end": f["end"] + offset})
+    return figs
+
+
+def _same_unit(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    return {a, b} in ({"°", "°F"}, {"°", "°C"})
+
+
+def _close(title_value: float, body_value: float) -> bool:
+    diff = abs(title_value - body_value)
+    if float(title_value).is_integer():
+        # A whole number in the title is the body's figure rounded.
+        return diff < _TOL_INT or diff <= 0.005 * abs(body_value)
+    return diff <= 0.02 * max(abs(title_value), abs(body_value), 1.0)
+
+
+def _stood_behind(fig: dict, body: list[dict], body_text: str) -> bool:
+    for other in body:
+        if not _close(fig["value"], other["value"]):
+            continue
+        if not fig["unit"] or _same_unit(fig["unit"], other["unit"]):
+            return True
+        # A tile's bare value under a label that names the unit.
+        if not other["unit"] and re.search(re.escape(fig["unit"]),
+                                           body_text, re.I):
+            return True
+    return False
+
+
+def _without(title: str, start: int, end: int) -> str:
+    head = title[:start]
+    lead = _LEAD.search(head)
+    if lead:
+        head = head[:lead.start()]
+    out = re.sub(r"\s{2,}", " ", head + title[end:])
+    out = re.sub(r"\s+([,.;])", r"\1", out)
+    out = re.sub(r"([,;:])\s*(?=[,;]|$)", "", out)
+    return re.sub(r"(?:[,;—–-]\s*)+$", "", out).strip()
+
+
+_PREP = frozenset("of to in on at for from by over since until after before "
+                  "with within during across per vs than".split())
+
+
+def _tidy_title(title: str) -> str:
+    subject, sep, rest = title.partition(":")
+    if not sep:
+        return title.strip()
+    words = rest.split()
+    if len(words) < 2 or words[0].lower() in _PREP:
+        return subject.strip()
+    return f"{subject.strip()}: {rest.strip()}"
+
+
+def title_figures_agree(out: dict, changed: list[str]) -> None:
+    """Take out of the title every figure the summary and tiles do not
+    state with the same value and unit, and every bare number."""
+    title = str(out.get("title") or "")
+    figs = title_figures(title)
+    if not figs:
+        return
+    texts = [str(out.get("summary") or "")]
+    for h in out.get("highlights") or []:
+        if isinstance(h, dict):
+            texts.append(" ".join(str(h.get(k) or "") for k in
+                                  ("label", "value", "delta")))
+    body_text = " ".join(texts)
+    body = [f for t in texts for f in _figures_in(t)]
+    # A pair goes as a pair: "from 68 to 74" says nothing with one side.
+    drop = [f for f in figs if f["bare"]
+            or not _stood_behind(f, body, body_text)]
+    if not drop:
+        return
+    spans = []
+    for f in drop:
+        start, end = f["start"], f["end"]
+        if f.get("pair"):
+            mates = [g for g in figs if g.get("pair")
+                     and abs(g["start"] - f["start"]) < 24]
+            start = min(start, *(g["start"] for g in mates))
+            end = max(end, *(g["end"] for g in mates))
+        spans.append((start, end))
+    for start, end in sorted(set(spans), reverse=True):
+        if any(s < start < e for s, e in spans if (s, e) != (start, end)):
+            continue
+        title = _without(title, start, end)
+    title = _tidy_title(title)
+    if title and title != out.get("title"):
+        out["title"] = title[:120]
+        changed.append("a title figure the card does not stand behind")
+
+
 __all__ = ["BLIND_WHY", "GAP_LINE_MAX", "blind_lead", "finding_twin",
-           "is_gap", "trim_gaps"]
+           "is_gap", "title_figures", "title_figures_agree", "trim_gaps"]

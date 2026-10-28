@@ -525,6 +525,9 @@ def review(obj: dict, previous: dict | None = None,
                 got["fixed"] = fixed
             return got
         out["blind"] = True
+    # Before `_finish`: the title's figures are read against the body the
+    # model wrote, before a summary sentence restating them is taken off.
+    card_claims.title_figures_agree(out, got["changed"])
     _finish(out, got["changed"])
     card_claims.trim_gaps(out, got["changed"])
     _strip_verdict_sentence(out, got["changed"])
