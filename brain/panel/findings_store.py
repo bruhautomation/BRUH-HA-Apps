@@ -488,7 +488,16 @@ HOUSE_TZ = None
 # Model-written sources whose words are left alone: a person's correction is
 # their words, and the safety lane and the tripwire are written by code
 # (the tripwire's card must never name its entity).
-PLAIN_EXEMPT = frozenset({"correction", "safety", "security"})
+PLAIN_EXEMPT = frozenset({"correction", "safety", "security", "self_care"})
+# Who brAIn is here, the one stored answer (`personality.identity`):
+# `IDENTITY() -> {"name", "voice"}`, handed in by the panel. A model's
+# sentence about brAIn's voice reads it (`house_words.self_said`); unset,
+# the name is "brAIn" and no voice is recorded.
+IDENTITY = None
+# A model's row telling the owner to change a line of brAIn's own
+# instructions, as the yes/no question brAIn asks itself (`self_care.
+# as_question`): `SELF_CARE(obj) -> fields | None`, handed in by the panel.
+SELF_CARE = None
 
 
 def _model_written(source: str) -> bool:
@@ -519,6 +528,30 @@ def _tz_now():
         return None
 
 
+def _identity_now() -> dict:
+    hook = IDENTITY
+    if hook is None:
+        return {"name": "brAIn", "voice": ""}
+    try:
+        got = hook() or {}
+        return {"name": str(got.get("name") or "brAIn"),
+                "voice": str(got.get("voice") or "")}
+    except Exception as exc:  # noqa: BLE001 — a nicer sentence, never the write
+        log.debug("could not read brAIn's identity: %s", exc)
+        return {"name": "brAIn", "voice": ""}
+
+
+def _self_care(obj: dict) -> dict | None:
+    hook = SELF_CARE
+    if hook is None:
+        return None
+    try:
+        return hook(obj)
+    except Exception as exc:  # noqa: BLE001 — the row stays a finding
+        log.debug("could not read a row as brAIn's own upkeep: %s", exc)
+        return None
+
+
 def plain(text: str, names: dict | None = None, tz=None) -> str:
     """`house_words.plain` with the panel's names and zone when not handed."""
     if not isinstance(text, str) or not text:
@@ -538,10 +571,19 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
                                                       or RESIDENT_SOURCE):
         return row
     names, tz = _names_now(), _tz_now()
+    who = _identity_now()
+    # A row about brAIn itself also loses its developer words: a path, a
+    # tool, an id, a model id (`house_words.self_said`).
+    dev = house_words.about_self(*(row.get(k) for k in
+                                   ("text", "claim", "detail", "fix")))
     out = dict(row)
     for key in keys:
         if isinstance(out.get(key), str) and out[key]:
             out[key] = plain(out[key], names, tz)
+            # One narrator, one stored answer for its voice.
+            out[key] = house_words.self_said(
+                out[key], who["name"], who["voice"], dev=dev,
+                keep=key == "text")
             # A step or an account holding a hole where a value belongs
             # ("a template", "<entity>", "TODO") is refused and the row
             # keeps what it had (#446): `refine` writes nothing over an
@@ -1461,6 +1503,12 @@ def _shape(entry: dict) -> dict:
     if items:
         out["items"] = items
     out.update(_subject_fields(entry))
+    # brAIn's own upkeep (`self_care`): the instruction line its Yes takes
+    # out. Absent on every other row.
+    edit = entry.get("self_edit")
+    if isinstance(edit, dict) and edit.get("key") and edit.get("line"):
+        out["self_edit"] = {"key": str(edit["key"])[:48],
+                            "line": str(edit["line"])[:2000]}
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
     if entry.get("came_back"):
@@ -2351,6 +2399,8 @@ def add_many(objs: list[dict]) -> list[dict]:
     refreshed = False
     for obj in objs:
         entry = coerce(obj)
+        care = (_self_care(obj) if entry is not None
+                and _model_written(entry.get("source")) else None)
         if entry is not None and _model_written(entry.get("source")):
             # A model's words in the house's own. `text` too, except for
             # the producers whose text is a key code chose (a question's
@@ -2359,6 +2409,9 @@ def add_many(objs: list[dict]) -> list[dict]:
                 ("claim", "detail", "fix", "todo_text")
                 if entry.get("source") in SUBJECT_FOLD_EXCLUDED
                 else ("text", "claim", "detail", "fix", "todo_text")))
+        if entry is not None and care:
+            # brAIn's own upkeep: its question, not the owner's chore.
+            entry.update(care)
         if entry is None:
             continue
         if (_sweepable(entry, None) and is_drop_report(entry)

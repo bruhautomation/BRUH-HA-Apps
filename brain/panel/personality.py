@@ -47,6 +47,7 @@ MORPH_FILE = os.environ.get(
     "BRAIN_MORPH_PERSONALITY_FILE", "/config/morph/frontend/personality.js")
 
 NAME_MAX = 60
+VOICE_MAX = 80
 # One ceiling for the persona everywhere it is stored, shown or typed.
 PERSONA_MAX = 32000
 GROWTH_TEXT_MAX = 500
@@ -141,6 +142,10 @@ def normalise(data) -> dict:
     data = data if isinstance(data, dict) else {}
     out = {
         "name": _one_line(data.get("name"), NAME_MAX),
+        # The voice brAIn speaks with: one line, the household's answer
+        # (`identity`), set in ⚙ › Personality or by a growth note that says
+        # the voice changed. Absent is "" — "not recorded", never a guess.
+        "voice": _one_line(data.get("voice"), VOICE_MAX),
         "persona": _block(data.get("persona"), PERSONA_MAX),
         "growth": clean_growth(data.get("growth")),
     }
@@ -266,8 +271,9 @@ def growth_refusal(text, path: str | None = None) -> str:
     return ""
 
 
-def save(name, persona, path: str | None = None) -> dict:
-    """Replace the name and the persona; the growth log is kept.
+def save(name, persona, path: str | None = None, voice=None) -> dict:
+    """Replace the name and the persona; the growth log is kept, and so is
+    the voice unless ``voice`` is given.
 
     Raises ValueError when there is nowhere to write, or the text is past
     the cap (a person typed it, so it is refused rather than shortened).
@@ -287,6 +293,8 @@ def save(name, persona, path: str | None = None) -> dict:
         data = load(target)
         data["name"] = _one_line(name, NAME_MAX)
         data["persona"] = _block(persona, PERSONA_MAX)
+        if isinstance(voice, str):
+            data["voice"] = _one_line(voice, VOICE_MAX)
         data["updated_at"] = int(time.time())
         _write(data, target)
     return data
@@ -308,10 +316,51 @@ def add_growth(text, when: float | None = None, path: str | None = None) -> dict
     with atomic_write.locked(target):
         data = load(target)
         data["growth"] = (data.get("growth") or []) + [entry]
+        said = voice_named(words)
+        if said:
+            # The note that the voice changed IS the new answer: every
+            # surface quotes the store (`identity`), never the note.
+            data["voice"] = said
         data["growth"] = data["growth"][-GROWTH_MAX:]
         data["updated_at"] = at
         _write(data, target)
     return entry
+
+
+# A growth note saying which voice brAIn now speaks with: "the spoken voice
+# changed from A to B", "my voice is now B", "switched the voice to B".
+_VOICE_NOTE = re.compile(
+    r"\bvoice\b[^.\n]*?\b(?:to|is now|now)\s+(?:the\s+)?[“\"']?"
+    r"([^.,;”\"'\n]{2,%d}?)[”\"']?\s*(?:voice\b|for\b|on\b|in\b|[.,;]|$)"
+    % VOICE_MAX, re.I)
+
+
+def voice_named(text) -> str:
+    """The voice a growth note says brAIn now speaks with, or ""."""
+    m = _VOICE_NOTE.search(str(text or ""))
+    return _one_line(m.group(1), VOICE_MAX) if m else ""
+
+
+def identity(data: dict | None = None, path: str | None = None) -> dict:
+    """THE answer to who brAIn is here: `{name, voice}`, read off the store
+    (the name through `assistant_name`, so the Personality switch holds).
+    Findings and cards quote this and never a model's memory of it."""
+    try:
+        data = data if isinstance(data, dict) else load(path)
+    except Exception:  # noqa: BLE001 — an unreadable store is no answer
+        data = {}
+    return {"name": assistant_name(data), "voice": str(data.get("voice") or "")}
+
+
+def identity_line(data: dict | None = None, path: str | None = None) -> str:
+    """The line a prompt carries about brAIn's own name and voice."""
+    who = identity(data, path)
+    voice = (f"brAIn's spoken voice is {who['voice']}." if who["voice"] else
+             "Which voice brAIn speaks with is not recorded: say nothing "
+             "about it.")
+    return ("BRAIN'S OWN VOICE (the one stored answer; quote it, never from "
+            f"memory, and never ask the household to change brAIn's files): "
+            f"{voice}")
 
 
 def payload(path: str | None = None) -> dict:
@@ -321,10 +370,12 @@ def payload(path: str | None = None) -> dict:
         "set": is_set(data),
         "name": data["name"],
         "persona": data["persona"],
+        "voice": data.get("voice") or "",
         "growth": list(reversed(data["growth"])),
         "updated_at": data.get("updated_at") or 0,
         "path": path or STORE,
-        "limits": {"name": NAME_MAX, "persona": PERSONA_MAX, "growth": GROWTH_TEXT_MAX},
+        "limits": {"name": NAME_MAX, "persona": PERSONA_MAX,
+                   "growth": GROWTH_TEXT_MAX, "voice": VOICE_MAX},
     }
 
 

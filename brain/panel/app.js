@@ -17255,6 +17255,9 @@ function renderPersonality() {
   const d = persState.data || {};
   $("#persName").value = d.name || "";
   $("#persText").value = d.persona || "";
+  // The one stored answer for which voice brAIn speaks with: findings and
+  // cards quote it (`personality.identity`).
+  if ($("#persVoice")) $("#persVoice").value = d.voice || "";
   const list = $("#persGrowth");
   list.textContent = "";
   const growth = Array.isArray(d.growth) ? d.growth : [];
@@ -17276,7 +17279,8 @@ $("#persSave").addEventListener("click", async () => {
   try {
     persState.data = await api("api/personality", {
       method: "PUT", body: JSON.stringify({
-        name: $("#persName").value, persona: $("#persText").value }) });
+        name: $("#persName").value, persona: $("#persText").value,
+        voice: $("#persVoice") ? $("#persVoice").value : undefined }) });
     renderPersonality();
     setSummary("setSumPersonality", persState.data.set
       ? [persState.data.name, (persState.data.persona || "").split("\n")[0].slice(0, 60)]

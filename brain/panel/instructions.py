@@ -333,6 +333,32 @@ def save(key: str, text: str) -> None:
     apply(key)
 
 
+def override_lines(key: str) -> list[str]:
+    """The lines of an override, or [] when there is none to read."""
+    try:
+        return override_path(key).read_text(encoding="utf-8").splitlines()
+    except (KeyError, OSError):
+        return []
+
+
+def drop_line(key: str, line: str) -> bool:
+    """Take one line out of an override, the first that reads exactly
+    ``line``; an override left empty is removed (the shipped text is back).
+    Whether a line was taken out. Never raises on a missing file."""
+    lines = override_lines(key)
+    wanted = str(line or "").strip()
+    for i, have in enumerate(lines):
+        if have.strip() == wanted and wanted:
+            rest = lines[:i] + lines[i + 1:]
+            text = "\n".join(rest) + ("\n" if rest else "")
+            if text.strip():
+                save(key, text)
+            else:
+                reset(key)
+            return True
+    return False
+
+
 def reset(key: str) -> None:
     path = override_path(key)
     try:
