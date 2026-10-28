@@ -102,6 +102,12 @@ class TestTheHeatLossFixIsAboutTheRoomItMeasured(unittest.TestCase):
                 "device_class": "temperature",
                 "unit_of_measurement": "°C"}}
             entities.append({"entity_id": eid, "area_id": room.lower()})
+            # Every room is heated: `climate.heat_loss` compares only the
+            # rooms a thermostat or heater serves.
+            cid = f"climate.{room.lower()}"
+            states[cid] = {"state": "heat", "attributes": {
+                "friendly_name": f"{room} thermostat"}}
+            entities.append({"entity_id": cid, "area_id": room.lower()})
         states.update(extra_states or {})
         entities += extra_entities or []
         return {"states": states, "entities": entities, "devices": [],

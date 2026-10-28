@@ -276,12 +276,17 @@ def all_items() -> list[dict]:
 
 def add_suggestions(rows: list[dict], dash: dict) -> int:
     data = _load()
-    known = {it["key"] for it in data["items"]} | set(data["declined"])
+    # A suggestion ended as `kept` (its card's entity came back) is no
+    # answer about the idea, so it may be made again if the thing goes for
+    # good; every other one already made is not made twice.
+    live = [it for it in data["items"] if it.get("status") != "kept"]
+    known = {it["key"] for it in live} | set(data["declined"])
     sections = {s["id"] for f in dash.get("floors") or [] for s in f.get("sections") or []}
-    cards = {c["id"] for f in dash.get("floors") or [] for s in f.get("sections") or []
+    cards = {c["id"]: c.get("entity") or "" for f in dash.get("floors") or []
+             for s in f.get("sections") or []
              for g in s.get("groups") or [] for c in g.get("cards") or []}
     open_now = sum(1 for it in data["items"] if it.get("status") == "open")
-    seen_words = [_words(it["title"]) for it in data["items"]] + \
+    seen_words = [_words(it["title"]) for it in live] + \
         [_words(v.get("title")) for v in data["declined"].values()]
     added = 0
     taken = _taken(data)
@@ -308,6 +313,10 @@ def add_suggestions(rows: list[dict], dash: dict) -> int:
             item["section"] = row["section"]
         if row.get("card") in cards:
             item["card"] = row["card"]
+            # The entity the card shows rides on brAIn's case, so a "fixing
+            # it" answer can end early when that entity reports again.
+            if cards[row["card"]]:
+                item["entity_id"] = str(cards[row["card"]])[:255]
         data["items"].append(item)
         added += 1
         open_now += 1
@@ -479,7 +488,10 @@ def settle_doing(read_tell) -> None:
 # what it filed and what it was told, as an index (it is what stops the
 # next pass proposing the same thing), never as something drawn.
 MORPH_SOURCE = "morph"
-ENDED = ("declined", "sent", "doing", "done")
+# `kept`: brAIn ended a suggestion to remove a card because the thing on it
+# reports again after a "fixing it for now" answer — the card stays, and a
+# later pass may suggest it again if it goes for good (it is not declined).
+ENDED = ("declined", "sent", "doing", "done", "kept")
 _SEQ = 0
 
 
@@ -563,6 +575,9 @@ def sync_brain(start_tell=None) -> dict:
             if tid:
                 it.update(status="doing", tell=tid, decided=now, withdrawn=now)
                 record_outcome({"kind": "suggestion", "id": key, "verb": "do", "title": it["title"], "tell": tid, "at": now})
+        elif how == "kept":
+            it.update(status="kept", decided=now, withdrawn=now)
+            record_outcome({"kind": "suggestion", "id": key, "verb": "kept", "title": it["title"], "at": now})
         elif how == "declined":
             it.update(status="declined", note=note, decided=now, withdrawn=now)
             data["declined"][it["key"]] = {"title": it["title"], "note": note, "at": now}

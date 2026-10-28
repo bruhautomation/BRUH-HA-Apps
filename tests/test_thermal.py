@@ -650,9 +650,107 @@ class TestHeatLoss(unittest.TestCase):
         self.assertEqual(loss, [])
         # And with nothing asking for a temperature, the same room is the
         # heat-loss finding instead — never neither, and never both.
-        alone = snap(four(**{"sensor.study_temp": both}), target=None)
+        alone = snap(four(**{"sensor.study_temp": both}), hvac="off")
         self.assertEqual(thermal_check.underheated(alone, NOW), [])
         self.assertEqual(len(thermal_check.heat_loss(alone, NOW)), 1)
+
+
+def unheated(house: dict, *areas: str) -> dict:
+    """The snapshot with no thermostat in these rooms: the space nothing
+    heats — a garage, a porch, a loft — which is a room in the registry
+    and a temperature sensor like any other."""
+    gone = {f"climate.{a.lower()}" for a in areas}
+    house["states"] = {e: s for e, s in house["states"].items()
+                       if e not in gone}
+    house["entities"] = [r for r in house["entities"]
+                         if r["entity_id"] not in gone]
+    return house
+
+
+class TestHeatLossComparesConditionedRoomsOnly(unittest.TestCase):
+    """A heat-loss ranking is a question about rooms something heats.
+
+    It ranked every room with a thermometer against the rest and filed an
+    uninsulated space as the house's leakiest room, which the household
+    marked Wrong ("expected, mostly uninsulated"). A room with no
+    thermostat and no heater is not losing the house's heat — it has none
+    to lose — so it is never an outlier and never part of the median.
+    """
+
+    def test_an_unheated_garage_is_never_the_outlier(self):
+        garage = room(k=0.40, gain=0.5, warmest=14.0, area="Garage")
+        house = unheated(snap(four(**{"sensor.garage_temp": garage})),
+                         "Garage")
+        self.assertEqual(thermal_check.heat_loss(house, NOW), [])
+
+    def test_a_heated_room_whose_loss_rises_is_still_reported(self):
+        garage = room(k=0.40, gain=0.5, warmest=14.0, area="Garage")
+        leaky = room(k=0.25, gain=2.0, warmest=22.5, area="Study")
+        house = unheated(snap(four(**{"sensor.garage_temp": garage,
+                                      "sensor.study_temp": leaky})),
+                         "Garage")
+        found = thermal_check.heat_loss(house, NOW)
+        self.assertEqual([r["entity_id"] for r in found],
+                         ["sensor.study_temp"])
+
+    def test_unheated_rooms_do_not_make_up_the_rest_of_the_house(self):
+        """Three heated rooms and two porches is three rooms to compare."""
+        rooms = {
+            "sensor.hall_temp": room(area="Hall"),
+            "sensor.lounge_temp": room(k=0.075, area="Lounge"),
+            "sensor.study_temp": room(k=0.25, area="Study"),
+            "sensor.porch_temp": room(k=0.09, area="Porch"),
+            "sensor.shed_temp": room(k=0.08, area="Shed"),
+        }
+        house = unheated(snap(rooms), "Porch", "Shed")
+        self.assertEqual(thermal_check.heat_loss(house, NOW), [])
+
+    def test_a_heater_switch_makes_a_room_heated(self):
+        leaky = room(k=0.25, gain=2.0, warmest=22.5, area="Conservatory")
+        house = unheated(snap(four(**{"sensor.cons_temp": leaky})),
+                         "Conservatory")
+        house["states"]["switch.conservatory_heater"] = {
+            "state": "off", "attributes": {
+                "friendly_name": "Conservatory heater"}}
+        house["entities"].append({"entity_id": "switch.conservatory_heater",
+                                  "area_id": "conservatory"})
+        found = thermal_check.heat_loss(house, NOW)
+        self.assertEqual([r["entity_id"] for r in found], ["sensor.cons_temp"])
+
+    def test_a_room_the_household_called_unconditioned_is_left_out(self):
+        """A thermostat in the loft does not make the loft insulated."""
+        loft = room(k=0.30, gain=2.0, warmest=21.5, area="Loft")
+        house = snap(four(**{"sensor.loft_temp": loft}))
+        self.assertEqual(len(thermal_check.heat_loss(house, NOW)), 1)
+        house["unconditioned"] = {"areas": ["loft"], "entities": []}
+        self.assertEqual(thermal_check.heat_loss(house, NOW), [])
+
+    def test_a_note_about_one_sensor_covers_its_room(self):
+        loft = room(k=0.30, gain=2.0, warmest=21.5, area="Loft")
+        house = snap(four(**{"sensor.loft_temp": loft,
+                             "sensor.loft_humidity_temp":
+                                 room(k=0.31, area="Loft")}))
+        house["unconditioned"] = {"areas": [],
+                                  "entities": ["sensor.loft_humidity_temp"]}
+        self.assertEqual(thermal_check.heat_loss(house, NOW), [])
+
+    def test_the_notes_are_read_off_what_the_household_said(self):
+        rows = [
+            {"subject": "area:loft", "subjects": ["area:loft"],
+             "text": "The loft is mostly uninsulated"},
+            {"subject": "sensor.porch_temp", "subjects": ["sensor.porch_temp"],
+             "predicate": "exception:climate.heat_loss",
+             "text": "expected — the porch isn't heated"},
+            {"subject": "area:workshop", "subjects": ["area:workshop"],
+             "text": "The workshop is an unconditioned space"},
+            {"subject": "area:kitchen", "subjects": ["area:kitchen"],
+             "text": "The kitchen is heated by the range in winter"},
+            {"subject": "area:study", "subjects": ["area:study"],
+             "text": "The study is well insulated"},
+        ]
+        got = thermal_check.unconditioned_from(rows)
+        self.assertEqual(got["areas"], ["loft", "workshop"])
+        self.assertEqual(got["entities"], ["sensor.porch_temp"])
 
 
 # ---------------------------------------------------------------------------

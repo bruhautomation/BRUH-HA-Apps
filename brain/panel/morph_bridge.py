@@ -83,7 +83,9 @@ ANSWER_KEEP_S = 3600
 MAX_ASKS_PER_PASS = 8
 ASK_ID_RE = re.compile(r"^a-[0-9a-fA-F]{4,64}$")
 ASK_DO = ("done", "conversation", "tell_dashboard", "tell_code", "fallback")
-ENDED_HOWS = ("accepted", "declined", "dismissed", "todo")
+# `kept`: a suggestion to remove a card about something that was out of use
+# for now, ended because it reports again — the card stays.
+ENDED_HOWS = ("accepted", "declined", "dismissed", "todo", "kept")
 
 
 def writable() -> bool:

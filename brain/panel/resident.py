@@ -1134,6 +1134,106 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# "It did not run" is a claim about the rule that runs it
+# ---------------------------------------------------------------------------
+#
+# A case said the basement dehumidifier "hasn't run" while the house was
+# damp, from the dehumidifier's state history and whichever humidity
+# reading the run found — and the automation that drives it triggers on one
+# sensor, not that one. "Should have run" is a claim about what runs the
+# device, so it is grounded only when the reading the claim compares it with
+# is one the device's own automations read (a trigger or a condition). A
+# gate in code, after the case is parsed, because a prompt line asking the
+# run to read the automation is a line a run can skip.
+
+_DID_NOT_RUN_RE = re.compile(
+    r"\b(?:has(?:n'?t| not)|did(?:n'?t| not)|never|failed to|was(?:n'?t| not)|"
+    r"is(?:n'?t| not)|does(?:n'?t| not)|wo(?:n'?t|uld not))\s+"
+    r"(?:been\s+)?(?:run|ran|running|turn(?:ed)?\s+on|turning\s+on|"
+    r"c[ao]me\s+on|coming\s+on|start(?:ed)?|kick(?:ed)?\s+in|"
+    r"activated?|switch(?:ed)?\s+on|cycled?)\b"
+    r"|\bshould\s+have\s+(?:run|turned\s+on|come\s+on|started|kicked\s+in|"
+    r"switched\s+on)\b"
+    r"|\bstayed\s+off\b|\bnot\s+running\b", re.I)
+_ENTITY_IN_WORDS_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
+# What a claim may compare an actuator with: a reading.
+READING_DOMAINS = frozenset({"sensor", "binary_sensor", "weather"})
+
+
+def drivers_of(automations, house) -> dict[str, list[dict]]:
+    """``{actuator: [{"alias", "reads"}]}`` — every automation that acts on
+    an entity, with the entities its triggers and conditions read.
+
+    ``automations`` is the checks snapshot's list of automation configs and
+    ``house`` its `checks._util.House` (for `entity_refs`, which knows a
+    template's references from a service name). Pure over what it is given.
+    """
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+
+    out: dict[str, list[dict]] = {}
+    for cfg in automations or ():
+        if not isinstance(cfg, dict):
+            continue
+        acts: set[str] = set()
+        for call in shadow.would_do(cfg):
+            acts.update(str(e) for e in call.get("entity_id") or ())
+        if not acts:
+            continue
+        conditions = cfg.get("conditions", cfg.get("condition"))
+        reads = set(house.entity_refs(shadow.triggers_of(cfg)))
+        if conditions:
+            reads |= set(house.entity_refs(conditions))
+        alias = str(cfg.get("alias") or cfg.get("id") or "an automation")[:80]
+        row = {"alias": alias, "reads": sorted(reads - acts)}
+        for eid in sorted(acts):
+            out.setdefault(eid, []).append(row)
+    return out
+
+
+def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
+    """Why a "did not run" case is not grounded, or "" when it is (or when
+    it is not that kind of claim).
+
+    The claim (its title or detail) has to say a device did not run, the
+    case has to name a device some automation drives and a reading beside
+    it, and NONE of the readings may be anything those automations read.
+    A device nothing drives, or a claim that compares it with no reading,
+    is left alone: there is no rule to read it against.
+    """
+    if not isinstance(case, dict) or not drivers:
+        return ""
+    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
+                                                       "detail"))
+    if not _DID_NOT_RUN_RE.search(words):
+        return ""
+    named: list[str] = []
+    for eid in ([str(case.get("entity_id") or "")]
+                + [str(r.get("entity") or "") for r in case.get("evidence") or ()
+                   if isinstance(r, dict)]
+                + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
+        if "." in eid and eid not in named:
+            named.append(eid)
+    actuators = [e for e in named if drivers.get(e)]
+    if not actuators:
+        return ""
+    readings = [e for e in named if e not in actuators
+                and e.split(".", 1)[0] in READING_DOMAINS]
+    if not readings:
+        return ""
+    rules = [r for a in actuators for r in drivers[a]]
+    watched = {e for r in rules for e in r.get("reads") or ()}
+    if any(e in watched for e in readings):
+        return ""
+    by = "; ".join(
+        f"“{r['alias']}” reads " + (", ".join(r.get("reads") or ()) or
+                                    "no entity")
+        for r in rules[:3])
+    return textclip.clip(
+        f"{', '.join(actuators)} is run by {by} — the claim compares it with "
+        f"{', '.join(readings)}, which none of them reads", MAX_WHY)
+
+
 def _no_placeholder(value) -> str:
     """A reply's sentence, or "" when it holds a hole where a value belongs
     (#446) — the row then keeps the sentence it had."""
@@ -1512,4 +1612,5 @@ __all__ = [
     "CLAIM_RULE", "DISMISS_RULE", "REFINE_SYSTEM", "investigate_system",
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
+    "READING_DOMAINS", "drivers_of", "ungrounded_did_not_run",
 ]

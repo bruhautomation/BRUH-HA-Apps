@@ -806,6 +806,14 @@ def _without_impossible(series: list, attrs: dict, eid: str,
     """
     if devices is None or not series:
         return series, None
+    # A series that has been warmer than any room every hour for days, and
+    # past the ambient ceiling on some of them, is something hot working
+    # (`devices.history_says_hot`, the rule `dev.implausible` reads off the
+    # daily statistics): learned, not thrown away hour by hour.
+    says_hot = getattr(devices, "history_says_hot", None)
+    if says_hot is not None and says_hot(
+            series, attrs, devices.HOT_HISTORY_MIN_DAYS * 24):
+        return series, None
     kept, dropped, bad = [], [], []
     for row in series:
         values = [row.get(k) for k in ("mean", "min", "max")] if isinstance(

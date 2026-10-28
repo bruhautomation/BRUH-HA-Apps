@@ -83,7 +83,9 @@ worth waking somebody for.
 """
 from __future__ import annotations
 
-from ._util import House, join_names, num
+import re
+
+from ._util import House, domain_of, join_names, num
 
 # How far under its setpoint a room has to have stayed, all month, before
 # this is a fault rather than a thermostat that is slightly optimistic.
@@ -322,12 +324,99 @@ def _heat_loss_fix(house: House, eid: str, room: str) -> str:
             "open is the cheapest one to rule out.")
 
 
+# --- which rooms a heat-loss ranking may compare ---------------------------
+# A switch whose name says it heats a room. Home Assistant has no device
+# class for "this switch is a heater", so the words are the only reading;
+# a `climate` entity needs none.
+HEATER_DOMAINS = frozenset({"switch", "input_boolean"})
+_HEATER_WORDS = re.compile(
+    r"\b(heater|heaters|heating|radiator|radiators|underfloor|baseboard|"
+    r"floor heat|space heater)\b", re.I)
+# What the household says about a space nothing conditions. "Not heated"
+# and "isn't heated" are the same sentence; "well insulated" is the
+# opposite one and must not match, so every alternative names the absence.
+_UNCONDITIONED = re.compile(
+    r"\b(unheated|uninsulated|unconditioned|non[- ]?heated|"
+    r"(?:not|isn'?t|is not|never|no)\s+(?:heated|insulated|conditioned)|"
+    r"no (?:heating|heat|insulation|thermostat))\b", re.I)
+
+
+def unconditioned_from(rows) -> dict:
+    """The rooms and sensors the household said nothing heats.
+
+    ``rows`` are facts-store rows (any source, the Wrong reasons among
+    them). An `area:` subject names the room; an entity subject names a
+    sensor, whose room the check resolves against the registry it holds.
+    ``{"areas": [...], "entities": [...]}``, sorted, for the snapshot.
+    """
+    areas: set[str] = set()
+    entities: set[str] = set()
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        if not _UNCONDITIONED.search(str(row.get("text") or "")):
+            continue
+        subjects = row.get("subjects")
+        if not isinstance(subjects, list) or not subjects:
+            subjects = [row.get("subject") or ""]
+        for subject in subjects:
+            subject = str(subject or "")
+            if subject.startswith("area:") and subject[5:]:
+                areas.add(subject[5:])
+            elif "." in subject and ":" not in subject:
+                entities.add(subject)
+    return {"areas": sorted(areas), "entities": sorted(entities)}
+
+
+def conditioned_areas(house: House) -> set[str]:
+    """The area ids something heats: a thermostat, or a heater switch.
+
+    A `climate` entity counts whatever it is doing now — off in August is
+    still the room's heating — and a room the household said is
+    unheated or uninsulated (`snap["unconditioned"]`, read off the facts
+    store by the collector) is not one, thermostat or not.
+    """
+    heated: set[str] = set()
+    for eid in set(house.states) | set(house.registry):
+        domain = domain_of(eid)
+        if domain == "climate" or (
+                domain in HEATER_DOMAINS
+                and _HEATER_WORDS.search(f"{eid.replace('_', ' ')} "
+                                         f"{house.name(eid)}")):
+            area = house.area_id_of(eid)
+            if area:
+                heated.add(area)
+    said = house.snap.get("unconditioned") or {}
+    if isinstance(said, dict):
+        heated -= {str(a) for a in said.get("areas") or ()}
+        heated -= {house.area_id_of(str(e))
+                   for e in said.get("entities") or ()}
+    return heated
+
+
 def heat_loss(snap: dict, now: float) -> list[dict]:
-    """A room that empties much faster than the rest of the house."""
+    """A room that empties much faster than the rest of the house.
+
+    Only rooms something heats are compared — with each other, and for
+    the median. A garage or a loft with no thermostat has no heat of the
+    house's to lose, so it was the leakiest room in every house that had
+    one, and it says nothing about a heated room that it falls faster.
+    """
     import baselines  # noqa: PLC0415
 
     store, rooms = _rooms(snap)
-    measured = {eid: e for eid, e in rooms.items() if e.get("k")}
+    house = House(snap)
+    heated = conditioned_areas(house)
+    measured = {eid: e for eid, e in rooms.items()
+                if e.get("k") and house.area_id_of(eid) in heated}
+    unheated = sorted(eid for eid, e in rooms.items()
+                      if e.get("k") and eid not in measured)
+    if unheated:
+        house.gave_up("climate.heat_loss",
+                      [{"entity_id": eid} for eid in unheated],
+                      "nothing heats this room (no thermostat or heater, or "
+                      "you said it is unheated), so it is not compared",
+                      kind="explained")
     if len(measured) < MIN_ROOMS:
         return []
     claimed = {h["entity_id"] for h in underheated_rooms(snap)}
@@ -335,7 +424,6 @@ def heat_loss(snap: dict, now: float) -> list[dict]:
     if middle <= 0:
         return []
 
-    house = House(snap)
     hits = []
     for eid, entry in sorted(measured.items()):
         if eid in claimed:
