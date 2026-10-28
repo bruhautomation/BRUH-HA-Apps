@@ -12958,6 +12958,13 @@ def _note_registry(snapshot: dict) -> None:
         _CONTROLLED_BY.update(_controlled_by_map(snapshot))
     except Exception as exc:  # noqa: BLE001
         log.debug("controlled-by note failed: %s", exc)
+    try:
+        driven = resident.drivers_of(snapshot.get("automations") or [],
+                                     House(snapshot))
+        _DRIVEN_BY.clear()
+        _DRIVEN_BY.update(driven)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("driven-by note failed: %s", exc)
     _note_world(snapshot)
 
 
@@ -13040,6 +13047,11 @@ def _used_by_map(snapshot: dict) -> dict[str, list[str]]:
 # pass, `_NAMES`' rule.
 _CONTROLLED_BY: dict[str, list[str]] = {}
 CONTROLLED_BY_PER_ENTITY = 4
+# The same automations as structure rather than prose, for the gate a case
+# saying a device "did not run" passes (`resident.ungrounded_did_not_run`):
+# `{actuator: [{alias, reads}]}`. Empty until the first checks pass, which
+# gates nothing — "I could not look" must not refuse a case.
+_DRIVEN_BY: dict[str, list[dict]] = {}
 # The keys of a trigger that say WHEN it fires, beside the entity it reads.
 _TRIGGER_TERMS = ("above", "below", "to", "from", "for", "at")
 
@@ -14131,6 +14143,23 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             await _outcome(signal, "withdrawn", run_id, now, why, refines,
                            escalated=True)
             return False
+    # "It did not run" compared with a reading its own automations never
+    # read is a claim about a rule the house does not have: refused, with
+    # the automations' own triggers as the reason on the trail.
+    ungrounded = resident.ungrounded_did_not_run(case, _DRIVEN_BY)
+    if ungrounded:
+        RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
+        log.info("an investigation of %s said a device did not run against a "
+                 "reading its automations never read; refused: %s",
+                 signal.get("subject"), ungrounded)
+        await asyncio.to_thread(decision_trail.note_many, [{
+            "kind": "explained",
+            "subject": str(signal.get("subject") or ""),
+            "check": "resident", "reason": ungrounded,
+            "text": str(case.get("claim") or "")}], now)
+        await _outcome(signal, "refused", run_id, now, why, refines,
+                       said=ungrounded)
+        return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was
     # handed the line rather than reading it off the house.
