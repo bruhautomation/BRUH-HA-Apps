@@ -272,6 +272,7 @@ export function cardFailure(e) {
 const CHANGE_VERB = /\b(add|remove|delete|hide|show(?! me\b)|move|put|rename|make|change|resize|swap|replace|get rid of|bring back|restore|reorder|group|split|merge|drop|take (?:out|off|away))\b/i;
 const PAGE_NOUN = /\b(card|cards|tile|tiles|section|sections|dashboard|greeting|header|story|coming up|timeline|scenes? line|layout|column|columns|widget|chart|graph|morph|this page|the page|screen)\b(?!\s+(?:table|tables|room|rooms|reader|readers|game|games|lamp|lamps|light|lights|shelf|desk|player|printer)\b)/i;
 const DEVICE_COMMAND = /^\s*(?:please\s+)?(?:turn\s+(?:on|off|up|down)|switch\s+(?:on|off)|dim|brighten|open|close|lock|unlock|start|stop|play|pause|set|run|arm|disarm)\b/i;
+const LOVELACE = /\blovelace\b/i;
 const PAGE_ITSELF = /\b(dashboard|morph|this page|the page|layout)\b/i;
 
 export function isDashChange(q) {
@@ -280,11 +281,17 @@ export function isDashChange(q) {
   if (!verb) return false;
   if (!PAGE_NOUN.test(q.slice(verb.index))) return false;
   if (DEVICE_COMMAND.test(q) && !PAGE_ITSELF.test(q)) return false;
+  // A Lovelace dashboard is Home Assistant's, not Morph's page: the
+  // request goes to brAIn, which changes it with brain.update_dashboard,
+  // rather than to a Tell about /config/morph.
+  if (LOVELACE.test(q)) return false;
   return true;
 }
 
-// The one sentence of context the house's conversation agent is given with
-// an Ask: it cannot write Morph's files, so it must never say it changed
-// the dashboard (house report: "it says it's making changes, but none of
-// them are applied").
-export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the house’s dashboard. You cannot change the dashboard: if the person asks for a change to it, say that dashboard changes are made with Morph’s Tell (hold the thing in Edit, or press “Change the dashboard instead”) and do not claim to have changed it.';
+// The context the house's conversation agent is given with an Ask: it
+// cannot write Morph's files, so it must never say it changed Morph's page
+// (house report: "it says it's making changes, but none of them are
+// applied"). A Lovelace dashboard is a different thing it CAN change, and
+// a sentence that said "you cannot change the dashboard" was read as
+// "brAIn can't change config" about Lovelace too.
+export const ASK_CONTEXT = 'This question comes from the Ask bar on Morph, the house’s dashboard. Morph’s own page is changed with Morph’s Tell, not from here: if the person asks for a change to Morph’s page, say so (hold the thing in Edit, or press “Change the dashboard instead”) and do not claim to have changed it. A Lovelace dashboard is different: when you can act, change it with get_dashboard and call_service brain.update_dashboard (backed up first).';

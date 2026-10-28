@@ -535,6 +535,13 @@ def _log_records(rows: list, now: float, known: set[str] | None = None,
             "last_hours_ago": round(max(0.0, now - float(
                 row.get("timestamp") or now)) / 3600, 1),
         }
+        # When it began, where Core says: how long a problem has gone on is
+        # half of whether it is one (`hold_transient`).
+        began, ended = row.get("first_occurred"), row.get("timestamp")
+        if all(isinstance(t, (int, float)) and not isinstance(t, bool)
+               for t in (began, ended)):
+            rec["lasted_hours"] = round(max(0.0, float(ended) - float(began))
+                                        / 3600, 1)
         # A browser's error line carries the browser's user agent, and a
         # phone's model in it is not the device the error is about: the
         # frontend's records name no device by name.
@@ -1013,8 +1020,29 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
                 states_now[eid] = str(st.get("state") or "")
         if len(states_now) >= 400:
             break
+    # The house as it is at the review, for `hold_transient`: the state of
+    # every entity of an integration a log line came from (and of every
+    # entity a line names), and how each integration's config entries are
+    # doing. Beside the records and never in the prompt, `subjects`' reason.
+    log_domains = {str(r.get(k) or "") for r in logs
+                   for k in ("integration", "owner")} - {""}
+    log_named: set[str] = set()
+    for r in logs:
+        log_named |= set(r.get("entities") or [])
+    health = {}
+    for eid, st in (collected.get("states") or {}).items():
+        if (platforms.get(str(eid)) in log_domains or eid in log_named) \
+                and isinstance(st, dict):
+            health[str(eid)] = {"state": str(st.get("state") or ""),
+                                "since_h": _hours_since(st.get("last_changed"), now)}
+    entry_states: dict[str, list[str]] = {}
+    for e in collected.get("config_entries") or []:
+        if isinstance(e, dict) and e.get("domain") in log_domains:
+            entry_states.setdefault(str(e["domain"]), []).append(
+                str(e.get("state") or ""))
     return {"records": records,
             "states_now": states_now,
+            "health": health, "entry_states": entry_states,
             "integration_names": integration_names(
                 records, collected.get("config_entries") or [],
                 collected.get("manifests") or []),
@@ -1714,6 +1742,34 @@ def _fix_follows(fix: str, logs: list[dict], dig: dict) -> bool:
     return bool(words & said)
 
 
+def _brain_reloads(where: str) -> str:
+    """The sentence a log cause owes about reloading: brAIn's to do.
+
+    A fix that told the owner to reload an integration handed them the one
+    step brAIn can take itself — from the chat, through the same gate as
+    any other change — so the step is offered as brAIn's, never assigned."""
+    return (f"If it still fails, brAIn can reload the {where} integration "
+            "for you: ask it in the chat." if where else
+            "If it still fails, brAIn can reload its integration for you: "
+            "ask it in the chat.")
+
+
+_RELOAD_WORD = re.compile(r"\breload", re.I)
+
+
+def _reload_is_brains(fix: str, logs: list[dict], dig: dict) -> str:
+    """``fix`` with every sentence telling the owner to reload an
+    integration replaced by `_brain_reloads`' one."""
+    if not fix or not _RELOAD_WORD.search(fix):
+        return fix
+    kept = [sent for sent in _SENTENCES.split(fix)
+            if not (_RELOAD_WORD.search(sent) and "brAIn" not in sent)]
+    if len(kept) == len(_SENTENCES.split(fix)):
+        return fix
+    where = _source_of(logs[0], dig) if logs else ""
+    return " ".join(kept + [_brain_reloads(where)]).strip()
+
+
 # Prose that blames a thing without naming it. A cause citing a line that
 # says what made the calls names them instead.
 _VAGUE_RE = re.compile(
@@ -1907,6 +1963,10 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             # another problem: what brAIn read about it, or nothing — never
             # a canned step (#342's floor, without its stock sentences).
             fix = _evidence_fix(logs or [by_id[real[0]]], dig)
+        if only_logs:
+            # Reloading an integration is a step brAIn takes, not one it
+            # hands the owner (`_brain_reloads`).
+            fix = _reload_is_brains(fix, logs, dig)
         if said:
             detail = f"{detail} {said}".strip()
         if logs:
@@ -1924,6 +1984,115 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             "bundled": bundled, "rewritten": rewritten,
             "unrelated": unrelated, "unstated": unstated,
             "unfollowed": unfollowed}
+
+
+# ---------------------------------------------------------------------------
+# A passing error is not a problem
+# ---------------------------------------------------------------------------
+#
+# The log keeps what happened around a restart — a cloud reconnect, a
+# Bluetooth drop, a Cast retry, an add-on coming back — and a run reading
+# it at night filed each as "needs you" while every entity the integration
+# provides was working when somebody read the card. So before a log cause
+# is filed the house is asked as it is NOW (`digest`'s `health`): a cause
+# is filed only when the integration's things are down, the error is still
+# being logged in the latest window, and it has gone on for hours. Anything
+# else is held, and why goes on the decision trail. "Could not look" holds
+# nothing: an unread state list keeps the cause.
+
+# The latest window: an error last logged longer ago than this has stopped.
+PERSIST_H = 2.0
+# How long a thing must have been failing before the log about it is filed.
+BROKEN_H = 3.0
+ENTRY_FAILED_STATES = ("setup_error", "setup_retry")
+
+
+def _judge_log(rec: dict, dig: dict) -> tuple[str, str] | None:
+    """`(kind, reason)` when this log record is no problem to file now, or
+    None when it is one — or is not a record this can judge."""
+    logger = str(rec.get("logger") or "")
+    domain = str(rec.get("owner") or rec.get("integration") or "")
+    if (rec.get("called_by") or domain in RULE_DOMAINS or _from_frontend(rec)
+            or (not domain and logger.startswith("homeassistant"))):
+        # Calls to a missing entity, an automation's or a template's error,
+        # the browser: somebody's own configuration, which no reconnect
+        # puts right.
+        return None
+    name = _source_of(rec, dig) or logger or "the integration"
+    if domain and any(st in ENTRY_FAILED_STATES for st in
+                      (dig.get("entry_states") or {}).get(domain) or ()):
+        return ("claimed", f"{name} did not finish setting up: brAIn's "
+                "check for that reports it, and brAIn's overnight healing "
+                "reloads it when self-healing is on")
+    last = rec.get("last_hours_ago")
+    persisting = isinstance(last, (int, float)) and last <= PERSIST_H
+    since = _ago(last) or "a while ago"
+    platforms = dig.get("platforms") or {}
+    subject = list(rec.get("entities") or []) or (
+        [e for e, p in platforms.items() if p == domain] if domain else [])
+    if subject and not (dig.get("available") or {}).get("states"):
+        return None
+    health = dig.get("health") or {}
+    known = [health[e] for e in subject if e in health]
+    if known:
+        down = [h for h in known if h.get("state") == "unavailable"]
+        if not down:
+            return ("transient", f"everything {name} provides is working "
+                    f"now; the errors were last logged {since}")
+        if not persisting:
+            return ("transient", f"nothing from {name} has been logged since "
+                    f"{since}, so the log is not what this is")
+        down_for = max(float(h.get("since_h") or 0) for h in down)
+        if down_for < BROKEN_H:
+            return ("transient", f"{name} has been failing for under "
+                    f"{BROKEN_H:g} hours; brAIn looks again next night")
+        return None
+    # Nothing of its own to ask: the log is all there is.
+    if not persisting:
+        return ("transient", f"nothing from {name} has been logged since "
+                f"{since}")
+    lasted = rec.get("lasted_hours")
+    if isinstance(lasted, (int, float)) and lasted < BROKEN_H:
+        return ("transient", f"{name} logged a burst of errors that has "
+                f"lasted under {BROKEN_H:g} hours")
+    return None
+
+
+def hold_transient(causes: list[dict], dig: dict,
+                   now: float) -> tuple[list[dict], list[dict]]:
+    """`(kept, held)`. A cause made only of log records every one of which
+    `_judge_log` holds is held, as `{cause, kind, reason}`; anything else —
+    a mesh record, a Z-Wave node, an automation, a log line that is a real
+    problem now — is kept as it was."""
+    by_id = {r["id"]: r for r in dig.get("records") or []}
+    kept, held = [], []
+    for cause in causes:
+        recs = [by_id[r] for r in cause.get("records") or [] if r in by_id]
+        if not recs or any(r["kind"] != "log" for r in recs):
+            kept.append(cause)
+            continue
+        verdicts = [_judge_log(r, dig) for r in recs]
+        if any(v is None for v in verdicts):
+            kept.append(cause)
+            continue
+        claimed = [v for v in verdicts if v[0] == "claimed"]
+        kind, reason = (claimed or verdicts)[0]
+        held.append({"cause": cause, "kind": kind,
+                     "reason": textclip.clip(reason, 300)})
+    return kept, held
+
+
+def trail_rows(held: list[dict]) -> list[dict]:
+    """The decision trail's rows for the causes `hold_transient` held."""
+    out = []
+    for h in held:
+        cause = h["cause"]
+        out.append({"kind": h["kind"], "subject": cause.get("entity_id") or "",
+                    "reason": h["reason"], "text": cause.get("title") or "",
+                    "source": SOURCE, "check": "",
+                    "entities": [cause["entity_id"]] if cause.get("entity_id")
+                    else []})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -2048,5 +2217,6 @@ def keep_keys(open_rows: list[dict], state: dict, available: dict,
 
 
 __all__ = ["SCHEMA", "SOURCE", "SYSTEM", "collect", "digest", "frame",
-           "integration_of", "keep_keys", "load", "parse_causes",
-           "read_user_text", "rows", "save", "subject_of", "worth_a_run"]
+           "hold_transient", "integration_of", "keep_keys", "load",
+           "parse_causes", "read_user_text", "rows", "save", "subject_of",
+           "trail_rows", "worth_a_run"]

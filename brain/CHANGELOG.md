@@ -2,6 +2,38 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.8
+
+### Changed
+
+- **"I need to fix this" is a pause, not a rule.** Answering Wrong or replying with words like "being repaired", "unplugged for now" or "I'll plug it back in soon" pauses the suggestion for two weeks (up to 90 days) instead of teaching brAIn a general correction; it comes back early if the device answers again. This includes Morph's "remove this unavailable card" suggestion, which now keeps the card. (#503)
+- **A heat-loss ranking compares only heated rooms.** Rooms with no heating or thermostat, and rooms you have said are unheated or uninsulated, are not ranked against heated ones. (#505)
+- **A processor or machine temperature is judged by its own kind and history.** The implausible-reading check takes its range from the device and integration (a computer's processor temperature is not an "impossible" reading) and from the sensor's own week. (#504)
+- **brAIn checks the automation before saying a device did not run.** A claim that a device should have run is dropped when the reading it blames is not one of that device's automation triggers or conditions. (#502)
+- **A frozen reading stands down for a low battery.** A sensor whose battery is flagged low is reported by the battery check only, and a "normal when unpowered" reason on an unavailable device is remembered as a rule. (#498, #499)
+
+## 4.0.7
+
+### Added
+
+- **One card for devices that keep dropping off the network.** Wi-Fi devices that hang or flap, and Z-Wave and Zigbee devices that go quiet, are now one self-updating card instead of one card per device. A device is listed only after it has been down for hours or has dropped repeatedly, a device that comes back leaves the card, and the card clears itself when none remain. Phones and trackers are never listed, and a restart or half a mesh going quiet at once is not counted as devices dropping. (#513)
+
+### Changed
+
+- **Brief blips in an integration's log are no longer filed as problems.** The overnight check and the "errors in the log" check now file a log-only cause only when the integration's own entities are unavailable now, the error was logged recently, and it has been going on for hours. Their advice no longer tells you to reload the integration; brAIn can do it when asked in the chat. brAIn does not yet reload a failing integration by itself. (#512)
+- **Lovelace changes are no longer described as impossible.** brAIn's tools, prompts and refusals now say how a dashboard is changed (through the dashboard tools and `brain.update_dashboard`, with an approval card, or none under act-without-asking), and a refusal names the Blocked services list when that is what stopped it. Voice and unattended runs stay read-only. (#510)
+
+## 4.0.6
+
+### Changed
+
+- **One header, in Morph's theme.** Inside the sidebar panel there is now a single header: the name and version, Edit (on Home), the status dot and ⚙, with Home, Insights, Ask and Memory inside it. The bottom tab bar is gone, so Home runs to the bottom of the screen. Every brAIn page follows Morph's light, medium or dark theme, so the two read as one product. Outside the panel (plain ingress) nothing changes. (#511)
+- **Settings › Personality shows sections.** The personality is drawn as titled sections (tagline, born, who I am, how I am, voice, never and any other part), with Edit swapping them for the text box in place. The Settings row shows the tagline instead of the raw "line:" text. (#519)
+
+### Fixed
+
+- **A personality cut off by the old 4,000-character limit says so.** brAIn shows one line saying it looks cut off and where to paste the full text; the stored text is not touched. (#519)
+
 ## 4.0.5
 
 ### Changed

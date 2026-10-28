@@ -1505,6 +1505,12 @@ def _shape(entry: dict) -> dict:
     items = clean_items(entry.get("items"))
     if items:
         out["items"] = items
+    # What ends a "for now" snooze early (`wake_returned`): the entities it
+    # is about, which reporting again means the reason it slept is over.
+    # Absent on every other row, and only while the snooze is set.
+    wake = clean_items(entry.get("snooze_wake"))
+    if wake and int(entry.get("snoozed_until") or 0):
+        out["snooze_wake"] = wake
     out.update(_subject_fields(entry))
     # brAIn's own upkeep (`self_care`): the instruction line its Yes takes
     # out. Absent on every other row.
@@ -2245,9 +2251,12 @@ def _fold_shared(items: list[dict]) -> set[int]:
 # count the card's own detail now contradicts — one device, one count.
 # The refusals are `_fold_shared`'s.
 DROP_CHECKS = frozenset({
+    "check:net.connectivity", "check:dev.unavailable", "check:dev.zha_unseen",
+    "check:dev.zwave_dead",
+    # The per-device checks `net.connectivity` replaced: rows they filed
+    # before the update still fold until the first pass clears them.
     "check:net.wifi_hung", "check:net.wifi_flapping", "check:net.zwave_silent",
-    "check:net.zigbee_silent", "check:dev.unavailable", "check:dev.zha_unseen",
-    "check:dev.zwave_dead", "check:net.unifi_dropped"})
+    "check:net.zigbee_silent", "check:net.unifi_dropped"})
 # A model-written row's claim that something is not there. Read off the
 # title or the claim only, for rows no check id can classify.
 OFFLINE_RE = re.compile(
@@ -3140,7 +3149,7 @@ def elevate(ts: int) -> dict | None:
 
 
 @_mutates
-def snooze(ts: int, until: int) -> dict | None:
+def snooze(ts: int, until: int, wake=None) -> dict | None:
     """Take a finding off the list until ``until`` (epoch seconds).
 
     Deliberately does NOT touch the status. "Remind me later" and "not a
@@ -3148,16 +3157,68 @@ def snooze(ts: int, until: int) -> dict | None:
     the analyst never to raise it again, and using it for the first would
     quietly throw away a real problem you meant to come back to.
 
-    ``until <= 0`` brings it back now.
+    ``until <= 0`` brings it back now. ``wake`` names the entities whose
+    return ends the snooze early (`wake_returned`) — the "I'm fixing it"
+    snooze, which is over the moment the thing it is about reports again;
+    any other snooze clears it.
     """
     items = _load()
     for entry in items:
         if int(entry.get("ts") or 0) != ts:
             continue
         entry["snoozed_until"] = max(0, int(until))
+        wake = clean_items(wake) if wake and until > 0 else []
+        if wake:
+            entry["snooze_wake"] = wake
+        else:
+            entry.pop("snooze_wake", None)
         _write(items)
         return _shape(entry)
     return None
+
+
+# A state that is not a reading: an entity reporting one has not come back.
+_NOT_BACK = frozenset({"", "unavailable", "unknown", "none"})
+
+
+@_mutates
+def wake_returned(states, now: float | None = None) -> list[dict]:
+    """End the "for now" snoozes whose entities all report again.
+
+    ``states`` is the snapshot a checks pass already fetched. A row asleep
+    with `snooze_wake` whose every entity now has a real state is over
+    early: Morph's suggestion to remove that thing's card is dropped (the
+    card is kept — the caller tells Morph), and any other row is woken, so
+    a check's own pass clears it if the rule no longer finds it and shows
+    it again if it does. Returns the rows it ended or woke, shaped.
+    """
+    if not isinstance(states, dict) or not states:
+        return []
+    now = time.time() if now is None else now
+    items = _load()
+    kept, touched, changed = [], [], False
+    for entry in items:
+        wake = clean_items(entry.get("snooze_wake"))
+        if not wake or float(entry.get("snoozed_until") or 0) <= now:
+            kept.append(entry)
+            continue
+        back = all(isinstance(states.get(e), dict)
+                   and str(states[e].get("state") or "").lower()
+                   not in _NOT_BACK for e in wake)
+        if not back:
+            kept.append(entry)
+            continue
+        changed = True
+        if str(entry.get("source") or "") == MORPH_SOURCE:
+            touched.append(_shape(entry))
+            continue
+        entry["snoozed_until"] = 0
+        entry.pop("snooze_wake", None)
+        touched.append(_shape(entry))
+        kept.append(entry)
+    if changed:
+        _write(kept)
+    return touched
 
 
 @_mutates
@@ -3868,6 +3929,11 @@ def refresh_details(objs: list[dict]) -> int:
             # What a Wrong pressed on this row will answer is what it names
             # NOW, not what it named when it was filed.
             cur["items"] = new_items
+            # And what it shows under Details, and folds other rows into
+            # (`_devices_named`): a device that left the list leaves those.
+            if str(cur.get("source") or "").startswith("check:") \
+                    and "evidence" in entry:
+                cur["evidence"] = _clean_evidence(entry.get("evidence"))
             changed += 1
         # A check's own sentence about what to do follows the check, so a
         # reworded rule reaches the rows it already filed. Only while the

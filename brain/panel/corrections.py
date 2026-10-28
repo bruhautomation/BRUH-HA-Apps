@@ -371,6 +371,93 @@ def conditional(note: str) -> bool:
     return bool(_CONDITIONAL_RE.search(str(note or "")))
 
 
+# A reason that says the thing is out of use FOR NOW: being repaired,
+# unplugged for now, "I need to fix this light", "I'll plug it back in
+# soon". That is not "this rule is wrong here" — stored as a rule it went
+# quiet for good about a light somebody meant to repair, and stored as a
+# fact it went quiet about nothing and the suggestion came straight back.
+# It is the snooze the person meant (`server._end_finding`): no rule, quiet
+# for the period it names, and over early when the thing reports again.
+# A reason that says it stays that way ("I won't fix it", "do not plan to
+# replace it", "unpowered unless we're using it") is for good, and is not.
+_TEMPORARY_RE = re.compile(
+    r"\b(?:temporar(?:il)?y|for now|for the moment|for a (?:bit|while)|"
+    r"being (?:repaired|fixed|replaced|serviced|rebuilt)|"
+    r"(?:in|for|away for|out for|sent (?:off|away) for) (?:a )?repairs?|"
+    r"getting (?:it |them )?(?:repaired|fixed|replaced)|"
+    r"(?:need|needs|going|have|has|got) to (?:fix|repair|replace|re-?pair|"
+    r"reconnect|plug)|"
+    r"(?:i'?ll|i will|we'?ll|we will|i'?m going to|we'?re going to) "
+    r"(?:fix|repair|replace|re-?pair|reconnect|plug|put (?:it|them) back)|"
+    r"plug(?:ged)? (?:it |them )?back in|"
+    r"waiting (?:for|on) (?:a |the )?(?:new |replacement )?"
+    r"(?:part|parts|replacement|repair|fix|bulb|battery)|"
+    r"fixing (?:it|them|this|that)|"
+    r"out of (?:use|action|service|order) (?:for now|until|while|at the)|"
+    r"until (?:i|we) (?:fix|repair|replace|get|plug))", re.I)
+_FOR_GOOD_RE = re.compile(
+    r"\b(?:won'?t|will not|not going to|never|don'?t|do not|no plans? to|"
+    r"not plan(?:ning)? to|isn'?t going to|aren'?t going to)\b"
+    r"(?:\W+\w+){0,4}?\W+(?:fix|repair|replace|plug|use|reconnect|"
+    r"bother)\b"
+    r"|\b(?:unless|most of the year|permanently|for good|seasonal)\b", re.I)
+# How long a snooze a reason that names no period gets, and the most any
+# reason gets: past a season it is not "for now".
+TEMPORARY_DAYS = 14
+TEMPORARY_MAX_DAYS = 90
+_PERIOD_RE = re.compile(
+    r"\b(\d{1,3}|a|an|one|two|three|four|five|six|a couple of|a few)\s+"
+    r"(day|days|week|weeks|month|months|year|years)\b", re.I)
+_PERIOD_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
+                   "four": 4, "five": 5, "six": 6, "a couple of": 2,
+                   "a few": 3}
+_PERIOD_UNITS = {"day": 1, "week": 7, "month": 30, "year": 365}
+
+
+# A reason that says a device is normally WITHOUT POWER: "unpowered unless
+# we're using it", "unplugged except when we need it", "off most of the
+# year". Under `dev.unavailable` that is the state the check reports called
+# normal, and the use it is excepted for is nothing any state shows — so
+# it is the rule, where the same shape of condition under another check is
+# kept as a fact and asked about (`server._unwatchable_condition`). "For
+# now" is `temporary`'s, and is not this.
+_UNPOWERED_RE = re.compile(
+    r"\b(?:unpowered|unplugged|powered (?:off|down)|switched off|turned off|"
+    r"off at the (?:wall|plug|socket|breaker)|no power|not powered|"
+    r"not plugged in)\b", re.I)
+_NORMALLY_RE = re.compile(
+    r"\b(?:unless|except (?:when|while|if)|only (?:on|powered|plugged)|"
+    r"until (?:we|i|someone) (?:use|need)|when (?:not|we'?re not) (?:in use|"
+    r"using|needed)|most of the (?:year|time)|(?:in|during|over|for) the "
+    r"(?:winter|summer|off.?season)|seasonal|normally|usually|always|"
+    r"expected)\b", re.I)
+
+
+def normally_unpowered(note: str) -> bool:
+    """Whether a reason says the device is normally without power."""
+    text = str(note or "")
+    return (bool(_UNPOWERED_RE.search(text) and _NORMALLY_RE.search(text))
+            and not temporary(text))
+
+
+def temporary(note: str) -> bool:
+    """Whether a reason says the thing is out of use for now, not for good."""
+    text = str(note or "")
+    return bool(_TEMPORARY_RE.search(text)) and not _FOR_GOOD_RE.search(text)
+
+
+def temporary_days(note: str) -> int:
+    """The quiet a 'for now' reason asks for: the period it names, clamped
+    to `TEMPORARY_MAX_DAYS`, else `TEMPORARY_DAYS`."""
+    m = _PERIOD_RE.search(str(note or ""))
+    if not m:
+        return TEMPORARY_DAYS
+    raw = m.group(1).lower()
+    count = int(raw) if raw.isdigit() else _PERIOD_NUMBERS.get(raw, 1)
+    unit = _PERIOD_UNITS[m.group(2).lower().rstrip("s")]
+    return max(1, min(TEMPORARY_MAX_DAYS, count * unit))
+
+
 def conditional_confirmation(entity_name: str = "", *,
                              rule_written: bool = False,
                              note: str = "") -> str:

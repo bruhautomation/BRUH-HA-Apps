@@ -74,20 +74,29 @@ def add_client(snap, n, *, ap=AP_MAC, down_for=5 * 3600, tracker="home",
     return switch, tracker_id
 
 
+def drop_row(snap):
+    """The one connectivity card the per-device drop checks became, or
+    None (`network.connectivity`)."""
+    rows = network.connectivity(snap, NOW)
+    return rows[0] if rows else None
+
+
+def listed(snap):
+    row = drop_row(snap)
+    return list((row or {}).get("items") or [])
+
+
 class TestHungAssociation(unittest.TestCase):
     def test_four_hung_on_one_access_point_are_one_row_naming_it(self):
         snap = house()
         add_ap(snap)
         for n in range(1, 5):
             add_client(snap, n)
-        rows = network.wifi_hung(snap, NOW)
-        self.assertEqual(len(rows), 1, rows)
-        row = rows[0]
-        self.assertIn("Garage access point", row["text"])
-        for n in range(1, 5):
-            self.assertIn(f"Plug {n}", row["detail"])
+        row = drop_row(snap)
+        self.assertEqual(sorted(row["items"]),
+                         [f"switch.plug_{n}" for n in range(1, 5)])
+        self.assertIn("4 of them hang on Garage access point", row["detail"])
         self.assertIn("2.4 GHz", row["detail"])
-        self.assertEqual(row["entity_id"], "device_tracker.dev_ap1")
 
     def test_through_run_all_it_is_a_wifi_finding(self):
         snap = house()
@@ -95,16 +104,16 @@ class TestHungAssociation(unittest.TestCase):
         add_client(snap, 1)
         result = checks.run_all(snap, NOW)
         rows = [f for f in result["findings"]
-                if f["source"] == "check:net.wifi_hung"]
+                if f["source"] == "check:net.connectivity"]
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["source_title"], "Network (Wi-Fi)")
+        self.assertEqual(rows[0]["source_title"], "Network")
 
     def test_dev_unavailable_stands_down_for_a_hung_device(self):
         snap = house()
         add_ap(snap)
         add_client(snap, 1, down_for=3 * DAY)
         self.assertEqual(devices.unavailable(snap, NOW), [])
-        self.assertEqual(len(network.wifi_hung(snap, NOW)), 1)
+        self.assertEqual(listed(snap), ["switch.plug_1"])
 
     def test_healthy_left_and_fresh_say_nothing(self):
         snap = house()
@@ -112,7 +121,7 @@ class TestHungAssociation(unittest.TestCase):
         add_client(snap, 1, down_for=0)               # answering
         add_client(snap, 2, tracker="not_home")       # really gone
         add_client(snap, 3, down_for=1800)            # only half an hour
-        self.assertEqual(network.wifi_hung(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_an_integration_down_everywhere_is_the_integration(self):
         snap = house()
@@ -121,21 +130,25 @@ class TestHungAssociation(unittest.TestCase):
         add_client(snap, 1)
         add_client(snap, 2)
         add_client(snap, 3, ap=AP2_MAC)
-        self.assertEqual(network.wifi_hung(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_a_wrong_on_the_client_stands_it_down(self):
         snap = house()
         add_ap(snap)
-        _sw, tracker = add_client(snap, 1)
+        switch, tracker = add_client(snap, 1)
+        # Given to the check this one replaced, about the tracker...
         snap["facts"] = {tracker: {"net.wifi_hung"}}
-        self.assertEqual(network.wifi_hung(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
+        # ...or to the card, about the device it lists.
+        snap["facts"] = {switch: {"net.connectivity"}}
+        self.assertEqual(listed(snap), [])
 
     def test_a_client_named_by_its_address_is_not_spelled_out(self):
         snap = house()
         add_ap(snap)
         add_client(snap, 1)
         snap["devices"][-1]["name"] = "bb:bb:bb:00:00:01"
-        row = network.wifi_hung(snap, NOW)[0]
+        row = drop_row(snap)
         self.assertNotIn("bb:bb:bb", row["detail"])
         self.assertIn("A device with no name", row["detail"])
 
@@ -144,7 +157,7 @@ class TestHungAssociation(unittest.TestCase):
         add_ap(snap)
         add_client(snap, 1)
         snap["devices"][-1]["labels"] = ["not_in_use"]
-        self.assertEqual(network.wifi_hung(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
 
 def series(eid, changes):
@@ -189,24 +202,24 @@ class TestFlapping(unittest.TestCase):
         return snap
 
     def test_twelve_drops_with_the_tracker_home_is_a_row(self):
-        snap = self.wifi_house(flaps(12))
-        rows = network.wifi_flapping(snap, NOW)
-        self.assertEqual(len(rows), 1, rows)
-        self.assertIn("Plug 1", rows[0]["text"])
-        self.assertIn("12 separate times", rows[0]["detail"])
-        self.assertEqual(rows[0]["entity_id"], "switch.plug_1")
+        # Recent: drops that stopped days ago are a device that recovered
+        # (`network.RECENT_S`, test_connectivity_card).
+        snap = self.wifi_house(flaps(12, start_ago=2 * DAY))
+        row = drop_row(snap)
+        self.assertEqual(row["items"], ["switch.plug_1"])
+        self.assertIn("Plug 1", row["detail"])
+        self.assertIn("dropped 12 times", row["detail"])
 
     def test_restart_minutes_are_not_counted(self):
-        snap = self.wifi_house(flaps(8), mass=5)
-        self.assertEqual(network.wifi_flapping(snap, NOW), [])
-        # And they are a restart, so not UniFi's row either.
-        self.assertEqual(network.unifi_dropped(snap, NOW), [])
+        snap = self.wifi_house(flaps(8, start_ago=2 * DAY), mass=5)
+        # Neither a device's drops nor UniFi's: a restart.
+        self.assertIsNone(drop_row(snap))
 
     def test_a_tracker_that_left_is_not_flapping(self):
-        snap = self.wifi_house(flaps(12))
+        snap = self.wifi_house(flaps(12, start_ago=2 * DAY))
         rows = snap["wifi_history"]["entities"]["device_tracker.plug_1_client"]
         rows.append({"state": "not_home", "last_changed": iso(3 * DAY)})
-        self.assertEqual(network.wifi_flapping(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_the_candidates_are_one_probe_and_the_tracker(self):
         snap = self.wifi_house(flaps(1))
@@ -214,7 +227,7 @@ class TestFlapping(unittest.TestCase):
         self.assertEqual({c["probe"] for c in cands},
                          {"switch.plug_1", "switch.plug_2", "switch.plug_3"})
 
-    def test_unifi_dropping_every_tracker_is_its_own_single_row(self):
+    def test_unifi_dropping_every_tracker_is_said_on_the_card(self):
         snap = self.wifi_house(flaps(0))
         for n in (1, 2, 3):
             tracker = [(6.5 * DAY, "home")]
@@ -224,10 +237,10 @@ class TestFlapping(unittest.TestCase):
             snap["wifi_history"]["entities"][
                 f"device_tracker.plug_{n}_client"] = series(
                 f"device_tracker.plug_{n}_client", tracker)
-        rows = network.unifi_dropped(snap, NOW)
-        self.assertEqual(len(rows), 1, rows)
-        self.assertIn("4 times", rows[0]["detail"])
-        self.assertEqual(network.wifi_flapping(snap, NOW), [])
+        row = drop_row(snap)
+        self.assertIn("together 4 times", row["detail"])
+        self.assertEqual(listed(snap), [], "never counted against a device")
+        self.assertEqual(row["integration"], "unifi")
 
 
 def zwave_house(**node):
@@ -254,41 +267,40 @@ class TestZWave(unittest.TestCase):
         snap = zwave_house()
         result = checks.run_all(snap, NOW)
         rows = [f for f in result["findings"]
-                if f["source"] == "check:net.zwave_silent"]
+                if f["source"] == "check:net.connectivity"]
         self.assertEqual(len(rows), 1, result["findings"])
-        self.assertIn("Shed door sensor", rows[0]["text"])
-        self.assertEqual(rows[0]["source_title"], "Network (Z-Wave)")
+        self.assertIn("Shed door sensor (Z-Wave)", rows[0]["detail"])
 
     def test_three_wake_intervals_is_the_bar_when_it_is_known(self):
         snap = zwave_house(status={"wake_up_interval": 3600},
                            statistics={"last_seen": iso(4 * 3600)})
-        self.assertEqual(len(network.zwave_silent(snap, NOW)), 1)
+        self.assertEqual(len(listed(snap)), 1)
         snap = zwave_house(status={"wake_up_interval": 3600},
                            statistics={"last_seen": iso(2.5 * 3600)})
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_a_restart_does_not_hide_it_and_last_changed_is_never_read(self):
         # The node status sensor changed ten minutes ago (a restart), and
         # Z-Wave JS's own record still says four days.
         snap = zwave_house()
-        self.assertEqual(len(network.zwave_silent(snap, NOW)), 1)
+        self.assertEqual(len(listed(snap)), 1)
         # No "last seen" anywhere: could not tell, so nothing.
         snap = zwave_house(statistics={"last_seen": None})
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_disabled_labelled_and_dead_nodes_are_not_raised(self):
         snap = zwave_house()
         snap["devices"][-1]["disabled_by"] = "user"
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
         snap = zwave_house()
         snap["devices"][-1]["labels"] = ["spare"]
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
         snap = zwave_house()
         snap["labels"] = [{"label_id": "lbl1", "name": "Not in use"}]
         snap["devices"][-1]["labels"] = ["lbl1"]
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
         snap = zwave_house(status={"status": 3})
-        self.assertEqual(network.zwave_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
 
     def test_a_weak_link_is_raised_and_no_reading_is_not(self):
         snap = zwave_house(status={"status": 4},
@@ -358,15 +370,16 @@ class TestZigbee(unittest.TestCase):
                                   power="Battery", kind="EndDevice"),
                               zha("Porch button", seen=30 * 3600,
                                   power="Battery", kind="EndDevice"))
-        names = sorted(r["text"] for r in network.zigbee_silent(snap, NOW))
-        self.assertEqual(len(names), 2, names)
-        self.assertTrue(names[0].startswith("Landing plug"))
-        self.assertTrue(names[1].startswith("Porch button"))
+        row = drop_row(snap)
+        self.assertEqual(sorted(row["items"]), ["light.zb_0", "light.zb_2"])
+        self.assertIn("Landing plug", row["detail"])
+        self.assertIn("Porch button", row["detail"])
+        self.assertNotIn("Hall button", row["detail"])
 
     def test_a_week_is_zha_unseen_and_never_both(self):
         snap = self.zha_house(zha("Porch button", seen=8 * DAY,
                                   power="Battery", kind="EndDevice"))
-        self.assertEqual(network.zigbee_silent(snap, NOW), [])
+        self.assertEqual(listed(snap), [])
         self.assertEqual(len(devices.zha_unseen(snap, NOW)), 1)
 
     def test_dev_unavailable_stands_down_for_a_quiet_zigbee_device(self):
@@ -375,7 +388,7 @@ class TestZigbee(unittest.TestCase):
                                         "attributes": {},
                                         "last_changed": iso(2 * DAY)}
         self.assertEqual(devices.unavailable(snap, NOW), [])
-        self.assertEqual(len(network.zigbee_silent(snap, NOW)), 1)
+        self.assertEqual(listed(snap), ["light.zb_0"])
 
     def test_a_disabled_or_spare_device_says_nothing(self):
         snap = self.zha_house(zha("Landing plug", lqi=30))
@@ -562,9 +575,8 @@ class TestLogFlood(unittest.TestCase):
 class TestTheCatalog(unittest.TestCase):
     def test_brain_check_list_carries_the_network_checks(self):
         ids = set(checks.CHECK_IDS)
-        for cid in ("net.wifi_hung", "net.wifi_flapping", "net.unifi_dropped",
-                    "net.zwave_silent", "net.zwave_link", "net.zigbee_silent",
-                    "net.zigbee_weak", "integ.log_flood"):
+        for cid in ("net.connectivity", "net.zwave_link", "net.zigbee_weak",
+                    "integ.log_flood"):
             self.assertIn(cid, ids)
             self.assertFalse(checks.is_shadow(cid), cid)
         self.assertEqual(checks.title_for("net.zwave_link"), "Network (Z-Wave)")
@@ -574,10 +586,15 @@ class TestTheCatalog(unittest.TestCase):
         snap = house()
         snap["available"]["zwave_nodes"] = False
         result = checks.run_all(snap, NOW)
-        self.assertIn("net.zwave_silent", result["skipped"])
         self.assertIn("net.zwave_link", result["skipped"])
-        self.assertIn("net.wifi_hung", result["ran"])
         self.assertIn("integ.log_flood", result["ran"])
+        # A house with no Z-Wave still runs the one drop card...
+        self.assertIn("net.connectivity", result["ran"])
+        # ...and one that has Z-Wave, unread, could not look.
+        snap = zwave_house()
+        snap["available"]["zwave_nodes"] = False
+        result = checks.run_all(snap, NOW)
+        self.assertIn("net.connectivity", result["skipped"])
 
 
 if __name__ == "__main__":
