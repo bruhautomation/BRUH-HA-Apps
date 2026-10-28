@@ -870,6 +870,19 @@ async def collect(now: float | None = None) -> dict:
     except Exception as exc:  # noqa: BLE001
         snap["facts"] = {}
         _mark("facts", False, f"the facts store could not be read: {exc}")
+    # The rooms the household said nothing heats ("the loft is mostly
+    # uninsulated", a Wrong reason on a garage sensor), for the checks
+    # that compare heated rooms (`thermal.conditioned_areas`). Unreadable
+    # is empty: every room with a thermostat is compared, as before.
+    try:
+        import facts_store  # noqa: PLC0415
+        from . import thermal as _thermal_check  # noqa: PLC0415
+        snap["unconditioned"] = _thermal_check.unconditioned_from(
+            r for r in facts_store.export_rows()
+            if not facts_store._expired(r, now))  # noqa: SLF001
+    except Exception as exc:  # noqa: BLE001
+        snap["unconditioned"] = {"areas": [], "entities": []}
+        log.debug("could not read the unconditioned rooms: %s", exc)
     # The same rules by SCOPE (`corrections.scope_map`): a room's, a whole
     # check's, and the never-covered table `House.should_report` refuses
     # the wide ones with. Left OUT on failure rather than emptied, so
