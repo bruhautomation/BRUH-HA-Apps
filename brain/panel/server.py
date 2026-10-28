@@ -2913,7 +2913,10 @@ def _morph_reply_system(tools: str,
 READ_ONLY_TOOLS = (
     "You have Home Assistant's reading tools; you can change nothing. "
     "Read the current state and the history of what they asked about "
-    "before you answer.")
+    "before you answer. If they ask for a change — an automation, a "
+    "Lovelace dashboard, anything in the house — say brAIn makes it in the "
+    "brAIn chat, or here once \"Let brAIn act without asking\" is on; "
+    "never say it cannot be done.")
 MORPH_REPLY_SYSTEM = _morph_reply_system(READ_ONLY_TOOLS)
 MORPH_REPLY_ACT_SYSTEM = _morph_reply_system(PERSON_ACT_TOOLS)
 # The same conversation, typed into the Respond box under a card in the

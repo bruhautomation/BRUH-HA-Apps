@@ -511,7 +511,8 @@ class TestTheAskBar(unittest.TestCase):
                 "remove the camera tile", "turn off the card on the dashboard and add a tile"]
         out = self.ask(house + page)
         self.assertEqual([False] * len(house) + [True] * len(page), out["got"])
-        self.assertIn("You cannot change the dashboard", out["ctx"])
+        self.assertIn("Morph’s own page is changed with Morph’s Tell", out["ctx"])
+        self.assertIn("do not claim to have changed it", out["ctx"])
 
     def test_the_panel_uses_them(self):
         panel = (FRONTEND / "morph-panel.js").read_text()

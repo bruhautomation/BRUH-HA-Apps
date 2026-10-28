@@ -2992,8 +2992,8 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   async askAgent(q) {
     const agent = Object.values(this.hass.entities || {}).find((e) => e.platform === 'brain' && e.entity_id.startsWith('conversation.'));
     try {
-      // The agent is told, in one sentence beside the words, that it cannot
-      // change the dashboard. A Home Assistant whose conversation/process
+      // The agent is told, beside the words, that Morph's page is changed
+      // with a Tell (and a Lovelace dashboard with brain.update_dashboard). A Home Assistant whose conversation/process
       // does not take extra_system_prompt refuses the key, so the question
       // is asked again without it rather than not at all.
       const msg = { type: 'conversation/process', text: q, agent_id: agent ? agent.entity_id : undefined, conversation_id: this._conv || undefined };
