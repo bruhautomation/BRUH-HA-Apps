@@ -414,6 +414,32 @@ _PERIOD_NUMBERS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
 _PERIOD_UNITS = {"day": 1, "week": 7, "month": 30, "year": 365}
 
 
+# A reason that says a device is normally WITHOUT POWER: "unpowered unless
+# we're using it", "unplugged except when we need it", "off most of the
+# year". Under `dev.unavailable` that is the state the check reports called
+# normal, and the use it is excepted for is nothing any state shows — so
+# it is the rule, where the same shape of condition under another check is
+# kept as a fact and asked about (`server._unwatchable_condition`). "For
+# now" is `temporary`'s, and is not this.
+_UNPOWERED_RE = re.compile(
+    r"\b(?:unpowered|unplugged|powered (?:off|down)|switched off|turned off|"
+    r"off at the (?:wall|plug|socket|breaker)|no power|not powered|"
+    r"not plugged in)\b", re.I)
+_NORMALLY_RE = re.compile(
+    r"\b(?:unless|except (?:when|while|if)|only (?:on|powered|plugged)|"
+    r"until (?:we|i|someone) (?:use|need)|when (?:not|we'?re not) (?:in use|"
+    r"using|needed)|most of the (?:year|time)|(?:in|during|over|for) the "
+    r"(?:winter|summer|off.?season)|seasonal|normally|usually|always|"
+    r"expected)\b", re.I)
+
+
+def normally_unpowered(note: str) -> bool:
+    """Whether a reason says the device is normally without power."""
+    text = str(note or "")
+    return (bool(_UNPOWERED_RE.search(text) and _NORMALLY_RE.search(text))
+            and not temporary(text))
+
+
 def temporary(note: str) -> bool:
     """Whether a reason says the thing is out of use for now, not for good."""
     text = str(note or "")

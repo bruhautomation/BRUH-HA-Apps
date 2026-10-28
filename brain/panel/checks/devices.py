@@ -1352,6 +1352,12 @@ def _flat_battery_beside(house: House, eid: str) -> str:
     """
     for other in house.siblings(eid):
         st = house.states.get(other) or {}
+        # A low-battery FLAG on the device, on: `dev.battery_low` files it
+        # (`_flag_rows`), so a reading stuck beside it is that card's too —
+        # "it's still reading, probably low battery", said under a frozen
+        # row on a device whose only battery reading is a flag.
+        if _is_low_battery_flag(other, st) and st.get("state") == "on":
+            return other
         if not _is_battery(st):
             continue
         level = num(st.get("state"))
@@ -1359,6 +1365,40 @@ def _flat_battery_beside(house: House, eid: str) -> str:
                 and not rechargeable(house, other):
             return other
     return ""
+
+
+# What a sensor that carries its own battery as an attribute calls it.
+OWN_BATTERY_ATTRS = ("battery_level", "battery")
+
+
+def _own_battery_low(attrs: dict) -> float | None:
+    """The sensor's OWN battery attribute, when it reads at or under the
+    low mark — the level, else None. `dev.battery_low` reads battery
+    entities, so this is not a card of its own; it is what a stuck
+    reading's fix should name first."""
+    for key in OWN_BATTERY_ATTRS:
+        level = num((attrs or {}).get(key))
+        if level is not None and 0 <= level <= BATTERY_LOW_PCT:
+            return level
+    return None
+
+
+FROZEN_FIX = ("Power-cycle the sensor, or reload its integration — it has "
+              "probably stopped updating while its integration keeps "
+              "repeating the last value.")
+
+
+def _frozen_fix(attrs: dict) -> str:
+    """The fix, leading with the sensor's own battery when it reads low: a
+    sensor that runs flat repeats its last value, and "power-cycle it"
+    sends somebody to the wrong end of the problem."""
+    level = _own_battery_low(attrs)
+    if level is None:
+        return FROZEN_FIX
+    return (f"Its own battery reads {numfmt.number(level)}% — replace it "
+            "first; a sensor running flat stops sending new readings. If it "
+            "still reads one value after that, power-cycle it or reload its "
+            "integration.")
 
 
 def frozen(snap: dict, now: float) -> list[dict]:
@@ -1413,9 +1453,13 @@ def frozen(snap: dict, now: float) -> list[dict]:
             # the same box under a different fix.
             house._note({"kind": "dedupe", "subject": eid,
                          "check": "dev.frozen",
-                         "reason": f"{house.label(flat)} reads "
-                                   f"{house.states[flat].get('state')}%, so "
-                                   "the battery check owns this device",
+                         "reason": (f"{house.label(flat)} says its battery "
+                                    "is low"
+                                    if _is_low_battery_flag(
+                                        flat, house.states.get(flat) or {})
+                                    else f"{house.label(flat)} reads "
+                                    f"{house.states[flat].get('state')}%")
+                                   + ", so the battery check owns this device",
                          "text": ""})
             continue
         if not house.should_report(eid, "dev.frozen"):
@@ -1429,9 +1473,7 @@ def frozen(snap: dict, now: float) -> list[dict]:
             "detail": f"{numfmt.quantity(lo, unit)} on every one of the "
                       f"last {len(days)} "
                       "days. A real sensor moves." + house.placed(eid),
-            "fix": "Power-cycle the sensor, or reload its integration — it "
-                   "has probably stopped updating while its integration "
-                   "keeps repeating the last value.",
+            "fix": _frozen_fix(attrs),
             "severity": "warning",
             "fixable": False,
             "entity_id": eid,

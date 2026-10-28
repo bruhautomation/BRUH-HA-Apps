@@ -20795,6 +20795,11 @@ def _unwatchable_condition(finding: dict, note: str) -> bool:
     source = str(finding.get("source") or "")
     if not source.startswith("check:") or not corrections.conditional(note):
         return False
+    if (source == "check:dev.unavailable"
+            and corrections.normally_unpowered(note)):
+        # "Unpowered unless we're using it": the condition names the very
+        # state this check reports as the normal one, so it is the rule.
+        return False
     from checks import chores as _chores  # noqa: PLC0415
     eid = str(finding.get("entity_id") or "")
     return not (_chores.report_while(note) and _MACHINE_STATUS.get(eid))
