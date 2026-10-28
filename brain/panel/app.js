@@ -1610,7 +1610,11 @@ function openCase(caseId) {
 
 function openInsightCard(id) {
   switchView("insights");
-  flashNode(document.querySelector(`#grid .card[data-id="${CSS.escape(id)}"]`));
+  const node = document.querySelector(`#grid .card[data-id="${CSS.escape(id)}"]`);
+  // A card folded into its finding (`told_in`) has no node: it opens whole.
+  const folded = !node && (state.insights || []).find((i) => i && i.id === id);
+  if (folded) { openModal(folded, true); return; }
+  flashNode(node);
 }
 
 function makeCard(catInfo, insight, fallbackId) {
@@ -2164,9 +2168,16 @@ function render() {
   // Needs you is about.
   const byId = new Set(state.insights.map((i) => i.id));
   const quiet = [];
+  const twinned = [];
   const folds = (i) => {
     if (!i || q || state.viewing[i.id] || ACTIVE_STATES.includes(jobFor(i.id).state)) return false;
     if (i.superseded_by && byId.has(i.superseded_by)) return true;
+    // A card wholly about one open finding's device is that finding
+    // (`told_in`): one item, on Needs you, with this card one press away.
+    if (i.told_in && (state.cases || []).some((c) => c.id === i.told_in)) {
+      twinned.push(i);
+      return true;
+    }
     if (i.quiet && !casesForInsight(i).length) { quiet.push(i); return true; }
     return false;
   };
@@ -2188,6 +2199,7 @@ function render() {
   attentionFirst(shown, (e) => cardNeedsSomething(e.ins, casesForInsight(e.ins).length))
     .forEach((e) => grid.appendChild(e.make()));
   if (quiet.length) grid.appendChild(quietLine(quiet));
+  if (twinned.length) grid.appendChild(twinLine(twinned));
   renderSchedule();
 }
 
@@ -2203,6 +2215,22 @@ function quietLine(cards) {
     a.type = "button";
     a.dataset.id = c.id;
     a.addEventListener("click", () => openModal(c, true));
+    line.appendChild(a);
+  });
+  return line;
+}
+
+// Every card that is one open finding's story, as one line: each name
+// opens the finding on Needs you, where the card is linked from.
+function twinLine(cards) {
+  const line = el("p", "quietline");
+  line.appendChild(el("strong", null, "On Needs you: "));
+  cards.forEach((c, n) => {
+    if (n) line.appendChild(document.createTextNode(", "));
+    const a = el("button", "quietname", c.title || c.category_title || "Report");
+    a.type = "button";
+    a.dataset.id = c.id;
+    a.addEventListener("click", () => openCase(c.told_in));
     line.appendChild(a);
   });
   return line;

@@ -163,6 +163,7 @@ import devloop.verify
 import devloop.siblings
 import devloop_archive
 import card_tags
+import card_claims
 import card_verdict
 import cases
 import changes
@@ -6145,7 +6146,7 @@ async def _generate(insight_id: str) -> None:
         verdict = card_verdict.review(
             {**obj, "highlights": highlights}, previous, open_rows=open_rows,
             others=await asyncio.to_thread(_other_card_subjects, insight_id),
-            names_in=_entities_named_in)
+            names_in=_entities_named_in, asked=question is not None)
         # A card that says a problem on the list is already dealt with —
         # in its `fixed` field or in words — has that row's own check
         # asked again, so the row clears or is reworded by the rule that
@@ -6170,6 +6171,10 @@ async def _generate(insight_id: str) -> None:
                              if k in verdict["obj"]}}
             highlights = obj["highlights"] if isinstance(
                 obj.get("highlights"), list) else highlights
+        # A headline that is a blind spot or a non-event (`card_claims`):
+        # stored, since somebody pressed for it, and folded.
+        blind = bool(verdict["obj"].get("blind")
+                     or verdict["hold"] == card_claims.BLIND_WHY)
         # The one judgement, read off the reply's field or its own first
         # sentence (`card_verdict.review`), and absent where there is none.
         card_judgement = card_verdict.clean_verdict(
@@ -6277,7 +6282,8 @@ async def _generate(insight_id: str) -> None:
             "verdict": card_judgement,
             # All fine about nothing that changed: Reports folds it into
             # its "All quiet" line rather than a card of its own.
-            "quiet": bool(quiet_card),
+            "quiet": bool(quiet_card) or blind,
+            **({"blind": True} if blind else {}),
             "focus_used": cat.get("focus", "") if question is None else "",
             # The entities whose CURRENT state the visualization wants,
             # so a card about something happening now stops being frozen
@@ -9819,6 +9825,16 @@ async def h_insights(request: web.Request) -> web.Response:
         # one read of the edits file for the whole list, not one per card
         edits = card_tags.load_edits()
         superseded = _superseded(insights)
+        # The open findings a card can be wholly about (`card_claims.
+        # finding_twin`): a card and a finding about one thing are one item.
+        try:
+            live_rows = [f for f in findings_store.list_all("live")
+                         if f.get("entity_id")]
+        except Exception:  # noqa: BLE001 — no rows is no twin
+            live_rows = []
+
+        def device_of(eid):
+            return (_NAMES.get(eid) or {}).get("device")
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
             ins["entities"] = _card_entities(ins)
@@ -9831,6 +9847,10 @@ async def h_insights(request: web.Request) -> web.Response:
                 ins.pop("verdict", None)
             if ins.get("id") in superseded:
                 ins["superseded_by"] = superseded[ins["id"]]
+            twin = card_claims.finding_twin(set(ins["entities"]), live_rows,
+                                            device_of)
+            if twin is not None and twin.get("ts"):
+                ins["told_in"] = f"f:{twin['ts']}"
             # The heading an asked card carries in place of "Custom". A
             # category card is headed by its category, which the panel
             # reads live off the definition so a rename shows at once.

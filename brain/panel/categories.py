@@ -519,7 +519,7 @@ ANALYSIS RULES:
 - Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the owner to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
-- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow.
+- Thin data: visualize what IS there and make the comparison it allows. What brAIn could not see, missing history, "nothing to compare" or nothing happening is never the headline: at most one short line on the card it qualifies.
 - Never invent a number.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
