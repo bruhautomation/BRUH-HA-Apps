@@ -1395,11 +1395,23 @@
           <label for="persName">Name</label>
           <input id="persName" class="persname" type="text" maxlength="60" autocomplete="off"
             placeholder="brAIn">
-          <label for="persText">Personality</label>
-          <textarea id="persText" class="perstext" rows="6" maxlength="32000"
+          <!-- The persona reads as the outline it is (`line:`, `born:`,
+               `who_i_am:` … from Morph's old PERSONA object), each labelled
+               part a titled section (`personaSections`). Edit puts the one
+               box in their place; Save writes it, Cancel puts back what is
+               stored. A persona the old 4,000 cap cut says so (`.perscut`). -->
+          <div class="perslabel" id="persLabel">Personality</div>
+          <div id="persSections" class="perssections" aria-labelledby="persLabel"></div>
+          <p id="persCut" class="perscut hint" hidden>This looks cut off: an older version
+            kept only the first 4,000 characters. If you have the full text, press Edit and
+            paste it in.</p>
+          <textarea id="persText" class="perstext" rows="12" maxlength="32000" hidden
+            aria-labelledby="persLabel"
             placeholder="How it speaks and behaves, in your own words…"></textarea>
           <div class="row persacts">
+            <button type="button" id="persEdit" class="btn">Edit</button>
             <button type="button" id="persSave" class="btn primary">Save</button>
+            <button type="button" id="persCancel" class="btn" hidden>Cancel</button>
             <button type="button" id="persAsk" class="btn">Ask</button>
           </div>
           <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>

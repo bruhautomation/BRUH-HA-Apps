@@ -178,7 +178,34 @@ const CUT = ['Copy selected', 'Copy all', 'Write a report now',
 
 const NOW = Math.floor(Date.now() / 1000);
 
+// A persona moved over from Morph's old PERSONA object: labelled parts, the
+// way personality.py's import renders them. The sections the page must draw
+// from it, in order, by their plain titles.
+const PERSONA_OUTLINE = [
+  'line: The evening star of the house, steady and a little wry.',
+  'born: 2026-03-14',
+  'who_i_am:',
+  '  - a keeper of small routines',
+  '  - plain-spoken',
+  'how_i_am: Calm first, quick second.',
+  'voice:',
+  '  rules:',
+  '    - one sentence for what changed',
+  '  tone: warm',
+  'never:',
+  '  - lecture',
+  'name_why: Named for the star that comes out first.',
+  'still_working_out: when to speak up at night, and how softly.',
+].join('\n');
+const PERSONA_TITLES = ['Tagline', 'Born', 'Who I am', 'How I am', 'Voice', 'Never',
+  'Why the name', 'Still working out'];
+// What the old cap left of a longer persona: the outline padded to ~3,996
+// characters and ended with "…".
+const PERSONA_CUT = ' ' + 'It keeps the house quiet in the evening. '.repeat(90).slice(0, 3995 - PERSONA_OUTLINE.length - 1).trimEnd() + '…';
+
 const STUB = `
+const PERSONA_OUTLINE = ${JSON.stringify(PERSONA_OUTLINE)};
+const PERSONA_CUT = ${JSON.stringify(PERSONA_CUT)};
 window.__fetched = [];
 window.EventSource = function () {
   return { close() {}, addEventListener() {}, onmessage: null, onerror: null };
@@ -214,11 +241,18 @@ window.fetch = async (url, opts) => {
     if (opts && opts.method === 'PUT') {
       (window.__personaPuts = window.__personaPuts || []).push(JSON.parse(opts.body));
     }
-    return answer({ set: true, name: 'Juniper', persona: 'Warm and dry-humoured.',
+    // The persona as Morph's old PERSONA object moved over: an outline of
+    // labelled parts. With window.__personaCut it ends the way the old
+    // 4,000-character cap cut it.
+    const sent = opts && opts.method === 'PUT' ? JSON.parse(opts.body) : null;
+    const persona = sent ? sent.persona : PERSONA_OUTLINE + (window.__personaCut ? PERSONA_CUT : '');
+    return answer({ set: true, name: 'Juniper', persona,
+      summary: 'Juniper · The evening star of the house, steady and a little wry.',
+      cut_at_old_limit: !sent && !!window.__personaCut,
       growth: [{ date: '2026-09-20', text: 'Stopped announcing the heating twice.' },
                { date: '2026-08-02', text: 'Calls the side door the garden door.' }],
       updated_at: ${NOW}, path: '/config/.brain/personality.json',
-      limits: { name: 60, persona: 4000, growth: 500 } });
+      limits: { name: 60, persona: 32000, growth: 500 } });
   }
   if (p.includes('api/settings') && opts && opts.method === 'PUT') {
     (window.__puts = window.__puts || []).push(JSON.parse(opts.body));
@@ -260,7 +294,7 @@ window.fetch = async (url, opts) => {
                rate_limited_until: window.__rateLimitedUntil || null,
                resets_at: ${NOW} + 7200, week_resets_at: ${NOW} + 200000 },
       options_synced: true, model_label: 'Claude Sonnet 4.5',
-      personality_summary: 'Juniper · Warm and dry-humoured.',
+      personality_summary: 'Juniper · The evening star of the house, steady and a little wry.',
     });
   }
   if (p.includes('api/status')) {
@@ -1406,41 +1440,107 @@ for (const width of WIDTHS) {
     note(where, `driving the permission switch failed: ${String(e.message).split('\n')[0]}`);
   }
 
-  // ---- Personality: the persona to edit, the growth log to read ----------
-  // It lives in brAIn now (it was Morph's): a name and a persona to edit
-  // and Save, the growth log newest first and read-only, and Ask, which
-  // opens a conversation about who brAIn is.
+  // ---- Personality: the persona as sections, one box to edit it ---------
+  // It lives in brAIn now (it was Morph's). The owner: "the personality in
+  // brAIn settings still looks clipped … bring back the rich formatting /
+  // sections". So the stored outline reads as titled sections (Tagline,
+  // Born, Who I am …), Edit turns them into the one box in the same place,
+  // Save sends it, the growth log stays newest first and read-only, and a
+  // persona the old 4,000 cap cut says so once.
   try {
     await showSection(page, 'personality');
-    await page.waitForFunction(() => document.querySelector('#persName').value === 'Juniper',
+    await page.waitForFunction(() => document.querySelector('#persName').value === 'Juniper'
+      && document.querySelectorAll('#persSections .perssec').length > 0,
       null, { timeout: 4000 });
-    const pers = await page.evaluate(() => ({
-      text: document.querySelector('#persText').value,
-      growth: [...document.querySelectorAll('#persGrowth .persline')].map((x) => x.textContent),
-      font: parseFloat(getComputedStyle(document.querySelector('#persText')).fontSize),
-      nameFont: parseFloat(getComputedStyle(document.querySelector('#persName')).fontSize),
-      inputs: document.querySelectorAll('#persGrowth input, #persGrowth textarea, #persGrowth button').length,
-      saveH: Math.round(document.querySelector('#persSave').getBoundingClientRect().height),
-      askH: Math.round(document.querySelector('#persAsk').getBoundingClientRect().height),
-    }));
-    if (!/dry-humoured/.test(pers.text)) note(where, `the persona box reads "${pers.text}"`);
+    const pers = await page.evaluate(() => {
+      const shown = (n) => !!n && n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+      const sec = document.querySelector('#setsecPersonality');
+      return {
+        text: document.querySelector('#persText').value,
+        boxShown: shown(document.querySelector('#persText')),
+        boxes: [...sec.querySelectorAll('textarea')].filter(shown).length,
+        titles: [...document.querySelectorAll('#persSections .perssec .perssectitle')].map((x) => x.textContent.trim()),
+        body: document.querySelector('#persSections').textContent,
+        rawLabels: /(^|\n)\s*(line|born|who_i_am|name_why):/.test(document.querySelector('#persSections').innerText),
+        cutNotes: [...sec.querySelectorAll('.perscut')].filter(shown).length,
+        row: (document.querySelector('#setSumPersonality') || {}).textContent || '',
+        growth: [...document.querySelectorAll('#persGrowth .persline')].map((x) => x.textContent),
+        font: parseFloat(getComputedStyle(document.querySelector('#persText')).fontSize),
+        nameFont: parseFloat(getComputedStyle(document.querySelector('#persName')).fontSize),
+        inputs: document.querySelectorAll('#persGrowth input, #persGrowth textarea, #persGrowth button').length,
+        editH: Math.round((document.querySelector('#persEdit') || { getBoundingClientRect: () => ({ height: 0 }) }).getBoundingClientRect().height),
+        saveH: Math.round(document.querySelector('#persSave').getBoundingClientRect().height),
+        askH: Math.round(document.querySelector('#persAsk').getBoundingClientRect().height),
+        sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
+      };
+    });
+    if (!/evening star/.test(pers.text)) note(where, `the persona box reads "${pers.text.slice(0, 60)}"`);
+    if (pers.titles.join(' | ') !== PERSONA_TITLES.join(' | ')) {
+      note(where, `the persona's sections are [${pers.titles.join(' | ')}], not [${PERSONA_TITLES.join(' | ')}]`);
+    }
+    if (pers.rawLabels) note(where, 'the sections show the outline\'s raw labels (line:, born:, …)');
+    for (const words of ['The evening star of the house', 'a keeper of small routines', 'one sentence for what changed', 'Named for the star']) {
+      if (!pers.body.includes(words)) note(where, `the sections leave out "${words}"`);
+    }
+    if (pers.boxShown || pers.boxes) note(where, 'the persona is a box beside its sections rather than sections with Edit');
+    if (pers.cutNotes) note(where, 'a whole persona says it was cut off');
+    if (/line:/.test(pers.row) || !/evening star/.test(pers.row)) note(where, `the Personality row reads "${pers.row}"`);
     if (pers.growth[0] !== 'Stopped announcing the heating twice.') {
       note(where, `the growth log is not newest first: ${pers.growth.join(' | ')}`);
     }
     if (pers.inputs) note(where, 'the growth log is editable');
-    if (touch && (pers.font < 16 || pers.nameFont < 16)) {
-      note(where, `the personality fields are ${pers.nameFont}px / ${pers.font}px on a finger`);
+    if (touch && (pers.saveH < MIN_TARGET || pers.askH < MIN_TARGET || pers.editH < MIN_TARGET)) {
+      note(where, `Edit is ${pers.editH}px, Save ${pers.saveH}px and Ask ${pers.askH}px on a finger`);
     }
-    if (touch && (pers.saveH < MIN_TARGET || pers.askH < MIN_TARGET)) {
-      note(where, `Save is ${pers.saveH}px and Ask ${pers.askH}px on a finger`);
+    if (pers.sideways) note(where, 'the Personality page scrolls sideways');
+    // PERSONA_SHOT_DIR=<dir>: keep a picture of the sections, for a person to look at.
+    if (process.env.PERSONA_SHOT_DIR) await page.screenshot({ path: `${process.env.PERSONA_SHOT_DIR}/persona-${width}.png` });
+    await page.click('#persEdit');
+    const editing = await page.evaluate(() => {
+      const shown = (n) => !!n && n.getClientRects().length > 0;
+      const sec = document.querySelector('#setsecPersonality');
+      return { box: shown(document.querySelector('#persText')), sections: shown(document.querySelector('#persSections')),
+               boxes: [...sec.querySelectorAll('textarea')].filter(shown).length,
+               font: parseFloat(getComputedStyle(document.querySelector('#persText')).fontSize),
+               nameFont: parseFloat(getComputedStyle(document.querySelector('#persName')).fontSize) };
+    });
+    if (!editing.box || editing.sections || editing.boxes !== 1) {
+      note(where, `Edit did not put the one box where the sections were (box ${editing.box}, sections ${editing.sections}, ${editing.boxes} boxes)`);
     }
-    await page.fill('#persText', 'Warmer, and brief.');
+    if (touch && (editing.font < 16 || editing.nameFont < 16)) {
+      note(where, `the personality fields are ${editing.nameFont}px / ${editing.font}px on a finger`);
+    }
+    await page.fill('#persText', 'line: Warmer, and brief.');
     await page.click('#persSave');
     await page.waitForFunction(() => (window.__personaPuts || []).length === 1, null, { timeout: 4000 });
     const sent = await page.evaluate(() => window.__personaPuts[0]);
-    if (sent.persona !== 'Warmer, and brief.' || sent.name !== 'Juniper') {
+    if (sent.persona !== 'line: Warmer, and brief.' || sent.name !== 'Juniper') {
       note(where, `Save sent ${JSON.stringify(sent)}`);
     }
+    await page.waitForFunction(() => document.querySelector('#persSections').getClientRects().length > 0
+      && /Warmer, and brief/.test(document.querySelector('#persSections').textContent), null, { timeout: 4000 })
+      .catch(() => note(where, 'after Save the page does not show the saved persona as sections'));
+    const row = await page.evaluate(() => document.querySelector('#setSumPersonality').textContent);
+    if (/line:/.test(row)) note(where, `after Save the Personality row reads "${row}"`);
+
+    // A persona the old 4,000 cap cut: said once, and the paste offered.
+    await page.evaluate(() => { window.__personaCut = true; });
+    await page.evaluate(() => loadPersonality());
+    await page.waitForFunction(() => document.querySelectorAll('#setsecPersonality .perscut').length > 0, null, { timeout: 4000 })
+      .catch(() => {});
+    const cut = await page.evaluate(() => {
+      const shown = (n) => !!n && n.getClientRects().length > 0;
+      const notes = [...document.querySelectorAll('#setsecPersonality .perscut')].filter(shown);
+      const secs = document.querySelector('#persSections').textContent.trim();
+      return { n: notes.length, words: notes.map((x) => x.textContent).join(' '), endsCut: secs.endsWith('…'),
+               box: document.querySelector('#persText').value };
+    });
+    if (process.env.PERSONA_SHOT_DIR) await page.screenshot({ path: `${process.env.PERSONA_SHOT_DIR}/persona-cut-${width}.png`, fullPage: true });
+    if (cut.n !== 1) note(where, `a persona cut at the old limit is said ${cut.n} times, not once`);
+    else if (!/cut off/i.test(cut.words) || !/paste/i.test(cut.words)) note(where, `the cut-off note reads "${cut.words}"`);
+    if (cut.endsCut) note(where, 'a persona cut at the old limit is shown ending in "…" as if whole');
+    if (!cut.box.endsWith('…')) note(where, 'the stored text was changed rather than shown as it is');
+    await page.evaluate(() => { window.__personaCut = false; });
   } catch (e) {
     note(where, `driving the personality failed: ${String(e.message).split('\n')[0]}`);
   }
