@@ -406,6 +406,7 @@ class MorphPanel extends HTMLElement {
     if (this.rootEl.className !== cls) this.rootEl.className = cls;
     this.region('thenrule', this.s.thenAt ? `<div class="thenrule" style="width:${(Math.min(1, (Date.now() - this.s.thenAt) / 86400000) * 100).toFixed(1)}%"></div>` : '');
     this.region('bar', this.barHtml());
+    this.chrome(theme);
     this.region('lede', this.updateHtml() + (this.s.edit ? `<div class="lede">Editing · <b>hold anything to tell ${esc(this.who())} what to change</b> · drag a section by its title · tap a card to rename, resize or remove it</div>` : '') + this.activityHtml());
     this.$('[data-region="board"]').hidden = false;
     if (!this.data) { this.region('top', '<p class="sm">Opening Morph…</p>'); return; }
@@ -672,6 +673,24 @@ class MorphPanel extends HTMLElement {
     }
   }
 
+  // What brAIn's header needs from Morph inside the shell: the theme to
+  // draw itself in, and whether Edit (or Done and YAML) belongs there. Sent
+  // only when it changes; the shell passes it to brAIn's page.
+  chrome(theme) {
+    const c = { theme, admin: this.admin(), edit: !!this.s.edit, yaml: this.s.yaml != null };
+    const key = JSON.stringify(c);
+    if (key === this._chromeKey) return;
+    this._chromeKey = key;
+    this.dispatchEvent(new CustomEvent('morph-chrome', { bubbles: true, composed: true, detail: c }));
+  }
+
+  // A press on Morph's controls in brAIn's header ('edit', 'yaml-toggle').
+  chromeAct(name) {
+    if (name !== 'edit' && name !== 'yaml-toggle') return;
+    if (name === 'edit' && !this.admin() && !this.s.edit) return;
+    this.act(name, { dataset: {} });
+  }
+
   barHtml() {
     const now = new Date();
     const date = now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) + ' · ' + clock(now);
@@ -688,6 +707,12 @@ class MorphPanel extends HTMLElement {
     const yaml = this.s.edit && this.s.yaml != null ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:14px"><span class="label">Raw configuration · /config/morph/dashboard.yaml</span><textarea class="code-ed" data-keep="yaml" spellcheck="false" aria-label="dashboard.yaml">${esc(this.s.yaml)}</textarea><div class="row"><button type="button" class="wd go" data-act="yaml-save">Save YAML</button><span class="small">Saved as one commit; Undo puts it back.</span></div></div>` : '';
     // On a phone a toast takes the date's place: the bar is one row and
     // Edit's own buttons must stay on it.
+    // Inside brAIn's shell there is ONE header, brAIn's (the owner: "there
+    // are two headers … merge them"): Edit, YAML and Done are drawn there
+    // from `chrome()` and pressed back through `chromeAct`, the date gives
+    // way to the page's own clock, and a toast is a line of the page rather
+    // than a bar.
+    if (this._shell) return `${toast ? `<div class="toastline">${toast}</div>` : ''}${yaml}`;
     const dateHtml = this.s.toast && this._narrow ? '' : `<span class="date">${esc(date)}</span>`;
     const brand = this._shell ? '' : `<span class="brand">${MARK(16)}${esc(this.who().toUpperCase())}</span>`;
     return `<div class="bar">${menu}${brand}${toast}<span class="flex1"></span>${dateHtml}${right}</div>${yaml}`;
