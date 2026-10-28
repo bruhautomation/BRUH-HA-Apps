@@ -2,6 +2,17 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.6
+
+### Changed
+
+- **One header, in Morph's theme.** Inside the sidebar panel there is now a single header: the name and version, Edit (on Home), the status dot and ⚙, with Home, Insights, Ask and Memory inside it. The bottom tab bar is gone, so Home runs to the bottom of the screen. Every brAIn page follows Morph's light, medium or dark theme, so the two read as one product. Outside the panel (plain ingress) nothing changes. (#511)
+- **Settings › Personality shows sections.** The personality is drawn as titled sections (tagline, born, who I am, how I am, voice, never and any other part), with Edit swapping them for the text box in place. The Settings row shows the tagline instead of the raw "line:" text. (#519)
+
+### Fixed
+
+- **A personality cut off by the old 4,000-character limit says so.** brAIn shows one line saying it looks cut off and where to paste the full text; the stored text is not touched. (#519)
+
 ## 4.0.5
 
 ### Changed
