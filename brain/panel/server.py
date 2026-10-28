@@ -11213,8 +11213,8 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 # offline checks. A device somebody set aside there is not reported again
 # in the log's words.
 SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
-                        "net.wifi_hung", "net.zwave_silent",
-                        "net.zigbee_silent")
+                        "net.connectivity", "net.wifi_hung",
+                        "net.zwave_silent", "net.zigbee_silent")
 
 
 def _sre_set_aside(now: float) -> set[str]:
@@ -11235,6 +11235,8 @@ def _sre_set_aside(now: float) -> set[str]:
             if (row.get("source") in sources and row.get("entity_id")
                     and float(row.get("snoozed_until") or 0) > now):
                 out.add(str(row["entity_id"]))
+                # The connectivity card names every device it lists.
+                out |= set(findings_store.clean_items(row.get("items")))
         for entry in findings_store.settled_listing():
             if (entry.get("kind") == "ignored"
                     and entry.get("source") in sources
@@ -15591,7 +15593,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
-            ran_sources = {checks.source_for(c) for c in result["ran"]}
+            ran_sources = checks.sources_ran(result["ran"])
             # Filed as waiting to be looked at rather than as work
             # (`triage.gate`), which every producer does now. Nothing is
             # hidden by this on its own: a row only leaves `triaging` for

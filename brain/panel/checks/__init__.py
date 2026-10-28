@@ -141,6 +141,19 @@ def source_for(check_id: str) -> str:
     return f"check:{check_id}"
 
 
+def sources_ran(ran) -> set[str]:
+    """The producers a pass may clear rows of: every check that ran, and
+    every check a check that ran REPLACED (a catalog entry's `replaces`),
+    whose rows nothing else will ever report again — the per-device drop
+    checks `net.connectivity` became one card of."""
+    out = set()
+    for cid in ran or ():
+        out.add(source_for(cid))
+        for old in (get_check(cid) or {}).get("replaces") or ():
+            out.add(source_for(old))
+    return out
+
+
 def title_for(check_id: str) -> str:
     """The producer's name on a card: the catalog entry's own
     `source_title` where it has one ("Network (Z-Wave)"), else its group's."""
