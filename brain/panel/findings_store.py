@@ -585,11 +585,8 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             out[key] = house_words.self_said(
                 out[key], who["name"], who["voice"], dev=dev,
                 keep=key == "text")
-            # Urgent only when two readings agree (`house_words.calm`), and
-            # a step never asks somebody to check what brAIn reads itself.
+            # Urgent only when two readings agree (`house_words.calm`).
             out[key] = house_words.calm(out[key], agree)
-            if key == "fix":
-                out[key] = house_words.without_self_checks(out[key])
             # A step or an account holding a hole where a value belongs
             # ("a template", "<entity>", "TODO") is refused and the row
             # keeps what it had (#446): `refine` writes nothing over an

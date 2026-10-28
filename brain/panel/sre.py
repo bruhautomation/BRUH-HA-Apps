@@ -1444,7 +1444,7 @@ def _evidence_fix(recs: list[dict], dig: dict) -> str:
         if isinstance(lqi, (int, float)) and lqi < WEAK_LQI:
             return (f"{name}'s link to the Zigbee network reads {int(lqi)}, "
                     f"under the {WEAK_LQI} where messages start to drop.")
-        return ""
+        return _looks_again(rec, dig)
     if rec["kind"] == "zwave":
         name = rec.get("name") or "It"
         stats = rec.get("stats") or {}
@@ -1454,7 +1454,7 @@ def _evidence_fix(recs: list[dict], dig: dict) -> str:
             return f"Z-Wave reads {name} as dead."
         if dropped:
             return f"Z-Wave counts {dropped} dropped commands to {name}."
-        return ""
+        return _looks_again(rec, dig)
     if rec["kind"] == "automation":
         plugs = [names.get(e) or e for e in rec.get("switches_off") or []]
         return (f"{rec.get('automation') or 'An automation'} switches off "
@@ -1472,9 +1472,20 @@ def _evidence_fix(recs: list[dict], dig: dict) -> str:
             siblings += f", so the trouble is at {thing}, not the network"
         bits.append(siblings)
     if not bits:
-        return ""
+        return _looks_again(rec, dig)
     text = "; ".join(bits)
     return text[0].upper() + text[1:] + "."
+
+
+def _looks_again(rec: dict, dig: dict) -> str:
+    """With nothing read beyond the lines themselves, what brAIn does next
+    — a fact about brAIn, never a step it could take itself handed to the
+    household."""
+    thing = _thing_of(rec, dig) or rec.get("name") or _source_of(rec, dig)
+    if not thing:
+        return ""
+    return (f"brAIn looks at {thing} again tomorrow night and takes this "
+            "off when the errors stop.")
 
 
 def _not_yours(logs: list[dict], dig: dict) -> str:

@@ -525,9 +525,13 @@ def self_said(text: str, name: str = "brAIn", voice: str = "",
     return " ".join(kept).strip()
 
 
+# brAIn's upkeep: it speaking of itself, or of its own instructions,
+# personality, voice or tooling. Merely naming brAIn ("the house book brAIn
+# writes") is not: a house row keeps its ids for the names map.
 _SELF_RE = re.compile(
-    r"\bbrAIn\b|\b(?:I|I['’]m|I['’]ve|My|my|me|myself)\b|\bpersonality\b|"
-    r"\binstructions?\b|\bwake word\b|\bvoice\b|\bmcp__|\bclaude-", )
+    r"\b(?:I|I['’]m|I['’]ve|My|my|me|myself)\b|\bpersonality\b|"
+    r"\binstructions?\b|\bwake word\b|\bvoice\b|\bmcp__|\bclaude-|"
+    r"\b[\w-]+\.md\b")
 
 
 def about_self(*texts) -> bool:
