@@ -8,7 +8,21 @@
 // reads it, and one can run before that part of the file has.
 const SHELL = new URLSearchParams(location.search).get("shell") === "1"
   && window.parent !== window;
-const shellState = { morph: false, narrow: false, raised: false };
+const shellState = { morph: false, narrow: false, raised: false, home: {} };
+// Inside the shell the page is drawn in Morph's theme (dark, medium,
+// light). The shell says which on every state message; until the first,
+// the one Morph last rendered in — the frame shares Home Assistant's origin
+// and so Morph's localStorage — so the page does not flash another.
+const SHELL_THEMES = ["dark", "medium", "light"];
+function applyShellTheme(theme) {
+  if (!SHELL || !SHELL_THEMES.includes(theme)) return;
+  document.documentElement.dataset.theme = theme;
+}
+if (SHELL) {
+  let saved = "";
+  try { saved = localStorage.getItem("morph.theme") || ""; } catch (e) { /* storage refused */ }
+  applyShellTheme(SHELL_THEMES.includes(saved) ? saved : "dark");
+}
 // What the page calls brAIn (Personality: `applyName`).
 let pageName = "brAIn";
 
@@ -12096,6 +12110,7 @@ function switchView(name) {
   currentView = name;
   if (SHELL) {
     document.documentElement.classList.toggle("shell-home", name === "home");
+    syncShellEdit();
     shellPost({ show: name === "home" ? "home" : "panel" });
     shellRaiseCheck();
   }
@@ -12349,6 +12364,21 @@ function shellRaiseCheck() {
   shellPost({ raise: open });
 }
 
+// Morph's Edit in the one header: on Home, while the shell says the person
+// may edit the dashboard; Done (and YAML) while they are.
+function syncShellEdit() {
+  const edit = $("#shellEdit");
+  const yaml = $("#shellYaml");
+  if (!edit || !yaml) return;
+  const h = shellState.home || {};
+  const on = SHELL && currentView === "home" && !!h.edit;
+  edit.hidden = !on;
+  $("#shellEditText").textContent = h.editing ? "Done" : "Edit";
+  edit.classList.toggle("editing", !!h.editing);
+  yaml.hidden = !(on && h.editing);
+  yaml.textContent = h.yaml ? "Hide YAML" : "YAML";
+}
+
 // The Home tab: there while the dashboard is switched on. Inside the shell
 // the shell says so; on its own, this page reads it off the status poll.
 function syncHomeTab() {
@@ -12370,6 +12400,8 @@ if (SHELL) {
   document.documentElement.classList.add("in-shell");
   setInterval(shellRaiseCheck, 250);
   $("#shellMenu").addEventListener("click", () => shellPost({ menu: true }));
+  $("#shellEdit").addEventListener("click", () => shellPost({ home: "edit" }));
+  $("#shellYaml").addEventListener("click", () => shellPost({ home: "yaml-toggle" }));
   window.addEventListener("message", (ev) => {
     if (ev.source !== window.parent || ev.origin !== location.origin) return;
     const d = ev.data;
@@ -12377,8 +12409,11 @@ if (SHELL) {
     if (d.state) {
       shellState.morph = !!d.state.morph;
       shellState.narrow = !!d.state.narrow;
+      shellState.home = d.state.home || {};
+      applyShellTheme(d.state.theme);
       $("#shellMenu").hidden = !shellState.narrow;
       syncHomeTab();
+      syncShellEdit();
       if (d.state.view === "home" && shellState.morph && currentView !== "home") switchView("home");
       if (d.state.view === "panel" && currentView === "home") switchView("insights");
       shellBars();
@@ -17223,10 +17258,121 @@ async function loadPersonality() {
   renderPersonality();
 }
 
+// The persona as the outline it is. A persona moved over from Morph's old
+// PERSONA object is labelled parts — `line: …`, `born: …`, `who_i_am:` with
+// `- item` lines under it, nested `key: value` lines indented — and was
+// shown here as one raw box. A label is a few words at the start of a line
+// with no indent (personality.py `_LABEL` is the same rule); words before
+// the first label are an untitled lead, and a persona with no labels is its
+// paragraphs under no title at all.
+const PERS_LABEL = /^([A-Za-z][A-Za-z0-9_' -]{0,39}):(?:\s+(.*))?$/;
+const PERS_TITLES = {
+  line: "Tagline", tagline: "Tagline", "tag line": "Tagline", one_line: "Tagline",
+  name_why: "Why the name", why_the_name: "Why the name",
+};
+
+function personaTitle(key) {
+  const k = String(key || "").trim();
+  const known = PERS_TITLES[k.toLowerCase()];
+  if (known) return known;
+  const words = k.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
+    .replace(/\bi\b/g, "I");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+function personaLabel(line) {
+  if (!line || /^\s/.test(line)) return null;
+  const m = PERS_LABEL.exec(line.trimEnd());
+  if (!m || m[1].trim().split(/\s+/).length > 4) return null;
+  return { key: m[1].trim(), value: (m[2] || "").trim() };
+}
+
+function personaSections(text) {
+  const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let cur = { title: "", lines: [] };
+  lines.forEach((line) => {
+    const lab = personaLabel(line);
+    if (lab) {
+      if (cur.title || cur.lines.some((x) => x.trim())) out.push(cur);
+      cur = { title: personaTitle(lab.key), lines: lab.value ? [lab.value] : [] };
+    } else {
+      cur.lines.push(line);
+    }
+  });
+  if (cur.title || cur.lines.some((x) => x.trim())) out.push(cur);
+  return out;
+}
+
+// One section's words: `- item` lines as a list, an indented `key: value`
+// as its own titled line, anything else as paragraphs.
+function personaBody(sec, lines) {
+  let list = null;
+  let para = [];
+  const flush = () => {
+    if (para.length) sec.appendChild(el("p", "", para.join("\n")));
+    para = [];
+  };
+  lines.forEach((raw) => {
+    const t = raw.trim();
+    if (!t) { flush(); list = null; return; }
+    const item = /^[-*•]\s+(.*)$/.exec(t);
+    if (item) {
+      flush();
+      if (!list) { list = el("ul"); sec.appendChild(list); }
+      list.appendChild(el("li", "", item[1]));
+      return;
+    }
+    list = null;
+    const sub = /^\s/.test(raw) ? PERS_LABEL.exec(t) : null;
+    if (sub && sub[1].split(/\s+/).length <= 4) {
+      flush();
+      const p = el("p");
+      p.appendChild(el("span", "perssub", personaTitle(sub[1]) + (sub[2] ? " · " : "")));
+      if (sub[2]) p.appendChild(document.createTextNode(sub[2]));
+      sec.appendChild(p);
+      return;
+    }
+    para.push(t);
+  });
+  flush();
+}
+
+function renderPersonaSections(persona, cut) {
+  const box = $("#persSections");
+  box.textContent = "";
+  // A persona the old cap cut ends in its "…": the note under the sections
+  // says so, and the sections stop at the last word rather than pretending.
+  const text = cut ? String(persona || "").replace(/\s*…\s*$/, "") : persona;
+  const secs = personaSections(text);
+  if (!secs.length) {
+    box.appendChild(el("p", "persempty", "Nothing set yet. Press Edit to say how it speaks and behaves."));
+    return;
+  }
+  secs.forEach((s, i) => {
+    const sec = el("section", "perssec" + (!i && (!s.title || s.title === "Tagline") ? " lead" : ""));
+    if (s.title) sec.appendChild(el("h4", "perssectitle", s.title));
+    personaBody(sec, s.lines);
+    box.appendChild(sec);
+  });
+}
+
+function setPersonaEditing(on) {
+  persState.editing = !!on;
+  $("#persText").hidden = !on;
+  $("#persSections").hidden = !!on;
+  $("#persEdit").hidden = !!on;
+  $("#persCancel").hidden = !on;
+  if (on) $("#persText").focus();
+}
+
 function renderPersonality() {
   const d = persState.data || {};
   $("#persName").value = d.name || "";
   $("#persText").value = d.persona || "";
+  renderPersonaSections(d.persona, !!d.cut_at_old_limit);
+  $("#persCut").hidden = !d.cut_at_old_limit;
+  setPersonaEditing(false);
   const list = $("#persGrowth");
   list.textContent = "";
   const growth = Array.isArray(d.growth) ? d.growth : [];
@@ -17242,6 +17388,12 @@ function renderPersonality() {
   });
 }
 
+$("#persEdit").addEventListener("click", () => setPersonaEditing(true));
+$("#persCancel").addEventListener("click", () => {
+  $("#persText").value = (persState.data || {}).persona || "";
+  setPersonaEditing(false);
+});
+
 $("#persSave").addEventListener("click", async () => {
   const btn = $("#persSave");
   btn.disabled = true;
@@ -17250,10 +17402,8 @@ $("#persSave").addEventListener("click", async () => {
       method: "PUT", body: JSON.stringify({
         name: $("#persName").value, persona: $("#persText").value }) });
     renderPersonality();
-    setSummary("setSumPersonality", persState.data.set
-      ? [persState.data.name, (persState.data.persona || "").split("\n")[0].slice(0, 60)]
-        .filter(Boolean).join(" · ")
-      : "None set");
+    setSummary("setSumPersonality", persState.data.summary
+      || (persState.data.set ? persState.data.name || "Set" : "None set"));
     toast("Saved. The next conversation speaks as it.");
   } catch (e) {
     toast(e.message);

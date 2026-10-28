@@ -84,6 +84,9 @@ KINDS = {
     "look_ignore": "brAIn looked and let it go",
     "look_watch": "brAIn looked and decided to watch it",
     "held": "looked at, and held back from the list",
+    # A log error that has stopped, or whose integration is working now: a
+    # reconnect around a restart is not a problem to file.
+    "transient": "a passing error: what it was about is working now",
     # Not a silence about something wrong — the answer to "did you look at
     # X": every check in that part of Home Assistant looked and found
     # nothing. One row per area per day (the date is in the reason).
@@ -107,7 +110,7 @@ KINDS = {
 # written again past the window, as before.
 FOLD_KINDS = frozenset({"dedupe", "exception", "mute", "shadow", "cap",
                         "drift", "claimed", "explained", "checked",
-                        "unchecked"})
+                        "unchecked", "transient"})
 
 _LOCK = threading.Lock()
 # `(kind, subject, check, reason)` -> when it was last written. In memory:

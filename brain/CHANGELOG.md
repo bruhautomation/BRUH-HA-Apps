@@ -2,6 +2,28 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.7
+
+### Added
+
+- **One card for devices that keep dropping off the network.** Wi-Fi devices that hang or flap, and Z-Wave and Zigbee devices that go quiet, are now one self-updating card instead of one card per device. A device is listed only after it has been down for hours or has dropped repeatedly, a device that comes back leaves the card, and the card clears itself when none remain. Phones and trackers are never listed, and a restart or half a mesh going quiet at once is not counted as devices dropping. (#513)
+
+### Changed
+
+- **Brief blips in an integration's log are no longer filed as problems.** The overnight check and the "errors in the log" check now file a log-only cause only when the integration's own entities are unavailable now, the error was logged recently, and it has been going on for hours. Their advice no longer tells you to reload the integration; brAIn can do it when asked in the chat. brAIn does not yet reload a failing integration by itself. (#512)
+- **Lovelace changes are no longer described as impossible.** brAIn's tools, prompts and refusals now say how a dashboard is changed (through the dashboard tools and `brain.update_dashboard`, with an approval card, or none under act-without-asking), and a refusal names the Blocked services list when that is what stopped it. Voice and unattended runs stay read-only. (#510)
+
+## 4.0.6
+
+### Changed
+
+- **One header, in Morph's theme.** Inside the sidebar panel there is now a single header: the name and version, Edit (on Home), the status dot and ⚙, with Home, Insights, Ask and Memory inside it. The bottom tab bar is gone, so Home runs to the bottom of the screen. Every brAIn page follows Morph's light, medium or dark theme, so the two read as one product. Outside the panel (plain ingress) nothing changes. (#511)
+- **Settings › Personality shows sections.** The personality is drawn as titled sections (tagline, born, who I am, how I am, voice, never and any other part), with Edit swapping them for the text box in place. The Settings row shows the tagline instead of the raw "line:" text. (#519)
+
+### Fixed
+
+- **A personality cut off by the old 4,000-character limit says so.** brAIn shows one line saying it looks cut off and where to paste the full text; the stored text is not touched. (#519)
+
 ## 4.0.5
 
 ### Changed

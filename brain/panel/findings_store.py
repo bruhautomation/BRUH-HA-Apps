@@ -2200,9 +2200,12 @@ def _fold_shared(items: list[dict]) -> set[int]:
 # count the card's own detail now contradicts — one device, one count.
 # The refusals are `_fold_shared`'s.
 DROP_CHECKS = frozenset({
+    "check:net.connectivity", "check:dev.unavailable", "check:dev.zha_unseen",
+    "check:dev.zwave_dead",
+    # The per-device checks `net.connectivity` replaced: rows they filed
+    # before the update still fold until the first pass clears them.
     "check:net.wifi_hung", "check:net.wifi_flapping", "check:net.zwave_silent",
-    "check:net.zigbee_silent", "check:dev.unavailable", "check:dev.zha_unseen",
-    "check:dev.zwave_dead", "check:net.unifi_dropped"})
+    "check:net.zigbee_silent", "check:net.unifi_dropped"})
 # A model-written row's claim that something is not there. Read off the
 # title or the claim only, for rows no check id can classify.
 OFFLINE_RE = re.compile(
@@ -3870,6 +3873,11 @@ def refresh_details(objs: list[dict]) -> int:
             # What a Wrong pressed on this row will answer is what it names
             # NOW, not what it named when it was filed.
             cur["items"] = new_items
+            # And what it shows under Details, and folds other rows into
+            # (`_devices_named`): a device that left the list leaves those.
+            if str(cur.get("source") or "").startswith("check:") \
+                    and "evidence" in entry:
+                cur["evidence"] = _clean_evidence(entry.get("evidence"))
             changed += 1
         # A check's own sentence about what to do follows the check, so a
         # reworded rule reaches the rows it already filed. Only while the

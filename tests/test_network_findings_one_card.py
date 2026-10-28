@@ -191,7 +191,7 @@ class TestOneDeviceOneCard(DeviceCase):
             snap["wifi_history"]["entities"][
                 f"device_tracker.plug_{n}_client"] = tnc.series(
                 f"device_tracker.plug_{n}_client", tracker)
-        [row] = network.unifi_dropped(snap, NOW)
+        [row] = network.connectivity(snap, NOW)
         self.assertEqual(row["integration"], "unifi")
 
 

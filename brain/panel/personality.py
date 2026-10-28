@@ -49,6 +49,11 @@ MORPH_FILE = os.environ.get(
 NAME_MAX = 60
 # One ceiling for the persona everywhere it is stored, shown or typed.
 PERSONA_MAX = 32000
+# The ceiling before 4.0.1. A persona saved or moved over under it was cut
+# with textclip's "…" (on a sentence end past 60% of it, else a word), and
+# is stored that way: `looks_cut` lets ⚙ › Personality say so once rather
+# than show it as whole. Nothing is ever written back on a guess.
+OLD_PERSONA_MAX = 4000
 GROWTH_TEXT_MAX = 500
 GROWTH_MAX = 200
 # What a file may be before it is not read at all: a persona and two hundred
@@ -323,9 +328,54 @@ def payload(path: str | None = None) -> dict:
         "persona": data["persona"],
         "growth": list(reversed(data["growth"])),
         "updated_at": data.get("updated_at") or 0,
+        "summary": summary(data),
+        "cut_at_old_limit": looks_cut(data["persona"]),
         "path": path or STORE,
         "limits": {"name": NAME_MAX, "persona": PERSONA_MAX, "growth": GROWTH_TEXT_MAX},
     }
+
+
+# A labelled part of an outline (`line: …`, `who_i_am:`), at the start of a
+# line with no indent: a few words, no sentence. The page's sections and
+# the list row's tagline both read it (app.js `personaSections` is the same
+# rule).
+_LABEL = re.compile(r"^([A-Za-z][A-Za-z0-9_' -]{0,39}):(?:\s+(.*))?$")
+TAGLINE_KEYS = ("line", "tagline", "tag line", "one_line", "one line", "summary")
+
+
+def _label(line: str):
+    if not line or line[:1].isspace():
+        return None
+    m = _LABEL.match(line.rstrip())
+    if not m or len(m.group(1).split()) > 4:
+        return None
+    return m.group(1).strip(), (m.group(2) or "").strip()
+
+
+def tagline(persona) -> str:
+    """The persona in one line: an outline's `line:` (or `tagline:`)
+    without its label, else its first words — never a bare label."""
+    lines = str(persona or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    for line in lines:
+        got = _label(line)
+        if got and got[0].lower() in TAGLINE_KEYS and got[1]:
+            return got[1]
+    for line in lines:
+        got = _label(line)
+        text = got[1] if got else line.strip()
+        text = re.sub(r"^(?:[-*•]\s+|#+\s*)", "", text.strip())
+        if text:
+            return text
+    return ""
+
+
+def looks_cut(persona) -> bool:
+    """True when the persona ends the way the old 4,000 cap cut it: "…"
+    as its last character, at a length that cap could have left."""
+    text = str(persona or "").rstrip()
+    if not text.endswith("…"):
+        return False
+    return int((OLD_PERSONA_MAX - 1) * 0.6) <= len(text) <= OLD_PERSONA_MAX
 
 
 def summary(data: dict | None) -> str:
@@ -334,7 +384,7 @@ def summary(data: dict | None) -> str:
     if not is_set(data):
         return "None set"
     name = data.get("name") or ""
-    first = _one_line(data.get("persona"), 60)
+    first = _one_line(tagline(data.get("persona")), 90)
     if name and first:
         return f"{name} · {first}"
     return name or first
