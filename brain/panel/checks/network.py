@@ -29,8 +29,13 @@ none of it reaches a state:
 **What is not a device dropping is said apart, or not at all.** A minute
 in which Home Assistant restarted, or in which every UniFi tracker went
 unavailable together, is the house or the integration; it is never
-counted as a device's drop, and the second happening repeatedly is its
-own single row. One device is reported by one check: a hung association
+counted as a device's drop, and the second happening repeatedly is a
+sentence of its own on the card.
+
+**Every device dropping off is ONE card** (`connectivity`, check
+`net.connectivity`): hung, flapping, silent on Z-Wave and quiet on Zigbee
+are what it lists, kept up to date in place, and the per-device checks
+it replaced (`REPLACED`) file nothing. One device is reported by one check: a hung association
 is this module's, not `dev.unavailable`'s (which asks
 :func:`wifi_hung_devices`), and a quiet Zigbee device is either
 `net.zigbee_silent`'s (hours) or `dev.zha_unseen`'s (a week), decided by
@@ -44,10 +49,8 @@ import re
 from numfmt import count
 
 from ._registry_facts import SELF_PLATFORMS, entry_not_loaded, is_node_status
-from ._util import (DAY, SOFTWARE_DOMAINS, House, after_restart,
-                    counted_names, domain_of, evidence_for, num,
-                    without_mac,
-                    parse_ts, when)
+from ._util import (DAY, SOFTWARE_DOMAINS, CouldNotLook, House,
+                    after_restart, domain_of, num, without_mac, parse_ts, when)
 
 # The integration whose trackers are the Wi-Fi clients.
 UNIFI_PLATFORMS = frozenset({"unifi"})
@@ -382,59 +385,6 @@ def wifi_hung_devices(snap: dict, now: float) -> set[str]:
     return {d for c in _hung_clients(house, now) for d in c["devices"]}
 
 
-def wifi_hung(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
-    groups: dict[str, list[dict]] = {}
-    for c in _hung_clients(house, now):
-        if not house.should_report(c["tracker"], "net.wifi_hung"):
-            continue
-        groups.setdefault(c["ap_mac"], []).append(c)
-    rows = []
-    for mac in sorted(groups, key=lambda m: -len(groups[m])):
-        clients = sorted(groups[mac], key=lambda c: c["name"])
-        name, ap_entity = ap_name(house, mac)
-        if ap_entity and not house.should_report(ap_entity, "net.wifi_hung"):
-            continue
-        many = len(clients) > 1
-        bands = {c["band"] for c in clients}
-        band = next(iter(bands)) if len(bands) == 1 else None
-        radio = f" on its {band} radio" if band else ""
-        detail = (f"{counted_names([c['name'] for c in clients])} "
-                  + ("are" if many else "is")
-                  + f" still connected to {name}{radio} according to UniFi, "
-                  + ("but their" if many else "but its")
-                  + " own entities have been unavailable since "
-                  + when(min(c["since"] for c in clients)) + ".")
-        if many:
-            detail += (" Several devices hanging on one access point at once "
-                       "is the access point's radio rather than the devices.")
-        fix = ("Restart the access point" + (f" (or just its {band} radio)"
-                                             if band else "")
-               + " from the UniFi Network app and see whether they come back. "
-               "If they hang again, give them a 2.4 GHz network of their own "
-               "with band steering and minimum data rates off, and update the "
-               "access point's firmware." if many else
-               "Block and unblock the device in the UniFi Network app to make "
-               "it reconnect, or power-cycle it. If it keeps happening, give it "
-               "a 2.4 GHz network of its own with band steering off.")
-        rows.append({
-            "text": f"Devices connected through {name} are not answering",
-            "detail": detail,
-            "fix": fix,
-            "severity": "warning",
-            "fixable": False,
-            "entity_id": ap_entity or clients[0]["tracker"],
-            "evidence": evidence_for(
-                [c["tracker"] for c in clients] + [c["own"][0] for c in clients],
-                "connected but unavailable"),
-        })
-    if len(rows) > MAX_ROWS:
-        house.gave_up("net.wifi_hung", rows[MAX_ROWS:],
-                      "too many access points at once to be the radios")
-        rows = rows[:MAX_ROWS]
-    return rows
-
-
 def _rows(history: dict, eid: str) -> list[tuple[float, str]]:
     out = []
     for row in history.get(eid) or ():
@@ -491,100 +441,6 @@ def _unifi_moments(tracker_drops: dict) -> list[float]:
         return []
     return _mass_moments(tracker_drops, max(MASS_MIN,
                                             int(n * UNIFI_DROP_SHARE + 0.999)))
-
-
-def wifi_flapping(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
-    hist, cands, probe_drops, tracker_drops = _wifi_week(snap)
-    if not cands:
-        return []
-    probe_mass = _mass_moments(probe_drops, max(MASS_MIN,
-                                                (len(probe_drops) + 1) // 2))
-    unifi = _unifi_moments(tracker_drops)
-    hung = wifi_hung_devices(house, now)
-    days = int((snap.get("wifi_history") or {}).get("days") or FLAP_DAYS)
-    rows = []
-    for c in cands:
-        if set(c["devices"]) & hung:
-            continue
-        states = {s for _t, s in _rows(hist, c["tracker"])}
-        if "not_home" in states or "home" not in states:
-            continue
-        spells = [t for t in probe_drops[c["probe"]]
-                  if now - t <= days * DAY
-                  and not _near(t, probe_mass) and not _near(t, unifi)
-                  and after_restart(snap, t) is None]
-        if len(spells) < FLAP_MIN_SPELLS:
-            continue
-        if not house.should_report(c["probe"], "net.wifi_flapping"):
-            continue
-        ap, _ap_entity = ap_name(house, c["ap_mac"])
-        radio = f" on its {c['band']} radio" if c["band"] else ""
-        rows.append({
-            "text": f"{c['name']} keeps dropping off the network",
-            "detail": (f"It went unavailable {len(spells)} separate times in "
-                       f"the last {days} days while UniFi kept it connected "
-                       f"to {ap}{radio}, most recently {when(spells[-1])}. "
-                       "Minutes when Home Assistant restarted, or when every "
-                       "device dropped at once, are not counted."),
-            "fix": ("The radio link is holding while the device stops "
-                    "answering, which is usually a weak signal or a crowded "
-                    "2.4 GHz channel. Check its signal in the UniFi Network "
-                    "app, move it or the access point closer, or give it a "
-                    "fixed 2.4 GHz network with band steering off; a device "
-                    "that does this on a good signal needs a firmware update."),
-            "severity": "warning",
-            "fixable": False,
-            "entity_id": c["probe"],
-            "evidence": evidence_for([c["probe"], c["tracker"]],
-                                     f"{len(spells)} drops"),
-            "_count": len(spells),
-        })
-    rows.sort(key=lambda r: -r["_count"])
-    for r in rows:
-        r.pop("_count", None)
-    if len(rows) > MAX_ROWS:
-        house.gave_up("net.wifi_flapping", rows[MAX_ROWS:],
-                      "too many devices flapping at once to be the devices")
-        rows = rows[:MAX_ROWS]
-    return rows
-
-
-def unifi_dropped(snap: dict, now: float) -> list[dict]:
-    """Every UniFi tracker going unavailable at once, repeatedly — the
-    integration losing its controller, never the devices. A moment when
-    the other integrations' entities dropped too is Home Assistant
-    restarting, and is not counted either."""
-    hist, cands, probe_drops, tracker_drops = _wifi_week(snap)
-    moments = _unifi_moments(tracker_drops)
-    if not moments:
-        return []
-    probe_mass = _mass_moments(probe_drops, max(MASS_MIN,
-                                                (len(probe_drops) + 1) // 2))
-    days = int((snap.get("wifi_history") or {}).get("days") or FLAP_DAYS)
-    counted = [t for t in moments if now - t <= days * DAY
-               and not _near(t, probe_mass)
-               and after_restart(snap, t) is None]
-    if len(counted) < UNIFI_DROPS_MIN:
-        return []
-    return [{
-        "text": "UniFi's device trackers keep dropping all at once",
-        "detail": (f"Every UniFi tracker went unavailable together "
-                   f"{len(counted)} times in the last {days} days, most "
-                   f"recently {when(counted[-1])}. That is the UniFi "
-                   "integration losing its controller, not the devices, so "
-                   "those minutes are not counted against any device."),
-        "fix": ("Check the UniFi Network application stays up and reachable "
-                "from Home Assistant: its address, its certificate and the "
-                "local account Home Assistant signs in with. Home Assistant's "
-                "log around those times says which."),
-        "severity": "warning",
-        "fixable": False,
-        "entity_id": "",
-        # The integration as a whole: one card with every other check's row
-        # about the same outage (#440).
-        "integration": "unifi",
-    }]
 
 
 # ---------------------------------------------------------------------------
@@ -709,39 +565,6 @@ def _span(seconds: float) -> str:
     return count(int(hours / 24), "day")
 
 
-def zwave_silent(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
-    rows = []
-    for n in sorted(_silent_nodes(house, now), key=lambda n: n["seen"]):
-        if n["entity"] and not house.should_report(n["entity"], "net.zwave_silent"):
-            continue
-        quiet = now - n["seen"]
-        if n["interval"]:
-            why = (f"It wakes every {_span(n['interval'])}, so it has missed "
-                   f"{int(quiet // n['interval'])} check-ins.")
-        else:
-            why = "A battery node checks in at least once a day."
-        rows.append({
-            "text": f"{n['name']} has not been heard from on the Z-Wave network",
-            "detail": (f"Z-Wave JS last heard from it {when(n['seen'])}, "
-                       f"{_span(quiet)} ago. {why} Home Assistant still shows "
-                       "its last readings, which are not current."),
-            "fix": ("Wake it (its button, or taking the battery out and back "
-                    "in) and check its battery. If it does not answer, it has "
-                    "dropped off the mesh: re-interview it from its device "
-                    "page, and remove it with 'Remove failed node' if it is "
-                    "really gone."),
-            "severity": "serious" if quiet >= 7 * DAY else "warning",
-            "fixable": False,
-            "entity_id": n["entity"],
-        })
-    if len(rows) > MAX_ROWS:
-        house.gave_up("net.zwave_silent", rows[MAX_ROWS:],
-                      "more silent nodes than one card a node can say")
-        rows = rows[:MAX_ROWS]
-    return rows
-
-
 def zwave_link(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     silent = {n["device_id"] for n in _silent_nodes(house, now)}
@@ -849,43 +672,6 @@ def zigbee_quiet_devices(snap, now: float) -> set[str]:
             if reg and zigbee_quiet(d, now)}
 
 
-def zigbee_silent(snap: dict, now: float) -> list[dict]:
-    house = House(snap)
-    rows = []
-    for dev, reg, entity in zigbee_devices(house):
-        if zigbee_quiet(dev, now) != "quiet":
-            continue
-        if entity and not house.should_report(entity, "net.zigbee_silent"):
-            continue
-        seen = parse_ts(dev.get("last_seen")) or now
-        mains = _zha_mains(dev)
-        rows.append({
-            "text": f"{zigbee_name(dev, reg, house)} has gone quiet on the "
-                    "Zigbee network",
-            "detail": (f"Last heard {when(seen)}, {_span(now - seen)} ago. "
-                       + ("It is plugged in, so it should talk every few "
-                          "minutes." if mains else
-                          "A battery device checks in at least once a day.")),
-            "fix": ("Check it still has power (a socket switched off, or a "
-                    "bulb turned off at the wall, is the usual cause), and "
-                    "re-pair it if it does not come back." if mains else
-                    "Press its button to wake it and check its battery; if "
-                    "it does not come back, re-pair it near the coordinator."),
-            "severity": "warning",
-            "fixable": False,
-            "entity_id": entity,
-            "_seen": seen,
-        })
-    rows.sort(key=lambda r: r["_seen"])
-    for r in rows:
-        r.pop("_seen", None)
-    if len(rows) > MAX_ROWS:
-        house.gave_up("net.zigbee_silent", rows[MAX_ROWS:],
-                      "too many devices quiet at once to be the devices")
-        rows = rows[:MAX_ROWS]
-    return rows
-
-
 def zigbee_weak(snap: dict, now: float) -> list[dict]:
     house = House(snap)
     rows = []
@@ -925,6 +711,251 @@ def zigbee_weak(snap: dict, now: float) -> list[dict]:
         rows = rows[:MAX_ROWS]
     return rows
 
+
+
+# ---------------------------------------------------------------------------
+# One card for every device dropping off the network
+# ---------------------------------------------------------------------------
+#
+# A device hung on Wi-Fi, one that keeps dropping, a Z-Wave node gone
+# silent and a Zigbee device gone quiet were each their own card, per
+# device, and most of them were about a failure that had passed by the
+# time anybody read it. They are one row now, under one stable text, so
+# the store keeps it in place rather than filing it again: `add_many`
+# dedupes it, `refresh_details` rewrites what it lists (`detail`, `items`,
+# `fix`) as devices come and go, `items` carries the devices — a Wrong is
+# an answer about each, and a device that turns up later is not swallowed
+# by it (`findings_store.answered_items`) — and `clear_resolved` takes the
+# row off when nothing is left. The detectors above are unchanged in what
+# they count; what changed is that a device is LISTED only when it has
+# been gone for hours (hung two, Zigbee six or a day, Z-Wave three
+# wake-ups) or dropped again and again with the last drop recent, never a
+# phone or a tracker, and never when many went at once.
+
+CONNECTIVITY_TEXT = "Some devices keep dropping off the network"
+CONNECTIVITY = "net.connectivity"
+# The checks this one replaced. A Wrong given to one of them still stands
+# down the device it was given about; their rows are cleared by this one
+# (`checks.sources_ran`).
+REPLACED = ("net.wifi_hung", "net.wifi_flapping", "net.unifi_dropped",
+            "net.zwave_silent", "net.zigbee_silent")
+# Repeated drops are listed only while the last one is this recent: a
+# device that flapped last week and has held since has recovered.
+RECENT_S = 3 * DAY
+# Half or more of a mesh quiet at once is the coordinator or a restart,
+# not the devices.
+MASS_SHARE = 0.5
+# A phone (or anything a person carries) leaves and comes back by design.
+PHONE_PLATFORMS = frozenset({"mobile_app"})
+PHONE_DOMAINS = frozenset({"device_tracker", "person"})
+# How many devices the detail names before "and N more"; every one is in
+# `items`, which the card's Show all lists.
+DETAIL_NAMES = 4
+# Each network's snapshot key and the platforms that say a house has it:
+# a house with the integration whose source could not be read is "could
+# not look", and a house without it simply has nothing there.
+SOURCES = {"Wi-Fi": ("wifi_history", UNIFI_PLATFORMS),
+           "Z-Wave": ("zwave_nodes", frozenset({"zwave_js"})),
+           "Zigbee": ("zha_devices", frozenset({"zha"}))}
+
+
+def _carried(house: House, devices, entity: str) -> bool:
+    """Whether this is a phone or a tracker: something a person carries,
+    which leaves and comes back by design."""
+    if domain_of(entity) in PHONE_DOMAINS:
+        return True
+    for row in house.entities:
+        if row.get("device_id") in set(devices or ()) and \
+                str(row.get("platform") or "") in PHONE_PLATFORMS:
+            return True
+    return str((house.registry.get(entity) or {}).get("platform") or "") \
+        in PHONE_PLATFORMS
+
+
+def _wifi_entries(house: House, snap: dict, now: float) -> tuple[list, list, str]:
+    """`(devices, access point sentences, UniFi sentence)` for Wi-Fi."""
+    out, aps = [], []
+    by_ap: dict[str, list[dict]] = {}
+    for c in _hung_clients(house, now):
+        by_ap.setdefault(c["ap_mac"], []).append(c)
+        ap, _e = ap_name(house, c["ap_mac"])
+        radio = f" on its {c['band']} radio" if c["band"] else ""
+        out.append({"entity": c["own"][0], "devices": c["devices"],
+                    "name": c["name"], "network": "Wi-Fi",
+                    "old": ("net.wifi_hung", c["tracker"]),
+                    "said": f"connected to {ap}{radio} but not answering "
+                            f"since {when(c['since'])}",
+                    "value": "connected but unavailable", "fix": "hung"})
+    for mac, clients in by_ap.items():
+        if len(clients) > 1:
+            ap, _e = ap_name(house, mac)
+            aps.append(f"{len(clients)} of them hang on {ap} at once, which "
+                       "is the access point's radio rather than the devices.")
+    hist, cands, probe_drops, tracker_drops = _wifi_week(snap)
+    unifi = _unifi_moments(tracker_drops)
+    probe_mass = _mass_moments(probe_drops, max(MASS_MIN,
+                                                (len(probe_drops) + 1) // 2))
+    days = int((snap.get("wifi_history") or {}).get("days") or FLAP_DAYS)
+    hung = {d for c in _hung_clients(house, now) for d in c["devices"]}
+    for c in cands:
+        if set(c["devices"]) & hung:
+            continue
+        states = {st for _t, st in _rows(hist, c["tracker"])}
+        if "not_home" in states or "home" not in states:
+            continue
+        spells = [t for t in probe_drops[c["probe"]]
+                  if now - t <= days * DAY
+                  and not _near(t, probe_mass) and not _near(t, unifi)
+                  and after_restart(snap, t) is None]
+        if len(spells) < FLAP_MIN_SPELLS or now - spells[-1] > RECENT_S:
+            continue
+        out.append({"entity": c["probe"], "devices": c["devices"],
+                    "name": c["name"], "network": "Wi-Fi",
+                    "old": ("net.wifi_flapping", c["probe"]),
+                    "said": f"dropped {len(spells)} times in {days} days, "
+                            f"last {when(spells[-1])}",
+                    "value": f"{len(spells)} drops", "fix": "flapping"})
+    counted = [t for t in unifi if now - t <= days * DAY
+               and not _near(t, probe_mass) and after_restart(snap, t) is None]
+    said = ""
+    if len(counted) >= UNIFI_DROPS_MIN and now - counted[-1] <= RECENT_S:
+        said = (f"Every UniFi tracker also went unavailable together "
+                f"{len(counted)} times in {days} days, last "
+                f"{when(counted[-1])}: that is the UniFi integration losing "
+                "its controller, and those minutes are not counted against "
+                "any device.")
+    return out, aps, said
+
+
+def _zwave_entries(house: House, now: float) -> tuple[list, int]:
+    out = []
+    for n in _silent_nodes(house, now):
+        quiet = now - n["seen"]
+        wake = (f", {int(quiet // n['interval'])} wake-ups missed"
+                if n["interval"] else "")
+        out.append({"entity": n["entity"], "devices": [n["device_id"]],
+                    "name": n["name"], "network": "Z-Wave",
+                    "old": ("net.zwave_silent", n["entity"]),
+                    "said": f"not heard from since {when(n['seen'])}{wake}",
+                    "value": f"silent {_span(quiet)}", "fix": "zwave",
+                    "serious": quiet >= 7 * DAY})
+    return out, sum(1 for _ in _zwave_nodes(house))
+
+
+def _zigbee_entries(house: House, now: float) -> tuple[list, int]:
+    out, total = [], 0
+    for dev, reg, entity in zigbee_devices(house):
+        total += 1
+        if zigbee_quiet(dev, now) != "quiet":
+            continue
+        seen = parse_ts(dev.get("last_seen")) or now
+        out.append({"entity": entity,
+                    "devices": [str(dev.get("device_reg_id") or "")],
+                    "name": zigbee_name(dev, reg, house), "network": "Zigbee",
+                    "old": ("net.zigbee_silent", entity),
+                    "said": f"quiet since {when(seen)}",
+                    "value": f"quiet {_span(now - seen)}",
+                    "fix": "zigbee_mains" if _zha_mains(dev) else "zigbee"})
+    return out, total
+
+
+_FIXES = {
+    "hung": ("Wi-Fi, still connected: block and unblock it in the UniFi "
+             "Network app, or power-cycle it."),
+    "flapping": ("Wi-Fi, dropping: check its signal in the UniFi Network "
+                 "app and move it or the access point closer, or give it a "
+                 "2.4 GHz network of its own with band steering off."),
+    "zwave": ("Z-Wave: wake it and check its battery; if it does not answer, "
+              "re-interview it from its device page."),
+    "zigbee_mains": ("Zigbee, plugged in: check it still has power (a socket "
+                     "or a wall switch turned off is the usual cause)."),
+    "zigbee": ("Zigbee, on a battery: press its button and check its "
+               "battery; re-pair it near the coordinator if it does not "
+               "come back."),
+}
+
+
+def _house_has(house: House, platforms) -> bool:
+    return any(str(r.get("platform") or "") in platforms for r in house.entities)
+
+
+def connectivity(snap: dict, now: float) -> list[dict]:
+    house = House(snap)
+    available = snap.get("available") or {}
+    for network_name, (key, platforms) in SOURCES.items():
+        if not available.get(key) and _house_has(house, platforms):
+            raise CouldNotLook(f"the {network_name} record ({key}) could not "
+                               "be read, and a device missing from it is not "
+                               "a device that came back")
+    wifi, ap_lines, unifi_line = _wifi_entries(house, snap, now)
+    zwave, zwave_total = _zwave_entries(house, now)
+    zigbee, zigbee_total = _zigbee_entries(house, now)
+    entries = list(wifi)
+    for name, found, total in (("Z-Wave", zwave, zwave_total),
+                               ("Zigbee", zigbee, zigbee_total)):
+        if len(found) >= MASS_MIN and len(found) >= MASS_SHARE * total:
+            house.gave_up(CONNECTIVITY, [{"entity_id": e["entity"],
+                                          "text": e["name"]} for e in found],
+                          f"{len(found)} of {total} {name} devices went quiet "
+                          "at once: that is a restart or the network itself, "
+                          "not the devices", kind="cap")
+            continue
+        entries += found
+    listed = []
+    for e in entries:
+        if not e["entity"] or _carried(house, e["devices"], e["entity"]):
+            continue
+        old_check, old_subject = e["old"]
+        if not house.should_report(e["entity"], CONNECTIVITY):
+            continue
+        if old_subject and not house.should_report(old_subject, old_check):
+            continue
+        if any(x["entity"] == e["entity"] for x in listed):
+            continue
+        listed.append(e)
+    if not listed and not unifi_line:
+        return []
+    order = {"Wi-Fi": 0, "Z-Wave": 1, "Zigbee": 2}
+    listed.sort(key=lambda e: (order[e["network"]], e["name"]))
+    phrases = [f"{e['name']} ({e['network']}), {e['said']}" for e in listed]
+    shown = phrases[:DETAIL_NAMES]
+    rest = len(phrases) - len(shown)
+    detail = ""
+    if listed:
+        detail = (("One device is" if len(listed) == 1 else
+                   f"{len(listed)} devices are")
+                  + " off the network for hours or keep dropping off: "
+                  + "; ".join(shown)
+                  + (f"; and {rest} more" if rest else "") + ". "
+                  + " ".join(ap_lines)
+                  + " Devices that came back are taken off this list, and a "
+                    "restart, or many devices at once, is not counted.")
+    if unifi_line:
+        detail = f"{detail} {unifi_line}".strip()
+    kinds = []
+    for e in listed:
+        if e["fix"] not in kinds:
+            kinds.append(e["fix"])
+    fix = " ".join(_FIXES[k] for k in kinds)
+    if unifi_line:
+        fix = (fix + " UniFi: check the UniFi Network application stays up "
+               "and reachable from Home Assistant.").strip()
+    return [{
+        "text": CONNECTIVITY_TEXT,
+        "detail": " ".join(detail.split()),
+        "fix": fix,
+        "severity": ("serious" if any(e.get("serious") for e in listed)
+                     else "warning"),
+        "fixable": False,
+        # Filed on no one entity: the row is about every device it lists
+        # (`items`), and an entity_id would stay the first device's after
+        # that one came back, since the store refreshes the rest in place.
+        "entity_id": "",
+        **({"items": [e["entity"] for e in listed]} if listed else
+           {"integration": "unifi"}),
+        "evidence": [{"entity": e["entity"], "value": e["value"], "when": ""}
+                     for e in listed[:8]],
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -1030,23 +1061,15 @@ MATTER = "Network (Matter)"
 BLUETOOTH = "Network (Bluetooth)"
 
 CHECKS = [
-    {"id": "net.wifi_hung", "area": "networks", "title": "Wi-Fi devices connected but not answering",
-     "source_title": WIFI, "needs": ("states", "registry"), "run": wifi_hung},
-    {"id": "net.wifi_flapping", "area": "networks", "title": "Wi-Fi devices that keep dropping off",
-     "source_title": WIFI, "needs": ("states", "registry", "wifi_history"),
-     "run": wifi_flapping},
-    {"id": "net.unifi_dropped", "area": "networks", "title": "UniFi trackers dropping all at once",
-     "source_title": WIFI, "needs": ("states", "registry", "wifi_history"),
-     "run": unifi_dropped},
-    {"id": "net.zwave_silent", "area": "networks", "title": "Z-Wave battery nodes gone silent",
-     "source_title": ZWAVE, "needs": ("states", "registry", "zwave_nodes"),
-     "run": zwave_silent},
+    # Every device dropping off, on any network, is one card
+    # (`connectivity`); it replaced the per-device checks in `REPLACED`.
+    {"id": "net.connectivity", "area": "networks",
+     "title": "Devices dropping off the network", "source_title": "Network",
+     "needs": ("states", "registry"), "replaces": REPLACED,
+     "run": connectivity},
     {"id": "net.zwave_link", "area": "networks", "title": "Z-Wave nodes with a weak link",
      "source_title": ZWAVE, "needs": ("states", "registry", "zwave_nodes"),
      "run": zwave_link},
-    {"id": "net.zigbee_silent", "area": "networks", "title": "Zigbee devices gone quiet for hours",
-     "source_title": ZIGBEE, "needs": ("registry", "zha_devices"),
-     "run": zigbee_silent},
     {"id": "net.zigbee_weak", "area": "networks", "title": "Zigbee routers with a weak link",
      "source_title": ZIGBEE, "needs": ("registry", "zha_devices"),
      "run": zigbee_weak},

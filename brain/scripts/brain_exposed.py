@@ -270,9 +270,12 @@ TOOLS_HA = (
     "WHAT YOU CAN DO: every Home Assistant tool you have — read states, "
     "history and statistics, call services, run scenes and scripts — plus "
     "brAIn's measurements (what is normal for a device, why something "
-    "changed) and what it remembers. You have no shell and cannot edit "
-    "files: for a change to automations or configuration YAML, say it needs "
-    "the brAIn chat or an agent with full admin access.")
+    "changed) and what it remembers. A Lovelace dashboard is changed with "
+    "services, not files: read it with get_dashboard, then save it with "
+    "call_service brain.update_dashboard (the old one is backed up, and "
+    "brain.restore_dashboard puts it back). You have no shell and cannot "
+    "edit files: for a change to automations or configuration YAML, say it "
+    "needs the brAIn chat or an agent with full admin access.")
 # The voice level: the same, less what voice is refused. It was told it
 # could reach "open findings" and "activity", which every voice-level call
 # then refused.

@@ -2913,7 +2913,10 @@ def _morph_reply_system(tools: str,
 READ_ONLY_TOOLS = (
     "You have Home Assistant's reading tools; you can change nothing. "
     "Read the current state and the history of what they asked about "
-    "before you answer.")
+    "before you answer. If they ask for a change — an automation, a "
+    "Lovelace dashboard, anything in the house — say brAIn makes it in the "
+    "brAIn chat, or here once \"Let brAIn act without asking\" is on; "
+    "never say it cannot be done.")
 MORPH_REPLY_SYSTEM = _morph_reply_system(READ_ONLY_TOOLS)
 MORPH_REPLY_ACT_SYSTEM = _morph_reply_system(PERSON_ACT_TOOLS)
 # The same conversation, typed into the Respond box under a card in the
@@ -11210,8 +11213,8 @@ async def h_upgrades_advise(request: web.Request) -> web.Response:
 # offline checks. A device somebody set aside there is not reported again
 # in the log's words.
 SRE_SET_ASIDE_CHECKS = ("dev.unavailable", "dev.zwave_dead", "dev.zha_unseen",
-                        "net.wifi_hung", "net.zwave_silent",
-                        "net.zigbee_silent")
+                        "net.connectivity", "net.wifi_hung",
+                        "net.zwave_silent", "net.zigbee_silent")
 
 
 def _sre_set_aside(now: float) -> set[str]:
@@ -11232,6 +11235,8 @@ def _sre_set_aside(now: float) -> set[str]:
             if (row.get("source") in sources and row.get("entity_id")
                     and float(row.get("snoozed_until") or 0) > now):
                 out.add(str(row["entity_id"]))
+                # The connectivity card names every device it lists.
+                out |= set(findings_store.clean_items(row.get("items")))
         for entry in findings_store.settled_listing():
             if (entry.get("kind") == "ignored"
                     and entry.get("source") in sources
@@ -11274,7 +11279,15 @@ async def _run_sre(reason: str = "schedule") -> None:
         if answer is None:
             raise RuntimeError("the reply could not be read")
         parsed = sre.parse_causes(answer, dig)
+        # A log error that has stopped, or whose integration works now, is
+        # held before it is filed, and why goes on the decision trail.
+        kept, held = sre.hold_transient(parsed["causes"], dig, now)
+        if held:
+            await asyncio.to_thread(decision_trail.note_many,
+                                    sre.trail_rows(held), now)
+        parsed["causes"] = kept
         rows = sre.rows(parsed["causes"], dig, state, now)
+        summary.update(transient=len(held))
         summary.update(ran=True, causes=len(parsed["causes"]),
                        refused=parsed["refused"], invented=parsed["invented"],
                        bundled=parsed["bundled"],
@@ -15580,7 +15593,7 @@ async def run_checks(reason: str = "schedule") -> dict:
         result = checks.run_all(snapshot, started)
 
         def apply() -> tuple[list[dict], int, list[dict], dict]:
-            ran_sources = {checks.source_for(c) for c in result["ran"]}
+            ran_sources = checks.sources_ran(result["ran"])
             # Filed as waiting to be looked at rather than as work
             # (`triage.gate`), which every producer does now. Nothing is
             # hidden by this on its own: a row only leaves `triaging` for

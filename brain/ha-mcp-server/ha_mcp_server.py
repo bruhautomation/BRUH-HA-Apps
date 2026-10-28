@@ -1600,8 +1600,10 @@ def _call_refusal(domain, service, data, script, extra):
         return {"error": HONEYTOKEN_REFUSAL.format(eid=trip)}
     if _service_denied(domain, service):
         return {"error": (
-            f"Service {domain}.{service} is not permitted for this assistant. "
-            "Tell the user this action is restricted; do not retry."
+            f"Service {domain}.{service} is not permitted for this assistant: "
+            "it is on this agent's Blocked services list (Settings → Devices "
+            "& services → brAIn → the agent → Configure). Tell the user that, "
+            "and that the brAIn chat can make the change; do not retry."
         )}
     if script and _service_denied("script", "turn_on"):
         return {"error": (
@@ -9075,7 +9077,9 @@ INSTRUCTIONS = (
     "explain_change. What is normal: what_is_normal. Automations: "
     "get_automation_config, get_automation_trace; test an idea with "
     "simulate_automation. Which assistants and HomeKit Bridges reach what: "
-    "assistant_exposure. What needs attention: get_findings; is brAIn OK: "
+    "assistant_exposure. Lovelace dashboards: list_dashboards, get_dashboard; "
+    "change one with call_service brain.update_dashboard (it backs the old "
+    "one up; brain.restore_dashboard puts it back). What needs attention: get_findings; is brAIn OK: "
     "get_health; why it stayed quiet: explain_decision. Memory: recall; "
     "remember_fact. Add-ons start at label_printer_status, minecraft_status, "
     "bright_status, bambu_status, music_assistant_status. A run with only reading tools has "

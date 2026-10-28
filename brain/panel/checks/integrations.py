@@ -33,6 +33,13 @@ from ._util import House, spell_integration
 # A logger repeating one error more than this in the window is a flood.
 FLOOD_MIN = 100
 WINDOW_H = 24
+# ...and only while it persists: still logged within the latest
+# `PERSIST_H`, and going on for at least `FLOOD_SPAN_H` of the day read —
+# more than one pass's worth. A hundred errors in the twenty minutes round
+# a restart (a broker coming back, a cloud reconnecting) is a burst that
+# passed, not a flood.
+PERSIST_H = 2
+FLOOD_SPAN_H = 6
 MAX_ROWS = 5
 # How much of the log one pass reads at most.
 LOG_MAX_LINES = 25000
@@ -90,8 +97,8 @@ def domain_of_logger(logger: str) -> str:
 
 def summarise_log(text: str, now: float, tz: dt.tzinfo | None = None,
                   hours: int = WINDOW_H) -> dict:
-    """`{hours, lines, groups: [{logger, domain, message, count, last,
-    ips}]}` over the ERROR and CRITICAL lines of the last ``hours``.
+    """`{hours, lines, groups: [{logger, domain, message, count, first,
+    last, ips}]}` over the ERROR and CRITICAL lines of the last ``hours``.
 
     Pure: a line is read off its own timestamp (Home Assistant writes
     local time with no offset, read in the house's zone), a line with no
@@ -125,8 +132,10 @@ def summarise_log(text: str, now: float, tz: dt.tzinfo | None = None,
             g = groups[key] = {"logger": logger,
                                "domain": domain_of_logger(logger),
                                "message": _redact(shown(msg)),
-                               "count": 0, "last": ts, "ips": []}
+                               "count": 0, "first": ts, "last": ts,
+                               "ips": []}
         g["count"] += 1
+        g["first"] = min(g["first"], ts)
         g["last"] = max(g["last"], ts)
         for ip in _IPV4.findall(msg):
             ip = ip.split(":")[0]
@@ -220,6 +229,25 @@ def _integration_name(snap: dict, domain: str, logger: str) -> str:
     return f"The {logger.split('.')[0]} library"
 
 
+def passing(group: dict, now: float) -> str:
+    """Why a flooding group is a burst that passed, or "" when it persists.
+
+    A group with no `first` or `last` (a summary from before they were
+    kept) cannot be judged, and "could not tell" files as it always did."""
+    last, first = group.get("last"), group.get("first")
+    if not isinstance(last, (int, float)):
+        return ""
+    if now - float(last) > PERSIST_H * 3600:
+        return (f"it stopped: nothing logged in the last {PERSIST_H} hours, "
+                "so it was a burst that passed")
+    if isinstance(first, (int, float)) and \
+            float(last) - float(first) < FLOOD_SPAN_H * 3600:
+        return (f"it has gone on for under {FLOOD_SPAN_H} hours; a burst "
+                "round a restart passes, and brAIn files it only if it is "
+                "still going in a later pass")
+    return ""
+
+
 def log_flood(snap: dict, now: float) -> list[dict]:
     from .devices import SELF_PLATFORMS  # noqa: PLC0415
     house = House(snap)
@@ -241,6 +269,14 @@ def log_flood(snap: dict, now: float) -> list[dict]:
         domain = str(top.get("domain") or domain_of_logger(logger))
         who = _integration_name(snap, domain, logger)
         device, entity = _device_named(house, top)
+        why = passing(top, now)
+        if why:
+            house.gave_up("integ.log_flood", [{
+                "entity_id": entity,
+                "text": f"{who} logged the same error "
+                        f"{int(top.get('count') or 0)} times"}],
+                why, kind="transient")
+            continue
         if entity and not house.should_report(entity, "integ.log_flood"):
             continue
         # What the error means, never the line: a status code, JSON or a
@@ -260,10 +296,11 @@ def log_flood(snap: dict, now: float) -> list[dict]:
                      "logging the same error over and over"),
             "detail": detail,
             "fix": ("Read what the error says is wrong in Settings > System > "
-                    "Logs. Fixing the device or address it names, or reloading "
-                    "the integration from Settings > Devices & services, "
-                    "usually stops it. A log this busy also wears the storage "
-                    "and buries other errors."),
+                    "Logs; fixing the device or address it names usually "
+                    "stops it. If it does not, brAIn can reload "
+                    + (f"the {who} integration" if domain else "the integration")
+                    + " for you: ask it in the chat. A log this busy also "
+                    "wears the storage and buries other errors."),
             "severity": "warning",
             "fixable": False,
             "entity_id": entity,
