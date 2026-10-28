@@ -7030,3 +7030,125 @@ body.term-classic #chatModelPick { display: none; }
 @media (pointer: coarse) {
   .quietline .quietname { min-height: 44px; padding: 0 4px; }
 }
+
+/* ------------------------------------------------- one header, one theme
+   Inside brAIn's shell (`html.in-shell`, ?shell=1) this page's bar is the
+   ONE header over Home and every brAIn tab — the owner: "there are two
+   headers … merge them", with the tabs "pulled into the header (subtle and
+   useful)" and "the rest of brAIn's menus must follow Morph's theming". So:
+
+   * the page takes Morph's theme, which the shell passes in
+     (`data-theme` on <html>: dark, medium or light — Morph's own grounds
+     #0A0C0E, #2A2D31 and #ECEBE6 and its inks), as tokens, so every pane
+     follows without a rule of its own. Outside the shell nothing sets
+     `data-theme` and the page is what it was (prefers-color-scheme).
+   * the bar is solid ground, not frosted: Morph is under it on Home.
+   * on a phone the tabs are a second row INSIDE the header rather than a
+     bar along the bottom (`--tabbar-h` is 0, so nothing is padded for it),
+     and the status dot is in the bar at every width.
+   * the active tab is a quiet chip of the theme's own ink, Morph's way of
+     marking where you are, rather than the brand azure. */
+:root[data-theme="dark"], :root[data-theme="medium"], :root[data-theme="light"] {
+  --accent-2: #5ac4f2;
+  --accent-ink: #4db6ec;
+  --good-ink: #1fc21f;
+  --warning-ink: #fab219;
+  --serious-ink: #ec835a;
+  --critical-ink: #f07575;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  --sel-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23b9ccdd' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+:root[data-theme="dark"] {
+  --plane: #0a0c0e;
+  --surface: #15181b;
+  --surface-2: #1d2125;
+  --ink: #edeff1;
+  --ink-2: #c3cad1;
+  --ink-3: #a0a9b3;
+  --hairline: rgba(255, 255, 255, 0.08);
+  --grid: #2a2f35;
+}
+:root[data-theme="medium"] {
+  --plane: #2a2d31;
+  --surface: #34383d;
+  --surface-2: #3d4248;
+  --ink: #f1f2f3;
+  --ink-2: #d2d7dc;
+  --ink-3: #b5bcc4;
+  --hairline: rgba(255, 255, 255, 0.1);
+  --grid: #4a5057;
+  --accent-ink: #7cc9f0;
+  --critical-ink: #f29c8c;
+  --serious-ink: #f0a07c;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --plane: #ecebe6;
+  --surface: #ffffff;
+  --surface-2: #e4e3dd;
+  --ink: #16181b;
+  --ink-2: #3b4148;
+  --ink-3: #535a63;
+  --hairline: rgba(22, 24, 27, 0.1);
+  --grid: #d6d4cd;
+  --accent-2: #0a6ba3;
+  --accent-ink: #0a6ba3;
+  --good-ink: #066a06;
+  --warning-ink: #875500;
+  --serious-ink: #a8421a;
+  --critical-ink: #b62f2f;
+  --shadow: 0 8px 28px rgba(22, 24, 27, 0.08);
+  --sel-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%2333506a' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] .wordmark, :root[data-theme="medium"] .wordmark { --wm-ai: #5ac4f2; }
+:root[data-theme="light"] .wordmark { --wm-ai: #1e9fe0; }
+
+html.in-shell .topbar {
+  background: var(--plane);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html.in-shell .topbar .btn.icon.statusdot { display: inline-flex; }
+html.in-shell .viewtab.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+/* Morph's Edit (Done and YAML while editing), on Home only (`syncShellEdit`). */
+/* Quiet, like a tab: the word and its pencil, no box until it is pressed,
+   and Done in the theme's ink while the dashboard is being edited. */
+.btn.shelledit {
+  min-height: 44px; min-width: 44px; padding: 0 12px; gap: 6px;
+  border-color: transparent; background: none; color: var(--ink-2); font-weight: 500;
+}
+.btn.shelledit:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.btn.shelledit.editing { color: var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.btn.shelledit.editing .ico { display: none; }
+.btn.shelledit[hidden] { display: none; }
+
+@media (max-width: 640px) {
+  html.in-shell { --tabbar-h: 0px; }
+  html.in-shell .topbar {
+    flex-wrap: wrap;
+    height: auto;
+    max-height: none;
+    min-height: var(--bar-h);
+    padding: 6px 8px 0 4px;
+    row-gap: 2px;
+    align-content: flex-start;
+  }
+  html.in-shell .viewtabs {
+    position: static;
+    order: 9;
+    width: 100%;
+    margin: 0;
+    padding: 0 0 4px;
+    gap: 2px;
+    justify-content: space-between;
+    background: none;
+    border-top: 0;
+  }
+  html.in-shell .viewtab { height: 48px; min-height: 44px; border-radius: 10px; }
+  html.in-shell body { padding-bottom: 0; }
+  html.in-shell .btn.shelledit { padding: 0 10px; }
+}
