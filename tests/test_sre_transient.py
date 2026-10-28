@@ -147,13 +147,13 @@ class TestABrokenIntegrationIsFiled(unittest.TestCase):
         self.assertEqual(len(kept), 1)
 
     def test_its_fix_never_hands_the_owner_a_reload(self):
-        _parsed, [cause], _held = self.roborock_down()
+        [cause] = self.roborock_down()[1]
         for sentence in cause["fix"].split(". "):
             if "reload" in sentence.lower():
                 self.assertIn("brAIn", sentence, cause["fix"])
 
     def test_the_fix_written_by_code_does_not_either(self):
-        _parsed, [cause], _held = self.roborock_down(fix="")
+        [cause] = self.roborock_down(fix="")[1]
         for sentence in cause["fix"].split(". "):
             if "reload" in sentence.lower():
                 self.assertIn("brAIn", sentence, cause["fix"])
