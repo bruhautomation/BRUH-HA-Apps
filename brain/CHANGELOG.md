@@ -2,6 +2,18 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.9
+
+### Added
+
+- **One spoken voice, stored once.** ⚙ › Personality has a "Spoken voice" field next to the name, and every card and finding quotes that one answer instead of the model's memory. A finding that points at a stale instruction line becomes a single yes/no question ("Shall brAIn take that line out?"); Yes removes it. (#507)
+
+### Changed
+
+- **Cards that only say "nothing to report" are folded away.** A card whose main claim is missing data, no comparison or no event is kept to a quiet line (or the last card is kept), a card keeps at most one short gap sentence, and a card about the same thing as an open finding shows as one "On Needs you" line. (#509)
+- **A card's title and body agree.** A figure in a card's title that the body doesn't state with the same value and unit is cut from the title, and a bare number with no unit is cut too. (#508)
+- **Findings speak in brAIn's one voice and say what was read.** Findings about brAIn itself no longer use "I" and "my" next to "brAIn", and no longer carry file paths, line numbers, tool names, entity ids or model ids. The "what to do" line now says what brAIn read (the plug's state, which other entities of the integration answer) or when brAIn looks again, instead of one fixed sentence per category, and urgent wording needs two agreeing readings. (#506, #507)
+
 ## 4.0.8
 
 ### Changed
