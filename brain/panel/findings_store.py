@@ -1460,6 +1460,12 @@ def _shape(entry: dict) -> dict:
     items = clean_items(entry.get("items"))
     if items:
         out["items"] = items
+    # What ends a "for now" snooze early (`wake_returned`): the entities it
+    # is about, which reporting again means the reason it slept is over.
+    # Absent on every other row, and only while the snooze is set.
+    wake = clean_items(entry.get("snooze_wake"))
+    if wake and int(entry.get("snoozed_until") or 0):
+        out["snooze_wake"] = wake
     out.update(_subject_fields(entry))
     # When a row brAIn fixed was reopened because its check still saw the
     # fault (`_came_back`). Absent on every other row, for the same reason.
@@ -3084,7 +3090,7 @@ def elevate(ts: int) -> dict | None:
 
 
 @_mutates
-def snooze(ts: int, until: int) -> dict | None:
+def snooze(ts: int, until: int, wake=None) -> dict | None:
     """Take a finding off the list until ``until`` (epoch seconds).
 
     Deliberately does NOT touch the status. "Remind me later" and "not a
@@ -3092,16 +3098,68 @@ def snooze(ts: int, until: int) -> dict | None:
     the analyst never to raise it again, and using it for the first would
     quietly throw away a real problem you meant to come back to.
 
-    ``until <= 0`` brings it back now.
+    ``until <= 0`` brings it back now. ``wake`` names the entities whose
+    return ends the snooze early (`wake_returned`) — the "I'm fixing it"
+    snooze, which is over the moment the thing it is about reports again;
+    any other snooze clears it.
     """
     items = _load()
     for entry in items:
         if int(entry.get("ts") or 0) != ts:
             continue
         entry["snoozed_until"] = max(0, int(until))
+        wake = clean_items(wake) if wake and until > 0 else []
+        if wake:
+            entry["snooze_wake"] = wake
+        else:
+            entry.pop("snooze_wake", None)
         _write(items)
         return _shape(entry)
     return None
+
+
+# A state that is not a reading: an entity reporting one has not come back.
+_NOT_BACK = frozenset({"", "unavailable", "unknown", "none"})
+
+
+@_mutates
+def wake_returned(states, now: float | None = None) -> list[dict]:
+    """End the "for now" snoozes whose entities all report again.
+
+    ``states`` is the snapshot a checks pass already fetched. A row asleep
+    with `snooze_wake` whose every entity now has a real state is over
+    early: Morph's suggestion to remove that thing's card is dropped (the
+    card is kept — the caller tells Morph), and any other row is woken, so
+    a check's own pass clears it if the rule no longer finds it and shows
+    it again if it does. Returns the rows it ended or woke, shaped.
+    """
+    if not isinstance(states, dict) or not states:
+        return []
+    now = time.time() if now is None else now
+    items = _load()
+    kept, touched, changed = [], [], False
+    for entry in items:
+        wake = clean_items(entry.get("snooze_wake"))
+        if not wake or float(entry.get("snoozed_until") or 0) <= now:
+            kept.append(entry)
+            continue
+        back = all(isinstance(states.get(e), dict)
+                   and str(states[e].get("state") or "").lower()
+                   not in _NOT_BACK for e in wake)
+        if not back:
+            kept.append(entry)
+            continue
+        changed = True
+        if str(entry.get("source") or "") == MORPH_SOURCE:
+            touched.append(_shape(entry))
+            continue
+        entry["snoozed_until"] = 0
+        entry.pop("snooze_wake", None)
+        touched.append(_shape(entry))
+        kept.append(entry)
+    if changed:
+        _write(kept)
+    return touched
 
 
 @_mutates

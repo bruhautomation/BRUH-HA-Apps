@@ -3344,10 +3344,51 @@ async def _morph_consent(case_id: str, case: dict, finding: dict | None,
             "change": "Got it."}.get(case.get("kind"), "Done.")
 
 
+def _for_now_said(until: int) -> str:
+    """What a "for now" answer is told: when it comes back, and that it
+    comes back sooner if the thing is working again."""
+    when = _when_words(until) if until else "later"
+    return (f"Okay — brAIn will leave it until {when}, and drop it sooner "
+            "if it is back before then.")
+
+
+def _for_now_routes(said: str, routes: list[dict] | None,
+                    finding: dict | None) -> list[dict] | None:
+    """A reply that says the thing is out of use for now ("I need to fix
+    this light") is the snooze it means, however it was read.
+
+    The interpreter read it as something to remember, or could not read it
+    at all, and a general correction is not a snooze — the suggestion came
+    back while the light was still out. Deterministic, over the reply's own
+    words (`corrections.temporary`): what was read as a memory or a Wrong
+    becomes one Wrong carrying the words, which `_end_finding` turns into
+    the snooze; a reply that asked for something else (a fix, To Do, a
+    question back, a time of its own) is left as it was read.
+    """
+    if finding is None or not corrections.temporary(said):
+        return routes
+    if not _for_now(finding, FINDING_VERBS["wrong"], said):
+        return routes
+    kinds = {(r.get("kind"), r.get("ending")) for r in routes or ()}
+    answered = {k for k in kinds
+                if k[0] not in ("remember", "chat")
+                and k != ("case_ending", "wrong")}
+    if answered:
+        return routes
+    return [{"kind": "case_ending", "ending": "wrong", "text": said,
+             "note": said}]
+
+
 async def _morph_wrong(case_id: str, finding: dict | None, note: str) -> str:
     """"No" to a case: Wrong, with the words as its note — the ending that
     lasts and teaches (§14.2) — scoped synchronously so the sentence said
     back is the one that was applied (`_reply_routes`' rule)."""
+    spec = FINDING_VERBS["wrong"]
+    if finding is not None and _for_now(finding, spec, note):
+        payload, fact = await _end_finding(finding, spec, note, refine=False)
+        _remember_morph_undo(case_id, _ending_undo(finding, spec, fact,
+                                                   payload))
+        return _for_now_said(int(payload.get("snoozed_until") or 0))
     if finding is None or finding.get("source") == findings_store.MORPH_SOURCE:
         if finding is not None:
             await _end_finding(finding, FINDING_VERBS["wrong"], note)
@@ -3355,7 +3396,6 @@ async def _morph_wrong(case_id: str, finding: dict | None, note: str) -> str:
         ok, why, _ = await _morph_end(case_id, "wrong", note)
         return ("Okay — brAIn will leave it." if ok
                 else why.capitalize() + ".")
-    spec = FINDING_VERBS["wrong"]
     payload, fact = await _end_finding(finding, spec, note, refine=False)
     ids = list(payload.get("_exception_ids") or [])
     sentence = ("Noted — brAIn will remember why and won't raise this again."
@@ -3406,6 +3446,7 @@ async def _morph_reply(case_id: str, text: str,
     if routes is None:
         (MORPH_STATE if surface == "morph" else RESPOND_STATE)["fallbacks"] += 1
         routes = _plain_morph_routes(said)
+    routes = _for_now_routes(said, routes, finding)
     if routes is None:
         unread = ("brAIn could not read that just now. Answer yes, no, done, "
                   "later or to do — or ask again in a minute.")
@@ -15588,6 +15629,16 @@ async def run_checks(reason: str = "schedule") -> dict:
             # ending is `open`.
             created = findings_store.add_many(triage.gate(result["findings"]))
             refreshed = findings_store.refresh_details(result["findings"])
+            # A "for now" snooze whose thing reports again is over early
+            # (`findings_store.wake_returned`): woken before the clear, so a
+            # check that no longer finds it clears it this pass, and Morph's
+            # suggestion to remove that thing's card ends as kept.
+            if (snapshot.get("available") or {}).get("states"):
+                for woke in findings_store.wake_returned(
+                        snapshot.get("states") or {}, started):
+                    if woke.get("source") == findings_store.MORPH_SOURCE:
+                        morph_bridge.note_ended(
+                            str(woke.get("morph_key") or ""), "kept")
             cleared = findings_store.clear_resolved(
                 ran_sources,
                 {findings_store.normalize(f["text"]) for f in result["findings"]})
@@ -20403,6 +20454,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
         # "Is this fixed?": the answer goes back on the report; nothing
         # about it is a fact about the house.
         return await _end_devloop_verify(finding, spec, note)
+    if _for_now(finding, spec, note):
+        # "I need to fix this light", "unplugged for now": out of use for
+        # the time a repair takes, which is a snooze, not a rule.
+        return await _snooze_for_now(finding, note)
     if finding.get("source") == findings_store.MORPH_SOURCE:
         # Morph's own suggestion about its dashboard: the answer is Morph's
         # to act on (`ended_morph` in cases.json), and none of it is a fact
@@ -20527,6 +20582,58 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     return payload, fact
 
 
+# The producers whose Wrong a "for now" reason turns into a snooze: a
+# house check, the Resident and Morph's suggestions — every row about a
+# thing in the house that is out of use for a while. A question brAIn asked
+# or an offer to widen a rule is answered, not snoozed.
+_FOR_NOW_SOURCES = (findings_store.RESIDENT_SOURCE, findings_store.MORPH_SOURCE)
+
+
+def _for_now(finding: dict, spec: dict, note: str) -> bool:
+    """A Wrong whose reason says the thing is out of use for now
+    (`corrections.temporary`), on a row that can sleep."""
+    if spec.get("kind") != "ignored" or not str(note or "").strip():
+        return False
+    source = str(finding.get("source") or "")
+    if not (source.startswith("check:") or source in _FOR_NOW_SOURCES):
+        return False
+    if corrections.is_offer(finding):
+        return False
+    return corrections.temporary(note)
+
+
+def _wake_entities(finding: dict) -> list[str]:
+    """The entities whose return ends a "for now" snooze: the row's own and
+    every item it names that is an entity."""
+    out = []
+    for eid in [str(finding.get("entity_id") or "")] + list(
+            findings_store.clean_items(finding.get("items"))):
+        if "." in eid and " " not in eid and eid not in out:
+            out.append(eid)
+    return out
+
+
+async def _snooze_for_now(finding: dict, note: str) -> tuple[dict, str]:
+    """Wrong, read as "out of use for now": the row sleeps for the period
+    the reason names (`corrections.temporary_days`) and wakes early when its
+    entities report again (`findings_store.wake_returned`). No rule, no
+    memory line, no label: a light somebody is repairing is not a fact
+    about the house, and a rule would outlive the repair. The undo token
+    wakes it (`_undo_finding`)."""
+    until = int(time.time() + corrections.temporary_days(note) * 86400)
+    wake = _wake_entities(finding)
+
+    def sleep() -> dict:
+        findings_store.snooze(int(finding["ts"]), until, wake=wake)
+        return _findings_payload()
+
+    payload = await asyncio.to_thread(sleep)
+    payload["_snoozed"] = until
+    payload["snoozed_until"] = until
+    _morph_dirty()
+    return payload, ""
+
+
 async def _end_morph_case(finding: dict, spec: dict,
                           note: str) -> tuple[dict, str]:
     """End one of Morph's own suggestions, wherever the answer was given.
@@ -20568,6 +20675,10 @@ def _ending_undo(finding: dict, spec: dict, fact: str, payload: dict) -> str:
     rule on the Knowledge tab.
     """
     ids = payload.pop("_exception_ids", None) or []
+    if payload.pop("_snoozed", None):
+        # A Wrong read as "for now" put the row to sleep rather than away:
+        # its undo wakes it, and has nothing else to take back.
+        return undo_store.record("finding", finding=finding, snoozed=True)
     return undo_store.record(
         "finding", finding=finding,
         key=findings_store.normalize(finding["text"]),
@@ -22038,6 +22149,11 @@ def _undo_finding(entry: dict) -> tuple[bool, dict]:
     round-trips, and a second implementation of putting a row back would
     be exactly the thing worth catching rather than the thing catching it.
     """
+    if entry["kind"] == "finding" and entry.get("snoozed"):
+        # A "for now" Wrong left the row on the list, asleep.
+        restored = findings_store.snooze(
+            int((entry.get("finding") or {}).get("ts") or 0), 0) is not None
+        return restored, _findings_payload()
     if entry["kind"] == "finding":
         # The row may have been re-reported in the meantime, in which
         # case the list already holds a newer version of it and putting
@@ -22509,7 +22625,8 @@ async def _reply_to_finding(finding: dict, text: str) -> tuple[bool, str]:
     said = str(text or "").strip()
     if not said:
         return False, "the reply was empty"
-    routes = await _interpret(said, "reply", case=finding)
+    routes = _for_now_routes(said, await _interpret(said, "reply",
+                                                    case=finding), finding)
     if routes is None or all(r["kind"] == "chat" for r in routes):
         return await _reply_conversation(finding, said)
     return await _reply_routes(finding, said, routes)
@@ -22910,7 +23027,10 @@ async def _reply_routes(finding: dict, said: str,
             payload, fact = await _end_finding(finding, spec, note,
                                                refine=False)
             ids = list(payload.get("_exception_ids") or [])
-            if ending == "wrong":
+            if ending == "wrong" and payload.get("_snoozed"):
+                sentences.append(_for_now_said(
+                    int(payload.get("snoozed_until") or 0)))
+            elif ending == "wrong":
                 scoped = await _scope_correction(finding, note, ids) \
                     if ids and note.strip() else None
                 if scoped:
