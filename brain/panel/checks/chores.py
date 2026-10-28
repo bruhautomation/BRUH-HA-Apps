@@ -774,10 +774,12 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
             continue
         if humidity < float(level) + DRY_MARGIN:
             continue
-        switches = [house.states.get(o) or {} for o in house.siblings(eid)
-                    if domain_of(o) == "switch"]
-        if switches and not any(st.get("state") == "on" for st in switches):
+        switches = [o for o in house.siblings(eid) if domain_of(o) == "switch"]
+        if switches and not any((house.states.get(o) or {}).get("state")
+                                == "on" for o in switches):
             continue
+        plug = next((o for o in switches
+                     if (house.states.get(o) or {}).get("state") == "on"), "")
         points = recent.get(eid) or []
         reading = appliances.state_at(shape, points, now)
         if reading.get("state") not in (appliances.IDLE, appliances.FINISHED):
@@ -789,14 +791,15 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
         since = float(reading.get("finished_at") or reading.get("since") or 0)
         if not since or now - since < DRY_STOPPED_H * 3600:
             continue
-        hits.append((since, eid, humidity, float(level), rh_eid))
+        hits.append((since, eid, humidity, float(level), rh_eid, plug,
+                     float(watts)))
     if len(hits) > MAX_ROWS:
         house.gave_up("chore.dehumidifier", [{"entity_id": h[1]} for h in hits],
                       f"{len(hits)} dehumidifiers stopped at once — past "
                       f"{MAX_ROWS} that is a measurement gone wrong")
         return []
     out = []
-    for since, eid, humidity, level, rh_eid in sorted(hits):
+    for since, eid, humidity, level, rh_eid, plug, watts in sorted(hits):
         hours = int((now - since) // 3600)
         device = house.device_of(eid)
         name = house.device_name(device) if device else house.name(eid)
@@ -807,7 +810,11 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
                        f"it usually starts running at about {level:.0f}%. "
                        "A full tank stops it like this."
                        + house.placed(eid, name)),
-            "fix": ("Empty its tank, or check it is switched on at the unit. "
+            # What brAIn read, never "check it is switched on": the plug's
+            # state and its draw say the power reaches it.
+            "fix": ((f"{house.name(plug)} reads on and the plug draws "
+                     if plug else "The plug draws ")
+                    + f"{watts:.0f} W, so it has power: empty its tank. "
                     "This clears itself when it runs again."),
             "severity": "warning",
             "fixable": False,

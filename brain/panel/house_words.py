@@ -362,3 +362,266 @@ def says_count(text: str, count: int) -> bool:
     if 0 <= count < len(_COUNT_WORDS):
         return re.search(rf"\b{_COUNT_WORDS[count]}\b", low) is not None
     return False
+
+
+# ---------------------------------------------------------------------------
+# brAIn about itself: one narrator, one stored answer, no developer text
+# ---------------------------------------------------------------------------
+#
+# A house's findings said "My spoken voice changed from voice A to voice B"
+# beside one saying the household chose voice C and a card saying B was
+# already the voice — each a model's memory — and one told the owner to edit
+# "line 27 of chat_identity.md" and call `note_personality_change`, in the
+# first person beside rows saying "brAIn". `self_said` is the one pass:
+# "I"/"my" and the household's name for brAIn become "brAIn" (a surface that
+# speaks the name turns it back, `personality.speak`, so it is one name and
+# never two); a sentence about brAIn's voice or name is the stored answer or
+# nothing; and with ``dev`` a sentence holding a file path, a tool name, an
+# id or a model id goes, because it is brAIn's own housekeeping in words
+# only its developer reads.
+
+_QUOTE_SPAN = re.compile(r"“[^”]*”|\"[^\"]*\"")
+_I_CONTRACTIONS = (
+    (re.compile(r"\bI['’]m\b"), "brAIn is"), (re.compile(r"\bI am\b"), "brAIn is"),
+    (re.compile(r"\bI['’]ve\b"), "brAIn has"),
+    (re.compile(r"\bI['’]ll\b"), "brAIn will"),
+    (re.compile(r"\bI['’]d\b"), "brAIn would"),
+    (re.compile(r"\bI (?:don['’]t|do not)\b"), "brAIn does not"),
+    (re.compile(r"\bI (?:didn['’]t|did not)\b"), "brAIn did not"),
+)
+_KEEP_VERBS = frozenset(
+    "can could will would should may might must shall did was had need "
+    "cannot".split())
+_IRREGULAR = {"have": "has", "do": "does", "go": "goes", "am": "is",
+              "be": "is", "were": "was"}
+_ADVERB = r"(?:(?:also|still|just|now|only|never|always|already|often|" \
+          r"usually|then|first|really|once)\s+)?"
+_I_VERB = re.compile(r"\bI\s+(" + _ADVERB + r")([a-z]+)\b")
+_MY = re.compile(r"\b[Mm]y\b")
+_MINE = re.compile(r"\bmine\b")
+_MYSELF = re.compile(r"\bmyself\b")
+_ME = re.compile(r"(?<![\w-])me\b")
+
+# A sentence that states which voice brAIn speaks with, or what it is
+# called, rather than something about the house.
+_VOICE_SENTENCE = re.compile(
+    r"(?:\b(?:brAIn['’]s|my|its|the assistant['’]s)\s+(?:\w+\s+)?voice\b"
+    r"|\bvoice\b[^.!?]*\b(?:use[sd]?|using|changed|switched|is now|set to|"
+    r"chose|chosen|picked|now|already)\b"
+    r"|\b(?:use[sd]?|using|now)\b[^.!?]*\bvoice\b"
+    r"|\b(?:speaks?|spoke|announces?|talks?)\s+(?:now\s+)?(?:with|in|using)"
+    r"\s+(?:the\s+)?[A-Z]\w*)", re.I)
+# ...and only one about brAIn: "the Voice PE satellite uses Piper" is the
+# house's.
+_ABOUT_BRAIN = re.compile(r"\bbrAIn\b|\bassistant\b|\bannounc", re.I)
+_NAME_SENTENCE = re.compile(
+    r"\b(?:brAIn|the assistant|it)\s+(?:is|was)\s+(?:now\s+)?(?:called|"
+    r"named)\b|\b(?:brAIn['’]s|my|its)\s+name\s+(?:is|was|changed)\b"
+    r"|\b(?:calls?|named|renamed)\s+(?:brAIn|the assistant|me)\b", re.I)
+
+# What only a developer reads: a file path or name, a line number, a tool
+# or function name, an entity id, a model id, code in backticks.
+_DEV_TOKEN = re.compile(
+    r"`[^`]+`"
+    r"|(?<![\w/])(?:/config|/data|/opt|/usr)/\S*"
+    r"|\b[\w.-]+\.(?:md|json|ya?ml|py|sh|js|txt|log|toml)\b"
+    r"|\bline\s+\d+\b"
+    r"|\bmcp__\w+"
+    r"|\b(?:claude|gpt|gemini)-[\w.-]+"
+    r"|\b(?:opus|sonnet|haiku)[\s-]?\d[\w.-]*"
+    r"|(?<![\w.])[a-z][a-z0-9]*(?:_[a-z0-9]+)+(?![\w.])"
+    r"|\b[a-z_]+\.[a-z0-9_]+\b", re.I)
+
+
+def _third_person(sentence: str) -> str:
+    out = sentence
+    for pattern, repl in _I_CONTRACTIONS:
+        out = pattern.sub(repl, out)
+
+    def verb(m: re.Match) -> str:
+        adverb, word = m.group(1), m.group(2)
+        low = word.lower()
+        if low in _IRREGULAR:
+            word = _IRREGULAR[low]
+        elif low in _KEEP_VERBS or low.endswith("ed"):
+            pass
+        elif re.search(r"(?:s|sh|ch|x|z|o)$", low):
+            word += "es"
+        elif re.search(r"[^aeiou]y$", low):
+            word = word[:-1] + "ies"
+        else:
+            word += "s"
+        return f"brAIn {adverb}{word}"
+
+    out = _I_VERB.sub(verb, out)
+    out = re.sub(r"\bI\b", "brAIn", out)
+    out = _MYSELF.sub("itself", out)
+    out = _MY.sub("brAIn's", out)
+    out = _MINE.sub("brAIn's", out)
+    out = _ME.sub("brAIn", out)
+    return out
+
+
+def _outside_quotes(text: str, fn) -> str:
+    """``fn`` over ``text`` less what it quotes: a person's own words are
+    theirs."""
+    out, last = [], 0
+    for m in _QUOTE_SPAN.finditer(text):
+        out.append(fn(text[last:m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(fn(text[last:]))
+    return "".join(out)
+
+
+def _strip_dev(sentence: str) -> str:
+    out = _DEV_TOKEN.sub(" ", sentence)
+    out = re.sub(r"\b(?:of|in|to|call|and|the|with|on)\s+(?=[\s,;.]|$)", "", out)
+    out = re.sub(r"\s+([,;.!?])", r"\1", re.sub(r"\s{2,}", " ", out))
+    return re.sub(r"^[\s,;]+|[\s,;]+$", "", out).strip()
+
+
+def self_said(text: str, name: str = "brAIn", voice: str = "",
+              dev: bool = False, keep: bool = False) -> str:
+    """``text`` written by a model, with brAIn as its one narrator.
+
+    ``name`` is the assistant's stored name (`personality.assistant_name`)
+    and ``voice`` its stored voice (`personality.identity`), "" when none
+    is stored. With ``dev``, sentences holding developer text go; with
+    ``keep`` (a row's `text`, its key) a sentence is never dropped, only
+    cleaned, so the row keeps a sentence."""
+    if not isinstance(text, str) or not text.strip():
+        return text
+    out = text
+    if name and name != "brAIn":
+        out = re.sub(r"(?<![\w])" + re.escape(name) + r"(?![\w])", "brAIn", out)
+    out = _outside_quotes(out, _third_person)
+    sentences = [s for s in _LOG_SENTENCES.split(out) if s.strip()]
+    kept: list[str] = []
+    said_identity = False
+    for sentence in sentences:
+        if _ABOUT_BRAIN.search(sentence) and (
+                _VOICE_SENTENCE.search(sentence)
+                or _NAME_SENTENCE.search(sentence)):
+            if voice and _VOICE_SENTENCE.search(sentence):
+                if not said_identity:
+                    kept.append(f"brAIn's spoken voice is {voice}.")
+                    said_identity = True
+                continue
+            # A name claim says nothing the surfaces do not: each speaks the
+            # stored name (`personality.speak`) wherever the prose says brAIn.
+            if keep and not kept and sentence is sentences[-1]:
+                kept.append(sentence)
+            continue
+        if dev and _DEV_TOKEN.search(sentence):
+            if keep:
+                cleaned = _strip_dev(sentence)
+                if cleaned:
+                    kept.append(cleaned)
+            continue
+        kept.append(sentence)
+    if keep and not kept:
+        return out
+    return " ".join(kept).strip()
+
+
+# brAIn's upkeep: it speaking of itself, or of its own instructions,
+# personality, voice or tooling. Merely naming brAIn ("the house book brAIn
+# writes") is not: a house row keeps its ids for the names map.
+_SELF_RE = re.compile(
+    r"\b(?:I|I['’]m|I['’]ve|My|my|me|myself)\b|\bpersonality\b|"
+    r"\binstructions?\b|\bwake word\b|\bvoice\b|\bmcp__|\bclaude-|"
+    r"\b[\w-]+\.md\b")
+
+
+def about_self(*texts) -> bool:
+    """Whether a row's words are about brAIn itself."""
+    return any(_SELF_RE.search(str(t or "")) for t in texts)
+
+
+# ---------------------------------------------------------------------------
+# "What to do" from what brAIn read
+# ---------------------------------------------------------------------------
+#
+# Fixes told the owner to "check that it is switched on" about a plug brAIn
+# reads, to "restart the router or DNS server" over one device failing while
+# its siblings answered, and to "stop the pump now" on one reading. A fix
+# never asks somebody to look at what brAIn can read, never blames the
+# network when the rest of the integration answers, and is urgent only when
+# two readings agree.
+
+_SELF_CHECK = re.compile(
+    r"\b(?:check|make sure|confirm|verify|see)\b(?:\s+(?:that|whether|if))?"
+    r"[^.!?]{0,60}?\b(?:switched on|turned on|plugged in|powered(?: on)?|"
+    r"has power|still has power|reachable|online|connected|on the network|"
+    r"available)\b"
+    r"|\bcheck (?:its|the|that)?\s*(?:state|status|logs?|traces?|history|"
+    r"settings)\b"
+    r"|\b(?:check|look at|read) (?:the )?(?:errors?|logs?)\b"
+    r"|\bSettings\s*>\s*System\s*>\s*Logs\b"
+    r"|\bwatch (?:whether|if) it (?:continues|happens again)\b", re.I)
+_NETWORK_BLAME = re.compile(
+    r"\b(?:router|dns|modem|internet|isp|access point|wi-?fi network|"
+    r"network switch)\b", re.I)
+_URGENT = re.compile(
+    r",?\s*\b(?:right away|immediately|at once|urgently|"
+    r"as soon as possible|asap|right now|without delay|"
+    r"before it['’]?s too late)\b|,?\s+now(?=\s*[.!,;]|\s*$)", re.I)
+
+
+def _drop_sentences(text: str, pattern) -> str:
+    if not text:
+        return text
+    kept = [s for s in _LOG_SENTENCES.split(str(text))
+            if s and not pattern.search(s)]
+    return " ".join(kept).strip()
+
+
+def without_self_checks(text: str) -> str:
+    """``text`` less every sentence asking somebody to check what brAIn
+    reads itself: a power state, a connection, a log, a setting."""
+    return _drop_sentences(text, _SELF_CHECK)
+
+
+def without_network_blame(text: str) -> str:
+    """``text`` less every sentence sending somebody to the router, DNS or
+    the internet — for a fault whose integration's other devices answer."""
+    return _drop_sentences(text, _NETWORK_BLAME)
+
+
+def _reading(value) -> float | None:
+    m = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    return float(m.group(0)) if m else None
+
+
+def readings_agree(evidence) -> bool:
+    """Whether a row's evidence holds two readings that agree: the last two
+    of one entity, numbers within a tenth of each other (or a degree), or
+    the same words."""
+    rows = [e for e in evidence or [] if isinstance(e, dict)
+            and str(e.get("value") or "").strip()]
+    by_entity: dict[str, list] = {}
+    for e in rows:
+        by_entity.setdefault(str(e.get("entity") or ""), []).append(e)
+    for seen in by_entity.values():
+        if len(seen) < 2:
+            continue
+        a, b = seen[-2], seen[-1]
+        x, y = _reading(a.get("value")), _reading(b.get("value"))
+        if x is not None and y is not None:
+            if (x >= 0) == (y >= 0) and abs(x - y) <= max(
+                    1.0, 0.1 * max(abs(x), abs(y))):
+                return True
+        elif str(a.get("value")).strip().lower() == \
+                str(b.get("value")).strip().lower():
+            return True
+    return False
+
+
+def calm(text: str, readings_agree: bool) -> str:
+    """``text`` with its urgency taken off unless two readings agree."""
+    if readings_agree or not text or not _URGENT.search(text):
+        return text
+    out = _URGENT.sub("", text)
+    out = re.sub(r"\s+([,.;!?])", r"\1", out).replace("!", ".")
+    return re.sub(r"\s{2,}", " ", out).strip()

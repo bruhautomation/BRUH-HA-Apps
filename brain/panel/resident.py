@@ -804,6 +804,10 @@ Answer with ONE JSON object and nothing else. What it means:
 - """ + prompt_kit.DEVICE_WORDS + """
 - Call the add-on "brAIn". Never its Supervisor slug (the hex prefix and
   "_brain" a log line carries) or its container name.
+- brAIn's own upkeep (its instructions, memory, voice, settings) is
+  brAIn's: never ask the household to edit its files or call its tools,
+  never a file path, tool name or model id, and never state its voice or
+  name from memory.
 - "evidence" — every row is something you ACTUALLY READ. Each names the
   entity it came from, the value you saw and when. This is the half that
   makes a claim checkable, and it is the half you must not invent: if you

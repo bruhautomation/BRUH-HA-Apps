@@ -70,6 +70,8 @@ from __future__ import annotations
 import datetime as dt
 import re
 
+import card_claims
+
 # The verdict words. A clause is a verdict of fine when it says one of
 # these and does not negate it ("not fine" is a finding, not a verdict).
 _FINE = re.compile(
@@ -489,7 +491,7 @@ def initial_verdict(obj: dict) -> str:
 
 
 def review(obj: dict, previous: dict | None = None,
-           open_rows=(), others=(), names_in=None) -> dict:
+           open_rows=(), others=(), names_in=None, asked: bool = False) -> dict:
     """What to do with one parsed card (`_review`), with the reassurance,
     a verdict sentence and the restated title taken off whatever is to be
     stored, and the card's one `verdict` set from what it said.
@@ -500,6 +502,8 @@ def review(obj: dict, previous: dict | None = None,
     card's lead. ``fixed``, present only when there is one, is the open rows
     the card says are already fixed, whose checks the caller asks again.
     """
+    # ``asked``: a card somebody asked for. Its claim is the answer to
+    # their question, so a blind spot or a non-event is never folded.
     verdict = initial_verdict(obj)
     got = _review(obj, previous, open_rows, verdict)
     fixed = claims_fixed(obj, open_rows)
@@ -510,7 +514,22 @@ def review(obj: dict, previous: dict | None = None,
     if got["hold"]:
         return got
     out = got["obj"]
+    blind = "" if asked else card_claims.blind_lead(out, verdict)
+    if blind and open_row_named(out, open_rows) is None:
+        # Its headline is what brAIn could not see, or that nothing
+        # happened: not news (`card_claims`). The last card stays; a first
+        # card is stored folded into the quiet line.
+        if previous:
+            got = {"obj": out, "hold": card_claims.BLIND_WHY, "changed": []}
+            if fixed:
+                got["fixed"] = fixed
+            return got
+        out["blind"] = True
+    # Before `_finish`: the title's figures are read against the body the
+    # model wrote, before a summary sentence restating them is taken off.
+    card_claims.title_figures_agree(out, got["changed"])
     _finish(out, got["changed"])
+    card_claims.trim_gaps(out, got["changed"])
     _strip_verdict_sentence(out, got["changed"])
     _not_another_cards_lead(out, got["changed"], others, names_in)
     changed = got["changed"]
@@ -699,6 +718,10 @@ def folds_quiet(card: dict) -> bool:
     rather than giving a card of its own."""
     card = card or {}
     shown = legacy(card)
+    if (card.get("blind") and nothing_to_act(card)
+            and shown["verdict"] not in (LOOK, ACTION)):
+        # A headline that was a blind spot or a non-event (`card_claims`).
+        return True
     if shown["verdict"] != FINE or not nothing_to_act(card):
         return False
     return bool(card.get("quiet")) or quiet(card) or no_change(card, None)

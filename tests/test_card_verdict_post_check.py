@@ -206,10 +206,10 @@ ECHOES = (
      "The garage opened 3 times after 22:00. Each was under 2 min.",
      "Each was under 2 min."),
     ("Freezer: 0 °F all week",
-     "The compressor ran 41% of the time, up from 30%. The seal is the " +
-     "likely cause.",
-     "The compressor ran 41% of the time, up from 30%. The seal is the " +
-     "likely cause."),
+     "The compressor ran 41% of the time to hold 0 °F, up from 30%. The " +
+     "seal is the likely cause.",
+     "The compressor ran 41% of the time to hold 0 °F, up from 30%. The " +
+     "seal is the likely cause."),
 )
 
 

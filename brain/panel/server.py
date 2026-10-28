@@ -163,6 +163,7 @@ import devloop.verify
 import devloop.siblings
 import devloop_archive
 import card_tags
+import card_claims
 import card_verdict
 import cases
 import changes
@@ -215,6 +216,8 @@ import milestones
 import model_plan
 import music_assistant
 import mute_offer
+import self_care
+import house_words
 import plain_words
 import notify_learn
 import notify_router
@@ -5659,6 +5662,25 @@ async def _end_mute_offer(finding: dict, spec: dict,
     return payload, ""
 
 
+async def _end_self_care(finding: dict, spec: dict,
+                         note: str) -> tuple[dict, str]:
+    """Yes takes the out-of-date line out of brAIn's instructions
+    (`self_care.correct`); No leaves it. No memory line either way."""
+    if spec.get("label") == "accepted":
+        try:
+            done = await asyncio.to_thread(self_care.correct, finding)
+            log.info("self-care: %s an instruction line",
+                     "took out" if done else "found no longer")
+        except (OSError, ValueError) as exc:
+            log.warning("could not correct brAIn's instructions: %s", exc)
+
+    def settle() -> dict:
+        findings_store.settle_and_clear(finding["ts"], spec["kind"], note=note)
+        return _findings_payload()
+
+    return await asyncio.to_thread(settle), ""
+
+
 def _mute_offer_undo(entry: dict) -> None:
     """Undo of a Yes unmutes; of either answer, forgets the answer."""
     finding = (entry or {}).get("finding") or {}
@@ -6104,6 +6126,11 @@ async def _generate(insight_id: str) -> None:
         # An asked card has a last time too once it exists: regenerating or
         # refining one revises it rather than starting from nothing.
         knowledge = knowledge_store.prompt_block()
+        # brAIn's own name and voice, the one stored answer: a card that
+        # mentions either quotes this, never a model's memory.
+        who_line = await asyncio.to_thread(personality.identity_line)
+        knowledge = f"{knowledge}\n\n{who_line}".strip() if knowledge \
+            else who_line
         previous = None
         previous_opportunities = []
         if question is None or refine or _insight_path(insight_id).exists():
@@ -6189,7 +6216,7 @@ async def _generate(insight_id: str) -> None:
         verdict = card_verdict.review(
             {**obj, "highlights": highlights}, previous, open_rows=open_rows,
             others=await asyncio.to_thread(_other_card_subjects, insight_id),
-            names_in=_entities_named_in)
+            names_in=_entities_named_in, asked=question is not None)
         # A card that says a problem on the list is already dealt with —
         # in its `fixed` field or in words — has that row's own check
         # asked again, so the row clears or is reworded by the rule that
@@ -6214,6 +6241,18 @@ async def _generate(insight_id: str) -> None:
                              if k in verdict["obj"]}}
             highlights = obj["highlights"] if isinstance(
                 obj.get("highlights"), list) else highlights
+        # A headline that is a blind spot or a non-event (`card_claims`):
+        # stored, since somebody pressed for it, and folded.
+        blind = bool(verdict["obj"].get("blind")
+                     or verdict["hold"] == card_claims.BLIND_WHY)
+        # brAIn as the one narrator of its own card, and its voice the
+        # stored answer (`house_words.self_said`), as on a finding.
+        who = await asyncio.to_thread(personality.identity)
+        said = {k: house_words.self_said(str(obj.get(k) or ""), who["name"],
+                                         who["voice"], keep=k == "title")
+                for k in ("title", "summary")}
+        if any(said[k] != str(obj.get(k) or "") for k in said):
+            obj = {**obj, **said}
         # The one judgement, read off the reply's field or its own first
         # sentence (`card_verdict.review`), and absent where there is none.
         card_judgement = card_verdict.clean_verdict(
@@ -6321,7 +6360,8 @@ async def _generate(insight_id: str) -> None:
             "verdict": card_judgement,
             # All fine about nothing that changed: Reports folds it into
             # its "All quiet" line rather than a card of its own.
-            "quiet": bool(quiet_card),
+            "quiet": bool(quiet_card) or blind,
+            **({"blind": True} if blind else {}),
             "focus_used": cat.get("focus", "") if question is None else "",
             # The entities whose CURRENT state the visualization wants,
             # so a card about something happening now stops being frozen
@@ -9300,6 +9340,10 @@ findings_store.QUEUE_COUNT = _queue_count
 # house's zone, handed in because the store imports neither.
 findings_store.DISPLAY_NAMES = lambda: _NAMES
 findings_store.HOUSE_TZ = lambda: baselines.house_timezone()[0]
+# Who brAIn is, the one stored answer a model's row reads (`personality.
+# identity`), and brAIn's own upkeep as its own question (`self_care`).
+findings_store.IDENTITY = personality.identity
+findings_store.SELF_CARE = self_care.as_question
 
 
 def _hypothesis_known_answer(text: str) -> bool:
@@ -9863,6 +9907,16 @@ async def h_insights(request: web.Request) -> web.Response:
         # one read of the edits file for the whole list, not one per card
         edits = card_tags.load_edits()
         superseded = _superseded(insights)
+        # The open findings a card can be wholly about (`card_claims.
+        # finding_twin`): a card and a finding about one thing are one item.
+        try:
+            live_rows = [f for f in findings_store.list_all("live")
+                         if f.get("entity_id")]
+        except Exception:  # noqa: BLE001 — no rows is no twin
+            live_rows = []
+
+        def device_of(eid):
+            return (_NAMES.get(eid) or {}).get("device")
         for ins in insights:
             ins["tags"] = card_tags.effective_tags(ins, edits)
             ins["entities"] = _card_entities(ins)
@@ -9875,6 +9929,10 @@ async def h_insights(request: web.Request) -> web.Response:
                 ins.pop("verdict", None)
             if ins.get("id") in superseded:
                 ins["superseded_by"] = superseded[ins["id"]]
+            twin = card_claims.finding_twin(set(ins["entities"]), live_rows,
+                                            device_of)
+            if twin is not None and twin.get("ts"):
+                ins["told_in"] = f"f:{twin['ts']}"
             # The heading an asked card carries in place of "Custom". A
             # category card is headed by its category, which the panel
             # reads live off the definition so a rename shows at once.
@@ -20492,6 +20550,10 @@ async def _end_finding(finding: dict, spec: dict, note: str, *,
     if finding.get("source") == mute_offer.SOURCE:
         # "Stop raising this rule?": Yes is the mute, No is remembered.
         return await _end_mute_offer(finding, spec, note)
+    if finding.get("source") == self_care.SOURCE:
+        # "Shall brAIn take that line out?": Yes is brAIn doing its own
+        # upkeep; neither answer is a fact about the house.
+        return await _end_self_care(finding, spec, note)
     if finding.get("source") == devloop.verify.SOURCE:
         # "Is this fixed?": the answer goes back on the report; nothing
         # about it is a fact about the house.
@@ -25782,8 +25844,13 @@ async def h_personality_put(request: web.Request) -> web.Response:
     refusal = await asyncio.to_thread(personality.save_refusal, name, persona)
     if refusal:
         raise web.HTTPBadRequest(text=refusal)
+    voice = body.get("voice")
+    if voice is not None and (not isinstance(voice, str)
+                              or len(voice.strip()) > personality.VOICE_MAX):
+        raise web.HTTPBadRequest(
+            text=f"a voice is at most {personality.VOICE_MAX} characters")
     try:
-        await asyncio.to_thread(personality.save, name, persona)
+        await asyncio.to_thread(personality.save, name, persona, None, voice)
     except (ValueError, OSError):
         log.exception("could not save the personality")
         raise web.HTTPInternalServerError(

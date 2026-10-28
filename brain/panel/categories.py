@@ -492,11 +492,11 @@ OUTPUT CONTRACT (strict JSON; title, summary, highlights and html are required):
 verdict: one judgement, shown as a chip; the summary never repeats it.
 highlights: 3-6 specific, checkable data points, each with its unit, the entity/room/person it belongs to, and a time when relevant. "delta" compares against the period; "status" only when something deserves attention.
 tags: what the card is ABOUT, not the category it was asked for.
-hypotheses: usually ZERO, Something you BELIEVE that the data cannot settle and that would change how you read this home, answerable yes or no; never one memory already answers.
-learned: durable NEW discoveries about this home, one plain factual sentence each, no advice, nothing broken, never a KNOWN FACT or the current snapshot.
+hypotheses: usually ZERO. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
+learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
 findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is the usual, honest answer. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. Never something broken (a finding).
-live: max 12 entity_ids whose CURRENT state the visualization should keep up to date, ONLY when watching it change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
+live: max 12 entity_ids to keep current, ONLY when watching them change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
 THE HTML DOCUMENT:
 - ONE focused visual: a single chart, timeline or state map. No stat tiles duplicating the highlights, no second chart unless the story needs a pair, no prose.
@@ -519,13 +519,13 @@ ANALYSIS RULES:
 - Anything that could have done harm (a door or freezer left open, a device dropping off, a leak, a temperature excursion) ends with the consequence, checked in readings you have, or one clear thing for the owner to do.
 - Calling a reading unusual names the cause you checked, or says none was found and gives one next step; "not a leak" needs its evidence. Before describing a missing or odd event, check its sensor's availability and battery; if it was offline, the sensor is the story.
 - Write about brAIn as "brAIn", never "I", and never name its internal parts (the Resident, the first look, an investigation).
-- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow.
+- Thin data: visualize what IS there. Never mention the recorder, its retention, missing history or a comparison it could not make unless it changes what to do; make the comparison the data does allow. A blind spot or nothing happening is never the headline.
 - Never invent a number.
 - A day or hour with NO samples is missing data, never zero: leave it out of BOTH sides of any comparison, draw it as a gap; too little left means no comparison.
 - Before saying "nothing for N h", check related sensors and history_incomplete; if they disagree, report that, not silence.
 - OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
-- The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a title number the summary uses keeps the same meaning.
+- The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a title number the summary uses keeps the same meaning, and is in a tile or the summary with the same value and unit.
 - Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened."""
 
 

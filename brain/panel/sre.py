@@ -1006,6 +1006,20 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
     entity_devices = {str(e["entity_id"]): str(e.get("device_id") or "")
                       for e in reg if e.get("device_id")}
     wide: dict[str, str] = {}
+    # What every entity of an integration a record is from reads now, and
+    # of every entity a record names: the facts a fix is made of
+    # (`_evidence_fix`). Beside the records and never in the prompt.
+    domains = {str(r.get(k) or "") for r in records
+               for k in ("integration", "owner")} - {""}
+    raw_states = collected.get("states") or {}
+    states_now = {}
+    for eid in sorted(set(platforms) | named):
+        if eid in named or platforms.get(eid) in domains:
+            st = raw_states.get(eid)
+            if isinstance(st, dict):
+                states_now[eid] = str(st.get("state") or "")
+        if len(states_now) >= 400:
+            break
     # The house as it is at the review, for `hold_transient`: the state of
     # every entity of an integration a log line came from (and of every
     # entity a line names), and how each integration's config entries are
@@ -1027,6 +1041,7 @@ def digest(collected: dict, now: float, set_aside=frozenset()) -> dict:
             entry_states.setdefault(str(e["domain"]), []).append(
                 str(e.get("state") or ""))
     return {"records": records,
+            "states_now": states_now,
             "health": health, "entry_states": entry_states,
             "integration_names": integration_names(
                 records, collected.get("config_entries") or [],
@@ -1154,6 +1169,11 @@ SYSTEM = prompt_kit.assemble(
   it continues" — brAIn looks again tomorrow night. Say what to change.
   When the answer lives somewhere brAIn cannot see (a router's or access
   point's own app), say once what it is and that brAIn cannot see it.
+- A fix names something the records show (the device that fails, how
+  many of its integration's others still answer) or is left empty. One
+  device failing while its siblings answer is that device, never the
+  router, DNS or the internet. Urgent words ("now", "immediately") only
+  when two readings agree.
 - """ + prompt_kit.DEVICE_WORDS + """
 - Records are cited by id EXACTLY as given.
 - At most 5 causes. If nothing here is a real problem, answer with no
@@ -1383,31 +1403,129 @@ def _with_source(logs: list[dict], dig: dict, detail: str) -> str:
     return f"{detail} The lines come from {' '.join(bits)}.".strip()
 
 
-def _record_fix(rec: dict, dig: dict) -> str:
-    """What to do about one record, in plain words, for a cause that came
-    back with no fix of its own."""
+_DOWN = ("unavailable", "unknown", "")
+
+
+def _state_words(state: str) -> str:
+    return "unavailable" if state in _DOWN else f"“{state}”"
+
+
+def _own_entities(rec: dict, dig: dict) -> list[str]:
+    """The entities a log record is about: those it names, else those on
+    the devices it names."""
+    named = list(rec.get("entities") or [])
+    if named:
+        return named
+    devices = set(rec.get("devices") or [])
+    return sorted(e for e, d in (dig.get("entity_devices") or {}).items()
+                  if d in devices)
+
+
+def _siblings_said(rec: dict, dig: dict) -> tuple[str, int, int]:
+    """`(sentence, others, answering)`: how many of the integration's other
+    entities answer now, read off tonight's states."""
+    domain = str(rec.get("owner") or rec.get("integration") or "")
+    states = dig.get("states_now") or {}
+    platforms = dig.get("platforms") or {}
+    if not domain or not states:
+        return "", 0, 0
+    mine = set(_own_entities(rec, dig))
+    ent_dev = dig.get("entity_devices") or {}
+    own_devices = ({ent_dev.get(e) for e in mine}
+                   | set(rec.get("devices") or [])) - {None, ""}
+    others = [e for e, p in platforms.items() if p == domain
+              and e not in mine and e in states
+              and ent_dev.get(e) not in own_devices]
+    if not others:
+        return "", 0, 0
+    answering = sum(1 for e in others if str(states.get(e) or "") not in _DOWN)
+    where = _source_of(rec, dig) or integration_name(domain, dig)
+    if answering == len(others):
+        said = (f"the other {len(others)} {where} "
+                + ("entity answers" if len(others) == 1 else "entities answer"))
+    elif answering == 0:
+        said = (f"the other {where} entity does not answer either"
+                if len(others) == 1 else
+                f"none of the other {len(others)} {where} entities answer "
+                "either")
+    else:
+        said = (f"{answering} of the other {len(others)} {where} entities "
+                "answer")
+    return said, len(others), answering
+
+
+def _evidence_fix(recs: list[dict], dig: dict) -> str:
+    """What brAIn read about a cause's first record, as the sentence its
+    "what to do" carries when the run gave none that fits — or "" when it
+    read nothing that says more than the detail. Never a canned step: a
+    per-category sentence ("check its settings", "restart the router")
+    told people to look at what brAIn had already read."""
+    rec = recs[0]
+    names = dig.get("names") or {}
     if rec["kind"] == "zigbee":
-        return ("Check it has power, then move it closer to the Zigbee "
-                "coordinator or a mains-powered Zigbee device, or add one "
-                "between them.")
+        name = rec.get("name") or "It"
+        if not rec.get("available"):
+            ago = _ago(rec.get("last_seen_hours"))
+            return (f"{name} reads unavailable on the Zigbee network"
+                    + (f", last heard {ago}" if ago else "") + ".")
+        lqi = rec.get("lqi")
+        if isinstance(lqi, (int, float)) and lqi < WEAK_LQI:
+            return (f"{name}'s link to the Zigbee network reads {int(lqi)}, "
+                    f"under the {WEAK_LQI} where messages start to drop.")
+        return _looks_again(rec, dig)
     if rec["kind"] == "zwave":
-        return ("Check it has power, then open it in Settings > Devices & "
-                "services > Z-Wave and re-interview it.")
+        name = rec.get("name") or "It"
+        stats = rec.get("stats") or {}
+        dropped = int(sum(_num(stats.get(k)) for k in
+                          ("commandsDroppedTX", "commandsDroppedRX")))
+        if rec.get("status") == "dead":
+            return f"Z-Wave reads {name} as dead."
+        if dropped:
+            return f"Z-Wave counts {dropped} dropped commands to {name}."
+        return _looks_again(rec, dig)
     if rec["kind"] == "automation":
-        return ("Edit that automation so it no longer switches the plug off: "
-                "a Zigbee router has to stay powered for the devices behind "
-                "it.")
-    return _not_your_template_fix([rec], dig)
+        plugs = [names.get(e) or e for e in rec.get("switches_off") or []]
+        return (f"{rec.get('automation') or 'An automation'} switches off "
+                f"{_and(plugs) or 'a Zigbee router'}, which other Zigbee "
+                "devices route through.")
+    bits = []
+    thing = _thing_of(rec, dig)
+    states = dig.get("states_now") or {}
+    read = [e for e in _own_entities(rec, dig) if e in states]
+    if thing and read:
+        bits.append(f"{thing} reads {_state_words(str(states[read[0]]))} now")
+    siblings, others, answering = _siblings_said(rec, dig)
+    if siblings:
+        if thing and others and answering == others:
+            siblings += f", so the trouble is at {thing}, not the network"
+        bits.append(siblings)
+    if not bits:
+        return _looks_again(rec, dig)
+    text = "; ".join(bits)
+    return text[0].upper() + text[1:] + "."
 
 
-def _not_your_template_fix(logs: list[dict], dig: dict | None = None) -> str:
-    who = next((str(r.get("owner") or r.get("integration") or "")
-                for r in logs if r.get("owner") or r.get("integration")), "")
-    where = (f"the {integration_name(who, dig or {})} integration" if who
-             else "an integration")
-    return (f"This comes from {where}, not from anything you wrote: check "
-            "that integration's settings, or report it to its author if it "
-            "keeps happening.")
+def _looks_again(rec: dict, dig: dict) -> str:
+    """With nothing read beyond the lines themselves, what brAIn does next
+    — a fact about brAIn, never a step it could take itself handed to the
+    household."""
+    thing = _thing_of(rec, dig) or rec.get("name") or _source_of(rec, dig)
+    if not thing:
+        return ""
+    return (f"brAIn looks at {thing} again tomorrow night and takes this "
+            "off when the errors stop.")
+
+
+def _not_yours(logs: list[dict], dig: dict) -> str:
+    """For a cause told to edit a template nothing of the owner's reads:
+    where the lines come from, and what brAIn read, in place of the step."""
+    rec = logs[0]
+    thing, where = _thing_of(rec, dig), _source_of(rec, dig)
+    said = (f"Nothing you wrote reads {thing}" if thing
+            else "Nothing you wrote is behind these lines")
+    said += (f": they come from the {where} integration." if where else ".")
+    read = _evidence_fix(logs, dig)
+    return f"{said} {read}".strip()
 
 
 # Integration names that are also everyday words in a fix ("the sensor",
@@ -1652,39 +1770,6 @@ def _reload_is_brains(fix: str, logs: list[dict], dig: dict) -> str:
     return " ".join(kept + [_brain_reloads(where)]).strip()
 
 
-def _error_fix(logs: list[dict], dig: dict) -> str:
-    """A fix for the error a log-only cause describes, when the run's own
-    fix said nothing about it."""
-    rec = logs[0]
-    thing, where = _thing_of(rec, dig), _source_of(rec, dig)
-    if thing:
-        return (f"The error is about {thing}: open it in Settings > Devices "
-                "& services and put right what the error says is wrong. "
-                + _brain_reloads(where))
-    if where:
-        return (f"Put right what the error says is wrong in the {where} "
-                "integration's settings in Settings > Devices & services. "
-                + _brain_reloads(where))
-    return ("Read the error in Settings > System > Logs and put right what "
-            "it names.")
-
-
-def _source_fix(logs: list[dict], dig: dict) -> str:
-    """A fix for what the log lines came from, when the run's own fix was
-    about something else."""
-    rec = logs[0]
-    thing, where = _thing_of(rec, dig), _source_of(rec, dig)
-    if thing:
-        return (f"Check that {thing} is powered on and reachable on the "
-                "network, or remove it from "
-                + (f"the {where} integration" if where else "its integration")
-                + " if it is gone for good.")
-    if where:
-        return (f"Check the {where} integration in Settings > Devices & "
-                "services. " + _brain_reloads(where))
-    return ""
-
-
 # Prose that blames a thing without naming it. A cause citing a line that
 # says what made the calls names them instead.
 _VAGUE_RE = re.compile(
@@ -1805,7 +1890,7 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             # Nothing the homeowner wrote refers to what the line is about,
             # so "edit the template" sends them looking for a template
             # that is not theirs. The integration is the source.
-            fix = _not_your_template_fix(logs, dig)
+            fix = _not_yours(logs, dig)
             kept = [s for s in _SENTENCES.split(detail)
                     if not _TEMPLATE_WORDS.search(s)]
             detail = " ".join(kept).strip()
@@ -1859,17 +1944,25 @@ def parse_causes(answer: dict | None, dig: dict) -> dict:
             # was is a card with nothing in it (#444): held back, counted.
             unstated += 1
             continue
+        if logs and fix:
+            # A step asking somebody to check what brAIn read (a power
+            # state, a connection, a log) goes, and so does one blaming
+            # the router or DNS while the integration's other devices
+            # answer: the fault is at the one that does not.
+            fix = house_words.without_self_checks(fix)
+            _said, others, answering = _siblings_said(logs[0], dig)
+            if others and answering:
+                fix = house_words.without_network_blame(fix)
         if only_logs and fix and not _fix_follows(fix, logs, dig):
             # A fix that says nothing the error is about ("restart it on
-            # its dock" under a cloud error) is replaced by one that does.
-            fix = _error_fix(logs, dig)
+            # its dock" under a cloud error) is replaced by what brAIn read.
+            fix = _evidence_fix(logs, dig)
             unfollowed += 1
-        if logs and not fix:
-            fix = _source_fix(logs, dig)
         if not fix:
             # A run that wrote no fix, or one whose every sentence was about
-            # another problem: the card still says what to do (#342).
-            fix = _record_fix(by_id[real[0]], dig)
+            # another problem: what brAIn read about it, or nothing — never
+            # a canned step (#342's floor, without its stock sentences).
+            fix = _evidence_fix(logs or [by_id[real[0]]], dig)
         if only_logs:
             # Reloading an integration is a step brAIn takes, not one it
             # hands the owner (`_brain_reloads`).

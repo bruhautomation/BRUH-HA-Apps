@@ -152,6 +152,9 @@ class TestACardIsTold(ClearCase):
 
     def test_the_other_cards_titles_and_not_its_own(self):
         self.reply["title"] = "Living room AC: 3 h cooling on Tuesday"
+        # The title's figure is in the body: a title figure the card does
+        # not state is taken out of the title (`card_claims`).
+        self.reply["summary"] = "It cooled for 3 h from 14:00."
         self.generate("energy")
         self.reply["title"] = "Evening lights"
         self.generate()               # lighting, once, so it has a title

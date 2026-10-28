@@ -229,6 +229,18 @@ def _integration_name(snap: dict, domain: str, logger: str) -> str:
     return f"The {logger.split('.')[0]} library"
 
 
+def _flood_fix(house, device: str, entity: str) -> str:
+    """The state of the thing a flood's line names, as brAIn read it."""
+    if not device or not entity:
+        return ""
+    state = str((house.states.get(entity) or {}).get("state") or "")
+    if state in ("unavailable", "unknown", ""):
+        return (f"Every one of these lines names {device}, and it reads "
+                "unavailable now: the trouble is at that device.")
+    return (f"Every one of these lines names {device}, which reads "
+            f"“{state}” now, so it is still answering.")
+
+
 def passing(group: dict, now: float) -> str:
     """Why a flooding group is a burst that passed, or "" when it persists.
 
@@ -295,12 +307,10 @@ def log_flood(snap: dict, now: float) -> list[dict]:
             "text": (f"{spell_integration(domain) if domain else who} is "
                      "logging the same error over and over"),
             "detail": detail,
-            "fix": ("Read what the error says is wrong in Settings > System > "
-                    "Logs; fixing the device or address it names usually "
-                    "stops it. If it does not, brAIn can reload "
-                    + (f"the {who} integration" if domain else "the integration")
-                    + " for you: ask it in the chat. A log this busy also "
-                    "wears the storage and buries other errors."),
+            # What brAIn read about what the line names, or nothing: a
+            # stock "read the log, reload it" sent people to the log brAIn
+            # had already read.
+            "fix": _flood_fix(house, device, entity),
             "severity": "warning",
             "fixable": False,
             "entity_id": entity,
