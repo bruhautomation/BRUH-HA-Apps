@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.8
+
+### Changed
+
+- **"I need to fix this" is a pause, not a rule.** Answering Wrong or replying with words like "being repaired", "unplugged for now" or "I'll plug it back in soon" pauses the suggestion for two weeks (up to 90 days) instead of teaching brAIn a general correction; it comes back early if the device answers again. This includes Morph's "remove this unavailable card" suggestion, which now keeps the card. (#503)
+- **A heat-loss ranking compares only heated rooms.** Rooms with no heating or thermostat, and rooms you have said are unheated or uninsulated, are not ranked against heated ones. (#505)
+- **A processor or machine temperature is judged by its own kind and history.** The implausible-reading check takes its range from the device and integration (a computer's processor temperature is not an "impossible" reading) and from the sensor's own week. (#504)
+- **brAIn checks the automation before saying a device did not run.** A claim that a device should have run is dropped when the reading it blames is not one of that device's automation triggers or conditions. (#502)
+- **A frozen reading stands down for a low battery.** A sensor whose battery is flagged low is reported by the battery check only, and a "normal when unpowered" reason on an unavailable device is remembered as a rule. (#498, #499)
+
 ## 4.0.7
 
 ### Added
