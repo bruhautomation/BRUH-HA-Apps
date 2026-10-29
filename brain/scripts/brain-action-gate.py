@@ -69,6 +69,7 @@ GATED_MCP = frozenset({
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
+    "cooking_control",
     "report_bug", "timed_action", "note_personality_change",
     "set_assistant_exposure",
 })

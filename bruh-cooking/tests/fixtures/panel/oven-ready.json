@@ -1,0 +1,388 @@
+{
+  "now": "2026-10-25T18:00:00+00:00",
+  "unit_system": "us_customary",
+  "appliance": {
+    "device_id": "device-oven",
+    "entry_id": "entry-1",
+    "name": "Kitchen Oven",
+    "model": "BOV950",
+    "product": "Joule Oven Air Fryer Pro",
+    "kind": "oven",
+    "finish": "brushed_stainless",
+    "available": true,
+    "tested": true,
+    "control_allowed": true,
+    "can_edit_cook": false,
+    "sensor_target_c": 161.0,
+    "limits": {
+      "min_temp_c": 27.0,
+      "max_temp_c": 250.0,
+      "max_cook_s": 259200
+    },
+    "entities": {
+      "continue": {
+        "button": "button.kitchen_oven_continue"
+      },
+      "oven_mode": {
+        "select": "select.kitchen_oven_mode"
+      },
+      "convection": {
+        "select": "select.kitchen_oven_convection"
+      },
+      "level": {
+        "select": "select.kitchen_oven_level"
+      },
+      "cooking": {
+        "binary_sensor": "binary_sensor.kitchen_oven_cooking"
+      },
+      "door": {
+        "binary_sensor": "binary_sensor.kitchen_oven_door"
+      },
+      "problem": {
+        "binary_sensor": "binary_sensor.kitchen_oven_problem"
+      },
+      "status": {
+        "sensor": "sensor.kitchen_oven_status"
+      },
+      "current_temperature": {
+        "sensor": "sensor.kitchen_oven_temperature"
+      },
+      "preheat": {
+        "sensor": "sensor.kitchen_oven_preheat"
+      },
+      "time_remaining": {
+        "sensor": "sensor.kitchen_oven_time_remaining"
+      },
+      "cook_end": {
+        "sensor": "sensor.kitchen_oven_cook_end"
+      },
+      "active_mode": {
+        "sensor": "sensor.kitchen_oven_active_mode"
+      },
+      "error": {
+        "sensor": "sensor.kitchen_oven_error"
+      },
+      "cook": {
+        "switch": "switch.kitchen_oven_cook"
+      },
+      "auto_start_timer": {
+        "switch": "switch.kitchen_oven_start_timer_automatically"
+      },
+      "keep_warm": {
+        "switch": "switch.kitchen_oven_keep_warm"
+      },
+      "frozen": {
+        "switch": "switch.kitchen_oven_frozen_food"
+      },
+      "target_temperature": {
+        "number": "number.kitchen_oven_target_temperature"
+      },
+      "cook_time": {
+        "number": "number.kitchen_oven_cook_time"
+      }
+    }
+  },
+  "device": {
+    "id": "device-oven",
+    "name": "Kitchen Oven",
+    "name_by_user": null,
+    "area_id": "kitchen",
+    "model": "Joule Oven Air Fryer Pro",
+    "model_id": "BOV950BSS",
+    "manufacturer": "Breville",
+    "sw_version": "1.10.21"
+  },
+  "area": {
+    "area_id": "kitchen",
+    "name": "Kitchen"
+  },
+  "states": {
+    "binary_sensor.kitchen_oven_cooking": {
+      "entity_id": "binary_sensor.kitchen_oven_cooking",
+      "state": "on",
+      "attributes": {
+        "device_class": "running",
+        "friendly_name": "Kitchen Oven Cooking"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "binary_sensor.kitchen_oven_door": {
+      "entity_id": "binary_sensor.kitchen_oven_door",
+      "state": "off",
+      "attributes": {
+        "device_class": "door",
+        "friendly_name": "Kitchen Oven Door"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "binary_sensor.kitchen_oven_problem": {
+      "entity_id": "binary_sensor.kitchen_oven_problem",
+      "state": "off",
+      "attributes": {
+        "device_class": "problem",
+        "friendly_name": "Kitchen Oven Problem"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "button.kitchen_oven_continue": {
+      "entity_id": "button.kitchen_oven_continue",
+      "state": "unknown",
+      "attributes": {
+        "friendly_name": "Kitchen Oven Continue"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "number.kitchen_oven_cook_time": {
+      "entity_id": "number.kitchen_oven_cook_time",
+      "state": "unknown",
+      "attributes": {
+        "min": 1,
+        "max": 480,
+        "step": 1,
+        "mode": "box",
+        "unit_of_measurement": "min",
+        "device_class": "duration",
+        "friendly_name": "Kitchen Oven Cook time"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "number.kitchen_oven_target_temperature": {
+      "entity_id": "number.kitchen_oven_target_temperature",
+      "state": "350.0",
+      "attributes": {
+        "min": 122.0,
+        "max": 482.0,
+        "step": 5.0,
+        "mode": "box",
+        "unit_of_measurement": "°F",
+        "device_class": "temperature",
+        "friendly_name": "Kitchen Oven Target temperature"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "select.kitchen_oven_convection": {
+      "entity_id": "select.kitchen_oven_convection",
+      "state": "on",
+      "attributes": {
+        "options": [
+          "off",
+          "on",
+          "super"
+        ],
+        "friendly_name": "Kitchen Oven Convection"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "select.kitchen_oven_level": {
+      "entity_id": "select.kitchen_oven_level",
+      "state": "unavailable",
+      "attributes": {
+        "options": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "friendly_name": "Kitchen Oven Level"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "select.kitchen_oven_mode": {
+      "entity_id": "select.kitchen_oven_mode",
+      "state": "bake",
+      "attributes": {
+        "options": [
+          "bake",
+          "air_fry",
+          "roast",
+          "broil",
+          "pizza",
+          "cookies",
+          "reheat",
+          "slow_cook",
+          "proof",
+          "warm",
+          "dehydrate",
+          "bottom_bake",
+          "bottom_broil",
+          "outer_top_broil",
+          "middle_top_broil"
+        ],
+        "friendly_name": "Kitchen Oven Mode"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_active_mode": {
+      "entity_id": "sensor.kitchen_oven_active_mode",
+      "state": "bake",
+      "attributes": {
+        "options": [
+          "air_fry",
+          "bagel",
+          "bake",
+          "bottom_bake",
+          "bottom_broil",
+          "broil",
+          "cookies",
+          "crispy_reheat",
+          "dehydrate",
+          "gentle_broil",
+          "keep_warm",
+          "middle_top_broil",
+          "outer_top_broil",
+          "pizza",
+          "proof",
+          "reheat",
+          "roast",
+          "slow_cook",
+          "sous_vide",
+          "toast",
+          "turbo",
+          "warm",
+          "windy_broil"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Kitchen Oven Active mode"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_cook_end": {
+      "entity_id": "sensor.kitchen_oven_cook_end",
+      "state": "unknown",
+      "attributes": {
+        "device_class": "timestamp",
+        "friendly_name": "Kitchen Oven Cook end"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_error": {
+      "entity_id": "sensor.kitchen_oven_error",
+      "state": "none",
+      "attributes": {
+        "options": [
+          "bad_motor",
+          "bath_thermistor_failure",
+          "button_pressed",
+          "current_leakage",
+          "door_open",
+          "firmware_crash",
+          "heater_broken",
+          "heater_thermistor_failure",
+          "low_water_level",
+          "none",
+          "other",
+          "overheating",
+          "power_loss",
+          "stuck_motor",
+          "tipped_over",
+          "water_leakage"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Kitchen Oven Error"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_preheat": {
+      "entity_id": "sensor.kitchen_oven_preheat",
+      "state": "unknown",
+      "attributes": {
+        "unit_of_measurement": "%",
+        "friendly_name": "Kitchen Oven Preheat"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_status": {
+      "entity_id": "sensor.kitchen_oven_status",
+      "state": "ready",
+      "attributes": {
+        "options": [
+          "offline",
+          "idle",
+          "preheating",
+          "ready",
+          "cooking",
+          "done",
+          "keeping_warm",
+          "waiting_for_button",
+          "error",
+          "updating"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Kitchen Oven Status"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_temperature": {
+      "entity_id": "sensor.kitchen_oven_temperature",
+      "state": "316.4",
+      "attributes": {
+        "state_class": "measurement",
+        "unit_of_measurement": "°F",
+        "device_class": "temperature",
+        "friendly_name": "Kitchen Oven Temperature"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.kitchen_oven_time_remaining": {
+      "entity_id": "sensor.kitchen_oven_time_remaining",
+      "state": "unknown",
+      "attributes": {
+        "unit_of_measurement": "min",
+        "device_class": "duration",
+        "friendly_name": "Kitchen Oven Time remaining"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.kitchen_oven_cook": {
+      "entity_id": "switch.kitchen_oven_cook",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "Kitchen Oven Cook"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.kitchen_oven_frozen_food": {
+      "entity_id": "switch.kitchen_oven_frozen_food",
+      "state": "unavailable",
+      "attributes": {
+        "friendly_name": "Kitchen Oven Frozen food"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.kitchen_oven_keep_warm": {
+      "entity_id": "switch.kitchen_oven_keep_warm",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Kitchen Oven Keep warm"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.kitchen_oven_start_timer_automatically": {
+      "entity_id": "switch.kitchen_oven_start_timer_automatically",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "Kitchen Oven Start timer automatically"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    }
+  }
+}

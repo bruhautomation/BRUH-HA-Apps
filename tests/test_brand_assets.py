@@ -38,6 +38,7 @@ INTEGRATIONS = [
     ("bruh-bambu-studio", "bruh_bambu"),
     ("gardenrx", "gardenrx"),
     ("bruh-task-manager", "bruh_task_manager"),
+    ("bruh-cooking", "bruh_cooking"),
 ]
 
 # The four files HA looks for, and the size each must be. Icons are exact

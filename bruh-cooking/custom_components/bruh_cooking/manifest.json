@@ -1,0 +1,14 @@
+{
+  "domain": "bruh_cooking",
+  "name": "BRUH Cooking",
+  "after_dependencies": ["frontend", "hassio", "http", "panel_custom"],
+  "codeowners": ["@bruhautomation"],
+  "config_flow": true,
+  "documentation": "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-cooking",
+  "integration_type": "hub",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/bruhautomation/BRUH-HA-Apps/issues",
+  "loggers": ["custom_components.bruh_cooking"],
+  "requirements": [],
+  "version": "0.1.0"
+}

@@ -1,0 +1,2 @@
+# Pins Home Assistant 2026.2.3 (hacs.json requires 2026.2.0 or newer).
+pytest-homeassistant-custom-component==0.13.316

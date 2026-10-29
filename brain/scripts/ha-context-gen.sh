@@ -327,8 +327,8 @@ reverts exactly it.
     local bruh_section="
 ## The other BRUH add-ons
 
-GardenRX, BRUH Bambu Studio, BRUH Print, BRight and BRUH Minecraft are built
-in the same repository as brAIn. When one is broken, look first: the
+GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH Minecraft and BRUH
+Cooking are built in the same repository as brAIn. When one is broken, look first: the
 \`bruh_addon_status\` MCP tool (or \`ha addon logs <slug>\`) gives its state,
 version and the errors in its log. Fix what is fixable here — restart it,
 correct its options or the house's own config. **Never patch its code inside
@@ -713,6 +713,14 @@ asked.
   \`garden_adjust_inventory\`, \`garden_add_crop\` and \`garden_log_note\`.
   GardenRX's database has one writer, the add-on: never edit it any other
   way. Listed only when GardenRX's integration is in Home Assistant.
+- BRUH Cooking (Breville+ and Sage cooking appliances: the Joule sous vide,
+  the Joule Oven Air Fryer Pro) — \`cooking_status\` (what each is doing,
+  temperatures, minutes left, the oven's mode and door; \`presets: true\` for
+  the presets each can cook), then \`cooking_control\` (\`start\` from a
+  preset and/or temperature, minutes, mode; \`stop\`; \`continue\` once the
+  food is in or out). A sous vide must be in water before it starts; the oven
+  waits for Start on its own panel — say so. Never start a cook nobody asked
+  for. Listed only when BRUH Cooking's integration is in Home Assistant.
 
 ## Registry Management — BRUH Power Tools
 

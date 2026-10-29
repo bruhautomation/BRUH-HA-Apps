@@ -30,7 +30,7 @@ class FakeCore:
         self.online = ["Steve", ".EmmaPlays", "DadCraft42"]
         self.reachable = True
         self.missing = set()
-        self.services = ["light", "bruh_bambu", "bruh_minecraft", "gardenrx"]
+        self.services = ["light", "bruh_bambu", "bruh_minecraft", "gardenrx", "bruh_cooking"]
 
     def __call__(self, payload, timeout=15):
         if payload["type"] == "get_services":
@@ -88,6 +88,14 @@ class FakeCore:
         if key[0] == "gardenrx":
             return {"response": {"ok": True, "id": 41,
                                  "message": "Logged 2 lb of Tomatoes."}}
+        if key == ("bruh_cooking", "get_status"):
+            return {"response": {"appliances": [
+                {"name": "Joule", "kind": "sous_vide", "state": "ready",
+                 "current_temperature": 56.0, "target_temperature": 56.0}]}}
+        if key == ("bruh_cooking", "get_presets"):
+            return {"response": {"presets": [{"id": "steak_medium_rare", "fits": ["Joule"]}]}}
+        if key[0] == "bruh_cooking":
+            return {"response": {"appliance": "Joule", "message": "Started Joule."}}
         if key[0] == "bruh_print":
             return {"response": {"printed": payload["service_data"].get("copies", 1),
                                  "side": "left", "notes": []}}
@@ -623,6 +631,98 @@ class TestGarden(Base):
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "scripts"))
         import brain_voice_context  # noqa: PLC0415
         self.assertIn("garden_log_harvest", brain_voice_context.OPERATIONAL)
+
+
+class TestCooking(Base):
+    """BRUH Cooking through its own services: an appliance by name, a
+    preset or settings, and every refusal the integration's sentence."""
+
+    TOOLS = {"cooking_status", "cooking_control"}
+
+    def test_both_tools_are_registered_and_reachable(self):
+        names = {t["name"] for t in m.TOOLS}
+        for name in self.TOOLS:
+            self.assertIn(name, names)
+            self.assertTrue(callable(getattr(m, m.TOOL_IMPLEMENTATIONS[name])))
+
+    def test_status_and_presets(self):
+        got = m.cooking_status()
+        self.assertEqual(got["appliances"][0]["state"], "ready")
+        self.assertEqual(self.core.calls, [(("bruh_cooking", "get_status"), {})])
+        got = m.cooking_status(appliance="Joule", presets=True)
+        self.assertEqual(got["presets"][0]["id"], "steak_medium_rare")
+        self.assertEqual(self.core.calls[-1], (("bruh_cooking", "get_presets"),
+                                               {"appliance": "Joule"}))
+
+    def test_a_start_reaches_the_service_in_its_own_words(self):
+        got = m.cooking_control("start", appliance="Joule", preset="steak_medium_rare",
+                                temperature=55, minutes=95)
+        self.assertEqual(got["message"], "Started Joule.")
+        self.assertEqual(self.core.calls[-1], (("bruh_cooking", "start"), {
+            "appliance": "Joule", "preset": "steak_medium_rare", "temperature": 55.0,
+            "duration": "01:35:00"}))
+        m.cooking_control("start", appliance="oven", mode="Air Fry", convection="super",
+                          keep_warm=True)
+        self.assertEqual(self.core.calls[-1], (("bruh_cooking", "start"), {
+            "appliance": "oven", "mode": "air_fry", "convection": "super",
+            "keep_warm": True}))
+
+    def test_stop_and_continue(self):
+        m.cooking_control("stop", appliance="Joule")
+        m.cooking_control("continue", appliance="Joule")
+        self.assertEqual([k for k, _ in self.core.calls], [
+            ("bruh_cooking", "stop"), ("bruh_cooking", "continue_cook")])
+
+    def test_nonsense_is_refused_before_it_reaches_the_appliance(self):
+        for got in (m.cooking_control("boil"),
+                    m.cooking_control("start", minutes=0),
+                    m.cooking_control("start", minutes="soon"),
+                    m.cooking_control("start", mode="grill"),
+                    m.cooking_control("start", level="max"),
+                    m.cooking_control("start", temperature="hot")):
+            self.assertIn("error", got)
+        self.assertEqual(self.core.calls, [])
+
+    def test_an_add_on_not_installed_says_so(self):
+        self.core.missing = {("bruh_cooking", "stop")}
+        self.assertIn("BRUH Cooking", m.cooking_control("stop")["error"])
+
+    def test_voice_reads_starts_stops_and_continues(self):
+        self.voice()
+        self.assertIn("appliances", m.cooking_status(presets=True))
+        for action in ("start", "stop", "continue"):
+            self.assertNotIn("error", m.cooking_control(action, appliance="Joule"))
+        self.assertEqual([k for k, _ in self.core.calls], [
+            ("bruh_cooking", "get_status"), ("bruh_cooking", "get_presets"),
+            ("bruh_cooking", "start"), ("bruh_cooking", "stop"),
+            ("bruh_cooking", "continue_cook")])
+        listed = {t["name"]: t for t in m.tools_for_channel()}
+        for name in self.TOOLS:
+            self.assertTrue(listed[name].get("_meta", {}).get("anthropic/alwaysLoad"))
+
+    def test_control_is_kept_off_an_approved_change(self):
+        self.assertIn("cooking_control", m.CONTRACT_REFUSED_TOOLS)
+        self.assertNotIn("cooking_status", m.CONTRACT_REFUSED_TOOLS)
+
+    def test_listed_only_where_bruh_cooking_is(self):
+        self.assertEqual(m.ADDON_TOOL_DOMAINS["bruh_cooking"], self.TOOLS)
+        with patch.object(m, "SUPERVISOR_TOKEN", "token"), \
+             patch.dict(m._SERVICE_DOMAINS, {"at": 0.0, "domains": None}):
+            self.core.services = ["light"]
+            names = {t["name"] for t in m.tools_for_channel()}
+            self.assertEqual(names & self.TOOLS, set())
+            m._SERVICE_DOMAINS["at"] = 0.0
+            self.core.services = ["light", "bruh_cooking"]
+            names = {t["name"] for t in m.tools_for_channel()}
+            self.assertEqual(names & self.TOOLS, self.TOOLS)
+
+    def test_bugs_can_be_filed_for_it(self):
+        self.assertIn("BRUH Cooking", m.SIBLING_ADDON_NAMES)
+
+    def test_the_voice_prompt_names_the_cooking_tools(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "brain", "scripts"))
+        import brain_voice_context  # noqa: PLC0415
+        self.assertIn("cooking_control", brain_voice_context.OPERATIONAL)
 
 
 if __name__ == "__main__":

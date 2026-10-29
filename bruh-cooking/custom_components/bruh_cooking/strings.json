@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "Add account"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "Log in with the account you use in the Breville+ Cooking app, or in Sage's version of it.",
+        "data": {
+          "email": "Email",
+          "password": "Password",
+          "brand": "Brand"
+        },
+        "data_description": {
+          "email": "The email address of your Breville or Sage account.",
+          "password": "Your password is only sent to Breville. Home Assistant keeps a login session, not the password.",
+          "brand": "The brand of your app and appliances: Sage in the UK, Europe and the UAE, and Breville elsewhere."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Log in again",
+        "description": "Your Breville session for {email} has expired. Enter your password to continue.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong email or password.",
+      "cannot_connect": "Couldn't reach Breville. Try again later.",
+      "mfa_not_supported": "This account uses multi-factor authentication, which isn't supported yet.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Breville account is already set up.",
+      "reauth_successful": "Logged in again.",
+      "wrong_account": "That's a different Breville account from the one set up here."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Some appliances haven't been tested with this integration yet, so Home Assistant only monitors them. Stopping a cook always works.",
+        "data": {
+          "allow_untested_control": "Allow control of untested appliances",
+          "show_sidebar_panel": "Show in the sidebar"
+        },
+        "data_description": {
+          "allow_untested_control": "Also start and change cooks on untested appliances. Only turn this on when you can keep an eye on the appliance, and please report how it goes.",
+          "show_sidebar_panel": "Show this account's appliances in a sidebar panel, with a live drawing of each and its controls. Everyone who uses Home Assistant sees it."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "offline": "Offline",
+          "idle": "Idle",
+          "preheating": "Preheating",
+          "ready": "Ready for food",
+          "cooking": "Cooking",
+          "done": "Done",
+          "keeping_warm": "Keeping warm",
+          "waiting_for_button": "Press the button on the appliance",
+          "error": "Error",
+          "updating": "Updating"
+        }
+      },
+      "current_temperature": {
+        "name": "Temperature"
+      },
+      "preheat": {
+        "name": "Preheat"
+      },
+      "time_remaining": {
+        "name": "Time remaining"
+      },
+      "cook_end": {
+        "name": "Cook end"
+      },
+      "active_mode": {
+        "name": "Active mode",
+        "state": {
+          "bake": "Bake",
+          "air_fry": "Air fry",
+          "roast": "Roast",
+          "broil": "Broil",
+          "pizza": "Pizza",
+          "cookies": "Cookies",
+          "reheat": "Reheat",
+          "slow_cook": "Slow cook",
+          "proof": "Proof",
+          "warm": "Warm",
+          "dehydrate": "Dehydrate",
+          "bottom_bake": "Bottom bake",
+          "gentle_broil": "Crispier air fry",
+          "bottom_broil": "Bottom broil",
+          "outer_top_broil": "Outer broil",
+          "middle_top_broil": "Middle top broil",
+          "windy_broil": "Convection broil",
+          "toast": "Toast",
+          "bagel": "Bagel",
+          "keep_warm": "Keep warm",
+          "sous_vide": "Sous vide",
+          "turbo": "Turbo sous vide",
+          "crispy_reheat": "Crispy reheat"
+        }
+      },
+      "error": {
+        "name": "Error",
+        "state": {
+          "none": "None",
+          "other": "Other",
+          "button_pressed": "Stopped with the button",
+          "low_water_level": "Low water level",
+          "tipped_over": "Tipped over",
+          "overheating": "Overheating",
+          "power_loss": "Power loss",
+          "heater_thermistor_failure": "Heater sensor failure",
+          "bath_thermistor_failure": "Water sensor failure",
+          "stuck_motor": "Stuck motor",
+          "firmware_crash": "Firmware crash",
+          "bad_motor": "Motor fault",
+          "water_leakage": "Water leak",
+          "current_leakage": "Electrical leak",
+          "heater_broken": "Heater fault",
+          "door_open": "Door open"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Cooking"
+      },
+      "door": {
+        "name": "Door"
+      },
+      "problem": {
+        "name": "Problem"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Target temperature"
+      },
+      "cook_time": {
+        "name": "Cook time"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "Mode",
+        "state": {
+          "bake": "Bake",
+          "air_fry": "Air fry",
+          "roast": "Roast",
+          "broil": "Broil",
+          "pizza": "Pizza",
+          "cookies": "Cookies",
+          "reheat": "Reheat",
+          "slow_cook": "Slow cook",
+          "proof": "Proof",
+          "warm": "Warm",
+          "dehydrate": "Dehydrate",
+          "bottom_bake": "Bottom bake",
+          "bottom_broil": "Bottom broil",
+          "outer_top_broil": "Outer broil",
+          "middle_top_broil": "Middle top broil"
+        }
+      },
+      "convection": {
+        "name": "Convection",
+        "state": {
+          "off": "Off",
+          "on": "On",
+          "super": "Super"
+        }
+      },
+      "level": {
+        "name": "Level",
+        "state": {
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "Cook"
+      },
+      "auto_start_timer": {
+        "name": "Start timer automatically"
+      },
+      "keep_warm": {
+        "name": "Keep warm"
+      },
+      "frozen": {
+        "name": "Frozen food"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "Continue"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "Bake",
+        "air_fry": "Air fry",
+        "roast": "Roast",
+        "broil": "Broil",
+        "pizza": "Pizza",
+        "cookies": "Cookies",
+        "reheat": "Reheat",
+        "slow_cook": "Slow cook",
+        "proof": "Proof",
+        "warm": "Warm",
+        "dehydrate": "Dehydrate",
+        "bottom_bake": "Bottom bake",
+        "bottom_broil": "Bottom broil",
+        "outer_top_broil": "Outer broil",
+        "middle_top_broil": "Middle top broil"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "Off",
+        "on": "On",
+        "super": "Super"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Start cook",
+      "description": "Starts a cook with the given settings. Target the appliance's Cook switch. Anything left out uses the appliance's current settings.",
+      "fields": {
+        "temperature": {
+          "name": "Temperature",
+          "description": "Target temperature, in your Home Assistant temperature unit."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Cook time. For sous vide, leave it out to hold the temperature until stopped."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "Oven mode (Joule Oven Air Fryer Pro only). Settings you leave out use this mode's defaults."
+        },
+        "convection": {
+          "name": "Convection",
+          "description": "Oven fan setting, if the mode allows it."
+        },
+        "level": {
+          "name": "Level",
+          "description": "Broil intensity (Low, Medium or High) or slow-cook level (Low or High)."
+        },
+        "auto_start_timer": {
+          "name": "Start timer automatically",
+          "description": "Start the timer once the temperature is reached instead of waiting for the food to go in."
+        },
+        "keep_warm": {
+          "name": "Keep warm",
+          "description": "Keep the food warm when an oven cook finishes."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Get status",
+      "description": "What each appliance is doing and what its next cook would be. Answers with the details.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance's name, as in Home Assistant or the app, or its device ID. Leave it out when the account has one appliance."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Get presets",
+      "description": "The built-in and saved presets each appliance can cook.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance's name, as in Home Assistant or the app, or its device ID. Leave it out when the account has one appliance."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stop",
+      "description": "Stops the named appliance's cook.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance's name, as in Home Assistant or the app, or its device ID. Leave it out when the account has one appliance."
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "Continue",
+      "description": "Tells the named appliance the food is in, or out, when it's waiting for that.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance's name, as in Home Assistant or the app, or its device ID. Leave it out when the account has one appliance."
+        }
+      }
+    },
+    "start": {
+      "name": "Start",
+      "description": "Starts a cook on the named appliance, from a preset or the settings given. Anything left out uses the appliance's current settings.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance's name, as in Home Assistant or the app, or its device ID. Leave it out when the account has one appliance."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "A preset's ID or name, such as steak_medium_rare. Anything else you give changes the preset's settings."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "Target temperature, in your Home Assistant temperature unit."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "Cook time. For sous vide, leave it out to hold the temperature until stopped."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "Oven mode (Joule Oven Air Fryer Pro only). Settings you leave out use this mode's defaults."
+        },
+        "convection": {
+          "name": "Convection",
+          "description": "Oven fan setting, if the mode allows it."
+        },
+        "level": {
+          "name": "Level",
+          "description": "Broil intensity (Low, Medium or High) or slow-cook level (Low or High)."
+        },
+        "auto_start_timer": {
+          "name": "Start timer automatically",
+          "description": "Start the timer once the temperature is reached instead of waiting for the food to go in."
+        },
+        "keep_warm": {
+          "name": "Keep warm",
+          "description": "Keep the food warm when an oven cook finishes."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "Control of the {product} hasn't been tested yet. To try it, turn on \"Allow control of untested appliances\" in the integration's options."
+    },
+    "start_failed": {
+      "message": "Couldn't start the cook: {error}"
+    },
+    "edit_failed": {
+      "message": "Couldn't change the cook: {error}"
+    },
+    "auth_expired": {
+      "message": "The Breville login has expired. Re-authenticate the integration, then try again."
+    },
+    "request_failed": {
+      "message": "The request to Breville's cloud failed: {error}"
+    },
+    "target_cook_switch": {
+      "message": "Target the appliance's Cook switch."
+    },
+    "mode_oven_only": {
+      "message": "Modes only apply to the oven."
+    },
+    "level_not_for_mode": {
+      "message": "Level {level} doesn't apply to this mode."
+    },
+    "stop_cook_first": {
+      "message": "Stop the cook before changing this setting."
+    },
+    "no_appliances": {
+      "message": "No cooking appliance is set up. Add a Breville or Sage account to BRUH Cooking first."
+    },
+    "which_appliance": {
+      "message": "Say which appliance: {names}."
+    },
+    "unknown_appliance": {
+      "message": "There's no appliance called {appliance}. The appliances are: {names}."
+    },
+    "unknown_preset": {
+      "message": "There's no preset called {preset}."
+    },
+    "preset_does_not_fit": {
+      "message": "The preset {preset} can't be cooked here: {error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} is already cooking. Stop that cook first."
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} isn't waiting for the food to go in or come out."
+    }
+  }
+}

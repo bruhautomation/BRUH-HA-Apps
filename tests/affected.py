@@ -143,7 +143,8 @@ REPO = Path(__file__).resolve().parent.parent
 WHOLE_SUITE = "tests/"
 
 ADDONS = ("brain", "bright", "bruh-print", "bruh-bambu-studio",
-          "bruh-minecraft-server", "gardenrx", "bruh-task-manager")
+          "bruh-minecraft-server", "gardenrx", "bruh-task-manager",
+          "bruh-cooking")
 # The prefix each add-on's own tests carry. brAIn has none: it is most of
 # the suite, and its tests are named after what they test, not after it.
 ADDON_TEST_PREFIX = {
@@ -154,6 +155,7 @@ ADDON_TEST_PREFIX = {
     "morph": "test_morph_",
     "gardenrx": "test_gardenrx_",
     "bruh-task-manager": "test_task_manager_",
+    "bruh-cooking": "test_cooking_",
 }
 # What a test writes when it means the add-on: its directory, and the
 # underscore spelling its integration domain uses.
@@ -166,6 +168,7 @@ ADDON_NAMES = {
     "morph": ("morph",),
     "gardenrx": ("gardenrx",),
     "bruh-task-manager": ("bruh-task-manager", "bruh_task_manager"),
+    "bruh-cooking": ("bruh-cooking", "bruh_cooking"),
 }
 ADDON_WIDE_FILES = {"run.sh", "config.yaml", "build.yaml", "Dockerfile",
                     "apparmor.txt"}
@@ -183,6 +186,8 @@ ADDON_WIDE_TESTS = {
                  "tests/test_gardenrx_addon.py"),
     "bruh-task-manager": ("tests/test_addon_hardening.py",
                           "tests/test_task_manager_addon.py"),
+    "bruh-cooking": ("tests/test_addon_hardening.py",
+                     "tests/test_cooking_addon.py"),
 }
 # The demo panel a browser measure boots, where it drives the real server
 # rather than loading the page's files: a change to that add-on's panel

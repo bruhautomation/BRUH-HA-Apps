@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "Konto hinzufügen"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "Melde dich mit dem Konto an, das du in der App Breville+ Cooking oder in ihrer Sage-Version verwendest.",
+        "data": {
+          "email": "E-Mail",
+          "password": "Passwort",
+          "brand": "Marke"
+        },
+        "data_description": {
+          "email": "Die E-Mail-Adresse deines Breville- oder Sage-Kontos.",
+          "password": "Dein Passwort wird nur an Breville gesendet. Home Assistant speichert eine Anmeldesitzung, nicht das Passwort.",
+          "brand": "Die Marke deiner App und Geräte: Sage in Großbritannien, Europa und den VAE, sonst Breville."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Erneut anmelden",
+        "description": "Deine Breville-Sitzung für {email} ist abgelaufen. Gib dein Passwort ein, um fortzufahren.",
+        "data": {
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Falsche E-Mail-Adresse oder falsches Passwort.",
+      "cannot_connect": "Breville ist nicht erreichbar. Versuche es später erneut.",
+      "mfa_not_supported": "Dieses Konto nutzt Multi-Faktor-Authentifizierung, die noch nicht unterstützt wird.",
+      "unknown": "Unerwarteter Fehler."
+    },
+    "abort": {
+      "already_configured": "Dieses Breville-Konto ist bereits eingerichtet.",
+      "reauth_successful": "Erneut angemeldet.",
+      "wrong_account": "Das ist ein anderes Breville-Konto als das hier eingerichtete."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Einige Geräte wurden mit dieser Integration noch nicht getestet, daher überwacht Home Assistant sie nur. Einen Garvorgang zu stoppen funktioniert immer.",
+        "data": {
+          "allow_untested_control": "Steuerung ungetesteter Geräte erlauben",
+          "show_sidebar_panel": "In der Seitenleiste anzeigen"
+        },
+        "data_description": {
+          "allow_untested_control": "Garvorgänge auch auf ungetesteten Geräten starten und ändern. Schalte das nur ein, wenn du das Gerät im Blick behalten kannst, und berichte bitte, wie es läuft.",
+          "show_sidebar_panel": "Zeigt die Geräte dieses Kontos in einem Panel in der Seitenleiste, mit einer Live-Zeichnung jedes Geräts und seiner Bedienung. Alle, die Home Assistant nutzen, sehen es."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "offline": "Offline",
+          "idle": "Inaktiv",
+          "preheating": "Vorheizen",
+          "ready": "Bereit zum Einlegen",
+          "cooking": "Garen",
+          "done": "Fertig",
+          "keeping_warm": "Warmhalten",
+          "waiting_for_button": "Taste am Gerät drücken",
+          "error": "Fehler",
+          "updating": "Aktualisierung"
+        }
+      },
+      "current_temperature": {
+        "name": "Temperatur"
+      },
+      "preheat": {
+        "name": "Vorheizen"
+      },
+      "time_remaining": {
+        "name": "Verbleibende Zeit"
+      },
+      "cook_end": {
+        "name": "Garzeitende"
+      },
+      "active_mode": {
+        "name": "Aktiver Modus",
+        "state": {
+          "bake": "Backen",
+          "air_fry": "Heißluftfrittieren",
+          "roast": "Braten",
+          "broil": "Grillen",
+          "pizza": "Pizza",
+          "cookies": "Kekse",
+          "reheat": "Aufwärmen",
+          "slow_cook": "Schongaren",
+          "proof": "Gären",
+          "warm": "Warmhalten",
+          "dehydrate": "Dörren",
+          "bottom_bake": "Unterhitze",
+          "gentle_broil": "Knuspriges Heißluftfrittieren",
+          "bottom_broil": "Untere Grillfunktion",
+          "outer_top_broil": "Äußere Grillfunktion",
+          "middle_top_broil": "Mittlere Obergrillfunktion",
+          "windy_broil": "Umluft-Grillen",
+          "toast": "Toast",
+          "bagel": "Bagel",
+          "keep_warm": "Warmhalten",
+          "sous_vide": "Sous-Vide",
+          "turbo": "Turbo-Sous-Vide",
+          "crispy_reheat": "Knusprig aufwärmen"
+        }
+      },
+      "error": {
+        "name": "Fehler",
+        "state": {
+          "none": "Keiner",
+          "other": "Anderer Fehler",
+          "button_pressed": "Mit der Taste gestoppt",
+          "low_water_level": "Niedriger Wasserstand",
+          "tipped_over": "Umgekippt",
+          "overheating": "Überhitzung",
+          "power_loss": "Stromausfall",
+          "heater_thermistor_failure": "Heizungssensor defekt",
+          "bath_thermistor_failure": "Wassersensor defekt",
+          "stuck_motor": "Motor blockiert",
+          "firmware_crash": "Firmware-Absturz",
+          "bad_motor": "Motorstörung",
+          "water_leakage": "Wasserleck",
+          "current_leakage": "Fehlerstrom",
+          "heater_broken": "Heizungsstörung",
+          "door_open": "Tür offen"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Garvorgang läuft"
+      },
+      "door": {
+        "name": "Tür"
+      },
+      "problem": {
+        "name": "Problem"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Zieltemperatur"
+      },
+      "cook_time": {
+        "name": "Garzeit"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "Modus",
+        "state": {
+          "bake": "Backen",
+          "air_fry": "Heißluftfrittieren",
+          "roast": "Braten",
+          "broil": "Grillen",
+          "pizza": "Pizza",
+          "cookies": "Kekse",
+          "reheat": "Aufwärmen",
+          "slow_cook": "Schongaren",
+          "proof": "Gären",
+          "warm": "Warmhalten",
+          "dehydrate": "Dörren",
+          "bottom_bake": "Unterhitze",
+          "bottom_broil": "Untere Grillfunktion",
+          "outer_top_broil": "Äußere Grillfunktion",
+          "middle_top_broil": "Mittlere Obergrillfunktion"
+        }
+      },
+      "convection": {
+        "name": "Umluft",
+        "state": {
+          "off": "Aus",
+          "on": "Ein",
+          "super": "Super"
+        }
+      },
+      "level": {
+        "name": "Stufe",
+        "state": {
+          "low": "Niedrig",
+          "medium": "Mittel",
+          "high": "Hoch"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "Garen"
+      },
+      "auto_start_timer": {
+        "name": "Timer automatisch starten"
+      },
+      "keep_warm": {
+        "name": "Warmhalten"
+      },
+      "frozen": {
+        "name": "Tiefkühlware"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "Weiter"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "Backen",
+        "air_fry": "Heißluftfrittieren",
+        "roast": "Braten",
+        "broil": "Grillen",
+        "pizza": "Pizza",
+        "cookies": "Kekse",
+        "reheat": "Aufwärmen",
+        "slow_cook": "Schongaren",
+        "proof": "Gären",
+        "warm": "Warmhalten",
+        "dehydrate": "Dörren",
+        "bottom_bake": "Unterhitze",
+        "bottom_broil": "Untere Grillfunktion",
+        "outer_top_broil": "Äußere Grillfunktion",
+        "middle_top_broil": "Mittlere Obergrillfunktion"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "Aus",
+        "on": "Ein",
+        "super": "Super"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "Niedrig",
+        "medium": "Mittel",
+        "high": "Hoch"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Garvorgang starten",
+      "description": "Startet einen Garvorgang mit den angegebenen Einstellungen. Wähle den Schalter „Garen“ des Geräts als Ziel. Was du weglässt, wird aus den aktuellen Einstellungen des Geräts übernommen.",
+      "fields": {
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Zieltemperatur in deiner Temperatureinheit von Home Assistant."
+        },
+        "duration": {
+          "name": "Dauer",
+          "description": "Garzeit. Lass sie bei Sous-Vide weg, um die Temperatur bis zum Stoppen zu halten."
+        },
+        "mode": {
+          "name": "Modus",
+          "description": "Ofenmodus (nur Joule Oven Air Fryer Pro). Einstellungen, die du weglässt, übernehmen die Standardwerte dieses Modus."
+        },
+        "convection": {
+          "name": "Umluft",
+          "description": "Lüftereinstellung des Ofens, sofern der Modus sie erlaubt."
+        },
+        "level": {
+          "name": "Stufe",
+          "description": "Grillstärke (Niedrig, Mittel oder Hoch) oder Schongarstufe (Niedrig oder Hoch)."
+        },
+        "auto_start_timer": {
+          "name": "Timer automatisch starten",
+          "description": "Startet den Timer, sobald die Temperatur erreicht ist, statt zu warten, bis die Lebensmittel eingelegt sind."
+        },
+        "keep_warm": {
+          "name": "Warmhalten",
+          "description": "Hält die Speisen warm, wenn ein Garvorgang im Ofen endet."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Status abrufen",
+      "description": "Was jedes Gerät gerade tut und wie sein nächster Garvorgang aussähe. Antwortet mit den Details.",
+      "fields": {
+        "appliance": {
+          "name": "Gerät",
+          "description": "Der Name des Geräts wie in Home Assistant oder der App, oder seine Geräte-ID. Lass ihn weg, wenn das Konto nur ein Gerät hat."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Voreinstellungen abrufen",
+      "description": "Die eingebauten und gespeicherten Voreinstellungen, die jedes Gerät garen kann.",
+      "fields": {
+        "appliance": {
+          "name": "Gerät",
+          "description": "Der Name des Geräts wie in Home Assistant oder der App, oder seine Geräte-ID. Lass ihn weg, wenn das Konto nur ein Gerät hat."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stoppen",
+      "description": "Stoppt den Garvorgang des genannten Geräts.",
+      "fields": {
+        "appliance": {
+          "name": "Gerät",
+          "description": "Der Name des Geräts wie in Home Assistant oder der App, oder seine Geräte-ID. Lass ihn weg, wenn das Konto nur ein Gerät hat."
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "Weiter",
+      "description": "Teilt dem genannten Gerät mit, dass das Essen drin oder draußen ist, wenn es darauf wartet.",
+      "fields": {
+        "appliance": {
+          "name": "Gerät",
+          "description": "Der Name des Geräts wie in Home Assistant oder der App, oder seine Geräte-ID. Lass ihn weg, wenn das Konto nur ein Gerät hat."
+        }
+      }
+    },
+    "start": {
+      "name": "Starten",
+      "description": "Startet einen Garvorgang auf dem genannten Gerät, aus einer Voreinstellung oder den angegebenen Einstellungen. Was du weglässt, wird aus den aktuellen Einstellungen des Geräts übernommen.",
+      "fields": {
+        "appliance": {
+          "name": "Gerät",
+          "description": "Der Name des Geräts wie in Home Assistant oder der App, oder seine Geräte-ID. Lass ihn weg, wenn das Konto nur ein Gerät hat."
+        },
+        "preset": {
+          "name": "Voreinstellung",
+          "description": "ID oder Name einer Voreinstellung, etwa steak_medium_rare. Alles andere, was du angibst, ändert ihre Einstellungen."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Zieltemperatur in deiner Temperatureinheit von Home Assistant."
+        },
+        "duration": {
+          "name": "Dauer",
+          "description": "Garzeit. Lass sie bei Sous-Vide weg, um die Temperatur bis zum Stoppen zu halten."
+        },
+        "mode": {
+          "name": "Modus",
+          "description": "Ofenmodus (nur Joule Oven Air Fryer Pro). Einstellungen, die du weglässt, übernehmen die Standardwerte dieses Modus."
+        },
+        "convection": {
+          "name": "Umluft",
+          "description": "Lüftereinstellung des Ofens, sofern der Modus sie erlaubt."
+        },
+        "level": {
+          "name": "Stufe",
+          "description": "Grillstärke (Niedrig, Mittel oder Hoch) oder Schongarstufe (Niedrig oder Hoch)."
+        },
+        "auto_start_timer": {
+          "name": "Timer automatisch starten",
+          "description": "Startet den Timer, sobald die Temperatur erreicht ist, statt zu warten, bis die Lebensmittel eingelegt sind."
+        },
+        "keep_warm": {
+          "name": "Warmhalten",
+          "description": "Hält die Speisen warm, wenn ein Garvorgang im Ofen endet."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "Die Steuerung des {product} wurde noch nicht getestet. Um sie auszuprobieren, schalte „Steuerung ungetesteter Geräte erlauben“ in den Optionen der Integration ein."
+    },
+    "start_failed": {
+      "message": "Der Garvorgang konnte nicht gestartet werden: {error}"
+    },
+    "edit_failed": {
+      "message": "Der Garvorgang konnte nicht geändert werden: {error}"
+    },
+    "auth_expired": {
+      "message": "Die Breville-Anmeldung ist abgelaufen. Authentifiziere die Integration erneut und versuche es dann noch einmal."
+    },
+    "request_failed": {
+      "message": "Die Anfrage an die Breville-Cloud ist fehlgeschlagen: {error}"
+    },
+    "target_cook_switch": {
+      "message": "Wähle den Schalter „Garen“ des Geräts als Ziel."
+    },
+    "mode_oven_only": {
+      "message": "Modi gelten nur für den Ofen."
+    },
+    "level_not_for_mode": {
+      "message": "Die Stufe {level} gilt nicht für diesen Modus."
+    },
+    "stop_cook_first": {
+      "message": "Stoppe den Garvorgang, bevor du diese Einstellung änderst."
+    },
+    "no_appliances": {
+      "message": "Es ist kein Kochgerät eingerichtet. Füge BRUH Cooking zuerst ein Breville- oder Sage-Konto hinzu."
+    },
+    "which_appliance": {
+      "message": "Sag, welches Gerät: {names}."
+    },
+    "unknown_appliance": {
+      "message": "Es gibt kein Gerät namens {appliance}. Die Geräte sind: {names}."
+    },
+    "unknown_preset": {
+      "message": "Es gibt keine Voreinstellung namens {preset}."
+    },
+    "preset_does_not_fit": {
+      "message": "Die Voreinstellung {preset} kann hier nicht gegart werden: {error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} gart bereits. Stoppe zuerst diesen Garvorgang."
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} wartet nicht darauf, dass das Essen hinein- oder herauskommt."
+    }
+  }
+}

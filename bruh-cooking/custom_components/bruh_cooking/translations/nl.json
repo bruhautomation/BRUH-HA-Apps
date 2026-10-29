@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "Account toevoegen"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "Log in met het account dat je gebruikt in de app Breville+ Cooking of in de Sage-versie ervan.",
+        "data": {
+          "email": "E-mail",
+          "password": "Wachtwoord",
+          "brand": "Merk"
+        },
+        "data_description": {
+          "email": "Het e-mailadres van je Breville- of Sage-account.",
+          "password": "Je wachtwoord wordt alleen naar Breville gestuurd. Home Assistant bewaart een inlogsessie, niet het wachtwoord.",
+          "brand": "Het merk van je app en apparaten: Sage in het VK, Europa en de VAE, en elders Breville."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Opnieuw inloggen",
+        "description": "Je Breville-sessie voor {email} is verlopen. Voer je wachtwoord in om door te gaan.",
+        "data": {
+          "password": "Wachtwoord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Onjuist e-mailadres of wachtwoord.",
+      "cannot_connect": "Kan Breville niet bereiken. Probeer het later opnieuw.",
+      "mfa_not_supported": "Dit account gebruikt meervoudige authenticatie, wat nog niet wordt ondersteund.",
+      "unknown": "Onverwachte fout."
+    },
+    "abort": {
+      "already_configured": "Dit Breville-account is al ingesteld.",
+      "reauth_successful": "Opnieuw ingelogd.",
+      "wrong_account": "Dat is een ander Breville-account dan het account dat hier is ingesteld."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Sommige apparaten zijn nog niet met deze integratie getest, dus Home Assistant houdt ze alleen in de gaten. Een kookproces stoppen werkt altijd.",
+        "data": {
+          "allow_untested_control": "Bediening van ongeteste apparaten toestaan",
+          "show_sidebar_panel": "Tonen in de zijbalk"
+        },
+        "data_description": {
+          "allow_untested_control": "Ook kookprocessen starten en wijzigen op ongeteste apparaten. Zet dit alleen aan als je het apparaat in de gaten kunt houden, en laat ons weten hoe het gaat.",
+          "show_sidebar_panel": "Toont de apparaten van dit account in een paneel in de zijbalk, met een live tekening van elk apparaat en de bediening ervan. Iedereen die Home Assistant gebruikt, ziet het."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "offline": "Offline",
+          "idle": "Inactief",
+          "preheating": "Voorverwarmen",
+          "ready": "Klaar om eten toe te voegen",
+          "cooking": "Koken",
+          "done": "Voltooid",
+          "keeping_warm": "Warmhouden",
+          "waiting_for_button": "Druk op de knop van het apparaat",
+          "error": "Fout",
+          "updating": "Bijwerken"
+        }
+      },
+      "current_temperature": {
+        "name": "Temperatuur"
+      },
+      "preheat": {
+        "name": "Voorverwarmen"
+      },
+      "time_remaining": {
+        "name": "Resterende tijd"
+      },
+      "cook_end": {
+        "name": "Einde kooktijd"
+      },
+      "active_mode": {
+        "name": "Actieve modus",
+        "state": {
+          "bake": "Bakken",
+          "air_fry": "Airfryen",
+          "roast": "Braden",
+          "broil": "Grillen",
+          "pizza": "Pizza",
+          "cookies": "Koekjes",
+          "reheat": "Opwarmen",
+          "slow_cook": "Langzaam garen",
+          "proof": "Rijzen",
+          "warm": "Warmhouden",
+          "dehydrate": "Drogen",
+          "bottom_bake": "Onderkant bakken",
+          "gentle_broil": "Krokanter airfryen",
+          "bottom_broil": "Onderkant grillen",
+          "outer_top_broil": "Buitenkant grillen",
+          "middle_top_broil": "Midden-boven grillen",
+          "windy_broil": "Convectie grillen",
+          "toast": "Toast",
+          "bagel": "Bagel",
+          "keep_warm": "Warmhouden",
+          "sous_vide": "Sous vide",
+          "turbo": "Turbo sous vide",
+          "crispy_reheat": "Krokant opwarmen"
+        }
+      },
+      "error": {
+        "name": "Fout",
+        "state": {
+          "none": "Geen",
+          "other": "Overig",
+          "button_pressed": "Gestopt met de knop",
+          "low_water_level": "Laag waterniveau",
+          "tipped_over": "Omgevallen",
+          "overheating": "Oververhitting",
+          "power_loss": "Stroomuitval",
+          "heater_thermistor_failure": "Sensor verwarmingselement defect",
+          "bath_thermistor_failure": "Watersensor defect",
+          "stuck_motor": "Motor vastgelopen",
+          "firmware_crash": "Firmwarecrash",
+          "bad_motor": "Motorstoring",
+          "water_leakage": "Waterlek",
+          "current_leakage": "Lekstroom",
+          "heater_broken": "Storing verwarmingselement",
+          "door_open": "Deur open"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Bezig met koken"
+      },
+      "door": {
+        "name": "Deur"
+      },
+      "problem": {
+        "name": "Probleem"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Doeltemperatuur"
+      },
+      "cook_time": {
+        "name": "Kooktijd"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "Modus",
+        "state": {
+          "bake": "Bakken",
+          "air_fry": "Airfryen",
+          "roast": "Braden",
+          "broil": "Grillen",
+          "pizza": "Pizza",
+          "cookies": "Koekjes",
+          "reheat": "Opwarmen",
+          "slow_cook": "Langzaam garen",
+          "proof": "Rijzen",
+          "warm": "Warmhouden",
+          "dehydrate": "Drogen",
+          "bottom_bake": "Onderkant bakken",
+          "bottom_broil": "Onderkant grillen",
+          "outer_top_broil": "Buitenkant grillen",
+          "middle_top_broil": "Midden-boven grillen"
+        }
+      },
+      "convection": {
+        "name": "Convectie",
+        "state": {
+          "off": "Uit",
+          "on": "Aan",
+          "super": "Super"
+        }
+      },
+      "level": {
+        "name": "Niveau",
+        "state": {
+          "low": "Laag",
+          "medium": "Gemiddeld",
+          "high": "Hoog"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "Koken"
+      },
+      "auto_start_timer": {
+        "name": "Timer automatisch starten"
+      },
+      "keep_warm": {
+        "name": "Warmhouden"
+      },
+      "frozen": {
+        "name": "Diepvriesproducten"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "Doorgaan"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "Bakken",
+        "air_fry": "Airfryen",
+        "roast": "Braden",
+        "broil": "Grillen",
+        "pizza": "Pizza",
+        "cookies": "Koekjes",
+        "reheat": "Opwarmen",
+        "slow_cook": "Langzaam garen",
+        "proof": "Rijzen",
+        "warm": "Warmhouden",
+        "dehydrate": "Drogen",
+        "bottom_bake": "Onderkant bakken",
+        "bottom_broil": "Onderkant grillen",
+        "outer_top_broil": "Buitenkant grillen",
+        "middle_top_broil": "Midden-boven grillen"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "Uit",
+        "on": "Aan",
+        "super": "Super"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "Laag",
+        "medium": "Gemiddeld",
+        "high": "Hoog"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Kookproces starten",
+      "description": "Start een kookproces met de opgegeven instellingen. Kies de schakelaar Koken van het apparaat als doel. Wat je weglaat, komt uit de huidige instellingen van het apparaat.",
+      "fields": {
+        "temperature": {
+          "name": "Temperatuur",
+          "description": "Doeltemperatuur, in de temperatuureenheid van Home Assistant."
+        },
+        "duration": {
+          "name": "Duur",
+          "description": "Kooktijd. Laat dit bij sous vide leeg om de temperatuur vast te houden tot je stopt."
+        },
+        "mode": {
+          "name": "Modus",
+          "description": "Ovenmodus (alleen Joule Oven Air Fryer Pro). Instellingen die je weglaat, krijgen de standaardwaarden van deze modus."
+        },
+        "convection": {
+          "name": "Convectie",
+          "description": "Ventilatorstand van de oven, als de modus dat toestaat."
+        },
+        "level": {
+          "name": "Niveau",
+          "description": "Grillsterkte (Laag, Gemiddeld of Hoog) of stand voor langzaam garen (Laag of Hoog)."
+        },
+        "auto_start_timer": {
+          "name": "Timer automatisch starten",
+          "description": "Start de timer zodra de temperatuur is bereikt, in plaats van te wachten tot het eten erin gaat."
+        },
+        "keep_warm": {
+          "name": "Warmhouden",
+          "description": "Houdt het eten warm als een ovenprogramma klaar is."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Status ophalen",
+      "description": "Wat elk apparaat doet en wat de volgende bereiding zou zijn. Antwoordt met de details.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "De naam van het apparaat, zoals in Home Assistant of de app, of de apparaat-ID. Laat leeg als het account één apparaat heeft."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Voorinstellingen ophalen",
+      "description": "De ingebouwde en opgeslagen voorinstellingen die elk apparaat kan bereiden.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "De naam van het apparaat, zoals in Home Assistant of de app, of de apparaat-ID. Laat leeg als het account één apparaat heeft."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stoppen",
+      "description": "Stopt de bereiding van het genoemde apparaat.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "De naam van het apparaat, zoals in Home Assistant of de app, of de apparaat-ID. Laat leeg als het account één apparaat heeft."
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "Doorgaan",
+      "description": "Laat het genoemde apparaat weten dat het eten erin of eruit is, als het daarop wacht.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "De naam van het apparaat, zoals in Home Assistant of de app, of de apparaat-ID. Laat leeg als het account één apparaat heeft."
+        }
+      }
+    },
+    "start": {
+      "name": "Starten",
+      "description": "Start een bereiding op het genoemde apparaat, vanuit een voorinstelling of de opgegeven instellingen. Wat je weglaat, komt uit de huidige instellingen van het apparaat.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "De naam van het apparaat, zoals in Home Assistant of de app, of de apparaat-ID. Laat leeg als het account één apparaat heeft."
+        },
+        "preset": {
+          "name": "Voorinstelling",
+          "description": "De ID of naam van een voorinstelling, zoals steak_medium_rare. Wat je verder opgeeft, wijzigt de instellingen ervan."
+        },
+        "temperature": {
+          "name": "Temperatuur",
+          "description": "Doeltemperatuur, in de temperatuureenheid van Home Assistant."
+        },
+        "duration": {
+          "name": "Duur",
+          "description": "Kooktijd. Laat dit bij sous vide leeg om de temperatuur vast te houden tot je stopt."
+        },
+        "mode": {
+          "name": "Modus",
+          "description": "Ovenmodus (alleen Joule Oven Air Fryer Pro). Instellingen die je weglaat, krijgen de standaardwaarden van deze modus."
+        },
+        "convection": {
+          "name": "Convectie",
+          "description": "Ventilatorstand van de oven, als de modus dat toestaat."
+        },
+        "level": {
+          "name": "Niveau",
+          "description": "Grillsterkte (Laag, Gemiddeld of Hoog) of stand voor langzaam garen (Laag of Hoog)."
+        },
+        "auto_start_timer": {
+          "name": "Timer automatisch starten",
+          "description": "Start de timer zodra de temperatuur is bereikt, in plaats van te wachten tot het eten erin gaat."
+        },
+        "keep_warm": {
+          "name": "Warmhouden",
+          "description": "Houdt het eten warm als een ovenprogramma klaar is."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "Bediening van de {product} is nog niet getest. Zet \"Bediening van ongeteste apparaten toestaan\" aan in de opties van de integratie om het te proberen."
+    },
+    "start_failed": {
+      "message": "Kan het kookproces niet starten: {error}"
+    },
+    "edit_failed": {
+      "message": "Kan het kookproces niet wijzigen: {error}"
+    },
+    "auth_expired": {
+      "message": "De Breville-login is verlopen. Authenticeer de integratie opnieuw en probeer het daarna nog eens."
+    },
+    "request_failed": {
+      "message": "Het verzoek aan de Breville-cloud is mislukt: {error}"
+    },
+    "target_cook_switch": {
+      "message": "Kies de schakelaar Koken van het apparaat als doel."
+    },
+    "mode_oven_only": {
+      "message": "Modi gelden alleen voor de oven."
+    },
+    "level_not_for_mode": {
+      "message": "Niveau {level} geldt niet voor deze modus."
+    },
+    "stop_cook_first": {
+      "message": "Stop het kookproces voordat je deze instelling wijzigt."
+    },
+    "no_appliances": {
+      "message": "Er is geen kookapparaat ingesteld. Voeg eerst een Breville- of Sage-account toe aan BRUH Cooking."
+    },
+    "which_appliance": {
+      "message": "Zeg welk apparaat: {names}."
+    },
+    "unknown_appliance": {
+      "message": "Er is geen apparaat met de naam {appliance}. De apparaten zijn: {names}."
+    },
+    "unknown_preset": {
+      "message": "Er is geen voorinstelling met de naam {preset}."
+    },
+    "preset_does_not_fit": {
+      "message": "De voorinstelling {preset} kan hier niet worden bereid: {error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} is al bezig. Stop eerst die bereiding."
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} wacht niet tot het eten erin of eruit gaat."
+    }
+  }
+}

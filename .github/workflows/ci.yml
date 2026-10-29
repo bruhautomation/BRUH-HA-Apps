@@ -51,6 +51,7 @@ jobs:
       morph: ${{ steps.scope.outputs.morph }}
       gardenrx: ${{ steps.scope.outputs.gardenrx }}
       taskmanager: ${{ steps.scope.outputs.taskmanager }}
+      cooking: ${{ steps.scope.outputs.cooking }}
     steps:
       - uses: actions/checkout@v7
 
@@ -80,6 +81,7 @@ jobs:
               echo "morph=true"
               echo "gardenrx=true"
               echo "taskmanager=true"
+              echo "cooking=true"
             } >> "$out"
             echo "Everything runs: $1" >> "$summary"
             exit 0
@@ -150,6 +152,7 @@ jobs:
           # brAIn's and always run.
           narrow "GardenRX" gardenrx test_gardenrx_
           narrow "BRUH Task Manager" bruh-task-manager test_task_manager_
+          narrow "BRUH Cooking" bruh-cooking test_cooking_
 
           # The two layout groups that boot an add-on's panel run when that
           # add-on or one of the files only that group reads changed. The
@@ -174,6 +177,13 @@ jobs:
           if grep -qE '^(bruh-task-manager/|tests/(task_manager_fake\.py|manual/(task_manager_demo_panel\.py|measure-task-manager\.mjs)))' <<<"$changed"; then
             taskmanager=true
           fi
+          # BRUH Cooking's own suites (its integration against a real Home
+          # Assistant, its panel's vitest) run in the cooking job.
+          cooking=false
+          if grep -qE '^bruh-cooking/' <<<"$changed"; then
+            cooking=true
+          fi
+          echo "BRUH Cooking's own suites: $cooking"
           echo "Layout groups: static-a and static-b run; bright=$bright print=$print morph=$morph gardenrx=$gardenrx taskmanager=$taskmanager"
           echo "Layout: bright=$bright print=$print morph=$morph gardenrx=$gardenrx taskmanager=$taskmanager" >> "$summary"
 
@@ -184,6 +194,7 @@ jobs:
             echo "morph=$morph"
             echo "gardenrx=$gardenrx"
             echo "taskmanager=$taskmanager"
+            echo "cooking=$cooking"
           } >> "$out"
 
   gardenrx-app:
@@ -249,6 +260,64 @@ jobs:
       - name: Every link works through ingress
         if: env.RUNS == 'true'
         run: node scripts/check-ingress.mjs
+
+  cooking:
+    # BRUH Cooking's integration and sidebar panel came from
+    # kedube/ha-breville-cooking with their own suites, which this repo's
+    # stubbed Home Assistant cannot run: the integration's tests stand up a
+    # real Home Assistant (pytest-homeassistant-custom-component, pinned in
+    # requirements_test.txt, which needs Python 3.13), and the panel's are
+    # vitest. The committed bundle is what the integration serves, so it has
+    # to be the one the source builds. Gated per step so the job always
+    # reports.
+    name: BRUH Cooking integration and panel
+    needs: changes
+    runs-on: ubuntu-latest
+    env:
+      RUNS: ${{ needs.changes.outputs.cooking || 'true' }}
+    steps:
+      - name: Say why there is nothing to do
+        if: env.RUNS != 'true'
+        run: echo "Skipped, because this pull request changes nothing under bruh-cooking/."
+
+      - uses: actions/checkout@v7
+        if: env.RUNS == 'true'
+
+      - uses: actions/setup-python@v7
+        if: env.RUNS == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: bruh-cooking/requirements_test.txt
+
+      - name: Integration tests against a real Home Assistant
+        if: env.RUNS == 'true'
+        working-directory: bruh-cooking
+        run: |
+          python -m pip install -r requirements_test.txt
+          python -m pytest -q
+
+      - uses: actions/setup-node@v7
+        if: env.RUNS == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bruh-cooking/frontend/package-lock.json
+
+      # The drawings' suite renders every appliance drawing in happy-dom and
+      # outgrows Node's default heap on a small runner.
+      - name: Panel typecheck, tests and build
+        if: env.RUNS == 'true'
+        working-directory: bruh-cooking/frontend
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          npm ci --no-audit --no-fund
+          npm run check
+
+      - name: The committed bundle is the one the source builds
+        if: env.RUNS == 'true'
+        run: git diff --exit-code -- bruh-cooking/custom_components/bruh_cooking/frontend
 
   tests:
     name: Python tests
@@ -760,6 +829,8 @@ jobs:
           cp -r gardenrx/custom_components/gardenrx custom_components/gardenrx
           cp -r bruh-task-manager/custom_components/bruh_task_manager \
                 custom_components/bruh_task_manager
+          cp -r bruh-cooking/custom_components/bruh_cooking \
+                custom_components/bruh_cooking
 
       - name: Run hassfest
         uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361  # master @ 2026-08-03
@@ -781,7 +852,7 @@ jobs:
       - name: Validate profiles
         run: |
           status=0
-          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt; do
+          for profile in brain/apparmor.txt bruh-minecraft-server/apparmor.txt bright/apparmor.txt gardenrx/apparmor.txt bruh-task-manager/apparmor.txt bruh-cooking/apparmor.txt; do
             if sudo apparmor_parser -Q -K "$profile"; then
               echo "✓ $profile"
             else
@@ -820,7 +891,10 @@ jobs:
             gardenrx/translations/en.yaml \
             bruh-task-manager/config.yaml \
             bruh-task-manager/build.yaml \
-            bruh-task-manager/translations/en.yaml
+            bruh-task-manager/translations/en.yaml \
+            bruh-cooking/config.yaml \
+            bruh-cooking/build.yaml \
+            bruh-cooking/translations/en.yaml
 
   shellcheck:
     name: Shellcheck
@@ -873,6 +947,19 @@ jobs:
           ignore_paths: >-
             bruh-task-manager/custom_components
             bruh-task-manager/panel
+
+      - name: Run shellcheck (cooking)
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
+        env:
+          SHELLCHECK_OPTS: -s bash -e SC1091
+        with:
+          scandir: ./bruh-cooking
+          severity: error
+          ignore_paths: >-
+            bruh-cooking/custom_components
+            bruh-cooking/frontend
+            bruh-cooking/tests
+            bruh-cooking/scripts
 
       - name: Run shellcheck (brain)
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master @ 2026-08-03
@@ -933,6 +1020,12 @@ jobs:
         uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
         with:
           dockerfile: bruh-task-manager/Dockerfile
+          failure-threshold: error
+
+      - name: Lint BRUH Cooking Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387  # v3.5.0
+        with:
+          dockerfile: bruh-cooking/Dockerfile
           failure-threshold: error
 
   manifest-versions:
@@ -1041,6 +1134,20 @@ jobs:
       - name: Check BRUH Task Manager changelog matches shipped version
         run: .github/scripts/check-changelog-version.sh bruh-task-manager
 
+      - name: Check BRUH Cooking version parity
+        run: |
+          addon_version=$(grep -E '^version:' bruh-cooking/config.yaml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          manifest_version=$(python3 -c 'import json; print(json.load(open("bruh-cooking/custom_components/bruh_cooking/manifest.json"))["version"])')
+          echo "add-on:         $addon_version"
+          echo "HA integration: $manifest_version"
+          if [ "$addon_version" != "$manifest_version" ]; then
+            echo "::error::BRUH Cooking add-on ($addon_version) and integration manifest ($manifest_version) versions disagree"
+            exit 1
+          fi
+
+      - name: Check BRUH Cooking changelog matches shipped version
+        run: .github/scripts/check-changelog-version.sh bruh-cooking
+
   version-bump:
     # On every PR that touches addon files, verify the version in
     # config.yaml has bumped vs. the base branch. HA only picks up new
@@ -1072,3 +1179,6 @@ jobs:
 
       - name: Verify BRUH Task Manager version bumped if files changed
         run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-task-manager
+
+      - name: Verify BRUH Cooking version bumped if files changed
+        run: .github/scripts/check-version-bump.sh "origin/${{ github.base_ref }}" bruh-cooking

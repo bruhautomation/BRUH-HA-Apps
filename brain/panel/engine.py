@@ -900,6 +900,8 @@ ANALYST_TOOLS = [
     # GardenRX, the reading half: the season so far, and what was picked.
     f"{MCP}garden_status",
     f"{MCP}garden_harvests",
+    # BRUH Cooking, the reading half: what the cooking appliances are doing.
+    f"{MCP}cooking_status",
 ]
 # Named explicitly rather than left to the allow-list, because `--allowedTools`
 # governs what runs WITHOUT a prompt, and a headless run cannot be prompted:
@@ -946,6 +948,9 @@ ANALYST_DENIED = [
     f"{MCP}garden_log_harvest", f"{MCP}garden_log_spray",
     f"{MCP}garden_queue_spray", f"{MCP}garden_adjust_inventory",
     f"{MCP}garden_add_crop", f"{MCP}garden_log_note",
+    # The cooking appliances: starting heats an oven or a water bath with
+    # nobody there to have asked for it, and a stop ends somebody's dinner.
+    f"{MCP}cooking_control",
     # Filing a bug upstream sends text off the box: a person asks for it.
     f"{MCP}report_bug",
     # A timed action calls services on a timer: a person asks for one.

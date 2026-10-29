@@ -131,6 +131,17 @@ authenticated and the panel is `panel_admin: true`. The add-on rates 5 in
 the store rather than 6, which is `host_pid`'s cost and is said on its
 Settings page.
 
+**BRUH Cooking** is a shell script with `hassio_role: default`: it reads
+`/supervisor/info` to find brAIn, posts its discovery, and copies the
+`bruh_cooking` integration into `/config`. It publishes no port and has no
+panel of its own. The integration runs inside Home Assistant Core and talks
+to Breville's cloud with the account's login session, which is kept in the
+config entry rather than the password; its diagnostics redact the account's
+email, names, ids, tokens, serial numbers and network addresses. Anyone who
+can use Home Assistant can start and stop a cook through the appliance's
+entities, as with any switch; untested models are monitor-only until an
+admin allows control, and saving or deleting a preset is admin-only.
+
 Things we consider vulnerabilities:
 
 - Any management endpoint answering a caller who has not authenticated to

@@ -724,9 +724,9 @@ Think like a person who uses brAIn every day, not like a code reviewer:
   the settings page, whether or not any tool can show it to you: file the
   redesign, title it after the screen, and let the developer look.
 
-brAIn is one of seven BRUH add-ons this owner may run, all built in one
+brAIn is one of eight BRUH add-ons this owner may run, all built in one
 repository: brAIn, GardenRX, BRUH Bambu Studio, BRUH Print, BRight, BRUH
-Minecraft and Morph. The owner may be talking about any of them ("the
+Minecraft, BRUH Cooking and Morph. The owner may be talking about any of them ("the
 garden app won't load", "the printer card is blank"). Say which in
 "addon", using exactly one of those names: a complaint about another
 add-on is filed for that add-on, never turned into one about brAIn.

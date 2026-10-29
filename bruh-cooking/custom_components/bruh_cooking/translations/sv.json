@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "Lägg till konto"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "Logga in med kontot du använder i appen Breville+ Cooking eller i dess Sage-version.",
+        "data": {
+          "email": "E-post",
+          "password": "Lösenord",
+          "brand": "Märke"
+        },
+        "data_description": {
+          "email": "E-postadressen till ditt Breville- eller Sage-konto.",
+          "password": "Ditt lösenord skickas bara till Breville. Home Assistant sparar en inloggningssession, inte lösenordet.",
+          "brand": "Märket på din app och dina apparater: Sage i Storbritannien, Europa och Förenade Arabemiraten, annars Breville."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Logga in igen",
+        "description": "Din Breville-session för {email} har gått ut. Ange ditt lösenord för att fortsätta.",
+        "data": {
+          "password": "Lösenord"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Fel e-postadress eller lösenord.",
+      "cannot_connect": "Det gick inte att nå Breville. Försök igen senare.",
+      "mfa_not_supported": "Det här kontot använder multifaktorautentisering, som inte stöds ännu.",
+      "unknown": "Oväntat fel."
+    },
+    "abort": {
+      "already_configured": "Det här Breville-kontot är redan konfigurerat.",
+      "reauth_successful": "Inloggad igen.",
+      "wrong_account": "Det är ett annat Breville-konto än det som är konfigurerat här."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Vissa apparater har inte testats med den här integrationen än, så Home Assistant övervakar dem bara. Att stoppa en tillagning fungerar alltid.",
+        "data": {
+          "allow_untested_control": "Tillåt styrning av otestade apparater",
+          "show_sidebar_panel": "Visa i sidofältet"
+        },
+        "data_description": {
+          "allow_untested_control": "Starta och ändra tillagningar även på otestade apparater. Slå bara på detta när du kan hålla ett öga på apparaten, och berätta gärna hur det går.",
+          "show_sidebar_panel": "Visar kontots apparater i en panel i sidofältet, med en levande ritning av varje apparat och dess reglage. Alla som använder Home Assistant ser den."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "offline": "Offline",
+          "idle": "Inaktiv",
+          "preheating": "Förvärmning",
+          "ready": "Redo för maten",
+          "cooking": "Tillagning",
+          "done": "Klar",
+          "keeping_warm": "Varmhållning",
+          "waiting_for_button": "Tryck på knappen på apparaten",
+          "error": "Fel",
+          "updating": "Uppdaterar"
+        }
+      },
+      "current_temperature": {
+        "name": "Temperatur"
+      },
+      "preheat": {
+        "name": "Förvärmning"
+      },
+      "time_remaining": {
+        "name": "Återstående tid"
+      },
+      "cook_end": {
+        "name": "Tillagning klar"
+      },
+      "active_mode": {
+        "name": "Aktivt läge",
+        "state": {
+          "bake": "Grädda",
+          "air_fry": "Varmluftsfritering",
+          "roast": "Ugnsstekning",
+          "broil": "Grilla",
+          "pizza": "Pizza",
+          "cookies": "Kakor",
+          "reheat": "Återuppvärmning",
+          "slow_cook": "Långkok",
+          "proof": "Jäsning",
+          "warm": "Varmhållning",
+          "dehydrate": "Torkning",
+          "bottom_bake": "Undervärme",
+          "gentle_broil": "Krispigare airfry",
+          "bottom_broil": "Grill underifrån",
+          "outer_top_broil": "Yttre grill",
+          "middle_top_broil": "Övre grill i mitten",
+          "windy_broil": "Konvektionsgrill",
+          "toast": "Toast",
+          "bagel": "Bagel",
+          "keep_warm": "Varmhållning",
+          "sous_vide": "Sous vide",
+          "turbo": "Sous vide turbo",
+          "crispy_reheat": "Krispig uppvärmning"
+        }
+      },
+      "error": {
+        "name": "Fel",
+        "state": {
+          "none": "Inget",
+          "other": "Annat",
+          "button_pressed": "Stoppad med knappen",
+          "low_water_level": "Låg vattennivå",
+          "tipped_over": "Vält",
+          "overheating": "Överhettning",
+          "power_loss": "Strömavbrott",
+          "heater_thermistor_failure": "Fel på värmarens sensor",
+          "bath_thermistor_failure": "Fel på vattensensorn",
+          "stuck_motor": "Motorn har fastnat",
+          "firmware_crash": "Firmwarekrasch",
+          "bad_motor": "Motorfel",
+          "water_leakage": "Vattenläcka",
+          "current_leakage": "Läckström",
+          "heater_broken": "Fel på värmaren",
+          "door_open": "Luckan öppen"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Tillagning pågår"
+      },
+      "door": {
+        "name": "Lucka"
+      },
+      "problem": {
+        "name": "Problem"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Måltemperatur"
+      },
+      "cook_time": {
+        "name": "Tillagningstid"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "Läge",
+        "state": {
+          "bake": "Grädda",
+          "air_fry": "Varmluftsfritering",
+          "roast": "Ugnsstekning",
+          "broil": "Grilla",
+          "pizza": "Pizza",
+          "cookies": "Kakor",
+          "reheat": "Återuppvärmning",
+          "slow_cook": "Långkok",
+          "proof": "Jäsning",
+          "warm": "Varmhållning",
+          "dehydrate": "Torkning",
+          "bottom_bake": "Undervärme",
+          "bottom_broil": "Grill underifrån",
+          "outer_top_broil": "Yttre grill",
+          "middle_top_broil": "Övre grill i mitten"
+        }
+      },
+      "convection": {
+        "name": "Konvektion",
+        "state": {
+          "off": "Av",
+          "on": "På",
+          "super": "Super"
+        }
+      },
+      "level": {
+        "name": "Nivå",
+        "state": {
+          "low": "Låg",
+          "medium": "Medel",
+          "high": "Hög"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "Tillagning"
+      },
+      "auto_start_timer": {
+        "name": "Starta timer automatiskt"
+      },
+      "keep_warm": {
+        "name": "Varmhållning"
+      },
+      "frozen": {
+        "name": "Fryst mat"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "Fortsätt"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "Grädda",
+        "air_fry": "Varmluftsfritering",
+        "roast": "Ugnsstekning",
+        "broil": "Grilla",
+        "pizza": "Pizza",
+        "cookies": "Kakor",
+        "reheat": "Återuppvärmning",
+        "slow_cook": "Långkok",
+        "proof": "Jäsning",
+        "warm": "Varmhållning",
+        "dehydrate": "Torkning",
+        "bottom_bake": "Undervärme",
+        "bottom_broil": "Grill underifrån",
+        "outer_top_broil": "Yttre grill",
+        "middle_top_broil": "Övre grill i mitten"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "Av",
+        "on": "På",
+        "super": "Super"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "Låg",
+        "medium": "Medel",
+        "high": "Hög"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Starta tillagning",
+      "description": "Startar en tillagning med angivna inställningar. Välj apparatens brytare Tillagning som mål. Det du utelämnar hämtas från apparatens nuvarande inställningar.",
+      "fields": {
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Måltemperatur, i Home Assistants temperaturenhet."
+        },
+        "duration": {
+          "name": "Varaktighet",
+          "description": "Tillagningstid. För sous vide, utelämna den för att hålla temperaturen tills du stoppar."
+        },
+        "mode": {
+          "name": "Läge",
+          "description": "Ugnsläge (endast Joule Oven Air Fryer Pro). Inställningar som du utelämnar får lägets standardvärden."
+        },
+        "convection": {
+          "name": "Konvektion",
+          "description": "Ugnens fläktinställning, om läget tillåter det."
+        },
+        "level": {
+          "name": "Nivå",
+          "description": "Grillstyrka (Låg, Medel eller Hög) eller nivå för långkok (Låg eller Hög)."
+        },
+        "auto_start_timer": {
+          "name": "Starta timer automatiskt",
+          "description": "Startar timern när temperaturen har nåtts i stället för att vänta på att maten läggs i."
+        },
+        "keep_warm": {
+          "name": "Varmhållning",
+          "description": "Håller maten varm när en tillagning i ugnen är klar."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Hämta status",
+      "description": "Vad varje apparat gör och hur dess nästa tillagning skulle bli. Svarar med detaljerna.",
+      "fields": {
+        "appliance": {
+          "name": "Apparat",
+          "description": "Apparatens namn som i Home Assistant eller appen, eller dess enhets-ID. Utelämna det när kontot har en apparat."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Hämta förinställningar",
+      "description": "De inbyggda och sparade förinställningar som varje apparat kan laga.",
+      "fields": {
+        "appliance": {
+          "name": "Apparat",
+          "description": "Apparatens namn som i Home Assistant eller appen, eller dess enhets-ID. Utelämna det när kontot har en apparat."
+        }
+      }
+    },
+    "stop": {
+      "name": "Stoppa",
+      "description": "Stoppar den angivna apparatens tillagning.",
+      "fields": {
+        "appliance": {
+          "name": "Apparat",
+          "description": "Apparatens namn som i Home Assistant eller appen, eller dess enhets-ID. Utelämna det när kontot har en apparat."
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "Fortsätt",
+      "description": "Talar om för apparaten att maten är i, eller ute, när den väntar på det.",
+      "fields": {
+        "appliance": {
+          "name": "Apparat",
+          "description": "Apparatens namn som i Home Assistant eller appen, eller dess enhets-ID. Utelämna det när kontot har en apparat."
+        }
+      }
+    },
+    "start": {
+      "name": "Starta",
+      "description": "Startar en tillagning på den angivna apparaten, från en förinställning eller angivna inställningar. Det du utelämnar tas från apparatens nuvarande inställningar.",
+      "fields": {
+        "appliance": {
+          "name": "Apparat",
+          "description": "Apparatens namn som i Home Assistant eller appen, eller dess enhets-ID. Utelämna det när kontot har en apparat."
+        },
+        "preset": {
+          "name": "Förinställning",
+          "description": "ID eller namn på en förinställning, till exempel steak_medium_rare. Det du anger utöver det ändrar dess inställningar."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Måltemperatur, i Home Assistants temperaturenhet."
+        },
+        "duration": {
+          "name": "Varaktighet",
+          "description": "Tillagningstid. För sous vide, utelämna den för att hålla temperaturen tills du stoppar."
+        },
+        "mode": {
+          "name": "Läge",
+          "description": "Ugnsläge (endast Joule Oven Air Fryer Pro). Inställningar som du utelämnar får lägets standardvärden."
+        },
+        "convection": {
+          "name": "Konvektion",
+          "description": "Ugnens fläktinställning, om läget tillåter det."
+        },
+        "level": {
+          "name": "Nivå",
+          "description": "Grillstyrka (Låg, Medel eller Hög) eller nivå för långkok (Låg eller Hög)."
+        },
+        "auto_start_timer": {
+          "name": "Starta timer automatiskt",
+          "description": "Startar timern när temperaturen har nåtts i stället för att vänta på att maten läggs i."
+        },
+        "keep_warm": {
+          "name": "Varmhållning",
+          "description": "Håller maten varm när en tillagning i ugnen är klar."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "Styrning av {product} har inte testats än. Slå på ”Tillåt styrning av otestade apparater” i integrationens alternativ för att prova."
+    },
+    "start_failed": {
+      "message": "Det gick inte att starta tillagningen: {error}"
+    },
+    "edit_failed": {
+      "message": "Det gick inte att ändra tillagningen: {error}"
+    },
+    "auth_expired": {
+      "message": "Breville-inloggningen har gått ut. Autentisera integrationen igen och försök sedan på nytt."
+    },
+    "request_failed": {
+      "message": "Begäran till Brevilles moln misslyckades: {error}"
+    },
+    "target_cook_switch": {
+      "message": "Välj apparatens brytare Tillagning som mål."
+    },
+    "mode_oven_only": {
+      "message": "Lägen gäller bara ugnen."
+    },
+    "level_not_for_mode": {
+      "message": "Nivå {level} gäller inte det här läget."
+    },
+    "stop_cook_first": {
+      "message": "Stoppa tillagningen innan du ändrar den här inställningen."
+    },
+    "no_appliances": {
+      "message": "Ingen matlagningsapparat är konfigurerad. Lägg först till ett Breville- eller Sage-konto i BRUH Cooking."
+    },
+    "which_appliance": {
+      "message": "Säg vilken apparat: {names}."
+    },
+    "unknown_appliance": {
+      "message": "Det finns ingen apparat som heter {appliance}. Apparaterna är: {names}."
+    },
+    "unknown_preset": {
+      "message": "Det finns ingen förinställning som heter {preset}."
+    },
+    "preset_does_not_fit": {
+      "message": "Förinställningen {preset} kan inte lagas här: {error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} lagar redan mat. Stoppa den tillagningen först."
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} väntar inte på att maten ska in eller ut."
+    }
+  }
+}

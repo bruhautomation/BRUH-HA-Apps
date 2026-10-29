@@ -490,6 +490,7 @@ CONTRACT_REFUSED_TOOLS = frozenset({
     "bambu_print", "bambu_control", "bambu_slice", "bambu_design",
     "garden_log_harvest", "garden_log_spray", "garden_queue_spray",
     "garden_adjust_inventory", "garden_add_crop", "garden_log_note",
+    "cooking_control",
     "report_bug", "timed_action", "note_personality_change",
     "set_assistant_exposure",
 })
@@ -1210,6 +1211,12 @@ VOICE_UNTARGETED = {
     # note are logged, and what was picked is read. Changing the stock,
     # the crops or the queue is not done by ear.
     "gardenrx": frozenset({"log_harvest", "log_spray", "log_note", "get_harvests"}),
+    # The owner asked for the cooking appliances by voice: read them, start,
+    # stop and continue a cook. The appliances are the last check — the oven
+    # waits for Start on its panel, a UL Joule for its button above 85 °C —
+    # and stop always works.
+    "bruh_cooking": frozenset({"get_status", "get_presets", "start", "stop",
+                               "continue_cook"}),
 }
 VOICE_CROSS_DOMAIN = {
     "homeassistant": frozenset({"turn_on", "turn_off", "toggle", "update_entity"}),
@@ -2359,14 +2366,14 @@ def get_health():
 
 # ---------------------------------------------------------------------------
 # The other BRUH add-ons — GardenRX, BRUH Bambu Studio, BRUH Print, BRight,
-# BRUH Minecraft, Morph. Their code lives in their own images, so brAIn can
+# BRUH Minecraft, BRUH Cooking, Morph. Their code lives in their own images, so brAIn can
 # look at them (state, log, integration errors) and file a report the cloud
 # routine fixes upstream; it never patches them in place, because a patch in
 # a container is wiped by the next update and diverges from the repository.
 # ---------------------------------------------------------------------------
 
 SIBLING_ADDON_NAMES = ("brAIn", "GardenRX", "BRUH Bambu Studio", "BRUH Print",
-                    "BRight", "BRUH Minecraft", "Morph")
+                    "BRight", "BRUH Minecraft", "BRUH Cooking", "Morph")
 
 
 def bruh_addon_status(addon=""):
@@ -2800,6 +2807,7 @@ ADDON_NAMES = {
     "bruh_print": ("BRUH Print", "BRUH Print"),
     "bruh_bambu": ("BRUH Bambu Studio", "BRUH Bambu Studio"),
     "gardenrx": ("GardenRX", "GardenRX"),
+    "bruh_cooking": ("BRUH Cooking", "BRUH Cooking"),
 }
 
 
@@ -3706,6 +3714,82 @@ def garden_harvests(crop="", start="", end=""):
     if not isinstance(result, dict) or result.get("error"):
         return result
     return _tag_text(_garden_trim(result), GARDEN_TEXT_KEYS)
+
+
+# -- BRUH Cooking ------------------------------------------------------------
+#
+# Breville+ and Sage cooking appliances (the Joule sous vide, the Joule Oven
+# Air Fryer Pro). The bruh_cooking integration names an appliance the way a
+# person does and answers every call in words (`_addon_call`); every rule the
+# appliance's own entities keep — untested models monitor-only, a running
+# oven cook unchangeable, stop always allowed — is the integration's, so a
+# refusal here is its sentence, repeated.
+
+COOKING_ACTIONS = {"start": "start", "stop": "stop", "continue": "continue_cook"}
+COOKING_OVEN_MODES = (
+    "bake", "air_fry", "roast", "broil", "pizza", "cookies", "reheat",
+    "slow_cook", "proof", "warm", "dehydrate", "bottom_bake", "bottom_broil",
+    "outer_top_broil", "middle_top_broil")
+COOKING_MAX_MINUTES = 96 * 60
+
+
+def _cooking_appliance(appliance):
+    name = str(appliance or "").strip()
+    return {"appliance": name[:80]} if name else {}
+
+
+def cooking_status(appliance="", presets=False):
+    """What each cooking appliance is doing, and optionally the presets it can cook."""
+    data = _cooking_appliance(appliance)
+    status = _addon_call("bruh_cooking", "get_status", data)
+    if status.get("error") or not presets:
+        return status
+    listing = _addon_call("bruh_cooking", "get_presets", data)
+    if listing.get("error"):
+        return {**status, "presets_error": listing["error"]}
+    return {**status, "presets": (listing.get("presets") or [])[:60]}
+
+
+def cooking_control(action, appliance="", preset="", temperature=None,
+                    minutes=None, mode="", convection="", level="",
+                    keep_warm=None, auto_start_timer=None):
+    """Start, stop or continue a cook on a Breville or Sage cooking appliance."""
+    action = str(action or "").strip().lower()
+    if action not in COOKING_ACTIONS:
+        return {"error": "Use start, stop or continue."}
+    data = _cooking_appliance(appliance)
+    if action == "start":
+        if str(preset or "").strip():
+            data["preset"] = str(preset).strip()[:80]
+        if temperature not in (None, ""):
+            try:
+                data["temperature"] = float(temperature)
+            except (TypeError, ValueError):
+                return {"error": "temperature is a number, in the house's unit."}
+        if minutes not in (None, ""):
+            try:
+                total = int(round(float(minutes)))
+            except (TypeError, ValueError):
+                return {"error": "minutes is a number of minutes."}
+            if not 1 <= total <= COOKING_MAX_MINUTES:
+                return {"error": f"minutes is between 1 and {COOKING_MAX_MINUTES}."}
+            data["duration"] = f"{total // 60:02d}:{total % 60:02d}:00"
+        if str(mode or "").strip():
+            word = str(mode).strip().lower().replace(" ", "_").replace("-", "_")
+            if word not in COOKING_OVEN_MODES:
+                return {"error": "mode is one of " + ", ".join(COOKING_OVEN_MODES) + "."}
+            data["mode"] = word
+        for field, value, allowed in (("convection", convection, ("off", "on", "super")),
+                                      ("level", level, ("low", "medium", "high"))):
+            if str(value or "").strip():
+                word = str(value).strip().lower()
+                if word not in allowed:
+                    return {"error": f"{field} is one of " + ", ".join(allowed) + "."}
+                data[field] = word
+        for field, value in (("keep_warm", keep_warm), ("auto_start_timer", auto_start_timer)):
+            if value is not None:
+                data[field] = bool(value)
+    return _addon_call("bruh_cooking", COOKING_ACTIONS[action], data)
 
 
 def get_activity(hours=24, cause=None, limit=200):
@@ -6817,6 +6901,56 @@ TOOLS = [
             "date": {"type": "string"}},
             "required": ["place", "note"]},
     },
+    # BRUH Cooking — Breville+ and Sage cooking appliances, through its integration.
+    {
+        "name": "cooking_status",
+        "description": (
+            "BRUH Cooking's appliances (Breville+ and Sage: the Joule sous vide, "
+            "the Joule Oven Air Fryer Pro): each one's state (idle, preheating, "
+            "ready — at temperature, waiting for the food —, cooking, done, "
+            "keeping_warm, waiting_for_button — press Start on the appliance —, "
+            "error, offline), current and target temperature in the house's unit, "
+            "minutes left, when it ends, preheat percent, the oven's mode and "
+            "door, any error, whether control is allowed, and the next cook's "
+            "settings. appliance narrows it to one (its name). presets=true adds "
+            "the presets each appliance can cook. Read-only."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "appliance": {"type": "string"},
+            "presets": {"type": "boolean"}}},
+    },
+    {
+        "name": "cooking_control",
+        "description": (
+            "Drive a Breville+ or Sage cooking appliance through BRUH Cooking. "
+            "appliance is its name (\"Joule\", \"oven\"), left out when there is "
+            "only one. action start: a cook from preset (an id or name from "
+            "cooking_status presets=true, e.g. steak_medium_rare) and/or "
+            "temperature (the house's unit), minutes, and for the oven mode "
+            "(bake, air_fry, roast, broil, pizza, cookies, reheat, slow_cook, "
+            "proof, warm, dehydrate, …), convection (off, on, super), level "
+            "(low, medium, high — broil and slow cook), keep_warm; "
+            "auto_start_timer starts the timer at temperature instead of "
+            "waiting for continue. A sous vide must be in water: say so when "
+            "you start one. The oven waits for Start on its panel — tell the "
+            "person. A start over a running cook is refused. action stop: ends "
+            "the cook. action continue: the food is in (starts the timer once "
+            "it is ready) or out (when done). Answers with the appliance's own "
+            "sentence; repeat it."
+        ),
+        "inputSchema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["start", "stop", "continue"]},
+            "appliance": {"type": "string"},
+            "preset": {"type": "string"},
+            "temperature": {"type": "number"},
+            "minutes": {"type": "number"},
+            "mode": {"type": "string"},
+            "convection": {"type": "string", "enum": ["off", "on", "super"]},
+            "level": {"type": "string", "enum": ["low", "medium", "high"]},
+            "keep_warm": {"type": "boolean"},
+            "auto_start_timer": {"type": "boolean"}},
+            "required": ["action"]},
+    },
     # Music Assistant — its own API, through the panel.
     {
         "name": "music_assistant_status",
@@ -8325,7 +8459,8 @@ TOOLS = [
         "name": "bruh_addon_status",
         "description": (
             "How the other BRUH add-ons are doing: GardenRX, BRUH Bambu "
-            "Studio, BRUH Print, BRight, BRUH Minecraft and Morph. For each "
+            "Studio, BRUH Print, BRight, BRUH Minecraft, BRUH Cooking and "
+            "Morph. For each "
             "installed one: version, whether it is running, whether an update "
             "is waiting, the distinct errors in its log with the lines around "
             "them, and what Home Assistant logged about its integration. Use "
@@ -8925,6 +9060,8 @@ TOOL_IMPLEMENTATIONS = {
     "garden_adjust_inventory": "garden_adjust_inventory",
     "garden_add_crop": "garden_add_crop",
     "garden_log_note": "garden_log_note",
+    "cooking_status": "cooking_status",
+    "cooking_control": "cooking_control",
     "explain_decision": "explain_decision",
     "notification_history": "notification_history",
 }
@@ -9078,6 +9215,7 @@ ALWAYS_LOAD_TOOLS = frozenset({
     "print_label", "label_printer_status", "bright_show", "minecraft_teleport",
     "minecraft_status", "bambu_status", "bambu_print", "bambu_control",
     "bambu_design", "garden_log_harvest", "garden_log_spray", "garden_log_note",
+    "cooking_status", "cooking_control",
 })
 ALWAYS_LOAD_ELSEWHERE = frozenset({"get_entity_state", "get_all_states"})
 _ALWAYS = {"anthropic/alwaysLoad": True}
@@ -9128,6 +9266,7 @@ ADDON_TOOL_DOMAINS = {
                            "garden_log_spray", "garden_queue_spray",
                            "garden_adjust_inventory", "garden_add_crop",
                            "garden_log_note"}),
+    "bruh_cooking": frozenset({"cooking_status", "cooking_control"}),
 }
 SERVICE_DOMAINS_TTL_S = 60
 _SERVICE_DOMAINS = {"at": 0.0, "domains": None}

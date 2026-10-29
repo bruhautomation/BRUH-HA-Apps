@@ -580,6 +580,8 @@ class TestMCPProtocol(unittest.TestCase):
             "garden_status", "garden_harvests", "garden_log_harvest",
             "garden_log_spray", "garden_queue_spray", "garden_adjust_inventory",
             "garden_add_crop", "garden_log_note",
+            # BRUH Cooking: the cooking appliances, through its integration
+            "cooking_status", "cooking_control",
             # Recording how brAIn's personality has grown (⚙ › Personality)
             "note_personality_change",
         }

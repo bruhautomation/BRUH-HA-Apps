@@ -31,6 +31,7 @@ INTEGRATIONS = {
     "bruh_print": REPO / "bruh-print" / "custom_components" / "bruh_print",
     "bruh_bambu": REPO / "bruh-bambu-studio" / "custom_components" / "bruh_bambu",
     "gardenrx": REPO / "gardenrx" / "custom_components" / "gardenrx",
+    "bruh_cooking": REPO / "bruh-cooking" / "custom_components" / "bruh_cooking",
 }
 RESPONDS = ("optional", "only")
 
@@ -49,7 +50,9 @@ class _Any(metaclass=_Meta):
         pass
 
     def __call__(self, *a, **kw):
-        return a[0] if a else self
+        # A decorator hands back what it decorates; a decorator factory
+        # (`websocket_command({...})`) hands back a decorator.
+        return a[0] if a and callable(a[0]) else self
 
     def __getattr__(self, name):
         return _Any()
@@ -77,7 +80,16 @@ def _stubs() -> dict:
              "homeassistant.helpers.entity_platform", "homeassistant.components",
              "homeassistant.components.sensor", "homeassistant.data_entry_flow",
              "homeassistant.helpers.device_registry", "homeassistant.helpers.entity",
-             "homeassistant.helpers.aiohttp_client")
+             "homeassistant.helpers.aiohttp_client",
+             # BRUH Cooking's integration, which imports its whole package
+             # (the coordinator, the panel's API) from __init__.
+             "homeassistant.components.switch", "homeassistant.components.http",
+             "homeassistant.helpers.typing", "homeassistant.helpers.dispatcher",
+             "homeassistant.helpers.storage", "homeassistant.helpers.restore_state",
+             "homeassistant.helpers.selector", "homeassistant.helpers.service_info",
+             "homeassistant.helpers.service_info.hassio", "homeassistant.loader",
+             "homeassistant.util", "homeassistant.util.hass_dict",
+             "homeassistant.util.unit_conversion")
     mods = {name: _Module(name) for name in names}
     mods["homeassistant.core"].SupportsResponse = types.SimpleNamespace(
         NONE=None, OPTIONAL="optional", ONLY="only")

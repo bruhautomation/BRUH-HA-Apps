@@ -456,6 +456,7 @@ not depend on the current one's result. So while a pull request is in CI:
   | BRUH Print | `devloop:bruh-print` | `bruh-print/` | `docs/notes/bruh-print.md`, `tests/manual/measure-print-*.mjs` |
   | BRight | `devloop:bright` | `bright/` | `docs/notes/bright.md`, `tests/test_bright_*.py` |
   | BRUH Minecraft | `devloop:bruh_minecraft_server` | `bruh-minecraft-server/` | CLAUDE.md's Minecraft entry |
+  | BRUH Cooking | `devloop:bruh-cooking` | `bruh-cooking/` | `docs/notes/cooking.md`; the integration's tests run against a real Home Assistant (`cd bruh-cooking && python3 -m pytest` after `pip install -r requirements_test.txt`), and a panel change is rebuilt (`cd bruh-cooking/frontend && npm ci && npm run check`) and the bundle committed |
 
   Morph's issues are faults it found in its own code; the others' come
   from the `siblings` stream (brAIn reading that add-on's log, Supervisor
