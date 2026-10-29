@@ -2,6 +2,14 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.11
+
+### Added
+
+- **Morph's Ask stacks its answers.** Asking a second question while the first is still running no longer drops the first: each question runs on its own and its answer stacks under the Ask line (newest first, the last five kept), the busy mark is on while any is running, and the session is resumed only when nothing else is in flight. A Tell replaced while it runs is parked until it finishes, and the top strip says it finished, with Show to reopen it and Keep or Undo. (#524)
+- **A switch can ride in a room's title row.** A switch card with `options.header` is drawn as a small pill button at the right of the room's title, amber while on, even when the room is folded, instead of as a tile (in Edit it is a tile again). (#526)
+- **A room rail on a touch screen, opened by a slight pull left.** A thin rail at the right edge: a vertical swipe there scrolls the page as usual, and only a short pull to the left opens it so sliding up or down jumps from room to room. Words inside the rail explain it ("Pull left to open the rooms", "Keep pulling left"). (#527)
+
 ## 4.0.10
 
 ### Added
