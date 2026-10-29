@@ -40,6 +40,7 @@ import * as sal from './salience.js';
 import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
+import { Rail } from './rail.js';
 import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
 
 const HOLD_MS = 540;
@@ -54,6 +55,8 @@ function entityIdsIn(v, states, out, depth) {
   if (Array.isArray(v)) { v.forEach((x) => entityIdsIn(x, states, out, depth + 1)); return; }
   if (typeof v === 'object') Object.keys(v).forEach((k) => { if (k !== 'id') entityIdsIn(v[k], states, out, depth + 1); });
 }
+// How many asked questions Ask keeps on screen, answered or not.
+const ASK_KEEP = 5;
 const TELL_SUGS = {
   card: ['Make this wider', 'Move it to the top of the room', 'Show its history by default'],
   section: ['Put the scenes first', 'Split this into two groups', 'Add the room’s temperature here'],
@@ -131,16 +134,33 @@ function detailCard(card) {
   return d;
 }
 
+// A switch that rides in its room's title row as a pill (`options.header:
+// true`, the owner: a pause toggle "in the header of the card as a
+// button"): outside Edit it is not a tile, not lifted into Now and not what
+// keeps a room open; in Edit it is an ordinary tile, so it can be edited.
+function isHeadCard(card) {
+  return !!(card && card.type === 'switch' && card.entity && card.options && card.options.header === true);
+}
+
 class MorphPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
     this.s = {
       edit: false, view: null, fading: null, previews: {}, memberPreview: null,
-      tell: null, secEdit: null, ask: null, story: {}, confirm: {}, hold: null, add: null,
+      secEdit: null, asks: [], story: {}, confirm: {}, hold: null, add: null,
       sugNo: null, toast: null, yaml: null, hist: null, persona: undefined, upcHost: null, upcShown: null,
-      unfold: {}, pending: {}, replyOpen: {}, todoOpen: null, thenAt: null, converse: null,
+      unfold: {}, pending: {}, replyOpen: {}, todoOpen: null, thenAt: null,
     };
+    // The Tell box shows one tell. A tell it stops showing while brAIn is
+    // still at it (another Tell opened, the box closed) keeps running in
+    // the service by its id, and the activity strip lists it while it runs;
+    // the strip used to forget it the moment it finished, so its answer and
+    // its Undo were nowhere on the page. Every replacement goes through
+    // here, and parkTell keeps such a tell until its result is seen.
+    let tellNow = null;
+    this.tellsAway = [];
+    Object.defineProperty(this.s, 'tell', { enumerable: true, get: () => tellNow, set: (t) => { if (tellNow && tellNow !== t) this.parkTell(tellNow, t); tellNow = t; } });
     // How the person is touching the page, for the quiet-moment gate.
     this.ui = { lastTouch: 0, pointerDown: false, lastScroll: 0, lastArrange: 0, open: false };
     this.touched = {};
@@ -288,7 +308,7 @@ class MorphPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.innerHTML = `<style>${STYLES}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain"><div class="wrap">
 <div data-region="thenrule"></div><div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
-<div data-region="board"><div data-board></div></div></div></div></div>`;
+<div data-region="board"><div data-board></div></div></div><div class="srail" data-rail aria-hidden="true"></div></div></div>`;
     if (!document.querySelector('link[data-morph-fonts]')) {
       const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = FONTS_URL; l.dataset.morphFonts = '1'; document.head.appendChild(l);
     }
@@ -304,11 +324,15 @@ class MorphPanel extends HTMLElement {
     history.setOnData(() => this.schedule());
     then.setOnData(() => this.schedule());
     this.bindEvents();
+    // The room rail on a touch screen's right edge (rail.js): a column of
+    // the page beside the content, opened by a short pull to the left.
+    this.rail = new Rail(this.$('[data-rail]'), this);
     // Inside brAIn's shell the scroll is also the shell's to hear: brAIn's
     // header hides while the dashboard scrolls down and returns as it
     // scrolls up (shell.js passes it to brAIn's page).
     this.$('.scroll').addEventListener('scroll', (ev) => {
       this.ui.lastScroll = Date.now();
+      if (!this._railF) this._railF = requestAnimationFrame(() => { this._railF = 0; this.rail.paint(); });
       if (this._shell) this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: ev.currentTarget.scrollTop } }));
     }, { passive: true });
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
@@ -462,7 +486,7 @@ class MorphPanel extends HTMLElement {
     this.eachSection((sec) => {
       if (sec.hidden) return;
       this.sectionCards(sec).forEach((c) => {
-        if (['scenes', 'note', 'lovelace', 'readings'].includes(c.type)) return;
+        if (['scenes', 'note', 'lovelace', 'readings'].includes(c.type) || isHeadCard(c)) return;
         const ents = c.type === 'list' ? (c.entities || []) : c.entity ? [c.entity] : [];
         if (!ents.length) return;
         items.push({ id: c.id, sec: sec.id, entities: ents, primary: ents[0] });
@@ -822,17 +846,27 @@ class MorphPanel extends HTMLElement {
     const edit = this.s.edit;
     let ask = '';
     if ((dash.ask !== false || edit) && !this.s.thenAt) {
-      const a = this.s.ask;
-      const sugs = !a ? (edit ? TELL_SUGS.dashboard : ['Why is it warm upstairs?', 'What’s left on?', 'Is everything locked?']) : [];
-      const conv = this.s.converse;
-      const busyWords = conv && conv.state ? ((conv.state.steps || []).slice(-1)[0] || {}).t || `${this.who()} is thinking` : 'Thinking';
-      ask = `<div data-ask="1" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
-<label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? `Tell ${esc(this.who())} how to change this dashboard…` : 'Ask or tell the house…'}" aria-label="${edit ? `Tell ${esc(this.who())} how to change this dashboard` : 'Ask or tell the house'}"></label>
+      // Every question asked keeps running and its answer stacks here,
+      // newest first (the owner: "when asking multiple commands everything
+      // keeps running and the answers stack up"). One slot used to be
+      // overwritten by the next question, and its poll cleared with it.
+      const asks = this.s.asks;
+      const busy = asks.some((a) => a.busy);
+      const sugs = !asks.length ? (edit ? TELL_SUGS.dashboard : ['Why is it warm upstairs?', 'What’s left on?', 'Is everything locked?']) : [];
+      ask = `<div data-ask="1" aria-busy="${busy}" style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+<label class="askrow">${SPARK}<input class="askin" type="text" data-keep="ask" data-act-enter="ask" placeholder="${edit ? `Tell ${esc(this.who())} how to change this dashboard…` : 'Ask or tell the house…'}" aria-label="${edit ? `Tell ${esc(this.who())} how to change this dashboard` : 'Ask or tell the house'}">${busy ? '<span class="pulse askbusy" aria-hidden="true"></span>' : ''}</label>
 ${this.tellBox('dashboard')}
 ${sugs.length && !(this.s.tell && this.s.tell.kind === 'dashboard') ? `<div class="sugs">${sugs.map((s) => `<button type="button" class="wd" data-act="ask-sug" data-v="${esc(s)}" style="font-size:14px;min-height:34px">${esc(s)}</button>`).join('')}</div>` : ''}
-${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="small">${esc(a.q)}</span><p>${esc(a.busy ? busyWords + '…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go showme" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}${a.undo ? `<div class="row"><button type="button" class="wd strong" data-act="undo-commit" data-v="${esc(a.undo)}">Undo</button></div>` : ''}${!a.busy && this.admin() && a.kind !== 'tell' ? `<div class="row"><button type="button" class="wd" data-act="ask-tell" style="font-size:14px;min-height:34px">Change the dashboard instead</button></div>` : ''}</div>` : ''}</div>`;
+${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     }
     return `<section aria-label="Now" class="topsec" style="display:flex;flex-direction:column;gap:14px;max-width:980px">${this.clockHtml()}${dash.greeting !== false && this.form_ !== 'night' ? `<h1 class="hello">${esc(this.greeting())}</h1>` : ''}${this.data.state && this.data.state.note ? `<div class="banner">${esc(this.data.state.note)}</div>` : ''}${story}${ask}</section>`;
+  }
+
+  // One asked question and its answer (or what brAIn is doing about it).
+  answerHtml(a) {
+    const conv = a.conv;
+    const busyWords = conv && conv.state ? ((conv.state.steps || []).slice(-1)[0] || {}).t || `${this.who()} is thinking` : 'Thinking';
+    return `<div class="answer rise" data-k="ask-${a.key}" role="status" aria-live="polite"><span class="small">${esc(a.q)}</span><p>${a.busy ? '<span class="pulse" aria-hidden="true"></span>' : ''}${esc(a.busy ? busyWords + '…' : a.answer || '')}</p>${(a.show || []).length ? `<div class="row" style="flex-wrap:wrap;gap:0 20px">${a.show.map((x) => `<button type="button" class="wd go showme" data-act="reveal-card" data-v="${esc(x.id)}" style="font-size:15px">Show me ${esc(x.name)}</button>`).join('')}</div>` : ''}${a.undo ? `<div class="row"><button type="button" class="wd strong" data-act="undo-commit" data-v="${esc(a.undo)}">Undo</button></div>` : ''}${!a.busy && this.admin() && a.kind !== 'tell' ? `<div class="row"><button type="button" class="wd" data-act="ask-tell" data-v="${a.key}" style="font-size:14px;min-height:34px">Change the dashboard instead</button></div>` : ''}</div>`;
   }
 
   // Coming up: a fixed reading point with the next day sliding behind it
@@ -1364,7 +1398,10 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     if (this.settings().fold_rooms === false) return 'active';
     // A room with no presence sensor cannot say it is empty: one with
     // something on stays open rather than being folded on a guess.
-    if (here == null && !lifted && this.sectionEntities(sec).some((e) => { const st = this.hass.states[e]; return st && ['light', 'fan', 'media_player', 'switch'].includes(domainOf(e)) && ['on', 'playing'].includes(st.state); })) return 'active';
+    // A header switch (a pause) is a setting, not something left on.
+    const cards = this.sectionCards(sec);
+    const headOnly = new Set(cards.filter(isHeadCard).map((c) => c.entity).filter((e) => !cards.some((c) => !isHeadCard(c) && c.entity === e)));
+    if (here == null && !lifted && this.sectionEntities(sec).some((e) => { if (headOnly.has(e)) return false; const st = this.hass.states[e]; return st && ['light', 'fan', 'media_player', 'switch'].includes(domainOf(e)) && ['on', 'playing'].includes(st.state); })) return 'active';
     return 'idle';
   }
 
@@ -1372,7 +1409,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
   // sleeper usually needs at night — a night habit's card, else its fan,
   // else its first switch.
   nightControl(sec) {
-    const cards = this.sectionCards(sec).filter((c) => c.entity && !['scenes', 'note', 'lovelace', 'readings'].includes(c.type));
+    const cards = this.sectionCards(sec).filter((c) => c.entity && !['scenes', 'note', 'lovelace', 'readings'].includes(c.type) && !isHeadCard(c));
     const habits = ((this.brain().feed || {}).habits) || [];
     const nightly = (e) => habits.some((h) => h.entity_id === e && (h.minute >= 1200 || h.minute < 360));
     return cards.find((c) => nightly(c.entity)) || cards.find((c) => domainOf(c.entity) === 'fan') || cards.find((c) => ['switch', 'input_boolean'].includes(domainOf(c.entity))) || null;
@@ -1466,7 +1503,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
       return;
     }
     (sec.groups || []).forEach((g, gi) => {
-      let cards = (g.cards || []).filter((c) => !lifted.has(c.id));
+      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && (this.s.edit || !isHeadCard(c)));
       // An item the list says leads its room goes first in its group.
       // An anchor keeps its slot whatever its score (§4.4): the
       // others are ordered around it.
@@ -1591,6 +1628,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     });
     this.engine.layout(!this._laidOut, false);
     this._laidOut = true;
+    if (this.rail) this.rail.paint();
   }
 
   // A room's background, its glow and its state (§6, §9.1): a tint of its
@@ -1635,6 +1673,10 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     head.classList.remove('nohead');
     this.setHtml(head, `<div class="secbroken" style="flex:1;min-width:0"><h2>${esc(sec.title || '')}</h2><p class="sm" style="margin:2px 0 0;color:var(--muted)">Morph could not draw this room. The fault has been reported.</p></div>`);
   }
+
+  // The room rail's words and colours for a room on the board.
+  railTitle(id) { const sec = this.sectionById(id); return sec ? String(sec.title || '') : ''; }
+  railColor(id) { const sec = this.sectionById(id); return sec ? mix(hue(sec.color), 80) : 'var(--quiet)'; }
 
   sectionById(id) { let hit = null; this.eachSection((s) => { if (s.id === id) hit = s; }); return hit; }
 
@@ -1700,6 +1742,13 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     // Scene words in the title row, one tap even when the room is folded.
     const scenes = []; this.sectionCards(sec).forEach((c) => { if (c.type === 'scenes') (c.entities || []).forEach((e) => scenes.push(e)); });
     const folded = state === 'idle' || state === 'asleep';
+    // A header switch (`options.header`): a pill at the right of the title
+    // row, folded or not, amber while on. In Edit it is a tile instead.
+    const pills = edit ? '' : this.sectionCards(sec).filter(isHeadCard).map((c) => {
+      const st = H.states[c.entity]; const on = !!st && st.state === 'on';
+      const dead = !st || st.state === 'unavailable';
+      return `<button type="button" class="shtog${on ? ' on' : ''}" data-act="head-toggle" data-v="${esc(c.entity)}" data-card="${esc(c.id)}" aria-pressed="${on}"${dead ? ' disabled' : ''}><i aria-hidden="true"></i>${esc(this.cardName(c, sec))}</button>`;
+    }).join('');
     const sceneWords = folded && !edit && scenes.length ? `<span class="secscenes">${scenes.slice(0, 5).map((e) => `<button type="button" class="wd" data-act="scene" data-v="${esc(e)}">${esc(shortName(friendly(H, e), sec.title))}</button>`).join('')}</span>` : '';
     // Folded with a light on: a warm underline for the share that is on.
     const lights = ents.filter((e) => domainOf(e) === 'light' && H.states[e] && !(H.states[e].attributes.entity_id || []).length);
@@ -1720,7 +1769,7 @@ ${a ? `<div class="answer rise" role="status" aria-live="polite"><span class="sm
     const grip = edit ? '<svg aria-hidden="true" width="12" height="18" viewBox="0 0 12 18" style="flex-shrink:0;color:var(--quiet);margin-left:-8px"><path d="M3 3h.01M9 3h.01M3 9h.01M9 9h.01M3 15h.01M9 15h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>' : '';
     // The room's name is a button: tap it to fold or unfold the room.
     const name = edit ? `<h2>${esc(sec.title)}</h2>` : `<h2><button type="button" class="roomname" data-act="room-toggle" data-v="${esc(sec.id)}" aria-expanded="${!folded}">${esc(sec.title)}</button></h2>`;
-    return `${grip}<div class="sectitle">${name}<span class="secmeta">${esc(meta)}</span>${needs ? `<span class="needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}${traces}${sceneWords}<span class="flex1"></span>${this.chipsHtml(sec)}${under}</div>${because}${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
+    return `${grip}<div class="sectitle">${name}<span class="secmeta">${esc(meta)}</span>${needs ? `<span class="needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}${traces}${sceneWords}<span class="flex1"></span>${this.chipsHtml(sec)}${pills}${under}</div>${because}${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
   }
 
   renderTile(secEl, it, sec, ms) {
@@ -2104,7 +2153,23 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     }).join('');
     const L = st.learning || {};
     const learn = L.running ? '<div class="activity"><span class="pulse"></span><span class="lx"><b>Morph is learning from how this dashboard is used</b><span>brAIn is reading the last month of use; suggestions appear where they belong.</span></span></div>' : '';
-    return rows + learn;
+    return rows + this.tellsAwayHtml() + learn;
+  }
+
+  parkTell(old, next) {
+    if (!old.tellId || ['done', 'failed'].includes(old.state && old.state.phase)) return;
+    if (next && (next.tellId === old.tellId || next.previous === old.tellId)) return;
+    this.tellsAway = [old, ...this.tellsAway.filter((x) => x.tellId !== old.tellId)].slice(0, ASK_KEEP);
+  }
+
+  // A parked tell that has finished: what brAIn said, and Show opens its
+  // box again with Keep and Undo.
+  tellsAwayHtml() {
+    return this.tellsAway.map((t) => {
+      const st = this.tellStatus[t.tellId];
+      if (!st || !['done', 'failed'].includes(st.phase)) return '';
+      return `<div class="activity" data-k="away-${esc(t.tellId)}"><span class="lx"><b>${esc(this.who())} ${st.phase === 'failed' ? 'could not finish' : 'finished'} “${esc(t.text)}”</b><span>${esc(String(st.say || '').split('\n')[0].slice(0, 200))}</span></span><button type="button" class="wd" data-act="tell-back" data-v="${esc(t.tellId)}">Show</button></div>`;
+    }).join('');
   }
 
   restoreTellText(el) {
@@ -2208,6 +2273,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     if (t && t.tellId && !['done', 'failed'].includes(t.state && t.state.phase)) ids.push(t.tellId);
     ((this.data && this.data.state && this.data.state.suggestions) || []).forEach((g) => { if (g.status === 'doing' && g.tell) ids.push(g.tell); });
     ((this.data && this.data.state && this.data.state.activity) || []).forEach((a) => { if (!ids.includes(a.id) && !['done', 'failed'].includes((this.tellStatus[a.id] || {}).phase)) ids.push(a.id); });
+    // A parked tell is asked after until it lands, whether or not the
+    // service still lists it as running: the list drops it as it finishes.
+    this.tellsAway.forEach((x) => { if (!ids.includes(x.tellId) && !['done', 'failed'].includes((this.tellStatus[x.tellId] || {}).phase)) ids.push(x.tellId); });
     for (const id of ids) {
       try {
         const st = await this.hass.callWS({ type: 'morph/tell_status', tell: id });
@@ -2357,7 +2425,9 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   outside(e) {
     const inside = (sel) => !!(e.target.closest && e.target.closest(sel));
     if (this.s.secEdit && !inside(`[data-sec-head="${CSS.escape(this.s.secEdit)}"]`)) { this.s.secEdit = null; this.schedule(); }
-    if (this.s.ask && !inside('[data-ask]') && !this.s.ask.busy) { this.s.ask = null; this.schedule(); }
+    // Outside Ask, the answers that are finished fold away; a question
+    // still being answered stays until it is.
+    if (this.s.asks.some((a) => !a.busy) && !inside('[data-ask]')) { this.s.asks = this.s.asks.filter((a) => a.busy); this.schedule(); }
     const t = this.s.tell;
     if (t && !inside('[data-tell]') && !(t.kind === 'card' && inside(`[data-tile="${CSS.escape(t.id)}"]`)) && !t.sent) { this.closeTell(); }
     if (this.s.todoOpen != null && !inside(`[data-todo="${CSS.escape(String(this.s.todoOpen))}"]`)) { this.s.todoOpen = null; this.schedule(); }
@@ -2760,6 +2830,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         { const at = this.tileOf(el); this.track('toggle', at.card, at.section, data.entity_id && String(data.entity_id)); }
         return;
       }
+      case 'head-toggle': { const hit = this.findCard(el.dataset.card); this.call({ domain: 'homeassistant', service: 'toggle', data: { entity_id: v } }); this.track('toggle', el.dataset.card, hit && hit.sec.id); return; }
       case 'scene': this.call({ domain: 'scene', service: 'turn_on', data: { entity_id: v } }); this.track('scene', null, null, v); return;
       case 'tgt': {
         const tile = el.closest('[data-tile]'); const hit = tile && this.findCard(tile.getAttribute('data-tile')); if (!hit) return;
@@ -2807,7 +2878,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       case 'tell-send': { const ta = this.shadowRoot.querySelector('textarea[data-tellkey]'); this.sendTell(ta ? ta.value : ''); return; }
       case 'tell-cancel': this.closeTell(); return;
       case 'tell-refresh': this.dash = null; this.load(); return;
-      case 'ask-tell': if (this.s.ask && this.s.ask.q) this.tellDashboard(this.s.ask.q); return;
+      case 'ask-tell': { const a = this.s.asks.find((x) => x.key === v); if (a) { this.askDrop(a); this.tellDashboard(a.q); } return; }
       case 'tell-keep': this.closeTell(); this.load(); return;
       case 'reload-page': location.reload(); return;
       case 'code-reset': {
@@ -2886,11 +2957,22 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       }
       case 'shot-zoom': { if (this.s.tell) { this.s.tell.zoom = !this.s.tell.zoom; this.schedule(); } return; }
       case 'activity-open': {
+        // A tell this page parked is the same object again, its turns and
+        // its picture with it.
+        if (this.tellsAway.some((x) => x.tellId === v)) { await this.doAct('tell-back', el); this.pollTell(true); return; }
         const a = (((this.data && this.data.state) || {}).activity || []).find((x) => x.id === v); if (!a) return;
         const st = this.tellStatus[v] || { phase: a.phase, steps: [], started: a.started };
         this.s.tell = { kind: a.kind || 'dashboard', id: a.target || '', label: a.label, path: a.path, text: a.kind === 'code' ? String(a.text || '').split('\n')[0] : a.text, sent: true, tellId: a.id, state: st, turns: [] };
         if (a.kind === 'card' && a.target && this.findCard(a.target)) this.openView(a.target, 'tell');
         this.pollTell(true); this.schedule(); return;
+      }
+      case 'tell-back': {
+        const t = this.tellsAway.find((x) => x.tellId === v); if (!t) return;
+        this.tellsAway = this.tellsAway.filter((x) => x !== t);
+        t.state = this.tellStatus[v] || t.state;
+        this.s.tell = t;
+        if (t.kind === 'card' && t.id && this.findCard(t.id)) this.openView(t.id, 'tell');
+        this.schedule(); return;
       }
       case 'close': this.closeView(); return;
       // editing
@@ -2970,57 +3052,87 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
     q = String(q || '').trim(); if (!q) return;
     const ae = this.shadowRoot.activeElement; if (ae && ae.blur) ae.blur();
     if (this.s.edit) { this.tellDashboard(q); return; }
-    this.s.ask = { q, busy: true }; this.schedule();
+    const a = this.askAdd(q);
     this.track('ask');
     if (this.admin()) {
       let r = null;
       try { r = await this.hass.callWS({ type: 'morph/ask', text: q }); } catch (e) { r = null; }
       const how = r && r.do;
-      if (how === 'done') { this.s.ask = { q, answer: r.say || 'Done.' }; this.liftNamed(r.say || ''); this.schedule(); return; }
-      if (how === 'tell_dashboard' || how === 'tell_code') { this.tellDashboard(q, how === 'tell_code'); return; }
-      if (how === 'conversation') { this.converse(q); return; }
+      if (how === 'done') { this.askSet(a, r.say || 'Done.'); return; }
+      if (how === 'tell_dashboard' || how === 'tell_code') { this.askDrop(a); this.tellDashboard(q, how === 'tell_code'); return; }
+      if (how === 'conversation') { this.converse(a); return; }
       // fallback: the interpreter did not answer (offline, no credential).
-      if (isDashChange(q)) { this.tellDashboard(q); return; }
-      if (how === 'fallback' || !r) { const ok = await this.converse(q, true); if (ok) return; }
+      if (isDashChange(q)) { this.askDrop(a); this.tellDashboard(q); return; }
+      if (how === 'fallback' || !r) { const ok = await this.converse(a, true); if (ok) return; }
     }
-    await this.askAgent(q);
+    await this.askAgent(a);
   }
+
+  // The stack of questions (newest first, the last ASK_KEEP): each one its
+  // own entry, its own conversation and its own poll, so a second question
+  // never cuts the first one off. A finished entry past the cap goes first;
+  // one still running goes only when five newer ones are asked.
+  askAdd(q) {
+    this._askSeq = (this._askSeq || 0) + 1;
+    const a = { key: String(this._askSeq), q, busy: true };
+    const list = [a, ...this.s.asks];
+    while (list.length > ASK_KEEP) {
+      let i = -1;
+      for (let j = list.length - 1; j > 0; j--) if (!list[j].busy) { i = j; break; }
+      const gone = list.splice(i > 0 ? i : list.length - 1, 1)[0];
+      clearTimeout(gone.t);
+    }
+    this.s.asks = list;
+    this.schedule();
+    return a;
+  }
+
+  askSet(a, answer) {
+    a.busy = false; a.answer = answer; clearTimeout(a.t);
+    this.liftNamed(answer, a);
+    this.schedule();
+  }
+
+  askDrop(a) { clearTimeout(a.t); this.s.asks = this.s.asks.filter((x) => x !== a); this.schedule(); }
 
   // A conversation with brAIn (a task that may continue): the session is
   // kept, so the next question resumes it, and it is the same conversation
-  // brAIn's own Ask tab can pick up.
-  async converse(q, quiet) {
+  // brAIn's own Ask tab can pick up. Only while no other conversation from
+  // this page is in flight: two turns resuming one session at once would
+  // race for it, so a question asked while another runs starts its own.
+  async converse(a, quiet) {
+    const others = this.s.asks.some((x) => x !== a && x.busy && x.conv);
     let r;
-    try { r = await this.hass.callWS({ type: 'morph/request', kind: 'converse', payload: { text: q, session: this.s.convSession || '' } }); } catch (e) { r = null; }
+    try { r = await this.hass.callWS({ type: 'morph/request', kind: 'converse', payload: { text: a.q, session: others ? '' : (this.s.convSession || '') } }); } catch (e) { r = null; }
     if (!r || !r.ok || !r.id) {
       if (quiet) return false;
-      this.s.ask = { q, answer: (r && r.error) || `${this.who()} did not take that.` }; this.schedule(); return false;
+      this.askSet(a, (r && r.error) || `${this.who()} did not take that.`); return false;
     }
-    this.s.converse = { id: r.id, q, state: r };
-    this.s.ask = { q, busy: true };
-    this.pollConverse();
+    a.conv = { id: r.id, state: r };
+    this.schedule();
+    this.pollConverse(a);
     return true;
   }
 
-  async pollConverse() {
-    const c = this.s.converse; if (!c) return;
+  async pollConverse(a) {
+    const c = a.conv; if (!c || !a.busy) return;
     try {
       const st = await this.hass.callWS({ type: 'morph/tell_status', tell: c.id });
       c.state = st;
       if (st.phase === 'done' || st.phase === 'failed' || st.phase === 'missing') {
         if (st.session_id) this.s.convSession = st.session_id;
-        this.s.ask = { q: c.q, answer: st.say || (st.phase === 'failed' ? `${this.who()} could not answer.` : 'No answer.') };
-        this.s.converse = null;
-        this.liftNamed(this.s.ask.answer);
-        this.schedule();
+        this.askSet(a, st.say || (st.phase === 'failed' ? `${this.who()} could not answer.` : 'No answer.'));
         return;
       }
     } catch (e) { /* asked again below */ }
     this.schedule();
-    clearTimeout(this._convT); this._convT = setTimeout(() => this.pollConverse(), 1200);
+    // Dropped from the stack (five newer questions): nobody reads it.
+    if (!this.s.asks.includes(a)) return;
+    clearTimeout(a.t); a.t = setTimeout(() => this.pollConverse(a), 1200);
   }
 
-  async askAgent(q) {
+  async askAgent(a) {
+    const q = a.q;
     const agent = Object.values(this.hass.entities || {}).find((e) => e.platform === 'brain' && e.entity_id.startsWith('conversation.'));
     try {
       // The agent is told, beside the words, that Morph's page is changed
@@ -3034,16 +3146,13 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         r = await this.hass.callWS(msg);
       }
       this._conv = r.conversation_id;
-      const ans = (r.response && r.response.speech && r.response.speech.plain && r.response.speech.plain.speech) || 'No answer.';
-      this.s.ask = { q, answer: ans };
-      this.liftNamed(ans);
-    } catch (e) { this.s.ask = { q, answer: 'Could not ask: ' + (e.message || e) }; }
-    this.schedule();
+      this.askSet(a, (r.response && r.response.speech && r.response.speech.plain && r.response.speech.plain.speech) || 'No answer.');
+    } catch (e) { this.askSet(a, 'Could not ask: ' + (e.message || e)); }
   }
 
   // What an answer names on the page lifts into Now for ten minutes with
   // "because you asked" (§7.3), and the sentence offers Show me.
-  liftNamed(ans) {
+  liftNamed(ans, a) {
     const show = [];
     const low = String(ans || '').toLowerCase();
     this.eachSection((sec) => this.sectionCards(sec).forEach((c) => {
@@ -3051,7 +3160,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
       const n = this.cardName(c, sec);
       if (show.length < 3 && n.length > 3 && low.includes(n.toLowerCase())) show.push({ id: c.id, name: n });
     }));
-    if (this.s.ask) this.s.ask.show = show;
+    if (a) a.show = show;
     const until = Date.now() + sal.ASKED_MS;
     show.forEach((x) => { this.asked[x.id] = until; });
     if (show.length) { this._salDirty = true; this._forceApply = true; }
@@ -3116,7 +3225,6 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
   }
 
   tellDashboard(q, code) {
-    this.s.ask = null;
     this.s.tell = { kind: 'dashboard', path: code ? 'Morph itself' : 'The whole dashboard', label: code ? 'Morph itself' : 'dashboard', sent: false, draft: q, turns: [] };
     this.shoot(this.s.tell);
     this.sendTell(q);

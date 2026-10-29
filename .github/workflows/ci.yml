@@ -406,6 +406,13 @@ jobs:
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-askabout.mjs
 
+      # The house's own layer over the page: house.css applied, a house.js
+      # that throws contained to one line in ⚙, ?nohouse=1 and the
+      # device switch honoured.
+      - name: Measure the house layer
+        if: matrix.group == 'static-a'
+        run: node tests/manual/measure-house-layer.mjs
+
       - name: Measure the activity tab
         if: matrix.group == 'static-a'
         run: node tests/manual/measure-activity.mjs

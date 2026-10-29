@@ -18,6 +18,26 @@ export const CSS = `
 .morph button:focus-visible,.morph input:focus-visible,.morph [tabindex]:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:8px}
 .disp{font-family:'Bricolage Grotesque','Manrope',sans-serif}
 .wrap{max-width:1440px;margin:0 auto;padding:22px clamp(14px,3vw,44px) 120px;display:flex;flex-direction:column;gap:30px}
+/* The scroller holds the page and, on a touch screen, the room rail beside
+   it (rail.js): a column of the page, never over it (rule 1). Its tips are
+   vertical words inside it, beside the finger. */
+.scroll{display:flex;align-items:flex-start}
+.scroll>.wrap{flex:1 1 auto;min-width:0}
+.srail{display:none}
+@media (any-pointer:coarse){
+.scroll>.wrap{padding-right:4px}
+.srail{display:block;position:sticky;top:0;flex:0 0 28px;width:28px;height:var(--morph-h,100vh);overflow:hidden;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;border-radius:14px 0 0 14px;transition:background .2s ease}
+.srail.engaged{background:var(--chip)}
+.srail.open{background:color-mix(in oklab,var(--violet) 14%,var(--surface))}
+.srline{position:absolute;top:8px;bottom:8px;right:9px;width:2px;border-radius:1px;background:var(--line)}
+.srdots i{position:absolute;right:7px;width:6px;height:6px;margin-top:-3px;border-radius:50%;opacity:.75;transition:transform .15s ease}
+.srdots i.on{transform:scale(1.7);opacity:1}
+.srfill{position:absolute;right:2px;height:4px;border-radius:2px;background:var(--violet)}
+.srtip{position:absolute;left:1px;writing-mode:vertical-rl;font-size:12px;font-weight:600;line-height:13px;color:var(--text);white-space:nowrap;pointer-events:none}
+.srtip span{display:block}
+.srtip .srsub{color:var(--muted);font-weight:500}
+.srail.open .srtip{font-size:13px;color:var(--violet)}
+}
 .bar{display:flex;align-items:center;gap:10px;min-height:44px}
 .brand{font-weight:700;font-size:12px;letter-spacing:.24em;display:inline-flex;align-items:center;gap:8px}
 .brand svg{color:var(--violet);letter-spacing:0}
@@ -65,6 +85,14 @@ section.sec.nowband .secbg{background:transparent!important}
 .needs{font-size:13px;color:var(--rose);white-space:nowrap}
 .trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:13px;cursor:pointer;min-height:28px;white-space:nowrap}
 .secbecause{flex-basis:100%;font-size:13px;margin:-2px 0 0}
+/* A header switch (options.header): a pill at the right of a room's title
+   row, amber while on; a 44px target on touch. */
+.morph .shtog{align-self:center;display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:transparent;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;flex-shrink:0;transition:background .2s ease,color .2s ease,border-color .2s ease}
+.morph .shtog i{width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor}
+.morph .shtog.on{color:var(--amber);border-color:color-mix(in oklab,var(--amber) 55%,transparent);background:color-mix(in oklab,var(--amber) 16%,transparent)}
+.morph .shtog.on i{background:var(--amber);box-shadow:none}
+.morph .shtog:disabled{opacity:.45;cursor:default}
+@media (pointer:coarse){.morph .shtog{min-height:44px}}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
 .chip i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--line2)}
 .chip.on.rose i{background:var(--rose);box-shadow:none}.chip.on.amber i{background:var(--amber);box-shadow:none}
@@ -145,6 +173,8 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .askin:focus{border-bottom-color:var(--line2)}
 .askin::placeholder{color:var(--quiet)}
 .answer{padding-left:30px;max-width:760px;display:flex;flex-direction:column;gap:4px;margin-top:4px}
+.answer p .pulse{display:inline-block;margin-right:10px;vertical-align:middle}
+.askrow .askbusy{margin-left:-4px}
 .answer p{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:19px;font-weight:300;line-height:1.5;letter-spacing:-.01em;color:var(--muted);white-space:pre-wrap}
 .sugs{display:none;flex-wrap:wrap;gap:0 20px;padding-left:30px}
 [data-ask]:focus-within .sugs,[data-ask]:has(.askin:not(:placeholder-shown)) .sugs{display:flex}

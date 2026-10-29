@@ -183,7 +183,10 @@ iframe[hidden]{display:none}
     }
     clearInterval(this._validate);
     this._validate = setInterval(() => this.validate(), VALIDATE_MS);
-    this.frame.src = `${this.info.ingress_url}?shell=1`;
+    // ?nohouse=1 on brAIn's sidebar address is the page's safe mode: the
+    // house's own layer (/config/.brain/ui) is skipped inside the frame too.
+    const nohouse = /[?&]nohouse=1(?:&|$)/.test(location.search) ? '&nohouse=1' : '';
+    this.frame.src = `${this.info.ingress_url}?shell=1${nohouse}`;
     this.frame.hidden = false;
     this.say('');
   }

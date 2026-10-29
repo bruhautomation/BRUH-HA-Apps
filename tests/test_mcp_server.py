@@ -565,6 +565,8 @@ class TestMCPProtocol(unittest.TestCase):
             "minecraft_world", "minecraft_command", "minecraft_server",
             "minecraft_addons", "label_printer_status", "print_label",
             "bright_status", "bright_show", "explain_decision",
+            # What became of brAIn's own notifications (the delivery ledger)
+            "notification_history",
             # 2.11: what a device shows as, through the brain Power Tools
             "set_device_class", "show_switch_as", "stop_showing_switch_as",
             "set_sensor_display",

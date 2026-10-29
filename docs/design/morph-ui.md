@@ -37,7 +37,10 @@ that". They are the acceptance criteria.
 2. **One grammar.** **Tap** does the main thing (toggle, play, lock). **Slide**
    sets a level (brightness, fan speed, blind position). **Hold** opens the card
    in place with its options and its history. In **Edit**, **tap** edits and
-   **hold** talks to brAIn (§7).
+   **hold** talks to brAIn (§7). A short **pull left** on the room rail at a
+   touch screen's right edge is an *opening* gesture, not a slide: it sets no
+   level, it opens the room index (then up or down goes room to room), and a
+   vertical swipe there is an ordinary scroll.
 3. **No chrome.** No Done buttons, tabs, chevrons, instruction rows, hold rings
    or drag handles in normal use. A small hint pill on hover is the most a card
    gets.
