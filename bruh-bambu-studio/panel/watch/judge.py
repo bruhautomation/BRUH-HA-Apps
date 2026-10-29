@@ -102,6 +102,10 @@ def prompt(ctx: dict) -> str:
         "(often in front of the part), the purge line and the prime tower, a brim or skirt, " +
         "support material, the camera's wide-angle bend, reflections on the plate, and only " +
         "the bottom part of the object existing so far.",
+        "The bed and the toolhead move while a printer prints (an A1's bed slides front to " +
+        "back, every bed drops a little at each layer), so the plate may sit in a different " +
+        "place than in an earlier picture and parts of the frame may be smeared: neither is " +
+        "a problem with the print. Judge what is sharp enough to see.",
         "Look for: spaghetti (loose tangled strands); a part come loose, moved or knocked over; " +
         "a first layer not sticking or dragged; a blob of plastic on the nozzle; nothing being " +
         "laid down where the part should be growing (compare with the earlier picture); a layer " +

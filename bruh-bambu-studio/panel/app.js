@@ -62,6 +62,7 @@ function show(view) {
   try { localStorage.setItem("bambu.view", view); } catch (_) { /* storage may be refused in an iframe */ }
   if (view === "files") loadFiles();
   if (view === "printers" && state.data) renderPrinters();
+  if (view === "settings") renderSettings();
   if (view === "studio") connectScreen();
 }
 
@@ -214,8 +215,22 @@ function clock(minutes) {
 const STATE_WORDS = { idle: "Idle", prepare: "Preparing", running: "Printing", pause: "Paused",
   finish: "Finished", failed: "Failed", slicing: "Slicing", offline: "Offline", connecting: "Connecting" };
 
+// A finished or failed print stays the printer's state until the next one
+// starts; once the plate is seen clear (or somebody says so) it is ready.
+function plateClear(p) {
+  const w = p.failure_detection;
+  return Boolean(w && w.plate && w.plate.state === "clear" && (p.state === "finish" || p.state === "failed"));
+}
+
+function stateWord(p) {
+  if (!p.online) return "Offline";
+  if (plateClear(p)) return "Ready";
+  return STATE_WORDS[p.state] || p.state || "Connecting";
+}
+
 function stateTone(p) {
   if (!p.online) return "bad";
+  if (plateClear(p)) return "";
   if (p.state === "failed" || p.error_code) return "bad";
   if (p.state === "pause") return "warn";
   if (p.printing) return "live";
@@ -328,7 +343,7 @@ function cameraBlock(p) {
     scheduleFrame(p.id, 50);
   }
   const tone = stateTone(p);
-  const word = p.online ? (STATE_WORDS[p.state] || p.state || "Connecting") : "Offline";
+  const word = stateWord(p);
   // The stage is the job's to say (it is in the job block), not the picture's.
   const overlay = el("div", { class: "camover" },
     el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word),
@@ -397,30 +412,64 @@ function fullScreen(node, onChange) {
   }
 }
 
-function ring(pct) {
+function ring(pct, done = false) {
   const value = Math.max(0, Math.min(100, pct || 0));
+  if (done) return el("div", { class: "ring done", style: "--p:100", role: "img", "aria-label": "Finished" }, el("span", {}, "✓"));
   return el("div", { class: "ring", style: `--p:${value}`, role: "img", "aria-label": `${value}% done` },
     el("span", {}, `${value}`, el("small", {}, "%")));
 }
 
+function plateWatching(p) {
+  const w = p.failure_detection;
+  return Boolean(w && w.plate_watch);
+}
+
+// The job: what is printing (or what just finished, until the plate is
+// cleared), its progress and its two buttons. Nothing once the plate is
+// clear: a finished print that is no longer on the plate is not news.
 function jobBlock(p) {
   if (!(p.printing || p.state === "finish" || p.state === "failed") || !p.file) return null;
+  if (!p.printing && plateClear(p)) return null;
   const facts = [];
   if (p.printing && p.remaining_min != null) {
-    facts.push(el("div", { class: "fact" }, el("b", {}, duration(p.remaining_min)), el("span", {}, "left")));
-    facts.push(el("div", { class: "fact" }, el("b", {}, clock(p.remaining_min)), el("span", {}, "done at")));
+    facts.push(el("b", {}, duration(p.remaining_min)), " left");
+    const at = clock(p.remaining_min);
+    if (at) facts.push(` · done ${at}`);
   }
-  if (p.layer != null && p.total_layers) {
-    facts.push(el("div", { class: "fact" }, el("b", {}, `${p.layer}/${p.total_layers}`), el("span", {}, "layer")));
+  if (p.layer != null && p.total_layers) facts.push(`${facts.length ? " · " : ""}layer ${p.layer}/${p.total_layers}`);
+  const finished = p.state === "finish";
+  let stage;
+  if (p.printing) stage = p.stage || "Printing";
+  else if (finished) stage = plateWatching(p) ? "Finished — it clears itself once the part is off the plate." : "Finished — on the plate.";
+  else stage = "The print failed.";
+  const buttons = el("div", { class: "jobbtns" });
+  if (p.state === "pause") {
+    buttons.append(el("button", { class: "primary", onclick: () => command(p, "resume") }, icon("play"), "Resume"));
+  } else if (p.printing) {
+    buttons.append(el("button", { class: "iconbtn", title: "Pause", "aria-label": "Pause the print",
+      onclick: () => command(p, "pause") }, icon("pause")));
+  }
+  if (p.printing) {
+    const armed = state.armed === p.id;
+    buttons.append(el("button", { class: armed ? "danger solid" : "iconbtn danger",
+      title: "Stop the print", "aria-label": armed ? "Press again to stop" : "Stop the print", onclick: () => {
+        if (state.armed === p.id) { state.armed = null; command(p, "stop"); return; }
+        state.armed = p.id;
+        renderPrinters(true);
+        setTimeout(() => { if (state.armed === p.id) { state.armed = null; renderPrinters(true); } }, 4000);
+      } }, icon("stop"), armed ? "Stop?" : null));
+  } else {
+    buttons.append(el("button", { type: "button", title: "The part is off the plate",
+      onclick: () => watchAct(p, "plate_clear") }, "Plate is clear"));
   }
   return el("div", { class: "job" },
-    ring(p.progress),
+    ring(p.progress, finished && !p.printing),
     el("div", { class: "jobtext" },
       el("b", { class: "jobname", title: p.file }, p.file),
-      el("p", { class: "hint" }, p.printing ? (p.stage || "Printing")
-        : p.state === "finish" ? "Finished — clear the plate before the next print." : "The print failed."),
-      el("div", { class: "facts" }, facts)),
-    p.job_picture ? el("img", { class: "jobpic", src: p.job_picture, alt: "", loading: "lazy" }) : null);
+      el("p", { class: "hint" }, stage),
+      facts.length ? el("div", { class: "facts" }, facts) : null),
+    p.job_picture ? el("img", { class: "jobpic", src: p.job_picture, alt: "", loading: "lazy" }) : null,
+    buttons);
 }
 
 function tile(iconName, label, value, sub) {
@@ -491,24 +540,13 @@ function hmsBlock(p) {
     el("p", { class: "hint" }, "Each code opens Bambu Lab's page on what it means and what to do."));
 }
 
+// Speed, while it prints: a select, not four buttons across the card.
 function controlsBlock(p) {
-  const row = el("div", { class: "controls" });
-  if (p.state === "pause") row.append(el("button", { class: "primary", onclick: () => command(p, "resume") }, icon("play"), "Resume"));
-  else if (p.printing) row.append(el("button", { onclick: () => command(p, "pause") }, icon("pause"), "Pause"));
-  if (p.printing) {
-    const armed = state.armed === p.id;
-    row.append(el("button", { class: armed ? "danger solid" : "danger", onclick: () => {
-      if (state.armed === p.id) { state.armed = null; command(p, "stop"); return; }
-      state.armed = p.id;
-      renderPrinters(true);
-      setTimeout(() => { if (state.armed === p.id) { state.armed = null; renderPrinters(true); } }, 4000);
-    } }, icon("stop"), armed ? "Press again to stop" : "Stop"));
-    row.append(el("div", { class: "seg", role: "group", "aria-label": "Speed" },
-      ["silent", "standard", "sport", "ludicrous"].map((s) => el("button", { type: "button",
-        "aria-pressed": String(s === p.speed), onclick: () => command(p, "speed", { value: s }) },
-      s[0].toUpperCase() + s.slice(1)))));
-  }
-  return row.childNodes.length ? row : null;
+  if (!p.printing) return null;
+  const sel = el("select", { "aria-label": "Print speed", onchange: (e) => command(p, "speed", { value: e.target.value }) },
+    ["silent", "standard", "sport", "ludicrous"].map((v) => el("option", { value: v, selected: v === p.speed },
+      v[0].toUpperCase() + v.slice(1))));
+  return el("div", { class: "controls" }, el("label", { class: "speed" }, icon("speed"), sel));
 }
 
 const storageNodes = {};
@@ -525,69 +563,63 @@ function storageBlock(p) {
   return box;
 }
 
-async function loadStorage(p) {
+function fileWhen(f) {
+  if (!f.mtime) return f.date || "";
+  const d = new Date(f.mtime * 1000);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleString([], { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }),
+    hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+}
+
+// What is on the printer: a list, newest first (the server sorts it), the
+// first few shown and the rest a press away.
+const STORAGE_SHOWN = 8;
+
+async function loadStorage(p, all = false) {
   const node = storageNodes[p.id];
   node.dataset.loaded = "1";
-  node.replaceChildren(el("p", { class: "hint" }, "Reading the printer's storage…"));
+  if (!node.childElementCount || node.querySelector(".warn")) {
+    node.replaceChildren(el("p", { class: "hint" }, "Reading the printer's storage…"));
+  }
   try {
     const r = await api(`api/printer/storage?printer=${encodeURIComponent(p.id)}`);
     const jobs = r.files.filter((f) => f.printable);
-    const queue = [];
-    const grid = el("div", { class: "pfiles" }, jobs.map((f) => el("div", { class: "pfile" },
-      storagePicture(f, queue),
-      el("b", { title: f.name }, f.name.replace(/(\.gcode)?\.3mf$/i, "")),
-      el("span", { class: "hint" }, [f.size ? `${(f.size / 1e6).toFixed(1)} MB` : null, f.date].filter(Boolean).join(" · ")),
-      el("div", { class: "row wrap" },
-        el("button", { class: "primary", disabled: p.printing, onclick: () => printStored(p, f) }, "Print"),
-        el("button", { class: "danger", onclick: async () => {
+    const shown = all ? jobs : jobs.slice(0, STORAGE_SHOWN);
+    const list = el("ul", { class: "plist" }, shown.map((f) => {
+      const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
+        el("div", { class: "pmenupop" }, el("button", { type: "button", class: "danger", onclick: async () => {
           if (!confirm(`Delete ${f.name} from ${p.name}?`)) return;
           try {
             await api(`api/printer/storage?printer=${encodeURIComponent(p.id)}&name=${encodeURIComponent(f.name)}`,
               { method: "DELETE" });
-            loadStorage(p);
+            loadStorage(p, all);
           } catch (e) { toast(e.message, true); }
-        } }, "Delete")))));
-    node.replaceChildren(
-      jobs.length ? grid : el("p", { class: "hint" }, "No print jobs on the printer's storage."),
-      el("div", { class: "row" }, el("button", { type: "button", onclick: () => loadStorage(p) }, "Read again")));
-    loadPictures(queue, node);
+        } }, icon("close"), "Delete from the printer")));
+      return el("li", {},
+        el("div", { class: "grow" },
+          el("b", { title: f.name }, f.name.replace(/(\.gcode)?\.3mf$/i, "")),
+          el("span", { class: "hint" }, [fileWhen(f), f.size ? `${(f.size / 1e6).toFixed(1)} MB` : null].filter(Boolean).join(" · "))),
+        el("button", { type: "button", disabled: p.printing, title: p.printing ? "It is printing" : "Print it again",
+          onclick: () => printStored(p, f) }, "Print"),
+        menu);
+    }));
+    node.replaceChildren(...[
+      el("div", { class: "plisthead" }, el("span", { class: "hint" },
+        jobs.length ? `${jobs.length} print job${jobs.length === 1 ? "" : "s"}, newest first` : "No print jobs on the printer's storage."),
+      el("button", { type: "button", class: "iconbtn quiet", title: "Read again", "aria-label": "Read the printer's storage again",
+        onclick: () => loadStorage(p, all) }, icon("refresh"))),
+      jobs.length ? list : null,
+      jobs.length > shown.length ? el("button", { type: "button", class: "quiet",
+        onclick: () => loadStorage(p, true) }, `Show all ${jobs.length}`) : null].filter(Boolean));
   } catch (e) {
     node.dataset.loaded = "";
     node.replaceChildren(el("p", { class: "warn" }, e.message),
-      el("button", { type: "button", onclick: () => loadStorage(p) }, "Try again"));
+      el("button", { type: "button", onclick: () => loadStorage(p, all) }, "Try again"));
   }
 }
 
-// A file's picture on the printer: a quiet plate while it loads or when the
-// file has none, never a word that reads as an error. The pictures are read
-// one at a time (the printer serves one storage session well), and one that
-// failed (storage busy, a slow answer) is asked again rather than left blank.
+// The quiet plate drawn for a file with no picture (the Files tab).
 const PLATE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17l9 4 9-4-9-4-9 4zm9-14L3 7l9 4 9-4-9-4zm-9 9l9 4 9-4-2.2-1L12 13.9 5.2 11 3 12z"/></svg>';
-
-function storagePicture(f, queue) {
-  const box = el("div", { class: "nopic", "aria-hidden": "true" });
-  box.innerHTML = PLATE_SVG;
-  if (f.picture) { box.classList.add("loading"); queue.push({ url: f.picture, box }); }
-  return box;
-}
-
-async function loadPictures(queue, node) {
-  for (const item of queue) {
-    for (let attempt = 0; attempt < 4 && node.isConnected; attempt += 1) {
-      if (attempt) await new Promise((r) => setTimeout(r, 1500 * attempt));
-      let r;
-      try { r = await fetch(item.url, { cache: "no-store" }); } catch (_) { continue; }
-      if (r.status === 404) break;  // the file has no picture
-      if (!r.ok || !(r.headers.get("content-type") || "").startsWith("image/")) continue;
-      const img = el("img", { src: URL.createObjectURL(await r.blob()), alt: "" });
-      try { await img.decode(); } catch (_) { continue; }
-      item.box.replaceWith(img);
-      item.box = null;
-      break;
-    }
-    if (item.box) item.box.classList.remove("loading");
-  }
-}
 
 async function printStored(p, f) {
   const dlg = $("#printDialog");
@@ -679,31 +711,70 @@ async function watchSet(p, changes) {
   } catch (e) { toast(e.message, true); }
 }
 
+// Where it looks: the layers as a track, the printed part filled, "Now" at
+// the layer it is on, a dot per planned look in its state, and a key. A dot
+// says what it is for when pressed (a phone shows no title).
 function watchTimeline(p, w) {
   const points = (w.plan && w.plan.checkpoints) || [];
   const total = (w.plan && w.plan.total_layers) || p.total_layers;
   if (!points.length || !total) return null;
-  const line = el("div", { class: "wline", role: "img",
-    "aria-label": `${points.length} planned looks over ${total} layers` });
-  line.append(el("i", { class: "wfill", style: `width:${Math.min(100, ((p.layer || 0) / total) * 100)}%` }));
+  const at = (layer) => Math.max(0, Math.min(100, (layer / total) * 100));
+  const reason = el("p", { class: "wreason hint" });
+  const say = (c) => {
+    reason.replaceChildren(el("b", {}, `Layer ${c.layer} · ${KIND_WORDS[c.kind] || c.kind}: `), c.reason,
+      c.state === "done" ? ` — ${DECISION_WORDS[c.decision] || c.decision}.`
+        : c.state === "missed" || c.state === "skipped" ? " — not looked at." : "");
+  };
+  const line = el("div", { class: "wline" });
+  if (p.printing && p.layer) line.append(el("i", { class: "wfill", style: `width:${at(p.layer)}%` }));
+  const track = el("div", { class: "wtrack", role: "group",
+    "aria-label": `${points.length} planned looks over ${total} layers` }, line);
   for (const c of points) {
-    const tone = c.state === "done" ? (DECISION_TONE[c.decision] || "") : c.state;
-    line.append(el("span", { class: `wtick ${tone}`, style: `left:${Math.min(100, (c.layer / total) * 100)}%`,
-      title: `Layer ${c.layer} · ${KIND_WORDS[c.kind] || c.kind}: ${c.reason}`
-        + (c.state === "done" ? ` — ${DECISION_WORDS[c.decision] || c.decision}` : c.state === "missed" ? " — missed" : "") }));
+    const tone = c.state === "done" ? (DECISION_TONE[c.decision] || "live") : c.state;
+    const tick = el("button", { type: "button", class: `wtick ${tone}`, style: `left:${at(c.layer)}%`,
+      "aria-label": `Layer ${c.layer}: ${KIND_WORDS[c.kind] || c.kind}`,
+      onclick: () => { track.querySelectorAll(".wtick.on").forEach((t) => t.classList.remove("on")); tick.classList.add("on"); say(c); } });
+    track.append(tick);
   }
-  if (p.printing && p.layer) line.append(el("span", { class: "wnow", style: `left:${Math.min(100, (p.layer / total) * 100)}%` }));
-  const upcoming = points.filter((c) => c.state === "planned").slice(0, 3);
+  if (p.printing && p.layer) {
+    const pos = at(p.layer);
+    track.append(el("span", { class: `wnow${pos > 80 ? " right" : ""}`, style: `left:${pos}%` },
+      el("span", {}, `Now · ${p.layer}`)));
+  }
+  const done = points.filter((c) => c.state === "done").length;
+  const next = points.find((c) => c.state === "planned");
+  if (next) say(next);
+  else reason.textContent = done ? "Every planned look is done." : "";
+  if (next) reason.prepend("Next: ");
+  // Looks are counted as brAIn runs: the planned ones, and the extra looks a
+  // sudden change, the printer's own camera or a doubt asked for.
+  const used = (w.looks && w.looks.used) || 0;
+  const extra = Math.max(0, used - done);
+  const counts = `${done} of ${points.length} planned looks done`
+    + (extra ? ` · ${extra} extra (a doubt or a sudden change)` : "");
   return el("div", { class: "wplan" },
-    el("div", { class: "wplanhead" }, el("b", {}, "Where it looks"),
-      el("span", { class: "hint" }, w.plan.source === "gcode" ? "Planned from the print's G-code"
-        : "Spread by layer (the print's file could not be read)"),
-      el("span", { class: "grow" }),
-      el("span", { class: "hint" }, `${w.looks.used}/${w.looks.budget} looks`)),
-    line,
-    upcoming.length ? el("ul", { class: "wnext" }, upcoming.map((c) => el("li", {},
-      el("b", {}, `Layer ${c.layer}`), el("span", { class: "wkind" }, KIND_WORDS[c.kind] || c.kind),
-      el("span", { class: "hint" }, c.reason)))) : null);
+    el("div", { class: "wplanhead" }, el("b", {}, "Where it looks"), el("span", { class: "hint" }, counts)),
+    track,
+    el("div", { class: "wends" }, el("span", {}, "Layer 1"), el("span", {}, `Layer ${total}`)),
+    el("ul", { class: "wkey", "aria-label": "Key" },
+      el("li", {}, el("i", {}), "Planned"), el("li", {}, el("i", { class: "k-live" }), "Looked: fine"),
+      el("li", {}, el("i", { class: "k-warn" }), "Doubt"), el("li", {}, el("i", { class: "k-bad" }), "Failure"),
+      el("li", {}, el("i", { class: "k-missed" }), "Missed")),
+    reason,
+    w.plan.source === "gcode" ? null : el("p", { class: "hint" }, "Spread by layer: the print's file could not be read."));
+}
+
+// When it looks, and what it does about a moving bed: said by the ⓘ.
+function watchInfo() {
+  return el("details", { class: "info" }, el("summary", { "aria-label": "How print failure detection works", title: "How it works" }, "i"),
+    el("div", { class: "infopop" },
+      el("p", {}, el("b", {}, "When brAIn looks. "), "Each look is a brAIn run, so it looks only where prints fail. Before a print starts it reads the print's G-code and plans looks at:"),
+      el("ul", {}, el("li", {}, "the first layer, and again a few mm up"), el("li", {}, "a sharp narrowing, bridges, overhangs and supports"),
+        el("li", {}, "a colour change, a part getting tall and thin, the last layers"), el("li", {}, "one look in any long quiet stretch")),
+      el("p", {}, "It also looks at once when the camera picture changes suddenly or the printer's own camera raises an alert, about 3 minutes after anything doubtful, when you press Check now, and once when the print finishes. Sensitivity sets how many looks a print gets (Settings)."),
+      el("p", {}, el("b", {}, "Between looks "), "it checks a small grey copy of the picture every 10 seconds, free: a covered lens, a dark chamber or a frozen feed stand looks down, and it says so."),
+      el("p", {}, el("b", {}, "A moving bed. "), "The bed and toolhead move while it prints (an A1's bed slides front to back). So a look takes a burst of four frames about a second apart and sends brAIn the sharpest one, and brAIn is told a smear or a moved plate is not a failure. A look it still could not judge is never called a failure; it looks again later. Keep the chamber light on for the sharpest pictures."),
+      el("p", {}, el("b", {}, "After a print "), "it watches the plate (a picture a minute or so, only once the print has finished) and clears the finished print from this page once the part is taken off.")));
 }
 
 function watchAlert(p, w) {
@@ -764,43 +835,25 @@ function watchHistory(p) {
   return box;
 }
 
-function watchSettings(p, w) {
-  const box = el("details", { class: "more", "data-k": "watchset" }, el("summary", {}, "Detection settings"));
-  const notify = el("select", { class: "sel", "aria-label": "Phone for alerts",
-    onchange: (e) => watchSet(null, { notify: e.target.value }) },
-  el("option", { value: "" }, "Home Assistant notifications only"));
-  const fillTargets = () => {
-    const current = (state.data && state.data.watch_notify) || w.notify || "";
-    const list = watchTargets.list || [];
-    notify.replaceChildren(el("option", { value: "" }, "Home Assistant notifications only"),
-      ...[...new Set([...list, ...(current ? [current] : [])])].map((t) => el("option", { value: t, selected: t === current }, t.replace(/^notify\./, ""))));
-  };
-  box.addEventListener("toggle", async () => {
-    if (!box.open) return;
-    if (watchTargets.list === null) {
-      try { watchTargets.list = (await api("api/watch/targets")).targets; } catch (_) { watchTargets.list = []; }
-    }
-    fillTargets();
-  });
-  fillTargets();
+// Detection's settings for one printer (the Settings tab).
+function watchSettings(p) {
+  const w = p.failure_detection || {};
   const seg = (label, key, options) => el("div", { class: "wset" }, el("span", { class: "wsetlabel" }, label),
-    el("div", { class: "seg", role: "group", "aria-label": label }, options.map(([value, word, title]) =>
+    el("div", { class: "seg", role: "group", "aria-label": `${label} for ${p.name}` }, options.map(([value, word, title]) =>
       el("button", { type: "button", title, "aria-pressed": String(w[key] === value),
         onclick: () => watchSet(p, { [key]: value }) }, word))));
   const toggle = (label, key, hint) => el("label", { class: "check wcheckbox" },
     el("input", { type: "checkbox", checked: Boolean(w[key === "plate" ? "plate_watch" : key]),
       onchange: (e) => watchSet(p, { [key]: e.target.checked }) }),
     el("span", {}, label, el("small", { class: "hint" }, hint)));
-  box.append(
+  return el("div", { class: "wprinter grid" }, el("h3", {}, p.name),
+    toggle("Print failure detection", "enabled", "brAIn looks at the print at the moments it is most likely to fail."),
     seg("When a print fails", "mode", [["pause", "Warn and pause", "Pause a print brAIn is sure has failed"],
       ["warn", "Only warn", "Never pause; only tell you"]]),
     seg("Sensitivity", "sensitivity", [["low", "Relaxed", "Fewer looks, and only sure things"],
       ["medium", "Balanced", ""], ["high", "Careful", "More looks, and doubts raised sooner"]]),
     toggle("Turn the chamber light on to see", "light", "Only when it is too dark, once per print."),
-    toggle("Watch for the plate being cleared", "plate", "After a print, for the Plate clear sensor."),
-    el("label", {}, "Alerts go to", notify),
-    el("p", { class: "hint" }, "Each look is a brAIn run, so it looks only where a print is likely to fail and after anything doubtful, not every few seconds."));
-  return box;
+    toggle("Notice when the plate is cleared", "plate", "After a print finishes, a picture a minute or so until the part is off the plate — detection on or off."));
 }
 
 function watchBlock(p) {
@@ -809,19 +862,18 @@ function watchBlock(p) {
   const [word, tone] = WATCH_STATUS[w.status] || [w.status, ""];
   const head = el("div", { class: "whead" },
     el("span", { class: "wicon" }, icon(w.status === "warning" || w.status === "failure" ? "shieldAlert" : "shield")),
-    el("div", { class: "grow" }, el("b", {}, "Print failure detection"),
+    el("div", { class: "grow" }, el("b", {}, "Failure detection"),
       w.enabled ? el("p", { class: "hint" }, w.sentence) : null),
     w.enabled ? el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word) : null,
+    watchInfo(),
     el("label", { class: "switch", title: w.enabled ? "Turn print failure detection off" : "Turn print failure detection on" },
       el("input", { type: "checkbox", role: "switch", checked: w.enabled, "aria-label": "Print failure detection",
         onchange: (e) => watchSet(p, { enabled: e.target.checked }) }), el("i", {})));
   if (!w.enabled) {
     return el("section", { class: "watch off" }, head,
-      el("p", { class: "hint" }, "Watches the camera while it prints: brAIn looks at the moments a print is most likely to fail, warns you, and pauses a print that has failed."));
+      el("p", { class: "hint" }, "brAIn watches the camera at the moments a print is most likely to fail, warns you, and pauses a print that has failed."));
   }
   const last = w.last;
-  const plate = w.plate || {};
-  const plateWords = { clear: "Plate clear", occupied: "Print on the plate", printing: "Printing", unknown: "Plate: not sure" };
   // The last look is the alert's own while one is open: said once, not twice.
   const repeats = last && w.alert && w.alert.open && w.alert.check === last.n;
   const lastRow = last && !repeats ? el("div", { class: "wlast" },
@@ -837,40 +889,35 @@ function watchBlock(p) {
     lastRow,
     el("div", { class: "row wrap" },
       el("button", { type: "button", disabled: !(p.printing || p.state === "finish") || w.status === "looking",
-        title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now"),
-      w.plate_watch && !p.printing ? el("span", { class: `pill ${plate.state === "clear" ? "done" : ""}`, title: plate.why || "" },
-        el("i", { class: "dot" }), plateWords[plate.state] || "Plate") : null,
-      w.plate_watch && plate.state !== "clear" && !p.printing
-        ? el("button", { type: "button", onclick: () => watchAct(p, "plate_clear") }, "It's clear") : null),
-    watchHistory(p), watchSettings(p, w));
+        title: "Have brAIn look at the print now", onclick: () => watchAct(p, "check") }, icon("eye"), "Check now")),
+    watchHistory(p));
 }
 
 function printerCard(p) {
   const meta = [p.model, p.nozzle_diameter ? `${p.nozzle_diameter} mm nozzle` : null, p.host,
     p.wifi ? `Wi-Fi ${p.wifi}` : null].filter(Boolean).join(" · ");
-  // Removing a printer is rare and cannot be undone by a press, so it is in
-  // the card's menu, not a ✕ beside Refresh.
+  // Refresh, Reconnect and Remove are rare: the card's ⋯ menu, not a row.
   const menu = el("details", { class: "pmenu", "data-k": "menu" },
     el("summary", { "aria-label": `More for ${p.name}` }, "⋯"),
     el("div", { class: "pmenupop" },
+      el("button", { type: "button", title: "Ask for a full report (after changing a spool)",
+        onclick: () => command(p, "refresh") }, icon("refresh"), "Refresh"),
+      el("button", { type: "button", title: "Drop the connection and open a new one",
+        onclick: () => command(p, "reconnect") }, icon("link"), "Reconnect"),
       el("button", { type: "button", class: "danger", onclick: async () => {
         if (!confirm(`Remove ${p.name} from BRUH Bambu Studio?`)) return;
         await api(`api/printers/${encodeURIComponent(p.id)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
         refresh();
       } }, icon("close"), "Remove printer")));
   const head = el("header", { class: "phead" },
-    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint" }, meta)),
-    el("button", { type: "button", class: "quiet", title: "Ask for a full report (after changing a spool)",
-      onclick: () => command(p, "refresh") }, icon("refresh"), "Refresh"),
-    el("button", { type: "button", class: "quiet", title: "Drop the connection and open a new one",
-      onclick: () => command(p, "reconnect") }, icon("link"), "Reconnect"),
+    el("div", { class: "grow" }, el("h2", {}, p.name), el("p", { class: "hint", title: meta }, meta)),
     menu);
   // What the printer is doing now on the left (the picture, the job and its
   // controls, the temperatures and the filament); what watches it and what
   // is stored on it on the right. One column on a phone, in that order.
   const now = el("div", { class: "pnow" }, cameraBlock(p),
     el("div", { class: "pnowbody" },
-      p.connection_error ? el("p", { class: "warn" }, p.connection_error,
+      p.connection_error ? el("p", { class: "warn" }, p.connection_error, " ",
         el("button", { type: "button", onclick: () => command(p, "reconnect") }, "Reconnect")) : null,
       jobBlock(p), hmsBlock(p), controlsBlock(p), readings(p), amsBlock(p)));
   const more = el("div", { class: "pmore" }, watchBlock(p), storageBlock(p), manualBlock(p));
@@ -880,14 +927,15 @@ function printerCard(p) {
 function renderPrinters(force = false) {
   const list = $("#printerList");
   const printers = state.data.printers;
-  renderHa();
+  renderHaBanner();
+  if (state.view === "settings") renderSettings();
   if (!printers.length) {
-    list.replaceChildren(el("p", { class: "card hint" }, "No printers yet. Find them on your network, or add one by hand below."));
-    // The first time somebody opens an empty Printers tab, look for them.
-    if (state.view === "printers" && !renderPrinters.scanned) {
-      renderPrinters.scanned = true;
-      scanPrinters();
-    }
+    list.replaceChildren(el("div", { class: "card empty" },
+      el("p", {}, "No printers yet."),
+      el("button", { type: "button", class: "primary", onclick: () => {
+        show("settings");
+        if (!renderPrinters.scanned) { renderPrinters.scanned = true; scanPrinters(); }
+      } }, "Find printers")));
     return;
   }
   // Rebuilt only when nothing in it has focus, so a half-typed G-code line
@@ -904,11 +952,92 @@ function renderPrinters(force = false) {
   }));
 }
 
+// --------------------------------------------------------------- settings ---
+// Printers, detection, brAIn, the 3D view and Home Assistant: everything a
+// person sets once, out of the way of the printers themselves.
+function renderSettings() {
+  if (!state.data) return;
+  const active = document.activeElement;
+  const view = $("#viewSettings");
+  const typing = active && view.contains(active) && active.matches("input, select, textarea");
+  if (!typing) {
+    renderSavedPrinters();
+    renderWatchSettings();
+  }
+  renderHa();
+  loadBrainSettings();
+}
+
+function renderSavedPrinters() {
+  const printers = state.data.printers || [];
+  $("#savedPrinters").replaceChildren(...(printers.length ? printers.map((p) => el("div", { class: "srow" },
+    el("div", { class: "grow" }, el("b", {}, p.name),
+      el("span", { class: "hint" }, [p.model, p.host, p.serial].filter(Boolean).join(" · "))),
+    el("span", { class: `pill ${stateTone(p)}` }, el("i", { class: "dot" }), stateWord(p)),
+    el("button", { type: "button", class: "quiet danger", onclick: async () => {
+      if (!confirm(`Remove ${p.name} from BRUH Bambu Studio?`)) return;
+      await api(`api/printers/${encodeURIComponent(p.id)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
+      refresh();
+    } }, "Remove"))) : [el("p", { class: "hint" }, "No printers yet — find them below, or add one by hand.")]));
+}
+
+function renderWatchSettings() {
+  const box = $("#watchSettings");
+  const printers = state.data.printers || [];
+  const notify = el("select", { "aria-label": "Phone for alerts", onchange: (e) => watchSet(null, { notify: e.target.value }) });
+  const fillTargets = () => {
+    const current = state.data.watch_notify || "";
+    const list = watchTargets.list || [];
+    notify.replaceChildren(el("option", { value: "" }, "Home Assistant notifications only"),
+      ...[...new Set([...list, ...(current ? [current] : [])])].map((t) => el("option", { value: t, selected: t === current }, t.replace(/^notify\./, ""))));
+  };
+  fillTargets();
+  if (watchTargets.list === null) {
+    watchTargets.list = [];
+    api("api/watch/targets").then((r) => { watchTargets.list = r.targets || []; fillTargets(); }).catch(() => {});
+  }
+  box.replaceChildren(
+    el("div", { class: "srow" }, el("div", { class: "grow" }, el("b", {}, "Alerts go to"),
+      el("span", { class: "hint" }, "A phone gets the picture brAIn saw, with Pause or Ignore on the notification.")), notify),
+    ...printers.map((p) => watchSettings(p)),
+    el("p", { class: "hint" }, "Each look is a brAIn run, so it looks only where a print is likely to fail and after anything doubtful, not every few seconds."));
+}
+
+let BRAIN_SETTINGS = null;
+
+async function loadBrainSettings(force = false) {
+  if (BRAIN_SETTINGS && !force) return;
+  try {
+    BRAIN_SETTINGS = await api("api/settings");
+  } catch (e) { $("#brainNote").textContent = e.message; return; }
+  const { preferences: pr, models } = BRAIN_SETTINGS;
+  for (const [id, key] of [["#designModel", "design_model"], ["#lookModel", "look_model"]]) {
+    $(id).replaceChildren(...models.map((m) => el("option", { value: m.value, selected: m.value === pr[key] }, m.label)));
+  }
+  $("#designNotes").value = pr.design_notes || "";
+  $("#printNotes").value = pr.print_notes || "";
+  $("#designNotes").maxLength = BRAIN_SETTINGS.notes_max;
+  $("#printNotes").maxLength = BRAIN_SETTINGS.notes_max;
+  $("#designBrief").textContent = BRAIN_SETTINGS.design_brief || "";
+}
+
+async function saveBrainSettings(e) {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const r = await api("api/settings", { json: { design_model: f.get("design_model"), look_model: f.get("look_model"),
+      design_notes: f.get("design_notes"), print_notes: f.get("print_notes") } });
+    if (BRAIN_SETTINGS) BRAIN_SETTINGS.preferences = r.preferences;
+    $("#brainSaved").textContent = "Saved — used from brAIn's next message.";
+    setTimeout(() => { $("#brainSaved").textContent = ""; }, 4000);
+  } catch (err) { toast(err.message, true); }
+}
+
 // ------------------------------------------------------- home assistant ---
 function renderHa() {
   const ha = state.data.ha || {};
   const box = $("#haCard");
-  if (!box) return;
+  if (!box || !state.data) return;
   const rows = [];
   let tone = "";
   if (ha.reason === "disabled") {
@@ -944,8 +1073,19 @@ function renderHa() {
     cards.prepend(el("p", { class: "warn" }, "The card file is missing: switch install_lovelace_card on in the add-on's Configuration tab."));
   }
   box.className = `card ha ${tone}`;
-  box.replaceChildren(el("div", { class: "row spread" }, el("h2", {}, "Home Assistant"),
+  box.replaceChildren(el("div", { class: "cardhead" }, el("h3", { class: "grow" }, "Integration"),
     el("button", { type: "button", onclick: checkHa }, "Check again")), ...rows, cards);
+}
+
+// The one Home Assistant thing worth the Printers tab: a restart it owes.
+function renderHaBanner() {
+  const ha = (state.data && state.data.ha) || {};
+  const box = $("#haBanner");
+  if (!ha.restart_needed) { box.replaceChildren(); return; }
+  box.replaceChildren(el("div", { class: "banner" },
+    el("p", {}, ha.reason === "update" ? "Restart Home Assistant to load the updated BRUH Bambu Studio integration."
+      : "Restart Home Assistant once to add the printers' sensors, camera and dashboard card."),
+    el("button", { type: "button", class: "primary", onclick: restartHa }, "Restart Home Assistant")));
 }
 
 async function checkHa() {
@@ -953,6 +1093,7 @@ async function checkHa() {
     const r = await api("api/ha/check", { json: {} });
     state.data.ha = r.ha;
     renderHa();
+    renderHaBanner();
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1134,19 +1275,21 @@ function renderFiles() {
     const facts = [f.seconds ? duration(Math.round(f.seconds / 60)) : null,
       f.grams ? `${f.grams} g` : null, `${(f.size / 1e6).toFixed(1)} MB`,
       new Date(f.modified * 1000).toLocaleDateString()].filter(Boolean).join(" · ");
-    return el("div", { class: "frow" }, filePicture(f),
-      el("div", { class: "grow" }, el("b", { class: "fname" }, designed ? f.name : f.path),
-        el("div", { class: "badges" }, badges), el("p", { class: "hint" }, facts), filamentChips(f)),
-      el("div", { class: "factions" },
-        el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"),
-        !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { onclick: () => slice(f) }, "Slice") : null,
-        el("button", { onclick: () => studio("open", f.path) }, "Open in Studio"),
-        designed ? el("button", { onclick: () => { show("design"); if (window.openPart) window.openPart(f.design); } },
-          "Open design") : el("button", { class: "danger", onclick: async () => {
+    const menu = el("details", { class: "pmenu" }, el("summary", { "aria-label": `More for ${f.name}` }, "⋯"),
+      el("div", { class: "pmenupop" },
+        !f.sliced && f.path.toLowerCase().endsWith(".3mf") ? el("button", { type: "button", onclick: () => slice(f) }, "Slice") : null,
+        el("button", { type: "button", onclick: () => studio("open", f.path) }, "Open in Bambu Studio"),
+        designed ? el("button", { type: "button", onclick: () => { show("design"); if (window.openPart) window.openPart(f.design); } },
+          "Open the design") : el("button", { type: "button", class: "danger", onclick: async () => {
           if (!confirm(`Delete ${f.path}?`)) return;
           await api(`api/files?path=${encodeURIComponent(f.path)}`, { method: "DELETE" }).catch((e) => toast(e.message, true));
           loadFiles();
-        } }, "Delete")));
+        } }, icon("close"), "Delete")));
+    return el("div", { class: "frow" }, filePicture(f),
+      el("div", { class: "grow" }, el("b", { class: "fname", title: f.path }, designed ? f.name : f.path),
+        el("div", { class: "badges" }, badges), el("p", { class: "hint" }, facts), filamentChips(f)),
+      el("div", { class: "factions" },
+        el("button", { class: "primary", onclick: () => openPrint(f) }, "Print"), menu));
   });
   $("#fileList").replaceChildren(...(rows.length ? rows : [el("p", { class: "hint" },
     "No models yet. Upload one, or save a project from Bambu Studio into this folder.")]));
@@ -1288,7 +1431,7 @@ async function openPrint(f) {
     return;
   }
   const printers = state.data.printers;
-  if (!printers.length) { toast("Add a printer first.", true); show("printers"); return; }
+  if (!printers.length) { toast("Add a printer first.", true); show("settings"); return; }
   openPrintDialog({ title: `Print ${f.name}`, printers, file: f, sliced: f.sliced });
 }
 
@@ -1361,6 +1504,7 @@ $("#printForm").addEventListener("submit", submitPrint);
 $("#printCancel").addEventListener("click", () => $("#printDialog").close());
 $("#upload").addEventListener("change", upload);
 $("#importForm").addEventListener("submit", importLink);
+$("#brainSettings").addEventListener("submit", saveBrainSettings);
 api("api/printers").then((r) => {
   $("#modelSelect").replaceChildren(el("option", { value: "" }, "Not sure"), ...r.models.map((m) => el("option", { value: m }, m)));
 }).catch(() => {});
@@ -1369,7 +1513,9 @@ try { first = localStorage.getItem("bambu.view") || "studio"; } catch (_) { /* s
 refresh().then(() => show(first));
 setInterval(refresh, 4000);
 
-// A card's ⋯ menu closes on a press anywhere else, as a menu does.
+// A ⋯ menu or an ⓘ closes on a press anywhere else, and after a choice.
 document.addEventListener("click", (e) => {
-  document.querySelectorAll("details.pmenu[open]").forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+  document.querySelectorAll("details.pmenu[open], details.info[open]").forEach((d) => {
+    if (!d.contains(e.target) || (d.classList.contains("pmenu") && e.target.closest(".pmenupop button, .pmenupop a"))) d.open = false;
+  });
 });

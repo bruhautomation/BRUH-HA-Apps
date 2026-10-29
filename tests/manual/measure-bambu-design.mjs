@@ -31,10 +31,12 @@
  *    the pointer; a turn past the top that flips the view over; Home or a
  *    named view that jumps rather than moves, or does not frame the whole
  *    part; no bed under the part;
- *  - a vertical drag that moves the view against the hand (dragging down
- *    must lower the view, as Fusion's default does), or an "Invert vertical
- *    drag" setting that does not flip it back, is not remembered, or is
- *    under the touch floor;
+ *  - a vertical drag that is not inverted by default (dragging down raises
+ *    the view), or Settings' "Invert vertical drag" that does not turn it to
+ *    Fusion 360's way (down lowers it) or is not remembered;
+ *  - on a phone, an open part that makes the page scroll rather than its
+ *    conversation (the 3D view must stay on screen), or no way back to the
+ *    newest message;
  *  - Measure that does not snap like Fusion's: a pointer near a corner, an
  *    edge's middle, an edge, a face's centre or a face not taking that point
  *    and showing which; a distance not drawn on the line at its middle, with
@@ -152,17 +154,20 @@ async function viewerMoves(page, say, touch, ctx) {
     let b = await cam();
     if (close(a.az, b.az, 0.05)) say('a left drag did not turn the part');
     if (!close(a.distance, b.distance, a.distance * 0.01)) say(`a left drag changed the distance (${a.distance.toFixed(1)} → ${b.distance.toFixed(1)})`);
-    // Vertical: dragging down lowers the view (the camera follows the hand
-    // down, toward the bed), and the setting turns that round.
-    for (const [invert, sign] of [[false, -1], [true, 1]]) {
-      if (invert) {
-        const flip = page.locator('#invertY');
-        if (!(await flip.count())) { say('there is no Invert vertical drag setting'); break; }
-        await page.locator('#viewHelpBtn').click();
-        await flip.check();
+    // Vertical: inverted by default (dragging down raises the view), and
+    // Settings turns it to Fusion 360's way (down lowers it, toward the bed).
+    const setInvert = (on) => page.evaluate((v) => {
+      const box = document.querySelector('#invertY');
+      box.checked = v;
+      box.dispatchEvent(new Event('change'));
+    }, on);
+    if (!(await page.locator('#viewSettings #invertY').count())) say('there is no Invert vertical drag in Settings');
+    if (!(await page.locator('#invertY').isChecked())) say('Invert vertical drag is not on by default');
+    for (const [invert, sign] of [[true, 1], [false, -1]]) {
+      if (!invert) {
+        await setInvert(false);
         const stored = await page.evaluate(() => { try { return localStorage.getItem('bambu.invertY'); } catch (_) { return 'refused'; } });
-        if (stored !== '1') say(`Invert vertical drag is not remembered (${stored})`);
-        await page.locator('#viewHelpBtn').click();
+        if (stored !== '0') say(`Fusion-style vertical drag is not remembered (${stored})`);
       }
       await page.evaluate(() => design.viewer.view('front'));
       await settle();
@@ -174,14 +179,10 @@ async function viewerMoves(page, say, touch, ctx) {
       await settle();
       const after = await cam();
       if (Math.sign(after.el - before.el) !== sign || Math.abs(after.el - before.el) < 0.2) {
-        say(`a drag down ${invert ? 'with Invert vertical drag on ' : ''}moved the elevation ${before.el} → ${after.el}, not ${sign < 0 ? 'down' : 'up'}`);
+        say(`a drag down ${invert ? '' : 'with Invert vertical drag off '}moved the elevation ${before.el} → ${after.el}, not ${sign < 0 ? 'down' : 'up'}`);
       }
     }
-    if (await page.locator('#invertY').count()) {
-      await page.locator('#viewHelpBtn').click();
-      await page.locator('#invertY').uncheck();
-      await page.locator('#viewHelpBtn').click();
-    }
+    await setInvert(true);
     // Shift + middle drag turns too.
     a = await cam();
     await page.keyboard.down('Shift');
@@ -243,14 +244,25 @@ async function viewerMoves(page, say, touch, ctx) {
     let b = await cam();
     if (close(a.az, b.az, 0.05)) say('one finger did not turn the part');
     if (!close(a.distance, b.distance, a.distance * 0.01)) say('one finger changed the distance');
-    // One finger down lowers the view too.
+    // One finger down raises the view too (inverted, the default).
     a = b;
     await touchEv('touchStart', [[cx, cy - 60]]);
     for (let i = 1; i <= 8; i += 1) await touchEv('touchMove', [[cx, cy - 60 + i * 12]]);
     await touchEv('touchEnd', []);
     await settle();
     b = await cam();
-    if (!(b.el < a.el - 0.2)) say(`one finger down moved the elevation ${a.el} → ${b.el}, not down`);
+    if (!(b.el > a.el + 0.2)) say(`one finger down moved the elevation ${a.el} → ${b.el}, not up`);
+    // The part fills the window and the conversation scrolls inside itself.
+    const fits = await page.evaluate(() => ({ page: document.scrollingElement.scrollHeight - window.innerHeight,
+      overflow: getComputedStyle(document.querySelector('#messages')).overflowY,
+      viewer: document.querySelector('#viewer').getBoundingClientRect().bottom <= window.innerHeight }));
+    if (fits.page > 2) say(`an open part makes the page scroll by ${fits.page} px instead of its conversation`);
+    if (fits.overflow !== 'auto') say('the conversation does not scroll inside itself');
+    if (!fits.viewer) say('the 3D view is not on screen with the conversation');
+    await page.evaluate(() => { const m = document.querySelector('#messages'); m.scrollTop = 0; m.dispatchEvent(new Event('scroll')); });
+    const latest = await page.evaluate(() => { const m = document.querySelector('#messages');
+      return m.scrollHeight > m.clientHeight + 40 ? !document.querySelector('#toLatest').hidden : true; });
+    if (!latest) say('scrolled up, the conversation offers no way back to the newest message');
     const flipBox = await page.locator('#invertY').evaluate((el) => el.closest('label').getBoundingClientRect().height).catch(() => 0);
     if (flipBox && flipBox < 44) say(`Invert vertical drag is ${flipBox}px tall, under the touch floor`);
     a = b;
@@ -404,13 +416,15 @@ async function measureTool(page, say, touch) {
   const out = await page.locator('#measureOut').textContent();
   if (!/ΔX/.test(out) || !/ΔZ/.test(out)) say(`the measurement does not say ΔX/ΔY/ΔZ (${out})`);
   // A face, then a corner: how far that corner is from the face's plane.
-  await pick([11, 9, 36], 0, 0);
+  // Well inside the face: a phone's wider snap reaches an edge 9 mm away.
+  await pick([16, 12, 36], 0, 0);
   await pick([40, 0, 0], off, -off * 0.6);
   m = await state();
   const perp = m.results[m.results.length - 1];
   if (!perp || perp.perpendicular == null || Math.abs(perp.perpendicular - 36) > 0.05) say(`face to corner gave no 36 mm perpendicular (${JSON.stringify(perp)})`);
   // Two faces at right angles: the angle between them.
-  await pick([11, 9, 36], 0, 0);
+  // Well inside the face: a phone's wider snap reaches an edge 9 mm away.
+  await pick([16, 12, 36], 0, 0);
   await pick([12, 0, 10], 0, 0);
   m = await state();
   const ang = m.results[m.results.length - 1];
@@ -695,8 +709,8 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   const wideFiles = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wideFiles > 1) say(`the Files tab scrolls sideways by ${wideFiles} px`);
 
-  // Printers: Find lists what is new and what moved; Add leaves only the code.
-  await page.locator('.tab[data-view="printers"]').click();
+  // Settings: Find lists what is new and what moved; Add leaves only the code.
+  await page.locator('.tab[data-view="settings"]').click();
   const scanBtn = page.locator('#scanBtn');
   if (!(await scanBtn.count())) {
     say('there is no Find printers button');
@@ -732,7 +746,7 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
     }
   }
   const widePrinters = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
-  if (widePrinters > 1) say(`the Printers tab scrolls sideways by ${widePrinters} px`);
+  if (widePrinters > 1) say(`the Settings tab scrolls sideways by ${widePrinters} px`);
   if (process.env.SHOTS) {
     await page.screenshot({ path: `${process.env.SHOTS}/printers-${label}.png`, fullPage: true });
     await page.locator('.tab[data-view="design"]').click();

@@ -46,6 +46,7 @@ import ha_setup  # noqa: E402
 import importer  # noqa: E402
 import installer  # noqa: E402
 import library  # noqa: E402
+import prefs  # noqa: E402
 import slicer  # noqa: E402
 import store  # noqa: E402
 import thumbs  # noqa: E402
@@ -636,9 +637,13 @@ async def h_storage(request):
         files = await asyncio.to_thread(_list)
     except Exception as exc:  # noqa: BLE001 - ftplib raises its own zoo of errors
         return _err(f"Could not read {row['name']}'s storage: {exc}", 502)
-    # Print jobs first, newest name last is how the printer lists them; the
+    # Print jobs first, newest first (the printer lists them by name); the
     # card wants the jobs and nothing else (the logs and caches are folders).
     jobs = [f for f in files if not f["dir"] and f["name"].lower().endswith((".3mf", ".gcode"))]
+    now = time.time()
+    for f in files:
+        f["mtime"] = ftps.listing_time(f.get("date"), now)
+    jobs.sort(key=lambda f: f["mtime"] or 0, reverse=True)
     for f in jobs:
         f["printable"] = True
         f["picture"] = (f"api/printer/thumb?printer={urllib.parse.quote(row['id'])}"
@@ -1193,6 +1198,28 @@ def _design_summary(panel: Panel, part: dict) -> dict:
             # call having failed, and this is a successful read of a part.
             "reply": reply, "questions": questions, "problem": part.get("error") or "",
             "file": file, "print": printing}
+
+
+async def h_settings(_request):
+    """The owner's preferences for brAIn (Settings tab), and the built-in
+    design instructions they add to, so the page can show both."""
+    return web.json_response({"ok": True, "preferences": prefs.load(),
+                              "models": [{"value": m, "label": prefs.MODEL_WORDS[m]}
+                                         for m in prefs.MODELS],
+                              "notes_max": prefs.NOTES_MAX,
+                              "design_brief": designer.brief()})
+
+
+async def h_settings_save(request):
+    body = await _body(request)
+    changes = {k: body[k] for k in prefs.DEFAULTS if k in body}
+    if not changes:
+        return _err("Nothing to change: send " + ", ".join(prefs.DEFAULTS) + ".")
+    try:
+        saved = await asyncio.to_thread(prefs.update, changes)
+    except ValueError as exc:
+        return _err(str(exc))
+    return web.json_response({"ok": True, "preferences": saved})
 
 
 async def h_design_status(_request):
@@ -1785,6 +1812,8 @@ def build_app(panel: Panel | None = None, *, ticker: bool = True) -> web.Applica
     r.add_post("/api/ha/check", h_ha_check)
     r.add_post("/api/ha/restart", h_ha_restart)
     r.add_get("/api/print/options", h_print_options)
+    r.add_get("/api/settings", h_settings)
+    r.add_post("/api/settings", h_settings_save)
     r.add_get("/api/files", h_files)
     r.add_post("/api/files", h_upload)
     r.add_post("/api/import", h_import)

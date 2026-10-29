@@ -9,26 +9,32 @@
  *  - a printer card without its camera picture, the state pill, the stage,
  *    the progress ring, the time left, the AMS trays (the one feeding marked)
  *    or the external spool;
- *  - Refresh or Reconnect missing, or not sending what they say;
+ *  - Refresh or Reconnect missing from the card's ⋯ menu, or not sending
+ *    what they say;
  *  - the camera's <img> being replaced by a redraw (it must survive polls);
- *  - "On the printer" not listing the printer's jobs with their pictures;
- *  - the Home Assistant card not offering the restart it says is needed;
+ *  - "On the printer" not a list of the printer's jobs, newest first, or a
+ *    picture drawn in it (the printer's pictures rarely arrive);
+ *  - the Home Assistant restart it says is needed not offered on the Printers
+ *    tab, or the Home Assistant card, Find printers or the detection settings
+ *    anywhere but the Settings tab;
+ *  - a finished print whose plate is clear still drawn as a job, or the plate
+ *    not offered to be marked clear while it is on;
  *  - a print dialog without the build plate, the start options and the
  *    slicer settings grouped, or Print by object;
  *  - the print choice's three texts not starting at one left edge;
  *  - print failure detection without its status, the open alert with what
  *    brAIn saw beside what the print should be, the plan of looks over the
- *    layers, the history, or Resume not answering that alert;
+ *    layers with its key (and no "11/8 looks" count), the ⓘ saying when it
+ *    looks and what it does about a moving bed, the history, or Resume not
+ *    answering that alert;
  *  - a printer with detection off not offering the switch that turns it on;
  *  - the camera box not keeping the stream's own shape (a square stream in a
  *    16:9 box, letterboxed), or anything but controls drawn over the picture
  *    (the progress line that ran across the bottom of the feed);
- *  - a picture on the printer that failed once (the printer's storage busy)
- *    never shown, or a file with no picture drawn as a word ("GCODE");
  *  - something said twice on the card: the speed as a tile beside its own
  *    switch, the stage over the camera and in the job;
  *  - an AMS's four trays not on one row at a phone's width;
- *  - removing a printer as a bare ✕ beside Refresh;
+ *  - the header taller than one row, or removing a printer as a bare ✕;
  *  - a control under the touch floor, sideways scroll, or any page error.
  */
 import { chromium } from 'playwright';
@@ -88,9 +94,9 @@ const STATE = { ok: true, version: 'dev', printers: [A1, X1], jobs: [],
   ha: { reason: 'not_loaded', restart_needed: true, deployed: '0.2.0', running: null,
     lovelace_card: true, morph_installed: true, morph_card: true } };
 const STORAGE = { ok: true, printer: 'Workshop A1', files: [
-  { name: 'rotor.gcode.3mf', dir: false, size: 2.4e6, date: 'Oct 20 10:02', printable: true,
+  { name: 'rotor.gcode.3mf', dir: false, size: 2.4e6, date: 'Oct 20 10:02', mtime: 1760954520, printable: true,
     picture: 'api/printer/thumb?printer=a1&name=rotor.gcode.3mf&size=2400000' },
-  { name: 'plate.gcode', dir: false, size: 8e5, date: 'Oct 19 09:00', printable: true, picture: null },
+  { name: 'plate.gcode', dir: false, size: 8e5, date: 'Oct 19 09:00', mtime: 1760864400, printable: true, picture: null },
   { name: 'timelapse', dir: true, size: 0 }] };
 const FILES = { ok: true, root: '/share/bambu', files: [
   { path: 'imports/rotor.stl', name: 'rotor.stl', size: 3e6, modified: 1760000000, sliced: false, project: false }] };
@@ -102,7 +108,6 @@ const HISTORY = { ok: true, checks: [
   { n: 1, layer: 2, decision: 'ok', summary: 'The first layer is down evenly.', confidence: 0.88,
     why: 'The first layer is down.', at: Date.now() / 1000 - 4000, image_url: null }], alerts: [], errors: [] };
 const WATCH = [];
-const THUMB_FAILED = new Set();
 
 const browser = await chromium.launch(process.env.CHROMIUM_PATH
   ? { executablePath: process.env.CHROMIUM_PATH } : {});
@@ -126,11 +131,6 @@ async function run(label, viewport, touch) {
       if (url.searchParams.get('printer') === 'x1') return route.fulfill({ body: PICTURE, contentType: 'image/png' });
       return route.fulfill({ body: FRAME, contentType: 'image/jpeg' });
     }
-    if (path === 'api/printer/thumb' && !THUMB_FAILED.has(label)) {
-      // The printer's storage is busy the first time it is asked.
-      THUMB_FAILED.add(label);
-      return route.fulfill({ status: 502, json: { ok: false, error: 'Could not read the picture: timed out' } });
-    }
     if (path === 'api/watch/action' || path === 'api/watch/settings') {
       WATCH.push({ label, path, ...route.request().postDataJSON() });
       return route.fulfill({ json: { ok: true, note: 'Done.' } });
@@ -145,7 +145,9 @@ async function run(label, viewport, touch) {
       'api/files': FILES, 'api/design/status': { ok: true, brain: { state: 'ok' }, cad: true, viewer: true },
       'api/design/parts': { ok: true, parts: [] }, 'api/watch': HISTORY,
       'api/watch/targets': { ok: true, targets: ['notify.mobile_app_pixel'] },
-      'api/printers': { ok: true, printers: STATE.printers, models: ['A1', 'X1C'] } };
+      'api/printers': { ok: true, printers: STATE.printers, models: ['A1', 'X1C'] },
+      'api/settings': { ok: true, preferences: { design_model: 'default', look_model: 'haiku', design_notes: 'Walls 2 mm.', print_notes: '' },
+        models: [{ value: 'default', label: "brAIn's choice" }, { value: 'haiku', label: 'Haiku' }], notes_max: 4000, design_brief: 'You are designing…' } };
     if (path.startsWith('api/')) {
       if (method === 'GET' && stubs[path]) return route.fulfill({ json: stubs[path] });
       return route.fulfill({ json: { ok: true } });
@@ -156,8 +158,11 @@ async function run(label, viewport, touch) {
     try { return route.fulfill({ body: readFileSync(join(PANEL, file)), contentType: type }); }
     catch (_) { return route.fulfill({ status: 404, body: '' }); }
   });
+  X1.failure_detection.plate = { state: 'unknown' };
   await page.goto('http://panel.test/');
   await page.locator('.tab[data-view="printers"]').click();
+  const bar = await page.locator('header.bar').boundingBox();
+  if (bar.height > 60) say(`the header is ${Math.round(bar.height)}px tall: more than one row`);
   const card = page.locator('.printer[data-id="a1"]');
   await card.waitFor();
   await page.waitForFunction(() => {
@@ -166,9 +171,13 @@ async function run(label, viewport, touch) {
   }, null, { timeout: 10000 }).catch(() => say('the camera picture never appeared'));
   const text = await card.innerText();
   for (const want of ['Printing', 'Changing filament', '42', '1 h 35 min', 'left', '84/200', 'AMS',
-    'Spool holder', 'TPU', '0700_2000_0002_0001', 'Refresh', 'Reconnect', 'Pause', 'Stop', 'On the printer']) {
+    'Spool holder', 'TPU', '0700_2000_0002_0001', 'On the printer']) {
     if (!text.includes(want)) say(`the printer card does not show “${want}”`);
   }
+  for (const name of ['Pause the print', 'Stop the print']) {
+    if (!(await card.getByRole('button', { name }).count())) say(`the job has no “${name}” button`);
+  }
+  if (!(await card.locator('select[aria-label="Print speed"]').count())) say('the speed is not offered while it prints');
   if ((await card.locator('.spool').count()) !== 5) say('the card does not show four AMS trays and the spool holder');
   if ((await card.locator('.spool.active').count()) !== 1) say('the tray feeding the nozzle is not marked');
   if (!(await card.locator('.ring').count())) say('no progress ring');
@@ -205,7 +214,7 @@ async function run(label, viewport, touch) {
     .filter((e) => e.offsetParent && getComputedStyle(e).position === 'absolute'
       && !e.closest('.camover') && !e.matches('.cam, .camimg, .camback, .camnote')).map((e) => e.className));
   if (overPicture.length) say(`drawn over the camera picture: ${overPicture.join(', ')}`);
-  if ((await card.locator('.tile', { hasText: 'Speed' }).count()) && (await card.locator('.seg[aria-label="Speed"]').count())) {
+  if ((await card.locator('.tile', { hasText: 'Speed' }).count()) && (await card.locator('select[aria-label="Print speed"]').count())) {
     say('the speed is shown as a tile beside its own switch');
   }
   const stageTimes = await card.evaluate((c) => (c.innerText.match(/Changing filament/g) || []).length);
@@ -220,7 +229,9 @@ async function run(label, viewport, touch) {
   const same = await page.evaluate((img) => img.isConnected, before);
   if (!same) say('a redraw replaced the camera picture');
 
+  await card.locator('details[data-k="menu"] > summary').click();
   await card.getByRole('button', { name: 'Refresh' }).click();
+  await card.locator('details[data-k="menu"] > summary').click();
   await card.getByRole('button', { name: 'Reconnect' }).click();
   await page.waitForTimeout(200);
   const mine = COMMANDS.filter((c) => c.label === label).map((c) => c.action);
@@ -228,26 +239,33 @@ async function run(label, viewport, touch) {
   if (!mine.includes('reconnect')) say('Reconnect did not reconnect');
 
   await card.locator('details[data-k="storage"] > summary').click();
-  await card.locator('.pfile').first().waitFor().catch(() => say('On the printer listed nothing'));
-  if ((await card.locator('.pfile').count()) !== 2) say('On the printer did not list the two jobs');
-  // The job's picture loads lazily once the list opens: wait for it rather
-  // than reading it the instant the row appears.
-  const pic = await page.waitForFunction(() => {
-    const i = document.querySelector('.printer[data-id="a1"] .pfile img');
-    return i && i.complete && i.naturalWidth > 0;
-  }, null, { timeout: 12000 }).then(() => true).catch(() => false);
-  if (!pic) say("a job on the printer has no picture (a read that failed once was never tried again)");
-  const words = await card.locator('.pfile .nopic').evaluateAll((els) => els.map((e) => e.textContent.trim()).filter(Boolean));
-  if (words.length) say(`a file with no picture is drawn as words: ${words.join(', ')}`);
+  await card.locator('.plist li').first().waitFor().catch(() => say('On the printer listed nothing'));
+  const listed = await card.locator('.plist li b').allInnerTexts();
+  if (listed.length !== 2) say('On the printer did not list the two jobs');
+  else if (listed[0] !== 'rotor') say(`On the printer is not newest first: ${listed.join(', ')}`);
+  if (await card.locator('.plist img, .plist .nopic').count()) say('On the printer draws pictures that rarely arrive');
+  if (!(await card.locator('.plist').innerText()).includes('2.4 MB')) say('On the printer does not say how big a job is');
 
   // Print failure detection.
   const watch = card.locator('section.watch');
   const wtext = await watch.innerText();
-  for (const want of ['Print failure detection', 'Print paused', 'Spaghetti is building up', '91% sure',
-    'What brAIn saw', 'What it should be', 'Where it looks', 'Planned from the print', 'Layer 120',
+  for (const want of ['Failure detection', 'Print paused', 'Spaghetti is building up', '91% sure',
+    'What brAIn saw', 'What it should be', 'Where it looks', 'Next: Layer 120', '3 of 5 planned looks done',
+    'Layer 1', 'Layer 200', 'Now · 84', 'Planned', 'Looked: fine', 'Doubt', 'Missed',
     'Resume — not a failure', 'Stop print', 'Check now']) {
     if (!wtext.includes(want)) say(`failure detection does not show “${want}”`);
   }
+  if (/\d+\/\d+ looks/.test(wtext)) say('failure detection still counts looks as “n/m looks”');
+  await watch.locator('.wtick').nth(2).click();
+  if (!(await watch.locator('.wreason').innerText()).includes('Filament changes at layer 83')) {
+    say('pressing a look on the line does not say what it is for');
+  }
+  await watch.locator('details.info > summary').click();
+  const info = await watch.locator('.infopop').innerText();
+  for (const want of ['first layer', 'sharpest', 'bed', 'Check now']) {
+    if (!info.includes(want)) say(`the ⓘ does not say “${want}”`);
+  }
+  await page.mouse.click(5, 5);
   if ((await watch.locator('.wtick').count()) !== 5) say('the plan does not show its five looks on the layer line');
   if ((await watch.locator('.wtick.bad').count()) !== 1) say('the failed look is not marked on the layer line');
   const pics = await page.waitForFunction(() => [...document.querySelectorAll('.printer[data-id="a1"] .wpics img')]
@@ -260,11 +278,7 @@ async function run(label, viewport, touch) {
   await card.locator('details[data-k="watchhist"] > summary').click();
   await card.locator('.wcheck').first().waitFor().catch(() => say('the looks this print are not listed'));
   if ((await card.locator('.wcheck').count()) !== 2) say('the history does not list both looks');
-  await card.locator('details[data-k="watchset"] > summary').click();
-  const set = await card.locator('details[data-k="watchset"]').innerText();
-  for (const want of ['Warn and pause', 'Only warn', 'Relaxed', 'Balanced', 'Careful', 'Alerts go to']) {
-    if (!set.includes(want)) say(`the detection settings have no “${want}”`);
-  }
+  if (await card.locator('details[data-k="watchset"]').count()) say('the detection settings are still on the printer card');
   const x1 = page.locator('.printer[data-id="x1"] section.watch');
   if (!(await x1.innerText()).includes('moments a print is most likely to fail')) say('detection off does not say what it does');
   await x1.locator('.switch input').click();
@@ -275,11 +289,26 @@ async function run(label, viewport, touch) {
   const wideWatch = await watch.evaluate((el) => el.scrollWidth - el.clientWidth);
   if (wideWatch > 1) say(`failure detection scrolls sideways by ${wideWatch} px`);
 
-  const ha = page.locator('#haCard');
-  if (!(await ha.getByRole('button', { name: 'Restart Home Assistant' }).count())) {
-    say('the Home Assistant card does not offer the restart it needs');
+  if (!(await page.locator('#haBanner').getByRole('button', { name: 'Restart Home Assistant' }).count())) {
+    say('the Printers tab does not offer the restart Home Assistant needs');
   }
-  if (!(await ha.innerText()).includes('custom:bruh-bambu-card')) say('the Home Assistant card does not say how to add the card');
+  for (const sel of ['#haCard', '#findPrinters', '#watchSettings']) {
+    if (await page.locator(`#viewPrinters ${sel}`).count()) say(`${sel} is still on the Printers tab`);
+  }
+
+  // A finished print: on the plate until it is marked (or seen) clear.
+  const x1card = page.locator('.printer[data-id="x1"]');
+  if (!(await x1card.locator('.job').count())) say('a finished print on the plate is not shown');
+  await x1card.getByRole('button', { name: 'Plate is clear' }).click();
+  await page.waitForTimeout(200);
+  if (!WATCH.some((c) => c.label === label && c.action === 'plate_clear' && c.printer === 'x1')) say('Plate is clear did not say so');
+  X1.failure_detection.plate = { state: 'clear', why: 'You said the plate is clear.' };
+  await page.evaluate(() => refresh());
+  await page.waitForTimeout(300);
+  if (await x1card.locator('.job').count()) say('a finished print whose plate is clear is still drawn as a job');
+  if (!(await x1card.locator('.phead').innerText()).includes('X1C') || !(await x1card.innerText()).includes('Ready')) {
+    say('a finished printer whose plate is clear does not say it is ready');
+  }
 
   const wide = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
   if (wide > 1) say(`the Printers tab scrolls sideways by ${wide} px`);
@@ -289,20 +318,51 @@ async function run(label, viewport, touch) {
       .map((b) => (b.getAttribute('aria-label') || b.textContent).trim().slice(0, 30)));
     if (small.length) say(`under the touch floor: ${small.join(', ')}`);
   }
-  if (process.env.SHOTS) {
-    mkdirSync(process.env.SHOTS, { recursive: true });
-    await page.screenshot({ path: join(process.env.SHOTS, `printers-${label}.png`), fullPage: true });
-  }
 
   // A printer that is printing offers no second print from its storage.
-  if (!(await card.locator('.pfile').first().getByRole('button', { name: 'Print' }).isDisabled())) {
+  if (!(await card.locator('.plist li').first().getByRole('button', { name: 'Print' }).isDisabled())) {
     say('a busy printer offers to print a stored job');
+  }
+
+  // Settings: the printers, detection, brAIn and Home Assistant.
+  await page.locator('.tab[data-view="settings"]').click();
+  await page.locator('#viewSettings').waitFor();
+  await page.waitForTimeout(200);
+  const settings = await page.locator('#viewSettings').innerText();
+  for (const want of ['Find printers', 'Add a printer by hand', 'Workshop A1', 'Alerts go to', 'Warn and pause',
+    'Only warn', 'Relaxed', 'Balanced', 'Careful', 'Notice when the plate is cleared', 'Model for designing',
+    'Model for print checks', 'Designing — your standing instructions', 'Printing — your default settings',
+    'Invert vertical drag', 'custom:bruh-bambu-card', 'Restart Home Assistant']) {
+    if (!settings.includes(want)) say(`Settings has no “${want}”`);
+  }
+  if ((await page.locator('#designNotes').inputValue()) !== 'Walls 2 mm.') say('Settings does not show the saved design instructions');
+  if ((await page.locator('#lookModel').inputValue()) !== 'haiku') say('Settings does not show the saved model');
+  if (!(await page.locator('#invertY').isChecked())) say('Invert vertical drag is not the default');
+  const sideways = await page.evaluate(() => document.scrollingElement.scrollWidth - window.innerWidth);
+  if (sideways > 1) say(`Settings scrolls sideways by ${sideways} px`);
+  if (touch) {
+    const small = await page.evaluate(() => [...document.querySelectorAll('#viewSettings button, #viewSettings summary, #viewSettings select')]
+      .filter((b) => b.offsetParent && b.getBoundingClientRect().height < 40)
+      .map((b) => (b.getAttribute('aria-label') || b.textContent).trim().slice(0, 30)));
+    if (small.length) say(`Settings under the touch floor: ${small.join(', ')}`);
+  }
+  // Screenshots last: a full-page capture leaves the page measuring as if it
+  // had no touch screen, so every check that reads a size is done first.
+  if (process.env.SHOTS) {
+    mkdirSync(process.env.SHOTS, { recursive: true });
+    await page.screenshot({ path: join(process.env.SHOTS, `settings-${label}.png`), fullPage: true });
+    await page.locator('.tab[data-view="printers"]').click();
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(process.env.SHOTS, `printers-${label}.png`), fullPage: true });
   }
 
   await page.locator('.tab[data-view="files"]').click();
   await page.locator('#fileList .frow').first().waitFor();
   if (!(await page.locator('#fileList .frow img.fthumb').count())) say('a file row has no picture');
   if (process.env.SHOTS) await page.screenshot({ path: join(process.env.SHOTS, `files-${label}.png`), fullPage: true });
+  if ((await page.locator('#fileList .frow').first().locator('.factions > button').count()) !== 1) {
+    say('a file row shows more than Print beside its ⋯ menu');
+  }
   await page.locator('#fileList .frow').first().getByRole('button', { name: 'Print' }).click();
   await page.locator('#printDialog[open]').waitFor();
   const dialog = await page.locator('#printDialog').innerText();

@@ -74,11 +74,12 @@ def _image_ext(data: bytes) -> str | None:
 
 def submit(prompt: str, *, schema: dict, session_id: str = "", timeout: int = 600,
            kind: str = "conversation", images: list[bytes] | None = None,
-           scheduled: bool = False) -> str:
+           scheduled: bool = False, model: str = "") -> str:
     """Hand brAIn a task. `kind="conversation"` is a design conversation (the
     person's own, resumable); anything else is a one-off look. `images` are
     pictures handed to the run as pictures. `scheduled` makes brAIn's own
-    pause and usage budget apply, for a look nobody pressed for."""
+    pause and usage budget apply, for a look nobody pressed for. `model` is
+    one of prefs.MODELS ("default" or empty leaves it to brAIn's plan)."""
     task_id = f"bambu-{uuid.uuid4().hex[:12]}"
     task = {"id": task_id, "prompt": prompt, "ts": int(time.time()),
             "timeout": int(timeout), "source": "bruh_bambu", "tools": "read_only",
@@ -87,6 +88,8 @@ def submit(prompt: str, *, schema: dict, session_id: str = "", timeout: int = 60
         task.update(kind="conversation", person_words="")
     if scheduled:
         task["scheduled"] = True
+    if model and model != "default":
+        task["model"] = model
     if session_id:
         task["session_id"] = str(session_id)[:80]
     if images:

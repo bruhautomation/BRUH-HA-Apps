@@ -11,7 +11,7 @@ function fmtSize(size) {
 }
 
 function ago(ts) {
-  if (!ts) return "";
+  if (!ts || ts < 1e9) return "";
   const s = Math.max(0, Date.now() / 1000 - ts);
   if (s < 90) return "just now";
   if (s < 5400) return `${Math.round(s / 60)} min ago`;
@@ -195,9 +195,13 @@ function markdown(text) {
   return el("div", { class: "md" }, blocks);
 }
 
+function nearBottom(box) {
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+}
+
 function renderMessages(p) {
   const box = $("#messages");
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const atBottom = nearBottom(box);
   box.replaceChildren(...(p.messages || []).map((m) => {
     const bubble = el("div", { class: `msg ${m.role}` },
       // A system note (a print's outcome) quotes Bambu Studio's own words,
@@ -217,6 +221,7 @@ function renderMessages(p) {
     return bubble;
   }));
   if (atBottom || busy(p)) box.scrollTop = box.scrollHeight;
+  $("#toLatest").hidden = nearBottom(box);
 }
 
 function renderVersions(p) {
@@ -225,6 +230,8 @@ function renderVersions(p) {
     type: "button", class: `chip ${v.n === design.viewing ? "on" : ""} ${v.ok ? "" : "bad"}`,
     title: v.summary || "", onclick: () => { design.viewing = v.n; renderPart(); },
   }, `v${v.n}${v.n === p.current ? " ●" : ""}`)));
+  // One version is no choice: the row shows once there are two.
+  $("#versions").hidden = vs.length < 2;
   const v = vs.find((x) => x.n === design.viewing);
   const info = $("#versionInfo");
   info.replaceChildren();
@@ -432,8 +439,10 @@ function showMeasure(m) {
   $("#measureClear").hidden = !history.length;
 }
 
+// Inverted is the default (a drag down raises the view); Settings turns it
+// to Fusion 360's way round, and only that choice is remembered as "0".
 function invertY() {
-  try { return localStorage.getItem("bambu.invertY") === "1"; } catch (_) { return false; }
+  try { return localStorage.getItem("bambu.invertY") !== "0"; } catch (_) { return true; }
 }
 
 // The controls, said once: the first time a part is shown on this browser
@@ -648,6 +657,21 @@ $("#composerText").addEventListener("keydown", (e) => {
 });
 $("#partName").addEventListener("change", rename);
 $("#partDelete").addEventListener("click", removePart);
+// The conversation scrolls inside itself; ↓ Latest is there whenever the
+// newest message is out of sight.
+$("#messages").addEventListener("scroll", () => { $("#toLatest").hidden = nearBottom($("#messages")); }, { passive: true });
+$("#toLatest").addEventListener("click", () => {
+  const box = $("#messages");
+  box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
+});
+// On a phone ▾ folds the 3D view away for a long conversation, and back.
+$("#stageToggle").addEventListener("click", (e) => {
+  const shown = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  e.currentTarget.setAttribute("aria-pressed", String(shown));
+  e.currentTarget.setAttribute("aria-label", shown ? "Hide the 3D view" : "Show the 3D view");
+  $("#partView").classList.toggle("noview", !shown);
+  if (shown && design.viewer && design.viewer.resize) design.viewer.resize();
+});
 $("#partPrint").addEventListener("click", openPrintChoice);
 $("#pcAuto").addEventListener("click", autoPrint);
 $("#pcManual").addEventListener("click", openDesignPrint);

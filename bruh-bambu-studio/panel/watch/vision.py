@@ -114,6 +114,30 @@ def stats(grid: Grid) -> dict:
             "detail": round(edges / count, 2) if count else 0.0}
 
 
+def sharpness(grid: Grid, top: float = PLATE_TOP) -> float:
+    """How much edge there is over the plate: a frame taken while the bed or
+    the toolhead was moving is smeared, and a smear has less edge."""
+    px, w = grid.px, grid.w
+    total, count = 0, 0
+    for y in grid.rows(top):
+        row = y * w
+        for x in range(w - 1):
+            total += abs(px[row + x] - px[row + x + 1])
+            count += 1
+        if y + 1 < grid.h:
+            for x in range(w):
+                total += abs(px[row + x] - px[row + w + x])
+                count += 1
+    return total / count if count else 0.0
+
+
+def sharpest(grids: list[Grid]) -> int:
+    """The index of the steadiest of a burst of frames (the most edge)."""
+    if not grids:
+        raise ValueError("no grids")
+    return max(range(len(grids)), key=lambda i: sharpness(grids[i]))
+
+
 def view(grid: Grid, light_on: bool | None) -> str:
     """"ok", "covered" or "dark" — whether a look at this frame means anything."""
     s = stats(grid)
