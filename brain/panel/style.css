@@ -2325,29 +2325,38 @@ body.modal-open {
   .wordmark { --wm-ai: #1e9fe0; }
 }
 
-/* The logo and the version under it are one link to the changelog
-   (`#versionChip`). Stacked rather than side by side, so the bar is no wider
-   than the logo was and every measured breakpoint stands; the text is the
-   panel's smallest and muted, because it is a reference and not a status.
-   A pending restart is the one thing it ever says beyond the number, in the
-   warning colour, and the words carry it rather than the colour alone. */
+/* The name in the header (`#brandMark`): the wordmark, or the household's
+   name. The version is not here any more; it is a quiet link in ⚙'s
+   heading (`#versionChip`), the panel's smallest muted text, because it is
+   a reference and not a status. A pending restart is the one thing it ever
+   says beyond the number, in the warning colour, and the words carry it
+   rather than the colour alone. */
 .brandlink {
   display: inline-flex; flex-direction: column; align-items: flex-start;
   justify-content: center; gap: 1px; min-width: 44px; min-height: 44px;
   padding: 0 2px; margin-left: -2px; border-radius: 8px;
   color: var(--ink-3); text-decoration: none;
 }
-.brandlink:hover .vertext { color: var(--ink-2); text-decoration: underline; }
-.brandlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .brandlink .wordmark { height: 28px; }
+.setpage .setpagehead { flex-wrap: nowrap; align-items: center; }
+.setpage .setpagehead > div { flex: 1 1 auto; }
+.verlink {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  min-width: 44px; min-height: 44px; padding: 0 8px; border-radius: 8px;
+  /* A 44px target that does not make the title's row any taller. */
+  margin: -12px -8px -12px 0;
+  color: var(--ink-3); text-decoration: none;
+}
+.verlink:hover .vertext { color: var(--ink-2); text-decoration: underline; }
+.verlink:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .vertext {
   font-size: var(--fs-meta); line-height: 14px; font-weight: 500;
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
-.brandlink.pending .vertext { color: var(--serious-ink); font-weight: 600; }
+.verlink.pending .vertext { color: var(--serious-ink); font-weight: 600; }
 
 /* Personality on (`applyName`): the household's name stands where the
-   wordmark was, at the wordmark's height, and the version stays under it. */
+   wordmark was, at the wordmark's height. */
 .brandname {
   display: none; max-width: 14ch; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; font-size: 20px; line-height: 28px; font-weight: 700;
@@ -7126,21 +7135,74 @@ html.in-shell .viewtab.active {
 .btn.shelledit.editing .ico { display: none; }
 .btn.shelledit[hidden] { display: none; }
 
+/* The header on a phone, and a header that gets out of the way (the
+   owner: it "clashes with the Dynamic Island", "I don't like those menu
+   buttons up there all the time; maybe collapsible and goes away when
+   you're not at the top", and the shell "takes about 170px before any
+   content … Make it subtle, collapsible").
+
+   * The safe area is `--safe-top`: the phone's own env(), or the one the
+     shell measured in Home Assistant's page and sent in (`--shell-inset`),
+     whichever is larger, because a framed page is not promised the
+     inset. In full screen the island strip IS the header's first row: the
+     name left of the island, the status and ⚙ right of it, on the
+     header's solid ground, the hairline under the whole header.
+   * Below the strip there is one row: the tabs. The sections of Insights
+     and Memory are under their own tab (pressing the tab you are on opens
+     them, `#segNav` as a menu), the version is in ⚙, and the search is an
+     icon in the tab row that opens the field at the top of the pane.
+   * Scrolling down slides the header away, leaving only the island strip's
+     ground; scrolling up or reaching the top brings it back
+     (`html.bar-hidden`, `shellScrolled`). With reduce motion it shows and
+     hides without sliding.
+   * A drag on the header is never a scroll, and nothing in this page
+     rubber-bands Home Assistant's window around it. */
+:root { --safe-top: 0px; }
+html.in-shell {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--shell-inset, 0px));
+  overscroll-behavior: none;
+}
+html.in-shell body { overscroll-behavior: none; }
+html.in-shell .topbar {
+  padding-top: var(--safe-top);
+  height: auto;
+  min-height: calc(56px + var(--safe-top));
+  touch-action: none;
+  overscroll-behavior: none;
+  transition: transform .22s ease;
+}
+html.in-shell .topbar > * { transition: opacity .16s ease, visibility .16s; }
+html.in-shell.bar-hidden .topbar { transform: translateY(calc(var(--safe-top) - 100%)); }
+html.in-shell.bar-hidden .topbar > * { opacity: 0; visibility: hidden; }
+@media (min-width: 641px) and (max-width: 869px) {
+  html.in-shell .topbar { padding-top: max(4px, var(--safe-top)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html.in-shell .topbar, html.in-shell .topbar > * { transition: none; }
+}
+.btn.icon.searchbtn { display: none; }
+
 @media (max-width: 640px) {
   html.in-shell { --tabbar-h: 0px; }
+  /* Row one sits in the island strip (its 44px targets end where the strip
+     does); without an inset it is the top 48px. The `::before` is the line
+     break that puts everything ordered after it on row two. */
   html.in-shell .topbar {
     flex-wrap: wrap;
-    height: auto;
     max-height: none;
-    min-height: var(--bar-h);
-    padding: 6px 8px 0 4px;
-    row-gap: 2px;
+    min-height: 0;
+    padding: max(2px, calc(var(--safe-top) - 48px)) 8px 0 4px;
+    row-gap: 4px;
     align-content: flex-start;
   }
+  html.in-shell .topbar::before { content: ""; order: 8; flex: 0 0 100%; height: 0; }
+  html.in-shell .brandname { font-size: 18px; max-width: 76px; }
   html.in-shell .viewtabs {
     position: static;
     order: 9;
-    width: 100%;
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
     margin: 0;
     padding: 0 0 4px;
     gap: 2px;
@@ -7148,7 +7210,38 @@ html.in-shell .viewtab.active {
     background: none;
     border-top: 0;
   }
-  html.in-shell .viewtab { height: 48px; min-height: 44px; border-radius: 10px; }
+  html.in-shell .viewtab { flex: 1 1 0; height: 44px; min-height: 44px; gap: 1px; border-radius: 10px; }
+  html.in-shell .viewtab .badge { top: 0; }
+  /* The tab you are on opens its sections, and says so with a chevron. */
+  html.in-shell .viewtab.active.hassecs > span:not(.badge)::after {
+    content: ""; display: inline-block; width: 0; height: 0; margin-left: 4px;
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid currentColor; vertical-align: middle;
+  }
+  html.in-shell .btn.icon.searchbtn:not([hidden]) { display: inline-flex; order: 10; margin-bottom: 4px; }
+  html.in-shell .btn.icon.searchbtn[aria-expanded="true"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); }
+  html.in-shell #shellYaml, html.in-shell #shellEdit { order: 11; margin-bottom: 4px; }
   html.in-shell body { padding-bottom: 0; }
   html.in-shell .btn.shelledit { padding: 0 10px; }
+
+  /* The sections: a menu under the header, opened from the tab. */
+  html.in-shell .segnav { display: none; }
+  html.in-shell.segopen .segnav:not([hidden]) {
+    display: block; position: fixed; z-index: 35;
+    top: calc(var(--bar-h) + 4px); left: 8px; right: 8px;
+    padding: 6px; margin: 0;
+    background: var(--surface); border: var(--card-border); border-radius: var(--card-radius);
+    box-shadow: var(--shadow);
+  }
+  html.in-shell .segnav .segbtns {
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    padding: 0; border: 0; border-radius: 0; background: none;
+  }
+  html.in-shell .segnav .segbtn { min-height: 44px; justify-content: space-between; border-radius: 8px; font-size: 16px; }
+  html.in-shell .segnav .segsel { display: none; }
+  /* Without the select naming the pane, each pane's own title does —
+     except Insights', which is the tab's name already. */
+  html.in-shell .seg-view .panehead .panetitle { display: block; }
+  html.in-shell:not(.searching) .insighthead { display: none; }
+  html.in-shell.searching .insighthead { display: flex; }
 }

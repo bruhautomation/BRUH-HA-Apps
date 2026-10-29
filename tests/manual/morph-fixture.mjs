@@ -17,13 +17,31 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { stub as panelStub } from './today-fixture.mjs';
+import { stub as panelStub, INSIGHTS } from './today-fixture.mjs';
 
 // brAIn's own panel (brain/panel), for opts.realFrame: the shell frames the
 // real page rather than a stand-in, so what one screen shows — one header,
 // no bottom tab bar, one theme — is measured on the real thing.
 export const PANEL = fileURLToPath(new URL('../../brain/panel/', import.meta.url));
 export const BRAIN_VERSION = '4.0.5';
+
+// Enough insight cards for the Insights pane to offer its search (more
+// than REPORT_SEARCH_AFTER in app.js) and to be taller than a phone, so a
+// measure can scroll it: opts.insights = MANY_INSIGHTS.
+export const MANY_INSIGHTS = Array.from({ length: 12 }, (_, i) => ({
+  ...INSIGHTS[i % INSIGHTS.length], id: `custom-${i + 1}`,
+  title: `${INSIGHTS[i % INSIGHTS.length].title} (${i + 1})`,
+}));
+
+// An iPhone's safe area (its Dynamic Island strip on top, the home
+// indicator below), the way Safari and the Home Assistant app report it to
+// env(safe-area-inset-*): Chromium's own override, so the page under test
+// reads it exactly where a phone's would rather than from a stand-in.
+export async function safeArea(page, top, bottom = 0) {
+  const c = await page.context().newCDPSession(page);
+  await c.send('Emulation.setSafeAreaInsetsOverride', { insets: { top, topMax: top, bottom, bottomMax: bottom, left: 0, leftMax: 0, right: 0, rightMax: 0 } });
+  return c;
+}
 
 export const FRONTEND = fileURLToPath(new URL('../../brain/custom_components/brain/morph/frontend/', import.meta.url));
 export const ORIGIN = 'http://morph.test';
@@ -218,7 +236,7 @@ export function brainFeed(opts) {
 // The page: the panel, and a `hass` that answers like Home Assistant.
 export function page(opts) {
   const o = opts || {};
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <style>html,body{margin:0;height:100%;background:#000}</style></head><body>
 <script>
 customElements.define('morph-next', class extends HTMLElement {
@@ -403,7 +421,7 @@ function realPanel(opts) {
   const o = opts || {};
   const html = readFileSync(path.join(PANEL, 'index.html'), 'utf8').replaceAll('{{VERSION}}', BRAIN_VERSION);
   const features = { morph: o.morph !== false, personality: true, name: 'Juniper', shell: true, learning_loop: true, development_loop: false };
-  const extra = `<script>${panelStub()}
+  const extra = `<script>${panelStub(o.insights ? { insights: o.insights } : {})}
 (() => { const inner = window.fetch; window.fetch = async (url, opts) => {
   const r = await inner(url, opts);
   if (!String(url).includes('api/status')) return r;

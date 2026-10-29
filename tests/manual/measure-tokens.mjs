@@ -93,7 +93,9 @@ window.fetch = async (url) => {
     return answer({
       version: 'test', authenticated: true, auth_type: 'oauth',
       auth_source: 'panel', auth_check: { state: 'ok', error: '' },
-      model: 'default', settings: { onboarded: true },
+      // Ask as the chat, whose words this can judge: the terminal is a
+      // frame of ttyd's, which put nothing of the pane's own on the screen.
+      model: 'default', settings: { onboarded: true, terminal_ui: 'chat' },
       usage: { five_hour: 42, seven_day: 17, source: 'account' },
       auto: { enabled: true }, jobs: {}, queue_size: 0,
       categories: [{ id: 'energy', title: 'Energy', icon: '⚡', description: '',
@@ -118,6 +120,17 @@ window.fetch = async (url) => {
   }
   if (p.includes('api/scenes/areas')) {
     return answer({ areas: [{ area: 'Lounge', lights: 4 }], min_lights: 2 });
+  }
+  // Ask's list of conversations, so the Ask pane is judged on its own words
+  // rather than passing the "did it render?" floor on the header's alone
+  // (it did until the header's version line moved to ⚙).
+  if (p.includes('api/chat/conversations')) {
+    return answer({ conversations: [
+      { id: 'c-1', title: 'Why does the porch light come on at three', modified: 0, age: '2 min ago',
+        source: 'you', live: false, busy: false, needs_ok: false, row_state: { state: 'paused', label: '', hint: '' } },
+      { id: 'c-2', title: 'Turn the kitchen lights off', modified: 0, age: '1 h ago',
+        source: 'you', live: false, busy: false, needs_ok: false, row_state: { state: 'paused', label: '', hint: '' } }],
+      current: '', sources: [{ id: 'you', label: 'Chats', count: 2 }], sessions: [], max_sessions: 3 });
   }
   if (p.includes('api/proposals')) return answer({ proposals: [], open: 0, rooms: [] });
   if (p.includes('api/ideas')) return answer({ ideas: [], state: {} });

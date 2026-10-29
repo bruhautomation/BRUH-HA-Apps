@@ -64,8 +64,8 @@
 //   * every switch is a row in a group — its words on the left, the switch
 //     in the right-hand column beside them, never more than 640px from the
 //     start of its label on a wide screen — cameras and calendars included.
-//   * the header carries the version under the logo as one link to this
-//     release's changelog anchor (`CHANGELOG.md#2185`), named, a 44px target
+//   * ⚙'s heading carries the version (it left the header, which the owner
+//     asked to be "subtle") as one link to this release's changelog anchor (`CHANGELOG.md#2185`), named, a 44px target
 //     on touch, and saying "restart needed" with the restart sentence while
 //     Home Assistant still runs an older integration.
 //   * pressing it opens What's new in the panel: the notes newest first,
@@ -736,7 +736,7 @@ for (const width of WIDTHS) {
     note(where, `driving the budget failed: ${String(e.message).split('\n')[0]}`);
   }
 
-  // ---- the version in the header: a link to this release's changelog ------
+  // ---- the version in ⚙'s heading: a link to this release's changelog ----
   try {
     await page.waitForFunction(() => /2\.18\.5/.test(
       (document.querySelector('#versionChip') || {}).textContent || ''), null, { timeout: 4000 });
@@ -747,10 +747,12 @@ for (const width of WIDTHS) {
                href: a.getAttribute('href'), target: a.getAttribute('target'),
                rel: a.getAttribute('rel') || '', name: a.getAttribute('aria-label') || '',
                w: Math.round(r.width), h: Math.round(r.height),
-               inBar: !!a.closest('.topbar'), shown: a.offsetParent !== null };
+               inBar: !!a.closest('.topbar'), inSettings: !!a.closest('#setModal .setpagehead'),
+               shown: a.offsetParent !== null };
     });
     if (v.tag !== 'A') note(where, `the version is a <${v.tag}>, not a link`);
-    if (!v.shown || !v.inBar) note(where, 'the version is not in the header');
+    if (!v.shown || !v.inSettings) note(where, 'the version is not in ⚙\'s heading');
+    if (v.inBar) note(where, 'the version is still in the header');
     if (!/^v2\.18\.5$/.test(v.text)) note(where, `the version reads "${v.text}"`);
     if (v.href !== 'https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md#2185') {
       note(where, `the version links to "${v.href}"`);

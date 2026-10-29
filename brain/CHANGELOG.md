@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.12
+
+### Changed
+
+- **The phone header is slim, sits beside the Dynamic Island, and hides on scroll.** In the sidebar panel on a phone the header's first row sits in the top safe area (the menu and name left of the island, the status dot and ⚙ right of it), scrolling down hides it and scrolling up or reaching the top brings it back (no slide with reduced motion), and the chrome above the content is about 48px under the island strip instead of about 170px. The version moved to a link beside the Settings title (pressing it still opens What's new). On a phone, pressing the tab you are on opens that pane's sections as a menu, and Insights' search is an icon that opens its field. (#523, #525)
+- **Dragging the header no longer moves the page.** The page, its frame and Home no longer let a drag on the header scroll or rubber-band the window around brAIn. Morph draws no strip of its own under brAIn's header. (#522)
+
 ## 4.0.11
 
 ### Added

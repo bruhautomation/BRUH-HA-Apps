@@ -91,7 +91,7 @@ function seed(mode) {
   // with work nobody has to do is how you learn to ignore this one.
   $('#findBadge').textContent = '3';
   $('#findBadge').classList.remove('hidden');
-  // The version under the logo, as the panel paints it off /api/status.
+  // The version, as the panel paints it off /api/status (in ⚙'s heading).
   const ver = $('#versionText');
   if (ver) ver.textContent = 'v2.18.5';
   if (mode === 'broken') {
@@ -130,7 +130,7 @@ function probe(floors) {
   }
 
   // Everything you can press, measured as rendered.
-  const targets = [...bar.querySelectorAll('.viewtab, .btn.icon, .chip.clickable, #versionChip')]
+  const targets = [...bar.querySelectorAll('.viewtab, .btn.icon, .chip.clickable')]
     .filter((el) => getComputedStyle(el).display !== 'none')
     .map((el) => {
       const r = el.getBoundingClientRect();
@@ -163,11 +163,13 @@ function probe(floors) {
     .filter((el) => el !== tabbar && !el.classList.contains('spacer'))
     .filter((el) => getComputedStyle(el).display !== 'none')
     .map((el) => el.id || el.getAttribute('class').split(' ')[0]);
-  // The version: a link under the logo, to this release's changelog.
+  // The name (the wordmark, or the household's name) is the header's; the
+  // version moved to ⚙'s heading, so it is nowhere in the bar.
+  const brand = document.querySelector('#brandMark');
   const ver = document.querySelector('#versionChip');
-  const version = ver && ver.tagName === 'A' && ver.closest('.topbar') === bar
-    && getComputedStyle(ver).display !== 'none' && ver.getBoundingClientRect().width > 0
-    && /CHANGELOG\.md/.test(ver.getAttribute('href') || '') ? 'ok' : 'missing';
+  const version = brand && brand.closest('.topbar') === bar
+    && getComputedStyle(brand).display !== 'none' && brand.getBoundingClientRect().width > 0
+    ? (ver && bar.contains(ver) ? 'in the bar' : 'ok') : 'missing';
   return {
     version, versionName: ver ? ver.getAttribute('aria-label') || '' : '',
     fixedTabs: fixed,
@@ -228,7 +230,7 @@ function probe(floors) {
       // showing, and a third row only when a trouble chip joins the usage
       // pill. A phone: one header row of the logo, the dot and ⚙, and the
       // tabs on one row fixed along the bottom, named and inside the screen.
-      const header = new Set(['versionChip', 'statusDot', 'settingsBtn']);
+      const header = new Set(['brandMark', 'statusDot', 'settingsBtn']);
       const shape = bottom
         ? m.rows === 1 && m.height <= HEADER_MAX && m.fixedTabs && m.tabbarAtBottom
           && m.tabsInside && m.tabsOneRow && m.labelled === m.tabs
@@ -238,10 +240,10 @@ function probe(floors) {
           ? !m.fixedTabs && m.rows >= 2 && m.rows <= (mode === 'running' ? 2 : 3)
             && m.labelled === m.tabs
           : !m.fixedTabs && m.rows === 1 && m.height === 56 && m.labelled === m.tabs;
-      // Every width shows the version, as a link with a name, beside the
-      // logo — and on a phone it is the logo's own row, not a fourth item.
-      const versioned = m.version !== 'missing' && !!m.versionName
-        && m.headerItems.includes('versionChip');
+      // Every width shows the name, and on a phone it is the row's own
+      // first item; the version is in ⚙ and never in the bar.
+      const versioned = m.version === 'ok' && !!m.versionName
+        && m.headerItems.includes('brandMark');
       const touch = !!m.smallest && m.undersized.length === 0;
       rows.push({ width, mode, ...m, phone, shape, touch, overflow, versioned });
 
