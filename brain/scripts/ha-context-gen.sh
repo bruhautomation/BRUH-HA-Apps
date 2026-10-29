@@ -490,6 +490,21 @@ add-on, file it with \`report_bug\` without being asked. When it is off, file
 only when the person asks. Never patch an add-on's own code in place either
 way: the next update wipes it.
 
+## brAIn's own page (the house layer)
+
+brAIn's page can be changed by this house, YOLO or not, without touching the
+add-on: its program files (\`/opt/panel\`, the server and every shipped
+file) are not editable and an update replaces them, so never try. Instead
+write \`/config/.brain/ui/house.css\` (added after brAIn's stylesheet, so it
+wins) and \`/config/.brain/ui/house.js\` (run after brAIn's own script, in its
+own script). Both are optional, each at most 256 KB, and an update keeps
+them. A reload of the page shows the change. A house.js that throws leaves
+the page working and shows its error in ⚙ › Instructions. To undo an edit:
+\`brain undo\`, or delete the file. Safe mode: open the page with
+\`?nohouse=1\` (brAIn's sidebar entry passes it through) to skip both; ⚙ ›
+Instructions also turns them off on one device. The server's behaviour and
+the shipped tabs' code cannot be changed this way: only what the page draws.
+
 ## YOLO mode (opt-in): currently ${yolo_state}
 
 YOLO mode is off unless the owner turned it on in ⚙ › Permissions. When it

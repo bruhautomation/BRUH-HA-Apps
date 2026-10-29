@@ -109,6 +109,7 @@ BRUH-HA-Apps/
 │   │   ├── engine.py            # How Claude is invoked (argv, env, credential, job → model/effort/schema)
 │   │   ├── model_plan.py        # Which model does which job: Haiku looks, Sonnet thinks, Opus acts, Fable is a press
 │   │   ├── app.js / style.css / index.html / docs.js  # The whole UI
+│   │   ├── house_ui.py / house-layer.js  # The house's own layer over the page (/config/.brain/ui)
 │   │   ├── run_sources.py       # Which face started a conversation (session-id ledger)
 │   │   ├── chat_session.py      # …and the endings a discussion can offer as buttons
 │   │   ├── todo_store.py        # Work you accepted — a list that outlives the card

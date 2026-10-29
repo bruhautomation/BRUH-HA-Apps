@@ -264,6 +264,7 @@ import weekly
 # Home Assistant's own maintainer: names and rooms, the house book, the
 # overnight health check and the upgrade advisor.
 import house_book
+import house_ui
 import sre
 import memory_cleanup
 import tidy
@@ -8993,7 +8994,8 @@ def _read_json(path: Path) -> dict | None:
 # developer editing them still sees the edit, and a miss is read off the
 # loop; a hit costs a `stat`, which is the one thing here small enough to
 # leave where it is.
-STATIC_FILES = ("index.html", "style.css", "app.js", "docs.js", "favicon.svg")
+STATIC_FILES = ("index.html", "style.css", "app.js", "docs.js", "favicon.svg",
+                "house-layer.js")
 _STATIC_CACHE: dict[str, tuple[tuple[int, int], str]] = {}
 
 
@@ -9030,7 +9032,27 @@ def _warm_static() -> None:
 async def h_index(request: web.Request) -> web.Response:
     html = await asyncio.to_thread(_read_static, "index.html")
     html = html.replace("{{VERSION}}", ADDON_VERSION)
+    # The house's own layer (`house_ui`): its facts, and house.css linked
+    # after style.css. `?nohouse=1` is the safe mode and skips both.
+    html = await asyncio.to_thread(house_ui.render, html,
+                                   house_ui.wants_off(request.query))
     return web.Response(text=html, content_type="text/html")
+
+
+async def h_house_file(request: web.Request) -> web.Response:
+    """`house.css` / `house.js` from /config/.brain/ui, or a 404.
+
+    Never cached for long: the house edits these and expects a reload to
+    show the edit; the page's link carries the file's stamp anyway.
+    """
+    name = request.match_info["name"]
+    data = await asyncio.to_thread(house_ui.read, name)
+    if data is None:
+        raise web.HTTPNotFound(text="no such file")
+    return web.Response(body=data, content_type=house_ui.CONTENT_TYPES[name],
+                        charset="utf-8",
+                        headers={"Cache-Control": "no-cache",
+                                 "X-Content-Type-Options": "nosniff"})
 
 
 def _static(name: str, ctype: str):
@@ -18738,6 +18760,8 @@ def _diagnostics_payload() -> dict:
     # Download-diagnostics bundle say what the panel's status line says.
     payload["status"] = _brain_status(settings, usage or None)
     payload["counts"] = _counts()
+    # The house's layer over this page: names and sizes, never contents.
+    payload["house_ui"] = house_ui.summary()
     # And the flat sweep, derived last for the same reason and from the
     # same payload the report reads — so ⚙ → Diagnostics, the mirror,
     # Home Assistant's Download-diagnostics button and `brain report` all
@@ -26879,6 +26903,9 @@ def make_app() -> web.Application:
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
     app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
     app.router.add_get("/favicon.svg", _static("favicon.svg", "image/svg+xml"))
+    app.router.add_get("/house-layer.js",
+                       _static("house-layer.js", "application/javascript"))
+    app.router.add_get("/{name:house\\.(?:css|js)}", h_house_file)
     app.router.add_get("/api/status", h_status)
     app.router.add_get("/api/changelog", h_changelog)
     app.router.add_get("/api/settings", h_settings_get)
