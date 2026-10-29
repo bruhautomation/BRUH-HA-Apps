@@ -146,15 +146,18 @@
             </div>
             <div class="colourpop" id="colourPop" role="dialog" aria-label="Body colour" hidden></div>
             </div>
-            <div class="versions" id="versions"></div>
-            <div id="versionInfo" class="hint"></div>
+            <details class="partinfo" id="partInfo">
+              <summary><span id="partInfoLine">No version yet</span></summary>
+              <div class="versions" id="versions"></div>
+              <div id="versionInfo" class="hint"></div>
+            </details>
           </div>
           <div class="chat">
             <div class="messages" id="messages"></div>
             <button type="button" class="tolatest" id="toLatest" hidden>↓ Latest</button>
             <p class="status" id="designStatus" hidden></p>
             <form id="composer" class="composer">
-              <textarea id="composerText" rows="2" placeholder="Describe the part, or what to change…"></textarea>
+              <textarea id="composerText" rows="1" placeholder="Describe the part, or what to change…"></textarea>
               <button class="primary" type="submit">Send</button>
             </form>
           </div>

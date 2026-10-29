@@ -764,10 +764,18 @@ function watchTimeline(p, w) {
     w.plan.source === "gcode" ? null : el("p", { class: "hint" }, "Spread by layer: the print's file could not be read."));
 }
 
-// When it looks, and what it does about a moving bed: said by the ⓘ.
-function watchInfo() {
-  return el("details", { class: "info" }, el("summary", { "aria-label": "How print failure detection works", title: "How it works" }, "i"),
-    el("div", { class: "infopop" },
+// When it looks, and what it does about a moving bed: said by the ⓘ. One
+// per printer that outlives the card's redraws (every four seconds), so it
+// stays open, and where it was scrolled, until its ✕ or the ⓘ closes it.
+const infoNodes = {};
+
+function watchInfo(p) {
+  if (infoNodes[p.id]) return infoNodes[p.id];
+  const box = el("details", { class: "info" });
+  box.append(el("summary", { "aria-label": "How print failure detection works", title: "How it works" }, "i"),
+    el("div", { class: "infopop", role: "dialog", "aria-label": "How print failure detection works" },
+      el("div", { class: "infohead" }, el("b", {}, "How failure detection works"),
+        el("button", { type: "button", class: "iconbtn quiet", "aria-label": "Close", onclick: () => { box.open = false; } }, icon("close"))),
       el("p", {}, el("b", {}, "When brAIn looks. "), "Each look is a brAIn run, so it looks only where prints fail. Before a print starts it reads the print's G-code and plans looks at:"),
       el("ul", {}, el("li", {}, "the first layer, and again a few mm up"), el("li", {}, "a sharp narrowing, bridges, overhangs and supports"),
         el("li", {}, "a colour change, a part getting tall and thin, the last layers"), el("li", {}, "one look in any long quiet stretch")),
@@ -775,6 +783,8 @@ function watchInfo() {
       el("p", {}, el("b", {}, "Between looks "), "it checks a small grey copy of the picture every 10 seconds, free: a covered lens, a dark chamber or a frozen feed stand looks down, and it says so."),
       el("p", {}, el("b", {}, "A moving bed. "), "The bed and toolhead move while it prints (an A1's bed slides front to back). So a look takes a burst of four frames about a second apart and sends brAIn the sharpest one, and brAIn is told a smear or a moved plate is not a failure. A look it still could not judge is never called a failure; it looks again later. Keep the chamber light on for the sharpest pictures."),
       el("p", {}, el("b", {}, "After a print "), "it watches the plate (a picture a minute or so, only once the print has finished) and clears the finished print from this page once the part is taken off.")));
+  infoNodes[p.id] = box;
+  return box;
 }
 
 function watchAlert(p, w) {
@@ -865,7 +875,7 @@ function watchBlock(p) {
     el("div", { class: "grow" }, el("b", {}, "Failure detection"),
       w.enabled ? el("p", { class: "hint" }, w.sentence) : null),
     w.enabled ? el("span", { class: `pill ${tone}` }, el("i", { class: "dot" }), word) : null,
-    watchInfo(),
+    watchInfo(p),
     el("label", { class: "switch", title: w.enabled ? "Turn print failure detection off" : "Turn print failure detection on" },
       el("input", { type: "checkbox", role: "switch", checked: w.enabled, "aria-label": "Print failure detection",
         onchange: (e) => watchSet(p, { enabled: e.target.checked }) }), el("i", {})));
@@ -1513,9 +1523,13 @@ try { first = localStorage.getItem("bambu.view") || "studio"; } catch (_) { /* s
 refresh().then(() => show(first));
 setInterval(refresh, 4000);
 
-// A ⋯ menu or an ⓘ closes on a press anywhere else, and after a choice.
+// A ⋯ menu closes on a press anywhere else, and after a choice. An ⓘ is
+// something to read, so it stays open until its ✕ or the ⓘ again (or Escape).
 document.addEventListener("click", (e) => {
-  document.querySelectorAll("details.pmenu[open], details.info[open]").forEach((d) => {
-    if (!d.contains(e.target) || (d.classList.contains("pmenu") && e.target.closest(".pmenupop button, .pmenupop a"))) d.open = false;
+  document.querySelectorAll("details.pmenu[open]").forEach((d) => {
+    if (!d.contains(e.target) || e.target.closest(".pmenupop button, .pmenupop a")) d.open = false;
   });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.querySelectorAll("details.info[open]").forEach((d) => { d.open = false; });
 });

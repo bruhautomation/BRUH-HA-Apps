@@ -156,9 +156,18 @@ dialog::backdrop { background: rgba(5, 8, 11, .45); }
   min-height: 0; padding: 0; border-radius: 50%; color: var(--muted); font-size: 15px; font-weight: 700; }
 .info > summary::-webkit-details-marker { display: none; }
 .info[open] > summary, .info > summary:hover { background: var(--sunk); color: var(--accent); }
-.infopop { position: absolute; z-index: 9; top: calc(100% + 6px); right: -8px; width: min(360px, calc(100vw - 32px));
-  padding: 12px 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line);
-  box-shadow: var(--shadow); font-size: 14px; color: var(--ink); line-height: 1.45; }
+.infopop { position: absolute; z-index: 9; top: calc(100% + 6px); right: -8px; width: min(380px, calc(100vw - 32px));
+  max-height: min(70vh, 560px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 4px 14px 12px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .25); font-size: 14px; color: var(--ink); line-height: 1.45; text-align: left; font-weight: 400; }
+.infohead { position: sticky; top: 0; display: flex; align-items: center; gap: 8px; margin: 0 -4px 6px 0;
+  padding-top: 4px; background: var(--surface); }
+.infohead b { flex: 1; }
+/* A phone: the explanation sits inside the screen whatever the ⓘ's place. */
+@media (max-width: 640px) {
+  .infopop { position: fixed; left: 12px; right: 12px; top: calc(var(--bar-h) + 12px); width: auto;
+    max-height: calc(100vh - var(--bar-h) - 24px); max-height: calc(100dvh - var(--bar-h) - 24px); z-index: 40; }
+}
 .infopop p { margin: 0 0 8px; }
 .infopop ul { margin: 0 0 8px; padding-left: 18px; }
 .infopop li { margin: 2px 0; }
@@ -239,6 +248,20 @@ body.has-filled { overflow: hidden; }
 .viewtools > button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .versions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .versions:empty { display: none; }
+/* The version, in one line under the view; what changed, the warnings, the
+   dimensions and the other versions open from it. */
+.partinfo { margin-top: 8px; border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--line); }
+.partinfo > summary { list-style: none; min-height: 40px; padding: 0 12px; font-size: 14px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; }
+.partinfo > summary::-webkit-details-marker { display: none; }
+.partinfo > summary > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; }
+.partinfo > summary b { color: var(--ink); }
+.partinfo > summary .pill { margin-left: 6px; }
+.partinfo > summary::after { content: "›"; margin-left: auto; font-size: 20px; transition: transform .15s; }
+.partinfo[open] > summary::after { transform: rotate(90deg); }
+.partinfo > :not(summary) { padding: 0 12px; }
+.partinfo[open] { padding-bottom: 8px; }
+.partinfo .versions { margin-top: 0; }
 #versionInfo p { margin: 6px 0; font-size: 14px; }
 .warnlist { margin: 6px 0; padding-left: 18px; color: var(--warn-ink); }
 .chat { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0;
@@ -264,7 +287,7 @@ body.has-filled { overflow: hidden; }
 .msg .chip { margin-top: 6px; }
 .status { margin: 0; padding: 6px 12px; color: var(--muted); font-size: 13px; }
 .composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--line); align-items: flex-end; }
-.composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 160px; }
+.composer textarea { flex: 1; resize: none; min-height: 44px; max-height: 160px; height: 44px; overflow-y: auto; }
 .grid.two { grid-template-columns: 1fr 1fr; }
 fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); display: grid; gap: 6px; }
 .tray { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
@@ -285,7 +308,11 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
 .viewhelp-pop p { margin: 0; color: #b8c6d2; }
 /* On a phone only the gestures for the device in hand (they come first);
    both sets are there on a wider screen, for a laptop with a touch screen. */
-@media (max-width: 600px) { .viewhelp-pop > [data-input] ~ [data-input] { display: none; } }
+@media (max-width: 600px) {
+  .viewhelp-pop > [data-input] ~ [data-input] { display: none; }
+  .viewhelp-pop { font-size: 13px; line-height: 1.35; padding: 10px 12px; }
+  .viewhelp-pop ul { margin: 2px 0 6px; }
+}
 .bodies { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .bodies:empty { display: none; }
 /* A body's pill: its dot changes the colour it prints in, its name hides
@@ -332,6 +359,7 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
   font-size: 14px; white-space: nowrap; translate: -50% -50%; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); }
 .measurebox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .measurebox #measureOut { flex: 1 1 100%; margin: 6px 0 0; }
+.measurebox #measureOut:empty { display: none; }
 .measurebox .ax.x { color: #e5484d; } .measurebox .ax.y { color: #46a758; } .measurebox .ax.z { color: #3e8ed0; }
 .measurelist { margin: 0; padding-left: 20px; font-size: 13px; color: var(--muted); flex: 1; }
 .measurelist:empty { display: none; }
@@ -352,9 +380,13 @@ fieldset.trays { border: 1px solid var(--line); border-radius: var(--r-sm); disp
   .partname { font-size: 16px; }
   .partbody { display: flex; flex-direction: column; gap: var(--s2); }
   .stage { flex: none; overflow: visible; }
-  .viewerwrap { --view-h: 40dvh; }
-  .viewer { height: 40vh; height: var(--view-h); min-height: 200px; }
+  .viewerwrap { --view-h: 36dvh; }
+  .viewer { height: 36vh; height: var(--view-h); min-height: 200px; }
   .viewtools { margin-top: 6px; }
+  .viewtools .bodies { margin: 0 0 0 4px; padding-left: 8px; border-left: 1px solid var(--line); flex: none; flex-wrap: nowrap; overflow: visible; }
+  /* Full screen has the room: the row wraps, so every pill is on screen. */
+  .viewerwrap.filled .viewtools, .viewerwrap:fullscreen .viewtools { flex-wrap: wrap; overflow: visible; }
+  .viewerwrap.filled .viewtools .bodies, .viewerwrap:fullscreen .viewtools .bodies { flex-wrap: wrap; }
   .bodies, .versions { margin-top: 6px; }
   #versionInfo p { margin: 4px 0 0; font-size: 13px; }
   .partview.noview .stage { display: none; }
