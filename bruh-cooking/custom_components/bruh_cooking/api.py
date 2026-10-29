@@ -11,7 +11,6 @@ import asyncio
 import base64
 import contextlib
 import json
-import logging
 import time
 import uuid
 from collections import deque
@@ -23,7 +22,6 @@ from typing import Any
 
 import aiohttp
 
-_LOGGER = logging.getLogger(__name__)
 
 APP_CHANNEL = "brevilleJoule"
 # Sage, the brand in the UK and Europe, has its own app on the same cloud.

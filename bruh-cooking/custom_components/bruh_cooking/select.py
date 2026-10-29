@@ -39,13 +39,13 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda coordinator, appliance: (
-            (
+            [
                 OvenModeSelect(coordinator, appliance, "oven_mode"),
                 ConvectionSelect(coordinator, appliance, "convection"),
                 LevelSelect(coordinator, appliance, "level"),
-            )
+            ]
             if appliance.model == MODEL_BOV950
-            else ()
+            else []
         ),
     )
 
