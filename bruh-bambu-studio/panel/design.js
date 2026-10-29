@@ -235,9 +235,21 @@ function renderVersions(p) {
   const v = vs.find((x) => x.n === design.viewing);
   const info = $("#versionInfo");
   info.replaceChildren();
+  // Everything about the version is one line under the view, and the rest
+  // (what changed, the warnings, the dimensions, the other versions) opens
+  // from it: the conversation keeps the room.
+  const box = $("#partInfo");
+  box.hidden = !v;
   if (!v) return;
-  // The size is said once, under the view ("Overall …"), not again here.
-  info.append(el("p", {}, [v.summary, v.grams ? `≈ ${v.grams} g PLA` : null].filter(Boolean).join(" · ")));
+  const warnings = (v.warnings || []).length;
+  $("#partInfoLine").replaceChildren(
+    el("b", {}, `v${v.n}${vs.length > 1 ? ` of ${vs.length}` : ""}`),
+    v.n !== p.current ? " (not the current one)" : "",
+    v.ok ? "" : " · did not build",
+    v.size_mm ? ` · ${fmtSize(v.size_mm)}` : "",
+    v.grams ? ` · ≈ ${v.grams} g` : "",
+    warnings ? el("span", { class: "pill warn" }, el("i", { class: "dot" }), `${warnings} warning${warnings === 1 ? "" : "s"}`) : "");
+  if (v.summary) info.append(el("p", {}, v.summary));
   if (v.warnings && v.warnings.length) info.append(el("ul", { class: "warnlist" }, v.warnings.map((w) => el("li", {}, w))));
   if (v.dims) info.append(el("p", {}, Object.entries(v.dims).map(([k, val]) => `${k}: ${val}`).join(" · ")));
   if (v.ok && v.n !== p.current) {
@@ -291,10 +303,6 @@ async function loadModel(p, v) {
     await design.viewer.load(bodies);
     renderBodies(bodies);
     firstHelp();
-    const size = design.viewer.size();
-    if (size && !$("#measureBtn").getAttribute("aria-pressed").includes("true")) {
-      $("#measureOut").textContent = `Overall ${fmtSize(size)}`;
-    }
     if (v.n === p.current) saveThumb(p);
   } catch (e) { note.hidden = false; note.textContent = `Could not show it: ${e.message}`; }
 }
@@ -657,6 +665,30 @@ $("#composerText").addEventListener("keydown", (e) => {
 });
 $("#partName").addEventListener("change", rename);
 $("#partDelete").addEventListener("click", removePart);
+// On a phone the body pills ride in the view tools' row (one scrolling row,
+// not two), so the conversation under the view keeps the height.
+const narrow = window.matchMedia("(max-width: 900px)");
+function placeBodies() {
+  const tools = document.querySelector(".viewtools");
+  const list = $("#bodyList");
+  if (narrow.matches && list.parentElement !== tools) tools.append(list);
+  else if (!narrow.matches && list.parentElement === tools) tools.after(list);
+}
+placeBodies();
+narrow.addEventListener("change", placeBodies);
+// The message box starts one line tall and grows with what is typed.
+function fitComposer() {
+  const box = $("#composerText");
+  box.style.height = "auto";
+  box.style.height = `${Math.min(160, box.scrollHeight + 2)}px`;
+}
+$("#composerText").addEventListener("input", fitComposer);
+$("#composer").addEventListener("submit", () => setTimeout(fitComposer, 0));
+// The version's details stay as they were left, on this browser.
+try { $("#partInfo").open = localStorage.getItem("bambu.partInfo") === "1"; } catch (_) { /* storage refused */ }
+$("#partInfo").addEventListener("toggle", (e) => {
+  try { localStorage.setItem("bambu.partInfo", e.currentTarget.open ? "1" : "0"); } catch (_) { /* storage refused */ }
+});
 // The conversation scrolls inside itself; ↓ Latest is there whenever the
 // newest message is out of sight.
 $("#messages").addEventListener("scroll", () => { $("#toLatest").hidden = nearBottom($("#messages")); }, { passive: true });

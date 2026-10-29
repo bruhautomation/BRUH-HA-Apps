@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1
+
+### Changed
+
+- **The version is one line under the 3D view** — which version, its size, its weight and how many warnings — and what changed, the warnings, the dimensions and the other versions open from it. It stays open or closed as you left it. The "Overall" size line under the view is gone (the size is in that line).
+- **More room for the conversation on a phone.** The body pills share the view tools' row, the view is a little shorter, and the message box starts one line tall and grows as you type.
+
+### Fixed
+
+- **Failure detection's i stays open** until its ✕, the i again or Escape: the printer card's redraw every four seconds was closing it. It also fits the window — on a phone it sits inside the screen, and a long explanation scrolls inside itself.
+
 ## 0.4.0
 
 ### Added

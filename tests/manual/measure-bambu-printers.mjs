@@ -265,7 +265,19 @@ async function run(label, viewport, touch) {
   for (const want of ['first layer', 'sharpest', 'bed', 'Check now']) {
     if (!info.includes(want)) say(`the ⓘ does not say “${want}”`);
   }
-  await page.mouse.click(5, 5);
+  // It fits the window, and stays open through a tap elsewhere and the
+  // card's next redraw, until its ✕.
+  const pop = await watch.locator('.infopop').boundingBox();
+  const vw = page.viewportSize();
+  if (pop.x < 0 || pop.x + pop.width > vw.width + 1 || pop.y < 0 || pop.y + pop.height > vw.height + 1) {
+    say(`the ⓘ does not fit the window (${Math.round(pop.x)},${Math.round(pop.y)} ${Math.round(pop.width)}×${Math.round(pop.height)})`);
+  }
+  await page.mouse.click(5, vw.height - 5);
+  await page.evaluate(() => refresh());
+  await page.waitForTimeout(300);
+  if (!(await card.locator('section.watch details.info').evaluate((d) => d.open))) say('the ⓘ closed by itself');
+  await card.locator('section.watch .infopop').getByRole('button', { name: 'Close' }).click();
+  if (await card.locator('section.watch details.info').evaluate((d) => d.open)) say("the ⓘ's ✕ did not close it");
   if ((await watch.locator('.wtick').count()) !== 5) say('the plan does not show its five looks on the layer line');
   if ((await watch.locator('.wtick.bad').count()) !== 1) say('the failed look is not marked on the layer line');
   const pics = await page.waitForFunction(() => [...document.querySelectorAll('.printer[data-id="a1"] .wpics img')]

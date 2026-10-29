@@ -35,8 +35,10 @@
  *    the view), or Settings' "Invert vertical drag" that does not turn it to
  *    Fusion 360's way (down lowers it) or is not remembered;
  *  - on a phone, an open part that makes the page scroll rather than its
- *    conversation (the 3D view must stay on screen), or no way back to the
- *    newest message;
+ *    conversation (the 3D view must stay on screen), a conversation shorter
+ *    than a third of the screen, or no way back to the newest message;
+ *  - the version's text (what changed, warnings, dimensions) spread under
+ *    the view rather than one line that opens to it;
  *  - Measure that does not snap like Fusion's: a pointer near a corner, an
  *    edge's middle, an edge, a face's centre or a face not taking that point
  *    and showing which; a distance not drawn on the line at its middle, with
@@ -88,7 +90,12 @@ const PART = {
   print_settings: { colour: 'white', material: 'PLA' },
   messages: [{ role: 'user', text: 'A white box with a red lid' },
     { role: 'assistant', text: 'Here it is: **two bodies**, the lid in `red`.\n\n- Base: 2 walls\n- Lid: 15 % infill\n\n<b>not markup</b>', version: 1 }],
-  versions: [{ n: 1, ok: true, summary: 'First version', size_mm: [40, 30, 36],
+  versions: [{ n: 0, ok: true, summary: 'A first try without the lid', size_mm: [40, 30, 30],
+    files: { '3mf': 'box0.3mf', step: 'box0.step', stl: 'box0.stl', bodies: { Base: 'bodies/Base.stl' } } },
+  { n: 1, ok: true, summary: 'Added a press-fit lid with a 0.2 mm clearance and a finger notch on the front edge',
+    size_mm: [40, 30, 36], grams: 14,
+    warnings: ['The lid\'s notch is 0.8 mm thick, under two perimeters.', 'The base has a 52° overhang under the lip.'],
+    dims: { wall: '2 mm', clearance: '0.2 mm', notch: '8 × 3 mm', lid: '5 mm' },
     colors: { Base: '#F4F4F2', Lid: 'red' },
     files: { '3mf': 'box.3mf', step: 'box.step', stl: 'box.stl',
       bodies: { Base: 'bodies/Base.stl', Lid: 'bodies/Lid.stl' } } }],
@@ -259,6 +266,8 @@ async function viewerMoves(page, say, touch, ctx) {
     if (fits.page > 2) say(`an open part makes the page scroll by ${fits.page} px instead of its conversation`);
     if (fits.overflow !== 'auto') say('the conversation does not scroll inside itself');
     if (!fits.viewer) say('the 3D view is not on screen with the conversation');
+    const chatH = await page.evaluate(() => document.querySelector('.chat').getBoundingClientRect().height / window.innerHeight);
+    if (chatH < 0.33) say(`the conversation is ${Math.round(chatH * 100)}% of a phone's height`);
     await page.evaluate(() => { const m = document.querySelector('#messages'); m.scrollTop = 0; m.dispatchEvent(new Event('scroll')); });
     const latest = await page.evaluate(() => { const m = document.querySelector('#messages');
       return m.scrollHeight > m.clientHeight + 40 ? !document.querySelector('#toLatest').hidden : true; });
@@ -523,7 +532,7 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
       const chosen = { ...(PART.body_colours || {}) };
       for (const [name, colour] of Object.entries(body.body_colours || {})) {
         if (colour === null) delete chosen[name];
-        else chosen[name] = { colour: colour.toUpperCase(), over: PART.versions[0].colors[name] || '' };
+        else chosen[name] = { colour: colour.toUpperCase(), over: PART.versions[1].colors[name] || '' };
       }
       PART.body_colours = chosen;
       return route.fulfill({ json: { ok: true, part: PART } });
@@ -613,7 +622,7 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   }
   const clipped = await help.evaluate((el) => el.scrollHeight - el.clientHeight);
   if (touch && clipped > 2) say(`the controls help has to be scrolled on a phone (${clipped} px hidden)`);
-  await page.locator('#measureOut').click();
+  await page.locator('#messages').click();
   if (await help.isVisible()) say('the help did not close on a tap elsewhere');
   const bb = await btn.boundingBox();
   if (touch && (bb.width < 44 || bb.height < 44)) say(`the ? is ${bb.width}×${bb.height}, under the 44 px touch floor`);
@@ -622,6 +631,28 @@ for (const [label, viewport, touch] of [['phone', { width: 390, height: 844 }, t
   await btn.click();
   if (await help.isVisible()) say('the ? did not close the help again');
   }
+
+  // The version: one line under the view, the rest a press away.
+  const info = page.locator('#partInfo');
+  if (!(await info.count())) say('the version has no one-line summary under the view');
+  else {
+    if (await info.evaluate((d) => d.open)) say("the version's details are open by default");
+    const line = await info.locator('summary').innerText();
+    for (const want of ['v1 of 2', '40 × 30 × 36 mm', '14 g', '2 warnings']) {
+      if (!line.includes(want)) say(`the version's line does not say “${want}” (${line})`);
+    }
+    const lineH = (await info.boundingBox()).height;
+    if (lineH > 52) say(`the closed version line is ${Math.round(lineH)}px tall`);
+    if (await page.locator('#versionInfo').isVisible()) say("the version's text shows while it is closed");
+    await info.locator('summary').click();
+    const opened = await page.locator('#versionInfo').innerText();
+    for (const want of ['press-fit lid', 'under two perimeters', 'clearance: 0.2 mm']) {
+      if (!opened.includes(want)) say(`the version's details do not say “${want}”`);
+    }
+    if ((await page.locator('#versions .chip').count()) !== 2) say("the version's details do not offer both versions");
+    await info.locator('summary').click();
+  }
+  if (await page.locator('#measureOut').isVisible()) say('a line of measure text shows under the view while nothing is measured');
 
   // The body key.
   const chips = page.locator('#bodyList .chip.body');
