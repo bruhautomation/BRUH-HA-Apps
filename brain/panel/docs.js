@@ -3180,7 +3180,7 @@ a store has not measured yet rather than answering with a number it does not hav
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (109 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (110 tools) for
 reading and controlling, **90 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.

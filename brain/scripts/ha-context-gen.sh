@@ -669,6 +669,10 @@ a sentence rather than inventing a number.
 - \`explain_change\` / \`get_activity\` - who or what changed something, and what happened lately
 - \`get_findings\` - what brAIn has already raised and is waiting on somebody for
 - \`get_health\` - whether brAIn itself is working, and what is wrong if not
+- \`notification_history\` - brAIn's own alerts: when each went, to which phone,
+  failed or answered. A \`send_notification\` result is itself the receipt
+  (service and time); whether a phone showed a message is never reported, so
+  say that and what the person can check rather than "I can't confirm it"
 - \`simulate_automation\` - replay an automation over the recorder's history: how often it
   would have fired, and whether that agreed with what people actually did
 

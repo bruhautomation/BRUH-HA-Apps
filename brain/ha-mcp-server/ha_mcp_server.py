@@ -2204,6 +2204,63 @@ def get_findings(status="open", limit=50):
     }
 
 
+def notification_history(hours=24, limit=20):
+    """brAIn's own messages, read over loopback from the delivery ledger.
+
+    The panel writes one line per message it sends (`deliveries.py`): when,
+    to which notify service, the title, sent or failed with Home
+    Assistant's error, and what happened after where the companion app
+    reports it — a button answered, a notification cleared (Android only),
+    ignored after a day. This is the receipt behind "did my phone get the
+    freezer alert", which a conversation could not read before and so
+    answered with "I can't confirm it arrived". Messages a conversation
+    sent itself with send_notification are not in it: their receipt is that
+    tool's own result. Read-only.
+    """
+    try:
+        hours = max(1, min(24 * 14, int(hours or 24)))
+    except (TypeError, ValueError):
+        hours = 24
+    try:
+        limit = max(1, min(100, int(limit or 20)))
+    except (TypeError, ValueError):
+        limit = 20
+    result = _panel_get(f"/api/deliveries?hours={hours}&limit={limit}")
+    if isinstance(result, dict) and result.get("error"):
+        return result
+    result = result if isinstance(result, dict) else {}
+    if not result.get("readable", True):
+        return {"error": "brAIn's delivery ledger could not be read, so "
+                         "nothing can be said about what was sent."}
+    messages = []
+    for row in result.get("rows") or []:
+        if not isinstance(row, dict):
+            continue
+        out = {"sent_at": _local_text(float(row.get("at") or 0)),
+               "to": row.get("service") or "",
+               "kind": row.get("kind") or "",
+               "title": row.get("title") or "",
+               "outcome": row.get("outcome") or ""}
+        if row.get("error"):
+            out["error"] = row["error"]
+        if row.get("action"):
+            out["answered_with"] = row["action"]
+        if row.get("after_s") is not None:
+            out["after_minutes"] = round(float(row["after_s"]) / 60, 1)
+        messages.append(out)
+    return {
+        "hours": hours, "messages": messages,
+        "note": ("sent_at is when Home Assistant accepted the message for "
+                 "that service. outcome: failed = Home Assistant refused it "
+                 "(see error); answered = a button on it was pressed; "
+                 "cleared = swiped away (only Android reports this); "
+                 "ignored = neither within a day; pending = accepted and "
+                 "nothing reported since. Whether a phone showed or opened "
+                 "a message is never reported, so say that rather than "
+                 "guessing. No rows: brAIn sent nothing in this window."),
+    }
+
+
 def explain_decision(entity_id="", check_id="", limit=20):
     """What brAIn decided NOT to say about something, and why.
 
@@ -3996,7 +4053,16 @@ def control_vacuum(entity_id, action, command=None, params=None):
 
 
 def send_notification(message, title=None, target=None, data=None):
-    """Send a notification through Home Assistant."""
+    """Send a notification through Home Assistant, and say what is known.
+
+    Core answers a notify call with `[]` — no service, no time, nothing —
+    and a model handed that could only say "I can't confirm it arrived",
+    which a household heard twice. So the result is a receipt: which
+    service took it and when, by the house's clock. And it says, in plain
+    words, the one thing no receipt exists for: Home Assistant does not
+    report whether a phone or a speaker actually showed the message, so the
+    reply names what the person can check instead of guessing either way.
+    """
     payload = {"message": message}
     if title:
         payload["title"] = title
@@ -4005,12 +4071,36 @@ def send_notification(message, title=None, target=None, data=None):
 
     if target:
         # target = "mobile_app_phone" -> notify.mobile_app_phone
-        return call_service("notify", target, payload)
+        domain, service = "notify", str(target)
+    else:
+        # Default: persistent notification
+        if title:
+            payload["notification_id"] = title.lower().replace(" ", "_")
+        domain, service = "persistent_notification", "create"
+    result = call_service(domain, service, payload)
+    return _notification_receipt(domain, service, result)
 
-    # Default: persistent notification
-    if title:
-        payload["notification_id"] = title.lower().replace(" ", "_")
-    return call_service("persistent_notification", "create", payload)
+
+def _notification_receipt(domain, service, result):
+    """What a send can honestly be said to have done."""
+    if isinstance(result, dict) and result.get("error"):
+        return {**result, "sent": False}
+    at = _local_text(time.time())
+    if domain == "persistent_notification":
+        return {"sent": True, "service": "persistent_notification.create",
+                "accepted_at": at,
+                "receipt": (f"Home Assistant accepted it at {at}. It is in "
+                            "Home Assistant's notifications (the bell in the "
+                            "sidebar) until somebody dismisses it.")}
+    name = f"{domain}.{service}"
+    return {"sent": True, "service": name, "accepted_at": at,
+            "receipt": (f"Home Assistant accepted it for {name} at {at} with "
+                        "no error. Home Assistant does not report whether the "
+                        "phone or device showed it, so that part cannot be "
+                        "confirmed from here: the person can check the "
+                        "phone's notifications, and a push the companion "
+                        "app's relay refused is written to Home Assistant's "
+                        "log (Settings > System > Logs).")}
 
 
 def activate_scene(entity_id, transition=None):
@@ -7732,7 +7822,12 @@ TOOLS = [
         "description": (
             "Send a notification via Home Assistant. "
             "Without a target, creates a persistent notification in the HA UI. "
-            "With a target, sends to that notify service (e.g., mobile app, Slack, email)."
+            "With a target, sends to that notify service (e.g., mobile app, Slack, email). "
+            "The result is a receipt: the service and the time Home Assistant "
+            "accepted it (say that time), and what cannot be known — Home "
+            "Assistant does not report whether a phone showed it. Say exactly "
+            "that and what the person can check; for brAIn's own alerts, "
+            "notification_history has what happened to each."
         ),
         "inputSchema": {
             "type": "object",
@@ -8390,6 +8485,27 @@ TOOLS = [
         }
     },
     {
+        "name": "notification_history",
+        "description": (
+            "What brAIn's own notifications were and what happened to each: "
+            "when Home Assistant accepted it, the notify service it went to, "
+            "the title, failed with the error, answered (a button pressed), "
+            "cleared (Android) or ignored. Use it for 'did my phone get the "
+            "alert' and answer with the time and the service; never say you "
+            "cannot confirm it was sent when a row says it was. Whether a "
+            "phone showed it is never reported — say so. Read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "hours": {"type": "number",
+                          "description": "How far back (default 24, at most 336)"},
+                "limit": {"type": "number",
+                          "description": "At most this many messages (default 20)"}
+            }
+        }
+    },
+    {
         "name": "explain_decision",
         "description": (
             "What brAIn decided NOT to tell the homeowner about an entity (or "
@@ -8810,6 +8926,7 @@ TOOL_IMPLEMENTATIONS = {
     "garden_add_crop": "garden_add_crop",
     "garden_log_note": "garden_log_note",
     "explain_decision": "explain_decision",
+    "notification_history": "notification_history",
 }
 
 
@@ -8843,6 +8960,7 @@ VOICE_REFUSED_TOOLS = frozenset({
     "get_house_model", "room_physics", "simulate_automation", "get_findings",
     "get_health", "get_error_log", "fire_event", "get_supervisor_info",
     "reload_config", "offer_resolutions", "explain_decision",
+    "notification_history",
     "bruh_addon_status", "report_bug", "screenshot_panel", "timed_action",
     "note_personality_change", "assistant_exposure", "set_assistant_exposure",
 })

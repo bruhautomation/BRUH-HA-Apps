@@ -18809,6 +18809,44 @@ async def h_diagnostics(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(_diagnostics_payload))
 
 
+DELIVERY_FIELDS = ("id", "at", "kind", "service", "title", "ok", "error",
+                   "outcome", "action", "after_s")
+
+
+def _deliveries_window(hours: float, limit: int,
+                       now: float | None = None) -> dict:
+    """The ledger's last `hours`, newest first, as the MCP tool reads it.
+
+    The receipt a conversation lacked: "I can't confirm it arrived" was the
+    only answer a model could give about brAIn's own alerts, because the
+    ledger that says when each went, where, and whether Home Assistant
+    refused it was readable by nothing a conversation has. Titles, never
+    bodies: the question is whether it went, not what it said.
+    """
+    now = time.time() if now is None else float(now)
+    folded = deliveries.fold(now)
+    if folded is None:
+        return {"readable": False, "rows": []}
+    rows = []
+    for row in folded:
+        if now - float(row.get("at") or 0) > hours * 3600:
+            break
+        rows.append({k: row[k] for k in DELIVERY_FIELDS if k in row})
+        if len(rows) >= limit:
+            break
+    return {"readable": True, "rows": rows}
+
+
+async def h_deliveries(request: web.Request) -> web.Response:
+    try:
+        hours = max(1.0, min(24.0 * 14, float(request.query.get("hours") or 24)))
+        limit = max(1, min(100, int(request.query.get("limit") or 20)))
+    except ValueError:
+        raise web.HTTPBadRequest(text="hours and limit are numbers") from None
+    return web.json_response(
+        await asyncio.to_thread(_deliveries_window, hours, limit))
+
+
 # ---------------------------------------------------------------------------
 # Problem reports — the ⚙ dialog's Problems section and `brain report`
 # ---------------------------------------------------------------------------
@@ -26943,6 +26981,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/doctor/rehearse", h_rehearse_start)
     app.router.add_post("/api/doctor/rehearse/sweep", h_rehearse_sweep)
     app.router.add_get("/api/diagnostics", h_diagnostics)
+    app.router.add_get("/api/deliveries", h_deliveries)
     app.router.add_get("/api/reports", h_reports_list)
     # The two fixed names before the {name} pattern, which would otherwise
     # answer them with a 405.

@@ -856,6 +856,7 @@ ANALYST_TOOLS = [
     f"{MCP}bruh_addon_status", # the other BRUH add-ons: state, log errors
     f"{MCP}screenshot_panel",  # a picture of a BRUH screen, redacted, read-only
     f"{MCP}explain_decision",  # what brAIn decided NOT to say, and why
+    f"{MCP}notification_history",  # brAIn's own messages and what became of each
     f"{MCP}get_areas",
     f"{MCP}get_registry",
     # Which entities reach the voice assistants and each HomeKit Bridge.
