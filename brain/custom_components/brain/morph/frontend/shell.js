@@ -19,8 +19,12 @@
 // closes), `menu` (open Home Assistant's sidebar), `features` (a switch
 // changed) and `home` (Morph's Edit, Done or YAML pressed in brAIn's
 // header). To the frame: `state` (narrow, whether the dashboard is on,
-// which is in front, Morph's theme, and what of Morph's belongs in the
-// header) and `open` (a view or a Settings section asked for from Morph).
+// which is in front, Morph's theme, the phone's top safe area, and what of
+// Morph's belongs in the header), `scroll` (Morph's scroll position, so the
+// header hides as the dashboard scrolls down and returns as it scrolls up;
+// the frame then reports the header's new height in `bars`) and `open` (a
+// view or a Settings section asked for from Morph). Nothing here lets a
+// drag run on into Home Assistant's own window (`overscroll-behavior`).
 //
 // ONE header (the owner: "there are two headers … merge them"): brAIn's
 // bar, drawn in Morph's theme — dark, medium or light, the theme Morph
@@ -64,11 +68,15 @@ class BrainShell extends HTMLElement {
     this.info = null;
     this.view = 'home';
     this.raised = false;
-    this.bars = { top: 0, bottom: 0 };
+    this.bars = { top: 0, bottom: 0, hidden: false };
     this._onMessage = (ev) => this.message(ev);
     this._onOpen = (ev) => this.openInFrame((ev.detail && ev.detail.view) || 'insights', ev.detail && ev.detail.sec);
     this.chrome = null;
     this._onChrome = (ev) => { this.chrome = ev.detail || null; this.sync(); };
+    // Morph's scroll, passed to brAIn's page: the one header hides while
+    // the dashboard scrolls down and comes back as it scrolls up.
+    this._onScroll = (ev) => { if (this.view === 'home') this.post({ scroll: Math.max(0, Number(ev.detail && ev.detail.y) || 0) }); };
+    this._onResize = () => { if (this.info) this.sync(); };
   }
 
   // The theme the one header is drawn in: Morph's, as it renders; the one
@@ -85,6 +93,8 @@ class BrainShell extends HTMLElement {
     window.addEventListener('message', this._onMessage);
     this.addEventListener('brain-open', this._onOpen);
     this.addEventListener('morph-chrome', this._onChrome);
+    this.addEventListener('morph-scroll', this._onScroll);
+    window.addEventListener('resize', this._onResize);
     if (!this._drawn) this.draw();
     if (this._v.hass && !this.info) this.start();
   }
@@ -93,6 +103,8 @@ class BrainShell extends HTMLElement {
     window.removeEventListener('message', this._onMessage);
     this.removeEventListener('brain-open', this._onOpen);
     this.removeEventListener('morph-chrome', this._onChrome);
+    this.removeEventListener('morph-scroll', this._onScroll);
+    window.removeEventListener('resize', this._onResize);
     clearInterval(this._validate);
     this._validate = null;
   }
@@ -100,19 +112,31 @@ class BrainShell extends HTMLElement {
   draw() {
     this._drawn = true;
     this.shadowRoot.innerHTML = `<style>
-:host{display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
+:host{display:block;position:relative;height:100vh;height:100dvh;overflow:hidden;overscroll-behavior:none;background:var(--brain-ground,var(--primary-background-color,#0A0C0E))}
+.inset{position:absolute;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none}
 iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:block;background:transparent;z-index:1}
 iframe[hidden]{display:none}
-.home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;--morph-h:calc(100vh - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-top,0px) - var(--brain-bottom,0px))}
+.home{position:absolute;left:0;right:0;top:var(--brain-top,0px);bottom:var(--brain-bottom,0px);z-index:2;overflow:hidden;overscroll-behavior:none;--morph-h:calc(100vh - var(--brain-top,0px) - var(--brain-bottom,0px));--morph-h:calc(100dvh - var(--brain-top,0px) - var(--brain-bottom,0px))}
 .home[hidden]{display:none}
+.home.slide{transition:top .22s ease}
+@media (prefers-reduced-motion:reduce){.home.slide{transition:none}}
 :host(.raised) iframe{z-index:3}
 .say{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:16px/1.5 system-ui,sans-serif;color:var(--primary-text-color,#e6e6e6)}
 .say[hidden]{display:none}
 .say a{color:var(--primary-color,#4fb3ff)}
-</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div>`;
+</style><iframe title="brAIn" allow="clipboard-read; clipboard-write; microphone; fullscreen" hidden></iframe><div class="home" hidden></div><div class="say" role="status">Opening brAIn…</div><div class="inset" aria-hidden="true"></div>`;
     this.frame = this.shadowRoot.querySelector('iframe');
     this.homeEl = this.shadowRoot.querySelector('.home');
     this.sayEl = this.shadowRoot.querySelector('.say');
+    this.insetEl = this.shadowRoot.querySelector('.inset');
+  }
+
+  // The phone's top safe area (the Dynamic Island's strip), as Home
+  // Assistant's page has it: a framed page is not promised env() values,
+  // so brAIn's page is told (`state.inset`) and draws its header's first
+  // row in that strip.
+  inset() {
+    return this.insetEl ? Math.round(this.insetEl.getBoundingClientRect().height) : 0;
   }
 
   say(html) {
@@ -219,7 +243,7 @@ iframe[hidden]{display:none}
     // Morph's Edit belongs in the header while Morph is mounted and the
     // person may edit it (or is editing it).
     const edit = !!(morph && this.morph && (c.admin || c.edit));
-    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme,
+    this.post({ state: { narrow: !!this._v.narrow, morph, view: home ? 'home' : 'panel', theme, inset: this.inset(),
                          home: { edit, editing: !!c.edit, yaml: !!c.yaml } } });
   }
 
@@ -243,7 +267,11 @@ iframe[hidden]{display:none}
     if (d.bars) {
       const top = Math.max(0, Math.round(Number(d.bars.top) || 0));
       const bottom = Math.max(0, Math.round(Number(d.bars.bottom) || 0));
-      if (top !== this.bars.top || bottom !== this.bars.bottom) { this.bars = { top, bottom }; this.sync(); }
+      const hidden = !!d.bars.hidden;
+      // Home slides with the header as it hides or comes back; any other
+      // change of height (a second row, a chip) it simply follows.
+      this.homeEl.classList.toggle('slide', hidden !== !!this.bars.hidden);
+      if (top !== this.bars.top || bottom !== this.bars.bottom || hidden !== !!this.bars.hidden) { this.bars = { top, bottom, hidden }; this.sync(); }
       return;
     }
     if (d.show === 'home' || d.show === 'panel') {

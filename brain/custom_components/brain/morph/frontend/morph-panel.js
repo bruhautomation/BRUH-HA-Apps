@@ -286,7 +286,7 @@ class MorphPanel extends HTMLElement {
   boot() {
     if (this.engine) return;
     const root = this.shadowRoot;
-    root.innerHTML = `<style>${STYLES}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden"><div class="wrap">
+    root.innerHTML = `<style>${STYLES}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden;overscroll-behavior-y:contain"><div class="wrap">
 <div data-region="thenrule"></div><div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
 <div data-region="board"><div data-board></div></div></div></div></div>`;
     if (!document.querySelector('link[data-morph-fonts]')) {
@@ -304,7 +304,13 @@ class MorphPanel extends HTMLElement {
     history.setOnData(() => this.schedule());
     then.setOnData(() => this.schedule());
     this.bindEvents();
-    this.$('.scroll').addEventListener('scroll', () => { this.ui.lastScroll = Date.now(); }, { passive: true });
+    // Inside brAIn's shell the scroll is also the shell's to hear: brAIn's
+    // header hides while the dashboard scrolls down and returns as it
+    // scrolls up (shell.js passes it to brAIn's page).
+    this.$('.scroll').addEventListener('scroll', (ev) => {
+      this.ui.lastScroll = Date.now();
+      if (this._shell) this.dispatchEvent(new CustomEvent('morph-scroll', { bubbles: true, composed: true, detail: { y: ev.currentTarget.scrollTop } }));
+    }, { passive: true });
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
     this.ro.observe(this.$('[data-board]'));
     this.load();

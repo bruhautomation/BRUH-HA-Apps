@@ -9,6 +9,9 @@
 const SHELL = new URLSearchParams(location.search).get("shell") === "1"
   && window.parent !== window;
 const shellState = { morph: false, narrow: false, raised: false, home: {} };
+// The header that gets out of the way (`shellScrolled`): whether it is
+// hidden, and the scroll position the last decision was made at.
+const shellBar = { hidden: false, y: null };
 // Inside the shell the page is drawn in Morph's theme (dark, medium,
 // light). The shell says which on every state message; until the first,
 // the one Morph last rendered in — the frame shares Home Assistant's origin
@@ -2159,6 +2162,7 @@ function render() {
     search.hidden = !many;
     if (!many && state.query) { state.query = ""; search.value = ""; }
   }
+  syncSearchBtn();
   const q = many ? String(state.query || "").trim().toLowerCase() : "";
 
   // cards
@@ -12063,6 +12067,8 @@ function syncTabs(name) {
     const on = b.dataset.group === group;
     b.classList.toggle("active", on);
     b.setAttribute("aria-selected", on ? "true" : "false");
+    // Inside the shell on a phone, the tab you are on opens its sections.
+    b.classList.toggle("hassecs", on && !!SEG_GROUPS[group]);
   });
   let shown = 0;
   document.querySelectorAll(".subtab").forEach((b) => {
@@ -12138,6 +12144,7 @@ function switchView(name) {
   currentView = name;
   if (SHELL) {
     document.documentElement.classList.toggle("shell-home", name === "home");
+    shellViewChanged(name);
     syncShellEdit();
     shellPost({ show: name === "home" ? "home" : "panel" });
     shellRaiseCheck();
@@ -12148,6 +12155,7 @@ function switchView(name) {
   document.body.classList.toggle("term-open", name === "terminal");
   syncTabs(name);
   syncSegNav(name);
+  syncSearchBtn();
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view" + name[0].toUpperCase() + name.slice(1)));
 
@@ -12220,6 +12228,11 @@ document.querySelectorAll(".viewtab").forEach((b) =>
   b.addEventListener("click", () => {
     const group = b.dataset.group;
     const again = groupOf(currentView) === group;
+    // Inside the shell on a phone the sections are under their tab: the
+    // tab you are on opens them (and closes them), rather than a control
+    // that took a row of its own over every pane.
+    if (again && segMenuHere() && SEG_GROUPS[group]) { setSegMenu(!segMenuOpen()); return; }
+    setSegMenu(false);
     let target = again ? b.dataset.view : (groupLast[group] || b.dataset.view);
     // A pane switched off (Insights with `enable_insights: false`) hands
     // the press to the first pane of the group that is still there.
@@ -12234,7 +12247,7 @@ document.querySelectorAll(".viewtab").forEach((b) =>
 document.querySelectorAll(".subtab").forEach((b) =>
   b.addEventListener("click", () => switchView(b.dataset.view)));
 document.querySelectorAll("#segNav .segbtn").forEach((b) =>
-  b.addEventListener("click", () => switchView(b.dataset.view)));
+  b.addEventListener("click", () => { setSegMenu(false); switchView(b.dataset.view); }));
 $("#segNavSel")?.addEventListener("change", (ev) =>
   switchView(ev.currentTarget.value));
 syncTabs(currentView);
@@ -12370,12 +12383,15 @@ function shellBars() {
   if (!SHELL) return;
   const bar = document.querySelector(".topbar");
   const tabs = document.querySelector(".viewtabs");
-  const top = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
+  // Hidden, the header leaves only the island strip's ground, and Home
+  // takes the rest.
+  const full = bar ? Math.round(bar.getBoundingClientRect().height) : 0;
+  const top = shellBar.hidden ? Math.min(full, shellInset()) : full;
   // On a phone the tabs are a bar fixed along the bottom; the dashboard
   // ends above it.
   const fixed = tabs && getComputedStyle(tabs).position === "fixed";
   const bottom = fixed ? Math.round(tabs.getBoundingClientRect().height) : 0;
-  shellPost({ bars: { top, bottom } });
+  shellPost({ bars: { top, bottom, hidden: shellBar.hidden } });
 }
 
 // A popover or a dialog opened while Home is in front has to come over the
@@ -12424,8 +12440,132 @@ function syncHomeTab() {
   applyName();
 }
 
+// ---- the header on a phone, and a header that gets out of the way -------
+// The owner: the header "clashes with the Dynamic Island", "I don't like
+// those menu buttons up there all the time; maybe collapsible and goes away
+// when you're not at the top", and "on a phone the shell takes about 170px
+// before any content". So inside the shell: the header's first row sits in
+// the island strip (style.css, `--safe-top`); the sections are under their
+// tab on a phone (`setSegMenu`); the search is an icon (`syncSearchBtn`);
+// and scrolling down hides the header while scrolling up or reaching the
+// top brings it back (`shellScrolled`), for this page's scroll and for
+// Morph's on Home, which the shell passes in.
+
+// The top safe area as this page draws it (`--safe-top`), in pixels.
+function shellInset() {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;height:var(--safe-top,0px)";
+  document.body.appendChild(probe);
+  const h = probe.getBoundingClientRect().height;
+  probe.remove();
+  return Math.round(h);
+}
+
+function setBarHidden(hidden) {
+  if (!SHELL || hidden === shellBar.hidden) return;
+  shellBar.hidden = hidden;
+  document.documentElement.classList.toggle("bar-hidden", hidden);
+  if (hidden) setSegMenu(false);
+  shellBars();
+}
+
+// A scroll position, from this page or from Morph's: down past the header
+// hides it, up shows it, and near the top it is always there. A few pixels
+// either way are a thumb resting, not a direction.
+const BAR_SLACK = 8;
+function shellScrolled(y) {
+  if (!SHELL) return;
+  const bar = document.querySelector(".topbar");
+  const full = bar ? bar.getBoundingClientRect().height : 0;
+  if (shellBar.y === null) { shellBar.y = y; return; }
+  const dy = y - shellBar.y;
+  const busy = segMenuOpen() || document.documentElement.classList.contains("searching")
+    || (bar && bar.contains(document.activeElement) && document.activeElement.tagName === "INPUT");
+  if (y <= full) setBarHidden(false);
+  else if (dy > BAR_SLACK && !busy) setBarHidden(true);
+  else if (dy < -BAR_SLACK) setBarHidden(false);
+  if (Math.abs(dy) > BAR_SLACK || y <= full) shellBar.y = y;
+}
+
+// A new pane starts with the header shown, and the scroll it reads starts
+// over (Morph's own scroll is passed in on Home).
+function shellViewChanged(name) {
+  shellBar.y = name === "home" ? null : window.scrollY;
+  setSegMenu(false);
+  if (name !== "insights") setSearchOpen(false);
+  setBarHidden(false);
+}
+
+// The sections menu: on a phone inside the shell, `#segNav` is a menu
+// under the header that the tab you are on opens.
+function segMenuHere() {
+  return SHELL && window.matchMedia("(max-width: 640px)").matches;
+}
+function segMenuOpen() {
+  return document.documentElement.classList.contains("segopen");
+}
+function setSegMenu(open) {
+  open = !!open && segMenuHere();
+  document.documentElement.classList.toggle("segopen", open);
+  const tab = document.querySelector(".viewtab.active");
+  document.querySelectorAll(".viewtab").forEach((b) => b.removeAttribute("aria-expanded"));
+  if (tab && tab.classList.contains("hassecs")) tab.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+// Insights' search behind an icon: shown while the pane offers a search,
+// opening the field at the top of the pane; pressed again it closes the
+// field and the words in it go with it, so nothing is filtered unseen.
+function syncSearchBtn() {
+  const btn = $("#searchBtn");
+  const search = $("#reportSearch");
+  if (!btn || !search) return;
+  const on = SHELL && currentView === "insights" && !search.hidden;
+  btn.hidden = !on;
+  if (!on) setSearchOpen(false);
+}
+function setSearchOpen(open) {
+  const root = document.documentElement;
+  const was = root.classList.contains("searching");
+  root.classList.toggle("searching", !!open);
+  const btn = $("#searchBtn");
+  if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+  const search = $("#reportSearch");
+  if (open && search) {
+    window.scrollTo(0, 0);
+    setBarHidden(false);
+    search.focus();
+  } else if (!open && was && search && search.value) {
+    search.value = "";
+    state.query = "";
+    render();
+  }
+}
+
 if (SHELL) {
   document.documentElement.classList.add("in-shell");
+  window.addEventListener("scroll", () => {
+    if (currentView !== "home") shellScrolled(window.scrollY);
+  }, { passive: true });
+  // A drag that starts on the header is never a scroll: there is nothing in
+  // it to scroll, and passed on it moved Home Assistant's window around
+  // this page (the owner: "dragging brAIn's header scrolls the outer window
+  // and cuts content off"). `touch-action: none` says the same in CSS.
+  document.querySelector(".topbar").addEventListener("touchmove", (ev) => {
+    if (ev.cancelable) ev.preventDefault();
+  }, { passive: false });
+  $("#searchBtn").addEventListener("click", () =>
+    setSearchOpen(!document.documentElement.classList.contains("searching")));
+  $("#reportSearch")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { setSearchOpen(false); $("#searchBtn").focus(); }
+  });
+  // A press anywhere else closes the sections menu.
+  document.addEventListener("click", (ev) => {
+    if (!segMenuOpen()) return;
+    const t = ev.target;
+    if (t.closest && (t.closest("#segNav") || t.closest(".viewtab.active"))) return;
+    setSegMenu(false);
+  }, true);
+  window.matchMedia("(max-width: 640px)").addEventListener?.("change", () => setSegMenu(false));
   setInterval(shellRaiseCheck, 250);
   $("#shellMenu").addEventListener("click", () => shellPost({ menu: true }));
   $("#shellEdit").addEventListener("click", () => shellPost({ home: "edit" }));
@@ -12434,7 +12574,16 @@ if (SHELL) {
     if (ev.source !== window.parent || ev.origin !== location.origin) return;
     const d = ev.data;
     if (!d || d.type !== "brain-shell") return;
+    if (typeof d.scroll === "number") {
+      if (currentView === "home") shellScrolled(d.scroll);
+      return;
+    }
     if (d.state) {
+      // The safe area as Home Assistant's page has it, which a framed page
+      // is not promised (`--shell-inset`, style.css takes the larger).
+      if (typeof d.state.inset === "number") {
+        document.documentElement.style.setProperty("--shell-inset", Math.max(0, Math.round(d.state.inset)) + "px");
+      }
       shellState.morph = !!d.state.morph;
       shellState.narrow = !!d.state.narrow;
       shellState.home = d.state.home || {};
