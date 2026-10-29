@@ -36,6 +36,13 @@
  *     overlapping, holding it in Edit holds the strip and not the tile, and
  *     the same chip folds it;
  *
+ *   * Ask stacks: two questions asked back to back both answer, each with
+ *     its own conversation, newest first, whichever finishes first; the
+ *     second does not resume the session the first is using; the busy mark
+ *     is on while either runs; tapping outside folds only the finished
+ *     ones; five are kept. A Tell replaced while it runs is not lost: when
+ *     it lands, the strip at the top says so with Show;
+ *
  * Exits non-zero with every failure listed.
  */
 import { chromium } from 'playwright';
@@ -477,7 +484,7 @@ async function night(p, name) {
   const n = await p.evaluate(() => {
     const r = window.__panel.shadowRoot;
     const P = window.__panel;
-    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: !!P.s.ask, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
+    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: (P.s.asks || []).length, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
   });
   if (!/form-night/.test(n.cls)) fail(where, `the armed-night house is not in the night form (${n.cls}) ${n.dbg}`);
   if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
@@ -622,7 +629,7 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
     const q = await p.evaluate(() => ({ asked: window.__ws.some((m) => m.type === 'morph/ask'), conv: window.__ws.some((m) => m.type === 'morph/request' && m.kind === 'converse'), tell: window.__ws.some((m) => m.kind === 'tell'), offer: !!window.__panel.shadowRoot.querySelector('[data-act="ask-tell"]') }));
     if (!q.asked || !q.conv || q.tell) fail(name, 'a question was not handed to brAIn as a conversation');
     if (!q.offer) fail(name, 'an answer does not offer "Change the dashboard instead"');
-    await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.ask = null; window.__panel.schedule(); });
+    await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.asks = []; window.__panel.schedule(); });
     await settle(p, 400);
   }
 
@@ -1052,6 +1059,95 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   text = await box();
   if (!/Make a template sensor sensor\.hvac_delta/.test(text)) fail(`question ${name}`, `the answer did not become the next request (${text.slice(0, 200)})`);
   if (!/Home Assistant\s*sensor\.hvac_delta/.test(text) || !/Undo asks (?:brAIn|Juniper) to put these back/.test(text)) fail(`question ${name}`, `the Home Assistant change is not said with its undo (${text.slice(0, 300)})`);
+  await ctx.close();
+}
+
+// ------------------------------------------------------------------
+// Ask stacks (owner requests).
+const SHOTS = process.env.MORPH_SHOTS || '';
+async function shot(p, file) {
+  if (!SHOTS) return;
+  await p.screenshot({ path: `${SHOTS}/${file}.png` });
+}
+
+for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
+  const touch = name === 'phone';
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 1500);
+  const where = `owner ${name}`;
+
+  // 1. Two questions back to back: both answer, stacked newest first.
+  {
+    await p.evaluate(() => { window.__convEcho = true; window.__ws.length = 0; });
+    const askIt = (q) => p.evaluate((q) => { const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = q; window.__panel.act('ask', i); }, q);
+    await askIt('Which lights are on, slow please?');
+    await p.waitForTimeout(150);
+    await askIt('Is the porch light on?');
+    await settle(p, 400);
+    const busy = await p.evaluate(() => { const a = window.__panel.shadowRoot.querySelector('[data-ask]'); return a && a.getAttribute('aria-busy'); });
+    if (busy !== 'true') fail(where, `the Ask line does not say it is busy while two questions run (aria-busy=${busy})`);
+    await shot(p, `ask-stack-running-${name}`);
+    await settle(p, 1000);
+    const mid = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (!mid.some((t) => /You asked: Is the porch light on\?/.test(t))) fail(where, `the second question's answer did not arrive while the first ran (${mid.join(' | ').slice(0, 200)})`);
+    const busy2 = await p.evaluate(() => { const a = window.__panel.shadowRoot.querySelector('[data-ask]'); return a && a.getAttribute('aria-busy'); });
+    if (busy2 !== 'true') fail(where, 'the busy mark went off while the first question was still running');
+    await settle(p, 2600);
+    const both = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (!both.some((t) => /You asked: Which lights are on, slow please\?/.test(t))) fail(where, `the first question's answer was lost when a second was asked (${both.join(' | ').slice(0, 240)})`);
+    if (both.length < 2 || !/Is the porch light on/.test(both[0]) || !/Which lights are on/.test(both[1])) fail(where, `the answers are not stacked newest first (${both.join(' | ').slice(0, 240)})`);
+    const convs = await p.evaluate(() => window.__ws.filter((m) => m.type === 'morph/request' && m.kind === 'converse').map((m) => m.payload));
+    if (convs.length !== 2) fail(where, `two questions did not start two conversations (${convs.length})`);
+    else if (convs[1].session) fail(where, `the second question resumed a session while the first was still using it (${convs[1].session})`);
+    const idle = await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-ask]').getAttribute('aria-busy'));
+    if (idle !== 'false') fail(where, 'the busy mark stays on after every question answered');
+    await shot(p, `ask-stack-${name}`);
+    // Outside folds the finished ones only.
+    await askIt('Anything left on, slow?');
+    await settle(p, 300);
+    await p.mouse.click(4, Math.round(h * 0.6));
+    await settle(p, 300);
+    const left = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (left.length !== 1 || !/Anything left on/.test(left[0])) fail(where, `tapping outside did not fold exactly the finished answers (${left.join(' | ').slice(0, 200)})`);
+    for (let i = 0; i < 6; i++) await askIt(`Question ${i}?`);
+    await settle(p, 3200);
+    const kept = await p.evaluate(() => window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer').length);
+    if (kept !== 5) fail(where, `Ask keeps ${kept} answers, not the last 5`);
+    await p.mouse.click(4, Math.round(h * 0.6));
+    await p.evaluate(() => { window.__convEcho = false; });
+    await settle(p, 400);
+  }
+
+  // 1b. A Tell replaced while it runs: its result is said when it lands.
+  {
+    await p.evaluate(() => { window.__panel.tellDashboard('Make the kitchen card wider'); });
+    await settle(p, 300);
+    await p.evaluate(() => { window.__panel.tellDashboard('Move the porch section first'); });
+    await settle(p, 2000);
+    await p.evaluate(() => window.__panel.pollTell());
+    await settle(p, 500);
+    const strip = await p.evaluate(() => (window.__panel.shadowRoot.querySelector('[data-region="lede"]') || {}).innerText || '');
+    if (!/finished “Make the kitchen card wider”/.test(strip)) fail(where, `a Tell replaced while it ran left no trace when it finished (${strip.slice(0, 160)})`);
+    const back = p.locator('[data-region="lede"] [data-act="tell-back"]');
+    if (await back.count()) {
+      await back.first().click();
+      await settle(p, 500);
+      const box = await p.evaluate(() => ((window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || ''));
+      if (!/Make the kitchen card wider/.test(box) || !/Undo/.test(box)) fail(where, `Show did not open the earlier Tell's result with its Undo (${box.slice(0, 160)})`);
+    }
+    await p.evaluate(() => { window.__panel.s.tell = null; window.__panel.tellsAway = []; window.__panel.schedule(); });
+    await settle(p, 400);
+  }
+
+  const sw = await snapshot(p);
+  if (sw.sideways) fail(where, 'the page scrolls sideways');
+  if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
   await ctx.close();
 }
 

@@ -145,6 +145,8 @@ h1.hello{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-weight:400;
 .askin:focus{border-bottom-color:var(--line2)}
 .askin::placeholder{color:var(--quiet)}
 .answer{padding-left:30px;max-width:760px;display:flex;flex-direction:column;gap:4px;margin-top:4px}
+.answer p .pulse{display:inline-block;margin-right:10px;vertical-align:middle}
+.askrow .askbusy{margin-left:-4px}
 .answer p{font-family:'Bricolage Grotesque','Manrope',sans-serif;font-size:19px;font-weight:300;line-height:1.5;letter-spacing:-.01em;color:var(--muted);white-space:pre-wrap}
 .sugs{display:none;flex-wrap:wrap;gap:0 20px;padding-left:30px}
 [data-ask]:focus-within .sugs,[data-ask]:has(.askin:not(:placeholder-shown)) .sugs{display:flex}
