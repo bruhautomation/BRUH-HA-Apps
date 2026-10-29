@@ -200,6 +200,7 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
+| `rail.js` | The room rail on a touch screen's right edge: a short pull left opens it, then up or down goes room to room |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
@@ -311,7 +312,10 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
    in place, and the rest of the page moves around them.
 2. **One grammar.** Tap does the main thing. Slide sets a level. Hold opens the
    card in place, with its options and its history. In Edit, tap edits and hold
-   talks to brAIn.
+   talks to brAIn. The short pull left that opens the room rail on a
+   touch screen's right edge is an opening gesture, not a slide (it sets no
+   level): keep it, and never make the rail answer a plain touch or a vertical
+   swipe, which is the page scrolling.
 3. **No chrome.** No Done buttons, tabs, chevrons, instruction rows or drag
    handles in normal use.
 4. **One control, one place.** Never repeat a control in a second card.

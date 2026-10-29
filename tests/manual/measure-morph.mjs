@@ -46,6 +46,10 @@
  *     row as a pill (amber while on, aria-pressed, a 44px target on
  *     touch), not as a tile, also while the room is folded, and is a tile
  *     again in Edit;
+ *   * the room rail on a touch screen's right edge: a vertical swipe on it
+ *     scrolls the page and jumps nowhere; a short pull left opens it (with
+ *     a haptic), sliding then goes room to room; resting on it, pulling and
+ *     a tap each say what to do, inside the rail and never over the page.
  *
  * Exits non-zero with every failure listed.
  */
@@ -1067,11 +1071,19 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
 }
 
 // ------------------------------------------------------------------
-// Ask stacks and the header switch (owner requests).
+// Ask stacks, the header switch, the room rail (owner requests).
 const SHOTS = process.env.MORPH_SHOTS || '';
 async function shot(p, file) {
   if (!SHOTS) return;
   await p.screenshot({ path: `${SHOTS}/${file}.png` });
+}
+async function touchPath(p, pts, stepMs, holdMs) {
+  const cdp = await p.context().newCDPSession(p);
+  const [x0, y0] = pts[0];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] });
+  if (holdMs) await p.waitForTimeout(holdMs);
+  for (const [x, y] of pts.slice(1)) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await p.waitForTimeout(stepMs || 16); }
+  return { end: async () => { await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach(); }, cdp };
 }
 
 for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
@@ -1199,6 +1211,70 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     atRest(`${where} with a header switch`, await still(p));
   }
 
+  // 3. The room rail (touch only): a vertical swipe scrolls, a pull opens.
+  if (touch) {
+    await p.evaluate(() => { const P = window.__panel; P.$('.scroll').scrollTop = 0; });
+    await settle(p, 500);
+    const rail = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]'); if (!r) return null; const b = r.getBoundingClientRect(); return { x: b.left, w: b.width, right: b.right, top: b.top, h: b.height }; });
+    if (!rail || rail.w < 4) fail(where, 'there is no room rail on the right edge of a touch screen');
+    else {
+      const rx = rail.x + rail.w / 2;
+      const state = () => p.evaluate(() => { const P = window.__panel; const r = P.shadowRoot.querySelector('[data-rail]'); return { top: P.$('.scroll').scrollTop, jumps: P.railJumps || 0, open: r.classList.contains('open'), text: r.innerText.replace(/\s+/g, ' ').trim(), fill: (() => { const f = r.querySelector('[data-rail-fill]'); return f ? f.getBoundingClientRect().width : 0; })(), title: !!r.querySelector('[title]') || r.hasAttribute('title') }; });
+      // Nothing of the rail is over the page.
+      const over = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]').getBoundingClientRect(); return [...window.__panel.shadowRoot.querySelectorAll('[data-sec], .wrap > *')].filter((e) => { const b = e.getBoundingClientRect(); return b.width && b.right > r.left + 0.5 && b.bottom > r.top && b.top < r.bottom; }).map((e) => e.getAttribute('data-sec') || e.className || e.tagName).slice(0, 4); });
+      if (over.length) fail(where, `the rail lies over the page: ${over.join(', ')}`);
+      // A vertical swipe that starts on the rail scrolls the page.
+      const b0 = await state();
+      const pts = [[rx, 640]]; for (let i = 1; i <= 12; i++) pts.push([rx + (i % 2), 640 - i * 30]);
+      const sw = await touchPath(p, pts, 16);
+      await sw.end();
+      await settle(p, 700);
+      const b1 = await state();
+      if (b1.top - b0.top < 80) fail(where, `a vertical swipe on the rail did not scroll the page (${b0.top} → ${b1.top})`);
+      if (b1.jumps !== b0.jumps || b1.open) fail(where, 'a vertical swipe on the rail jumped to a room or opened the index');
+      await p.evaluate(() => { window.__panel.$('.scroll').scrollTop = 0; });
+      await settle(p, 400);
+      // Resting on it says what to do.
+      const rest = await touchPath(p, [[rx, 420]], 16, 400);
+      const r1 = await state();
+      if (!/Pull left to open the rooms/.test(r1.text)) fail(where, `resting on the rail does not say "Pull left to open the rooms" (${r1.text.slice(0, 80)})`);
+      await shot(p, `rail-rest-${name}`);
+      await rest.end();
+      await settle(p, 300);
+      const r2 = await state();
+      if (!/A little further left, then slide up or down to a room/.test(r2.text)) fail(where, `a tap on the rail leaves no hint (${r2.text.slice(0, 80)})`);
+      if (r2.jumps !== b0.jumps || r2.open) fail(where, 'a tap on the rail jumped to a room');
+      await shot(p, `rail-hint-${name}`);
+      await settle(p, 2600);
+      const r3 = await state();
+      if (/A little further left/.test(r3.text)) fail(where, 'the rail\'s hint does not go away');
+      // A short pull: "Keep pulling left" and a bar that fills.
+      await p.evaluate(() => { window.__haptics = []; window.addEventListener('haptic', (e) => window.__haptics.push(e.detail)); });
+      const pull = await touchPath(p, [[rx, 420], [rx - 2, 420], [rx - 5, 421]], 30);
+      const r4 = await state();
+      if (!/Keep pulling left/.test(r4.text)) fail(where, `a pull does not say "Keep pulling left" (${r4.text.slice(0, 80)})`);
+      if (!(r4.fill > 0)) fail(where, 'the pull bar does not fill');
+      if (r4.open) fail(where, 'a 5px pull already opened the rooms');
+      await shot(p, `rail-pull-${name}`);
+      // ...on to 12px: open, a haptic, then sliding goes to a room.
+      for (const x of [rx - 8, rx - 12]) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: 421 }] }); await p.waitForTimeout(30); }
+      const r5 = await state();
+      if (!r5.open) fail(where, 'a 12px pull left did not open the rooms');
+      const hap = await p.evaluate(() => window.__haptics);
+      if (!hap.includes('medium')) fail(where, `opening the rooms gave no medium haptic (${JSON.stringify(hap)})`);
+      for (let y = 430; y <= 760; y += 30) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rx - 12, y }] }); await p.waitForTimeout(20); }
+      await settle(p, 300);
+      const r6 = await state();
+      await shot(p, `rail-open-${name}`);
+      if (r6.jumps <= b0.jumps) fail(where, 'sliding the opened rail did not go to a room');
+      if (r6.top <= 0) fail(where, 'sliding the opened rail to the bottom did not move the page');
+      await pull.end();
+      await settle(p, 400);
+      const r7 = await state();
+      if (r7.open) fail(where, 'the rail stays open after the finger lifts');
+      if (r1.title || r4.title) fail(where, 'the rail\'s tip is a title tooltip');
+    }
+  }
   const sw = await snapshot(p);
   if (sw.sideways) fail(where, 'the page scrolls sideways');
   if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);

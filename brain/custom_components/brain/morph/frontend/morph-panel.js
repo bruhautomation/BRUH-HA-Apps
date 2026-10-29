@@ -40,6 +40,7 @@ import * as sal from './salience.js';
 import * as then from './then.js';
 import { morph } from './morph-dom.js';
 import { caseFace, todoFace, caseColor, placeCase } from './cases.js';
+import { Rail } from './rail.js';
 import { esc, mix, hue, HUES, clock, ago, friendly, shortName, lightColor, SPARK, MARK, domainOf, UNAVAILABLE, fmt, climateDoing, importWithRetry, cardPage, guardDefine, loadCard, cardUrl, cardFailure, isDashChange, ASK_CONTEXT, own } from './util.js';
 
 const HOLD_MS = 540;
@@ -307,7 +308,7 @@ class MorphPanel extends HTMLElement {
     const root = this.shadowRoot;
     root.innerHTML = `<style>${STYLES}</style><div class="morph t-dark" data-morph-root><div class="scroll" style="height:var(--morph-h,100vh);overflow-y:auto;overflow-x:hidden"><div class="wrap">
 <div data-region="thenrule"></div><div data-region="bar"></div><div data-region="lede"></div><div data-region="top"></div><div data-region="upcoming"></div><div data-region="scenes"></div><div data-region="rooms"></div><div data-region="notes"></div>
-<div data-region="board"><div data-board></div></div></div></div></div>`;
+<div data-region="board"><div data-board></div></div></div><div class="srail" data-rail aria-hidden="true"></div></div></div>`;
     if (!document.querySelector('link[data-morph-fonts]')) {
       const l = document.createElement('link'); l.rel = 'stylesheet'; l.href = FONTS_URL; l.dataset.morphFonts = '1'; document.head.appendChild(l);
     }
@@ -323,7 +324,10 @@ class MorphPanel extends HTMLElement {
     history.setOnData(() => this.schedule());
     then.setOnData(() => this.schedule());
     this.bindEvents();
-    this.$('.scroll').addEventListener('scroll', () => { this.ui.lastScroll = Date.now(); }, { passive: true });
+    // The room rail on a touch screen's right edge (rail.js): a column of
+    // the page beside the content, opened by a short pull to the left.
+    this.rail = new Rail(this.$('[data-rail]'), this);
+    this.$('.scroll').addEventListener('scroll', () => { this.ui.lastScroll = Date.now(); if (!this._railF) this._railF = requestAnimationFrame(() => { this._railF = 0; this.rail.paint(); }); }, { passive: true });
     this.ro = new ResizeObserver(() => { cancelAnimationFrame(this._ro); this._ro = requestAnimationFrame(() => this.engine.layout(false, true)); });
     this.ro.observe(this.$('[data-board]'));
     this.load();
@@ -1617,6 +1621,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     });
     this.engine.layout(!this._laidOut, false);
     this._laidOut = true;
+    if (this.rail) this.rail.paint();
   }
 
   // A room's background, its glow and its state (§6, §9.1): a tint of its
@@ -1661,6 +1666,10 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     head.classList.remove('nohead');
     this.setHtml(head, `<div class="secbroken" style="flex:1;min-width:0"><h2>${esc(sec.title || '')}</h2><p class="sm" style="margin:2px 0 0;color:var(--muted)">Morph could not draw this room. The fault has been reported.</p></div>`);
   }
+
+  // The room rail's words and colours for a room on the board.
+  railTitle(id) { const sec = this.sectionById(id); return sec ? String(sec.title || '') : ''; }
+  railColor(id) { const sec = this.sectionById(id); return sec ? mix(hue(sec.color), 80) : 'var(--quiet)'; }
 
   sectionById(id) { let hit = null; this.eachSection((s) => { if (s.id === id) hit = s; }); return hit; }
 
