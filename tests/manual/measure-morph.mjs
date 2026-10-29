@@ -36,6 +36,21 @@
  *     overlapping, holding it in Edit holds the strip and not the tile, and
  *     the same chip folds it;
  *
+ *   * Ask stacks: two questions asked back to back both answer, each with
+ *     its own conversation, newest first, whichever finishes first; the
+ *     second does not resume the session the first is using; the busy mark
+ *     is on while either runs; tapping outside folds only the finished
+ *     ones; five are kept. A Tell replaced while it runs is not lost: when
+ *     it lands, the strip at the top says so with Show;
+ *   * a switch card with `options.header: true` rides in its room's title
+ *     row as a pill (amber while on, aria-pressed, a 44px target on
+ *     touch), not as a tile, also while the room is folded, and is a tile
+ *     again in Edit;
+ *   * the room rail on a touch screen's right edge: a vertical swipe on it
+ *     scrolls the page and jumps nowhere; a short pull left opens it (with
+ *     a haptic), sliding then goes room to room; resting on it, pulling and
+ *     a tap each say what to do, inside the rail and never over the page.
+ *
  * Exits non-zero with every failure listed.
  */
 import { chromium } from 'playwright';
@@ -477,7 +492,7 @@ async function night(p, name) {
   const n = await p.evaluate(() => {
     const r = window.__panel.shadowRoot;
     const P = window.__panel;
-    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: !!P.s.ask, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
+    return { dbg: JSON.stringify({ st: P.salState && P.salState.period, ap: P.salApplied && P.salApplied.period, view: !!P.s.view, tell: !!P.s.tell, ask: (P.s.asks || []).length, alarm: P.hass.states['alarm_control_panel.house'].state, ptr: !!(P.ptr || P.mptr || P.upcD || P.drag), edit: P.s.edit }), cls: r.querySelector('[data-morph-root]').className, story: (r.querySelector('.story') || {}).textContent || '', now: [...r.querySelectorAll('.nowband [data-tile]')].map((e) => e.getAttribute('data-tile')) };
   });
   if (!/form-night/.test(n.cls)) fail(where, `the armed-night house is not in the night form (${n.cls}) ${n.dbg}`);
   if (!/Front Door is unlocked/.test(n.story)) fail(where, `the night verdict does not name the unlocked door: "${n.story}"`);
@@ -622,7 +637,7 @@ for (const [w, h, name, narrow] of W([[1440, 900, 'wide', false], [400, 860, 'ph
     const q = await p.evaluate(() => ({ asked: window.__ws.some((m) => m.type === 'morph/ask'), conv: window.__ws.some((m) => m.type === 'morph/request' && m.kind === 'converse'), tell: window.__ws.some((m) => m.kind === 'tell'), offer: !!window.__panel.shadowRoot.querySelector('[data-act="ask-tell"]') }));
     if (!q.asked || !q.conv || q.tell) fail(name, 'a question was not handed to brAIn as a conversation');
     if (!q.offer) fail(name, 'an answer does not offer "Change the dashboard instead"');
-    await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.ask = null; window.__panel.schedule(); });
+    await p.evaluate(() => { window.__ws.length = 0; window.__panel.s.asks = []; window.__panel.schedule(); });
     await settle(p, 400);
   }
 
@@ -1052,6 +1067,217 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
   text = await box();
   if (!/Make a template sensor sensor\.hvac_delta/.test(text)) fail(`question ${name}`, `the answer did not become the next request (${text.slice(0, 200)})`);
   if (!/Home Assistant\s*sensor\.hvac_delta/.test(text) || !/Undo asks (?:brAIn|Juniper) to put these back/.test(text)) fail(`question ${name}`, `the Home Assistant change is not said with its undo (${text.slice(0, 300)})`);
+  await ctx.close();
+}
+
+// ------------------------------------------------------------------
+// Ask stacks, the header switch, the room rail (owner requests).
+const SHOTS = process.env.MORPH_SHOTS || '';
+async function shot(p, file) {
+  if (!SHOTS) return;
+  await p.screenshot({ path: `${SHOTS}/${file}.png` });
+}
+async function touchPath(p, pts, stepMs, holdMs) {
+  const cdp = await p.context().newCDPSession(p);
+  const [x0, y0] = pts[0];
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y: y0 }] });
+  if (holdMs) await p.waitForTimeout(holdMs);
+  for (const [x, y] of pts.slice(1)) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] }); await p.waitForTimeout(stepMs || 16); }
+  return { end: async () => { await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach(); }, cdp };
+}
+
+for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
+  const touch = name === 'phone';
+  const ctx = await browser.newContext({ viewport: { width: w, height: h }, ...(touch ? { hasTouch: true, isMobile: true } : {}) });
+  await route(ctx, { narrow: touch });
+  const p = await ctx.newPage();
+  const errors = [];
+  p.on('pageerror', (e) => errors.push(String(e)));
+  await p.goto(ORIGIN + '/');
+  await p.waitForFunction(() => window.__panel && window.__panel.data);
+  await settle(p, 1500);
+  const where = `owner ${name}`;
+
+  // 1. Two questions back to back: both answer, stacked newest first.
+  {
+    await p.evaluate(() => { window.__convEcho = true; window.__ws.length = 0; });
+    const askIt = (q) => p.evaluate((q) => { const i = window.__panel.shadowRoot.querySelector('input[data-keep="ask"]'); i.value = q; window.__panel.act('ask', i); }, q);
+    await askIt('Which lights are on, slow please?');
+    await p.waitForTimeout(150);
+    await askIt('Is the porch light on?');
+    await settle(p, 400);
+    const busy = await p.evaluate(() => { const a = window.__panel.shadowRoot.querySelector('[data-ask]'); return a && a.getAttribute('aria-busy'); });
+    if (busy !== 'true') fail(where, `the Ask line does not say it is busy while two questions run (aria-busy=${busy})`);
+    await shot(p, `ask-stack-running-${name}`);
+    await settle(p, 1000);
+    const mid = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (!mid.some((t) => /You asked: Is the porch light on\?/.test(t))) fail(where, `the second question's answer did not arrive while the first ran (${mid.join(' | ').slice(0, 200)})`);
+    const busy2 = await p.evaluate(() => { const a = window.__panel.shadowRoot.querySelector('[data-ask]'); return a && a.getAttribute('aria-busy'); });
+    if (busy2 !== 'true') fail(where, 'the busy mark went off while the first question was still running');
+    await settle(p, 2600);
+    const both = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (!both.some((t) => /You asked: Which lights are on, slow please\?/.test(t))) fail(where, `the first question's answer was lost when a second was asked (${both.join(' | ').slice(0, 240)})`);
+    if (both.length < 2 || !/Is the porch light on/.test(both[0]) || !/Which lights are on/.test(both[1])) fail(where, `the answers are not stacked newest first (${both.join(' | ').slice(0, 240)})`);
+    const convs = await p.evaluate(() => window.__ws.filter((m) => m.type === 'morph/request' && m.kind === 'converse').map((m) => m.payload));
+    if (convs.length !== 2) fail(where, `two questions did not start two conversations (${convs.length})`);
+    else if (convs[1].session) fail(where, `the second question resumed a session while the first was still using it (${convs[1].session})`);
+    const idle = await p.evaluate(() => window.__panel.shadowRoot.querySelector('[data-ask]').getAttribute('aria-busy'));
+    if (idle !== 'false') fail(where, 'the busy mark stays on after every question answered');
+    await shot(p, `ask-stack-${name}`);
+    // Outside folds the finished ones only.
+    await askIt('Anything left on, slow?');
+    await settle(p, 300);
+    await p.mouse.click(4, Math.round(h * 0.6));
+    await settle(p, 300);
+    const left = await p.evaluate(() => [...window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer')].map((e) => e.innerText.replace(/\s+/g, ' ')));
+    if (left.length !== 1 || !/Anything left on/.test(left[0])) fail(where, `tapping outside did not fold exactly the finished answers (${left.join(' | ').slice(0, 200)})`);
+    for (let i = 0; i < 6; i++) await askIt(`Question ${i}?`);
+    await settle(p, 3200);
+    const kept = await p.evaluate(() => window.__panel.shadowRoot.querySelectorAll('[data-ask] .answer').length);
+    if (kept !== 5) fail(where, `Ask keeps ${kept} answers, not the last 5`);
+    await p.mouse.click(4, Math.round(h * 0.6));
+    await p.evaluate(() => { window.__convEcho = false; });
+    await settle(p, 400);
+  }
+
+  // 1b. A Tell replaced while it runs: its result is said when it lands.
+  {
+    await p.evaluate(() => { window.__panel.tellDashboard('Make the kitchen card wider'); });
+    await settle(p, 300);
+    await p.evaluate(() => { window.__panel.tellDashboard('Move the porch section first'); });
+    await settle(p, 2000);
+    await p.evaluate(() => window.__panel.pollTell());
+    await settle(p, 500);
+    const strip = await p.evaluate(() => (window.__panel.shadowRoot.querySelector('[data-region="lede"]') || {}).innerText || '');
+    if (!/finished “Make the kitchen card wider”/.test(strip)) fail(where, `a Tell replaced while it ran left no trace when it finished (${strip.slice(0, 160)})`);
+    const back = p.locator('[data-region="lede"] [data-act="tell-back"]');
+    if (await back.count()) {
+      await back.first().click();
+      await settle(p, 500);
+      const box = await p.evaluate(() => ((window.__panel.shadowRoot.querySelector('[data-tell]') || {}).innerText || ''));
+      if (!/Make the kitchen card wider/.test(box) || !/Undo/.test(box)) fail(where, `Show did not open the earlier Tell's result with its Undo (${box.slice(0, 160)})`);
+    }
+    await p.evaluate(() => { window.__panel.s.tell = null; window.__panel.tellsAway = []; window.__panel.schedule(); });
+    await settle(p, 400);
+  }
+
+  // 2. A switch card with options.header rides in its room's title row.
+  {
+    await p.evaluate(() => {
+      const P = window.__panel; const d = JSON.parse(JSON.stringify(P.dash));
+      const yard = d.floors.flatMap((f) => f.sections).find((s) => s.id === 's_yard');
+      yard.groups[0].cards.push({ id: 'c_pause', type: 'switch', entity: 'input_boolean.guest_mode', name: 'Pause watering', options: { header: true } });
+      P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.render();
+    });
+    await settle(p, 1200);
+    const read = () => p.evaluate(() => {
+      const r = window.__panel.shadowRoot; const sec = r.querySelector('[data-sec="s_yard"]');
+      const pill = sec && sec.querySelector('.sechead [data-act="head-toggle"]');
+      const b = pill && pill.getBoundingClientRect();
+      return { folded: !!sec && sec.classList.contains('folded'), pill: !!pill, text: pill ? pill.textContent.trim() : '', pressed: pill ? pill.getAttribute('aria-pressed') : null, h: b ? b.height : 0, title: pill ? pill.hasAttribute('title') : false, tile: !!r.querySelector('[data-tile="c_pause"]'), color: pill ? getComputedStyle(pill).color : '' };
+    });
+    let got = await read();
+    if (!got.pill) fail(where, `a header switch is not in its room's title row (folded: ${got.folded})`);
+    if (got.tile) fail(where, 'a header switch is drawn as a tile as well');
+    if (got.pill && got.text !== 'Pause watering') fail(where, `the header switch is not named by its card (${got.text})`);
+    if (got.pill && got.pressed !== 'false') fail(where, `an off header switch is not aria-pressed=false (${got.pressed})`);
+    if (got.title) fail(where, 'the header switch carries a title tooltip');
+    if (touch && got.pill && got.h < 44) fail(where, `the header switch is under the 44px touch floor (${got.h})`);
+    await p.evaluate(() => { const el = window.__panel.shadowRoot.querySelector('[data-sec="s_yard"]'); el.scrollIntoView({ block: 'center' }); });
+    await settle(p, 300);
+    await shot(p, `header-pill-off-${name}`);
+    if (got.pill) {
+      await p.evaluate(() => { window.__calls = []; });
+      await p.locator('[data-sec="s_yard"] [data-act="head-toggle"]').click();
+      await settle(p, 500);
+      const calls = await p.evaluate(() => window.__calls);
+      if (!calls.some((c) => c.domain === 'homeassistant' && c.service === 'toggle' && [].concat(c.data.entity_id).includes('input_boolean.guest_mode'))) fail(where, `tapping the header switch did not toggle it (${JSON.stringify(calls)})`);
+      got = await read();
+      if (got.pressed !== 'true') fail(where, `an on header switch is not aria-pressed=true (${got.pressed})`);
+      await shot(p, `header-pill-on-${name}`);
+      // Folded: still there.
+      const folded = await p.evaluate(async () => { const P = window.__panel; P.s.unfold.s_yard = 0; P.foldNow = 's_yard'; P._forceApply = true; P.engine.invalidate(); P.schedule(); await new Promise((r) => setTimeout(r, 900)); const sec = P.shadowRoot.querySelector('[data-sec="s_yard"]'); return { folded: sec.classList.contains('folded'), pill: !!sec.querySelector('.sechead [data-act="head-toggle"]') }; });
+      if (folded.folded && !folded.pill) fail(where, 'the header switch is gone while its room is folded');
+      // Edit: a tile again, no pill.
+      await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
+      await settle(p, 1200);
+      const ed = await p.evaluate(() => { const r = window.__panel.shadowRoot; return { pill: !!r.querySelector('[data-sec="s_yard"] .sechead [data-act="head-toggle"]'), tile: !!r.querySelector('[data-tile="c_pause"]') }; });
+      if (ed.pill) fail(where, 'the header switch is drawn in the title row in Edit');
+      if (!ed.tile) fail(where, 'the header switch is not an editable tile in Edit');
+      await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
+      await settle(p, 1200);
+      await p.evaluate(() => window.__panel.hass.callService('homeassistant', 'toggle', { entity_id: 'input_boolean.guest_mode' }));
+    }
+    atRest(`${where} with a header switch`, await still(p));
+  }
+
+  // 3. The room rail (touch only): a vertical swipe scrolls, a pull opens.
+  if (touch) {
+    await p.evaluate(() => { const P = window.__panel; P.$('.scroll').scrollTop = 0; });
+    await settle(p, 500);
+    const rail = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]'); if (!r) return null; const b = r.getBoundingClientRect(); return { x: b.left, w: b.width, right: b.right, top: b.top, h: b.height }; });
+    if (!rail || rail.w < 4) fail(where, 'there is no room rail on the right edge of a touch screen');
+    else {
+      const rx = rail.x + rail.w / 2;
+      const state = () => p.evaluate(() => { const P = window.__panel; const r = P.shadowRoot.querySelector('[data-rail]'); return { top: P.$('.scroll').scrollTop, jumps: P.railJumps || 0, open: r.classList.contains('open'), text: r.innerText.replace(/\s+/g, ' ').trim(), fill: (() => { const f = r.querySelector('[data-rail-fill]'); return f ? f.getBoundingClientRect().width : 0; })(), title: !!r.querySelector('[title]') || r.hasAttribute('title') }; });
+      // Nothing of the rail is over the page.
+      const over = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]').getBoundingClientRect(); return [...window.__panel.shadowRoot.querySelectorAll('[data-sec], .wrap > *')].filter((e) => { const b = e.getBoundingClientRect(); return b.width && b.right > r.left + 0.5 && b.bottom > r.top && b.top < r.bottom; }).map((e) => e.getAttribute('data-sec') || e.className || e.tagName).slice(0, 4); });
+      if (over.length) fail(where, `the rail lies over the page: ${over.join(', ')}`);
+      // A vertical swipe that starts on the rail scrolls the page.
+      const b0 = await state();
+      const pts = [[rx, 640]]; for (let i = 1; i <= 12; i++) pts.push([rx + (i % 2), 640 - i * 30]);
+      const sw = await touchPath(p, pts, 16);
+      await sw.end();
+      await settle(p, 700);
+      const b1 = await state();
+      if (b1.top - b0.top < 80) fail(where, `a vertical swipe on the rail did not scroll the page (${b0.top} → ${b1.top})`);
+      if (b1.jumps !== b0.jumps || b1.open) fail(where, 'a vertical swipe on the rail jumped to a room or opened the index');
+      await p.evaluate(() => { window.__panel.$('.scroll').scrollTop = 0; });
+      await settle(p, 400);
+      // Resting on it says what to do.
+      const rest = await touchPath(p, [[rx, 420]], 16, 400);
+      const r1 = await state();
+      if (!/Pull left to open the rooms/.test(r1.text)) fail(where, `resting on the rail does not say "Pull left to open the rooms" (${r1.text.slice(0, 80)})`);
+      await shot(p, `rail-rest-${name}`);
+      await rest.end();
+      await settle(p, 300);
+      const r2 = await state();
+      if (!/A little further left, then slide up or down to a room/.test(r2.text)) fail(where, `a tap on the rail leaves no hint (${r2.text.slice(0, 80)})`);
+      if (r2.jumps !== b0.jumps || r2.open) fail(where, 'a tap on the rail jumped to a room');
+      await shot(p, `rail-hint-${name}`);
+      await settle(p, 2600);
+      const r3 = await state();
+      if (/A little further left/.test(r3.text)) fail(where, 'the rail\'s hint does not go away');
+      // A short pull: "Keep pulling left" and a bar that fills.
+      await p.evaluate(() => { window.__haptics = []; window.addEventListener('haptic', (e) => window.__haptics.push(e.detail)); });
+      const pull = await touchPath(p, [[rx, 420], [rx - 2, 420], [rx - 5, 421]], 30);
+      const r4 = await state();
+      if (!/Keep pulling left/.test(r4.text)) fail(where, `a pull does not say "Keep pulling left" (${r4.text.slice(0, 80)})`);
+      if (!(r4.fill > 0)) fail(where, 'the pull bar does not fill');
+      if (r4.open) fail(where, 'a 5px pull already opened the rooms');
+      await shot(p, `rail-pull-${name}`);
+      // ...on to 12px: open, a haptic, then sliding goes to a room.
+      for (const x of [rx - 8, rx - 12]) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: 421 }] }); await p.waitForTimeout(30); }
+      const r5 = await state();
+      if (!r5.open) fail(where, 'a 12px pull left did not open the rooms');
+      const hap = await p.evaluate(() => window.__haptics);
+      if (!hap.includes('medium')) fail(where, `opening the rooms gave no medium haptic (${JSON.stringify(hap)})`);
+      for (let y = 430; y <= 760; y += 30) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rx - 12, y }] }); await p.waitForTimeout(20); }
+      await settle(p, 300);
+      const r6 = await state();
+      await shot(p, `rail-open-${name}`);
+      if (r6.jumps <= b0.jumps) fail(where, 'sliding the opened rail did not go to a room');
+      if (r6.top <= 0) fail(where, 'sliding the opened rail to the bottom did not move the page');
+      await pull.end();
+      await settle(p, 400);
+      const r7 = await state();
+      if (r7.open) fail(where, 'the rail stays open after the finger lifts');
+      if (r1.title || r4.title) fail(where, 'the rail\'s tip is a title tooltip');
+    }
+  }
+  const sw = await snapshot(p);
+  if (sw.sideways) fail(where, 'the page scrolls sideways');
+  if (errors.length) fail(where, `page errors: ${errors.slice(0, 2).join(' | ')}`);
   await ctx.close();
 }
 

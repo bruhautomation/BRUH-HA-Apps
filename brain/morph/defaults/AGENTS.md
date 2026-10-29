@@ -102,10 +102,15 @@ Optional keys on any card: `pin` (`true` keeps it in place whatever is
 happening; `active` keeps it in place only while it is on, open or running),
 `name`, `icon` (mdi:…), `span` (1–4 columns),
 `color`, `unit` (kept for a card that reads it; built-in cards show the entity's
-own unit), and `options` (a free mapping for card code to read). Two keys
+own unit), and `options` (a free mapping for card code to read). Three keys
 in it mean something to Morph: `options.detail`, a Lovelace card config shown
 only while the card is open (a performance chart under a thermostat: folded
-away until somebody opens that card), and `climate`'s `options.actions`, below.
+away until somebody opens that card), `climate`'s `options.actions`, below,
+and `switch`'s `options.header: true`, which puts the switch in its
+section's title row as a small pill button named by the card's `name` (amber
+while on, one tap toggles it, there even while the room is folded) instead
+of a tile: the place for a setting about the room, like a pause toggle. It
+is a tile again in Edit, so it can be edited.
 
 **Any Lovelace card works.** A `type` that is not in the table below is a
 Lovelace card: write its own YAML directly (`type: tile`, `type: custom:x`),
@@ -129,7 +134,7 @@ wrapper yourself is the same thing:
 | `fan` | `entity` | strip, the blades spin at speed · on/off · speed · direction, oscillate |
 | `cover` | `entity` | strip, the slats close as you slide · open/close · position · tilt |
 | `lock` | `entity` | switch · lock/unlock · — · logbook |
-| `switch` | `entity` (switch, input_boolean, siren, automation) | switch · toggle · — · timeline |
+| `switch` | `entity` (switch, input_boolean, siren, automation); optional `options.header: true` (a pill in the section's title row instead of a tile) | switch · toggle · — · timeline |
 | `button` | `entity` (script, button, input_button) | runs it on tap |
 | `climate` | `entity`; optional `options.actions` (up to 4 scripts, buttons or scenes: an id, or `{entity, label}`) | current temperature, a target ruler, −/+, the actions as buttons (a script reads as pressed while it runs) · — · — · modes, history |
 | `sensor` | `entity` | the value and a 24 h trace · opens history |
@@ -195,6 +200,7 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
+| `rail.js` | The room rail on a touch screen's right edge: a short pull left opens it, then up or down goes room to room |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |
@@ -306,7 +312,10 @@ Then use it in `dashboard.yaml` as `type: custom:morph-pets`. The contract:
    in place, and the rest of the page moves around them.
 2. **One grammar.** Tap does the main thing. Slide sets a level. Hold opens the
    card in place, with its options and its history. In Edit, tap edits and hold
-   talks to brAIn.
+   talks to brAIn. The short pull left that opens the room rail on a
+   touch screen's right edge is an opening gesture, not a slide (it sets no
+   level): keep it, and never make the rail answer a plain touch or a vertical
+   swipe, which is the page scrolling.
 3. **No chrome.** No Done buttons, tabs, chevrons, instruction rows or drag
    handles in normal use.
 4. **One control, one place.** Never repeat a control in a second card.
