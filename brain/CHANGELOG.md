@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.10
+
+### Added
+
+- **House changes to brAIn's own page, kept across updates.** Put `house.css` and `house.js` in `/config/.brain/ui/` and brAIn's page layers them after its own style and script: a session can restyle or extend the header, it shows after a reload, an update never touches it, and `brain undo` puts it back. A `house.js` that throws shows one line in ⚙ › Instructions and leaves the page working; opening the page with `?nohouse=1`, or the switch in ⚙ › Instructions, turns the layer off. brAIn's program files are still not writable. (#528)
+- **A notification now comes with a receipt, and brAIn can read its own delivery history.** The send tool says when Home Assistant accepted the notification and what that can and cannot prove, a refused send says so (and `ha notify` no longer prints "Notification sent" for a refusal), and a new read-only `notification_history` tool answers "did it arrive?" from the delivery ledger. (#529)
+
 ## 4.0.9
 
 ### Added

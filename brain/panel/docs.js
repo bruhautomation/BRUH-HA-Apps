@@ -339,6 +339,30 @@ section is one press away and nothing inside one is folded away.
 The page remembers which section you were on. There are no **?** bubbles:
 every hint is on the page.
 
+## Changing brAIn's own page
+
+brAIn's page can be restyled and added to by this house, and the change
+survives updates. Two optional files do it, and brAIn writes them for you if
+you ask it to change its own page:
+
+* \`/config/.brain/ui/house.css\` is added after brAIn's stylesheet, so it
+  wins where they disagree.
+* \`/config/.brain/ui/house.js\` runs after brAIn's own script, in a script of
+  its own: if it throws, the page keeps working and ⚙ › Instructions says
+  what went wrong.
+
+Each is at most 256 KB. A reload shows an edit. Nothing shipped is replaced:
+the add-on's own files and its server are not editable, and an update
+replaces them while leaving these two alone. \`brain undo\` puts back an edit
+brAIn made, and deleting a file removes it.
+
+If a change breaks the page, open it with \`?nohouse=1\` on the address (for
+example \`/brain?nohouse=1\`; the sidebar entry passes it to the page) and both
+files are skipped for that visit. ⚙ › Instructions shows a **House changes
+to this page** switch while either file exists, which turns them off on that
+device only. Diagnostics and problem reports list the files' names and sizes,
+never what they say.
+
 ## Which model does which job
 
 brAIn 2.0 plans every Claude run by **job** rather than by one global model:
@@ -3156,7 +3180,7 @@ a store has not measured yet rather than answering with a number it does not hav
 
 Most AI integrations can turn on a light. brAIn administers the installation.
 
-It reaches Home Assistant three ways at once — a **native MCP server** (109 tools) for
+It reaches Home Assistant three ways at once — a **native MCP server** (110 tools) for
 reading and controlling, **90 registry-management services** for the parts of Home
 Assistant that normally only exist behind the Settings UI, and a **real shell** in
 \`/config\` for everything that is still a YAML file.
