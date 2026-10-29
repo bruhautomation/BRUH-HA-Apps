@@ -40,6 +40,7 @@ from pathlib import Path
 
 import bambu_atomic
 import library
+import prefs
 import store
 import thumbs
 from bambu import ftps, protocol
@@ -68,6 +69,12 @@ URGENT_LOOK_GAP_S = 75
 FOLLOW_UP_S = 180
 MAX_FOLLOW_UPS = 3
 PLATE_LOOK_GAP_S = 20 * 60
+# A look is taken from a burst, not the one frame that happened to be newest:
+# the bed of an A1 slides front to back and every bed drops at each layer, so
+# a single frame is often a smear. The steadiest of the burst (the most edge,
+# vision.sharpest) is the one brAIn is shown.
+BURST_FRAMES = 4
+BURST_GAP_S = 1.2
 # Lifted no faster than this after a pause, or an AI look already in flight
 # about the moment before the pause would raise the same alert again.
 KEEP_CHECKS = 60
@@ -303,6 +310,8 @@ class PrinterWatch:
         settings = self.owner.settings_for(self.pid)
         if not settings["enabled"]:
             self.last_state = None
+            if settings["plate"]:
+                self._plate_only_step(settings, now)
             return
         summary = self.owner.summary_of(self.pid)
         if summary is None or not summary.get("online"):
@@ -325,6 +334,44 @@ class PrinterWatch:
             self._sample(summary, settings, now)
         if state == "running":
             self._maybe_look(summary, settings, now)
+
+    def _plate_only_step(self, settings: dict, now: float) -> None:
+        """Detection off, the plate watch on: nothing is looked at while a
+        print runs. Once one finishes, a frame a minute or so says when the
+        plate has been cleared, so the panel stops showing a finished print
+        nobody is printing any more."""
+        summary = self.owner.summary_of(self.pid)
+        if summary is None or not summary.get("online"):
+            return
+        state = summary.get("state")
+        with self.lock:
+            if state in ACTIVE and self.plate["state"] != "printing":
+                self.plate = {"state": "printing", "since": now, "why": "A print is on the plate."}
+                self.finished_grid = None
+                self._clear_votes = 0
+                self._save_plate()
+            elif state in ("finish", "failed") and self.plate["state"] in ("printing", "unknown"):
+                self.plate = {"state": "occupied", "since": now, "why": (
+                    "The finished print is on the plate." if state == "finish"
+                    else "A failed print is on the plate.")}
+                self._clear_votes = 0
+                self._save_plate()
+                self.owner.changed()
+        if state not in ("finish", "failed") or self.plate["state"] != "occupied":
+            return
+        if now - (self.plate.get("since") or now) > PLATE_WATCH_S:
+            return
+        if now - self.last_sample < SAMPLE_PLATE_S:
+            return
+        self.last_sample = now
+        jpeg, _error = self.owner.frame(self.pid)
+        grid = self.owner.decode(jpeg) if jpeg else None
+        if grid is None or vision.view(grid, summary.get("chamber_light")) != "ok":
+            return
+        with self.lock:
+            self.last_grid, self.last_frame = grid, jpeg
+            self.brain = self.owner.brain_status()
+            self._plate_step(grid, jpeg, now)
 
     def _transitions(self, summary: dict, state, now: float) -> None:
         was = self.last_state
@@ -441,7 +488,8 @@ class PrinterWatch:
             if vision.looks_like(grid, self.empty_ref):
                 self._clear_votes += 1
                 if self._clear_votes >= 2:
-                    self._plate_clear(now, "The plate looks the way it did before the print.")
+                    self._plate_clear(now, "The plate looks the way it did before the print.",
+                                      learn=False)
             else:
                 self._clear_votes = 0
             return
@@ -453,10 +501,29 @@ class PrinterWatch:
             self._launch({"kind": "plate", "why": "The plate changed after the print finished.",
                           "at": now}, None, plate_only=True)
 
-    def _plate_clear(self, now: float, why: str) -> None:
+    def _plate_clear(self, now: float, why: str, *, learn: bool = True) -> None:
         self.plate = {"state": "clear", "since": now, "why": why}
         self._save_plate()
+        # The plate as it is now is what an empty plate looks like: the next
+        # finished print is compared with it for free, without brAIn.
+        if learn and self.last_grid is not None and self.last_frame is not None \
+                and vision.view(self.last_grid, None) == "ok":
+            self._store_empty(self.last_grid, self.last_frame)
         self.owner.changed()
+
+    def _learn_empty(self) -> None:
+        """A fresh frame of the plate somebody just said is clear, kept as the
+        empty plate (the frame before they said it may still show the print)."""
+        try:
+            jpeg, _error = self.owner.frame(self.pid)
+            grid = self.owner.decode(jpeg) if jpeg else None
+            if grid is None or vision.view(grid, None) != "ok":
+                return
+            with self.lock:
+                if self.plate["state"] == "clear":
+                    self._store_empty(grid, jpeg)
+        except Exception:  # noqa: BLE001 - a reference not learnt is asked for again next time
+            log.info("Could not keep the empty plate for %s", self.pid, exc_info=True)
 
     # -- looks -------------------------------------------------------------
     def _budget(self) -> int:
@@ -539,6 +606,26 @@ class PrinterWatch:
         threading.Thread(target=self._look, args=(trigger, dict(summary or {}), frame, plate_only),
                          daemon=True, name=f"watch-look-{self.pid}").start()
 
+    def _steadiest(self, first: bytes) -> bytes:
+        """The steadiest frame of a short burst, the one the look started with included."""
+        frames = [first]
+        for _ in range(BURST_FRAMES - 1):
+            self.owner.sleep(BURST_GAP_S)
+            jpeg, _error = self.owner.frame(self.pid)
+            if jpeg and jpeg not in frames:
+                frames.append(jpeg)
+        if len(frames) == 1:
+            return first
+        grids, kept = [], []
+        for jpeg in frames:
+            grid = self.owner.decode(jpeg)
+            if grid is not None and vision.view(grid, None) == "ok":
+                grids.append(grid)
+                kept.append(jpeg)
+        if not grids:
+            return first
+        return kept[vision.sharpest(grids)]
+
     def _context(self, trigger: dict, summary: dict, row: dict) -> tuple[dict, list[bytes], dict]:
         rec = self.record
         ctx = {"printer": row.get("name"), "model": row.get("model"), "file": rec.get("file"),
@@ -590,11 +677,13 @@ class PrinterWatch:
     def _look(self, trigger: dict, summary: dict, frame: bytes, plate_only: bool) -> None:
         try:
             row = self.owner.row(self.pid) or {}
+            if not plate_only:
+                frame = self._steadiest(frame)
             with self.lock:
-                if self.record is None:
+                if self.record is None and not plate_only:
                     return
                 if plate_only:
-                    ctx, extra_images, extra = {"file": self.record.get("file")}, [], {}
+                    ctx, extra_images, extra = {"file": (self.record or {}).get("file")}, [], {}
                     question = judge.plate_prompt(ctx)
                 else:
                     ctx, extra_images, extra = self._context(trigger, summary, row)
@@ -623,6 +712,17 @@ class PrinterWatch:
         """Write one look down; the alert's id when the printer is to be paused."""
         rec = self.record
         now = self.owner.clock()
+        if plate_only:
+            if answer is None:
+                self.brain = {"state": "error", "sentence": error or "brAIn did not answer."}
+                return None
+            if answer["plate"] == "empty" and answer["confidence"] >= 0.7:
+                self._plate_clear(now, f"brAIn looked: {answer['summary']}")
+            elif answer["plate"] == "has_print":
+                self.plate = {"state": "occupied", "since": self.plate.get("since") or now,
+                              "why": answer["summary"]}
+                self._save_plate()
+            return None
         if rec is None:
             return None
         if answer is None:
@@ -639,14 +739,6 @@ class PrinterWatch:
             self._save()
             return None
         self.brain = {"state": "ok", "sentence": "brAIn is looking at the print."}
-        if plate_only:
-            if answer["plate"] == "empty" and answer["confidence"] >= 0.7:
-                self._plate_clear(now, f"brAIn looked: {answer['summary']}")
-            elif answer["plate"] == "has_print":
-                self.plate = {"state": "occupied", "since": self.plate.get("since") or now,
-                              "why": answer["summary"]}
-                self._save_plate()
-            return None
         settings = self.owner.settings_for(self.pid)
         decision = judge.decide(answer, sensitivity=settings["sensitivity"], mode=settings["mode"],
                                 ignored=rec["ignored"], no_pause=rec["no_pause"])
@@ -743,7 +835,9 @@ class PrinterWatch:
                               "at": self.owner.clock()}, self.owner.summary_of(self.pid))
                 return "brAIn is looking at the print."
             if action == "plate_clear":
-                self._plate_clear(self.owner.clock(), "You said the plate is clear.")
+                self._plate_clear(self.owner.clock(), "You said the plate is clear.", learn=False)
+                threading.Thread(target=self._learn_empty, daemon=True,
+                                 name=f"watch-empty-{self.pid}").start()
                 return "Marked the plate clear."
             if action == "plate_occupied":
                 self.plate = {"state": "occupied", "since": self.owner.clock(),
@@ -896,10 +990,16 @@ class Watcher:
         self.lock = threading.Lock()
         self.decode = vision.decode
         self.clock = time.time
+        self.sleep = time.sleep
 
     # -- settings ----------------------------------------------------------
     def settings_for(self, pid: str) -> dict:
         return {**DEFAULTS, **((self.settings.get("printers") or {}).get(pid) or {})}
+
+    def wanted(self, pid: str) -> bool:
+        """A printer's thread runs for detection, or for the plate watch alone."""
+        settings = self.settings_for(pid)
+        return bool(settings["enabled"] or settings["plate"])
 
     def notify_target(self) -> str:
         return str(self.settings.get("notify") or "")
@@ -933,14 +1033,14 @@ class Watcher:
             if not self.start_threads:
                 continue
             thread = self._threads.get(pid)
-            if self.settings_for(pid)["enabled"] and (thread is None or not thread.is_alive()):
+            if self.wanted(pid) and (thread is None or not thread.is_alive()):
                 thread = threading.Thread(target=self._loop, args=(watch,), daemon=True,
                                           name=f"watch-{pid}")
                 self._threads[pid] = thread
                 thread.start()
 
     def _loop(self, watch: PrinterWatch) -> None:
-        while self.settings_for(watch.pid)["enabled"] and watch.pid in self.panel.clients:
+        while self.wanted(watch.pid) and watch.pid in self.panel.clients:
             try:
                 watch.step()
                 watch.finish_look_due(time.time())
@@ -1016,7 +1116,8 @@ class Watcher:
         """One look by brAIn; (answer, "") or (None, why not)."""
         try:
             task = brain_link.submit(question, schema=judge.SCHEMA, kind="look", images=images,
-                                     scheduled=scheduled, timeout=judge.TIMEOUT_S)
+                                     scheduled=scheduled, timeout=judge.TIMEOUT_S,
+                                     model=prefs.load()["look_model"])
             result = brain_link.wait(task, judge.TIMEOUT_S)
         except (brain_link.NotListening, TimeoutError, OSError) as exc:
             return None, str(exc)

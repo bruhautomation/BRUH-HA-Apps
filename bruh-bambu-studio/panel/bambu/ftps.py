@@ -22,12 +22,14 @@ Bambu Studio itself makes on a LAN.
 """
 from __future__ import annotations
 
+import calendar
 import ftplib
 import os
 import posixpath
 import re
 import socket
 import ssl
+import time
 
 PORT = 990
 USER = "bblp"
@@ -80,6 +82,34 @@ def safe_name(name: str) -> str:
             f"{base!r} is not a name the printer can store. Use letters, "
             f"digits, spaces, dots, dashes and underscores.")
     return base
+
+
+MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+                                       "sep", "oct", "nov", "dec"), start=1)}
+
+
+def listing_time(date: str | None, now: float | None = None) -> float | None:
+    """A LIST row's date ("Oct 29 14:03", or "Mar  3  2025" for an older
+    file) as a timestamp, or None. A date with a time and no year is within
+    the last six months, so one that would land in the future was last year.
+    The printer's clock and the house's may disagree by a time zone; the
+    order of the files is what this is for."""
+    bits = str(date or "").split()
+    if len(bits) != 3 or bits[0][:3].lower() not in MONTHS or not bits[1].isdigit():
+        return None
+    month, day = MONTHS[bits[0][:3].lower()], int(bits[1])
+    now = time.time() if now is None else now
+    try:
+        if ":" in bits[2]:
+            hour, minute = (int(x) for x in bits[2].split(":", 1))
+            year = time.gmtime(now).tm_year
+            stamp = calendar.timegm((year, month, day, hour, minute, 0))
+            if stamp > now + 2 * 86400:
+                stamp = calendar.timegm((year - 1, month, day, hour, minute, 0))
+            return float(stamp)
+        return float(calendar.timegm((int(bits[2]), month, day, 0, 0, 0)))
+    except (ValueError, OverflowError):
+        return None
 
 
 class Storage:

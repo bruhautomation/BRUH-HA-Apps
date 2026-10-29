@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- **A Settings tab.** The printers you added, **Find printers** and *Add a printer by hand*, print failure detection's settings for each printer and where its alerts go, brAIn's model and your standing instructions, the 3D view's drag direction, and the Home Assistant card all live there now, out of the way of the printers. While Home Assistant owes a restart, a banner on the Printers tab still offers it.
+- **Choose brAIn's model.** One for Design conversations and one for print checks (*brAIn's choice*, Haiku, Sonnet, Opus or Fable).
+- **Your standing instructions for brAIn.** *Designing* is added to every Design conversation (units, wall thickness, fillets, screw clearances…) and *Printing* is followed whenever brAIn picks print settings or starts a print (plate, layers, walls, infill, brims, materials…). What you say in a conversation still wins, and the built-in instructions they add to can be read underneath.
+- **The plate is watched after a print, even with failure detection off.** Only once a print has finished (nothing is looked at while it runs), a picture a minute or so says when the part has been taken off, and the finished print leaves the card: the printer says *Ready*. **Plate is clear** says so by hand, and that plate is kept as the empty plate the next finish is compared with, so later prints clear by themselves without asking brAIn.
+- **An i on failure detection** says when brAIn looks (the moments in the G-code, sudden changes, after a doubt, Check now, the finish), what the free checks between looks do, and how it copes with a moving bed.
+- **↓ Latest** in a Design conversation scrolled up, back to the newest message.
+- **Home Assistant's Plate clear sensor works with failure detection off**, since the plate watch now does.
+
+### Changed
+
+- **One header row.** On a phone the panel's name is dropped (Home Assistant's own bar already says it) and the five tabs share one row with their icons, so there is no second header under Home Assistant's.
+- **A cleaner, denser layout throughout.** Quieter filled buttons, one spacing and radius scale, Refresh, Reconnect and Remove in the printer's **⋯** menu, Pause and Stop beside the print, the speed as a select, smaller readings, and each file in the library one row with **Print** and a **⋯** for the rest.
+- **Where it looks reads as a timeline.** Layer 1 to the last layer, *Now* at the layer it is on, a key (planned, looked fine, doubt, failure, missed), and the next look said under it. A dot says what it is for when pressed. "11/8 looks" is now "3 of 8 planned looks done · 8 extra", which is what it counted.
+- **On the printer is a list, newest first**, with each job's date and size and **Print**; its pictures, which rarely arrived, are gone. The first eight are shown, and the rest on **Show all**.
+- **The Design tab fits the window.** On a desktop the view and the conversation are side by side at the window's height; on a phone the part fills the screen under the bar, the conversation scrolls inside itself under the 3D view, and **▾** folds the view away for a long conversation. 3MF, STEP and Delete are in the part's **⋯**. The versions row shows once there are two.
+- **Invert vertical drag is the default** (dragging down raises the view). Turn it off in Settings › 3D view for Fusion 360's way.
+
+### Fixed
+
+- **A look is no longer a picture of a moving bed.** Each look takes four frames about a second apart and brAIn is shown the sharpest; brAIn is also told that a smear or a plate that has moved is not a failure.
+- **A part's age no longer reads "20756 days ago"** when it has no time.
+
 ## 0.3.3
 
 ### Added

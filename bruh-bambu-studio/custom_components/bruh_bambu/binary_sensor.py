@@ -4,8 +4,9 @@
   printer was paused for); `level` says which. The trigger an automation
   wants: "flash the office light when the print has a problem".
 * Plate clear — on when the finished print has been taken off, off while a
-  print is on the plate, unknown when nothing has looked (detection off, or
-  a plate nobody has seen empty).
+  print is on the plate, unknown when nothing has looked (the plate watch
+  off, or a plate nobody has seen empty). The plate watch runs after a
+  finish with failure detection on or off, so it does not need detection.
 * Camera covered — on while the lens is covered (or the chamber too dark to
   see), which is when nothing is being checked.
 
@@ -100,7 +101,7 @@ class PlateClear(_WatchBinary):
     @property
     def available(self) -> bool:
         watch = self._watch()
-        return bool(watch is not None and watch.get("enabled") and watch.get("plate_watch"))
+        return bool(watch is not None and watch.get("plate_watch"))
 
     @property
     def is_on(self) -> bool | None:

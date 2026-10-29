@@ -8,9 +8,10 @@
 // turntable about a fixed Z-up axis, so it never flips over the top; a turn
 // about the point under the pointer; a slide; and a zoom toward the point
 // under the pointer, never toward the middle. Named views and Home move
-// there rather than jumping, and frame the whole part. A vertical drag moves
-// the view the way the hand moves (down lowers it toward the bed), and the
-// Design tab's "Invert vertical drag" turns that round (`invertY`).
+// there rather than jumping, and frame the whole part. Uninverted, a vertical
+// drag moves the view the way the hand moves (down lowers it toward the bed,
+// as Fusion 360 does); the panel inverts it by default (`invertY`, Settings ›
+// 3D view), so a drag down raises the view.
 //
 // Measure snaps the way Fusion's does: near a corner, the middle of an edge,
 // an edge, the centre of a flat face or a face, the pick takes that point
@@ -87,7 +88,7 @@ class FusionCamera {
     this.limits = [1, 5000];
     this.pointers = new Map();
     this.mode = null;
-    this.invertY = false;  // true: a drag down raises the view (the old way)
+    this.invertY = false;  // true: a drag down raises the view (the panel's default, set by design.js)
     const on = (type, fn, opts) => dom.addEventListener(type, fn, opts);
     on("pointerdown", (e) => this._down(e));
     on("pointermove", (e) => this._move(e));

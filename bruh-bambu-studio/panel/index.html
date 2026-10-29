@@ -10,12 +10,13 @@
 </head>
 <body>
 <header class="bar">
-  <div class="brand"><strong>BRUH</strong> Bambu Studio <span class="tag">Experimental</span></div>
-  <nav class="tabs" role="tablist">
-    <button class="tab" data-view="studio" role="tab">Studio</button>
-    <button class="tab" data-view="printers" role="tab">Printers</button>
-    <button class="tab" data-view="files" role="tab">Files</button>
-    <button class="tab" data-view="design" role="tab" id="designTab" hidden>Design</button>
+  <div class="brand"><strong>BRUH</strong> Bambu Studio</div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" data-view="studio" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21,16H3V4H21M21,2H3C1.89,2 1,2.89 1,4V16A2,2 0 0,0 3,18H10V20H8V22H16V20H14V18H21A2,2 0 0,0 23,16V4C23,2.89 22.1,2 21,2Z"/></svg><span>Studio</span></button>
+    <button class="tab" data-view="printers" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19,6A1,1 0 0,0 20,5A1,1 0 0,0 19,4A1,1 0 0,0 18,5A1,1 0 0,0 19,6M19,2A3,3 0 0,1 22,5V11H18V7H6V11H2V5A3,3 0 0,1 5,2H19M18,18.25C18,18.63 17.79,18.96 17.47,19.13L12.57,21.82C12.4,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L6.53,19.13C6.21,18.96 6,18.63 6,18.25V13C6,12.62 6.21,12.29 6.53,12.12L11.43,9.68C11.59,9.56 11.79,9.5 12,9.5C12.21,9.5 12.4,9.56 12.57,9.68L17.47,12.12C17.79,12.29 18,12.62 18,13V18.25M12,11.65L9.04,13L12,14.6L14.96,13L12,11.65M8,17.66L11,19.29V16.33L8,14.71V17.66M16,17.66V14.71L13,16.33V19.29L16,17.66Z"/></svg><span>Printers</span></button>
+    <button class="tab" data-view="files" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10,4H4C2.89,4 2,4.89 2,6V18A2,2 0 0,0 4,20H20A2,2 0 0,0 22,18V8C22,6.89 21.1,6 20,6H12L10,4Z"/></svg><span>Files</span></button>
+    <button class="tab" data-view="design" role="tab" id="designTab" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21,16.5C21,16.88 20.79,17.21 20.47,17.38L12.57,21.82C12.41,21.94 12.21,22 12,22C11.79,22 11.59,21.94 11.43,21.82L3.53,17.38C3.21,17.21 3,16.88 3,16.5V7.5C3,7.12 3.21,6.79 3.53,6.62L11.43,2.18C11.59,2.06 11.79,2 12,2C12.21,2 12.41,2.06 12.57,2.18L20.47,6.62C20.79,6.79 21,7.12 21,7.5V16.5M12,4.15L6.04,7.5L12,10.85L17.96,7.5L12,4.15Z"/></svg><span>Design</span></button>
+    <button class="tab" data-view="settings" role="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.94C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.67 16.04,18.34 16.56,17.94L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z"/></svg><span>Settings</span></button>
   </nav>
 </header>
 
@@ -50,55 +51,23 @@
   </section>
 
   <section id="viewPrinters" class="view" data-view="printers" hidden>
+    <div id="haBanner"></div>
     <div id="printerList" class="printers"></div>
-    <section class="card ha" id="haCard" aria-live="polite"></section>
-    <div class="card" id="findPrinters">
-      <div class="row spread">
-        <div><h2>Find printers</h2>
-          <p class="hint" id="scanNote">Looks for Bambu Lab printers on the network Home Assistant is on.</p></div>
-        <button class="primary" type="button" id="scanBtn">Find printers on my network</button>
-      </div>
-      <div id="scanResults"></div>
-      <details id="scanOther">
-        <summary>Search a different network</summary>
-        <form id="scanForm" class="importbar">
-          <input id="scanSubnet" inputmode="decimal" autocomplete="off" placeholder="192.168.2.0/24"
-                 aria-label="Network to search">
-          <button type="submit">Search</button>
-        </form>
-      </details>
-    </div>
-    <details class="card" id="addPrinter">
-      <summary>Add a printer</summary>
-      <p class="hint">On the printer's screen: the IP address is under Network, the
-        access code under LAN settings, the serial number under Device. Turn on
-        LAN-only mode and Developer mode so the printer accepts commands from Home
-        Assistant.</p>
-      <form id="printerForm" class="grid">
-        <label>Name <input name="name" placeholder="Workshop X1C" autocomplete="off"></label>
-        <label>Model <select name="model" id="modelSelect"></select></label>
-        <label>IP address <input name="host" required placeholder="192.168.1.50" autocomplete="off"></label>
-        <label>Serial number <input name="serial" required autocomplete="off"></label>
-        <label>Access code <input name="access_code" required autocomplete="off"></label>
-        <p class="hint" id="codeHint" hidden></p>
-        <div class="row"><button class="primary" type="submit">Save</button></div>
-      </form>
-    </details>
   </section>
 
   <section id="viewFiles" class="view" data-view="files" hidden>
     <div class="card">
-      <div class="row spread">
-        <div><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
+      <div class="cardhead">
+        <div class="grow"><h2>Library</h2><p class="hint" id="libraryRoot"></p></div>
         <label class="button primary">Upload<input type="file" id="upload" accept=".3mf,.stl,.step,.stp,.obj,.amf" hidden></label>
       </div>
       <form id="importForm" class="importbar">
         <input id="importUrl" type="url" inputmode="url" autocomplete="off"
-               placeholder="Paste a Printables link or a link to an .stl / .3mf file"
+               placeholder="Paste a Printables link, or a link to an .stl / .3mf"
                aria-label="Link to a model">
-        <button class="primary" type="submit">Import</button>
+        <button type="submit">Import</button>
       </form>
-      <p class="hint">MakerWorld (Bambu Handy) models need your Bambu sign-in: open them from Bambu Studio's MakerWorld page on the Studio tab.</p>
+      <p class="hint">MakerWorld models need your Bambu sign-in: open them from Bambu Studio's MakerWorld page on the Studio tab.</p>
       <div id="jobList"></div>
       <div id="fileList"></div>
     </div>
@@ -113,14 +82,19 @@
       </aside>
       <div class="partview" id="partView" hidden>
         <header class="parthead">
-          <button type="button" id="partBack" class="back" aria-label="All parts">‹ Parts</button>
+          <button type="button" id="partBack" class="iconbtn quiet back" aria-label="All parts" title="All parts">‹</button>
           <input id="partName" class="partname" aria-label="Part name">
-          <div class="row wrap" id="partActions">
-            <button type="button" class="primary" id="partPrint">Print</button>
-            <a class="button" id="dl3mf" download>3MF</a>
-            <a class="button" id="dlStep" download>STEP</a>
-            <button type="button" class="danger" id="partDelete">Delete</button>
-          </div>
+          <button type="button" id="stageToggle" class="iconbtn quiet stagetoggle" aria-pressed="true"
+                  aria-label="Hide the 3D view" title="Hide or show the 3D view">▾</button>
+          <button type="button" class="primary" id="partPrint">Print</button>
+          <details class="pmenu" id="partMenu">
+            <summary aria-label="More for this part">⋯</summary>
+            <div class="pmenupop">
+              <a class="button" id="dl3mf" download>Download 3MF</a>
+              <a class="button" id="dlStep" download>Download STEP</a>
+              <button type="button" class="danger" id="partDelete">Delete part</button>
+            </div>
+          </details>
         </header>
         <div class="partbody">
           <div class="stage">
@@ -149,9 +123,7 @@
                 </div>
                 <p><b>Home</b> goes back to the corner view with the whole part in sight;
                   <b>Top, Front, Right, Iso</b> turn to that side. Tap a body's name below to hide or show it,
-                  and its dot to change its colour.</p>
-                <label class="viewsetting"><input type="checkbox" id="invertY"> Invert vertical drag
-                  <small>dragging down raises the view</small></label>
+                  and its dot to change its colour. Which way a vertical drag turns is in Settings.</p>
               </div>
             </div>
             <div class="viewtools" role="toolbar" aria-label="3D view">
@@ -179,6 +151,7 @@
           </div>
           <div class="chat">
             <div class="messages" id="messages"></div>
+            <button type="button" class="tolatest" id="toLatest" hidden>↓ Latest</button>
             <p class="status" id="designStatus" hidden></p>
             <form id="composer" class="composer">
               <textarea id="composerText" rows="2" placeholder="Describe the part, or what to change…"></textarea>
@@ -188,6 +161,78 @@
         </div>
       </div>
     </div>
+  </section>
+  <section id="viewSettings" class="view settings" data-view="settings" hidden>
+    <h2 class="group">Printers</h2>
+    <div class="card" id="savedPrinters"></div>
+    <div class="card" id="findPrinters">
+      <div class="cardhead">
+        <div class="grow"><h3>Find printers</h3>
+          <p class="hint" id="scanNote">Looks for Bambu Lab printers on the network Home Assistant is on.</p></div>
+        <button class="primary" type="button" id="scanBtn">Find printers</button>
+      </div>
+      <div id="scanResults"></div>
+      <details id="scanOther">
+        <summary>Search a different network</summary>
+        <form id="scanForm" class="importbar">
+          <input id="scanSubnet" inputmode="decimal" autocomplete="off" placeholder="192.168.2.0/24"
+                 aria-label="Network to search">
+          <button type="submit">Search</button>
+        </form>
+      </details>
+      <details id="addPrinter">
+        <summary>Add a printer by hand</summary>
+        <p class="hint">On the printer's screen: the IP address is under Network, the
+          access code under LAN settings, the serial number under Device. Turn on
+          LAN-only mode and Developer mode so the printer accepts commands from Home
+          Assistant.</p>
+        <form id="printerForm" class="formgrid">
+          <label>Name <input name="name" placeholder="Workshop X1C" autocomplete="off"></label>
+          <label>Model <select name="model" id="modelSelect"></select></label>
+          <label>IP address <input name="host" required placeholder="192.168.1.50" autocomplete="off"></label>
+          <label>Serial number <input name="serial" required autocomplete="off"></label>
+          <label>Access code <input name="access_code" required autocomplete="off"></label>
+          <p class="hint" id="codeHint" hidden></p>
+          <div class="row"><button class="primary" type="submit">Save</button></div>
+        </form>
+      </details>
+    </div>
+
+    <h2 class="group">Print failure detection</h2>
+    <div class="card" id="watchSettings"></div>
+
+    <h2 class="group">brAIn</h2>
+    <form class="card formgrid" id="brainSettings">
+      <p class="hint" id="brainNote">Which model brAIn uses here, and what you want it to do every time.</p>
+      <div class="optgrid">
+        <label>Model for designing <select name="design_model" id="designModel"></select></label>
+        <label>Model for print checks <select name="look_model" id="lookModel"></select></label>
+      </div>
+      <label>Designing — your standing instructions
+        <textarea name="design_notes" id="designNotes" rows="4"
+                  placeholder="e.g. Metric only. Walls at least 2 mm. Round outside edges 1 mm. Holes for M3 screws are 3.4 mm."></textarea>
+        <small class="hint">Added to every Design conversation. What you say in a conversation still wins.</small></label>
+      <label>Printing — your default settings
+        <textarea name="print_notes" id="printNotes" rows="4"
+                  placeholder="e.g. Textured PEI plate. 0.2 mm layers, 3 walls, 15 % gyroid. Brim on anything taller than 60 mm. Prefer PETG for parts that live outside."></textarea>
+        <small class="hint">Followed when brAIn picks print settings or starts a print (Auto print).</small></label>
+      <div class="row"><button class="primary" type="submit">Save</button><span class="hint" id="brainSaved"></span></div>
+      <details id="briefBox">
+        <summary>brAIn's built-in design instructions</summary>
+        <pre class="brief" id="designBrief"></pre>
+      </details>
+    </form>
+
+    <h2 class="group">3D view</h2>
+    <div class="card">
+      <label class="check setting"><input type="checkbox" id="invertY">
+        <span>Invert vertical drag<small class="hint">On: dragging down raises the view. Off: dragging down lowers it, as Fusion 360 does.</small></span></label>
+    </div>
+
+    <h2 class="group">Home Assistant</h2>
+    <section class="card ha" id="haCard" aria-live="polite"></section>
+
+    <p class="hint about">BRUH Bambu Studio is experimental. Bambu Studio itself is Bambu Lab's, downloaded on first start.</p>
   </section>
 </main>
 

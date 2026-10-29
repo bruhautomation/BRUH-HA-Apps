@@ -252,6 +252,7 @@ class Harness(unittest.TestCase):
         self.w = watcher.Watcher(self.panel, data=self.tmp / "watch", start_threads=False)
         self.t = 1_000_000.0
         self.w.clock = lambda: self.t
+        self.w.sleep = lambda _s: None  # a look's burst of frames, without the waits
         self.grid = noisy(1)
         self.w.frame = lambda pid: (b"\xff\xd8\xff-frame", "")
         self.frames = 0
