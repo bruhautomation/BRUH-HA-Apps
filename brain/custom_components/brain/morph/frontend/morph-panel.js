@@ -133,6 +133,14 @@ function detailCard(card) {
   return d;
 }
 
+// A switch that rides in its room's title row as a pill (`options.header:
+// true`, the owner: a pause toggle "in the header of the card as a
+// button"): outside Edit it is not a tile, not lifted into Now and not what
+// keeps a room open; in Edit it is an ordinary tile, so it can be edited.
+function isHeadCard(card) {
+  return !!(card && card.type === 'switch' && card.entity && card.options && card.options.header === true);
+}
+
 class MorphPanel extends HTMLElement {
   constructor() {
     super();
@@ -467,7 +475,7 @@ class MorphPanel extends HTMLElement {
     this.eachSection((sec) => {
       if (sec.hidden) return;
       this.sectionCards(sec).forEach((c) => {
-        if (['scenes', 'note', 'lovelace', 'readings'].includes(c.type)) return;
+        if (['scenes', 'note', 'lovelace', 'readings'].includes(c.type) || isHeadCard(c)) return;
         const ents = c.type === 'list' ? (c.entities || []) : c.entity ? [c.entity] : [];
         if (!ents.length) return;
         items.push({ id: c.id, sec: sec.id, entities: ents, primary: ents[0] });
@@ -1379,7 +1387,10 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     if (this.settings().fold_rooms === false) return 'active';
     // A room with no presence sensor cannot say it is empty: one with
     // something on stays open rather than being folded on a guess.
-    if (here == null && !lifted && this.sectionEntities(sec).some((e) => { const st = this.hass.states[e]; return st && ['light', 'fan', 'media_player', 'switch'].includes(domainOf(e)) && ['on', 'playing'].includes(st.state); })) return 'active';
+    // A header switch (a pause) is a setting, not something left on.
+    const cards = this.sectionCards(sec);
+    const headOnly = new Set(cards.filter(isHeadCard).map((c) => c.entity).filter((e) => !cards.some((c) => !isHeadCard(c) && c.entity === e)));
+    if (here == null && !lifted && this.sectionEntities(sec).some((e) => { if (headOnly.has(e)) return false; const st = this.hass.states[e]; return st && ['light', 'fan', 'media_player', 'switch'].includes(domainOf(e)) && ['on', 'playing'].includes(st.state); })) return 'active';
     return 'idle';
   }
 
@@ -1387,7 +1398,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
   // sleeper usually needs at night — a night habit's card, else its fan,
   // else its first switch.
   nightControl(sec) {
-    const cards = this.sectionCards(sec).filter((c) => c.entity && !['scenes', 'note', 'lovelace', 'readings'].includes(c.type));
+    const cards = this.sectionCards(sec).filter((c) => c.entity && !['scenes', 'note', 'lovelace', 'readings'].includes(c.type) && !isHeadCard(c));
     const habits = ((this.brain().feed || {}).habits) || [];
     const nightly = (e) => habits.some((h) => h.entity_id === e && (h.minute >= 1200 || h.minute < 360));
     return cards.find((c) => nightly(c.entity)) || cards.find((c) => domainOf(c.entity) === 'fan') || cards.find((c) => ['switch', 'input_boolean'].includes(domainOf(c.entity))) || null;
@@ -1481,7 +1492,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
       return;
     }
     (sec.groups || []).forEach((g, gi) => {
-      let cards = (g.cards || []).filter((c) => !lifted.has(c.id));
+      let cards = (g.cards || []).filter((c) => !lifted.has(c.id) && (this.s.edit || !isHeadCard(c)));
       // An item the list says leads its room goes first in its group.
       // An anchor keeps its slot whatever its score (§4.4): the
       // others are ordered around it.
@@ -1715,6 +1726,13 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     // Scene words in the title row, one tap even when the room is folded.
     const scenes = []; this.sectionCards(sec).forEach((c) => { if (c.type === 'scenes') (c.entities || []).forEach((e) => scenes.push(e)); });
     const folded = state === 'idle' || state === 'asleep';
+    // A header switch (`options.header`): a pill at the right of the title
+    // row, folded or not, amber while on. In Edit it is a tile instead.
+    const pills = edit ? '' : this.sectionCards(sec).filter(isHeadCard).map((c) => {
+      const st = H.states[c.entity]; const on = !!st && st.state === 'on';
+      const dead = !st || st.state === 'unavailable';
+      return `<button type="button" class="shtog${on ? ' on' : ''}" data-act="head-toggle" data-v="${esc(c.entity)}" data-card="${esc(c.id)}" aria-pressed="${on}"${dead ? ' disabled' : ''}><i aria-hidden="true"></i>${esc(this.cardName(c, sec))}</button>`;
+    }).join('');
     const sceneWords = folded && !edit && scenes.length ? `<span class="secscenes">${scenes.slice(0, 5).map((e) => `<button type="button" class="wd" data-act="scene" data-v="${esc(e)}">${esc(shortName(friendly(H, e), sec.title))}</button>`).join('')}</span>` : '';
     // Folded with a light on: a warm underline for the share that is on.
     const lights = ents.filter((e) => domainOf(e) === 'light' && H.states[e] && !(H.states[e].attributes.entity_id || []).length);
@@ -1735,7 +1753,7 @@ ${asks.map((a) => this.answerHtml(a)).join('')}</div>`;
     const grip = edit ? '<svg aria-hidden="true" width="12" height="18" viewBox="0 0 12 18" style="flex-shrink:0;color:var(--quiet);margin-left:-8px"><path d="M3 3h.01M9 3h.01M3 9h.01M9 9h.01M3 15h.01M9 15h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>' : '';
     // The room's name is a button: tap it to fold or unfold the room.
     const name = edit ? `<h2>${esc(sec.title)}</h2>` : `<h2><button type="button" class="roomname" data-act="room-toggle" data-v="${esc(sec.id)}" aria-expanded="${!folded}">${esc(sec.title)}</button></h2>`;
-    return `${grip}<div class="sectitle">${name}<span class="secmeta">${esc(meta)}</span>${needs ? `<span class="needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}${traces}${sceneWords}<span class="flex1"></span>${this.chipsHtml(sec)}${under}</div>${because}${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
+    return `${grip}<div class="sectitle">${name}<span class="secmeta">${esc(meta)}</span>${needs ? `<span class="needs">${needs} need${needs === 1 ? 's' : ''} you</span>` : ''}${traces}${sceneWords}<span class="flex1"></span>${this.chipsHtml(sec)}${pills}${under}</div>${because}${edit ? `<button type="button" class="go" data-act="sec-edit" data-v="${esc(sec.id)}" style="padding:0 8px;font-size:13px;color:var(--muted)">${open ? 'Close' : 'Edit'}</button>` : ''}${this.tellBox('section', sec.id)}${editor}`;
   }
 
   renderTile(secEl, it, sec, ms) {
@@ -2796,6 +2814,7 @@ ${st.payload ? `<details class="payload"><summary>What ${esc(this.who())} receiv
         { const at = this.tileOf(el); this.track('toggle', at.card, at.section, data.entity_id && String(data.entity_id)); }
         return;
       }
+      case 'head-toggle': { const hit = this.findCard(el.dataset.card); this.call({ domain: 'homeassistant', service: 'toggle', data: { entity_id: v } }); this.track('toggle', el.dataset.card, hit && hit.sec.id); return; }
       case 'scene': this.call({ domain: 'scene', service: 'turn_on', data: { entity_id: v } }); this.track('scene', null, null, v); return;
       case 'tgt': {
         const tile = el.closest('[data-tile]'); const hit = tile && this.findCard(tile.getAttribute('data-tile')); if (!hit) return;

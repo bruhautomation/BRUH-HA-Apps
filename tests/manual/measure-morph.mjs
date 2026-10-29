@@ -42,6 +42,10 @@
  *     is on while either runs; tapping outside folds only the finished
  *     ones; five are kept. A Tell replaced while it runs is not lost: when
  *     it lands, the strip at the top says so with Show;
+ *   * a switch card with `options.header: true` rides in its room's title
+ *     row as a pill (amber while on, aria-pressed, a 44px target on
+ *     touch), not as a tile, also while the room is folded, and is a tile
+ *     again in Edit;
  *
  * Exits non-zero with every failure listed.
  */
@@ -1063,7 +1067,7 @@ for (const [w, h, name] of W([[1440, 900, 'wide'], [400, 860, 'phone']])) {
 }
 
 // ------------------------------------------------------------------
-// Ask stacks (owner requests).
+// Ask stacks and the header switch (owner requests).
 const SHOTS = process.env.MORPH_SHOTS || '';
 async function shot(p, file) {
   if (!SHOTS) return;
@@ -1143,6 +1147,56 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     }
     await p.evaluate(() => { window.__panel.s.tell = null; window.__panel.tellsAway = []; window.__panel.schedule(); });
     await settle(p, 400);
+  }
+
+  // 2. A switch card with options.header rides in its room's title row.
+  {
+    await p.evaluate(() => {
+      const P = window.__panel; const d = JSON.parse(JSON.stringify(P.dash));
+      const yard = d.floors.flatMap((f) => f.sections).find((s) => s.id === 's_yard');
+      yard.groups[0].cards.push({ id: 'c_pause', type: 'switch', entity: 'input_boolean.guest_mode', name: 'Pause watering', options: { header: true } });
+      P.dash = d; P._secEnts = null; P._watch = null; P._forceApply = true; P.engine.invalidate(); P.render();
+    });
+    await settle(p, 1200);
+    const read = () => p.evaluate(() => {
+      const r = window.__panel.shadowRoot; const sec = r.querySelector('[data-sec="s_yard"]');
+      const pill = sec && sec.querySelector('.sechead [data-act="head-toggle"]');
+      const b = pill && pill.getBoundingClientRect();
+      return { folded: !!sec && sec.classList.contains('folded'), pill: !!pill, text: pill ? pill.textContent.trim() : '', pressed: pill ? pill.getAttribute('aria-pressed') : null, h: b ? b.height : 0, title: pill ? pill.hasAttribute('title') : false, tile: !!r.querySelector('[data-tile="c_pause"]'), color: pill ? getComputedStyle(pill).color : '' };
+    });
+    let got = await read();
+    if (!got.pill) fail(where, `a header switch is not in its room's title row (folded: ${got.folded})`);
+    if (got.tile) fail(where, 'a header switch is drawn as a tile as well');
+    if (got.pill && got.text !== 'Pause watering') fail(where, `the header switch is not named by its card (${got.text})`);
+    if (got.pill && got.pressed !== 'false') fail(where, `an off header switch is not aria-pressed=false (${got.pressed})`);
+    if (got.title) fail(where, 'the header switch carries a title tooltip');
+    if (touch && got.pill && got.h < 44) fail(where, `the header switch is under the 44px touch floor (${got.h})`);
+    await p.evaluate(() => { const el = window.__panel.shadowRoot.querySelector('[data-sec="s_yard"]'); el.scrollIntoView({ block: 'center' }); });
+    await settle(p, 300);
+    await shot(p, `header-pill-off-${name}`);
+    if (got.pill) {
+      await p.evaluate(() => { window.__calls = []; });
+      await p.locator('[data-sec="s_yard"] [data-act="head-toggle"]').click();
+      await settle(p, 500);
+      const calls = await p.evaluate(() => window.__calls);
+      if (!calls.some((c) => c.domain === 'homeassistant' && c.service === 'toggle' && [].concat(c.data.entity_id).includes('input_boolean.guest_mode'))) fail(where, `tapping the header switch did not toggle it (${JSON.stringify(calls)})`);
+      got = await read();
+      if (got.pressed !== 'true') fail(where, `an on header switch is not aria-pressed=true (${got.pressed})`);
+      await shot(p, `header-pill-on-${name}`);
+      // Folded: still there.
+      const folded = await p.evaluate(async () => { const P = window.__panel; P.s.unfold.s_yard = 0; P.foldNow = 's_yard'; P._forceApply = true; P.engine.invalidate(); P.schedule(); await new Promise((r) => setTimeout(r, 900)); const sec = P.shadowRoot.querySelector('[data-sec="s_yard"]'); return { folded: sec.classList.contains('folded'), pill: !!sec.querySelector('.sechead [data-act="head-toggle"]') }; });
+      if (folded.folded && !folded.pill) fail(where, 'the header switch is gone while its room is folded');
+      // Edit: a tile again, no pill.
+      await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
+      await settle(p, 1200);
+      const ed = await p.evaluate(() => { const r = window.__panel.shadowRoot; return { pill: !!r.querySelector('[data-sec="s_yard"] .sechead [data-act="head-toggle"]'), tile: !!r.querySelector('[data-tile="c_pause"]') }; });
+      if (ed.pill) fail(where, 'the header switch is drawn in the title row in Edit');
+      if (!ed.tile) fail(where, 'the header switch is not an editable tile in Edit');
+      await p.evaluate(() => window.__panel.act('edit', { dataset: {} }));
+      await settle(p, 1200);
+      await p.evaluate(() => window.__panel.hass.callService('homeassistant', 'toggle', { entity_id: 'input_boolean.guest_mode' }));
+    }
+    atRest(`${where} with a header switch`, await still(p));
   }
 
   const sw = await snapshot(p);

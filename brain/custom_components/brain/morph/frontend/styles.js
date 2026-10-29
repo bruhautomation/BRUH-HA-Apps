@@ -65,6 +65,14 @@ section.sec.nowband .secbg{background:transparent!important}
 .needs{font-size:13px;color:var(--rose);white-space:nowrap}
 .trace{background:none;border:0;padding:0;margin:0;font:inherit;font-size:13px;cursor:pointer;min-height:28px;white-space:nowrap}
 .secbecause{flex-basis:100%;font-size:13px;margin:-2px 0 0}
+/* A header switch (options.header): a pill at the right of a room's title
+   row, amber while on; a 44px target on touch. */
+.morph .shtog{align-self:center;display:inline-flex;align-items:center;gap:7px;min-height:32px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:transparent;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer;flex-shrink:0;transition:background .2s ease,color .2s ease,border-color .2s ease}
+.morph .shtog i{width:7px;height:7px;border-radius:50%;box-shadow:inset 0 0 0 1.5px currentColor}
+.morph .shtog.on{color:var(--amber);border-color:color-mix(in oklab,var(--amber) 55%,transparent);background:color-mix(in oklab,var(--amber) 16%,transparent)}
+.morph .shtog.on i{background:var(--amber);box-shadow:none}
+.morph .shtog:disabled{opacity:.45;cursor:default}
+@media (pointer:coarse){.morph .shtog{min-height:44px}}
 .chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);white-space:nowrap}
 .chip i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--line2)}
 .chip.on.rose i{background:var(--rose);box-shadow:none}.chip.on.amber i{background:var(--amber);box-shadow:none}
