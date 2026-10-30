@@ -169,6 +169,18 @@ class TestDontRemindMe(RouteCase):
                      "normal for this sensor", ""):
             self.assertFalse(corrections.deferral(said), said)
 
+    def test_only_a_device_out_of_use_is_finished_with(self):
+        for said in ("this sensor is broken", "I no longer use this remote",
+                     "we don't use it any more", "retired, it's in a drawer",
+                     "got rid of that one"):
+            self.assertTrue(corrections.gone_for_good(said), said)
+        # Everyday words that are not about the device being finished: each
+        # would otherwise stand its checks down for good.
+        for said in ("I don't have time right now", "I don't need a reminder",
+                     "there is a spare battery in the drawer",
+                     "not now", "Don't remind me", ""):
+            self.assertFalse(corrections.gone_for_good(said), said)
+
     def deferred(self, said):
         row = self.check_row("dev.battery_low")
         before = time.time()

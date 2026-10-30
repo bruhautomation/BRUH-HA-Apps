@@ -452,15 +452,17 @@ def temporary(note: str) -> bool:
 # device has gone quiet or reads wrong (`House.answered_off`) — and it is
 # not a deferral, nor a for-now.
 _GONE_RE = re.compile(
-    r"\b(?:(?:no longer|not|n'?t|never)\s+(?:use|using|used|need|needed|"
-    r"in use|wanted)|(?:don'?t|do not|doesn'?t|did not|didn'?t)\s+"
-    r"(?:use|need|have)\s+(?:it|this|that|these|them)?|retired|"
+    r"\b(?:(?:no longer|never)\s+(?:use|using|used|need|needed)\b|"
+    r"(?:don'?t|do not|doesn'?t|did not|didn'?t|not)\s+(?:use|using|need)\s+"
+    r"(?:it|them|(?:this|that|these|those|the)(?:\s+\w+)?)\s+any ?more|"
+    r"(?:don'?t|do not|doesn'?t|not)\s+(?:use|using)\s+(?:it|them|"
+    r"(?:this|that|these|those|the)(?:\s+\w+)?)\b|"
+    r"(?:not|no longer) in use|not used(?! to)\b|retired|"
     r"decommission(?:ed)?|thrown (?:out|away)|got rid of|gave (?:it|them) "
     r"away|binned|scrapped|"
     r"(?:is|are|it'?s)\s+(?:completely |totally |just )?"
-    r"(?:broken|faulty|defective|useless|junk|a dud)|"
-    r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty)|"
-    r"spare|not used)\b", re.I)
+    r"(?:broken|faulty|defective|dead for good|junk|a dud)|"
+    r"(?:sensor|device|remote|unit)\s+(?:is\s+)?(?:broken|faulty))", re.I)
 
 
 def gone_for_good(note: str) -> bool:
