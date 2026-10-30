@@ -70,6 +70,10 @@ PROMPT_PERSONA_CHARS = PERSONA_MAX
 PROMPT_GROWTH_ENTRIES = 3
 PROMPT_GROWTH_CHARS = 200
 
+# Who wrote a growth entry when it was not the household: the assistant
+# itself, in the presence loop's nightly reflection (`presence.py`).
+SELF = "self"
+
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SPACE = re.compile(r"[ \t]+")
 
@@ -134,6 +138,11 @@ def clean_growth(rows) -> list[dict]:
         if not text:
             continue
         entry = {"date": _date_of(row), "text": text}
+        # A note the assistant wrote about itself (the presence loop's
+        # nightly reflection) says so, so ⚙ can offer to remove it and a
+        # prompt can tell it from what the household settled.
+        if row.get("by") == SELF:
+            entry["by"] = SELF
         at = row.get("at")
         if isinstance(at, (int, float)) and not isinstance(at, bool) and at > 0:
             entry["at"] = int(at / 1000 if at > 1e12 else at)
@@ -305,9 +314,15 @@ def save(name, persona, path: str | None = None, voice=None) -> dict:
     return data
 
 
-def add_growth(text, when: float | None = None, path: str | None = None) -> dict:
+def add_growth(text, when: float | None = None, path: str | None = None,
+               by: str | None = None) -> dict:
     """Append one dated growth entry. Raises ValueError on nothing to say,
-    or nowhere to write."""
+    or nowhere to write.
+
+    ``by="self"`` is a note the assistant wrote about itself: it is marked
+    so (⚙ shows it as its own, with Remove), and it can never change the
+    stored voice — only the household's own words set that. Nothing here
+    ever touches the name or the persona."""
     import atomic_write  # noqa: PLC0415 — panel-local
 
     target = path or STORE
@@ -318,10 +333,12 @@ def add_growth(text, when: float | None = None, path: str | None = None) -> dict
         raise ValueError("brAIn's config folder is not there to save into")
     at = int(when if when is not None else time.time())
     entry = {"date": _dt.date.fromtimestamp(at).isoformat(), "at": at, "text": words}
+    if by == SELF:
+        entry["by"] = SELF
     with atomic_write.locked(target):
         data = load(target)
         data["growth"] = (data.get("growth") or []) + [entry]
-        said = voice_named(words)
+        said = voice_named(words) if by != SELF else ""
         if said:
             # The note that the voice changed IS the new answer: every
             # surface quotes the store (`identity`), never the note.
@@ -330,6 +347,34 @@ def add_growth(text, when: float | None = None, path: str | None = None) -> dict
         data["updated_at"] = at
         _write(data, target)
     return entry
+
+
+def remove_growth(at, text, path: str | None = None) -> bool:
+    """Take back one growth entry the assistant wrote itself. Returns
+    whether one went. An entry the household settled is never removed
+    here: that is theirs, and the persona is edited in ⚙ instead."""
+    import atomic_write  # noqa: PLC0415 — panel-local
+
+    target = path or STORE
+    if not writable(target):
+        return False
+    try:
+        at = int(at)
+    except (TypeError, ValueError):
+        return False
+    text = str(text or "")
+    with atomic_write.locked(target):
+        data = load(target)
+        growth = data.get("growth") or []
+        keep = [g for g in growth
+                if not (g.get("by") == SELF and int(g.get("at") or 0) == at
+                        and g.get("text") == text)]
+        if len(keep) == len(growth):
+            return False
+        data["growth"] = keep
+        data["updated_at"] = int(time.time())
+        _write(data, target)
+    return True
 
 
 # A growth note saying which voice brAIn now speaks with: "the spoken voice
@@ -458,7 +503,9 @@ def prompt_block(data: dict | None = None) -> str:
     text = " ".join(parts)
     growth = (data.get("growth") or [])[-PROMPT_GROWTH_ENTRIES:]
     if growth:
-        lines = [f"- {g.get('date') or 'undated'}: {_one_line(g['text'], PROMPT_GROWTH_CHARS)}"
+        lines = [f"- {g.get('date') or 'undated'}"
+                 f"{' (your own note)' if g.get('by') == SELF else ''}: "
+                 f"{_one_line(g['text'], PROMPT_GROWTH_CHARS)}"
                  for g in growth]
         text += "\nHow you have grown, most recent last:\n" + "\n".join(lines)
     return text

@@ -7035,6 +7035,22 @@ body.term-classic #chatModelPick { display: none; }
 .persdate { font-size: 12px; color: var(--ink-3); }
 .persline { font-size: 14px; color: var(--ink); overflow-wrap: anywhere; }
 .persempty { font-size: 14px; color: var(--ink-3); }
+/* How … is growing (the presence loop): one row per thing, its words over
+   their reason, its own press beside it. */
+.presbody { display: grid; gap: 6px; max-width: 600px; }
+.preshead { margin: var(--sp-2) 0 0; font-size: var(--fs-meta); font-weight: 600; color: var(--ink-2); }
+.presrow {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 6px 8px 6px 12px; background: var(--plane);
+  border: 1px solid var(--hairline); border-radius: 10px;
+}
+.prestext { flex: 1 1 220px; min-width: 0; display: grid; gap: 2px; }
+.presline { font-size: var(--fs-body); color: var(--ink); overflow-wrap: anywhere; }
+.pressub { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.presacts { flex: none; display: flex; gap: 8px; margin-left: auto; }
+@media (pointer: coarse) {
+  .presrow .btn { min-height: 44px; }
+}
 /* The persona as sections (`personaSections`): a plain title over its words,
    hairlines between, the whole outline readable without opening a box. */
 #setModal .perslabel {

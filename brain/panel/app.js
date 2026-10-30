@@ -17799,10 +17799,11 @@ function renderPersonality() {
   setPersonaEditing(false);
   const list = $("#persGrowth");
   list.textContent = "";
-  const growth = Array.isArray(d.growth) ? d.growth : [];
+  // The assistant's own overnight notes are listed under "How … is
+  // growing" with a Remove each; this list is what the household settled.
+  const growth = (Array.isArray(d.growth) ? d.growth : []).filter((g) => g.by !== "self");
   if (!growth.length) {
     list.appendChild(el("li", "persempty", "Nothing yet."));
-    return;
   }
   growth.forEach((g) => {
     const li = el("li", "persentry");
@@ -17810,6 +17811,131 @@ function renderPersonality() {
     li.appendChild(el("span", "persline", g.text || ""));
     list.appendChild(li);
   });
+  loadPresence();
+}
+
+// ---- ⚙ › Personality › How … is growing ------------------------------------
+//
+// The presence loop (presence.py, /api/presence): once a night the assistant
+// notes how it is doing and thinks of a few small ways to keep in touch with
+// each person; a hard budget decides what is ever sent. Everything it noted,
+// has in mind or sent is here, each with the one press that takes it back:
+// Remove, Skip, Never (this kind), Restore, Less like this.
+const presState = { data: null };
+
+async function loadPresence() {
+  const body = $("#presBody");
+  if (!body) return;
+  try {
+    presState.data = await api("api/presence");
+  } catch (e) {
+    body.textContent = "";
+    body.appendChild(el("p", "persempty", `Could not read this: ${e.message}`));
+    return;
+  }
+  renderPresence();
+}
+
+async function presencePost(payload, said) {
+  try {
+    const out = await api("api/presence", { method: "POST", body: JSON.stringify(payload) });
+    if (out.personality) {
+      persState.data = out.personality;
+      renderPersonality();
+    } else {
+      presState.data = out;
+      renderPresence();
+    }
+    if (said) toast(said);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+function presButton(label, aria, onClick) {
+  const b = el("button", "btn ghost", label);
+  b.type = "button";
+  b.setAttribute("aria-label", aria);
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function presRow(main, sub, buttons) {
+  const row = el("div", "presrow");
+  const words = el("div", "prestext");
+  words.appendChild(el("span", "presline", main));
+  if (sub) words.appendChild(el("span", "pressub", sub));
+  row.appendChild(words);
+  if ((buttons || []).length) {
+    const acts = el("div", "presacts");
+    buttons.forEach((b) => acts.appendChild(b));
+    row.appendChild(acts);
+  }
+  return row;
+}
+
+function presCount(n, word) {
+  const words = ["no", "one", "two", "three", "four", "five"];
+  return `${words[n] || n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+function renderPresence() {
+  const d = presState.data || {};
+  const p = persState.data || {};
+  const name = d.name || p.name || "brAIn";
+  $("#presHead").textContent = `How ${name} is growing`;
+  const b = d.budget || {};
+  $("#presWhat").textContent = d.on
+    ? `Once a night ${name} notes how it is doing and thinks of small ways to keep in touch. `
+      + `At most ${presCount(b.per_day || 1, "message")} a person a day and ${b.per_week || 3} a week, `
+      + `${b.hours || "08:00–21:00"}, never in quiet hours or to anyone away.`
+    : `Off: it needs Personality and the Learning loop on in Features.`;
+  const body = $("#presBody");
+  body.textContent = "";
+  const mine = (Array.isArray(p.growth) ? p.growth : []).filter((g) => g.by === "self");
+  if (mine.length) {
+    body.appendChild(el("p", "preshead", "Its own notes"));
+    mine.slice(0, 6).forEach((g) => body.appendChild(presRow(g.text || "", g.date || "", [
+      presButton("Remove", `Remove: ${g.text || ""}`, () => presencePost(
+        { do: "growth_remove", at: g.at, text: g.text }, "Removed")),
+    ])));
+  }
+  (d.people || []).forEach((who) => {
+    const rows = [];
+    (who.ideas || []).forEach((i) => rows.push(presRow(`${i.kind_label}: ${i.text}`, i.reason, [
+      presButton("Skip", `Skip: ${i.text}`, () => presencePost(
+        { do: "skip", person: who.person, id: i.id }, "Skipped")),
+      presButton("Never", `Never a ${i.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "never", person: who.person, kind: i.kind }, `No more of those for ${who.name}`)),
+    ])));
+    (who.notes || []).forEach((n) => rows.push(presRow(n.text, "Noted from how they answered", [
+      presButton("Remove", `Remove: ${n.text}`, () => presencePost(
+        { do: "note_remove", person: who.person, id: n.id }, "Removed")),
+    ])));
+    (who.retired || []).forEach((r) => rows.push(presRow(`Less like this: ${r.kind_label}`, "", [
+      presButton("Restore", `Bring back ${r.kind_label.toLowerCase()} for ${who.name}`, () => presencePost(
+        { do: "bring_back", person: who.person, kind: r.kind }, "Brought back")),
+    ])));
+    if (who.paused) rows.push(presRow("Not now — nothing more today", "", []));
+    if (!rows.length) return;
+    body.appendChild(el("p", "preshead", who.name));
+    rows.forEach((r) => body.appendChild(r));
+  });
+  const sent = d.touches || [];
+  if (sent.length) {
+    body.appendChild(el("p", "preshead", "Lately"));
+    sent.forEach((t) => {
+      const meta = [t.when, t.name, t.kind_label, t.reaction_label].filter(Boolean).join(" · ");
+      const btns = ["less", "not_now"].includes(t.reaction) ? [] : [
+        presButton("Less like this", `Less like this: ${t.text}`, () => presencePost(
+          { do: "react", id: t.id, reaction: "less" }, "Fewer of those")),
+      ];
+      body.appendChild(presRow(t.text, `${meta}. ${t.reason}`, btns));
+    });
+  }
+  if (!body.childElementCount) {
+    body.appendChild(el("p", "persempty", d.on ? "Nothing yet: it reflects overnight." : "Nothing yet."));
+  }
 }
 
 // ---- Header: what the top bar shows --------------------------------------
