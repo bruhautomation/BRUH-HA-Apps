@@ -90,6 +90,26 @@ _MEDIA_ON = frozenset({"buffering", "idle", "on", "paused", "playing"})
 _COVER_KINDS = ("awning", "blind", "curtain", "shade", "shutter")
 
 
+def _parse_ts(value) -> float | None:
+    """An HA timestamp (ISO string, or epoch seconds) as epoch seconds.
+
+    Its own copy of `checks._util.parse_ts`: the checks import this module,
+    so importing them back from here is a cycle."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) / (1000.0 if value > 1e11 else 1.0)
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.timestamp()
+
 def _on_off(domain: str) -> dict:
     return {f"{domain}.turned_on": {"to": {"on"}},
             f"{domain}.turned_off": {"to": {"off"}}}
@@ -583,15 +603,13 @@ def build_timeline(history: dict) -> dict[str, list[tuple[float, str, dict]]]:
     wants: an automation's state trigger fires on a change, and a
     recorder that stored every sample would answer a different question.
     """
-    from checks._util import parse_ts  # noqa: PLC0415 — panel-local
-
     out: dict[str, list[tuple[float, str, dict]]] = {}
     for eid, rows in (history or {}).items():
         points = []
         for row in rows or []:
             if not isinstance(row, dict):
                 continue
-            when = parse_ts(row.get("last_changed") or row.get("last_updated"))
+            when = _parse_ts(row.get("last_changed") or row.get("last_updated"))
             if when is None:
                 continue
             points.append((when, str(row.get("state") or ""),
