@@ -20,13 +20,17 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     rendered as messages) or "classic" (ttyd + tmux, the
                     character grid). Both drive the same CLI with the same
                     permissions; the difference is entirely presentation.
-  chat_max_sessions — how many chat conversations may hold a live Claude
-                    Code process at once (1-8, default 3). Switching
-                    between conversations stops nothing, so this is the
-                    number of processes the box carries, not the number of
-                    conversations you may have: past it, the least
-                    recently active IDLE one is stopped and reopens with
-                    --resume.
+  chat_max_sessions — an optional limit on how many conversations may hold
+                    a live Claude Code process at once. None (the default)
+                    is no limit: every conversation may be live and busy at
+                    once, and only memory puts an IDLE one to sleep
+                    (chat_session.MEM_FLOOR_MB). A number (1-32) is a
+                    person's own choice: past it, the least recently active
+                    IDLE one is stopped and reopens with --resume. Every
+                    save before "No limit" wrote the old default 3 back, so
+                    a 3 stored without `chat_max_sessions_v` is read once
+                    as no limit (the next save records the version, and a
+                    3 chosen after that is kept); any other number is kept.
   capture         — whether every card run writes what the analyst was
                     sent and what it answered to /data/capture, so a
                     prompt change can be scored against real houses. OFF
@@ -147,8 +151,15 @@ OPTION_BOOLS = ("dangerously_skip_permissions",)
 # The chat's live-process cap. A range rather than a free integer for the
 # same reason budget_percent has one: the low end has to leave the chat
 # usable and the high end has to leave the box usable.
-CHAT_SESSIONS_RANGE = (1, 8)
-DEFAULT_CHAT_SESSIONS = 3
+CHAT_SESSIONS_RANGE = (1, 32)
+DEFAULT_CHAT_SESSIONS = None   # no limit
+# The version a stored `chat_max_sessions` was saved under. Every save before
+# "No limit" wrote the old default (3) back whether or not anybody chose it,
+# so a 3 with no version is read ONCE as no limit, the owner's decision; the
+# next save writes the version, and a 3 chosen from then on is kept. Any
+# other unversioned number was somebody's choice and is kept as it is.
+CHAT_SESSIONS_VERSION = 2
+OLD_DEFAULT_CHAT_SESSIONS = 3
 
 DEFAULTS = {
     # A fresh install has no cards and no schedule. brAIn studies the home
@@ -192,6 +203,7 @@ DEFAULTS = {
     "dangerously_skip_permissions": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
+    "chat_max_sessions_v": CHAT_SESSIONS_VERSION,
     # How hard brAIn thinks, as one word rather than a model per job. The
     # model plan (model_plan.py) tiers every run — Haiku looks, Sonnet
     # thinks, Opus acts — and this steps the tiers down ("light": cheaper
@@ -237,7 +249,14 @@ DEFAULTS = {
     # See the module docstring and `camera_policy`. Empty: no camera is
     # looked at unattended until somebody ticks it.
     "camera_confirm": [],
+    # The header's mark (`header_brand.py`): "logo", "name" or "custom";
+    # None is "never chose" — the name while Personality is on, else the
+    # logo, which is what every install did before this existed.
+    "header_brand": None,
+    "header_text": "",
 }
+HEADER_BRANDS = ("logo", "name", "custom")
+HEADER_TEXT_MAX = 24
 
 # An entity id, and nothing else: this one is read by the nightly pass
 # and compared against the states, so it has no business holding prose.
@@ -366,8 +385,16 @@ def load() -> dict:
     lo, hi = CHAT_SESSIONS_RANGE
     sessions = data.get("chat_max_sessions")
     if isinstance(sessions, int) and not isinstance(sessions, bool) \
-            and lo <= sessions <= hi:
+            and lo <= sessions <= hi \
+            and not (sessions == OLD_DEFAULT_CHAT_SESSIONS
+                     and data.get("chat_max_sessions_v")
+                     != CHAT_SESSIONS_VERSION):
         out["chat_max_sessions"] = sessions
+    out["chat_max_sessions_v"] = CHAT_SESSIONS_VERSION
+    if data.get("header_brand") in HEADER_BRANDS:
+        out["header_brand"] = data["header_brand"]
+    if isinstance(data.get("header_text"), str):
+        out["header_text"] = _one_line(data["header_text"], HEADER_TEXT_MAX)
     try:
         out["occasion_calendars"] = clean_calendars(
             data.get("occasion_calendars"))
@@ -510,6 +537,15 @@ def save(fields: dict) -> dict:
             if not isinstance(value, bool):
                 raise ValueError("upgrade_advice_auto must be a boolean")
             clean[key] = value
+        elif key == "header_brand":
+            if value is not None and value not in HEADER_BRANDS:
+                raise ValueError(
+                    f"header_brand must be one of {', '.join(HEADER_BRANDS)}")
+            clean[key] = value
+        elif key == "header_text":
+            if not isinstance(value, str):
+                raise ValueError("header_text must be text")
+            clean[key] = _one_line(value, HEADER_TEXT_MAX)
         elif key == "muted_sources":
             clean[key] = clean_sources(value)
         elif key == "occasion_calendars":
@@ -567,10 +603,12 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "chat_max_sessions":
             lo, hi = CHAT_SESSIONS_RANGE
-            if not isinstance(value, int) or isinstance(value, bool) \
-                    or not lo <= value <= hi:
+            if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool)
+                    or not lo <= value <= hi):
                 raise ValueError(
-                    f"chat_max_sessions must be an integer {lo}-{hi}")
+                    f"chat_max_sessions must be null (no limit) or an "
+                    f"integer {lo}-{hi}")
             clean[key] = value
         elif key == "thermal_outdoor":
             # None (or "") is "let brAIn rank them".

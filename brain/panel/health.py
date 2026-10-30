@@ -158,6 +158,8 @@ LOOPS = {
     "requests": ("answers given in Home Assistant", "degraded"),
     "morph": ("Morph's Ask line and the list it draws", "degraded"),
     "notify_learn": ("the weekly notification suggestions", "degraded"),
+    "presence": ("the presence loop (greetings and how brAIn grows)",
+                 "degraded"),
     "followups": ("the follow-up looks at what brAIn changed", "degraded"),
     "timed": ("the timed actions (one-off tasks brAIn runs on a timer)",
               "degraded"),
