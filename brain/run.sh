@@ -1871,6 +1871,48 @@ WATCHDOG_MCP
 # Custom Integration Deployment
 # ============================================================================
 
+# ----------------------------------------------------------------------------
+# A restart of Home Assistant is owed only when the integration code it runs
+# differs from the code deployed: the manifest's version moves with every
+# release, the code does not. integration_fingerprint is the shell twin of
+# the integration's fingerprint.py (the files Core reads at load, without
+# the manifest's version line or a VERSION = "x.y.z" line, never frontend/
+# or brand/), and the integration records the fingerprint of what it
+# loaded in its record file.
+# tests/test_integration_fingerprint.py holds the two to one answer.
+# ----------------------------------------------------------------------------
+integration_fingerprint() {
+    local dir="$1" listing
+    [ -f "${dir}/manifest.json" ] || return 1
+    listing=$(cd "${dir}" && find . \( -type d \( -name __pycache__ -o -name frontend -o -name brand -o -name www -o -name static -o -name '.?*' \) -prune \) \
+            -o -type f ! -name '.*' \( -name '*.py' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \) -print \
+        | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do
+            if [ "${f}" = "manifest.json" ]; then
+                printf '%s %s\n' "${f}" "$(grep -v -E '^[[:space:]]*"version"[[:space:]]*:' "${f}" | sha256sum | cut -d' ' -f1)"
+            elif [ "${f%.py}" != "${f}" ]; then
+                printf '%s %s\n' "${f}" "$(grep -v -E "^VERSION[[:space:]]*=[[:space:]]*[\"'][^\"']*[\"'][[:space:]]*\$" "${f}" | sha256sum | cut -d' ' -f1)"
+            else
+                printf '%s %s\n' "${f}" "$(sha256sum < "${f}" | cut -d' ' -f1)"
+            fi
+        done) || return 1
+    printf 'f1-%s\n' "$(printf '%s\n' "${listing}" | sha256sum | cut -c1-16)"
+}
+
+# "needed" when Home Assistant has to restart to run the integration in
+# $1, "no" when the record ($2, written by the integration as it loaded)
+# names the same code. A record without a fingerprint was written by an
+# older integration, which cannot say what it loaded: that is a restart,
+# once, after which the record carries one.
+integration_restart_verdict() {
+    local src_fp="$1" record="$2" loaded_fp
+    loaded_fp=$(jq -r '.fingerprint // empty' "${record}" 2>/dev/null || true)
+    if [ -n "${src_fp}" ] && [ "${loaded_fp}" = "${src_fp}" ]; then
+        echo "no"
+    else
+        echo "needed"
+    fi
+}
+
 deploy_custom_integration() {
     local src="/opt/custom_components/brain"
     local dest="/config/custom_components/brain"
@@ -1897,18 +1939,20 @@ deploy_custom_integration() {
     fi
 
     src_version=$(jq -r '.version // "0"' "$src/manifest.json" 2>/dev/null || echo "0")
+    local src_fp dest_version="0"
+    src_fp=$(integration_fingerprint "$src" || true)
     mkdir -p /config/custom_components
 
-    # Deploy or update the integration files
+    # Deploy or update the integration files. Copied when the version OR the
+    # code moved; a restart is asked for only when the code Home Assistant
+    # loaded differs from what is deployed now (integration_restart_verdict).
     if [ -d "$dest" ]; then
-        local dest_version
         dest_version=$(jq -r '.version // "0"' "$dest/manifest.json" 2>/dev/null || echo "0")
 
-        if [ "$src_version" != "$dest_version" ]; then
+        if [ "$src_version" != "$dest_version" ] || [ "$src_fp" != "$(integration_fingerprint "$dest" || true)" ]; then
             bashio::log.info "Updating brAIn integration: $dest_version -> $src_version"
             rm -rf "$dest"
             cp -r "$src" "$dest"
-            bashio::log.info "Integration updated - Home Assistant will need to restart to apply"
             first_install=true
         else
             bashio::log.info "brAIn integration is up to date (v${dest_version})"
@@ -1925,10 +1969,46 @@ deploy_custom_integration() {
     # name; the add-on must explicitly POST to trigger the actual discovery flow.
     send_discovery_message
 
-    # On first install or update, HA Core needs to restart to load the custom component.
-    if [ "$first_install" = "true" ]; then
-        notify_restart_required "$src_version" "$is_fresh_install"
+    # A fresh install always needs a restart (nothing is loaded yet). An
+    # update needs one only when Home Assistant runs different code.
+    if [ "$is_fresh_install" = "true" ]; then
+        notify_restart_required "$src_version" "true" "$src_fp"
+    elif [ "$first_install" = "true" ]; then
+        if [ "$(integration_restart_verdict "$src_fp" "$INTEGRATION_LOADED_FILE")" = "needed" ]; then
+            notify_restart_required "$src_version" "false" "$src_fp"
+        else
+            no_restart_needed "$src_version" "$dest_version"
+        fi
     fi
+}
+
+# What the integration wrote as it loaded: its version and the fingerprint
+# of the code Home Assistant is running.
+INTEGRATION_LOADED_FILE="/config/.brain/integration_loaded.json"
+
+# The update changed nothing Home Assistant loads (the version, the
+# panel's files): no restart, and nothing that says one. A marker an
+# earlier update left is stale now that the running code is the deployed
+# code, and the record takes the new version so nothing reads it as old.
+no_restart_needed() {
+    local version="$1" previous="$2" tmp
+    bashio::log.info "brAIn integration ${previous} -> ${version}: Home Assistant already runs this code, so no restart is needed"
+    rm -f /config/.brain/restart_required
+    if [ -f "$INTEGRATION_LOADED_FILE" ]; then
+        tmp="${INTEGRATION_LOADED_FILE}.tmp.$$"
+        if jq --arg v "$version" '.version = $v' "$INTEGRATION_LOADED_FILE" > "$tmp" 2>/dev/null; then
+            mv -f "$tmp" "$INTEGRATION_LOADED_FILE"
+        else
+            rm -f "$tmp"
+        fi
+    fi
+    # The running integration takes down a Repairs issue an earlier
+    # update raised.
+    curl -s -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        "http://supervisor/core/api/events/brain_restart_required" 2>/dev/null || true
 }
 
 send_discovery_message() {
@@ -1976,6 +2056,7 @@ send_discovery_message() {
 notify_restart_required() {
     local version="${1:-unknown}"
     local fresh_install="${2:-false}"
+    local fingerprint="${3:-}"
 
     bashio::log.info "============================================"
     bashio::log.info "  New integration files deployed (v${version})!"
@@ -1985,7 +2066,8 @@ notify_restart_required() {
 
     # Write a marker file so the integration can detect the pending restart
     local marker_payload
-    marker_payload=$(jq -n --arg v "$version" '{"required_version": $v}')
+    marker_payload=$(jq -n --arg v "$version" --arg f "$fingerprint" \
+        '{"required_version": $v} + (if $f == "" then {} else {"fingerprint": $f} end)')
     echo "$marker_payload" > /config/.brain/restart_required
 
     # Fire an event so the running integration (if loaded) can create a repair issue

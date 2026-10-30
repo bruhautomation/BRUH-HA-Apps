@@ -95,6 +95,48 @@ prepare_filesystem() {
     chown -R bambu:bambu /data/home/.config
 }
 
+# ----------------------------------------------------------------------------
+# A restart of Home Assistant is owed only when the integration code it runs
+# differs from the code deployed: the manifest's version moves with every
+# release, the code does not. integration_fingerprint is the shell twin of
+# the integration's fingerprint.py (the files Core reads at load, without
+# the manifest's version line or a VERSION = "x.y.z" line, never frontend/
+# or brand/), and the integration records the fingerprint of what it
+# loaded in its record file.
+# tests/test_integration_fingerprint.py holds the two to one answer.
+# ----------------------------------------------------------------------------
+integration_fingerprint() {
+    local dir="$1" listing
+    [ -f "${dir}/manifest.json" ] || return 1
+    listing=$(cd "${dir}" && find . \( -type d \( -name __pycache__ -o -name frontend -o -name brand -o -name www -o -name static -o -name '.?*' \) -prune \) \
+            -o -type f ! -name '.*' \( -name '*.py' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \) -print \
+        | sed 's|^\./||' | LC_ALL=C sort | while IFS= read -r f; do
+            if [ "${f}" = "manifest.json" ]; then
+                printf '%s %s\n' "${f}" "$(grep -v -E '^[[:space:]]*"version"[[:space:]]*:' "${f}" | sha256sum | cut -d' ' -f1)"
+            elif [ "${f%.py}" != "${f}" ]; then
+                printf '%s %s\n' "${f}" "$(grep -v -E "^VERSION[[:space:]]*=[[:space:]]*[\"'][^\"']*[\"'][[:space:]]*\$" "${f}" | sha256sum | cut -d' ' -f1)"
+            else
+                printf '%s %s\n' "${f}" "$(sha256sum < "${f}" | cut -d' ' -f1)"
+            fi
+        done) || return 1
+    printf 'f1-%s\n' "$(printf '%s\n' "${listing}" | sha256sum | cut -c1-16)"
+}
+
+# "needed" when Home Assistant has to restart to run the integration in
+# $1, "no" when the record ($2, written by the integration as it loaded)
+# names the same code. A record without a fingerprint was written by an
+# older integration, which cannot say what it loaded: that is a restart,
+# once, after which the record carries one.
+integration_restart_verdict() {
+    local src_fp="$1" record="$2" loaded_fp
+    loaded_fp=$(jq -r '.fingerprint // empty' "${record}" 2>/dev/null || true)
+    if [ -n "${src_fp}" ] && [ "${loaded_fp}" = "${src_fp}" ]; then
+        echo "no"
+    else
+        echo "needed"
+    fi
+}
+
 deploy_custom_integration() {
     if [ "${ENABLE_HA_INTEGRATION}" != "true" ]; then
         bashio::log.info "HA integration disabled; skipping custom_components deploy"
@@ -106,7 +148,11 @@ deploy_custom_integration() {
     local src_ver dst_ver
     src_ver=$(jq -r '.version' "${src}/manifest.json" 2>/dev/null || echo "unknown")
     dst_ver=$(jq -r '.version' "${dst}/manifest.json" 2>/dev/null || echo "none")
-    if [ "${src_ver}" != "${dst_ver}" ]; then
+    local src_fp
+    src_fp=$(integration_fingerprint "${src}" || true)
+    if [ "${src_ver}" != "${dst_ver}" ] || [ "${src_fp}" != "$(integration_fingerprint "${dst}" || true)" ]; then
+        # Whether Home Assistant needs a restart for it is the panel's to
+        # say (ha_setup.py), by the same fingerprint.
         bashio::log.info "Deploying bruh_bambu integration (${dst_ver} -> ${src_ver})"
         rm -rf "${dst}"
         cp -a "${src}" "${dst}"

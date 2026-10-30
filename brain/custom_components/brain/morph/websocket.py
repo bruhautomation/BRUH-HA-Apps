@@ -193,11 +193,34 @@ def _personality() -> dict:
 def _load() -> dict:
     # ``code`` is the stamp of the panel code Home Assistant would serve now
     # and ``integration`` the Morph it is running: the page compares both
-    # with what it loaded, which is how it knows a reload, or a restart of
-    # Home Assistant, would change what is on screen.
+    # with what it loaded, which is how it knows a reload would change what
+    # is on screen. ``restart`` is whether Home Assistant owes a restart.
     return {"mirror": _read_json(MIRROR), "state": _read_json(STATE), "brain": _brain_feed(),
             "now": time.time(), "code": _code_stamp(), "integration": VERSION,
-            "features": _features()}
+            "restart": restart_owed(), "features": _features()}
+
+
+def restart_owed(shared=BRAIN_SHARED) -> bool:
+    """Whether Home Assistant must restart to load brAIn's update: the one
+    answer the panel's verdict and Repairs give, read off the same two files
+    (run.sh's marker, written only when the deployed code differs from the
+    loaded code, and the record the integration wrote as it loaded). The
+    add-on's version being newer than this integration's is not it: an
+    update that changed no integration code moves the version and owes no
+    restart."""
+    try:
+        with open(shared / "restart_required", encoding="utf-8") as f:
+            marker = json.load(f)
+    except (OSError, ValueError):
+        return False  # no marker (or one that cannot be read): the panel's rule
+    if not isinstance(marker, dict):
+        return False
+    loaded = _read_json(shared / "integration_loaded.json")
+    wanted, have = str(marker.get("fingerprint") or ""), str(loaded.get("fingerprint") or "")
+    if wanted and have:
+        return wanted != have
+    required, running = str(marker.get("required_version") or ""), str(loaded.get("version") or "")
+    return not required or not running or required != running
 
 
 def _features() -> dict:

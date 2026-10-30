@@ -188,6 +188,24 @@ async def test_the_files_are_served_once_and_the_bundle_read_once(
     assert _sidebar(hass)[PANEL_URL_PATH].config["_panel_custom"]["module_url"] == MODULE_URL
 
 
+async def test_a_new_bundle_gets_a_new_url_without_a_restart(
+    hass: HomeAssistant, bundle: Path
+) -> None:
+    """An update that changed only the panel owes no restart of Home
+    Assistant, so the panel's URL follows the bundle on disk: a page reload
+    then loads the new one instead of the copy cached for good."""
+    await async_add_entry_panel(hass, _entry(hass, "a"))
+    await frontend.async_follow_bundle(hass)
+    assert frontend.panel_module_url(hass) == MODULE_URL
+
+    newer = b"export const v = 2;\n"
+    (bundle / BUNDLE).write_bytes(newer)
+    await frontend.async_follow_bundle(hass)
+    url = f"/bruh_cooking/bruh-cooking-panel.js?v={VERSION}-{hashlib.sha256(newer).hexdigest()[:8]}"
+    assert frontend.panel_module_url(hass) == url
+    assert _sidebar(hass)[PANEL_URL_PATH].config["_panel_custom"]["module_url"] == url
+
+
 async def test_the_module_url_serves_the_bundle(hass: HomeAssistant, hass_client) -> None:
     assert await async_setup_component(hass, "http", {})
     await async_add_entry_panel(hass, _entry(hass, "a"))

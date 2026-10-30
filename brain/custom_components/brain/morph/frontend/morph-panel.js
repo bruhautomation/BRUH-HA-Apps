@@ -662,8 +662,11 @@ class MorphPanel extends HTMLElement {
   // stays open for days, and an update, or brAIn changing Morph's own code,
   // only reaches it on a reload. So this says which of the two it needs:
   // a reload (the code moved, or Home Assistant restarted onto a newer Morph
-  // integration), or a restart of Home Assistant (brAIn is newer than the
-  // integration it has loaded, so a reload alone would not finish it).
+  // integration), or a restart of Home Assistant (the integration's code
+  // changed, so a reload alone would not finish it). A newer add-on version
+  // alone is not a restart: an update that moved only the version, or only
+  // the panel's files, owes none, and `restart` is the integration's answer
+  // (websocket.restart_owed, the rule the panel's verdict and Repairs use).
   updateHtml() {
     const d = this.data;
     if (!d || d.error) return '';
@@ -676,8 +679,12 @@ class MorphPanel extends HTMLElement {
       const what = integ && loaded && integ !== loaded ? `Morph ${integ} is ready.` : 'Morph’s code has changed since this page opened.';
       return bar(`${what} Reload to run it.`, '<button type="button" class="wd strong" data-act="reload-page">Reload</button>');
     }
-    if (this.admin() && addon && integ && addon !== integ && addon !== 'dev') {
-      return bar(`Morph ${addon} is installed, but Home Assistant is still running Morph ${integ}. Restart Home Assistant to finish the update.`, '');
+    // An integration from before `restart` was sent cannot say; it is a
+    // release behind by definition, so the version decides, once.
+    const owed = typeof d.restart === 'boolean' ? d.restart
+      : !!(addon && integ && addon !== integ && addon !== 'dev');
+    if (this.admin() && owed) {
+      return bar(`${addon && addon !== 'dev' ? `brAIn ${addon} is installed. ` : ''}Restart Home Assistant to load its update.`, '');
     }
     return '';
   }

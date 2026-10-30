@@ -807,6 +807,12 @@ if (ONLY !== 'phone') { // single-width checks: run in one of the two processes
   if (!/Morph 9\.9\.9 is ready/.test(b)) fail('opening', `a newer integration did not offer a reload: "${b}"`);
   b = await banner(() => { window.__integration = ''; window.__fixture.state.version = '9.9.9'; });
   if (!/Restart Home Assistant/.test(b)) fail('opening', `a newer add-on did not ask for a restart: "${b}"`);
+  // The integration's own answer beats the version: an update that changed
+  // no integration code moves the version and owes no restart.
+  b = await banner(() => { window.__restart = false; });
+  if (b) fail('opening', `a version-only update asked for something: "${b}"`);
+  b = await banner(() => { window.__restart = true; window.__fixture.state.version = ''; });
+  if (!/Restart Home Assistant/.test(b)) fail('opening', `changed integration code did not ask for a restart: "${b}"`);
   await ctx.close();
 }
 

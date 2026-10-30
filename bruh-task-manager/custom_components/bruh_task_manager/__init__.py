@@ -14,6 +14,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 from .coordinator import TaskManagerCoordinator
+from .fingerprint import record_loaded
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
@@ -21,6 +22,10 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # What this Home Assistant loaded (fingerprint.py, taken at import), for the
+    # add-on's run.sh: it says a restart is needed only when the code it deploys
+    # differs from this.
+    await hass.async_add_executor_job(record_loaded, hass.config.path(".bruh_task_manager/integration.json"))
     coordinator = TaskManagerCoordinator(hass)
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator

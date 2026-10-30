@@ -14,8 +14,9 @@ TOKEN_PATH = ".gardenrx/api_token"
 SCAN_INTERVAL_S = 60
 REQUEST_TIMEOUT_S = 20
 
-# The card file the integration serves to the frontend. The version is in the
-# URL so an update is a new URL, and no browser keeps last release's card.
+# The card file the integration serves to the frontend. A hash of the file is
+# on the URL (and the version in its path), so an update is a new URL, and no
+# browser keeps last release's card.
 CARDS_FILE = "gardenrx-cards.js"
 CARDS_URL_BASE = "/gardenrx_static"
 
