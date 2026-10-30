@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 import unittest.mock as mock
+import urllib.error
 import zipfile
 from pathlib import Path
 
@@ -412,6 +413,25 @@ class TestHomeAssistantSetup(unittest.TestCase):
         with self.fake([("/core/api/services/homeassistant/restart", (200, []))]):
             ok, _why = ha_setup.restart_core()
         self.assertTrue(ok)
+
+    def test_a_restart_that_takes_core_down_before_it_answers_is_a_restart(self):
+        # Core stops while the service call is still open, so the answer is
+        # a timeout or a dropped connection rather than a 200.
+        import http.client
+        for exc in (TimeoutError("timed out"), ConnectionResetError(104, "reset"),
+                    http.client.RemoteDisconnected("closed"),
+                    urllib.error.URLError(TimeoutError("timed out"))):
+            with self.subTest(exc=type(exc).__name__), \
+                    mock.patch.object(ha_setup, "_call", side_effect=exc):
+                ok, why = ha_setup.restart_core()
+            self.assertTrue(ok, why)
+
+    def test_a_restart_that_never_reached_core_is_said(self):
+        refused = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        with mock.patch.object(ha_setup, "_call", side_effect=refused):
+            ok, why = ha_setup.restart_core()
+        self.assertFalse(ok)
+        self.assertIn("could not reach", why)
 
 
 class TestRoutes(unittest.IsolatedAsyncioTestCase):

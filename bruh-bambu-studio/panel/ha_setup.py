@@ -23,6 +23,7 @@ up, which is how a running copy's version is read without asking Core.
 """
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -174,8 +175,21 @@ def check(force: bool = False) -> dict:
 def restart_core() -> tuple[bool, str]:
     """Home Assistant's own restart service: the Supervisor's /core/restart
     needs a role this add-on does not ask for, and the service is the same
-    restart the Settings menu runs (it checks the configuration first)."""
-    status, body = _call("POST", "/core/api/services/homeassistant/restart", {})
+    restart the Settings menu runs (it checks the configuration first).
+
+    Core often stops before it answers that call, so a timeout or a dropped
+    connection is the restart under way; only a call that never reached
+    Core is a restart that did not happen."""
+    try:
+        status, body = _call("POST", "/core/api/services/homeassistant/restart", {})
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, (TimeoutError, ConnectionResetError)):
+            return True, ""
+        return False, "the add-on could not reach Home Assistant"
+    except ConnectionRefusedError:
+        return False, "the add-on could not reach Home Assistant"
+    except (TimeoutError, ConnectionError, http.client.HTTPException):
+        return True, ""
     if status == 200:
         return True, ""
     return False, (body or {}).get("message", f"HTTP {status}") if isinstance(body, dict) else f"HTTP {status}"
