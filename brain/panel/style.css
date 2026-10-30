@@ -1428,14 +1428,16 @@ body.modal-open {
 .setnavbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .setnavbtn.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .setnavname { font-size: var(--fs-body); font-weight: 600; }
+/* Wrapped, never cut: a summary that ends in "…" is a setting nobody can
+   read without opening it (#555). */
 .setnavsum {
   font-size: var(--fs-meta); color: var(--ink-3); min-width: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: normal; overflow-wrap: anywhere;
 }
 .setnavbtn.active .setnavsum { color: var(--ink-2); }
 .setback { display: none; }
 @media (min-width: 900px) {
-  .setlayout { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+  .setlayout { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
   .setnav { position: sticky; top: calc(var(--bar-h, 56px) + 12px); }
 }
 @media (max-width: 899.98px) {
@@ -7119,6 +7121,18 @@ html.in-shell .topbar {
   -webkit-backdrop-filter: none;
 }
 html.in-shell .topbar .btn.icon.statusdot { display: inline-flex; }
+/* The status shows only when there is something to do about it (signed
+   out, paused, a restart, a fault); watching is the header saying nothing
+   (the owner: "I also don't need the health indicator icon next to the
+   gear"). */
+html.in-shell .topbar .btn.icon.statusdot[data-state="watching"] { display: none; }
+/* The clock beside ⚙ (`syncShellClock`), on every tab and at every width. */
+.shellclock { display: none; }
+html.in-shell .shellclock:not([hidden]) {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
+  font-size: 16px; font-weight: 600; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 html.in-shell .viewtab.active {
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 10%, transparent);
@@ -7151,10 +7165,15 @@ html.in-shell .viewtab.active {
      and Memory are under their own tab (pressing the tab you are on opens
      them, `#segNav` as a menu), the version is in ⚙, and the search is an
      icon in the tab row that opens the field at the top of the pane.
-   * Scrolling down slides the header away, leaving only the island strip's
-     ground; scrolling up or reaching the top brings it back
-     (`html.bar-hidden`, `shellScrolled`). With reduce motion it shows and
-     hides without sliding.
+   * On a phone, scrolling down slides the tab row away and leaves the first
+     row — the name, the clock, ⚙ — where it is (the owner: "the collapsing
+     menu was supposed to be just for the home insights ask memory
+     buttons"); scrolling up or reaching the top brings it back
+     (`html.bar-hidden`, `shellScrolled`, `--bar-cut` is the tab row's
+     height). The header moves up by that much and its first row moves
+     back down by the same, so only the tab row goes. A wider screen's
+     header is one row and stays. With reduce motion it shows and hides
+     without sliding.
    * A drag on the header is never a scroll, and nothing in this page
      rubber-bands Home Assistant's window around it. */
 :root { --safe-top: 0px; }
@@ -7171,9 +7190,14 @@ html.in-shell .topbar {
   overscroll-behavior: none;
   transition: transform .22s ease;
 }
-html.in-shell .topbar > * { transition: opacity .16s ease, visibility .16s; }
-html.in-shell.bar-hidden .topbar { transform: translateY(calc(var(--safe-top) - 100%)); }
-html.in-shell.bar-hidden .topbar > * { opacity: 0; visibility: hidden; }
+html.in-shell .topbar > * { transition: opacity .16s ease, visibility .16s, transform .22s ease; }
+html.in-shell.bar-hidden .topbar { transform: translateY(calc(-1 * var(--bar-cut, 0px))); }
+html.in-shell.bar-hidden .topbar > :not(.viewtabs):not(.searchbtn):not(.shelledit) {
+  transform: translateY(var(--bar-cut, 0px));
+}
+html.in-shell.bar-hidden .topbar > .viewtabs,
+html.in-shell.bar-hidden .topbar > .searchbtn,
+html.in-shell.bar-hidden .topbar > .shelledit { opacity: 0; visibility: hidden; }
 @media (min-width: 641px) and (max-width: 869px) {
   html.in-shell .topbar { padding-top: max(4px, var(--safe-top)); }
 }
@@ -7196,7 +7220,11 @@ html.in-shell.bar-hidden .topbar > * { opacity: 0; visibility: hidden; }
     align-content: flex-start;
   }
   html.in-shell .topbar::before { content: ""; order: 8; flex: 0 0 100%; height: 0; }
-  html.in-shell .brandname { font-size: 18px; max-width: 76px; }
+  html.in-shell .brandname { font-size: 18px; max-width: 70px; }
+  /* With ☰ off the edge, the name drops its side padding to stay left of the island. */
+  html.in-shell .brandlink { padding: 0; margin-left: 0; }
+  /* ☰ off the screen's edge (the owner: "a little jammed into the left"). */
+  html.in-shell .btn.shellmenu { margin-left: 6px; }
   html.in-shell .viewtabs {
     position: static;
     order: 9;
@@ -7212,36 +7240,95 @@ html.in-shell.bar-hidden .topbar > * { opacity: 0; visibility: hidden; }
   }
   html.in-shell .viewtab { flex: 1 1 0; height: 44px; min-height: 44px; gap: 1px; border-radius: 10px; }
   html.in-shell .viewtab .badge { top: 0; }
-  /* The tab you are on opens its sections, and says so with a chevron. */
-  html.in-shell .viewtab.active.hassecs > span:not(.badge)::after {
-    content: ""; display: inline-block; width: 0; height: 0; margin-left: 4px;
-    border-left: 4px solid transparent; border-right: 4px solid transparent;
-    border-top: 5px solid currentColor; vertical-align: middle;
-  }
   html.in-shell .btn.icon.searchbtn:not([hidden]) { display: inline-flex; order: 10; margin-bottom: 4px; }
   html.in-shell .btn.icon.searchbtn[aria-expanded="true"] { color: var(--ink); background: color-mix(in srgb, var(--ink) 10%, transparent); }
   html.in-shell #shellYaml, html.in-shell #shellEdit { order: 11; margin-bottom: 4px; }
   html.in-shell body { padding-bottom: 0; }
   html.in-shell .btn.shelledit { padding: 0 10px; }
 
-  /* The sections: a menu under the header, opened from the tab. */
-  html.in-shell .segnav { display: none; }
-  html.in-shell.segopen .segnav:not([hidden]) {
-    display: block; position: fixed; z-index: 35;
-    top: calc(var(--bar-h) + 4px); left: 8px; right: 8px;
-    padding: 6px; margin: 0;
-    background: var(--surface); border: var(--card-border); border-radius: var(--card-radius);
-    box-shadow: var(--shadow);
+  /* The sections: one row of segments at the top of the pane, every name
+     on screen (the owner asked for "a row" rather than a menu under the
+     tab). The segment you are on names the pane, so the pane's own title
+     is not said again under it. */
+  html.in-shell .segnav:not([hidden]) { display: block; margin: 0 0 var(--sp-3); }
+  html.in-shell .segnav .segbtns { display: flex; width: 100%; }
+  html.in-shell .segnav .segbtn {
+    flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center;
+    padding: 0 6px; font-size: 16px; white-space: nowrap;
   }
-  html.in-shell .segnav .segbtns {
-    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
-    padding: 0; border: 0; border-radius: 0; background: none;
-  }
-  html.in-shell .segnav .segbtn { min-height: 44px; justify-content: space-between; border-radius: 8px; font-size: 16px; }
   html.in-shell .segnav .segsel { display: none; }
-  /* Without the select naming the pane, each pane's own title does —
-     except Insights', which is the tab's name already. */
-  html.in-shell .seg-view .panehead .panetitle { display: block; }
+  html.in-shell .seg-view .panehead .panetitle { display: none; }
   html.in-shell:not(.searching) .insighthead { display: none; }
   html.in-shell.searching .insighthead { display: flex; }
+}
+
+/* ---------------------------------------- what an insight card is (#539)
+   One line under the pane's heading that opens on a press — a phone has
+   no hover — saying how a card differs from the dashboard. */
+.aboutcards { margin: 0 0 var(--sp-3); }
+.aboutline {
+  appearance: none; border: 0; background: none; padding: 0; margin: 0;
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px;
+  font: inherit; font-size: var(--fs-body); color: var(--ink-2); cursor: pointer;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .25em;
+  text-decoration-color: color-mix(in srgb, var(--ink-2) 45%, transparent);
+  text-align: left;
+}
+.aboutline::after {
+  content: ""; width: 0; height: 0; flex: none;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+}
+.aboutline[aria-expanded="true"]::after { transform: rotate(180deg); }
+.aboutline:hover, .aboutline:focus-visible { color: var(--ink); }
+.aboutbody { margin: var(--sp-2) 0 0; max-width: 68ch; color: var(--ink-2);
+  font-size: var(--fs-body); line-height: var(--lh-body); }
+@media (pointer: coarse) { .aboutline { min-height: 44px; } }
+
+/* ------------------------- Memory › Knowledge's folded lines (#539)
+   The deep review and the suggested reports, each one line: its name and
+   what it holds or when it last ran, Run at the end; the name opens it. */
+.kfolds { display: grid; gap: 0; margin: 0 0 var(--sp-4);
+  border-top: 1px solid var(--hairline); }
+.kfold { border-bottom: 1px solid var(--hairline); }
+.kfoldhead { display: flex; align-items: center; gap: var(--sp-3); min-height: 52px; }
+.kfoldname {
+  appearance: none; border: 0; background: none; padding: 4px 0; margin: 0;
+  flex: 1 1 auto; min-width: 0; min-height: 44px; cursor: pointer; text-align: left;
+  display: flex; flex-direction: column; justify-content: center; gap: 1px;
+  font: inherit; color: var(--ink);
+}
+.kfoldtitle { font-size: var(--fs-body); font-weight: 600; display: inline-flex;
+  align-items: center; gap: 8px; }
+.kfoldtitle::after {
+  content: ""; width: 0; height: 0;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--ink-3);
+}
+.kfoldname[aria-expanded="true"] .kfoldtitle::after { transform: rotate(180deg); }
+.kfoldmeta { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.kfoldmeta:empty { display: none; }
+.kfoldrun { flex: none; display: inline-flex; }
+.kfoldrun .kreviewrun { display: inline-flex; }
+.kfoldrun .btn { min-height: 44px; }
+.kfoldbody { padding: 0 0 var(--sp-4); }
+.kfoldbody[hidden] { display: none; }
+
+/* ---------------------------------------------- Ask's list head (#553)
+   Below the rail's breakpoint ＋, ⋯ and ⤢ are one kind of control: bare
+   44px icons in the list's head row (and the transcript's), the floating
+   two sitting in the row rather than boxed squares hanging above it. */
+@media (max-width: 899px) {
+  body:not(.term-classic) .termfabs { top: 4px; right: 8px; gap: 4px; }
+  body:not(.term-classic) .termfab {
+    width: 44px; height: 44px; border: 0; border-radius: 10px;
+    background: none; color: var(--ink-3); opacity: 1;
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  body:not(.term-classic) .termfab:hover,
+  body:not(.term-classic) .termfab:focus-visible {
+    background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink);
+  }
+  body:not(.term-classic).ask-list .crhead { min-height: 52px; padding-top: 4px; padding-bottom: 4px; }
+  .crhead .btn.icon { width: 44px; height: 44px; }
 }

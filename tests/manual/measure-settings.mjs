@@ -76,6 +76,17 @@
 //     check id, job word or exit code on the face of a row, the ids under a
 //     closed technical part — and the scorecard names every rule, counts in
 //     words ("right 8 of 14, wrong 6") and gives a verdict.
+//   * #555: Model & usage says each thing once — the session limit in the
+//     slider's label and not again in the line under it, "Asking by hand
+//     always runs" once — with no sub-heading repeating the section's
+//     name; and no summary on the list is cut off with an ellipsis.
+//   * #556: Permissions names each switch once, in plain words ("No
+//     restrictions", never "YOLO"), with no heading over it saying the same,
+//     and says how it differs from acting without asking.
+//   * #557: Diagnostics and Developer read in plain words: no journal, no
+//     daemon, no "Configuration tab", no internal id or <code> on a row —
+//     a background job by what it does, a rehearsal row by what was
+//     planted and its verdict in words.
 //
 // Drives the panel's REAL markup and its real `openSettings` /
 // `restoreSettingsSections` behind a stubbed fetch. A copy of the page in
@@ -103,7 +114,12 @@ const MIN_TEXT = 16;
 // It grew one more row in 4.0 when Features came first (945 → 1005 at 390,
 // 1022 at 768), and moved by that row again; ⚙ › Dashboard's row is hidden
 // while the Morph dashboard is off, as it is here.
-const MAX_SCROLL = { 390: 1020, 768: 1060, 1200: 1000 };
+// And once more (#555) when the list's summaries stopped being cut off with
+// an ellipsis: a summary that is the house's own words (the notification
+// sentence, the personality) wraps to a second line rather than ending in
+// "…", which at 390 is two rows of ~17px (1040 measured); the budget moved by
+// those two lines and no more.
+const MAX_SCROLL = { 390: 1055, 768: 1060, 1200: 1000 };
 
 // The verbs a button in ⚙ may say. The doc's vocabulary, plus the few
 // labels it names for this dialog itself (Sign in again, Sign out, Edit,
@@ -357,11 +373,12 @@ window.fetch = async (url, opts) => {
           detail: 'The oldest has waited 5 h 0 min.' },
       ],
       runs: { total: 12, failures: [] }, checks: { ran: 15, skipped: [] },
+      journal: { claude_runs: 12, runs: 12, by_outcome: { ok: 40, error: 2 }, failures: [] },
       daemons: {
-        usage_tracker: { running: true },
-        assist_listener: { running: false, not_used: 'not used (fast mode)', expected: false },
-        ttyd: { running: false, not_used: 'not used (enable_terminal is off)', expected: false },
-        automation_listener: { running: false, expected: true },
+        usage_tracker: { running: true, what: 'the usage tracker' },
+        assist_listener: { running: false, not_used: 'not used (fast mode)', expected: false, what: 'the voice listener' },
+        ttyd: { running: false, not_used: 'not used (enable_terminal is off)', expected: false, what: 'the terminal' },
+        automation_listener: { running: false, expected: true, what: 'the automation listener' },
       },
       proposals: { intents: { armed: 2, fired: 1, refused: 0, queued: 0, ttl_days: 14 } },
     });
@@ -377,7 +394,17 @@ window.fetch = async (url, opts) => {
   }
   if (p.includes('api/baselines')) return answer({ running: false, entities: 0 });
   if (p.includes('api/doctor/rehearse')) {
-    return answer({ running: false, sweeping: false, last: {}, plan: [] });
+    // A finished rehearsal, its rows as rehearsal.score sends them.
+    return answer({ running: false, sweeping: false, plan: [], leftovers: [], last: {
+      finished_at: ${NOW} - 900,
+      checks: { planted: 2, found: 1, extra: 0, rows: [
+        { id: 'brain_test_dead_ref', name: 'An automation naming a light that does not exist',
+          check: 'auto.dead_ref', verdict: 'found', reported: ['x'] },
+        { id: 'brain_test_dead_service', name: 'An automation calling an action that does not exist',
+          check: 'auto.dead_service', verdict: 'missed', reported: [] }] },
+      analyst: { ran: false, error: 'skipped' },
+      cleanup: { ok: true, sentence: 'Everything it planted was removed.' },
+      cleared: { at: ${NOW} - 800, ok: true, removed: [] } } });
   }
   if (p.includes('api/doctor')) {
     // One finished run: three passed, one failed, two skipped — one over a
@@ -694,7 +721,23 @@ for (const width of WIDTHS) {
     }, v);
     let b = await budget();
     if (!/up to 25% of each 5-hour session/.test(b.label)) note(where, `the budget reads "${b.label}"`);
-    if (!/stop at 25%/.test(b.note) || !b.noteShown) note(where, `the budget does not say automatic insights stop at 25%: "${b.note}"`);
+    // #555: the line under the slider says what happens at the limit the
+    // label names, never the limit again.
+    if (/25%|session limit/.test(b.note) || !/wait|reset/.test(b.note) || !b.noteShown) note(where, `the line under the budget says the limit again or not what happens at it: "${b.note}"`);
+    {
+      const u = await page.evaluate(() => {
+        const sec = document.querySelector('#setsecUsage');
+        // The section's first thing under its name: a sub-heading there
+        // would only say part of the name again.
+        const first = sec.querySelector('.setsecbody').firstElementChild;
+        return { text: sec.innerText.replace(/\s+/g, ' '), first: first && first.matches('.sethead') ? first.textContent.trim() : '',
+                 name: sec.querySelector('.setsecname').textContent.trim() };
+      });
+      const byHand = (u.text.match(/Asking by hand always runs/g) || []).length;
+      if (byHand !== 1) note(where, `Model & usage says "Asking by hand always runs" ${byHand} times`);
+      const words = u.name.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+      if (u.first && words.includes(u.first.toLowerCase())) note(where, `the first sub-heading repeats the section's name: ${u.first}`);
+    }
     if (!/No limit/.test(b.scale) || b.max <= 100) note(where, 'the budget slider offers no "No limit" past 100%');
     if (b.sentences > 2) note(where, `the budget line runs to ${b.sentences} sentences`);
 
@@ -708,7 +751,9 @@ for (const width of WIDTHS) {
     }
     if (!/No limit: run until Anthropic rate-limits/.test(b.label)) note(where, `No limit is labelled "${b.label}"`);
     if (!/No limit/.test(b.valuetext)) note(where, `the slider announces "${b.valuetext}"`);
-    if (!/keep running/.test(b.note) || !/rate-limits/.test(b.note)) note(where, `No limit does not say it keeps running: "${b.note}"`);
+    // #555: the label says "until Anthropic rate-limits"; the line says
+    // what follows, not that again.
+    if (!/keep going/.test(b.note) || !/pause/.test(b.note) || /rate-limit/.test(b.note)) note(where, `No limit's line does not say it keeps going and then pauses, once: "${b.note}"`);
     if (!b.markHidden) note(where, 'a budget mark is still drawn with No limit chosen');
     if (b.sentences > 2) note(where, `the No limit line runs to ${b.sentences} sentences`);
 
@@ -728,7 +773,7 @@ for (const width of WIDTHS) {
     if (!b.put || b.put.budget_percent !== 100 || b.put.budget_no_limit !== false) {
       note(where, `going back to 100% saved ${JSON.stringify(b.put)}`);
     }
-    if (!/stop at 100%/.test(b.note)) note(where, `100% does not say automatic insights stop there: "${b.note}"`);
+    if (/100%/.test(b.note) || !/wait/.test(b.note)) note(where, `at 100% the line under the budget says the limit again or not that they wait: "${b.note}"`);
     if (b.markHidden) note(where, 'the budget mark stayed hidden after a percentage was chosen');
     await slide(25);
     await page.waitForTimeout(200);
@@ -1190,8 +1235,60 @@ for (const width of WIDTHS) {
       if (!VERBS.has(label)) note(where, `a Developer button says "${label}"`);
     }
     if (dv.bubbles) note(where, `${dv.bubbles} "?" bubbles under Developer`);
+    // #557: Diagnostics and Developer in plain words.
+    await page.waitForSelector('#rehearseBody .drow', { timeout: 4000 }).catch(() => note(where, 'the last rehearsal\'s rows were not drawn'));
+    for (const sec of ['developer', 'diagnostics']) {
+      await showSection(page, sec);
+      await page.waitForTimeout(300);
+      const plain = await page.evaluate((x) => {
+        const n = document.querySelector(`#setModal .setsec[data-sec="${x}"]`);
+        // What a person reads: closed technical parts and tooltips aside.
+        const text = n.innerText.replace(/\s+/g, ' ');
+        const code = [...n.querySelectorAll('code')].filter((c) => c.offsetParent !== null && !c.closest('details:not([open])')).map((c) => c.textContent);
+        return { text, code };
+      }, sec);
+      for (const [re, what] of [[/journal/i, 'a journal'], [/daemon/i, 'a daemon'], [/Configuration tab/i, 'the add-on\'s Configuration tab'],
+        [/brain_test_/, 'a planted id'], [/\bauto\.dead_/, 'a check id'], [/\b[a-z]+_[a-z_]+ —/, 'a process name']]) {
+        if (re.test(plain.text)) note(where, `${sec} says ${what}: "${(plain.text.match(new RegExp('.{0,40}' + re.source + '.{0,40}', re.flags)) || [''])[0]}"`);
+      }
+      if (plain.code.length) note(where, `${sec} shows code on its face: ${plain.code.join(', ')}`);
+    }
+    const rh = await page.evaluate(() => document.querySelector('#rehearseBody').innerText.replace(/\s+/g, ' '));
+    if (!/An automation naming a light that does not exist/.test(rh) || !/Found/.test(rh) || !/Missed/.test(rh)) note(where, `the rehearsal's rows do not say what was planted and what happened: "${rh.slice(0, 160)}"`);
   } catch (e) {
     note(where, `driving Developer failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- #556: Permissions names each switch once, in plain words ---------
+  try {
+    await showSection(page, 'permissions');
+    const pm = await page.evaluate(() => {
+      const sec = document.querySelector('#setsecPermissions');
+      const heads = [...sec.querySelectorAll('.sethead')].filter((n) => n.offsetParent !== null).map((n) => n.textContent.trim());
+      const labels = [...sec.querySelectorAll('.bigcheck b')].map((n) => n.textContent.trim());
+      const yolo = document.querySelector('#setYoloRow');
+      return { text: sec.innerText, heads, labels,
+               label: yolo ? yolo.querySelector('b').textContent.trim() : '',
+               sub: yolo ? yolo.querySelector('.subtext').textContent.replace(/\s+/g, ' ').trim() : '' };
+    });
+    if (/YOLO/i.test(pm.text)) note(where, 'Permissions still says "YOLO"');
+    const twice = pm.heads.filter((h) => pm.labels.some((l) => l.toLowerCase().includes(h.toLowerCase()) || h.toLowerCase().includes(l.toLowerCase())));
+    if (twice.length) note(where, `Permissions says ${twice.join(', ')} as a heading and again as a switch`);
+    if (!/^No restrictions$/.test(pm.label)) note(where, `the second switch reads "${pm.label}", not "No restrictions"`);
+    if (!/without asking/.test(pm.sub)) note(where, `the second switch does not say how it differs from acting without asking: "${pm.sub}"`);
+  } catch (e) {
+    note(where, `driving Permissions' names failed: ${String(e.message).split('\n')[0]}`);
+  }
+
+  // ---- #555: no summary on the list is cut off ----------------------------
+  try {
+    if (narrow) await page.locator('#setModal .setsec:not([hidden]) .setback').click({ timeout: 3000 }).catch(() => {});
+    const cut = await page.evaluate(() => [...document.querySelectorAll('#setNav .setnavsum')]
+      .filter((n) => n.offsetParent !== null && (n.scrollWidth > n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis'))
+      .map((n) => n.textContent.trim()));
+    if (cut.length) note(where, `cut off on the list: ${cut.join(' | ')}`);
+  } catch (e) {
+    note(where, `reading the list's summaries failed: ${String(e.message).split('\n')[0]}`);
   }
 
   // ---- every switch is a row: words on the left, the switch beside them ---
@@ -1291,10 +1388,11 @@ for (const width of WIDTHS) {
     // switch is off, or stopped when it should be running.
     await page.waitForSelector('#diagBody .drow', { timeout: 4000 }).catch(() => {});
     const diag = await page.evaluate(() => document.getElementById('diagBody').textContent.replace(/\s+/g, ' '));
-    if (!/usage_tracker — running/.test(diag)) note(where, 'a running daemon is not said to be running');
-    if (!/assist_listener — off — fast mode/.test(diag)) note(where, 'a daemon that is off does not say why');
-    if (!/ttyd — off — enable_terminal is off/.test(diag)) note(where, 'a daemon behind an off option does not name it');
-    if (!/automation_listener — stopped — it should be running/.test(diag)) note(where, 'a wanted daemon that is down is not called stopped');
+    // #557: each by what it does, never its process name or an option key.
+    if (!/The usage tracker — running/.test(diag)) note(where, 'a running background job is not said to be running');
+    if (!/The voice listener — off — fast mode/.test(diag)) note(where, 'a background job that is off does not say why');
+    if (!/The terminal — off — its switch is off/.test(diag)) note(where, 'a background job behind a switch that is off does not say so');
+    if (!/The automation listener — stopped — it should be running/.test(diag)) note(where, 'a wanted background job that is down is not called stopped');
     if (!/One-time asks.*2 armed, 1 fired.*Each runs once, when what you described happens/.test(diag)) {
       note(where, 'one-off asks are not described as running once, when, and where the result goes');
     }

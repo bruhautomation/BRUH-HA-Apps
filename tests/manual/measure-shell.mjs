@@ -38,17 +38,41 @@
 //     the strip before the pane's first line (the sections are under their
 //     tab, the search is a 44px icon that opens a 16px field); Morph draws
 //     no strip or safe-area padding of its own under it.
-//   * at 390 and 1200: scrolling down hides the header (only the island
-//     strip's ground stays) on Insights and on Home (Morph's scroll), Home
-//     takes its place, and scrolling up or reaching the top brings it back;
-//     with reduce motion it does not slide. A drag on the header moves
-//     neither the page under it nor the window around brAIn, and nothing
-//     lets a drag run on into Home Assistant's window.
+//   * at 390: scrolling down slides away ONLY the tab row — the name, the
+//     clock and ⚙ stay in the strip — on Insights and on Home (Morph's
+//     scroll), Home moves up under the first row, and scrolling up or
+//     reaching the top brings the tabs back; at 1200 the header is one row
+//     and stays whole; with reduce motion nothing slides. A drag on the
+//     header moves neither the page under it nor the window around brAIn,
+//     and nothing lets a drag run on into Home Assistant's window.
+//   * the owner's header (#539): a clock (h:mm) beside ⚙ on every tab and
+//     at both widths, and no status dot at rest (one with a sign-in to fix);
+//     the first tab reads "Morph UI" with an icon, and ⚙ › Dashboard ›
+//     Header tabs renames it and changes its icon; no Edit in the header at
+//     rest — Morph's own small ✎ Edit under it, which turns the header's
+//     into Done; ☰ ~10px off the edge on a phone; Insights' sections a row
+//     of segments on a phone (no menu, no title saying the segment again);
+//     a press-to-open line saying how insight cards differ from the
+//     dashboard; and an insight card drawn in Morph's palette, theme by
+//     theme.
 //     SHELL_SHOT_DIR=<dir> keeps a picture of each.
 //
 // Exits non-zero with every failure listed.
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { ORIGIN, route, BRAIN_VERSION, MANY_INSIGHTS, safeArea } from './morph-fixture.mjs';
+
+// The card stylesheet brAIn prepends to every card it saves
+// (categories.CARD_STYLES), read out of the source so the card measured here
+// carries exactly what a real one does.
+const CATEGORIES = readFileSync(fileURLToPath(new URL('../../brain/panel/categories.py', import.meta.url)), 'utf8');
+const CARD_STYLES = (CATEGORIES.match(/CARD_STYLES = """([\s\S]*?)"""/) || [])[1] || '';
+const STYLED = '<!doctype html><html><head><style data-brain="card-styles">' + CARD_STYLES + '</style></head>'
+  + '<body><svg width="100%" height="200"><rect x="10" y="10" width="300" height="160" fill="var(--c1)"/></svg></body></html>';
+const SHELL_INSIGHTS = MANY_INSIGHTS.map((x, i) => (i === 0 ? { ...x, html: STYLED } : x));
+// Morph's surfaces and first hue per theme (styles.js: --surface, --sky).
+const MORPH_CARD = { dark: { bg: '#15181b', c1: '#9cc2f5' }, medium: { bg: '#34383d', c1: '#a7c8f2' }, light: { bg: '#ffffff', c1: '#3b78c9' } };
 
 const failures = [];
 const fail = (where, what) => failures.push(`${where}: ${what}`);
@@ -182,9 +206,18 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
     const cs = getComputedStyle(bar);
     // What stands between the header and the pane's first line: the
     // section control, a select, the search row.
-    const rows = ['#segNav', '#segNavSel', '#reportSearch'].map((q) => document.querySelector(q))
+    // The sections' row of segments is the one row the owner asked for
+    // (#539) and is measured on its own (`seg`); anything else is chrome.
+    const rows = ['#segNavSel', '#reportSearch'].map((q) => document.querySelector(q))
       .filter((n) => shown(n) && !n.closest('.topbar') && getComputedStyle(n).position !== 'fixed');
-    const strip = ['#shellMenu', '.topbar .brandlink', '#statusDot', '#settingsBtn']
+    const segNav = document.querySelector('#segNav');
+    const segBtns = [...document.querySelectorAll('#segNav .segbtn')].filter(shown);
+    const seg = shown(segNav) ? { ...box(segNav), fixed: getComputedStyle(segNav).position === 'fixed',
+      names: segBtns.map((n) => (n.childNodes[0] || n).textContent.trim()),
+      tops: [...new Set(segBtns.map((n) => box(n).t))], minH: Math.min(...segBtns.map((n) => box(n).h)),
+      select: shown(document.querySelector('#segNavSel')) } : null;
+    const title = [...document.querySelectorAll('.view.active .panetitle')].filter(shown).map((n) => n.textContent.trim());
+    const strip = ['#shellMenu', '.topbar .brandlink', '#shellClock', '#statusDot', '#settingsBtn']
       .map((q) => [q, document.querySelector(q)]).filter(([, n]) => shown(n)).map(([q, n]) => ({ q, ...box(n) }));
     const targets = [...bar.querySelectorAll('button, a, input')].filter(shown).map((n) => ({ q: n.id || n.className, ...box(n) }));
     const search = [...bar.querySelectorAll('button')].find((n) => shown(n) && /search/i.test(n.getAttribute('aria-label') || ''));
@@ -194,6 +227,10 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
       motion: cs.transitionDuration, touchAction: cs.touchAction,
       chrome: box(bar).b + rows.reduce((a, n) => a + box(n).h, 0), rows: rows.map((n) => n.id),
       strip, targets, tabsTop: Math.min(...[...document.querySelectorAll('.viewtabs .viewtab')].filter(shown).map((n) => box(n).t)),
+      tabs: [...document.querySelectorAll('.viewtabs .viewtab')].filter(shown).length,
+      clock: shown(document.querySelector('#shellClock')) ? { text: document.querySelector('#shellClock').textContent.trim(), ...box(document.querySelector('#shellClock')) } : null,
+      menu: shown(document.querySelector('#shellMenu')) ? box(document.querySelector('#shellMenu')) : null,
+      seg, title,
       settings: shown(document.querySelector('#settingsBtn')) && box(document.querySelector('#settingsBtn')).b > 1,
       search: search ? { id: search.id, ...box(search) } : null,
       input: shown(input) ? { ...box(input), font: parseFloat(getComputedStyle(input).fontSize), value: input.value } : null,
@@ -224,18 +261,24 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
     let h = await head(f);
     if (top0 !== h.bar.h) fail(`${where}, Home`, `Home starts at ${top0}, not under the ${h.bar.h}px header`);
     // ---- Home: scrolling Morph down hides the header, up brings it back
+    // Only the tab row goes (#539): the name, the clock and ⚙ stay.
+    const ROW1 = inset ? inset + 2 : 52;
     await scrollMorph(p, 600);
     await settle(p, 450);
     h = await head(f);
     let t = await homeTop(p);
-    if (h.bar.b > inset + 1 || h.settings) fail(`${where}, Home`, `scrolling the dashboard down leaves the header on screen (its foot at ${h.bar.b}px)`);
-    if (t > inset + 1) fail(`${where}, Home`, `the dashboard does not take the header's place when it hides (Home starts at ${t}px)`);
+    if (touch) {
+      if (h.tabs) fail(`${where}, Home`, `scrolling the dashboard down leaves ${h.tabs} tabs on screen`);
+      if (!h.settings || !h.clock) fail(`${where}, Home`, 'scrolling the dashboard down took ⚙ or the clock with the tabs');
+      if (h.bar.b > ROW1 + 1) fail(`${where}, Home`, `with the tabs away the header still reaches ${h.bar.b}px (its first row ends by ${ROW1})`);
+      if (Math.abs(t - h.bar.b) > 1) fail(`${where}, Home`, `the dashboard does not move up under the first row (Home starts at ${t}px, the header ends at ${h.bar.b})`);
+    } else if (!h.tabs || !h.settings || h.bar.t < 0) fail(`${where}, Home`, 'scrolling the dashboard down hid part of a one-row header');
     await shot('home-scrolled');
     await scrollMorph(p, -120);
     await settle(p, 450);
     h = await head(f);
     t = await homeTop(p);
-    if (h.bar.t < 0 || !h.settings) fail(`${where}, Home`, 'scrolling the dashboard up does not bring the header back');
+    if (h.bar.t < 0 || !h.settings || !h.tabs) fail(`${where}, Home`, 'scrolling the dashboard up does not bring the tabs back');
     if (t !== h.bar.h) fail(`${where}, Home`, `with the header back, Home starts at ${t}, not under it (${h.bar.h})`);
     await p.evaluate(() => { window.__panel.shadowRoot.querySelector('.scroll').scrollTop = 0; });
     // ---- Insights ----
@@ -258,28 +301,40 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
       }
       const brand = h.strip.find((x) => x.q === '.topbar .brandlink');
       if (!brand || brand.r > ISLAND.left) fail(here, `the name is not left of the island (${brand ? `${brand.l}–${brand.r}` : 'missing'})`);
-      for (const q of ['#statusDot', '#settingsBtn']) {
+      for (const q of ['#shellClock', '#settingsBtn']) {
         const x = h.strip.find((y) => y.q === q);
         if (!x || x.l < ISLAND.right) fail(here, `${q} is not right of the island (${x ? `${x.l}–${x.r}` : 'missing'})`);
       }
+      // ☰ off the screen's edge (the owner: "a little jammed into the left").
+      if (!h.menu || h.menu.l < 8 || h.menu.l > 14) fail(here, `☰ starts ${h.menu ? h.menu.l : '?'}px from the edge, not ~10`);
       if (h.tabsTop < inset) fail(here, `the tabs start at ${h.tabsTop}px, inside the island strip`);
-      // Below the strip, at rest: at most 60px before the pane's first line.
+      // Below the strip, at rest: at most 60px of header before the pane's
+      // first line, and then the sections' one row of segments.
       const below = h.chrome - inset;
       if (below > CHROME_MAX) fail(here, `${below}px of header and controls sit under the island strip before any content (${h.chrome}px in all; ${h.rows.join(', ') || 'the header alone'}), over ${CHROME_MAX}`);
-      // The sections are in the tab row: the Insights tab opens them.
+      // The sections are a row of segments on the pane (#539), not a menu
+      // under the tab: every name on screen, one row, 44px, no select, and
+      // no pane title saying the segment again.
+      if (!h.seg) fail(here, 'Insights shows no row of sections');
+      else {
+        if (h.seg.names.join('|') !== 'Insights|Needs you|History') fail(here, `the sections row reads ${h.seg.names.join(', ')}`);
+        if (h.seg.tops.length !== 1) fail(here, `the sections sit on ${h.seg.tops.length} rows`);
+        if (h.seg.minH < 44) fail(here, `a section is ${h.seg.minH}px tall`);
+        if (h.seg.select || h.seg.fixed) fail(here, 'the sections are a select or a menu, not a row');
+        if (h.seg.h > 60) fail(here, `the sections row is ${h.seg.h}px tall`);
+        if (h.seg.t - h.bar.b > 24) fail(here, `the sections row starts ${h.seg.t - h.bar.b}px under the header`);
+      }
+      if (h.title.includes('Insights')) fail(here, 'the pane title says Insights again under its segment');
       await f.click('.viewtab[data-group="insights"]');
       await settle(p, 300);
-      const secs = await f.evaluate(() => [...document.querySelectorAll('button, [role="tab"], option')].filter((n) => n.getClientRects().length && getComputedStyle(n).visibility !== 'hidden' && /^Needs you|^History/.test(n.textContent.trim()) && !n.closest('#subtabs')).map((n) => ({ t: n.textContent.trim(), h: Math.round(n.getBoundingClientRect().height), tag: n.tagName })));
-      const hist = secs.find((x) => /^History/.test(x.t) && x.tag === 'BUTTON');
-      if (!hist) fail(here, `pressing the Insights tab offers no History (${JSON.stringify(secs)})`);
-      else {
-        if (hist.h < 44) fail(here, `History in the section list is ${hist.h}px tall`);
-        await shot('sections');
-        await f.locator('button:visible', { hasText: /^History$/ }).first().click();
-        await settle(p, 300);
-        const v = await f.evaluate(() => currentView);
-        if (v !== 'archive') fail(here, `History in the section list opened "${v}"`);
-      }
+      if (await f.evaluate(() => document.documentElement.classList.contains('segopen') || !!document.querySelector('.viewtab[aria-expanded="true"]'))) fail(here, 'pressing the Insights tab still opens a menu');
+      await shot('sections');
+      await f.locator('#segNav .segbtn:visible', { hasText: /^History$/ }).first().click();
+      await settle(p, 300);
+      const v = await f.evaluate(() => currentView);
+      if (v !== 'archive') fail(here, `History in the sections row opened "${v}"`);
+      const ht = (await head(f)).title;
+      if (ht.includes('History')) fail(here, 'History\'s pane title says History again under its segment');
       await f.evaluate(() => { switchView('insights'); window.scrollTo(0, 0); });
       await settle(p, 300);
       // The search is an icon in the header that opens the field.
@@ -310,20 +365,24 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
     await scrollFrame(f, 700);
     await settle(p, 450);
     h = await head(f);
-    if (h.bar.b > inset + 1 || h.settings) fail(here, `scrolling down leaves the header on screen (its foot at ${h.bar.b}px, ⚙ ${h.settings ? 'shown' : 'gone'})`);
-    if (inset && h.bar.b < inset - 1) fail(here, `the hidden header leaves the island strip bare (its foot at ${h.bar.b}px)`);
+    if (touch) {
+      if (h.tabs) fail(here, `scrolling down leaves ${h.tabs} tabs on screen`);
+      if (!h.settings || !h.clock || !h.strip.some((x) => x.q === '.topbar .brandlink')) fail(here, 'scrolling down took the name, the clock or ⚙ with the tabs');
+      if (h.bar.b > ROW1 + 1) fail(here, `with the tabs away the header still reaches ${h.bar.b}px (its first row ends by ${ROW1})`);
+      if (inset && h.bar.b < inset - 1) fail(here, `the header leaves the island strip bare (its foot at ${h.bar.b}px)`);
+    } else if (!h.tabs || !h.settings || h.bar.t < 0) fail(here, 'scrolling down hid part of a one-row header');
     await shot('scrolled');
     await scrollFrame(f, -120);
     await settle(p, 450);
     h = await head(f);
-    if (h.bar.t < 0 || !h.settings) fail(here, `scrolling back up does not bring the header back (its top at ${h.bar.t}px)`);
+    if (h.bar.t < 0 || !h.settings || !h.tabs) fail(here, `scrolling back up does not bring the tabs back (its top at ${h.bar.t}px)`);
     await shot('scrolledup');
     await scrollFrame(f, 300);
     await settle(p, 300);
     await f.evaluate(() => window.scrollTo(0, 0));
     await settle(p, 450);
     h = await head(f);
-    if (h.bar.t < 0 || !h.settings) fail(here, 'reaching the top does not bring the header back');
+    if (h.bar.t < 0 || !h.settings || !h.tabs) fail(here, 'reaching the top does not bring the tabs back');
     // ---- a drag on the header never moves Home Assistant's window --------
     if (touch) {
       if (h.overscroll.some((o) => o !== 'none')) fail(here, `brAIn's page lets a drag run on into the window around it (overscroll-behavior ${h.overscroll.join('/')})`);
@@ -373,7 +432,7 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
       const where = `one header, ${width}px, ${theme}`;
       const touch = width <= 430;
       const inset = touch ? INSET : 0;
-      const { ctx, p, errors } = await open(browser, { realFrame: true, theme, narrow: touch, insights: MANY_INSIGHTS }, width, touch, inset);
+      const { ctx, p, errors } = await open(browser, { realFrame: true, theme, narrow: touch, insights: SHELL_INSIGHTS }, width, touch, inset);
       const f = frame(p);
       if (!f) { fail(where, 'brAIn\'s page did not load in the frame'); await ctx.close(); continue; }
       try {
@@ -408,6 +467,8 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
           const brand = bar.querySelector('.brandlink');
           const edit = document.querySelector('#shellEdit');
           const status = [document.querySelector('#statusDot'), ...document.querySelectorAll('.topbar .chip')].filter(inBar);
+          const clock = document.querySelector('#shellClock');
+          const gear = document.querySelector('#settingsBtn');
           const cut = [...bar.querySelectorAll('button, a, span')].filter((n) => shown(n) && n.scrollWidth > n.clientWidth + 1 && getComputedStyle(n).overflow === 'hidden').map((n) => n.id || n.className || n.textContent.trim().slice(0, 20));
           const small = [...bar.querySelectorAll('button, a')].filter(shown).map((n) => ({ n: n.id || n.textContent.trim().slice(0, 16) || n.className, h: Math.round(n.getBoundingClientRect().height), w: Math.round(n.getBoundingClientRect().width) })).filter((x) => x.h < 44 || x.w < 44);
           return {
@@ -419,6 +480,9 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
             verInBar: [...bar.querySelectorAll('*')].some((n) => shown(n) && n.children.length === 0 && n.textContent.includes(ver)),
             verInSettings: (() => { const v = document.querySelector('#setModal #versionText'); return shown(v) && v.textContent.includes(ver); })(),
             edit: inBar(edit) ? edit.textContent.trim() : '',
+            homeIcon: !!document.querySelector('#homeTab svg.ico path'),
+            clock: inBar(clock) ? clock.textContent.trim() : '',
+            clockGap: inBar(clock) && inBar(gear) ? Math.round(gear.getBoundingClientRect().left - clock.getBoundingClientRect().right) : -1,
             theme: document.documentElement.dataset.theme || '', ground: ground(document.body), barGround: ground(bar),
             plane: getComputedStyle(document.documentElement).getPropertyValue('--plane').trim(),
             tabInk: tabs.length ? ratio(getComputedStyle(tabs.find((t) => !t.classList.contains('active')) || tabs[0]).color, ground(bar)) : 0,
@@ -442,7 +506,12 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
         if (headers !== 1) fail(here, `${headers} headers are on screen (brAIn's ${fr.headers}, Morph's ${view === 'Home' ? mo.bars : 0}), not one`);
         if (fr.tabbarFixed || fr.bottomBar) fail(here, 'the tabs are a bar along the bottom rather than in the header');
         if (view === 'Home' && mo.bottomGap !== 0) fail(here, `Home stops ${mo.bottomGap}px above the bottom, where a tab bar was`);
-        for (const n of ['Home', 'Insights', 'Ask', 'Memory']) if (!fr.names.includes(n)) fail(here, `the header has no ${n} (it has ${fr.names.join(', ')})`);
+        // The dashboard's tab is named for it, with an icon (#539).
+        if (fr.names[0] !== 'Morph UI' || !fr.homeIcon) fail(here, `the first tab reads "${fr.names[0]}"${fr.homeIcon ? '' : ' with no icon'}, not "Morph UI"`);
+        for (const n of ['Morph UI', 'Insights', 'Ask', 'Memory']) if (!fr.names.includes(n)) fail(here, `the header has no ${n} (it has ${fr.names.join(', ')})`);
+        // A clock beside ⚙, always (#539).
+        if (!/^\d{1,2}:\d{2}$/.test(fr.clock)) fail(here, `the header's clock reads "${fr.clock}"`);
+        else if (fr.clockGap < 0 || fr.clockGap > 24) fail(here, `the clock is ${fr.clockGap}px from ⚙, not beside it`);
         if (!fr.tabsInBar) fail(here, 'a tab is outside the header');
         if (!fr.settings) fail(here, '⚙ is not in the header');
         // The name is the header's; the version moved to ⚙ (the owner: the
@@ -450,9 +519,27 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
         if (!/Juniper/.test(fr.brand)) fail(here, `the header does not say the name ("${fr.brand}")`);
         if (fr.verInBar) fail(here, 'the version is still in the header');
         if (view === 'Settings' && !fr.verInSettings) fail(here, `⚙ does not show the version ${fr.ver}`);
-        if (!fr.status) fail(here, 'the header carries no status');
-        if (view === 'Home' && fr.edit !== 'Edit') fail(here, `Morph's Edit is not in the header ("${fr.edit}")`);
-        if (view !== 'Home' && fr.edit) fail(here, 'Edit is in the header on a brAIn tab');
+        // Nothing to act on, no status (#539); a signed-out house is
+        // measured below.
+        if (fr.status) fail(here, 'the header carries a status with nothing to act on');
+        // Edit at rest is Morph's, under the header, not in it (#539).
+        if (fr.edit) fail(here, `the header carries "${fr.edit}" at rest`);
+        if (view === 'Home') {
+          const q = await p.evaluate(() => {
+            const b = window.__panel && window.__panel.shadowRoot.querySelector('[data-act="edit"]');
+            if (!b || !b.getClientRects().length) return null;
+            const r = b.getBoundingClientRect();
+            return { text: b.textContent.trim(), t: Math.round(r.top), h: Math.round(r.height), font: parseFloat(getComputedStyle(b).fontSize), pencil: !!b.querySelector('svg') };
+          });
+          const homeT = await homeTop(p);
+          if (!q) fail(here, 'Morph draws no Edit under the header');
+          else {
+            if (q.text !== 'Edit' || !q.pencil) fail(here, `Morph's Edit reads "${q.text}"${q.pencil ? '' : ' with no pencil'}`);
+            if (q.t < homeT || q.t > homeT + 40) fail(here, `Morph's Edit is at ${q.t}px, not on the first line under the header (${homeT})`);
+            if (q.font > 14) fail(here, `Morph's Edit is ${q.font}px text, not a quiet one`);
+            if (touch && q.h < 44) fail(here, `Morph's Edit is ${q.h}px tall`);
+          }
+        }
         if (fr.theme !== theme) fail(here, `brAIn's page is in theme "${fr.theme}", not Morph's "${theme}"`);
         if (hex(fr.barGround) !== THEMES[theme]) fail(here, `the header's ground is ${hex(fr.barGround)}, not Morph's ${THEMES[theme]}`);
         if (view !== 'Home' && hex(fr.ground) !== THEMES[theme]) fail(here, `the page's ground is ${hex(fr.ground)}, not Morph's ${THEMES[theme]}`);
@@ -467,22 +554,114 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
       };
       await look('Home');
       await getsOutOfTheWay(p, f, where, width, theme, touch, inset);
-      // Edit in the one header puts Morph in edit mode.
-      const editBtn = await f.$('#shellEdit');
-      if (editBtn && await editBtn.isVisible()) {
-        await editBtn.click();
-        await settle(p, 300);
+      // Morph's quiet Edit puts it in edit mode, and the header says Done.
+      await p.evaluate(() => { const b = window.__panel && window.__panel.shadowRoot.querySelector('[data-act="edit"]'); if (b) b.click(); });
+      await settle(p, 400);
+      {
         const ed = await p.evaluate(() => !!(window.__panel && window.__panel.s && window.__panel.s.edit));
-        if (!ed) fail(where, 'Edit in the header did not put Morph in edit mode');
-        const done = await f.evaluate(() => (document.querySelector('#shellEdit') || {}).textContent || '');
-        if (!/Done/.test(done)) fail(where, `while editing the header says "${done.trim()}", not Done`);
-        await editBtn.click();
-        await settle(p, 300);
+        if (!ed) fail(where, 'Morph\'s Edit did not put the dashboard in edit mode');
+        const done = await f.evaluate(() => { const b = document.querySelector('#shellEdit'); return b && !b.hidden ? b.textContent.trim() : ''; });
+        if (done !== 'Done') fail(where, `while editing the header says "${done}", not Done`);
+        if (await p.evaluate(() => { const b = window.__panel.shadowRoot.querySelector('.editquiet'); return !!(b && b.getClientRects().length); })) fail(where, 'Morph\'s Edit is still drawn while editing');
+        const doneBtn = await f.$('#shellEdit');
+        if (doneBtn && await doneBtn.isVisible()) await doneBtn.click();
+        await settle(p, 400);
+        if (await p.evaluate(() => !!(window.__panel && window.__panel.s && window.__panel.s.edit))) fail(where, 'Done in the header did not end editing');
       }
       for (const [view, name] of [['insights', 'Insights'], ['terminal', 'Ask'], ['memory', 'Memory']]) {
         await f.evaluate((v) => switchView(v), view);
         await settle(p, 400);
         await look(name);
+      }
+      // ---- Insights: what a card is, on a press; a card in Morph's palette
+      await f.evaluate(() => { switchView('insights'); window.scrollTo(0, 0); });
+      await settle(p, 900);
+      {
+        const ab = await f.evaluate(() => {
+          const b = document.querySelector('#aboutCardsBtn');
+          if (!b || !b.getClientRects().length) return null;
+          const r = b.getBoundingClientRect();
+          return { text: b.textContent.trim(), h: Math.round(r.height), exp: b.getAttribute('aria-expanded'), tip: b.hasAttribute('title') || b.hasAttribute('data-tip'), body: !document.querySelector('#aboutCards').hidden };
+        });
+        if (!ab) fail(where, 'Insights has no line saying how insight cards differ from the dashboard');
+        else {
+          if (!/insight cards/i.test(ab.text) || !/dashboard/i.test(ab.text)) fail(where, `the explaining line reads "${ab.text}"`);
+          if (ab.exp !== 'false' || ab.body) fail(where, 'the explanation is open before it is pressed');
+          if (ab.tip) fail(where, 'the explanation is a hover tooltip');
+          if (touch && ab.h < 44) fail(where, `the explaining line is ${ab.h}px tall`);
+          await f.click('#aboutCardsBtn');
+          await settle(p, 200);
+          const said = await f.evaluate(() => { const n = document.querySelector('#aboutCards'); return n && !n.hidden ? n.textContent : ''; });
+          if (!/Morph UI/.test(said) || !/report/i.test(said)) fail(where, `pressed, the explanation says "${said.slice(0, 120)}"`);
+          await f.click('#aboutCardsBtn');
+        }
+        const card = await f.evaluate(async () => {
+          const fr = [...document.querySelectorAll('#grid .card .viz iframe')].find((x) => x.srcdoc.includes('card-styles'));
+          if (!fr) return null;
+          for (let i = 0; i < 40 && !(fr.contentDocument && fr.contentDocument.readyState === 'complete'); i++) await new Promise((r) => setTimeout(r, 50));
+          // The frame is sandboxed without same-origin, so it is read from
+          // what it was given and what it draws: its own document says.
+          return { srcdoc: fr.srcdoc };
+        });
+        if (!card) fail(where, 'no insight card carrying the card stylesheet was drawn');
+        else {
+          const m = card.srcdoc.match(/setAttribute\("data-theme",\s*"(\w+)"\)/);
+          if (!m || m[1] !== theme) fail(where, `the card is not told the shell's theme (${m ? m[1] : 'none'})`);
+          // Read the variables the card resolves in that theme, in a page of its own.
+          const tp = await p.context().newPage();
+          await tp.setContent(card.srcdoc.replace(/<script>(?!document\.documentElement\.setAttribute)[\s\S]*?<\/script>/g, ''));
+          const got = await tp.evaluate(() => {
+            const cs = getComputedStyle(document.documentElement);
+            return { theme: document.documentElement.dataset.theme || '', bg: cs.getPropertyValue('--bg').trim().toLowerCase(),
+                     c1: cs.getPropertyValue('--c1').trim().toLowerCase(), scheme: cs.colorScheme, font: getComputedStyle(document.body).fontFamily };
+          });
+          await tp.close();
+          const want = MORPH_CARD[theme];
+          if (got.bg !== want.bg || got.c1 !== want.c1) fail(where, `the card's palette is --bg ${got.bg}, --c1 ${got.c1}, not Morph's ${want.bg}, ${want.c1}`);
+          if (!/Manrope/.test(got.font)) fail(where, `the card's font is ${got.font}, not Morph's`);
+          if (got.scheme !== (theme === 'light' ? 'light' : 'dark')) fail(where, `the card's colour scheme is ${got.scheme} in the ${theme} theme`);
+        }
+      }
+      // ---- a signed-out house: the status shows, in the strip, beside the clock
+      {
+        const st = await f.evaluate(() => {
+          document.querySelector('#authChip').classList.remove('hidden');
+          document.querySelector('#authChipText').textContent = 'Sign in to Claude';
+          renderStatusDot();
+          const d = document.querySelector('#statusDot');
+          const shown = d.getClientRects().length > 0 && getComputedStyle(d).display !== 'none';
+          const r = d.getBoundingClientRect();
+          return { shown, state: d.dataset.state, l: Math.round(r.left), t: Math.round(r.top), b: Math.round(r.bottom) };
+        });
+        if (!st.shown) fail(where, `signed out, the header shows no status (${st.state})`);
+        if (touch && (st.b > inset + 1 || st.l < ISLAND.right)) fail(where, `signed out, the status is not right of the island in the strip (${st.l}, ${st.t}–${st.b})`);
+        await f.evaluate(() => { document.querySelector('#authChip').classList.add('hidden'); renderStatusDot(); });
+      }
+      // ---- ⚙ › Dashboard › Header tabs: the first tab renamed, a new icon
+      if (theme === 'dark') {
+        await f.evaluate(() => openSettings().then(() => showSettingsSection('dashboard')));
+        await settle(p, 900);
+        const before = await f.evaluate(() => document.querySelector('#homeTab svg.ico path').getAttribute('d'));
+        const ok = await f.evaluate(() => !!document.querySelector('#dashTab_home') && !!document.querySelector('#dashTabIcon_home'));
+        if (!ok) fail(where, '⚙ › Dashboard has no Header tabs setting for the first tab');
+        else {
+          await f.fill('#dashTab_home', 'House');
+          await f.press('#dashTab_home', 'Tab');
+          await settle(p, 500);
+          await f.selectOption('#dashTabIcon_home', 'home');
+          await settle(p, 600);
+          const tab = await f.evaluate(() => ({ label: document.querySelector('#homeTab .tablabel').textContent.trim(), d: document.querySelector('#homeTab svg.ico path').getAttribute('d') }));
+          const kept = await f.evaluate(() => window.__tabs || null);
+          if (tab.label !== 'House') fail(where, `renaming the first tab left it "${tab.label}"`);
+          if (tab.d === before) fail(where, 'choosing another icon left the first tab\'s icon as it was');
+          if (!kept || !kept.home || kept.home.label !== 'House' || kept.home.icon !== 'home') fail(where, `the header tabs were saved as ${JSON.stringify(kept)}`);
+          if (SHOTS) await p.screenshot({ path: `${SHOTS}/shell-${width}-${theme}-tabs.png` });
+          await f.fill('#dashTab_home', '');
+          await f.press('#dashTab_home', 'Tab');
+          await settle(p, 400);
+          await f.selectOption('#dashTabIcon_home', 'dashboard');
+          await settle(p, 500);
+        }
       }
       await f.evaluate(() => openSettings());
       await settle(p, 500);
@@ -506,7 +685,7 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
       await scrollFrame(f, 700);
       await settle(p, 100);
       h = await head(f);
-      if (h.bar.b > INSET + 1) fail(where, 'scrolling down does not hide the header');
+      if (h.tabs) fail(where, 'scrolling down does not slide the tabs away');
     } catch (e) { fail(where, `could not drive the page: ${String(e.message).split('\n')[0]}`); }
     if (errors.length) fail(where, `page errors: ${errors.join(' | ')}`);
     await ctx.close();
@@ -518,5 +697,5 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
     for (const f of failures) console.log('  - ' + f);
     process.exit(1);
   }
-  console.log('measure-shell: all checks passed (admin with and without the dashboard, somebody who is not an administrator, one header over brAIn\'s real page at 390 with a Dynamic Island and at 1200 in three themes, hiding on scroll, and reduce motion)');
+  console.log('measure-shell: all checks passed (admin with and without the dashboard, somebody who is not an administrator, one header over brAIn\'s real page at 390 with a Dynamic Island and at 1200 in three themes, the tab row hiding on scroll, the clock, the quiet Edit, the header tabs, the sections row, the cards in Morph\'s palette, and reduce motion)');
 })();

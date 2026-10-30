@@ -368,18 +368,49 @@ def memory_excerpt(text: str | None, limit: int = MEMORY_EXCERPT_CHARS) -> str:
 # dashboard mirror, a card kept in history) while the model is told only
 # the variable names. A card from before 2.0 carries its own colours and
 # is left exactly as it was.
+#
+# Inside brAIn's shell a card is drawn in the dashboard's look (the owner:
+# insight cards "don't go great with the Morph theming"): the panel writes
+# the shell's theme onto the card's own <html> as `data-theme` (dark,
+# medium, light), and the three blocks below restate the variables with
+# Morph's surfaces, inks and hues (styles.js) and its font. Outside the
+# shell no `data-theme` is set and prefers-color-scheme decides, as it did.
+# A card saved under an older copy of this sheet is served with this one
+# (`refresh_styles`), so a change here reaches every card on screen.
 CARD_STYLES = """:root{--bg:#ffffff;--ink:#0b0b0b;--ink2:#52514e;--muted:#706e69;--grid:#e1e0d9;--axis:#c3c2b7;
 --c1:#2a78d6;--c2:#008300;--c3:#e87ba4;--c4:#eda100;--c5:#1baf7a;--c6:#eb6834;--c7:#4a3aa7;--c8:#e34948;--other:#898781;
 --seq-lo:#cde2fb;--seq-hi:#0d366b;--div-mid:#f0efec;
 --good:#0ca30c;--warning:#fab219;--serious:#ec835a;--critical:#d03b3b;color-scheme:light dark}
 @media (prefers-color-scheme: dark){:root{--bg:#0e1e30;--ink:#ffffff;--ink2:#c3c2b7;--muted:#898781;--grid:#2c2c2a;--axis:#383835;
 --c1:#3987e5;--c2:#008300;--c3:#d55181;--c4:#c98500;--c5:#199e70;--c6:#d95926;--c7:#9085e9;--c8:#e66767;--div-mid:#383835}}
+:root[data-theme="dark"]{--bg:#15181b;--ink:#edeff1;--ink2:#a0a9b3;--muted:#8e97a1;--grid:#2a2f35;--axis:#3a4048;
+--c1:#9cc2f5;--c2:#63ccc2;--c3:#bba6f2;--c4:#f4b969;--c5:#bcd873;--c6:#f2b590;--c7:#9daaf5;--c8:#f2907f;--other:#808994;
+--seq-lo:#1d2a3a;--seq-hi:#9cc2f5;--div-mid:#2a2f35;color-scheme:dark}
+:root[data-theme="medium"]{--bg:#34383d;--ink:#f1f2f3;--ink2:#d2d7dc;--muted:#b5bcc4;--grid:#4a5057;--axis:#5a6068;
+--c1:#a7c8f2;--c2:#72cfc6;--c3:#c3b1f0;--c4:#f5c27f;--c5:#c3db86;--c6:#f0bc9c;--c7:#a9b4f2;--c8:#f29c8c;--other:#949ca6;
+--seq-lo:#3d4a5a;--seq-hi:#a7c8f2;--div-mid:#4a5057;color-scheme:dark}
+:root[data-theme="light"]{--bg:#ffffff;--ink:#16181b;--ink2:#3b4148;--muted:#535a63;--grid:#e4e3dd;--axis:#c9c7c0;
+--c1:#3b78c9;--c2:#178a80;--c3:#7a5fd0;--c4:#c27a1a;--c5:#5e8416;--c6:#b8622f;--c7:#4f5fc4;--c8:#c9503f;--other:#68707a;
+--seq-lo:#dce7f5;--seq-hi:#1e3f6e;--div-mid:#ecebe6;color-scheme:light}
 html,body{margin:0;padding:0;background:transparent;color:var(--ink);font-family:system-ui,sans-serif}
+:root[data-theme] body{font-family:'Manrope',system-ui,sans-serif}
 .tabular{font-variant-numeric:tabular-nums}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 """
 
 STYLE_TAG = '<style data-brain="card-styles">' + CARD_STYLES + '</style>'
+
+
+_STYLE_RE = re.compile(r'<style data-brain="card-styles">.*?</style>', re.S)
+
+
+def refresh_styles(html: str) -> str:
+    """The card's HTML with an older copy of CARD_STYLES swapped for this
+    one. A card from before 2.0 (no sheet of its own) is left as it was."""
+    text = str(html or "")
+    if 'data-brain="card-styles"' not in text or STYLE_TAG in text:
+        return text
+    return _STYLE_RE.sub(lambda _m: STYLE_TAG, text, count=1)
 
 
 def inject_styles(html: str) -> str:
@@ -504,7 +535,7 @@ THE HTML DOCUMENT:
 - Inline CSS and JS only, nothing external. 300px (a phone) to 900px wide: 100% width, height to content (~220-420px), no fixed width, no sideways scroll. A viewBox scales its text, so draw each SVG in script at `document.body.clientWidth`, redraw on resize, every label 11px or more. Leave a left margin for the longest label: a label cut at the edge is a bug. A pair of charts sits in a CSS grid of `repeat(auto-fit, minmax(260px, 1fr))`. Legends go ABOVE the plot. Inline SVG (or CSS grid for state maps), no canvas.
 - Hover tooltips on every mark, hit targets bigger than it, readable without hovering. Draw-in ≤800ms under prefers-reduced-motion: no-preference.
 
-DESIGN SYSTEM: brAIn prepends a stylesheet, so use its variables and never hard-code a colour; light and dark (prefers-color-scheme) come free. Surfaces and text: var(--bg), var(--ink), var(--ink2), var(--muted); gridlines var(--grid), axis var(--axis). Series in order var(--c1) (blue, #2a78d6 in light) … var(--c8), a different one per series, past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 through var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical) — never a series, always with a label. Dark surface is #0e1e30. Marks: 2px lines; bars from zero, 4px rounded tops; ≥8px hover markers; 2px gaps between stacked segments. ONE y-axis per chart (two scales → two charts). Legend at ≥2 series, direct labels at ≤4.
+DESIGN SYSTEM: the dashboard's look unless asked otherwise. brAIn prepends a sheet following its themes (prefers-color-scheme elsewhere): use its variables and font, no fixed colour. Surfaces, text: var(--bg), var(--ink), var(--ink2), var(--muted); grid var(--grid), axis var(--axis). Series in order var(--c1) (blue; #2a78d6 elsewhere) … var(--c8), past six folded into var(--other). Sequential: var(--seq-lo) to var(--seq-hi); diverging: --c1 ↔ --c8 via var(--div-mid); never rainbow. Status: var(--good), var(--warning), var(--serious), var(--critical), never a series, always labelled. Dark elsewhere: #0e1e30. Marks: 2px lines; bars from zero, 4px rounded tops; ≥8px hover markers; 2px gaps between stacked segments. ONE y-axis per chart (two scales → two charts). Legend at ≥2 series, direct labels at ≤4.
 
 ANALYSIS RULES:
 - RUTHLESSLY CONCISE: every sentence carries a number, a name or a time; no hedging.

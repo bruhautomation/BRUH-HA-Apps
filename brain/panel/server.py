@@ -297,7 +297,8 @@ from categories import (ANALYST_SYSTEM, CARD_SCHEMA, CATEGORIES, SYSTEM_PROMPT,
                         _CARD_CONTRACT, _previous_block,
                         build_orientation_prompt, build_prompt,
                         document_lines, get_category, house_block,
-                        inject_styles, memory_excerpt, stores_for)
+                        inject_styles, memory_excerpt, refresh_styles,
+                        stores_for)
 
 HERE = Path(__file__).resolve().parent
 INSIGHTS_DIR = Path(os.environ.get("BRAIN_DIR", "/data/insights"))
@@ -9940,6 +9941,10 @@ async def h_insights(request: web.Request) -> web.Response:
         def device_of(eid):
             return (_NAMES.get(eid) or {}).get("device")
         for ins in insights:
+            # A card saved under an older card stylesheet is drawn with
+            # this one, so the dashboard's look reaches every card.
+            if isinstance(ins.get("html"), str):
+                ins["html"] = refresh_styles(ins["html"])
             ins["tags"] = card_tags.effective_tags(ins, edits)
             ins["entities"] = _card_entities(ins)
             # One verdict: the chip, and a card stored before the field
@@ -25618,6 +25623,9 @@ def _annotate_daemons(rollcall: dict, options: dict) -> dict:
     not ask for — health's answer, worded for the Diagnostics list."""
     wanted = health.expected_daemons(options)
     for name, row in (rollcall or {}).items():
+        if isinstance(row, dict):
+            # What it does, which is what the list names it by.
+            row["what"] = health.daemon_words(name)
         if isinstance(row, dict) and not row.get("running"):
             why = health.not_used_reason(name, options)
             if why:

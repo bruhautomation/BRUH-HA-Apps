@@ -56,7 +56,9 @@ export const CSS = `
 .menu{background:none;border:0;padding:0 4px;margin:0;min-height:44px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center}
 .date{font-size:13px;color:var(--quiet);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bartoast{font-size:13px;color:var(--muted);margin-left:12px;min-width:0;flex:0 1 auto}
-.toastline{display:flex;align-items:center;min-height:44px}.toastline .bartoast{margin-left:0}
+.toastline{display:flex;align-items:center;min-height:44px;margin:-14px 0 -18px}.toastline .bartoast{margin-left:0}
+.morph .editquiet{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 4px;font-size:13px;font-weight:600;color:var(--muted)}
+.morph .editquiet:hover{color:var(--text)}
 .bar>.go,.bar>.menu,.bar>.brand{flex-shrink:0}
 .lede{font-size:13px;color:var(--muted);margin-top:-18px}
 .mtile:focus-visible{outline:2px solid var(--text);outline-offset:2px}

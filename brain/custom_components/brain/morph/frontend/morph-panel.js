@@ -742,7 +742,14 @@ class MorphPanel extends HTMLElement {
     // from `chrome()` and pressed back through `chromeAct`, the date gives
     // way to the page's own clock, and a toast is a line of the page rather
     // than a bar.
-    if (this._shell) return `${toast ? `<div class="toastline">${toast}</div>` : ''}${yaml}`;
+    // Edit at rest is Morph's own, and quiet: a small pencil on the
+    // page's first line, under brAIn's header (the owner: Edit "should be
+    // more subtle and under the [header]"); Done and YAML stay in the header
+    // while editing.
+    if (this._shell) {
+      const edit = admin && !this.s.edit ? `<button type="button" class="go editquiet" data-act="edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edit</button>` : '';
+      return `${toast || edit ? `<div class="toastline">${toast}<span class="flex1"></span>${edit}</div>` : ''}${yaml}`;
+    }
     const dateHtml = this.s.toast && this._narrow ? '' : `<span class="date">${esc(date)}</span>`;
     const brand = this._shell ? '' : `<span class="brand">${MARK(16)}${esc(this.who().toUpperCase())}</span>`;
     return `<div class="bar">${menu}${brand}${toast}<span class="flex1"></span>${dateHtml}${right}</div>${yaml}`;

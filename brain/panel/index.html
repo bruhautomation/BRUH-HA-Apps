@@ -61,26 +61,28 @@
        handler, measure and deep link under one binds as it did. The one
        badge counts the decisions waiting on you (`queue_count`). -->
   <nav class="viewtabs" role="tablist">
-    <!-- Home: the Morph dashboard (⚙ › Features), drawn by brAIn's shell
-         over this page, because it hosts Home Assistant's own cards. Here
-         it is a press the shell hears (`shellPost`); outside the shell it
-         opens the shell. Hidden while the dashboard is off. -->
-    <button id="homeTab" class="viewtab" data-view="home" data-group="home" role="tab" hidden>
-      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg>
-      <span>Home</span>
+    <!-- The Morph dashboard (⚙ › Features), drawn by brAIn's shell over
+         this page, because it hosts Home Assistant's own cards. Named
+         "Morph UI" by default; every tab's name and icon can be changed in
+         ⚙ › Dashboard › Header tabs (`applyHeaderTabs`). Here it is a press
+         the shell hears (`shellPost`); outside the shell it opens the
+         shell. Hidden while the dashboard is off. -->
+    <button id="homeTab" class="viewtab" data-view="home" data-group="home" data-tab="home" role="tab" hidden>
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 4h7v9H4zM13 4h7v5h-7zM13 11h7v9h-7zM4 15h7v5H4z"/></svg>
+      <span class="tablabel">Morph UI</span>
     </button>
-    <button class="viewtab active" data-view="insights" data-group="insights" role="tab">
+    <button class="viewtab active" data-view="insights" data-group="insights" data-tab="insights" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z"/></svg>
-      <span>Insights</span>
+      <span class="tablabel">Insights</span>
       <span id="findBadge" class="badge hidden"></span>
     </button>
-    <button class="viewtab" data-view="terminal" data-group="ask" role="tab">
+    <button class="viewtab" data-view="terminal" data-group="ask" data-tab="ask" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H5.5A1.5 1.5 0 0 1 4 14.5zM8 8.5h8M8 12h5"/></svg>
-      <span>Ask</span>
+      <span class="tablabel">Ask</span>
     </button>
-    <button class="viewtab" data-view="memory" data-group="memory" role="tab">
+    <button class="viewtab" data-view="memory" data-group="memory" data-tab="memory" role="tab">
       <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 5.5a3 3 0 0 0-5.7-1.3A2.8 2.8 0 0 0 4 9.4a3 3 0 0 0 .4 4.8A2.9 2.9 0 0 0 7 19a3 3 0 0 0 5-1.2zM12 5.5a3 3 0 0 1 5.7-1.3A2.8 2.8 0 0 1 20 9.4a3 3 0 0 1-.4 4.8A2.9 2.9 0 0 1 17 19a3 3 0 0 1-5-1.2z"/></svg>
-      <span>Memory</span>
+      <span class="tablabel">Memory</span>
     </button>
   </nav>
 
@@ -95,13 +97,14 @@
 
   <div class="spacer"></div>
 
-  <!-- Morph's own controls, in the one header: inside the shell, on Home,
-       for somebody who may edit the dashboard. Edit (Done while editing)
-       and YAML while editing; each press goes to Morph through the shell
-       (`syncShellEdit`). Never shown outside the shell. -->
+  <!-- Morph's own controls while the dashboard is being edited: Done and
+       YAML, inside the shell, on the dashboard's tab; each press goes to
+       Morph through the shell (`syncShellEdit`). At rest there is nothing
+       here: Morph draws a quiet ✎ Edit on its own first line, under this
+       header (the owner: Edit "should be more subtle and under the
+       header"). Never shown outside the shell. -->
   <button id="shellYaml" class="btn shelledit" type="button" hidden>YAML</button>
-  <button id="shellEdit" class="btn shelledit" type="button" hidden>
-    <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg><span id="shellEditText">Edit</span></button>
+  <button id="shellEdit" class="btn shelledit editing" type="button" hidden><span id="shellEditText">Done</span></button>
 
   <!-- Every chip carries its own word at every width. A chip collapsed to a
        bare coloured dot is a state nobody can read: it says something is
@@ -133,6 +136,11 @@
        a hover: it opens the same disclosure as the chips, with the status
        sentence and whatever they would have said, each with its own
        press. Hidden above the phone band, where the chips say it. -->
+  <!-- The time, beside ⚙, inside the shell (`syncShellClock`): h:mm in
+       the house's 12- or 24-hour preference when Home Assistant has one.
+       It stays when the tabs slide away. -->
+  <time id="shellClock" class="shellclock" hidden></time>
+
   <button id="statusDot" class="btn icon statusdot" data-state="watching"
           aria-expanded="false" aria-label="brAIn status"><span class="sdot" aria-hidden="true"></span></button>
 
@@ -448,6 +456,13 @@
       <input id="reportSearch" class="reportsearch" type="search" autocomplete="off"
              spellcheck="false" placeholder="Search insights" aria-label="Search insights" hidden>
     </div>
+    <!-- What an insight card is, against the dashboard: a line that opens
+       on a press (a phone has no hover), filled by `renderAboutCards`. -->
+    <div class="aboutcards">
+      <button id="aboutCardsBtn" class="aboutline" type="button" aria-expanded="false"
+              aria-controls="aboutCards">How insight cards differ from the dashboard</button>
+      <p id="aboutCards" class="aboutbody" hidden></p>
+    </div>
     <div id="grid" class="grid"></div>
 
     <!-- Schedule: every recurring card's cadence, last run, next run and
@@ -460,27 +475,6 @@
       </details>
     </section>
 
-    <!-- Deep review: a report like the others, priced on its Run button
-         before it is pressed, and dated rather than labelled with a model
-         and a token count. -->
-    <section class="reportrow kreviewsec" aria-label="Deep review">
-      <h2>Deep review</h2>
-      <div id="kReview" class="kreview"></div>
-    </section>
-
-    <!-- Suggested: reports brAIn thinks this house is missing. An idea costs
-         nothing until it is saved, which is why it is a row of its own and
-         not a card that runs. With nothing suggested the row is one line —
-         its name and Run — rather than an empty state. -->
-    <section id="ideasRow" class="reportrow ideasrow" aria-label="Suggested">
-      <div class="reportrowhead">
-        <h2>Suggested</h2>
-        <button id="ideasRun" class="btn small" type="button">Run</button>
-      </div>
-      <p class="reportrowhint">brAIn suggests reports this house doesn't have yet.</p>
-      <div id="ideasNote" class="ideasnote" hidden></div>
-      <div id="ideasList" class="findlist"></div>
-    </section>
   </section>
 </div>
 
@@ -867,6 +861,35 @@
       <button id="kCleanup" class="btn small" type="button"
               data-tip="brAIn reads its memory and lists what looks wrong, useless or mistaken. Nothing is removed until you tick it.">Clean up</button>
     </header>
+    <!-- Two reports about the house as a whole, each one folded line —
+         name, when it last ran or how many it holds, and Run — opened by
+         its name. They were rows under the insight cards (the owner: "I
+         have no idea why deep review and suggested reports are on
+         insights… those seem more like memory items to me"). -->
+    <div class="kfolds">
+      <div class="kfold" id="kReviewFold">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="kReview">
+            <span class="kfoldtitle">Deep review</span><span id="kReviewMeta" class="kfoldmeta"></span></button>
+          <span id="kReviewRun" class="kfoldrun"></span>
+        </div>
+        <div id="kReview" class="kreview kfoldbody" hidden></div>
+      </div>
+      <!-- Suggested: reports brAIn thinks this house is missing. An idea
+           costs nothing until it is saved. -->
+      <div class="kfold" id="ideasRow">
+        <div class="kfoldhead">
+          <button type="button" class="kfoldname" aria-expanded="false" aria-controls="ideasBody">
+            <span class="kfoldtitle">Suggested reports</span><span id="ideasMeta" class="kfoldmeta"></span></button>
+          <span class="kfoldrun"><button id="ideasRun" class="btn small" type="button">Run</button></span>
+        </div>
+        <div id="ideasBody" class="kfoldbody" hidden>
+          <p class="reportrowhint">brAIn suggests reports this house doesn't have yet.</p>
+          <div id="ideasNote" class="ideasnote" hidden></div>
+          <div id="ideasList" class="findlist"></div>
+        </div>
+      </div>
+    </div>
     <!-- Clean up: what brAIn proposes to remove from its own memory, one
          tick per line, with the reason. Filled by renderCleanup. -->
     <div id="kCleanupBox" class="kclean" hidden></div>
@@ -978,13 +1001,13 @@
     <div id="setSearchResults" class="setresults" role="list" aria-label="Matching settings" hidden></div>
     <div class="setnavlist" role="tablist" aria-orientation="vertical">
       <button type="button" class="setnavbtn" data-sec="features" role="tab" aria-controls="setsecFeatures">
-        <span class="setnavname">Features</span><span class="setnavsum" id="setSumFeatures">What brAIn does, and what leaves this house</span></button>
+        <span class="setnavname">Features</span><span class="setnavsum" id="setSumFeatures">What brAIn does, and what leaves home</span></button>
       <button type="button" class="setnavbtn" data-sec="dashboard" role="tab" aria-controls="setsecDashboard" id="setNavDashboard" hidden>
-        <span class="setnavname">Dashboard</span><span class="setnavsum" id="setSumDashboard">The Morph dashboard on the Home tab</span></button>
+        <span class="setnavname">Dashboard</span><span class="setnavsum" id="setSumDashboard">The dashboard and its header tabs</span></button>
       <button type="button" class="setnavbtn" data-sec="account" role="tab" aria-controls="setsecAccount">
         <span class="setnavname">Account</span><span class="setnavsum" id="setSumAccount">Your Claude sign-in</span></button>
       <button type="button" class="setnavbtn" data-sec="usage" role="tab" aria-controls="setsecUsage">
-        <span class="setnavname">Model &amp; usage</span><span class="setnavsum" id="setSumUsage">Which Claude model, and how much it spends</span></button>
+        <span class="setnavname">Model &amp; usage</span><span class="setnavsum" id="setSumUsage">Claude model and how much it spends</span></button>
       <button type="button" class="setnavbtn" data-sec="permissions" role="tab" aria-controls="setsecPermissions">
         <span class="setnavname">Permissions</span><span class="setnavsum" id="setSumPermissions">Whether brAIn asks before it acts</span></button>
       <button type="button" class="setnavbtn" data-sec="notifications" role="tab" aria-controls="setsecNotify">
@@ -1000,7 +1023,7 @@
       <button type="button" class="setnavbtn" data-sec="diagnostics" role="tab" aria-controls="setsecDiagnostics">
         <span class="setnavname">Diagnostics</span><span class="setnavsum" id="setSumDiagnostics">Run all tests, and what is wrong</span></button>
       <button type="button" class="setnavbtn" data-sec="developer" role="tab" aria-controls="setsecDeveloper">
-        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, run capture, the development loop</span></button>
+        <span class="setnavname">Developer</span><span class="setnavsum" id="setSumDeveloper">Rehearsal, capture, development loop</span></button>
       <button type="button" class="setnavbtn" data-sec="guide" role="tab" aria-controls="setsecGuide">
         <span class="setnavname">Guide</span><span class="setnavsum" id="setSumGuide">How brAIn works</span></button>
     </div>
@@ -1025,7 +1048,7 @@
             <div class="setrow top">
               <label class="check bigcheck"><input id="featMorph" class="tog" type="checkbox" data-feature="morph">
                 <span><b>Morph dashboard</b>
-                <span class="subtext">The Home tab: a dashboard laid out by what matters in the
+                <span class="subtext">The Morph UI tab: a dashboard laid out by what matters in the
                   house right now, which brAIn designs and edits with you.</span></span></label>
             </div>
             <p class="hint setgroupnote featwarn">Experimental: Morph is still being actively
@@ -1135,7 +1158,6 @@
           <h2 class="setsecname">Model &amp; usage</h2>
         </header>
         <div class="setsecbody">
-          <h4 class="sethead first">Model</h4>
           <label for="setModel">Claude model</label>
           <select id="setModel" class="sel selin"></select>
           <input id="setModelCustom" class="hidden" type="text" maxlength="100"
@@ -1189,8 +1211,8 @@
               <input id="setBudget" type="range" min="5" max="105" step="5" value="25"
                      aria-describedby="setBudgetNote">
               <div class="budgetscale" aria-hidden="true"><span>5%</span><span>No limit</span></div>
-              <p class="hint tight" id="setBudgetNote">Automatic insights stop at 25% of the
-                session until it resets. Asking by hand always runs.</p>
+              <p class="hint tight" id="setBudgetNote">Past that they wait for the session to
+                reset.</p>
             </div>
           </div>
 
@@ -1265,16 +1287,18 @@
             own tools, not every shell command.</p>
           </div>
 
-          <h4 class="sethead">YOLO mode</h4>
+          <!-- One step past the switch above: acting without asking still
+               keeps protected entities, house rules and the action gate;
+               this switches those off too. Its key is still `yolo_mode`. -->
           <div class="setgroup">
           <div class="setrow top" id="setYoloRow">
             <label class="check bigcheck"><input id="setYolo" class="tog" type="checkbox">
-              <span><b>YOLO mode: no restrictions at all</b>
-              <span class="subtext">brAIn may do literally anything, everywhere, and never waits
-              for your approval.</span></span></label>
+              <span><b>No restrictions</b>
+              <span class="subtext">Goes further than acting without asking: protected
+              entities, house rules and the action gate stop applying too, and brAIn never
+              waits for your approval.</span></span></label>
           </div>
-          <p class="hint setgroupnote" id="setYoloCaveat">Off by default. Protected entities, house
-            rules, the action gate and every approval step stop applying while it is on.</p>
+          <p class="hint setgroupnote" id="setYoloCaveat">Off by default.</p>
           </div>
 
           <h4 class="sethead">House rules</h4>
@@ -1556,8 +1580,8 @@
         </header>
         <div class="setsecbody">
           <h4 class="sethead first">Rehearsal</h4>
-          <p class="hint tight">Plants a few broken <code>brain_test_*</code> things, scores the
-            checks against them, and removes them. It asks first.</p>
+          <p class="hint tight">Plants a few deliberately broken test automations, scores
+            brAIn's checks against them, and removes them. It asks first.</p>
           <div class="row">
             <button id="rehearseRun" class="btn" aria-label="Run a rehearsal">Run</button>
             <!-- Rendered only when the record says something is still in

@@ -423,6 +423,17 @@ function realPanel(opts) {
   const features = { morph: o.morph !== false, personality: true, name: 'Juniper', shell: true, learning_loop: true, development_loop: false };
   const extra = `<script>${panelStub(o.insights ? { insights: o.insights } : {})}
 (() => { const inner = window.fetch; window.fetch = async (url, opts) => {
+  // ⚙ › Dashboard's settings, kept the way Morph's service keeps them:
+  // the header tabs a measure sets come back on the next read.
+  const json = (b) => new Response(JSON.stringify(b), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const dash = () => ({ theme: 'auto', hold_ms: 540, learning_hours: 24, tell_model: '', learn_model: '', fold_rooms: true, reduce_motion: false, header_tabs: window.__tabs || {} });
+  if (String(url).includes('api/morph/state')) return json({ version: '1.0.0', settings: dash(), learning: {}, code: [], people: [] });
+  if (String(url).includes('api/morph/request')) {
+    const b = JSON.parse((opts && opts.body) || '{}');
+    if (b.kind === 'settings') { const p = (b.payload && b.payload.patch) || {}; if (p.header_tabs) window.__tabs = p.header_tabs; return json({ ok: true, settings: dash() }); }
+    if (b.kind === 'history') return json({ ok: true, log: [] });
+    return json({ ok: true });
+  }
   const r = await inner(url, opts);
   if (!String(url).includes('api/status')) return r;
   const body = await r.json();
