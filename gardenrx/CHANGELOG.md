@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+### Changed
+
+- **An update asks for a restart only when it needs one.** The add-on log says "restart Home Assistant" only when the integration's code changed, and the cards' address now follows the file, so a card change needs only a page reload. The first update with this change still asks once.
+
 ## 0.1.3
 
 ### Added

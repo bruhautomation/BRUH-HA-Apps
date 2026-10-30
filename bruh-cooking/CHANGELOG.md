@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+### Changed
+
+- **An update asks for a restart only when it needs one.** The add-on log says "restart Home Assistant" only when the integration's code changed, and a new panel bundle is picked up without a restart. The first update with this change still asks once.
+
 ## 0.1.0
 
 ### Added
