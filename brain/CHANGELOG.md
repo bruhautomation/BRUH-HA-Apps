@@ -2,6 +2,16 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.25
+
+### Changed
+
+- **Everything brAIn remembers is in one place.** ⚙ › Memory is gone: the memory document (view, edit, export) and the notes waiting to be filed into it are now at the top of Memory › Knowledge, beside the facts, so there is one place to look. Links that opened ⚙ › Memory open it there.
+
+### Added
+
+- **"What brAIn brings to a run".** Memory › Knowledge (and Ask's ⋯) shows, for a conversation, an insight card, a voice request, a first look, an investigation and the overnight check, what each is given at the start and with each message, with sizes, and what it can look up while it works, read live from the code that builds each run. It also says plainly how the facts are used: matched to each message in the chat, handed to cards and investigations, and searchable by any run with tools.
+
 ## 4.0.24
 
 ### Changed
