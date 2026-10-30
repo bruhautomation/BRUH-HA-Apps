@@ -28407,7 +28407,7 @@ def make_app() -> web.Application:
             task.cancel()
             try:
                 await task
-            except BaseException:  # noqa: BLE001 — cancelled on the way out
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 — cancelled on the way out
                 pass
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
