@@ -488,7 +488,7 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
             tabInk: tabs.length ? ratio(getComputedStyle(tabs.find((t) => !t.classList.contains('active')) || tabs[0]).color, ground(bar)) : 0,
             bodyInk: ratio(getComputedStyle(document.body).color, getComputedStyle(document.documentElement).getPropertyValue('--plane').trim() ? ground(document.querySelector('main') || document.body) : 'rgb(255,255,255)'),
             sideways: document.documentElement.scrollWidth > window.innerWidth + 1,
-            cut, small, ver,
+            cut, small, ver, wide: window.innerWidth >= 1100,
           };
         }, BRAIN_VERSION);
         const mo = await p.evaluate(() => {
@@ -517,7 +517,9 @@ const frame = (p) => p.frames().find((f) => f.url().includes('/api/hassio_ingres
         // The name is the header's; the version moved to ⚙ (the owner: the
         // header should be "subtle"), so it is in Settings and not here.
         if (!/Juniper/.test(fr.brand)) fail(here, `the header does not say the name ("${fr.brand}")`);
-        if (fr.verInBar) fail(here, 'the version is still in the header');
+        // The owner, later: on a wide screen the header carries the version
+        // (a link to What's new); a phone's still does not.
+        if (fr.verInBar !== fr.wide) fail(here, fr.wide ? 'the wide header has no version' : 'the version is in a narrow header');
         if (view === 'Settings' && !fr.verInSettings) fail(here, `⚙ does not show the version ${fr.ver}`);
         // Nothing to act on, no status (#539); a signed-out house is
         // measured below.
