@@ -769,7 +769,8 @@ Answer with ONE JSON object and nothing else. What it means:
 - "stakes" — how much it matters if you are right: "low", "medium", "high".
 - "fix" — ONE action, in one sentence, specific to this house: the
   entity, the integration, the automation, the setting. Never a category,
-  never generic advice restated and never a list of things to try. If you
+  never generic advice restated and never a list of things to try.
+  """ + prompt_kit.ONE_STEP + """ If you
   concluded it is normal here or nothing is needed, say that nothing is
   needed and why. Never tell the person to press a button on the card
   (Ignore, Snooze) — those are always there. Never tell the
@@ -899,6 +900,7 @@ rewrite it or dismiss it, and you never file beside it.
   wording, so write them for this house, not for the rule that filed it —
   the device by its friendly name, the hub or integration it reports
   through, the time in local time, and the one thing to do.
+  """ + prompt_kit.ONE_STEP + """
 
 A GOOD DISMISSAL — the row said "Hall motion sensor has been unavailable":
   "claim": "", "dismiss": true,
@@ -1134,9 +1136,9 @@ def parse_case(obj, *, read_entities=None) -> dict | None:
         "confidence": confidence,
         "stakes": stakes,
         "severity": SEVERITY_BY_STAKES[stakes],
-        "fix": _no_placeholder(obj.get("fix")),
+        "fix": _one_step(obj.get("fix")),
         "fix_by": "resident",
-        "todo_text": _no_placeholder(obj.get("todo_text")),
+        "todo_text": _one_step(obj.get("todo_text")),
         "evidence": evidence,
         "actions": actions,
         "memory_hint": str(obj.get("memory_hint") or "").strip(),
@@ -1255,6 +1257,13 @@ def _no_placeholder(value) -> str:
     (#446) — the row then keeps the sentence it had."""
     text = str(value or "").strip()
     return "" if house_words.placeholder(text) else text
+
+
+def _one_step(value) -> str:
+    """A reply's step, or "" when it holds a placeholder or hands the
+    choice back to the person ("either … or", "also confirm", #536)."""
+    text = _no_placeholder(value)
+    return "" if house_words.fork(text) else text
 
 
 def parse_dismissal(obj) -> str | None:

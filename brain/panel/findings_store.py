@@ -594,11 +594,18 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             if key in PLACEHOLDER_REFUSED and house_words.placeholder(
                     out[key]):
                 out[key] = ""
+            # So is a step that hands the choice back ("either … or",
+            # "also confirm …", "if asked", #536): the account in `detail`
+            # may weigh two causes, the step a person carries out may not.
+            if key in FORK_REFUSED and house_words.fork(out[key]):
+                out[key] = ""
     return out
 
 
 # The fields a placeholder is refused in.
 PLACEHOLDER_REFUSED = ("detail", "fix", "todo_text")
+# The fields an unresolved fork is refused in: the steps.
+FORK_REFUSED = ("fix", "todo_text")
 
 
 def _queue_now(now: float) -> int | None:
@@ -3878,7 +3885,8 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
     # in the house's words.
     fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
-    if not fix or by not in FIX_AUTHORS or house_words.placeholder(fix):
+    if (not fix or by not in FIX_AUTHORS or house_words.placeholder(fix)
+            or house_words.fork(fix)):
         return None
     items = _load()
     for entry in items:

@@ -88,6 +88,19 @@ DEVICE_WORDS = (
     "picture stopped; restart the camera\", not \"the RTSP stream ended "
     "with I/O errors\".")
 
+# A what-to-do hands the household one step brAIn has already chosen, never
+# a fork it could have settled (#536). Held by tests/test_finding_one_step.py
+# in the investigation, the refine and the card contract, and by the floor
+# `house_words.fork` where a model-written row is stored.
+ONE_STEP = (
+    "A step is ONE step, already chosen. Never \"either … or …\" with a "
+    "step for each, never \"if not, …\", never \"also confirm\" or "
+    "\"check whether\" something brAIn can read, and never \"if asked\" or "
+    "\"if needed\": read what settles it (the history, the setting, the "
+    "configuration) and write the one step that follows. If nothing brAIn "
+    "can read settles it, the step is the one question only the household "
+    "can answer, asked once.")
+
 HONEST_EMPTY = (
     "Nothing, or \"unknown\", is a good answer when that is what the data "
     "says. A guess dressed as a finding is the worst answer, because it goes "

@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import re
 
+import prompt_kit
+
 # ---------------------------------------------------------------------------
 # Categories
 # ---------------------------------------------------------------------------
@@ -494,7 +496,7 @@ highlights: 3-6 specific, checkable data points, each with its unit, the entity/
 tags: what the card is ABOUT, not the category it was asked for.
 hypotheses: usually ZERO. A belief the data cannot settle that would change how you read this home, answerable yes or no; never one memory answers.
 learned: durable NEW discoveries about this home, one plain fact each, no advice, nothing broken, never a KNOWN FACT or the snapshot.
-findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on; "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is the usual, honest answer. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
+findings: things that are BROKEN and have an owner. It names the entity, the number and when it started; "fix" is concrete enough to act on and is ONE step (below); "fixable" is true ONLY when software could make the change (a config, a rename, a service call — never batteries or re-pairing). severity: critical = safety or data loss; serious = not working; warning = degraded or will break soon; info = worth tidying. A conclusion of fine files none; an empty list is the usual, honest answer. Never repeat a finding the prompt lists as reported or dismissed; an open one about a device this card covers is the verdict on it: point to it in one clause, never call that device fine.
 opportunities: usually none. An automation this home clearly lacks, as the one sentence the homeowner would say to ask for it, with the entity_ids it names. Never something broken (a finding).
 live: max 12 entity_ids to keep current, ONLY when watching them change is the story. Register `window.brainLive(callback)` once: it hands you {entity_id: {state, attributes, unit, name}} now and on every refresh. Draw the snapshot values first so the page works with no live data; never poll or fetch.
 
@@ -526,7 +528,8 @@ ANALYSIS RULES:
 - OPEN QUESTIONS are unconfirmed, but name one as the possible cause when it could explain what the card shows.
 - Never cite brAIn's own numbering ("signal 7", "finding #3"); name the device and time.
 - The title names the device, door or room measured ("Back door: evening openings 14 → 5", never "14 openings to 5"); a title number the summary uses keeps the same meaning, and is in a tile or the summary with the same value and unit.
-- Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened."""
+- Never raise again what the household turned down (listed with the findings) — as a finding, an opportunity or in the summary — unless something new happened.
+- A finding's "fix": """ + prompt_kit.ONE_STEP
 
 
 SYSTEM_PROMPT = """You are brAIn, the AI analyst inside a Home Assistant add-on. You receive a JSON snapshot of the user's smart home and produce ONE insight card: a handful of sharp, specific data points plus one compact self-contained visualization.

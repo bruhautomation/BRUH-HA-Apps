@@ -181,6 +181,29 @@ def placeholder(text: str) -> str:
     return m.group(0) if m else ""
 
 
+# A step that hands the household a choice or a lookup brAIn could have
+# settled itself (#536): "either … or …", "if not, …", "also confirm …",
+# "check whether …", "if asked" / "if needed". A what-to-do is ONE step,
+# already chosen from what brAIn read. Only an unresolved fork: "either way"
+# has settled it, and "check the gutter for leaves" is a step in the world.
+_FORK_RE = re.compile(
+    r"\beither\b(?!\s+way\b)[^.;:!?]{2,}?\bor\b"
+    r"|\bif\s+(?:not|so|it\s+(?:does|is|did|was)n'?t|that\s+"
+    r"(?:does|did)n'?t(?:\s+work)?|that\s+fails)\s*,"
+    r"|\balso\s+(?:confirm|check|verify|make\s+sure|ensure|see)\b"
+    r"|\b(?:confirm|check|verify|see)\s+(?:whether|if)\b"
+    r"|\bif\s+(?:asked|requested|needed|necessary|required|you\s+"
+    r"(?:want|prefer|like|wish))\b"
+    r"|\bwhichever\b", re.I)
+
+
+def fork(text: str) -> str:
+    """The first unresolved fork ``text`` hands a person, or "" — a step
+    that leaves the choice to somebody is not a step they can carry out."""
+    m = _FORK_RE.search(str(text or ""))
+    return m.group(0) if m else ""
+
+
 # An IPv4 address, optionally with a port, not inside a longer run of dots
 # and digits (a version number like 2026.10.1 is three parts and never
 # matches; four parts each 0-255 is an address).
