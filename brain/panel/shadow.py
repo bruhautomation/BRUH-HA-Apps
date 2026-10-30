@@ -398,6 +398,136 @@ def _condition_entities(cond: dict) -> set[str]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# What an automation is waiting for, now
+# ---------------------------------------------------------------------------
+#
+# "The dehumidifier is idle" is only news when the rule that starts it says
+# it should be running. A rule started by a sensor crossing a threshold —
+# `numeric_state` above or below — is waiting while that sensor sits on the
+# wrong side of it, and a numeric condition that does not hold keeps it off
+# whatever triggers it. These read the bounds off the config; the value is
+# the caller's (`value_of(entity) -> float | None`), so a bound nobody could
+# read is unknown, and unknown never says "waiting".
+
+# The verbs that START a device, as opposed to stopping or adjusting one.
+START_VERBS = frozenset({
+    "turn_on", "toggle", "start", "set_hvac_mode", "set_humidity",
+    "set_temperature", "set_mode", "set_preset_mode", "set_percentage"})
+
+
+def starts(config: dict, entity_id: str) -> bool:
+    """Whether this automation turns `entity_id` on (or sets it running)."""
+    for call in would_do(config):
+        verb = str(call.get("service") or "").split(".", 1)[-1]
+        if verb in START_VERBS and entity_id in (call.get("entity_id") or ()):
+            return True
+    return False
+
+
+def _bounds(block: dict) -> list[dict] | None:
+    """One `{entity, above, below}` per entity a numeric block reads, or
+    None when it reads an attribute or a template this cannot evaluate."""
+    if block.get("attribute") or block.get("value_template"):
+        return None
+    above, below = block.get("above"), block.get("below")
+    if above in (None, "") and below in (None, ""):
+        return None
+    raw = block.get("entity_id")
+    ids = [raw] if isinstance(raw, str) else list(raw or [])
+    ids = [str(e) for e in ids if isinstance(e, str) and "." in e]
+    if not ids:
+        return None
+    return [{"entity": e, "above": above, "below": below} for e in ids]
+
+
+def bounds_of(config: dict) -> tuple[list[dict] | None, list[dict]]:
+    """``(trigger_bounds, condition_bounds)``.
+
+    The first is None unless EVERY trigger is a plain numeric threshold —
+    a rule a time, a state or an event can also start is not one a
+    reading alone can say is waiting. The second is the top-level numeric
+    conditions (an AND), each of which has to hold for the rule to act.
+    """
+    trig: list[dict] | None = []
+    triggers = triggers_of(config)
+    if not triggers:
+        trig = None
+    for block in triggers:
+        found = _bounds(block) if kind_of(block) == "numeric_state" else None
+        if found is None:
+            trig = None
+            break
+        trig += found
+    cond: list[dict] = []
+    for block in _conditions_of(config):
+        if str(block.get("condition") or "").lower() == "numeric_state":
+            cond += _bounds(block) or []
+    return trig, cond
+
+
+def _limit(spec, value_of) -> float | None:
+    if isinstance(spec, str) and "." in spec and _num(spec) is None:
+        return value_of(spec)              # an input_number, read now
+    return _num(spec)
+
+
+def bound_met(bound: dict, value: float | None, value_of) -> bool | None:
+    """True/False for a reading against a bound, None when not knowable."""
+    if value is None:
+        return None
+    above, below = bound.get("above"), bound.get("below")
+    lo = _limit(above, value_of) if above not in (None, "") else None
+    hi = _limit(below, value_of) if below not in (None, "") else None
+    if (above not in (None, "") and lo is None) or (
+            below not in (None, "") and hi is None):
+        return None
+    return not ((lo is not None and not value > lo)
+                or (hi is not None and not value < hi))
+
+
+def waiting(trigger_bounds, condition_bounds, value_of,
+            seen=None) -> list[dict]:
+    """The bounds keeping one starting rule from acting now, or [] when it
+    may act — or when that is not knowable.
+
+    A numeric condition that reads on the wrong side holds it whatever
+    fires; numeric triggers all on the wrong side mean nothing has fired.
+    ``seen`` is `{entity: [values]}` somebody else read (an investigation's
+    evidence): a value past the bound there outranks the reading now.
+    """
+    seen = seen or {}
+
+    def state(bound: dict) -> bool | None:
+        if any(bound_met(bound, v, value_of) for v in seen.get(
+                bound["entity"], ())):
+            return True
+        return bound_met(bound, value_of(bound["entity"]), value_of)
+
+    unmet = [b for b in condition_bounds or () if state(b) is False]
+    if unmet:
+        return unmet
+    if trigger_bounds and all(state(b) is False for b in trigger_bounds):
+        return list(trigger_bounds)
+    return []
+
+
+def not_due(automations, entity_id: str, value_of) -> list[tuple[str, list]]:
+    """``[(alias, bounds)]`` when EVERY automation that starts `entity_id`
+    is waiting on a reading now, else [] (nothing starts it, or one may)."""
+    out = []
+    for cfg in automations or ():
+        if not isinstance(cfg, dict) or not starts(cfg, entity_id):
+            continue
+        trig, cond = bounds_of(cfg)
+        bounds = waiting(trig, cond, value_of)
+        if not bounds:
+            return []
+        out.append((str(cfg.get("alias") or cfg.get("id") or "an automation"),
+                    bounds))
+    return out
+
+
 async def fetch_history(session, entity_ids: list[str], start: float,
                         end: float) -> dict:
     """Raw state changes for a replay. NOT `ha_data.get_history`.

@@ -126,6 +126,7 @@ import hashlib
 import base64
 import json
 import logging
+import math
 import os
 import platform
 import re
@@ -5373,6 +5374,9 @@ def _on_bus_event(event_type: str, data: dict) -> None:
     failure in the second half is caught here rather than by the bus.
     """
     _note_safety(event_type, data)
+    if event_type == "state_changed" and isinstance(data, dict):
+        _note_live_reading(str(data.get("entity_id") or ""),
+                           data.get("new_state"))
     # A Dismiss press is an answer now (it clears the card), and arrives
     # through the request drain like every other button, so only a swipe
     # is recorded here.
@@ -6301,6 +6305,14 @@ async def _generate(insight_id: str) -> None:
                                           [f.get("entity_id")]):
                 log.info("%s: dropping a finding the household turned "
                          "down: %s", insight_id, f.get("text"))
+                continue
+            # "It is idle" about a machine an automation starts on a
+            # threshold its sensor is not past: the rule working (#558).
+            waits = resident.not_due(f, _DRIVEN_BY, _live_reading,
+                                     _DRIVEN_ALIASES)
+            if waits:
+                log.info("%s: dropping a finding about a machine that is "
+                         "not due to run: %s", insight_id, waits)
                 continue
             kept_findings.append(f)
         model_findings = kept_findings
@@ -13061,6 +13073,9 @@ def _note_registry(snapshot: dict) -> None:
                                      House(snapshot))
         _DRIVEN_BY.clear()
         _DRIVEN_BY.update(driven)
+        _note_live_readings(snapshot, driven)
+        _OPERATED.clear()
+        _OPERATED.update(house_book.operated_by(snapshot.get("automations")))
     except Exception as exc:  # noqa: BLE001
         log.debug("driven-by note failed: %s", exc)
     _note_world(snapshot)
@@ -13150,6 +13165,76 @@ CONTROLLED_BY_PER_ENTITY = 4
 # `{actuator: [{alias, reads}]}`. Empty until the first checks pass, which
 # gates nothing — "I could not look" must not refuse a case.
 _DRIVEN_BY: dict[str, list[dict]] = {}
+# The other entities on a driven device (its plug's power sensor) mapped to
+# the device the automation switches (`resident.device_aliases`).
+_DRIVEN_ALIASES: dict[str, str] = {}
+# The readings those automations start on — their numeric triggers' and
+# conditions' sensors and any helper holding a threshold — as numbers,
+# seeded by each checks pass and kept current by the bus
+# (`_note_live_reading`), so "is that sensor past its threshold NOW" is
+# answered without a fetch. A sensor nobody has read is absent, and absent
+# never holds a claim (`resident.not_due`).
+_LIVE_READINGS: dict[str, float | None] = {}
+# What each automation's actions do to an entity (`house_book.operated_by`),
+# for a question to the owner an automation already answers (#561).
+_OPERATED: dict[str, list[dict]] = {}
+
+
+def _registry_answers(case: dict, subject: str = "") -> str:
+    """What already answers a question an investigation would ask the
+    owner — the entity's room, or the automation that does what it asks
+    how to do — or "" (`house_book.registry_answers`, over the maps the
+    last checks pass left)."""
+    if str(case.get("kind") or "") != "question":
+        return ""
+    about = str(case.get("entity_id") or subject or "")
+    dig = {"placed": [e for e, v in _NAMES.items() if v.get("area")],
+           "names": {e: [v["name"]] for e, v in _NAMES.items()
+                     if v.get("name")},
+           "operated": _OPERATED}
+    for said in (case.get("claim"), case.get("text")):
+        why = house_book.registry_answers(str(said or ""), about, dig)
+        if why:
+            return why
+    return ""
+
+
+def _as_number(state) -> float | None:
+    try:
+        value = float((state or {}).get("state"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _note_live_readings(snapshot: dict, driven: dict) -> None:
+    house = House(snapshot)
+    _DRIVEN_ALIASES.clear()
+    _DRIVEN_ALIASES.update(resident.device_aliases(driven, house))
+    watched: set[str] = set()
+    for rules in driven.values():
+        for rule in rules:
+            for bound in ((rule.get("trigger_bounds") or [])
+                          + (rule.get("condition_bounds") or [])):
+                watched.add(bound["entity"])
+                for key in ("above", "below"):
+                    if isinstance(bound.get(key), str) and "." in bound[key]:
+                        watched.add(bound[key])
+    _LIVE_READINGS.clear()
+    _LIVE_READINGS.update({e: _as_number(house.states.get(e))
+                           for e in sorted(watched)})
+
+
+def _note_live_reading(entity: str, new_state) -> None:
+    """The bus's half: keep a watched reading current."""
+    if entity in _LIVE_READINGS:
+        _LIVE_READINGS[entity] = _as_number(new_state)
+
+
+def _live_reading(entity: str) -> float | None:
+    return _LIVE_READINGS.get(entity)
+
+
 # The keys of a trigger that say WHEN it fires, beside the entity it reads.
 _TRIGGER_TERMS = ("above", "below", "to", "from", "for", "at")
 
@@ -13203,13 +13288,27 @@ def _controlled_by_map(snapshot: dict) -> dict[str, list[str]]:
 
 
 def _controlled_by_rows(entities) -> list[str]:
-    """One line per automation that switches one of these entities."""
+    """One line per automation that switches one of these entities — or
+    the device one of them sits on — and what its sensors read now."""
     rows: list[str] = []
+    wanted: list[str] = []
     for eid in entities or ():
-        name = (_NAMES.get(str(eid)) or {}).get("name") or ""
-        label = f"{eid} ({name})" if name and name != eid else str(eid)
-        for how in _CONTROLLED_BY.get(str(eid)) or []:
+        for one in (str(eid), _DRIVEN_ALIASES.get(str(eid), "")):
+            if one and one not in wanted:
+                wanted.append(one)
+    for eid in wanted:
+        name = (_NAMES.get(eid) or {}).get("name") or ""
+        label = f"{eid} ({name})" if name and name != eid else eid
+        for how in _CONTROLLED_BY.get(eid) or []:
             rows.append(f"{label}: {how}")
+        now = sorted({b["entity"] for r in _DRIVEN_BY.get(eid) or ()
+                      if r.get("starts")
+                      for b in ((r.get("trigger_bounds") or [])
+                                + (r.get("condition_bounds") or []))
+                      if _LIVE_READINGS.get(b["entity"]) is not None})
+        if now:
+            rows.append(f"{label}: what starts it reads now — " + ", ".join(
+                f"{e} {_LIVE_READINGS[e]:g}" for e in now[:4]))
     return rows
 
 
@@ -14257,6 +14356,26 @@ async def _resident_investigate(signal: dict, now: float, thinking: str,
             "text": str(case.get("claim") or "")}], now)
         await _outcome(signal, "refused", run_id, now, why, refines,
                        said=ungrounded)
+        return False
+    # "It is idle" about a machine whose every starting automation waits on
+    # a reading that is not past its threshold now is the rule working
+    # (#558); "where is it?" or "how is it disarmed?" put to the owner while
+    # the registry or an automation already says is brAIn's own homework
+    # (#561). Nothing is filed, and the trail says what answered it.
+    waits = (resident.not_due(case, _DRIVEN_BY, _live_reading, _DRIVEN_ALIASES)
+             or _registry_answers(case, str(signal.get("subject") or "")))
+    if waits:
+        RESIDENT_STATE["refused"] = RESIDENT_STATE.get("refused", 0) + 1
+        log.info("an investigation of %s claimed what the house already "
+                 "answers; refused: %s",
+                 signal.get("subject"), waits)
+        await asyncio.to_thread(decision_trail.note_many, [{
+            "kind": "explained",
+            "subject": str(signal.get("subject") or ""),
+            "check": "resident", "reason": waits,
+            "text": str(case.get("claim") or "")}], now)
+        await _outcome(signal, "refused", run_id, now, why, refines,
+                       said=waits)
         return False
     # The signal that started it, folded in — because "what made brAIn look"
     # is evidence about the claim and the run has no way to cite it: it was

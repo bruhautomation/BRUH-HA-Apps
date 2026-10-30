@@ -307,18 +307,44 @@ def digest(snap: dict) -> dict:
                          "area": house.area_of(eid),
                          "class": str(attrs.get("device_class") or "")})
         index[f"entity:{eid}"] = house.name(eid)
-    # What the registry already answers, for `parse` to refuse a question
-    # about and never for the prompt: every entity with a room by its own
-    # area id or its device's (the id, not the name — an area the list
-    # could not name is still a room), and every entity an automation
-    # operates, whose "how do you…?" the automation already answers.
+    # What the registry already answers, for `registry_answers` and never
+    # for the prompt: every entity with a room by its own area id or its
+    # device's (the id, not the name — an area the list could not name is
+    # still a room); every entity an automation's ACTIONS operate, with
+    # the service and the automation, whose "how is it done?" that
+    # automation answers; and the names a question can call them by.
     placed = sorted(e for e in set(house.states) | set(house.registry)
                     if (house.registry.get(e) or {}).get("area_id")
                     or (house.device_of(e) or {}).get("area_id"))
-    automated = sorted(house.entity_refs([snap.get("automations")]))
+    operated = operated_by(snap.get("automations"))
+    names: dict[str, list[str]] = {}
+    for eid in set(placed) | set(operated):
+        device = house.device_of(eid)
+        names[eid] = [n for n in (house.name(eid),
+                                  house.device_name(device) if device else "")
+                      if n]
     return {"automations": autos, "scripts": scripts, "scenes": scenes,
             "facts": facts, "areas": areas, "entities": entities,
-            "index": index, "placed": placed, "automated": automated}
+            "index": index, "placed": placed, "operated": operated,
+            "names": names}
+
+
+def operated_by(automations) -> dict[str, list[dict]]:
+    """``{entity: [{"service", "alias"}]}`` — what each automation that has
+    a trigger does to the entities its actions name."""
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+    out: dict[str, list[dict]] = {}
+    for cfg in automations or ():
+        if not isinstance(cfg, dict) or not shadow.triggers_of(cfg):
+            continue
+        alias = str(cfg.get("alias") or cfg.get("id") or "an automation")[:80]
+        for call in shadow.would_do(cfg):
+            verb = str(call.get("service") or "").split(".", 1)[-1]
+            for eid in call.get("entity_id") or ():
+                row = {"service": verb, "alias": alias}
+                if row not in out.setdefault(str(eid), []):
+                    out[str(eid)].append(row)
+    return out
 
 
 # Person-facing — the book is read by a partner or a house-sitter, and it
@@ -359,7 +385,9 @@ SYSTEM = prompt_kit.assemble(
 - Then ask up to 3 QUESTIONS about things a reader needs and no source can
   tell you — above all, where a physical shutoff or device is — each
   about one subject you were given. Never ask where something is when it
-  is given with an "area": that is where it is.
+  is given with an "area": that is where it is. Never ask how something
+  is done (armed, disarmed, unlocked, opened) when an automation does it:
+  write what triggers it in the book, citing that automation.
 - A question's "why" stands on its own: say what a reader would need the
   answer for (a house-sitter when the alarm sounds, a leak at night).
   Never refer to notes, facts or sources by name ("the notes say…"): the
@@ -483,10 +511,108 @@ _ASKS_WHERE = re.compile(
     r"\bwhere\b|\b(?:which|what)\s+(?:room|area|floor|part\s+of\s+the\s+house)\b"
     r"|\blocat(?:ed|ion)\b|\bin\s+which\b", re.I)
 # A question asking how to OPERATE something. About an entity an automation
-# already operates, the automation is the answer and the book says so.
+# already operates, the automation is the answer and the book says so. "How
+# is it disarmed?" is the same question in the passive, and is read as one
+# only with an operation in it ("how is it powered?" is not).
 _ASKS_HOW = re.compile(
     r"^\s*how\s+(?:do|does|can|could|should|would|to)\b", re.I)
+_ASKS_HOW_PASSIVE = re.compile(r"^\s*how\s+(?:is|are|was|were|gets?)\b", re.I)
+# The operation a how-question asks about, as the services that do it.
+_OPERATIONS = (
+    (re.compile(r"\bdisarm(?:ed|s|ing)?\b", re.I), ("alarm_disarm",)),
+    (re.compile(r"\barm(?:ed|s|ing)?\b", re.I), ("alarm_arm",)),
+    (re.compile(r"\bunlock(?:ed|s|ing)?\b", re.I), ("unlock", "open")),
+    (re.compile(r"\block(?:ed|s|ing)?\b", re.I), ("lock",)),
+    (re.compile(r"\bopen(?:ed|s|ing)?\b", re.I), ("open", "unlock")),
+    (re.compile(r"\bclos(?:e|ed|es|ing)\b", re.I), ("close",)),
+    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+on\b|\bstart(?:ed|s)?\b",
+                re.I), ("turn_on", "toggle", "start")),
+    (re.compile(r"\b(?:turn|switch)(?:ed|s|ing)?\s+off\b|\bstop(?:ped|s)?\b",
+                re.I), ("turn_off", "toggle", "stop")),
+)
+# What a where-question asks about: the words after "where is", or between
+# "which room is" and "in".
+_WHERE_OBJECT = re.compile(
+    r"\bwhere\s+(?:is|are)\s+(?P<a>[^?.,;:]+)"
+    r"|\b(?:which|what)\s+(?:room|area)\s+(?:is|are)\s+(?P<b>[^?.,;:]+?)\s+in\b",
+    re.I)
+# Words a question puts after a thing's name that do not make it another
+# thing: "the landing motion SENSOR", "the hall PIR MOUNTED".
+_THING_WORDS = frozenset({
+    "sensor", "sensors", "detector", "device", "unit", "plug", "switch",
+    "button", "remote", "panel", "controller", "mounted", "located",
+    "installed", "placed", "fitted", "kept", "physically", "now", "exactly"})
+_ARTICLES = frozenset({"the", "your", "a", "an", "our", "this", "that"})
 
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", str(text or "").lower())
+
+
+def _is_the_thing(phrase: str, name: str) -> bool:
+    """Whether a question's object IS this name, give or take the words a
+    question puts around a thing ("the", "sensor", "mounted")."""
+    said = [w for w in _words(phrase)]
+    while said and said[0] in _ARTICLES:
+        said.pop(0)
+    named = _words(name)
+    if not named or said[:len(named)] != named:
+        return False
+    return all(w in _THING_WORDS for w in said[len(named):])
+
+
+def _named_in(text: str, dig: dict, wanted) -> list[str]:
+    """The entities in `wanted` a question names, by id or by any name."""
+    low = " " + " ".join(_words(text)) + " "
+    out = []
+    for eid in wanted:
+        names = (dig.get("names") or {}).get(eid) or []
+        if eid.lower() in text.lower() or any(
+                f" {' '.join(_words(n))} " in low for n in names if _words(n)):
+            out.append(eid)
+    return out
+
+
+def registry_answers(text: str, about: str, dig: dict) -> str:
+    """What already answers a question to the homeowner, or "".
+
+    ``about`` is the entity its subject is (or ""). A where-question about
+    an entity that has a room — its subject, or the thing it asks about
+    named in its words — is answered by the registry. A how-question about
+    operating an entity (its subject, or one it names) that an automation
+    operates that way is answered by the automation.
+    """
+    text = str(text or "")
+    placed = set(dig.get("placed") or ())
+    placed |= {str(e.get("id")) for e in dig.get("entities") or []
+               if isinstance(e, dict) and e.get("area")}
+    names = dig.get("names") or {}
+    if _ASKS_WHERE.search(text):
+        if about and about in placed:
+            return f"{about} has a room in the registry"
+        for m in _WHERE_OBJECT.finditer(text):
+            phrase = m.group("a") or m.group("b") or ""
+            for eid in sorted(placed & set(names)):
+                if eid.lower() in phrase.lower() or any(
+                        _is_the_thing(phrase, n) for n in names[eid]):
+                    return f"{eid} has a room in the registry"
+    active = bool(_ASKS_HOW.search(text))
+    if not (active or _ASKS_HOW_PASSIVE.search(text)):
+        return ""
+    operated = dig.get("operated") or {}
+    asked = [svc for rx, svcs in _OPERATIONS if rx.search(text)
+             for svc in svcs]
+    if not asked and not active:
+        return ""
+    candidates = [about] if about in operated else []
+    if asked:
+        candidates += [e for e in _named_in(text, dig, sorted(operated))
+                       if e not in candidates]
+    for eid in candidates:
+        for row in operated[eid]:
+            if not asked or any(row["service"].startswith(a) for a in asked):
+                return f"“{row['alias']}” does it ({row['service']} on {eid})"
+    return ""
 
 def _about_entity(key: str, dig: dict) -> str:
     """The entity a question's subject is about: an entity subject's id, or
@@ -558,10 +684,6 @@ def parse(answer: dict | None, dig: dict, request: str = "",
     sections = [{"key": k, "title": SECTIONS[k], "entries": out_sections[k]}
                 for k in SECTIONS if out_sections.get(k)]
     questions = []
-    placed = {f"entity:{e.get('id')}" for e in dig.get("entities") or []
-              if isinstance(e, dict) and e.get("area")}
-    placed |= {f"entity:{e}" for e in dig.get("placed") or ()}
-    automated = {f"entity:{e}" for e in dig.get("automated") or ()}
     q_in = (answer or {}).get("questions") if isinstance(answer, dict) else None
     for q in q_in if isinstance(q_in, list) and not request else []:
         if len(questions) >= MAX_QUESTIONS_PER_RUN or not isinstance(q, dict):
@@ -572,15 +694,11 @@ def parse(answer: dict | None, dig: dict, request: str = "",
         text = redact_text(re.sub(r"\s+", " ", str(q.get("question") or "")).strip())
         if not key or key not in index or not text:
             continue
-        # "Where is it?" about something the registry already places —
-        # through its own area or its device's — asks the homeowner for
-        # what brAIn was handed. Any other question about it may stand.
-        about = f"entity:{_about_entity(key, dig)}"
-        if about in placed and _ASKS_WHERE.search(text):
-            continue
-        # "How do you arm the alarm?" about an alarm an automation arms:
-        # the automation is the answer, and the book cites it.
-        if about in automated and _ASKS_HOW.search(text):
+        # "Where is it?" about something the registry already places, and
+        # "how is the alarm disarmed?" about an alarm an automation
+        # disarms, ask the homeowner for what brAIn was handed: the
+        # registry and the automation are the answer (#561).
+        if registry_answers(text, _about_entity(key, dig), dig):
             continue
         questions.append({"question": textclip.clip(text, MAX_QUESTION),
                           "why": textclip.clip(redact_text(str(q.get("why") or "")), 300),
