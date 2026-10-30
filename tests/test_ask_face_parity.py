@@ -262,8 +262,8 @@ class TestBothFacesAreLaunchedAlike(_Faces):
         faces = self._faces(True, "")
         chat, terminal = (self._launch(faces[f]) for f in ("chat", "terminal"))
         self.assertTrue(chat["bypass"])
-        self.assertTrue(set(self.engine.PLATFORM_DENIED)
-                        <= set(chat["denied_in_bypass"]))
+        self.assertLessEqual(set(self.engine.PLATFORM_DENIED),
+                             set(chat["denied_in_bypass"]))
         for field in chat:
             self.assertEqual(terminal[field], chat[field], field)
 
