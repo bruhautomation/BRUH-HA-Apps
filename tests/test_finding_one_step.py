@@ -18,8 +18,8 @@ exactly as a placeholder is refused. Every example is invented.
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 PANEL_DIR = BASE_DIR / "brain" / "panel"
@@ -68,8 +68,8 @@ class TestTheFloor(unittest.TestCase):
                "detail": "Either the battery is flat or the hub dropped it; "
                          "its battery read 3% on Tuesday.",
                "fix": FORKS[1], "todo_text": FORKS[2]}
-        with mock.patch.object(findings_store, "_names_now", return_value={}), \
-                mock.patch.object(findings_store, "_tz_now", return_value=None):
+        with unittest.mock.patch.object(findings_store, "_names_now", return_value={}), \
+                unittest.mock.patch.object(findings_store, "_tz_now", return_value=None):
             out = findings_store._plain_row(row)
         self.assertEqual(out["fix"], "")
         self.assertEqual(out["todo_text"], "")
@@ -81,8 +81,8 @@ class TestTheFloor(unittest.TestCase):
         row = {"source": findings_store.RESIDENT_SOURCE,
                "claim": "The shed sensor stopped reporting",
                "fix": ONE_STEP[0]}
-        with mock.patch.object(findings_store, "_names_now", return_value={}), \
-                mock.patch.object(findings_store, "_tz_now", return_value=None):
+        with unittest.mock.patch.object(findings_store, "_names_now", return_value={}), \
+                unittest.mock.patch.object(findings_store, "_tz_now", return_value=None):
             out = findings_store._plain_row(row)
         self.assertEqual(out["fix"], ONE_STEP[0])
 
@@ -105,13 +105,13 @@ class TestTheChatsDoor(unittest.TestCase):
 
     def test_set_fix_refuses_a_fork(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(findings_store, "FINDINGS_FILE",
+            with unittest.mock.patch.object(findings_store, "FINDINGS_FILE",
                                    Path(tmp) / "findings.json"), \
-                    mock.patch.object(findings_store, "SETTLED_FILE",
+                    unittest.mock.patch.object(findings_store, "SETTLED_FILE",
                                       Path(tmp) / "settled.json"), \
-                    mock.patch.object(findings_store, "_names_now",
+                    unittest.mock.patch.object(findings_store, "_names_now",
                                       return_value={}), \
-                    mock.patch.object(findings_store, "_tz_now",
+                    unittest.mock.patch.object(findings_store, "_tz_now",
                                       return_value=None):
                 [row] = findings_store.add_many([{
                     "text": "The shed sensor has not reported in two days",

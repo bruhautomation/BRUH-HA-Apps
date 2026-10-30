@@ -18,8 +18,8 @@ unstable" card, and a freezer probe that nothing covered.
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
-from unittest import mock
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "brain" / "panel"))
@@ -138,10 +138,10 @@ class TestTheWordIsRecorded(unittest.TestCase):
     def test_record_look_keeps_already(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "verdicts.jsonl"
-            with mock.patch.object(outcomes, "VERDICTS_FILE", path), \
-                    mock.patch.object(outcomes.findings_store, "list_all",
+            with unittest.mock.patch.object(outcomes, "VERDICTS_FILE", path), \
+                    unittest.mock.patch.object(outcomes.findings_store, "list_all",
                                       return_value=[]), \
-                    mock.patch.object(resident, "tier_for",
+                    unittest.mock.patch.object(resident, "tier_for",
                                       return_value="haiku"):
                 batch = [{"kind": "check", "subject": "cover.garage_door",
                           "source": "check:net.unreachable"},
