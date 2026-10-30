@@ -1437,7 +1437,7 @@ body.modal-open {
 .setnavbtn.active .setnavsum { color: var(--ink-2); }
 .setback { display: none; }
 @media (min-width: 900px) {
-  .setlayout { grid-template-columns: 300px minmax(0, 1fr); align-items: start; }
+  .setlayout { grid-template-columns: 320px minmax(0, 1fr); align-items: start; }
   .setnav { position: sticky; top: calc(var(--bar-h, 56px) + 12px); }
 }
 @media (max-width: 899.98px) {

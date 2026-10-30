@@ -17935,7 +17935,7 @@ let featState = null;
 
 function featSummary(f) {
   const on = [f.morph && "Morph", f.personality && "Personality",
-    f.learning_loop && "Learning loop", f.development_loop && "Development loop"].filter(Boolean);
+    f.learning_loop && "Learning", f.development_loop && "Development"].filter(Boolean);
   return on.length ? on.join(" · ") : "Everything off";
 }
 
