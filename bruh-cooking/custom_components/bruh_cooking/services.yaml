@@ -1,0 +1,144 @@
+start_cook:
+  target:
+    entity:
+      integration: bruh_cooking
+      domain: switch
+  fields:
+    temperature:
+      selector:
+        number:
+          min: 20
+          max: 480
+          step: 0.5
+          mode: box
+    duration:
+      selector:
+        duration:
+    mode:
+      selector:
+        select:
+          translation_key: oven_mode
+          options:
+            - bake
+            - air_fry
+            - roast
+            - broil
+            - pizza
+            - cookies
+            - reheat
+            - slow_cook
+            - proof
+            - warm
+            - dehydrate
+            - bottom_bake
+            - bottom_broil
+            - outer_top_broil
+            - middle_top_broil
+    convection:
+      selector:
+        select:
+          translation_key: convection
+          options:
+            - "off"
+            - "on"
+            - super
+    level:
+      selector:
+        select:
+          translation_key: level
+          options:
+            - low
+            - medium
+            - high
+    auto_start_timer:
+      selector:
+        boolean:
+    keep_warm:
+      selector:
+        boolean:
+get_status:
+  fields:
+    appliance:
+      example: Joule
+      selector:
+        text:
+get_presets:
+  fields:
+    appliance:
+      example: Oven
+      selector:
+        text:
+start:
+  fields:
+    appliance:
+      example: Joule
+      selector:
+        text:
+    preset:
+      example: steak_medium_rare
+      selector:
+        text:
+    temperature:
+      selector:
+        number:
+          min: 20
+          max: 480
+          step: 0.5
+          mode: box
+    duration:
+      selector:
+        duration:
+    mode:
+      selector:
+        select:
+          translation_key: oven_mode
+          options:
+            - bake
+            - air_fry
+            - roast
+            - broil
+            - pizza
+            - cookies
+            - reheat
+            - slow_cook
+            - proof
+            - warm
+            - dehydrate
+            - bottom_bake
+            - bottom_broil
+            - outer_top_broil
+            - middle_top_broil
+    convection:
+      selector:
+        select:
+          translation_key: convection
+          options:
+            - "off"
+            - "on"
+            - super
+    level:
+      selector:
+        select:
+          translation_key: level
+          options:
+            - low
+            - medium
+            - high
+    auto_start_timer:
+      selector:
+        boolean:
+    keep_warm:
+      selector:
+        boolean:
+stop:
+  fields:
+    appliance:
+      example: Joule
+      selector:
+        text:
+continue_cook:
+  fields:
+    appliance:
+      example: Joule
+      selector:
+        text:

@@ -1,0 +1,15 @@
+---
+# Option labels and help text for BRUH Cooking's configuration UI.
+configuration:
+  enable_ha_integration:
+    name: Home Assistant integration
+    description: >-
+      Deploy the bruh_cooking integration: each Breville or Sage cooking
+      appliance as a device with its entities, the BRUH Cooking sidebar panel,
+      and the bruh_cooking.* services brAIn uses to start, stop and watch a
+      cook. Restart Home Assistant once after the first start to load it, then
+      add your Breville or Sage account.
+  log_level:
+    name: Log level
+    description: >-
+      How much the add-on writes to its log.

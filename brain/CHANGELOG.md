@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.13
+
+### Added
+
+- **brAIn drives BRUH Cooking, the new add-on for Breville+ and Sage cooking appliances.** Two tools, listed only once BRUH Cooking's integration is in Home Assistant: `cooking_status` (what the Joule or the Joule Oven is doing — state, temperatures, minutes left, the oven's mode and door — and the presets each can cook) and `cooking_control` (start from a preset or a temperature, minutes and mode; stop; continue once the food is in or out). Each answers with the appliance's own sentence. Voice may read, start, stop and continue. An unattended run reads them and never drives one, a start or stop in chat passes the action gate, and an approved change cannot reach them. BRUH Cooking is in brAIn's add-on status, its bug reports and the development loop's *Other BRUH add-ons* stream.
+
 ## 4.0.12
 
 ### Changed

@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Breville+ drawings</title>
+    <style>
+      :root { color-scheme: light; --bg: #ffffff; --fg: #3a3f45; }
+      :root[data-theme="dark"] { color-scheme: dark; --bg: #1c1c1c; --fg: #c8ccd0; }
+      body { margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
+        font: 13px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+        display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-end; }
+      figure { margin: 0; padding: 12px; background: var(--bg); }
+      .row { display: flex; gap: 24px; align-items: flex-end; }
+      .stage svg { display: block; width: 100%; height: auto; }
+      /* --height: the drawing fits a fixed stage and stands at its bottom, as on a card. */
+      .stage.fixed { display: flex; align-items: flex-end; justify-content: center; }
+      .stage.fixed svg { max-height: 100%; }
+      img.ref { display: block; width: auto; }
+      figcaption { margin-top: 8px; opacity: 0.7; }
+    </style>
+  </head>
+  <body>
+    <!-- A classic script: Chrome refuses module scripts on file:// pages. -->
+    <script defer src="gallery.js"></script>
+  </body>
+</html>

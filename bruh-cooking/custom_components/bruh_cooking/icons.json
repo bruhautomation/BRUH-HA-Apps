@@ -1,0 +1,90 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "cooking": {
+        "default": "mdi:pot-outline",
+        "state": {
+          "on": "mdi:pot-steam"
+        }
+      }
+    },
+    "button": {
+      "continue": {
+        "default": "mdi:skip-next-circle-outline"
+      }
+    },
+    "number": {
+      "cook_time": {
+        "default": "mdi:timer-outline"
+      }
+    },
+    "select": {
+      "convection": {
+        "default": "mdi:fan"
+      },
+      "level": {
+        "default": "mdi:fire"
+      },
+      "oven_mode": {
+        "default": "mdi:stove"
+      }
+    },
+    "sensor": {
+      "active_mode": {
+        "default": "mdi:stove"
+      },
+      "cook_end": {
+        "default": "mdi:timer-check-outline"
+      },
+      "error": {
+        "default": "mdi:alert-circle-outline",
+        "state": {
+          "none": "mdi:check-circle-outline"
+        }
+      },
+      "preheat": {
+        "default": "mdi:thermometer-chevron-up"
+      },
+      "status": {
+        "default": "mdi:pot-steam-outline",
+        "state": {
+          "offline": "mdi:cloud-off-outline",
+          "idle": "mdi:pot-outline",
+          "preheating": "mdi:thermometer-chevron-up",
+          "ready": "mdi:thermometer-check",
+          "cooking": "mdi:pot-steam",
+          "done": "mdi:check-circle-outline",
+          "keeping_warm": "mdi:heat-wave",
+          "waiting_for_button": "mdi:gesture-tap-button",
+          "error": "mdi:alert-circle-outline",
+          "updating": "mdi:update"
+        }
+      },
+      "time_remaining": {
+        "default": "mdi:timer-sand"
+      }
+    },
+    "switch": {
+      "auto_start_timer": {
+        "default": "mdi:timer-play-outline"
+      },
+      "cook": {
+        "default": "mdi:pot-outline",
+        "state": {
+          "on": "mdi:pot-steam"
+        }
+      },
+      "frozen": {
+        "default": "mdi:snowflake"
+      },
+      "keep_warm": {
+        "default": "mdi:heat-wave"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "service": "mdi:pot-steam"
+    }
+  }
+}

@@ -17,6 +17,7 @@ body:
         - BRUH Print
         - BRUH Bambu Studio
         - GardenRX
+        - BRUH Cooking
         - Other / unsure
     validations:
       required: true

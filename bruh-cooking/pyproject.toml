@@ -1,0 +1,9 @@
+# BRUH Cooking's integration tests run against a real Home Assistant
+# (pytest-homeassistant-custom-component, requirements_test.txt), apart from
+# the repository's own suite, which stubs Home Assistant:
+#
+#     cd bruh-cooking && python3 -m pytest
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

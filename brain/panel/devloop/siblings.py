@@ -59,6 +59,8 @@ CATALOG: tuple[dict, ...] = (
     {"key": "bright", "name": "BRight", "dir": "bright/", "domain": "bright"},
     {"key": "bruh_minecraft_server", "name": "BRUH Minecraft",
      "dir": "bruh-minecraft-server/", "domain": "bruh_minecraft"},
+    {"key": "bruh-cooking", "name": "BRUH Cooking", "dir": "bruh-cooking/",
+     "domain": "bruh_cooking"},
 )
 PRODUCTS = tuple(s["name"] for s in CATALOG)
 

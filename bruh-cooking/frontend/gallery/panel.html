@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Breville+ panel</title>
+    <style>
+      /* Home Assistant's default theme variables, light and dark. */
+      :root {
+        color-scheme: light;
+        --primary-background-color: #fafafa;
+        --secondary-background-color: #e5e5e5;
+        --card-background-color: #ffffff;
+        --primary-text-color: #212121;
+        --secondary-text-color: #727272;
+        --divider-color: rgba(0, 0, 0, 0.12);
+        --primary-color: #03a9f4;
+        --app-header-background-color: #fafafa;
+        --app-header-text-color: #212121;
+        --app-header-border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+        --ha-card-border-color: #e0e0e0;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --primary-background-color: #111111;
+        --secondary-background-color: #282828;
+        --card-background-color: #1c1c1c;
+        --primary-text-color: #e1e1e1;
+        --secondary-text-color: #9b9b9b;
+        --divider-color: rgba(225, 225, 225, 0.12);
+        --app-header-background-color: #111111;
+        --app-header-text-color: #e1e1e1;
+        --app-header-border-bottom: 1px solid rgba(225, 225, 225, 0.12);
+        --ha-card-border-color: rgba(225, 225, 225, 0.12);
+      }
+      body {
+        margin: 0;
+        background: var(--primary-background-color);
+        font-family: Roboto, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="frame"></div>
+    <!-- A classic script: Chrome refuses module scripts on file:// pages. -->
+    <script defer src="panel.js"></script>
+  </body>
+</html>

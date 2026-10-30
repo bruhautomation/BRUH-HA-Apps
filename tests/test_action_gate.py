@@ -768,6 +768,11 @@ class TestWhatTheHookSendsAndSkips(unittest.TestCase):
             self.assertEqual(writes - gated, set())
             self.assertEqual({"garden_status", "garden_harvests"} & gated, set())
 
+    def test_driving_a_cooking_appliance_is_gated_and_reading_one_is_not(self):
+        for gated in (self.hook.GATED_MCP, consequence.GATED_MCP):
+            self.assertIn("cooking_control", gated)
+            self.assertNotIn("cooking_status", gated)
+
     def test_a_task_carries_the_persons_words_apart_from_its_prompt(self):
         with patch.dict(os.environ, {"BRAIN_PERSON_WORDS": "  make the porch light warmer "}):
             self.assertEqual(self.hook.task_words(), ["make the porch light warmer"])

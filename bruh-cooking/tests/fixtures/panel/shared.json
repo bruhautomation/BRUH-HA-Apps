@@ -1,0 +1,783 @@
+{
+  "oven_modes": [
+    {
+      "id": "bake",
+      "remote": true,
+      "type": "temp",
+      "rack": 6,
+      "preheat": true,
+      "temperature_c": {
+        "default": 165,
+        "min": 50,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 1800,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "roasting_pan",
+      "food": "croissants",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "air_fry",
+      "remote": true,
+      "type": "temp",
+      "rack": 3,
+      "preheat": true,
+      "temperature_c": {
+        "default": 205,
+        "min": 150,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 1080,
+      "convection": [
+        "super"
+      ],
+      "default_convection": "super",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "air_fry_basket",
+      "food": "fries",
+      "elements": "top"
+    },
+    {
+      "id": "roast",
+      "remote": true,
+      "type": "temp",
+      "rack": 6,
+      "preheat": true,
+      "temperature_c": {
+        "default": 205,
+        "min": 50,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 3600,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "broil_rack",
+      "food": "chicken",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "broil",
+      "remote": true,
+      "type": "broil",
+      "rack": 1,
+      "preheat": false,
+      "temperature_c": null,
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_level": "high",
+      "default_seconds": 600,
+      "convection": [
+        "off"
+      ],
+      "default_convection": "off",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "broil_rack",
+      "food": "steak",
+      "elements": "top"
+    },
+    {
+      "id": "pizza",
+      "remote": true,
+      "type": "temp",
+      "rack": 7,
+      "preheat": true,
+      "temperature_c": {
+        "default": 205,
+        "min": 150,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 960,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": true,
+      "keep_warm": true,
+      "accessory": "pizza_pan",
+      "food": "pizza",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "cookies",
+      "remote": true,
+      "type": "temp",
+      "rack": 5,
+      "preheat": true,
+      "temperature_c": {
+        "default": 165,
+        "min": 100,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 660,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": false,
+      "keep_warm": true,
+      "accessory": "roasting_pan",
+      "food": "cookies",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "reheat",
+      "remote": true,
+      "type": "temp",
+      "rack": 4,
+      "preheat": false,
+      "temperature_c": {
+        "default": 165,
+        "min": 70,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 900,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": false,
+      "keep_warm": true,
+      "accessory": "wire_rack",
+      "food": "plate",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "slow_cook",
+      "remote": true,
+      "type": "slow_cook",
+      "rack": 8,
+      "preheat": false,
+      "temperature_c": null,
+      "levels": [
+        "low",
+        "high"
+      ],
+      "default_level": "low",
+      "default_seconds": 28800,
+      "convection": [
+        "on"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "pot",
+      "food": null,
+      "elements": "bottom_low"
+    },
+    {
+      "id": "proof",
+      "remote": true,
+      "type": "temp",
+      "rack": 8,
+      "preheat": false,
+      "temperature_c": {
+        "default": 29,
+        "min": 27,
+        "max": 38,
+        "step": 1
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 3600,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": false,
+      "accessory": "wire_rack",
+      "food": "dough",
+      "elements": "bottom_low"
+    },
+    {
+      "id": "warm",
+      "remote": true,
+      "type": "temp",
+      "rack": 4,
+      "preheat": false,
+      "temperature_c": {
+        "default": 70,
+        "min": 45,
+        "max": 120,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 3600,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": false,
+      "accessory": "wire_rack",
+      "food": "covered_dish",
+      "elements": "low"
+    },
+    {
+      "id": "dehydrate",
+      "remote": true,
+      "type": "temp",
+      "rack": 3,
+      "preheat": false,
+      "temperature_c": {
+        "default": 52,
+        "min": 30,
+        "max": 80,
+        "step": 1
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 43200,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "super",
+      "frozen": null,
+      "keep_warm": false,
+      "accessory": "air_fry_basket",
+      "food": "fruit",
+      "elements": "low"
+    },
+    {
+      "id": "bottom_bake",
+      "remote": true,
+      "type": "temp",
+      "rack": 6,
+      "preheat": true,
+      "temperature_c": {
+        "default": 165,
+        "min": 50,
+        "max": 250,
+        "step": 5
+      },
+      "levels": null,
+      "default_level": null,
+      "default_seconds": 1800,
+      "convection": [
+        "off",
+        "on",
+        "super"
+      ],
+      "default_convection": "on",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "roasting_pan",
+      "food": "casserole",
+      "elements": "bottom"
+    },
+    {
+      "id": "bottom_broil",
+      "remote": true,
+      "type": "broil",
+      "rack": 1,
+      "preheat": false,
+      "temperature_c": null,
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_level": "high",
+      "default_seconds": 600,
+      "convection": [
+        "off"
+      ],
+      "default_convection": "off",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "broil_rack",
+      "food": "steak",
+      "elements": "bottom"
+    },
+    {
+      "id": "outer_top_broil",
+      "remote": true,
+      "type": "broil",
+      "rack": 1,
+      "preheat": false,
+      "temperature_c": null,
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_level": "high",
+      "default_seconds": 600,
+      "convection": [
+        "off"
+      ],
+      "default_convection": "off",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "broil_rack",
+      "food": "steak",
+      "elements": "outer_top"
+    },
+    {
+      "id": "middle_top_broil",
+      "remote": true,
+      "type": "broil",
+      "rack": 1,
+      "preheat": false,
+      "temperature_c": null,
+      "levels": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default_level": "high",
+      "default_seconds": 600,
+      "convection": [
+        "off"
+      ],
+      "default_convection": "off",
+      "frozen": null,
+      "keep_warm": true,
+      "accessory": "broil_rack",
+      "food": "steak",
+      "elements": "middle_top"
+    },
+    {
+      "id": "toast",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "wire_rack",
+      "food": "bread",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "bagel",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "wire_rack",
+      "food": "bagel",
+      "elements": "top_bottom"
+    },
+    {
+      "id": "gentle_broil",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "air_fry_basket",
+      "food": "fries",
+      "elements": "top"
+    },
+    {
+      "id": "windy_broil",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "broil_rack",
+      "food": "steak",
+      "elements": "top"
+    },
+    {
+      "id": "keep_warm",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "wire_rack",
+      "food": "covered_dish",
+      "elements": "low"
+    },
+    {
+      "id": "crispy_reheat",
+      "remote": false,
+      "type": null,
+      "rack": 4,
+      "accessory": "wire_rack",
+      "food": "pizza_slice",
+      "elements": "top_bottom"
+    }
+  ],
+  "presets": [
+    {
+      "id": "steak_rare",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 52,
+        "duration_s": 5400
+      }
+    },
+    {
+      "id": "steak_medium_rare",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 56,
+        "duration_s": 5400
+      }
+    },
+    {
+      "id": "steak_medium",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 60,
+        "duration_s": 5400
+      }
+    },
+    {
+      "id": "steak_well_done",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 70,
+        "duration_s": 5400
+      }
+    },
+    {
+      "id": "beef_roast",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 56,
+        "duration_s": 21600
+      }
+    },
+    {
+      "id": "short_ribs",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 57,
+        "duration_s": 172800
+      }
+    },
+    {
+      "id": "pork_chop",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 60,
+        "duration_s": 7200
+      }
+    },
+    {
+      "id": "pulled_pork",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 74,
+        "duration_s": 86400
+      }
+    },
+    {
+      "id": "chicken_breast",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 63,
+        "duration_s": 7200
+      }
+    },
+    {
+      "id": "chicken_thighs",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 65,
+        "duration_s": 7200
+      }
+    },
+    {
+      "id": "salmon",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": "raw_safe_fish",
+      "settings": {
+        "temperature_c": 50,
+        "duration_s": 2700
+      }
+    },
+    {
+      "id": "white_fish",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": "raw_safe_fish",
+      "settings": {
+        "temperature_c": 55,
+        "duration_s": 1800
+      }
+    },
+    {
+      "id": "shrimp",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": "raw_safe_fish",
+      "settings": {
+        "temperature_c": 57,
+        "duration_s": 1800
+      }
+    },
+    {
+      "id": "soft_eggs",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 63,
+        "duration_s": 2700
+      }
+    },
+    {
+      "id": "vegetables",
+      "kind": "sous_vide",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "temperature_c": 85,
+        "duration_s": 3600
+      }
+    },
+    {
+      "id": "frozen_fries",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "air_fry",
+        "temperature_c": 205,
+        "temperature_f": 400,
+        "duration_s": 1200
+      }
+    },
+    {
+      "id": "chicken_wings",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "air_fry",
+        "temperature_c": 205,
+        "temperature_f": 400,
+        "duration_s": 1500
+      }
+    },
+    {
+      "id": "frozen_pizza",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "pizza",
+        "temperature_c": 205,
+        "temperature_f": 400,
+        "frozen": true,
+        "duration_s": 960
+      }
+    },
+    {
+      "id": "fresh_pizza",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "pizza",
+        "temperature_c": 230,
+        "temperature_f": 450,
+        "frozen": false,
+        "duration_s": 720
+      }
+    },
+    {
+      "id": "roast_vegetables",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "roast",
+        "temperature_c": 205,
+        "temperature_f": 400,
+        "duration_s": 1800
+      }
+    },
+    {
+      "id": "roast_chicken",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "roast",
+        "temperature_c": 205,
+        "temperature_f": 400,
+        "duration_s": 4500
+      }
+    },
+    {
+      "id": "cookies",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "cookies",
+        "temperature_c": 175,
+        "temperature_f": 350,
+        "frozen": false,
+        "duration_s": 660
+      }
+    },
+    {
+      "id": "cake",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "bake",
+        "temperature_c": 175,
+        "temperature_f": 350,
+        "duration_s": 2100
+      }
+    },
+    {
+      "id": "leftovers",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "reheat",
+        "temperature_c": 165,
+        "temperature_f": 325,
+        "frozen": false,
+        "duration_s": 900
+      }
+    },
+    {
+      "id": "salmon_fillets",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "broil",
+        "level": "high",
+        "duration_s": 480
+      }
+    },
+    {
+      "id": "dried_fruit",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "dehydrate",
+        "temperature_c": 57,
+        "temperature_f": 135,
+        "duration_s": 28800
+      }
+    },
+    {
+      "id": "bread_dough",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "proof",
+        "temperature_c": 29,
+        "temperature_f": 85,
+        "duration_s": 3600
+      }
+    },
+    {
+      "id": "pot_roast",
+      "kind": "oven",
+      "builtin": true,
+      "name": null,
+      "note": null,
+      "settings": {
+        "mode": "slow_cook",
+        "level": "low",
+        "duration_s": 28800
+      }
+    }
+  ]
+}

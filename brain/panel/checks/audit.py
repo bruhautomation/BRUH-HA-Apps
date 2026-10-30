@@ -28,7 +28,7 @@ DAY = 86400.0
 # here about themselves.
 OWN_DOMAINS = frozenset({"brain", "morph", "bruh_print", "bruh_minecraft",
                           "bright", "bruh_bambu", "gardenrx",
-                          "bruh_task_manager"})
+                          "bruh_task_manager", "bruh_cooking"})
 
 # Readings that are no reading: a tracker reading one of these is
 # `dev.unavailable`'s to report, not a stale whereabouts.

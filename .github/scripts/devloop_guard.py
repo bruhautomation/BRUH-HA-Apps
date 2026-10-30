@@ -33,7 +33,12 @@ CODE_RE = re.compile(
     r"brain/custom_components/.*\.py|brain/ha-mcp-server/.*|"
     r"brain/morph/service/.*\.py|"
     r"bruh-print/.*\.py|bruh-bambu-studio/.*\.py|bright/.*\.py|bruh-minecraft-server/.*\.py|bruh-task-manager/.*\.py|"
-    r"gardenrx/(?:app/src|gateway)/.*\.(?:ts|tsx|mjs|js)|gardenrx/custom_components/.*\.py)$")
+    r"gardenrx/(?:app/src|gateway)/.*\.(?:ts|tsx|mjs|js)|gardenrx/custom_components/.*\.py|"
+    r"bruh-cooking/custom_components/.*\.py|bruh-cooking/frontend/src/.*\.ts)$")
+# Where tests live: the repository's suite, and the two BRUH Cooking keeps
+# beside its code (its integration's against a real Home Assistant, and its
+# panel's vitest suite).
+TEST_DIRS = ("tests/", "bruh-cooking/tests/", "bruh-cooking/frontend/test/")
 
 
 def git(*args: str) -> str:
@@ -51,9 +56,9 @@ def main(base: str) -> int:
         parts = line.split("\t")
         status, paths = parts[0], parts[1:]
         for path in paths:
-            if status.startswith("D") and path.startswith("tests/"):
+            if status.startswith("D") and path.startswith(TEST_DIRS):
                 problems.append(f"{path}: a test file was deleted")
-            if path.startswith("tests/"):
+            if path.startswith(TEST_DIRS):
                 tests_changed = True
             elif CODE_RE.match(path) and not status.startswith("D"):
                 code_changed.append(path)
@@ -69,7 +74,7 @@ def main(base: str) -> int:
             if not VERSION_RE.match(line):
                 problems.append(f"{path}: only the version line may change ({line[:80]})")
                 break
-    tests_diff = git("diff", "--unified=0", f"{base}...HEAD", "--", "tests/")
+    tests_diff = git("diff", "--unified=0", f"{base}...HEAD", "--", *TEST_DIRS)
     for line in tests_diff.splitlines():
         if SKIP_RE.match(line):
             problems.append(f"a test was skipped: {line[:100]}")

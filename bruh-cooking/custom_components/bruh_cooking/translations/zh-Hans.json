@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "添加账户"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "使用你在 Breville+ Cooking 应用（或其 Sage 版本）中使用的账户登录。",
+        "data": {
+          "email": "电子邮箱",
+          "password": "密码",
+          "brand": "品牌"
+        },
+        "data_description": {
+          "email": "你的 Breville 或 Sage 账户的电子邮箱地址。",
+          "password": "你的密码只会发送给 Breville。Home Assistant 保存的是登录会话，而不是密码。",
+          "brand": "你的应用和设备的品牌：在英国、欧洲和阿联酋为 Sage，其他地区为 Breville。"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新登录",
+        "description": "{email} 的 Breville 会话已过期。请输入密码以继续。",
+        "data": {
+          "password": "密码"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "电子邮箱或密码错误。",
+      "cannot_connect": "无法连接到 Breville。请稍后再试。",
+      "mfa_not_supported": "此账户使用多重身份验证，目前尚不支持。",
+      "unknown": "意外错误。"
+    },
+    "abort": {
+      "already_configured": "此 Breville 账户已设置。",
+      "reauth_successful": "已重新登录。",
+      "wrong_account": "这是另一个 Breville 账户，与此处设置的账户不同。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "部分设备尚未使用此集成测试过，因此 Home Assistant 只会监控它们。停止烹饪始终可用。",
+        "data": {
+          "allow_untested_control": "允许控制未经测试的设备",
+          "show_sidebar_panel": "在侧边栏中显示"
+        },
+        "data_description": {
+          "allow_untested_control": "也可以在未经测试的设备上开始和更改烹饪。请仅在你能照看设备时开启，并告诉我们使用情况。",
+          "show_sidebar_panel": "在侧边栏面板中显示此账户的设备，附带每台设备的实时图示及其控件。所有使用 Home Assistant 的人都能看到。"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "状态",
+        "state": {
+          "offline": "离线",
+          "idle": "空闲",
+          "preheating": "预热中",
+          "ready": "可放入食材",
+          "cooking": "烹饪中",
+          "done": "已完成",
+          "keeping_warm": "保温中",
+          "waiting_for_button": "请按下设备上的按钮",
+          "error": "错误",
+          "updating": "更新中"
+        }
+      },
+      "current_temperature": {
+        "name": "温度"
+      },
+      "preheat": {
+        "name": "预热"
+      },
+      "time_remaining": {
+        "name": "剩余时间"
+      },
+      "cook_end": {
+        "name": "烹饪结束时间"
+      },
+      "active_mode": {
+        "name": "当前模式",
+        "state": {
+          "bake": "烘焙",
+          "air_fry": "空气炸",
+          "roast": "烤制",
+          "broil": "炙烤",
+          "pizza": "披萨",
+          "cookies": "曲奇",
+          "reheat": "复热",
+          "slow_cook": "慢炖",
+          "proof": "发酵",
+          "warm": "保温",
+          "dehydrate": "烘干",
+          "bottom_bake": "下火烘焙",
+          "gentle_broil": "更酥脆空气炸",
+          "bottom_broil": "下火炙烤",
+          "outer_top_broil": "外圈炙烤",
+          "middle_top_broil": "中间上火炙烤",
+          "windy_broil": "热风炙烤",
+          "toast": "吐司",
+          "bagel": "贝果",
+          "keep_warm": "保温",
+          "sous_vide": "低温慢煮",
+          "turbo": "低温慢煮（Turbo）",
+          "crispy_reheat": "酥脆复热"
+        }
+      },
+      "error": {
+        "name": "错误",
+        "state": {
+          "none": "无",
+          "other": "其他",
+          "button_pressed": "已通过按钮停止",
+          "low_water_level": "水位过低",
+          "tipped_over": "已倾倒",
+          "overheating": "过热",
+          "power_loss": "断电",
+          "heater_thermistor_failure": "加热器传感器故障",
+          "bath_thermistor_failure": "水温传感器故障",
+          "stuck_motor": "电机卡住",
+          "firmware_crash": "固件崩溃",
+          "bad_motor": "电机故障",
+          "water_leakage": "漏水",
+          "current_leakage": "漏电",
+          "heater_broken": "加热器故障",
+          "door_open": "炉门打开"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "正在烹饪"
+      },
+      "door": {
+        "name": "炉门"
+      },
+      "problem": {
+        "name": "问题"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "目标温度"
+      },
+      "cook_time": {
+        "name": "烹饪时间"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "模式",
+        "state": {
+          "bake": "烘焙",
+          "air_fry": "空气炸",
+          "roast": "烤制",
+          "broil": "炙烤",
+          "pizza": "披萨",
+          "cookies": "曲奇",
+          "reheat": "复热",
+          "slow_cook": "慢炖",
+          "proof": "发酵",
+          "warm": "保温",
+          "dehydrate": "烘干",
+          "bottom_bake": "下火烘焙",
+          "bottom_broil": "下火炙烤",
+          "outer_top_broil": "外圈炙烤",
+          "middle_top_broil": "中间上火炙烤"
+        }
+      },
+      "convection": {
+        "name": "对流",
+        "state": {
+          "off": "关闭",
+          "on": "开启",
+          "super": "超强"
+        }
+      },
+      "level": {
+        "name": "档位",
+        "state": {
+          "low": "低",
+          "medium": "中",
+          "high": "高"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "烹饪"
+      },
+      "auto_start_timer": {
+        "name": "自动开始计时"
+      },
+      "keep_warm": {
+        "name": "保温"
+      },
+      "frozen": {
+        "name": "冷冻食品"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "继续"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "烘焙",
+        "air_fry": "空气炸",
+        "roast": "烤制",
+        "broil": "炙烤",
+        "pizza": "披萨",
+        "cookies": "曲奇",
+        "reheat": "复热",
+        "slow_cook": "慢炖",
+        "proof": "发酵",
+        "warm": "保温",
+        "dehydrate": "烘干",
+        "bottom_bake": "下火烘焙",
+        "bottom_broil": "下火炙烤",
+        "outer_top_broil": "外圈炙烤",
+        "middle_top_broil": "中间上火炙烤"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "关闭",
+        "on": "开启",
+        "super": "超强"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "低",
+        "medium": "中",
+        "high": "高"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "开始烹饪",
+      "description": "使用指定的设置开始烹饪。请以设备的“烹饪”开关为目标。未指定的设置将使用设备的当前设置。",
+      "fields": {
+        "temperature": {
+          "name": "温度",
+          "description": "目标温度，使用你的 Home Assistant 温度单位。"
+        },
+        "duration": {
+          "name": "时长",
+          "description": "烹饪时间。对于低温慢煮，留空则会保持温度直到停止。"
+        },
+        "mode": {
+          "name": "模式",
+          "description": "烤箱模式（仅限 Joule Oven Air Fryer Pro）。未指定的设置将使用此模式的默认值。"
+        },
+        "convection": {
+          "name": "对流",
+          "description": "烤箱风扇设置（如果该模式允许）。"
+        },
+        "level": {
+          "name": "档位",
+          "description": "炙烤强度（低、中或高）或慢炖档位（低或高）。"
+        },
+        "auto_start_timer": {
+          "name": "自动开始计时",
+          "description": "达到温度后立即开始计时，而不是等待放入食材。"
+        },
+        "keep_warm": {
+          "name": "保温",
+          "description": "烤箱烹饪结束后为食物保温。"
+        }
+      }
+    },
+    "get_status": {
+      "name": "获取状态",
+      "description": "每台设备正在做什么，以及下一次烹饪的设置。返回详细信息。",
+      "fields": {
+        "appliance": {
+          "name": "设备",
+          "description": "设备在 Home Assistant 或应用中的名称，或其设备 ID。账户只有一台设备时可留空。"
+        }
+      }
+    },
+    "get_presets": {
+      "name": "获取预设",
+      "description": "每台设备可以烹饪的内置和已保存预设。",
+      "fields": {
+        "appliance": {
+          "name": "设备",
+          "description": "设备在 Home Assistant 或应用中的名称，或其设备 ID。账户只有一台设备时可留空。"
+        }
+      }
+    },
+    "stop": {
+      "name": "停止",
+      "description": "停止指定设备的烹饪。",
+      "fields": {
+        "appliance": {
+          "name": "设备",
+          "description": "设备在 Home Assistant 或应用中的名称，或其设备 ID。账户只有一台设备时可留空。"
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "继续",
+      "description": "在设备等待时，告诉它食物已放入或已取出。",
+      "fields": {
+        "appliance": {
+          "name": "设备",
+          "description": "设备在 Home Assistant 或应用中的名称，或其设备 ID。账户只有一台设备时可留空。"
+        }
+      }
+    },
+    "start": {
+      "name": "开始",
+      "description": "在指定设备上开始烹饪，使用预设或给出的设置。未给出的设置使用设备当前的设置。",
+      "fields": {
+        "appliance": {
+          "name": "设备",
+          "description": "设备在 Home Assistant 或应用中的名称，或其设备 ID。账户只有一台设备时可留空。"
+        },
+        "preset": {
+          "name": "预设",
+          "description": "预设的 ID 或名称，例如 steak_medium_rare。另外给出的设置会覆盖预设的设置。"
+        },
+        "temperature": {
+          "name": "温度",
+          "description": "目标温度，使用你的 Home Assistant 温度单位。"
+        },
+        "duration": {
+          "name": "时长",
+          "description": "烹饪时间。对于低温慢煮，留空则会保持温度直到停止。"
+        },
+        "mode": {
+          "name": "模式",
+          "description": "烤箱模式（仅限 Joule Oven Air Fryer Pro）。未指定的设置将使用此模式的默认值。"
+        },
+        "convection": {
+          "name": "对流",
+          "description": "烤箱风扇设置（如果该模式允许）。"
+        },
+        "level": {
+          "name": "档位",
+          "description": "炙烤强度（低、中或高）或慢炖档位（低或高）。"
+        },
+        "auto_start_timer": {
+          "name": "自动开始计时",
+          "description": "达到温度后立即开始计时，而不是等待放入食材。"
+        },
+        "keep_warm": {
+          "name": "保温",
+          "description": "烤箱烹饪结束后为食物保温。"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "{product} 的控制功能尚未经过测试。如需尝试，请在集成选项中开启“允许控制未经测试的设备”。"
+    },
+    "start_failed": {
+      "message": "无法开始烹饪：{error}"
+    },
+    "edit_failed": {
+      "message": "无法更改烹饪：{error}"
+    },
+    "auth_expired": {
+      "message": "Breville 登录已过期。请重新验证此集成，然后再试一次。"
+    },
+    "request_failed": {
+      "message": "向 Breville 云端发送的请求失败：{error}"
+    },
+    "target_cook_switch": {
+      "message": "请以设备的“烹饪”开关为目标。"
+    },
+    "mode_oven_only": {
+      "message": "模式仅适用于烤箱。"
+    },
+    "level_not_for_mode": {
+      "message": "档位 {level} 不适用于此模式。"
+    },
+    "stop_cook_first": {
+      "message": "请先停止烹饪，再更改此设置。"
+    },
+    "no_appliances": {
+      "message": "尚未设置任何烹饪设备。请先在 BRUH Cooking 中添加 Breville 或 Sage 账户。"
+    },
+    "which_appliance": {
+      "message": "请说明是哪台设备：{names}。"
+    },
+    "unknown_appliance": {
+      "message": "没有名为 {appliance} 的设备。现有设备：{names}。"
+    },
+    "unknown_preset": {
+      "message": "没有名为 {preset} 的预设。"
+    },
+    "preset_does_not_fit": {
+      "message": "预设 {preset} 无法在此设备上烹饪：{error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} 正在烹饪。请先停止当前烹饪。"
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} 没有在等待放入或取出食物。"
+    }
+  }
+}

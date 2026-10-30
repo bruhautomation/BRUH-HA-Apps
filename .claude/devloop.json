@@ -16,6 +16,8 @@
     "bruh-minecraft-server/config.yaml",
     "bruh-minecraft-server/custom_components/bruh_minecraft/manifest.json",
     "bruh-task-manager/config.yaml",
-    "bruh-task-manager/custom_components/bruh_task_manager/manifest.json"
+    "bruh-task-manager/custom_components/bruh_task_manager/manifest.json",
+    "bruh-cooking/config.yaml",
+    "bruh-cooking/custom_components/bruh_cooking/manifest.json"
   ]
 }

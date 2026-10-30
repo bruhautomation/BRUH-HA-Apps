@@ -1,0 +1,421 @@
+{
+  "config": {
+    "initiate_flow": {
+      "user": "Añadir cuenta"
+    },
+    "step": {
+      "user": {
+        "title": "BRUH Cooking",
+        "description": "Inicia sesión con la cuenta que usas en la app Breville+ Cooking o en su versión de Sage.",
+        "data": {
+          "email": "Correo electrónico",
+          "password": "Contraseña",
+          "brand": "Marca"
+        },
+        "data_description": {
+          "email": "La dirección de correo electrónico de tu cuenta de Breville o Sage.",
+          "password": "Tu contraseña solo se envía a Breville. Home Assistant guarda una sesión iniciada, no la contraseña.",
+          "brand": "La marca de tu app y tus aparatos: Sage en el Reino Unido, Europa y los EAU, y Breville en el resto."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Volver a iniciar sesión",
+        "description": "Tu sesión de Breville para {email} ha caducado. Introduce tu contraseña para continuar.",
+        "data": {
+          "password": "Contraseña"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Correo electrónico o contraseña incorrectos.",
+      "cannot_connect": "No se ha podido conectar con Breville. Inténtalo de nuevo más tarde.",
+      "mfa_not_supported": "Esta cuenta usa autenticación multifactor, que todavía no es compatible.",
+      "unknown": "Error inesperado."
+    },
+    "abort": {
+      "already_configured": "Esta cuenta de Breville ya está configurada.",
+      "reauth_successful": "Sesión iniciada de nuevo.",
+      "wrong_account": "Esa cuenta de Breville es distinta de la que está configurada aquí."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "description": "Algunos aparatos aún no se han probado con esta integración, así que Home Assistant solo los supervisa. Detener una cocción siempre funciona.",
+        "data": {
+          "allow_untested_control": "Permitir controlar aparatos no probados",
+          "show_sidebar_panel": "Mostrar en la barra lateral"
+        },
+        "data_description": {
+          "allow_untested_control": "También permite iniciar y cambiar cocciones en aparatos no probados. Actívalo solo cuando puedas vigilar el aparato, y cuéntanos cómo va.",
+          "show_sidebar_panel": "Muestra los aparatos de esta cuenta en un panel de la barra lateral, con un dibujo en directo de cada uno y sus controles. Lo ven todos los que usan Home Assistant."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Estado",
+        "state": {
+          "offline": "Sin conexión",
+          "idle": "Inactivo",
+          "preheating": "Precalentando",
+          "ready": "Listo para añadir la comida",
+          "cooking": "Cocinando",
+          "done": "Terminado",
+          "keeping_warm": "Manteniendo caliente",
+          "waiting_for_button": "Pulsa el botón del aparato",
+          "error": "Error",
+          "updating": "Actualizando"
+        }
+      },
+      "current_temperature": {
+        "name": "Temperatura"
+      },
+      "preheat": {
+        "name": "Precalentamiento"
+      },
+      "time_remaining": {
+        "name": "Tiempo restante"
+      },
+      "cook_end": {
+        "name": "Fin de la cocción"
+      },
+      "active_mode": {
+        "name": "Modo activo",
+        "state": {
+          "bake": "Hornear",
+          "air_fry": "Freír con aire",
+          "roast": "Asar",
+          "broil": "Gratinar",
+          "pizza": "Pizza",
+          "cookies": "Galletas",
+          "reheat": "Recalentar",
+          "slow_cook": "Cocción lenta",
+          "proof": "Fermentar",
+          "warm": "Mantener caliente",
+          "dehydrate": "Deshidratar",
+          "bottom_bake": "Hornear por abajo",
+          "gentle_broil": "Freír con aire más crujiente",
+          "bottom_broil": "Gratinar por abajo",
+          "outer_top_broil": "Gratinar exterior",
+          "middle_top_broil": "Gratinar centro superior",
+          "windy_broil": "Gratinar con convección",
+          "toast": "Tostada",
+          "bagel": "Bagel",
+          "keep_warm": "Mantener caliente",
+          "sous_vide": "Cocción al vacío",
+          "turbo": "Cocción al vacío turbo",
+          "crispy_reheat": "Recalentar crujiente"
+        }
+      },
+      "error": {
+        "name": "Error",
+        "state": {
+          "none": "Ninguno",
+          "other": "Otro",
+          "button_pressed": "Detenido con el botón",
+          "low_water_level": "Nivel de agua bajo",
+          "tipped_over": "Volcado",
+          "overheating": "Sobrecalentamiento",
+          "power_loss": "Corte de corriente",
+          "heater_thermistor_failure": "Fallo del sensor del calefactor",
+          "bath_thermistor_failure": "Fallo del sensor de agua",
+          "stuck_motor": "Motor atascado",
+          "firmware_crash": "Fallo del firmware",
+          "bad_motor": "Avería del motor",
+          "water_leakage": "Fuga de agua",
+          "current_leakage": "Fuga eléctrica",
+          "heater_broken": "Avería del calefactor",
+          "door_open": "Puerta abierta"
+        }
+      }
+    },
+    "binary_sensor": {
+      "cooking": {
+        "name": "Cocinando"
+      },
+      "door": {
+        "name": "Puerta"
+      },
+      "problem": {
+        "name": "Problema"
+      }
+    },
+    "number": {
+      "target_temperature": {
+        "name": "Temperatura deseada"
+      },
+      "cook_time": {
+        "name": "Tiempo de cocción"
+      }
+    },
+    "select": {
+      "oven_mode": {
+        "name": "Modo",
+        "state": {
+          "bake": "Hornear",
+          "air_fry": "Freír con aire",
+          "roast": "Asar",
+          "broil": "Gratinar",
+          "pizza": "Pizza",
+          "cookies": "Galletas",
+          "reheat": "Recalentar",
+          "slow_cook": "Cocción lenta",
+          "proof": "Fermentar",
+          "warm": "Mantener caliente",
+          "dehydrate": "Deshidratar",
+          "bottom_bake": "Hornear por abajo",
+          "bottom_broil": "Gratinar por abajo",
+          "outer_top_broil": "Gratinar exterior",
+          "middle_top_broil": "Gratinar centro superior"
+        }
+      },
+      "convection": {
+        "name": "Convección",
+        "state": {
+          "off": "Desactivada",
+          "on": "Activada",
+          "super": "Súper"
+        }
+      },
+      "level": {
+        "name": "Nivel",
+        "state": {
+          "low": "Bajo",
+          "medium": "Medio",
+          "high": "Alto"
+        }
+      }
+    },
+    "switch": {
+      "cook": {
+        "name": "Cocción"
+      },
+      "auto_start_timer": {
+        "name": "Iniciar temporizador automáticamente"
+      },
+      "keep_warm": {
+        "name": "Mantener caliente"
+      },
+      "frozen": {
+        "name": "Alimentos congelados"
+      }
+    },
+    "button": {
+      "continue": {
+        "name": "Continuar"
+      }
+    }
+  },
+  "selector": {
+    "brand": {
+      "options": {
+        "breville": "Breville",
+        "sage": "Sage"
+      }
+    },
+    "oven_mode": {
+      "options": {
+        "bake": "Hornear",
+        "air_fry": "Freír con aire",
+        "roast": "Asar",
+        "broil": "Gratinar",
+        "pizza": "Pizza",
+        "cookies": "Galletas",
+        "reheat": "Recalentar",
+        "slow_cook": "Cocción lenta",
+        "proof": "Fermentar",
+        "warm": "Mantener caliente",
+        "dehydrate": "Deshidratar",
+        "bottom_bake": "Hornear por abajo",
+        "bottom_broil": "Gratinar por abajo",
+        "outer_top_broil": "Gratinar exterior",
+        "middle_top_broil": "Gratinar centro superior"
+      }
+    },
+    "convection": {
+      "options": {
+        "off": "Desactivada",
+        "on": "Activada",
+        "super": "Súper"
+      }
+    },
+    "level": {
+      "options": {
+        "low": "Bajo",
+        "medium": "Medio",
+        "high": "Alto"
+      }
+    }
+  },
+  "services": {
+    "start_cook": {
+      "name": "Iniciar cocción",
+      "description": "Inicia una cocción con los ajustes indicados. Elige como destino el interruptor Cocción del aparato. Lo que no indiques usa los ajustes actuales del aparato.",
+      "fields": {
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura deseada, en la unidad de temperatura de Home Assistant."
+        },
+        "duration": {
+          "name": "Duración",
+          "description": "Tiempo de cocción. Para la cocción al vacío, déjalo vacío para mantener la temperatura hasta detenerla."
+        },
+        "mode": {
+          "name": "Modo",
+          "description": "Modo del horno (solo Joule Oven Air Fryer Pro). Los ajustes que no indiques usan los valores predeterminados de este modo."
+        },
+        "convection": {
+          "name": "Convección",
+          "description": "Ajuste del ventilador del horno, si el modo lo permite."
+        },
+        "level": {
+          "name": "Nivel",
+          "description": "Intensidad del gratinador (Bajo, Medio o Alto) o nivel de cocción lenta (Bajo o Alto)."
+        },
+        "auto_start_timer": {
+          "name": "Iniciar temporizador automáticamente",
+          "description": "Inicia el temporizador en cuanto se alcanza la temperatura, en lugar de esperar a que se añada la comida."
+        },
+        "keep_warm": {
+          "name": "Mantener caliente",
+          "description": "Mantiene la comida caliente cuando termina una cocción en el horno."
+        }
+      }
+    },
+    "get_status": {
+      "name": "Obtener estado",
+      "description": "Qué hace cada electrodoméstico y cómo sería su próxima cocción. Responde con los detalles.",
+      "fields": {
+        "appliance": {
+          "name": "Electrodoméstico",
+          "description": "El nombre del electrodoméstico, como en Home Assistant o la app, o su ID de dispositivo. Déjalo vacío si la cuenta tiene uno solo."
+        }
+      }
+    },
+    "get_presets": {
+      "name": "Obtener ajustes predefinidos",
+      "description": "Los ajustes predefinidos incorporados y guardados que puede cocinar cada electrodoméstico.",
+      "fields": {
+        "appliance": {
+          "name": "Electrodoméstico",
+          "description": "El nombre del electrodoméstico, como en Home Assistant o la app, o su ID de dispositivo. Déjalo vacío si la cuenta tiene uno solo."
+        }
+      }
+    },
+    "stop": {
+      "name": "Detener",
+      "description": "Detiene la cocción del electrodoméstico indicado.",
+      "fields": {
+        "appliance": {
+          "name": "Electrodoméstico",
+          "description": "El nombre del electrodoméstico, como en Home Assistant o la app, o su ID de dispositivo. Déjalo vacío si la cuenta tiene uno solo."
+        }
+      }
+    },
+    "continue_cook": {
+      "name": "Continuar",
+      "description": "Indica al electrodoméstico que la comida está dentro, o fuera, cuando lo está esperando.",
+      "fields": {
+        "appliance": {
+          "name": "Electrodoméstico",
+          "description": "El nombre del electrodoméstico, como en Home Assistant o la app, o su ID de dispositivo. Déjalo vacío si la cuenta tiene uno solo."
+        }
+      }
+    },
+    "start": {
+      "name": "Iniciar",
+      "description": "Inicia una cocción en el electrodoméstico indicado, desde un ajuste predefinido o los ajustes dados. Lo que omitas usa los ajustes actuales del electrodoméstico.",
+      "fields": {
+        "appliance": {
+          "name": "Electrodoméstico",
+          "description": "El nombre del electrodoméstico, como en Home Assistant o la app, o su ID de dispositivo. Déjalo vacío si la cuenta tiene uno solo."
+        },
+        "preset": {
+          "name": "Ajuste predefinido",
+          "description": "El ID o el nombre de un ajuste predefinido, como steak_medium_rare. Lo demás que indiques cambia sus ajustes."
+        },
+        "temperature": {
+          "name": "Temperatura",
+          "description": "Temperatura deseada, en la unidad de temperatura de Home Assistant."
+        },
+        "duration": {
+          "name": "Duración",
+          "description": "Tiempo de cocción. Para la cocción al vacío, déjalo vacío para mantener la temperatura hasta detenerla."
+        },
+        "mode": {
+          "name": "Modo",
+          "description": "Modo del horno (solo Joule Oven Air Fryer Pro). Los ajustes que no indiques usan los valores predeterminados de este modo."
+        },
+        "convection": {
+          "name": "Convección",
+          "description": "Ajuste del ventilador del horno, si el modo lo permite."
+        },
+        "level": {
+          "name": "Nivel",
+          "description": "Intensidad del gratinador (Bajo, Medio o Alto) o nivel de cocción lenta (Bajo o Alto)."
+        },
+        "auto_start_timer": {
+          "name": "Iniciar temporizador automáticamente",
+          "description": "Inicia el temporizador en cuanto se alcanza la temperatura, en lugar de esperar a que se añada la comida."
+        },
+        "keep_warm": {
+          "name": "Mantener caliente",
+          "description": "Mantiene la comida caliente cuando termina una cocción en el horno."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "untested_control": {
+      "message": "El control del {product} aún no se ha probado. Para probarlo, activa «Permitir controlar aparatos no probados» en las opciones de la integración."
+    },
+    "start_failed": {
+      "message": "No se ha podido iniciar la cocción: {error}"
+    },
+    "edit_failed": {
+      "message": "No se ha podido cambiar la cocción: {error}"
+    },
+    "auth_expired": {
+      "message": "La sesión de Breville ha caducado. Vuelve a autenticar la integración y después inténtalo de nuevo."
+    },
+    "request_failed": {
+      "message": "La solicitud a la nube de Breville ha fallado: {error}"
+    },
+    "target_cook_switch": {
+      "message": "Elige como destino el interruptor Cocción del aparato."
+    },
+    "mode_oven_only": {
+      "message": "Los modos solo se aplican al horno."
+    },
+    "level_not_for_mode": {
+      "message": "El nivel {level} no se aplica a este modo."
+    },
+    "stop_cook_first": {
+      "message": "Detén la cocción antes de cambiar este ajuste."
+    },
+    "no_appliances": {
+      "message": "No hay ningún electrodoméstico de cocina configurado. Primero añade una cuenta de Breville o Sage a BRUH Cooking."
+    },
+    "which_appliance": {
+      "message": "Indica qué electrodoméstico: {names}."
+    },
+    "unknown_appliance": {
+      "message": "No hay ningún electrodoméstico llamado {appliance}. Los electrodomésticos son: {names}."
+    },
+    "unknown_preset": {
+      "message": "No hay ningún ajuste predefinido llamado {preset}."
+    },
+    "preset_does_not_fit": {
+      "message": "El ajuste predefinido {preset} no se puede cocinar aquí: {error}"
+    },
+    "already_cooking": {
+      "message": "{appliance} ya está cocinando. Detén primero esa cocción."
+    },
+    "nothing_to_continue": {
+      "message": "{appliance} no está esperando a que se meta o se saque la comida."
+    }
+  }
+}

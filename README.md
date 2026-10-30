@@ -156,6 +156,25 @@ Manager for Home Assistant OS, in the sidebar.
 
 📖 [add-on README](bruh-task-manager/) · [full documentation](bruh-task-manager/DOCS.md)
 
+### [BRUH Cooking](bruh-cooking/)
+
+> ⚠️ **Experimental. Requires brAIn.**
+
+**Your sous vide and your oven, driven by brAIn.** Breville+ and Sage cooking
+appliances (the ChefSteps Joule, the Joule Turbo and the Joule Oven Air Fryer
+Pro) in Home Assistant, over the same cloud as the Breville+ Cooking app.
+
+- **Ask brAIn** — *"Heat the Joule for a medium-rare steak"*, *"How long is
+  left on the oven?"*, *"Stop the sous vide"*, in chat or by voice
+- **Every appliance as a device** — status, temperature, time left, preheat,
+  the Cook switch, Continue, and the oven's mode, convection, level and door
+- **A sidebar panel** that draws each appliance as it is, with every control,
+  a temperature chart and presets
+- Built from [kedube/ha-breville-cooking](https://github.com/kedube/ha-breville-cooking),
+  GPL-3.0
+
+📖 [add-on README](bruh-cooking/) · [full documentation](bruh-cooking/DOCS.md)
+
 ## Installation
 
 Click the badge above, or add this repository URL to your Home Assistant add-on store (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**):

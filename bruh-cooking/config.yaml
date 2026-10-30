@@ -1,0 +1,66 @@
+---
+name: "BRUH Cooking"
+description: "Breville+ and Sage cooking appliances — the Joule sous vide and the Joule Oven Air Fryer Pro — in Home Assistant and brAIn: start, stop and watch a cook, presets, and a sidebar panel that draws each appliance. Requires brAIn."
+version: "0.1.0"
+slug: "bruh-cooking"
+init: false
+
+# Pull the prebuilt image. The image name follows the FOLDER (build.yml
+# names it after the matrix entry).
+image: "ghcr.io/bruhautomation/{arch}-bruh-cooking"
+
+arch:
+  - aarch64
+  - amd64
+
+url: "https://github.com/bruhautomation/BRUH-HA-Apps/tree/main/bruh-cooking"
+
+# AppArmor profile — see apparmor.txt next to this file.
+apparmor: true
+
+boot: auto
+startup: services
+stage: experimental
+
+# The integration talks to Breville's cloud from Home Assistant Core; this
+# add-on deploys it, keeps it deployed, and refuses to run without brAIn.
+# The bundled integration uses Core features from 2026.2.
+homeassistant: "2026.2.0"
+
+# ============================================================================
+# App configuration options
+# ----------------------------------------------------------------------------
+# Documented inline for whoever edits this file; the text users actually see
+# is in translations/en.yaml.
+# ============================================================================
+options:
+  # enable_ha_integration: deploy the bruh_cooking custom integration (the
+  # appliances' entities, the bruh_cooking.* services brAIn calls, and the
+  # sidebar panel) and announce it for one-click setup.
+  enable_ha_integration: true
+
+  # log_level: verbosity of the add-on's own script.
+  log_level: info
+schema:
+  enable_ha_integration: bool
+  log_level: "list(trace|debug|info|notice|warning|error|fatal)"
+
+# /config carries the integration deploy. Nothing else is mapped.
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /config
+
+# `default` reads /supervisor/info (to find brAIn) and posts the discovery.
+hassio_api: true
+hassio_role: default
+homeassistant_api: false
+auth_api: false
+
+# Auto-discovery: registers "bruh_cooking" with the Supervisor so HA Core
+# offers a one-click setup tile for the integration.
+discovery:
+  - bruh_cooking
+
+# Nothing here is a credential: the Breville login session lives in the
+# integration's config entry, in Home Assistant's own storage.

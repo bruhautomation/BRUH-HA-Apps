@@ -1,0 +1,81 @@
+#include <tunables/global>
+
+# AppArmor profile for the BRUH Cooking add-on.
+#
+# BRUH Cooking is a shell script: it copies the bruh_cooking integration into
+# /config, asks the Supervisor whether brAIn is installed, and announces the
+# integration. It needs no device, no host network and no port. The profile
+# denies the host-escape primitives and allows that work.
+
+profile bruh-cooking flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # ------------------------------------------------------------------
+  # Host-escape primitives — denied outright
+  # ------------------------------------------------------------------
+  deny /proc/sys/** wklx,
+  deny /sys/kernel/** wklx,
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  deny /sys/module/** wklx,
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+  deny /dev/kmsg rwklx,
+
+  deny /sys/firmware/** rwklx,
+  deny /boot/** rwklx,
+
+  # The add-on talks to the Supervisor over HTTP with SUPERVISOR_TOKEN; a
+  # writable docker.sock is root on the host by another name.
+  deny /var/run/docker.sock rwklx,
+  deny /run/docker.sock rwklx,
+
+  # ------------------------------------------------------------------
+  # Capabilities
+  # ------------------------------------------------------------------
+  # The integration is copied into /config as root, keeping its modes.
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability audit_write,
+
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_ptrace,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability mac_admin,
+  deny capability mac_override,
+  deny capability dac_read_search,
+
+  deny mount,
+  deny umount,
+  deny pivot_root,
+
+  # ------------------------------------------------------------------
+  # What the add-on legitimately does
+  # ------------------------------------------------------------------
+
+  # /config (the integration deploy) and the container's own tree.
+  file,
+
+  signal (send,receive) set=(kill,term,int,hup,cont,usr1,usr2,winch),
+
+  # The Supervisor API. No raw sockets.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+  network netlink raw,
+
+  /** ix,
+}

@@ -1,0 +1,250 @@
+{
+  "now": "2026-10-25T18:00:00+00:00",
+  "unit_system": "metric",
+  "appliance": {
+    "device_id": "device-joule",
+    "entry_id": "entry-1",
+    "name": "Countertop",
+    "model": "CSJ100",
+    "product": "Joule Sous Vide",
+    "kind": "sous_vide",
+    "finish": "white_polished",
+    "available": true,
+    "tested": true,
+    "control_allowed": true,
+    "can_edit_cook": true,
+    "sensor_target_c": null,
+    "limits": {
+      "min_temp_c": 20.0,
+      "max_temp_c": 98.0,
+      "max_cook_s": 345600
+    },
+    "entities": {
+      "cooking": {
+        "binary_sensor": "binary_sensor.countertop_cooking"
+      },
+      "problem": {
+        "binary_sensor": "binary_sensor.countertop_problem"
+      },
+      "cook": {
+        "switch": "switch.countertop_cook"
+      },
+      "auto_start_timer": {
+        "switch": "switch.countertop_start_timer_automatically"
+      },
+      "target_temperature": {
+        "number": "number.countertop_target_temperature"
+      },
+      "cook_time": {
+        "number": "number.countertop_cook_time"
+      },
+      "continue": {
+        "button": "button.countertop_continue"
+      },
+      "status": {
+        "sensor": "sensor.countertop_status"
+      },
+      "current_temperature": {
+        "sensor": "sensor.countertop_temperature"
+      },
+      "preheat": {
+        "sensor": "sensor.countertop_preheat"
+      },
+      "time_remaining": {
+        "sensor": "sensor.countertop_time_remaining"
+      },
+      "cook_end": {
+        "sensor": "sensor.countertop_cook_end"
+      },
+      "error": {
+        "sensor": "sensor.countertop_error"
+      }
+    }
+  },
+  "device": {
+    "id": "device-joule",
+    "name": "Countertop",
+    "name_by_user": null,
+    "area_id": "kitchen",
+    "model": "Joule Sous Vide",
+    "model_id": "CS10001",
+    "manufacturer": "ChefSteps",
+    "sw_version": "123"
+  },
+  "area": {
+    "area_id": "kitchen",
+    "name": "Kitchen"
+  },
+  "states": {
+    "binary_sensor.countertop_cooking": {
+      "entity_id": "binary_sensor.countertop_cooking",
+      "state": "on",
+      "attributes": {
+        "device_class": "running",
+        "friendly_name": "Countertop Cooking"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "binary_sensor.countertop_problem": {
+      "entity_id": "binary_sensor.countertop_problem",
+      "state": "off",
+      "attributes": {
+        "device_class": "problem",
+        "friendly_name": "Countertop Problem"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "button.countertop_continue": {
+      "entity_id": "button.countertop_continue",
+      "state": "unknown",
+      "attributes": {
+        "friendly_name": "Countertop Continue"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "number.countertop_cook_time": {
+      "entity_id": "number.countertop_cook_time",
+      "state": "90",
+      "attributes": {
+        "min": 0,
+        "max": 5760,
+        "step": 1,
+        "mode": "box",
+        "unit_of_measurement": "min",
+        "device_class": "duration",
+        "friendly_name": "Countertop Cook time"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "number.countertop_target_temperature": {
+      "entity_id": "number.countertop_target_temperature",
+      "state": "56.0",
+      "attributes": {
+        "min": 20.0,
+        "max": 98.0,
+        "step": 0.1,
+        "mode": "box",
+        "unit_of_measurement": "°C",
+        "device_class": "temperature",
+        "friendly_name": "Countertop Target temperature"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_cook_end": {
+      "entity_id": "sensor.countertop_cook_end",
+      "state": "unknown",
+      "attributes": {
+        "device_class": "timestamp",
+        "friendly_name": "Countertop Cook end"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_error": {
+      "entity_id": "sensor.countertop_error",
+      "state": "none",
+      "attributes": {
+        "options": [
+          "bad_motor",
+          "bath_thermistor_failure",
+          "button_pressed",
+          "current_leakage",
+          "door_open",
+          "firmware_crash",
+          "heater_broken",
+          "heater_thermistor_failure",
+          "low_water_level",
+          "none",
+          "other",
+          "overheating",
+          "power_loss",
+          "stuck_motor",
+          "tipped_over",
+          "water_leakage"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Countertop Error"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_preheat": {
+      "entity_id": "sensor.countertop_preheat",
+      "state": "unknown",
+      "attributes": {
+        "unit_of_measurement": "%",
+        "friendly_name": "Countertop Preheat"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_status": {
+      "entity_id": "sensor.countertop_status",
+      "state": "ready",
+      "attributes": {
+        "options": [
+          "offline",
+          "idle",
+          "preheating",
+          "ready",
+          "cooking",
+          "done",
+          "keeping_warm",
+          "waiting_for_button",
+          "error",
+          "updating"
+        ],
+        "device_class": "enum",
+        "friendly_name": "Countertop Status"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_temperature": {
+      "entity_id": "sensor.countertop_temperature",
+      "state": "56.0",
+      "attributes": {
+        "state_class": "measurement",
+        "unit_of_measurement": "°C",
+        "device_class": "temperature",
+        "friendly_name": "Countertop Temperature"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "sensor.countertop_time_remaining": {
+      "entity_id": "sensor.countertop_time_remaining",
+      "state": "unknown",
+      "attributes": {
+        "unit_of_measurement": "min",
+        "device_class": "duration",
+        "friendly_name": "Countertop Time remaining"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.countertop_cook": {
+      "entity_id": "switch.countertop_cook",
+      "state": "on",
+      "attributes": {
+        "friendly_name": "Countertop Cook"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    },
+    "switch.countertop_start_timer_automatically": {
+      "entity_id": "switch.countertop_start_timer_automatically",
+      "state": "off",
+      "attributes": {
+        "friendly_name": "Countertop Start timer automatically"
+      },
+      "last_changed": "2026-10-25T18:00:00+00:00",
+      "last_updated": "2026-10-25T18:00:00+00:00"
+    }
+  }
+}

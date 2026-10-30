@@ -44,7 +44,8 @@ jobs:
               'BRUH Print':            ['print'],
               'BRUH Bambu Studio':     ['bambu'],
               'GardenRX':              ['gardenrx'],
-              'Multiple add-ons':      ['brain', 'minecraft', 'bright', 'print', 'bambu', 'gardenrx'],
+              'BRUH Cooking':          ['cooking'],
+              'Multiple add-ons':      ['brain', 'minecraft', 'bright', 'print', 'bambu', 'gardenrx', 'cooking'],
               'The repository / docs': ['repo'],
             };
             const COLORS = {
@@ -54,6 +55,7 @@ jobs:
               print:     { color: '0b6bcb', description: 'The BRUH Print add-on' },
               bambu:     { color: '00ae42', description: 'The BRUH Bambu Studio add-on' },
               gardenrx:  { color: '2e9e5b', description: 'The GardenRX add-on' },
+              cooking:   { color: 'e8553a', description: 'The BRUH Cooking add-on' },
               repo:      { color: '6e7781', description: 'Repository, CI or docs' },
             };
 

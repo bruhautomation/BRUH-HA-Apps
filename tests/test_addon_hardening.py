@@ -33,6 +33,7 @@ ADDONS = {
     "bruh-bambu-studio": os.path.join(BASE_DIR, "bruh-bambu-studio"),
     "gardenrx": os.path.join(BASE_DIR, "gardenrx"),
     "bruh-task-manager": os.path.join(BASE_DIR, "bruh-task-manager"),
+    "bruh-cooking": os.path.join(BASE_DIR, "bruh-cooking"),
 }
 
 
@@ -447,11 +448,15 @@ class TestWatchdog(unittest.TestCase):
         (`ingress_port: 0`, because host_network made a pinned port a
         collision on somebody's box), so the only honest watcher is the one
         inside the container that knows which port it got.
+
+        An add-on with no panel at all (BRUH Cooking: a script that deploys
+        an integration, whose panel lives inside Home Assistant) has nothing
+        to hang, and is not asked.
         """
         for slug, addon_dir in ADDONS.items():
             with self.subTest(addon=slug):
                 config = load_config(addon_dir)
-                if "watchdog" in config:
+                if "watchdog" in config or not config.get("ingress"):
                     continue
                 with open(os.path.join(addon_dir, "run.sh")) as f:
                     run_sh = f.read()

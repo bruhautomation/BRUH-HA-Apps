@@ -1,0 +1,33 @@
+{
+  "name": "bruh-cooking-panel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sidebar panel for BRUH Cooking (Breville+ and Sage cooking appliances): a drawing of each appliance with its live state and every control.",
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "gallery": "node scripts/render.mjs",
+    "axe": "node scripts/axe.mjs",
+    "panel": "node scripts/shoot-panel.mjs",
+    "keyboard": "node scripts/keyboard.mjs",
+    "demo": "node scripts/demo.mjs"
+  },
+  "dependencies": {
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "axe-core": "^4.11.0",
+    "esbuild": "^0.28.2",
+    "happy-dom": "^20.14.5",
+    "playwright-core": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

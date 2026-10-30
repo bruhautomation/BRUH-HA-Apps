@@ -196,6 +196,25 @@ const APPS = [
 			['brands/custom_integrations/bruh_task_manager/logo@2x.png', 682, 512],
 		],
 	},
+	{
+		name: 'BRUH Cooking',
+		tile: 'cooking/bruh-cooking-tile-dark.svg',
+		logo: 'cooking/bruh-cooking-logo-ondark.svg',
+		squares: [
+			['bruh-cooking/icon.png', 256],
+			['bruh-cooking/custom_components/bruh_cooking/brand/icon.png', 256],
+			['bruh-cooking/custom_components/bruh_cooking/brand/icon@2x.png', 512],
+			['brands/custom_integrations/bruh_cooking/icon.png', 256],
+			['brands/custom_integrations/bruh_cooking/icon@2x.png', 512],
+		],
+		lockups: [
+			['bruh-cooking/logo.png', 512, 384],
+			['bruh-cooking/custom_components/bruh_cooking/brand/logo.png', 341, 256],
+			['bruh-cooking/custom_components/bruh_cooking/brand/logo@2x.png', 682, 512],
+			['brands/custom_integrations/bruh_cooking/logo.png', 341, 256],
+			['brands/custom_integrations/bruh_cooking/logo@2x.png', 682, 512],
+		],
+	},
 ];
 
 const browser = await chromium.launch(

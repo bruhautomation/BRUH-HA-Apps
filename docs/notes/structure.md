@@ -203,6 +203,14 @@ BRUH-HA-Apps/
 │   │                            #   policy + ending (End process), settings (Level 2 status),
 │   │                            #   runaway, machine, server, and the page
 │   └── custom_components/bruh_task_manager/  # sensors + the runaway binary sensor
+├── bruh-cooking/                # Breville+/Sage cooking appliances; requires brAIn (GPL-3.0)
+│   ├── run.sh                   # require brAIn, deploy bruh_cooking, discovery, watch
+│   ├── custom_components/bruh_cooking/  # from kedube/ha-breville-cooking, renamed; services.py
+│   │                            #   is what brAIn calls (get_status, start, stop, …)
+│   ├── frontend/                # the sidebar panel's Lit/TypeScript source (built bundle is
+│   │                            #   committed under custom_components/bruh_cooking/frontend/)
+│   ├── tests/                   # the integration's own suite, against a real Home Assistant
+│   └── docs/api.md              # the Breville cloud protocol
 ├── tests/
 │   └── corpus/                  # Houses and what was true of them — the frozen entries,
 │                                #   the schema, the one scorer's corpus shape, and replay.py
