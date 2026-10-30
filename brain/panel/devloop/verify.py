@@ -34,7 +34,8 @@ import atomic_write
 from textclip import clip
 
 from . import STREAMS, data_dir
-from .upstream import _date, installed_at, product_of, running_at_least, running_for
+from .upstream import (_date, installed_at, product_of, running_at_least,
+                       running_for, version_tuple)
 
 log = logging.getLogger("brain.devloop")
 
@@ -73,11 +74,56 @@ def save(data: dict) -> None:
         log.info("could not write the verify ledger: %s", exc)
 
 
+def live_version(addon: str, integration: dict | None) -> str:
+    """The brAIn release that is actually RUNNING here (#535).
+
+    run.sh deploys a new integration at every start and Home Assistant goes
+    on running the one it loaded until it restarts, so the add-on can be on
+    a release whose fixes are not live yet. The older of the two is what a
+    fix is checked against; "" ("could not tell") while a restart is owed
+    and nothing says what Home Assistant loaded. ``integration`` is
+    `server._integration_versions()`; None (not known) leaves the add-on's.
+    """
+    integ = integration or {}
+    loaded = str(integ.get("loaded") or "")
+    have, mine = version_tuple(loaded), version_tuple(addon)
+    if integ.get("restart_pending") and have is None:
+        return ""
+    if have is not None and mine is not None and have < mine:
+        return loaded
+    return str(addon or "")
+
+
 def due(items: dict, version: str, state: dict, live_ts: set[int],
         products: dict | None = None) -> list[dict]:
+    """The reports of the next question due (`due_groups`), flattened."""
+    return [e for group in due_groups(items, version, state, live_ts, products)
+            for e in group]
+
+
+def area_of(entry: dict) -> tuple[str, str, str]:
+    """What one question covers: the add-on, the release and the place the
+    reports were made ("Chat", "Today"; "" for the owner's own requests)."""
+    return (product_of(entry), str(entry.get("fixed_in") or ""),
+            _title_and_place(entry)[1].casefold())
+
+
+def due_groups(items: dict, version: str, state: dict, live_ts: set[int],
+               products: dict | None = None) -> list[list[dict]]:
     """The fixed reports whose fix this house now runs and nobody has been
-    asked about under that release. A fix whose release is unknown is
-    never asked about: "is x.y.z here" has no answer when x.y.z is."""
+    asked about under that release, one list per question: the fixes one
+    release made to one area are asked about together (#535), five cards
+    about one update being five interruptions with one answer. A fix whose
+    release is unknown is never asked about: "is x.y.z here" has no answer
+    when x.y.z is. ``version`` is brAIn's RUNNING release (`live_version`)."""
+    groups: dict[tuple, list[dict]] = {}
+    for entry in _eligible(items, version, state, live_ts, products):
+        groups.setdefault(area_of(entry), []).append(entry)
+    return list(groups.values())[:MAX_PER_PASS]
+
+
+def _eligible(items: dict, version: str, state: dict, live_ts: set[int],
+              products: dict | None = None) -> list[dict]:
     out = []
     for entry in sorted((e for e in items.values() if isinstance(e, dict)),
                         key=lambda e: float(e.get("closed_at") or 0)):
@@ -94,8 +140,6 @@ def due(items: dict, version: str, state: dict, live_ts: set[int],
         if int(rec.get("ts") or 0) in live_ts:
             continue
         out.append(entry)
-        if len(out) >= MAX_PER_PASS:
-            break
     return out
 
 
@@ -231,6 +275,70 @@ def question_row(entry: dict) -> dict:
         "fixable": False, "source": SOURCE, "source_title": SOURCE_TITLE,
         "entity_id": "", "evidence": [],
     }
+
+
+def group_row(entries: list[dict]) -> dict:
+    """One question for the fixes one release made to one area.
+
+    A single report is the question it always was (`question_row`). Several
+    are one row naming the release and the place once, its detail listing
+    what changed — each change once, however many reports asked for it.
+    """
+    entries = [e for e in entries if isinstance(e, dict)]
+    if len(entries) == 1:
+        return question_row(entries[0])
+    first = entries[0]
+    fixed_in = str(first.get("fixed_in") or "")
+    product = product_of(first)
+    titles: list[str] = []
+    place = ""
+    for entry in entries:
+        title, where = _title_and_place(entry)
+        place = place or where
+        plain = _plain_sentences(title).rstrip(" .") or title
+        if plain and plain.casefold() not in {t.casefold() for t in titles}:
+            titles.append(plain)
+    if len(titles) == 1:
+        return question_row(first)
+    place = clip(place, 60).strip()
+    in_place = f" ({place})" if place else ""
+    tail = f" — after the {product} {fixed_in} update"
+    more = f" and {len(titles) - 1} more"
+    room = TEXT_CHARS - len(TEXT_PREFIX) - len(more) - len(in_place) - len(tail)
+    listed = "; ".join(clip(t, 120) for t in titles)
+    quoted = [f"“{clip(t, 70)}”" for t in titles[:2]]
+    named = (" and ".join(quoted) if len(titles) == 2 else
+             f"{quoted[0]}, {quoted[1]} and {len(titles) - 2} more")
+    look = place or product
+    detail = " ".join(p for p in (
+        f"The {product} update installed here was meant to fix these: "
+        f"{listed}.",
+        f"Where to look: {look}." if look else "") if p)
+    return {
+        # Stable per question: the first change, how many others, the place
+        # and the release — so a later question about the same release and
+        # place is a different row, not one the settled ledger suppresses.
+        "text": f"{TEXT_PREFIX}{clip(titles[0], max(room, 20))}{more}"
+                f"{in_place}{tail}",
+        "claim": f"Are these fixed now{in_place}: {named}?",
+        "detail": detail,
+        "kind": "question", "severity": "info", "stakes": "low",
+        "fixable": False, "source": SOURCE, "source_title": SOURCE_TITLE,
+        "entity_id": "", "evidence": [],
+    }
+
+
+def fps_for_finding(state: dict, finding: dict) -> list[str]:
+    """Every report a question row is about: a question can cover several
+    (`group_row`), all recorded under the row's id. Falls back to
+    `fp_for_finding` for a row filed one report at a time."""
+    ts = finding.get("ts")
+    out = [fp for fp, rec in state.items()
+           if isinstance(rec, dict) and ts is not None and rec.get("ts") == ts]
+    if out:
+        return out
+    fp = fp_for_finding(state, finding)
+    return [fp] if fp else []
 
 
 def record_asked(state: dict, fp: str, ts: int, fixed_in: str, now: float,

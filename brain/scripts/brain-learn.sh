@@ -294,6 +294,9 @@ Rules for "findings":
 - "fixable" is true only when software could make the change (editing config,
   renaming an entity, calling a service). Anything needing hands in the
   physical world — batteries, re-pairing, power-cycling — is false.
+- "fix" is ONE step, already chosen: never "either … or …", "if not, …",
+  "also confirm …" or "if needed". Read what settles it, then write the
+  step that follows.
 - Omit rather than pad. Most study sessions find nothing broken.
 
 Rules for "hypotheses":
