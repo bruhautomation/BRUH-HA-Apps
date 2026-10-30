@@ -60,6 +60,10 @@ and so cannot clear anything):
                     reset) and its link's signal and round trip. `{}` and
                     available on a house with no Z-Wave; unavailable when
                     Core would not answer for any node
+    zigbee_history {hours, entities: {entity_id: [history rows]}} — two days
+                    of each plugged-in Zigbee device's entity, for
+                    `net.zigbee_weak`. Unavailable when the recorder would
+                    not answer (the check then goes on the live reading).
     wifi_history   {days, entities: {entity_id: [history rows]}} — a week
                     of the UniFi trackers and one entity of each device they
                     track (`network.wifi_history_candidates`), bounded the
@@ -696,6 +700,20 @@ async def collect(now: float | None = None) -> dict:
             snap["wifi_history"] = {}
             _mark("wifi_history", False, str(exc))
 
+        # Two days of the plugged-in Zigbee devices, for `net.zigbee_weak`:
+        # a weak number on a router that has not dropped out is not a card.
+        try:
+            if not snap["available"].get("registry"):
+                raise RuntimeError("the registry was not read")
+            zb = await _zigbee_history(session, snap, now)
+            snap["zigbee_history"] = zb or {}
+            _mark("zigbee_history", zb is not None,
+                  "" if zb is not None else
+                  "the recorder did not answer for the Zigbee history")
+        except Exception as exc:  # noqa: BLE001
+            snap["zigbee_history"] = {}
+            _mark("zigbee_history", False, str(exc))
+
         # Core's own log, folded into what repeats.
         try:
             logs = await _core_log(session, now)
@@ -1275,6 +1293,29 @@ async def _wifi_history(session, snap: dict, now: float) -> dict | None:
     got = ha_data.series_by_entity(raw)
     return {"days": network.FLAP_DAYS,
             "entities": {eid: got.get(eid) or [] for eid in ids}}
+
+
+async def _zigbee_history(session, snap: dict, now: float) -> dict | None:
+    """`ZIGBEE_DROPOUT_HOURS` of the plugged-in Zigbee devices
+    (`network.zigbee_history_candidates`), or None when the recorder would
+    not answer. Nothing to ask costs nothing."""
+    import ha_data
+
+    from . import network
+    ids = sorted(set(network.zigbee_history_candidates(snap)))
+    hours = network.ZIGBEE_DROPOUT_HOURS
+    if not ids:
+        return {"hours": hours, "entities": {}}
+    end = dt.datetime.fromtimestamp(now, tz=dt.timezone.utc)
+    start = end - dt.timedelta(hours=hours)
+    raw = await ha_data._rest_get(
+        session, ha_data.history_path(start), timeout=60,
+        params=ha_data.history_params(ids, end, minimal=True,
+                                      no_attributes=True))
+    if not isinstance(raw, list):
+        return None
+    got = ha_data.series_by_entity(raw)
+    return {"hours": hours, "entities": {eid: got.get(eid) or [] for eid in ids}}
 
 
 async def _core_log(session, now: float) -> dict | None:
