@@ -219,12 +219,25 @@ const state = {
 // ---------------------------------------------------------------- helpers
 
 async function api(path, opts = {}) {
-  const resp = await fetch(path.replace(/^\//, ""), {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
-  if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
-  return resp.json();
+  // A 503 carrying `starting` is the panel's own starting gate: the route
+  // never ran, so the request is simply asked again a moment later —
+  // a POST included — rather than shown to somebody as an error.
+  for (let attempt = 0, wait = 1000; ; attempt++, wait *= 2) {
+    const resp = await fetch(path.replace(/^\//, ""), {
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    });
+    if (resp.status === 503 && attempt < 5) {
+      let starting = false;
+      try { starting = !!(await resp.clone().json()).starting; } catch (e) { /* not ours */ }
+      if (starting) {
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+    }
+    if (!resp.ok) throw new Error((await resp.text()) || `HTTP ${resp.status}`);
+    return resp.json();
+  }
 }
 
 // ------------------------------------------------------- modal scroll lock
@@ -1715,7 +1728,7 @@ function makeCard(catInfo, insight, fallbackId) {
     ask.disabled = active;
     ask.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      askAboutReport(id, catInfo, shown || insight);
+      askAboutReport(id, catInfo, shown || insight, ask);
     });
     actions.appendChild(ask);
   }
@@ -5668,14 +5681,75 @@ async function renderRefineKept() {
 // message — the same handoff a right-click "Ask brAIn about this" makes
 // (`askPrompt`, `openInTerminal`), so there is one way a thing on screen
 // becomes a conversation.
-function askAboutReport(id, catInfo, insight) {
+function askAboutReport(id, catInfo, insight, btn) {
   const name = (insight && insight.title) || (catInfo && catInfo.title) || "this report";
   const about = (catInfo && catInfo.title) || (insight && insight.eyebrow) || "";
   const text = [about && about !== name ? `${about}: ${name}` : name,
     insight && insight.summary ? String(insight.summary) : ""]
     .filter(Boolean).join("\n").slice(0, ASK_TEXT_MAX);
-  openInTerminal({ prompt: askPrompt(
-    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, "") });
+  askAbout(askPrompt(
+    { where: "Insights › Reports", text, ids: [`insight=${id}`] }, ""), btn);
+}
+
+// Ask brAIn about something: ONE rule for every ask-about (a report's Ask,
+// the press-and-hold box, Personality's and Instructions' Ask) — it follows
+// the SAVED face. The server decides (POST api/ask): on the chat face a new
+// chat conversation starts with the prompt and this viewer is moved onto
+// it by its key; on the classic face a terminal window opens on it. The
+// face is never flipped locally — a local flip is undone by the next
+// status refresh, which put people on an empty "New chat" while their
+// question ran in a hidden terminal. The button is held while the POST is
+// in flight, so a double tap is one conversation.
+async function askAbout(prompt, btn) {
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+  }
+  try {
+    switchView("terminal");
+    if (chatState.session === "classic") showTerminalFrame();
+    else askShow("chat");
+    const out = await chatSwitching(() => api("api/ask", {
+      method: "POST", body: JSON.stringify({ prompt, ...chatWho() }) }));
+    if (out && out.face === "terminal") {
+      if (chatState.session !== "classic") {
+        // The server's saved face is the terminal and this page had not
+        // caught up: follow the saved one, which is what the next status
+        // refresh would do anyway.
+        applyTermMode("classic");
+      }
+      showTerminalFrame();
+      if (out.opened === false) toast("Starting the terminal…");
+      return out;
+    }
+    if (out && out.key) {
+      setChatFinding(null);
+      chatReconnect(out.key, out.session_id);
+      askShow("chat");
+    }
+    return out;
+  } catch (e) {
+    toast(e.message);
+    return null;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// A terminal window brAIn opened, brought forward on the classic face —
+// the saved face, so the next status refresh agrees with it.
+async function openTerminalWindow(windowId) {
+  if (chatState.session !== "classic") {
+    setTermMode("classic", "Ask now opens as the classic terminal");
+  }
+  switchView("terminal");
+  showTerminalFrame();
+  try {
+    await api("api/terminal/select", {
+      method: "POST", body: JSON.stringify({ window_id: windowId }) });
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 function openRefine(id, catInfo, insight) {
@@ -6142,14 +6216,17 @@ async function discussFinding(f, btns) {
     switchView("terminal");
     // Ask on a card opens the conversation about it, not the list.
     askShow("chat");
-    if (chatState.session !== "classic") chatConnect();
-    const out = await api(`api/finding/${f.ts}/discuss`, { method: "POST" });
+    const out = await chatSwitching(() => api(`api/finding/${f.ts}/discuss`, {
+      method: "POST", body: JSON.stringify(chatWho()) }));
     if (out && out.face === "terminal") {
       // Claude Code's own terminal: the server opened a window whose first
       // message is the card. The card's presses stay on the card.
       showTerminalFrame();
       toast("Opened in the terminal");
     } else {
+      // The new conversation is this viewer's by its key, not by whichever
+      // conversation another device attached last.
+      if (out && out.key) chatReconnect(out.key, out.session_id);
       setChatFinding(f);
     }
   } catch (e) {
@@ -12279,9 +12356,8 @@ function switchView(name) {
   }
   if (name === "terminal") {
     if (chatState.session === "classic") {
-      const frame = $("#termFrame");
       // Lazy: don't start a shell session for someone who never opens the tab.
-      if (frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+      loadTerminalFrame();
       refreshChatRail();
     } else {
       chatConnect();
@@ -12892,6 +12968,8 @@ const chatState = {
   session: "chat",   // "chat" | "classic"
   runState: "idle",
   sessionId: null,   // the CLI's id for this conversation — what `--resume` takes
+  key: null,         // the server's handle on THIS viewer's session (ChatSession.key)
+  switching: 0,      // this viewer is moving itself; a `switched` now is ours
   info: {},          // model, cwd, version, api_key_source, from the CLI itself
   context: {},       // {tokens, window} — how full the conversation is
   models: [],        // the same choices ⚙ offers, for the chat's own picker
@@ -13325,7 +13403,8 @@ function chatStatusForPermission(ev) {
 // second answer to a question nobody is asking.
 function chatPermissionPost(body, buttons, rearm) {
   buttons.forEach((b) => { b.disabled = true; });
-  api("api/chat/permission", { method: "POST", body: JSON.stringify(body) })
+  api("api/chat/permission", { method: "POST",
+    body: JSON.stringify({ ...body, ...chatWho() }) })
     .catch((e) => {
       toast(e.message);
       if (rearm) rearm(); else buttons.forEach((b) => { b.disabled = false; });
@@ -13655,13 +13734,26 @@ function chatRender(ev) {
       renderChatRail();
       break;
     case "switched":
-      // The view moved to another conversation. Reconnect rather than
-      // patching this stream: the first frame of the new one is the new
-      // session's snapshot, which is the contract the stream has always
-      // had — no client has to stitch "what it was" onto "what happened
-      // next".
-      chatDisconnect();
-      chatConnect();
+      // The shared "attached" conversation moved. Followed only when this
+      // viewer moved it (or has no conversation of its own yet): another
+      // device opening a chat must not pull this one's view — that is how
+      // a phone's message ended up in a desktop's newer conversation.
+      // Reconnect rather than patching this stream: the first frame of the
+      // new one is the new session's snapshot.
+      if (chatState.switching || !chatState.key) {
+        chatReconnect(ev.key || null, ev.session_id || null);
+      }
+      break;
+    case "send_failed":
+      // A message accepted while Claude was starting did not get through:
+      // put the words back rather than losing them.
+      chatState.pendingSend = 0;
+      chatStatusClear();
+      if (ev.text && !$("#chatInput").value) {
+        $("#chatInput").value = ev.text;
+        chatGrow();
+      }
+      toast(ev.reason ? `Not sent: ${ev.reason}` : "That message was not sent");
       break;
     case "session_asks": {
       // A conversation nobody is looking at is waiting on an approval, and
@@ -13769,6 +13861,40 @@ function chatSetState(runState, error) {
   chatComposerOnState(runState);
 }
 
+// Which conversation THIS viewer is in, named on every send, stop, model
+// pick and approval answer. Every device used to act on one shared
+// "attached" session, so a phone's message landed in whichever
+// conversation a desktop had opened last. The key is the server's handle on
+// the session object (a fresh chat has one before the CLI names it).
+function chatWho() {
+  const out = {};
+  if (chatState.key) out.session_key = chatState.key;
+  if (chatState.sessionId) out.session_id = chatState.sessionId;
+  return out;
+}
+
+function chatWhoQuery() {
+  const q = new URLSearchParams(chatWho()).toString();
+  return q ? `?${q}` : "";
+}
+
+// Move THIS viewer's stream to a conversation (null: the attached one).
+function chatReconnect(key, sessionId) {
+  chatState.key = key || null;
+  chatState.sessionId = sessionId || null;
+  chatDisconnect();
+  if (chatState.session !== "classic") chatConnect();
+}
+
+// Run a switch this viewer asked for: a `switched` that arrives while it is
+// in flight is this viewer's own and is followed; any other is another
+// device moving ITS view, and is not ours to follow.
+async function chatSwitching(run) {
+  chatState.switching += 1;
+  try { return await run(); }
+  finally { setTimeout(() => { chatState.switching = Math.max(0, chatState.switching - 1); }, 1500); }
+}
+
 // One stream, reopened on drop. EventSource retries by itself, but only
 // while the page believes the connection died — an ingress that closes it
 // cleanly looks like a finished response, so the close handler re-arms.
@@ -13776,7 +13902,7 @@ function chatConnect() {
   if (chatState.es) return;
   let es;
   try {
-    es = new EventSource("api/chat/stream");
+    es = new EventSource("api/chat/stream" + chatWhoQuery());
   } catch (e) {
     return;
   }
@@ -13790,6 +13916,7 @@ function chatConnect() {
       // the CLI announces them once, at startup, and a viewer who connected
       // afterwards would otherwise never see them.
       chatState.sessionId = ev.session_id || null;
+      chatState.key = ev.key || chatState.key;
       chatState.info = ev.info || {};
       chatState.context = ev.context || {};
       chatState.commands = ev.commands || [];
@@ -13860,7 +13987,10 @@ async function chatSend(text) {
   chatState.pendingSend = Date.now();
   chatStatus("Sending…");
   try {
-    await api("api/chat/send", { method: "POST", body: JSON.stringify({ text }) });
+    const out = await api("api/chat/send", {
+      method: "POST", body: JSON.stringify({ text, ...chatWho() }) });
+    if (out && out.key) chatState.key = out.key;
+    if (out && out.pending) chatStatus("Starting Claude…");
   } catch (e) {
     chatState.pendingSend = 0;
     chatStatusClear();
@@ -13982,7 +14112,7 @@ if (window.visualViewport) {
 }
 
 $("#chatStop").addEventListener("click", async () => {
-  try { await api("api/chat/stop", { method: "POST" }); }
+  try { await api("api/chat/stop", { method: "POST", body: JSON.stringify(chatWho()) }); }
   catch (e) { toast(e.message); }
 });
 
@@ -13996,7 +14126,7 @@ $("#chatNew").addEventListener("click", async () => {
   if (!askOnList() && chatLog().childElementCount && !window.confirm(
     "Start a new chat? This one is kept — you can reopen it from your "
     + "chats.")) return;
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); return; }
   askShow("chat");
   refreshChatRail();
@@ -14113,9 +14243,18 @@ $("#chatStateAct").addEventListener("click", () => {
 // whether you are sure about leaving a conversation Claude still holds,
 // and this one it does not.
 async function startFresh() {
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); }
   refreshChatRail();
+}
+
+// A new conversation for THIS viewer (its own empty one reused), and the
+// stream moved onto it by its key rather than by a broadcast.
+async function chatNewHere() {
+  const out = await chatSwitching(() => api("api/chat/new", {
+    method: "POST", body: JSON.stringify(chatWho()) }));
+  if (out && out.key) chatReconnect(out.key, out.session_id);
+  return out;
 }
 
 // Ask about it: a record cannot be continued, so the honest offer is a
@@ -14126,7 +14265,7 @@ async function askAboutRecord() {
   if (!rec) return;
   closeBox("#convViewModal");
   chatState.record = null;
-  try { await api("api/chat/new", { method: "POST" }); }
+  try { await chatNewHere(); }
   catch (e) { toast(e.message); return; }
   refreshChatRail();
   const input = $("#chatInput");
@@ -14577,6 +14716,8 @@ async function deleteConversation(c, btn) {
       }
       await api(`api/chat/session/${encodeURIComponent(c.id)}/close`,
                 { method: "POST" });
+      // Closing the one on screen lands this viewer on a fresh chat.
+      if (c.id === chatState.sessionId) chatReconnect(null, null);
       out = await remove();
     }
     toast("Conversation deleted", out.undo);
@@ -14609,6 +14750,7 @@ async function refreshChatRail() {
   try {
     const data = await api(convQuery());
     chatState.convs = data.conversations || [];
+    chatState.termWindows = data.terminal || [];
     chatState.convSources = data.sources || [];
   } catch (e) {
     return;  // transient: the rail keeps whatever it last showed
@@ -14715,7 +14857,7 @@ function renderChatRail() {
     btn.type = "button";
     btn.appendChild(el("span", "ctitle", c.title));
     const foot = el("div", "crfoot");
-    const mark = convMark(c);
+    const mark = c.terminal ? el("span", "crlive", "In the terminal") : convMark(c);
     if (mark) foot.appendChild(mark);
     foot.appendChild(el("span", "cwhen", c.age));
     btn.appendChild(foot);
@@ -14723,6 +14865,10 @@ function renderChatRail() {
     if (c.view_only) {
       // A card or fix run: a record to read, never a place to type.
       btn.addEventListener("click", () => viewConversation(c));
+    } else if (c.terminal && chatState.session !== "classic") {
+      // A terminal window is running it: a second process would fork it,
+      // so the row takes you to that window instead.
+      btn.addEventListener("click", () => openTerminalWindow(c.terminal.window_id));
     } else if (chatState.session === "classic") {
       // Claude Code's own terminal: the conversation opens in a new window
       // there, resumed, and whatever the terminal was doing stays put.
@@ -14738,6 +14884,24 @@ function renderChatRail() {
     if (!c.view_only) row.appendChild(convRowMenu(c));
     list.appendChild(row);
   });
+  // brAIn's terminal windows on a conversation the list has no row for
+  // yet (one a card's Ask started there): Claude processes too, so they
+  // are listed rather than running out of sight.
+  const listed = new Set(chatState.convs.map((c) => c.id));
+  (chatState.termWindows || [])
+    .filter((w) => !w.session_id || !listed.has(w.session_id))
+    .forEach((w) => {
+      const row = el("div", "crrow");
+      const btn = el("button", "critem");
+      btn.type = "button";
+      btn.appendChild(el("span", "ctitle", "A conversation in the terminal"));
+      const foot = el("div", "crfoot");
+      foot.appendChild(el("span", "crlive", "In the terminal"));
+      btn.appendChild(foot);
+      btn.addEventListener("click", () => openTerminalWindow(w.window_id));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
 }
 
 $("#chatRailNew").addEventListener("click", () => $("#chatNew").click());
@@ -14798,9 +14962,15 @@ async function resumeConversation(conv) {
     // `spawn: false`: opening a conversation is reading it. Its transcript
     // comes over now and the Claude process starts with the first message
     // you send — not one per conversation you happened to look at.
-    const out = await api("api/chat/resume", {
+    const out = await chatSwitching(() => api("api/chat/resume", {
       method: "POST",
-      body: JSON.stringify({ session_id: conv.id, spawn: false }) });
+      body: JSON.stringify({ session_id: conv.id, spawn: false }) }));
+    if (out && out.in_terminal) {
+      // A terminal window is running it: that is where it carries on.
+      await openTerminalWindow(out.window_id);
+      return;
+    }
+    if (out && out.key) chatReconnect(out.key, out.session_id);
     // The row's state rides back so the composer line is right before the
     // reconnect's snapshot lands — and a fallback is a state on the line
     // ("Context lost") rather than only the toast below, which vanishes.
@@ -15041,7 +15211,7 @@ async function pickChatModel(id) {
   closeChipPop();
   try {
     const out = await api("api/chat/model", {
-      method: "POST", body: JSON.stringify({ model: id || null }) });
+      method: "POST", body: JSON.stringify({ model: id || null, ...chatWho() }) });
     chatState.chatModel = out.chat_model || "";
     // The meta line is the only confirmation a pick landed, and the event
     // that would refresh it (init → info) does not arrive until the next
@@ -15073,7 +15243,8 @@ $("#chatModelPick").addEventListener("click", () =>
 async function chatHandoff() {
   let out;
   try {
-    out = await api("api/chat/handoff", { method: "POST" });
+    out = await api("api/chat/handoff", {
+      method: "POST", body: JSON.stringify(chatWho()) });
   } catch (e) {
     toast(e.message);
     return;
@@ -15100,7 +15271,11 @@ async function chatHandoff() {
 // That Claude is left running: it is somebody's shell.
 async function chatAdopt() {
   try {
-    return await api("api/chat/adopt", { method: "POST" });
+    const out = await chatSwitching(() => api("api/chat/adopt", { method: "POST" }));
+    // Adopt opens the terminal's conversation as the attached one; this
+    // viewer follows it there.
+    chatReconnect(null, null);
+    return out;
   } catch (e) {
     // Never block the switch on it. The renderer changing is the thing that
     // was asked for; not finding a conversation to carry is a worse chat,
@@ -15305,16 +15480,79 @@ document.addEventListener("click", (ev) => {
 // The terminal frame, loaded on first need. ttyd attaches to the one tmux
 // session, so a window the server just opened is what it shows.
 function showTerminalFrame() {
-  const frame = $("#termFrame");
-  if (frame && frame.getAttribute("src") === "about:blank") frame.src = "terminal/";
+  loadTerminalFrame();
   document.body.classList.remove("ask-list");
 }
+
+// The frame, loaded only once the terminal answers. A frame pointed at
+// `terminal/` while the panel or ttyd was (re)starting caught the proxy's
+// 502 page and kept it — nothing ever loaded it again. So the terminal is
+// probed first (ttyd's small `token` route, through the panel's proxy),
+// and a frame that lands on an error page anyway is retried, with a short
+// backoff and a line saying what is happening.
+const termLoad = { timer: null, delay: 1000 };
+
+function termStarting(on) {
+  const p = $("#termStarting");
+  if (p) p.classList.toggle("hidden", !on);
+}
+
+function termRetry() {
+  if (termLoad.timer) return;
+  termStarting(true);
+  termLoad.timer = setTimeout(() => {
+    termLoad.timer = null;
+    loadTerminalFrame(true);
+  }, termLoad.delay);
+  termLoad.delay = Math.min(termLoad.delay * 2, 10000);
+}
+
+async function loadTerminalFrame(force) {
+  const frame = $("#termFrame");
+  if (!frame) return;
+  if (!force && frame.getAttribute("src") !== "about:blank") return;
+  let up = false;
+  try {
+    const r = await fetch("terminal/token", { cache: "no-store" });
+    up = r.ok;
+  } catch (e) {
+    up = false;
+  }
+  if (!up) { termRetry(); return; }
+  termLoad.delay = 1000;
+  termStarting(false);
+  frame.src = "terminal/";
+}
+
+// What a proxy's error page looks like from here: same origin, so its text
+// is readable, and ttyd's own page always carries its terminal element.
+function termFrameIsError(frame) {
+  try {
+    const doc = frame.contentDocument;
+    if (!doc || !doc.body) return false;
+    if (doc.querySelector(".xterm, #terminal-container")) return false;
+    if (doc.body.hasAttribute("data-terminal-starting")) return true;
+    return /\b50[234]\b|Bad Gateway|not responding yet/i.test(doc.body.innerText || "");
+  } catch (e) {
+    return false;
+  }
+}
+
+$("#termFrame").addEventListener("load", () => {
+  const frame = $("#termFrame");
+  if (frame.getAttribute("src") === "about:blank") return;
+  if (termFrameIsError(frame)) termRetry();
+  else termStarting(false);
+});
 
 // Open Claude Code in the terminal: on a conversation, with a first message,
 // or both. Every way into a conversation from the panel ends here — a row,
 // New, Discuss on a card, and pressing and holding anything.
 async function openInTerminal(body) {
-  if (chatState.session !== "classic") applyTermMode("classic");
+  // No local face flip here: a face the server has not saved is put back by
+  // the next status refresh (`syncTermMode`), which is how Ask on a card
+  // used to land people on an empty chat. Asking goes through `askAbout`,
+  // which follows the saved face; this is the classic face's own door.
   switchView("terminal");
   showTerminalFrame();
   try {
@@ -17537,9 +17775,11 @@ function openAskAbout(el, x, y) {
   go.className = "btn small primary";
   go.textContent = "Ask";
   const send = () => {
+    if (go.disabled) return;
     const prompt = askPrompt(ctx, input.value.trim());
+    go.disabled = true;
     closeAskAbout();
-    openInTerminal({ prompt });
+    askAbout(prompt);
   };
   go.addEventListener("click", send);
   cancel.addEventListener("click", closeAskAbout);
@@ -17802,7 +18042,7 @@ $("#persAsk").addEventListener("click", () => {
     + "When we settle a change to how you speak or behave, record it with "
     + "note_personality_change in one sentence, and if the persona itself should "
     + "change, tell me what to put in ⚙ › Personality.");
-  openInTerminal({ prompt: lines.join("\n") });
+  askAbout(lines.join("\n"), $("#persAsk"));
 });
 
 // ------------------------------------------------- ⚙ › Instructions
@@ -17933,7 +18173,7 @@ $("#instrAsk").addEventListener("click", () => {
   }
   lines.push("", "Read it, tell me what it makes brAIn do, and help me change it.");
   leaveSettings();
-  openInTerminal({ prompt: lines.join("\n") });
+  askAbout(lines.join("\n"), $("#instrAsk"));
 });
 
 // -------------------------------------------------------- ⚙ › Features

@@ -775,6 +775,10 @@
        Talk button, which hands the phone's mic to Claude Code's /voice. -->
   <iframe id="termFrame" title="Terminal" src="about:blank"
           allow="clipboard-read; clipboard-write; microphone"></iframe>
+  <!-- Over the frame while the terminal is not answering yet (a restart, a
+       ttyd that is being started again): the frame is retried with a short
+       backoff rather than left on a proxy's 502 page. -->
+  <p id="termStarting" class="termstarting hidden" role="status">The terminal is starting…</p>
 
   <!-- Two buttons, not five. These float over somebody's output, and a
        column of five translucent squares sitting on top of the text is

@@ -23703,15 +23703,67 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
         return web.json_response({**out, "finding": finding,
                                   "face": "terminal"})
     prompt = await asyncio.to_thread(_discuss_prompt, finding)
+    out = await _ask_in_chat(prompt, await _json_body(request),
+                             finding_ts=int(finding["ts"]))
+    return web.json_response({**out, "finding": finding})
+
+
+async def _ask_in_chat(prompt: str, body: dict, finding_ts: int = 0) -> dict:
+    """A NEW chat conversation that starts with ``prompt``, answered at once.
+
+    The one path every ask-about takes on the chat face (Discuss, Ask on a
+    card, the hold menu, Personality's and Instructions' Ask): `new` opens
+    the conversation without spawning — the asking viewer's own empty chat
+    is reused rather than a second one opened — and the prompt is sent the
+    way the composer sends, so the request answers within ``SEND_HOLD_S``
+    with the conversation's key and the spawn's progress (or failure)
+    arrives on the stream the panel then opens on it.
+    """
     registry = _chat_registry()
+    current = registry.by_key(str(body.get("session_key") or ""))
     try:
-        await registry.new(finding_ts=int(finding["ts"]))
-        session = _chat()
-        await session.send(prompt)
+        opened = await registry.new(finding_ts=finding_ts, current=current,
+                                    spawn=False)
+        session = registry.by_key(opened["key"])
+        if session is None:
+            raise RuntimeError("the new conversation could not be opened")
+        session.model = eff_chat_model()
+        session.skip_permissions = registry.skip_permissions
+        sent = await _send_promptly(session, prompt)
+    except ValueError as exc:
+        raise web.HTTPBadRequest(reason=_refusal(exc))
     except RuntimeError as exc:
         raise web.HTTPConflict(reason=_refusal(exc))
-    return web.json_response({"ok": True, "finding": finding,
-                              "session_id": session.session_id})
+    return {"ok": True, "face": "chat", "session_id": session.session_id,
+            "key": session.key, "pending": bool(sent.get("pending"))}
+
+
+ASK_CONTEXT_MAX = 6000
+
+
+async def h_ask(request: web.Request) -> web.Response:
+    """POST {prompt[, context]}: ask brAIn about something, on the saved face.
+
+    Every ask-about used to open the TERMINAL by flipping the page's face
+    locally without saving it, so the next status poll put the saved face
+    (the chat) back and the person was left on an empty "New chat" while
+    their question ran in a hidden tmux window. One rule now, decided here
+    and nowhere else: the saved face wins. On the chat face a new chat
+    conversation starts with the prompt; on the classic face a terminal
+    window opens on it, as it always did.
+    """
+    body = await _json_body(request)
+    prompt = str(body.get("prompt") or "").strip()
+    if not prompt:
+        raise web.HTTPBadRequest(reason="nothing to ask")
+    context = str(body.get("context") or "").strip()[:ASK_CONTEXT_MAX]
+    if context:
+        prompt = f"{prompt}\n\n{context}"
+    prompt = prompt[:chat_session.MAX_TEXT_CHARS]
+    if settings_store.load().get("terminal_ui") == "classic":
+        out = await _open_terminal("", prompt)
+        return web.json_response({**out, "face": "terminal"})
+    return web.json_response(await _ask_in_chat(prompt, body))
 
 
 async def h_finding_fix(request: web.Request) -> web.Response:
@@ -26666,17 +26718,8 @@ async def h_chat_send(request: web.Request) -> web.Response:
         {**out, "session_id": session.session_id, "key": session.key})
 
 
-async def _chat_body(request: web.Request) -> dict:
-    """A JSON body that may be absent (the old Stop sent none)."""
-    try:
-        body = await request.json()
-    except (ValueError, UnicodeDecodeError):
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
 async def h_chat_stop(request: web.Request) -> web.Response:
-    session = await _chat_for(await _chat_body(request))
+    session = await _chat_for(await _json_body(request))
     return web.json_response(await session.interrupt())
 
 
@@ -26687,7 +26730,7 @@ async def h_chat_new(request: web.Request) -> web.Response:
     rather than spending a slot on a second empty process — see
     ``SessionRegistry.new``.
     """
-    body = await _chat_body(request)
+    body = await _json_body(request)
     registry = _chat_registry()
     # The asking viewer's own conversation, so "reuse the empty one" reuses
     # THEIRS and never another device's empty chat.
@@ -26699,8 +26742,10 @@ async def h_chat_new(request: web.Request) -> web.Response:
 
 
 async def h_chat_handoff(request: web.Request) -> web.Response:
-    """Stop the chat session and hand it to the classic terminal."""
-    return web.json_response(await _chat().handoff())
+    """Stop the chat session and hand it to the classic terminal — the
+    viewer's own conversation when it names one."""
+    session = await _chat_for(await _json_body(request))
+    return web.json_response(await session.handoff())
 
 
 async def h_chat_conversations(request: web.Request) -> web.Response:
@@ -26792,7 +26837,7 @@ async def h_chat_conversations(request: web.Request) -> web.Response:
 
 async def h_terminal_select(request: web.Request) -> web.Response:
     """POST {window_id}: bring one of brAIn's terminal windows forward."""
-    body = await _chat_body(request)
+    body = await _json_body(request)
     window_id = str(body.get("window_id") or "")
     selected = await asyncio.to_thread(
         chat_session.select_terminal_window, window_id)
@@ -27262,6 +27307,100 @@ def note_crash(route: str, exc: BaseException, now: float | None = None) -> bool
     return True
 
 
+# The start, split in two (see `on_startup`): the gate below holds a request
+# that needs the slow half until it is done. `done` is created by
+# on_startup on the running loop; before that (an app nobody started, a
+# handler called directly) there is no gate at all.
+_STARTUP: dict = {"done": None, "error": ""}
+# How long a request waits for the start to finish before it is answered
+# "starting" instead — well under any proxy's timeout, and long enough that
+# an ordinary start (and every test's) is simply waited out.
+STARTING_WAIT_S = float(os.environ.get("BRAIN_STARTING_WAIT_S", "8"))
+STARTING_PAGE_WAIT_S = 1.5
+# What may answer before the start is done: the readiness probe, the
+# panel's own files, and the terminal (ttyd is not ours to gate).
+_STARTING_OPEN = ("/api/ready", "/terminal", "/style.css", "/app.js",
+                  "/docs.js", "/favicon.svg", "/house-layer.js")
+STARTING_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brAIn is starting</title>
+<style>
+:root { color-scheme: light dark; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+  font: 16px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }
+p { padding: 0 16px; text-align: center; }
+</style></head>
+<body data-brain-starting>
+<p>brAIn is starting… this page opens by itself in a moment.</p>
+<script>
+(function poll(delay) {
+  setTimeout(function () {
+    fetch("api/ready", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.ready) location.reload();
+        else poll(Math.min(delay * 2, 5000));
+      })
+      .catch(function () { poll(Math.min(delay * 2, 5000)); });
+  }, delay);
+})(500);
+</script>
+</body></html>
+"""
+
+
+def startup_ready() -> bool:
+    done = _STARTUP.get("done")
+    return done is None or done.is_set()
+
+
+async def _wait_started(timeout: float) -> bool:
+    done = _STARTUP.get("done")
+    if done is None or done.is_set():
+        return True
+    try:
+        await asyncio.wait_for(asyncio.shield(done.wait()), timeout)
+    except asyncio.TimeoutError:
+        return False
+    return True
+
+
+@web.middleware
+async def starting_middleware(request: web.Request, handler):
+    """Bound first, gated until the slow half of the start is done.
+
+    A request that needs it waits up to ``STARTING_WAIT_S`` and is then
+    answered rather than held: the page's root with a small page that
+    reloads itself once ``/api/ready`` says so, and an API route with a
+    plain 503 ``{"starting": true}`` the panel can retry — never a proxy's
+    502 because nothing was listening yet.
+    """
+    if startup_ready():
+        return await handler(request)
+    path = request.path
+    if path.startswith(_STARTING_OPEN):
+        return await handler(request)
+    if path in ("/", "/index.html"):
+        if await _wait_started(STARTING_PAGE_WAIT_S):
+            return await handler(request)
+        return web.Response(text=STARTING_PAGE, content_type="text/html",
+                            headers={"Cache-Control": "no-store"})
+    if await _wait_started(STARTING_WAIT_S):
+        return await handler(request)
+    return web.json_response(
+        {"starting": True, "error": "brAIn is starting — try again in a "
+                                    "moment"},
+        status=503, headers={"Retry-After": "2", "Cache-Control": "no-store"})
+
+
+async def h_ready(request: web.Request) -> web.Response:
+    """Whether the start has finished — what the starting page polls."""
+    return web.json_response({"ready": startup_ready(),
+                              "error": _STARTUP.get("error") or ""},
+                             headers={"Cache-Control": "no-store"})
+
+
 @web.middleware
 async def crash_middleware(request: web.Request, handler):
     try:
@@ -27297,8 +27436,9 @@ def make_app() -> web.Application:
     # export — the document plus every ledger. Everything else is far
     # smaller.
     app = web.Application(client_max_size=1024 * 1024,
-                          middlewares=[crash_middleware])
+                          middlewares=[crash_middleware, starting_middleware])
     app.router.add_get("/", h_index)
+    app.router.add_get("/api/ready", h_ready)
     app.router.add_get("/style.css", _static("style.css", "text/css"))
     app.router.add_get("/app.js", _static("app.js", "application/javascript"))
     app.router.add_get("/docs.js", _static("docs.js", "application/javascript"))
@@ -27531,6 +27671,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/chat/handoff", h_chat_handoff)
     app.router.add_post("/api/terminal/open", h_terminal_open)
     app.router.add_post("/api/terminal/select", h_terminal_select)
+    app.router.add_post("/api/ask", h_ask)
     app.router.add_get("/api/features", h_features_get)
     app.router.add_put("/api/features", h_features_put)
     app.router.add_get("/api/morph/state", h_morph_state)
@@ -27570,6 +27711,63 @@ def make_app() -> web.Application:
     _maint_routes(app)
 
     async def on_startup(app: web.Application) -> None:
+        """What has to be true before the port is bound — and nothing else.
+
+        aiohttp binds only after every ``on_startup`` returns, and this
+        used to hold fifteen migrations, syncs and the event bus, so Home
+        Assistant's ingress answered 502 for the whole of every start. Now
+        only what a route cannot do without runs here; the rest is
+        ``_startup_work``, a task started here and finished after the bind,
+        while the starting gate (`starting_middleware`) holds requests that
+        need it.
+        """
+        _STARTUP["done"] = asyncio.Event()
+        _STARTUP["error"] = ""
+        # Every failed run of any kind becomes one readable file: hooked on
+        # the journal so a new run path is covered by having recorded itself.
+        journal.on_record(_journal_report_listener)
+        # And every run that spent something tells the usage tracker, which
+        # is asking on a 30-minute heartbeat rather than every 5 minutes.
+        journal.on_record(_journal_usage_listener)
+        # And a usage limit met by any run holds the scheduled cards.
+        journal.on_record(_journal_rate_listener)
+        # The work queue belongs to the loop the worker runs on, and it
+        # is a module global — so the first loop to touch it owns it for
+        # the life of the process. In the add-on that is one loop and one
+        # app and the distinction never arises; anywhere that builds a
+        # second app (a test, the demo panel) the second worker's very
+        # first `get()` raises "bound to a different event loop" into a
+        # task nobody awaits, which surfaces as an unraisable exception
+        # in an unrelated teardown. Rebinding here costs one object and
+        # keeps the queue an implementation detail of the running app.
+        _rebind_queue()
+        _rebind_resident_queue()
+        # The panel's own four files, read into memory before the first
+        # request rather than on it — off the loop, where every read of them
+        # now happens.
+        await asyncio.to_thread(_warm_static)
+        # Waiters from a loop that has gone (a test, a second app) can
+        # never be woken; the run queue drops them, `_rebind_queue`'s rule.
+        run_queue.QUEUE.reset()
+        # The add-on's options decide every effective setting a route
+        # answers with (and a pre-1.8 override is promoted into them), so
+        # they are synced before the first request rather than after it.
+        await _options_sync()
+        _publish_permission_mode()
+        app["startup"] = asyncio.create_task(_startup_work(app))
+
+    async def _startup_work(app: web.Application) -> None:
+        try:
+            await _startup_body(app)
+        except Exception as exc:  # noqa: BLE001 — a start that failed half
+            # way must still open the gate, or every route answers 503 for
+            # ever; the fault is logged and carried by /api/ready.
+            log.exception("brAIn's startup work failed")
+            _STARTUP["error"] = _refusal(exc)
+        finally:
+            _STARTUP["done"].set()
+
+    async def _startup_body(app: web.Application) -> None:
         # Every prompt's shipped text is captured before any override is put
         # in force, then the overrides, then the shipped copies are written
         # where Claude in the terminal can read them.
@@ -27640,35 +27838,7 @@ def make_app() -> web.Application:
             conversations.relabel_morph, chat_session.WORK_DIR)
         if morphs:
             log.info("listed %d conversation(s) Morph started under Morph", morphs)
-        await _options_sync()
-        _publish_permission_mode()
         await _shell_sync()
-        # Every failed run of any kind becomes one readable file: hooked on
-        # the journal so a new run path is covered by having recorded itself.
-        journal.on_record(_journal_report_listener)
-        # And every run that spent something tells the usage tracker, which
-        # is asking on a 30-minute heartbeat rather than every 5 minutes.
-        journal.on_record(_journal_usage_listener)
-        # And a usage limit met by any run holds the scheduled cards.
-        journal.on_record(_journal_rate_listener)
-        # The work queue belongs to the loop the worker runs on, and it
-        # is a module global — so the first loop to touch it owns it for
-        # the life of the process. In the add-on that is one loop and one
-        # app and the distinction never arises; anywhere that builds a
-        # second app (a test, the demo panel) the second worker's very
-        # first `get()` raises "bound to a different event loop" into a
-        # task nobody awaits, which surfaces as an unraisable exception
-        # in an unrelated teardown. Rebinding here costs one object and
-        # keeps the queue an implementation detail of the running app.
-        _rebind_queue()
-        _rebind_resident_queue()
-        # The panel's own four files, read into memory before the first
-        # request rather than on it — off the loop, where every read of them
-        # now happens.
-        await asyncio.to_thread(_warm_static)
-        # Waiters from a loop that has gone (a test, a second app) can
-        # never be woken; the run queue drops them, `_rebind_queue`'s rule.
-        run_queue.QUEUE.reset()
         # Every long-lived loop is supervised: a done-callback says at
         # warning when one stops, and `/api/diagnostics` carries whether
         # each is alive and when the ones that beat last went round —
@@ -27738,6 +27908,13 @@ def make_app() -> web.Application:
             start_auth_check()
 
     async def on_cleanup(app: web.Application) -> None:
+        task = app.get("startup")
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 — cancelled on the way out
+                pass
         # The chat session is a child process of ours; leaving it running
         # after the panel goes down orphans a Claude that nothing will ever
         # read from again.
