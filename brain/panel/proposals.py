@@ -116,6 +116,50 @@ def key_for(obj: dict) -> str:
         f"{obj.get('kind') or ''}|{body}".encode()).hexdigest()[:16]
 
 
+def playbook_class(obj: dict) -> str:
+    """The class (smoke, leak, freeze…) of an emergency playbook proposal or
+    of the row/ledger entry it became, or "" for anything else."""
+    if str((obj or {}).get("kind") or "") != "playbook":
+        return ""
+    book = (obj or {}).get("playbook")
+    return str((book.get("class") if isinstance(book, dict) else "")
+               or (obj or {}).get("playbook_class") or "")
+
+
+def playbook_sensors(obj: dict) -> frozenset:
+    """The detectors a playbook proposal (or the entry it became) fires on."""
+    book = (obj or {}).get("playbook")
+    rows = book.get("sensors") if isinstance(book, dict) else None
+    if rows is None:
+        rows = (obj or {}).get("playbook_sensors")
+    return frozenset(str(r.get("entity_id") if isinstance(r, dict) else r)
+                     for r in rows or ())
+
+
+def _same_playbook(entry: dict, obj: dict) -> bool:
+    """Is this row or ledger entry the same emergency playbook as `obj`?
+
+    The class and the detectors that trigger it, and nothing it acts on:
+    a playbook's config lists every light, thermostat and blind in the
+    house, so a key over the config made a declined playbook a new one the
+    day any of them changed. An entry written before this carries no
+    detectors (and on the ledger no class, only its title, which is
+    constant per class): it is matched on what it has, so a decline made
+    under the old keys still stands.
+    """
+    if str(entry.get("kind") or "") != "playbook":
+        return False
+    cls = playbook_class(obj)
+    have = playbook_class(entry)
+    if have:
+        if have != cls:
+            return False
+    elif not (obj.get("title") and entry.get("title") == obj.get("title")):
+        return False
+    theirs = playbook_sensors(entry)
+    return not theirs or theirs == playbook_sensors(obj)
+
+
 def _normalise(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).strip()
 
@@ -187,6 +231,18 @@ def _knows(key: str, rows: list[dict]) -> bool:
     return any(r.get("key") == key for r in rows) or key in settled_keys()
 
 
+def _known(obj: dict, rows: list[dict]) -> bool:
+    """`_knows` for a whole proposal: its key, and for a playbook the same
+    class under any key an older build gave it."""
+    if _knows(key_for(obj), rows):
+        return True
+    if not playbook_class(obj):
+        return False
+    return (any(_same_playbook(r, obj) for r in rows)
+            or any(_same_playbook(e, obj)
+                   for e in _read(SETTLED_FILE, "settled")))
+
+
 def knows(obj: dict) -> bool:
     """Has this change already been offered, or already been answered?
 
@@ -195,7 +251,7 @@ def knows(obj: dict) -> bool:
     will refuse it — and a producer that does not ask is refused all the
     same.
     """
-    return _knows(key_for(obj), listing())
+    return _known(obj, listing())
 
 
 def add(obj: dict) -> dict | None:
@@ -207,7 +263,7 @@ def add(obj: dict) -> dict | None:
     """
     key = key_for(obj)
     rows = listing()
-    if _knows(key, rows):
+    if _known(obj, rows):
         return None
     if sum(1 for r in rows if r.get("status") in OPEN_STATUSES) >= MAX_OPEN:
         # Refused rather than pushing an unanswered one out: a list that
@@ -340,6 +396,9 @@ def _settle(row: dict, status: str, note: str, now: float,
         "source": row.get("source"),
         "settled_at": int(now),
     }
+    if playbook_class(row):
+        entry["playbook_class"] = playbook_class(row)
+        entry["playbook_sensors"] = sorted(playbook_sensors(row))
     if applied:
         # What an accept actually produced, on the one record that
         # outlives the row. "Accepted" and "accepted, and here is the

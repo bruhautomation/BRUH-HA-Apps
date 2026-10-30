@@ -70,6 +70,14 @@ LEAK_CLASSES = ("moisture",)
 # about.
 OPENABLE_COVERS = ("blind", "shade", "curtain")
 
+# Integrations that run cameras. A camera listens for an alarm's sound and
+# calls the result "smoke" or "carbon monoxide" detected: that is a camera's
+# guess at a noise, not a detector on a ceiling, and a house that counts it
+# as one offers a playbook for a detector it does not have.
+CAMERA_PLATFORMS = frozenset({"unifiprotect", "frigate", "reolink", "amcrest",
+                              "onvif", "tapo", "hikvision", "dahua",
+                              "synology_dsm", "blink", "arlo"})
+
 # What a switch has to say for brAIn to believe it is a water shutoff.
 # `valve` as a DOMAIN always qualifies — that is what the domain is — but
 # a switch is named by a person, so the word has to be the whole word:
@@ -170,6 +178,25 @@ def _domain_class(domain: str, classes: tuple[str, ...]):
         return (eid.startswith(f"{domain}.")
                 and str(attrs.get("device_class") or "") in classes)
     return pick
+
+
+def _real_detector(house: House):
+    """The smoke/CO/gas predicate, without a camera's audio detection.
+
+    A binary sensor of a smoke class counts unless a camera integration
+    owns it or it sits on the same device as a camera entity — however that
+    integration names it (`*_alarm_detected` for UniFi Protect, and the
+    next one's own word for it)."""
+    pick = _domain_class("binary_sensor", SMOKE_CLASSES)
+
+    def real(eid: str, attrs: dict) -> bool:
+        if not pick(eid, attrs):
+            return False
+        platform = str((house.registry.get(eid) or {}).get("platform") or "")
+        if platform in CAMERA_PLATFORMS:
+            return False
+        return not any(o.startswith("camera.") for o in house.siblings(eid))
+    return real
 
 
 def _shutoff_by_name(eid: str, attrs: dict) -> bool:
@@ -291,7 +318,7 @@ NO_TRIAL = ("There is no week to try this against: a trial replays the days "
 
 def _smoke(house: House, snap: dict, patterns: list[str],
            notify: list[str]) -> dict | None:
-    sensors = _pick(house, _domain_class("binary_sensor", SMOKE_CLASSES))
+    sensors = _pick(house, _real_detector(house))
     if not sensors:
         return None
 
