@@ -200,7 +200,7 @@ Morph's own panel modules are in `/config/custom_components/brain/morph/frontend
 | `engine.js` | The layout engine: springs, masonry, opening in place |
 | `history.js` | History and charts |
 | `upcoming.js` | The Coming up strip |
-| `rail.js` | The room rail on a touch screen's right edge: a short pull left opens it, then up or down goes room to room |
+| `rail.js` | The room rail on a touch screen's right edge: a column of notches, one per room by floor; a short pull left opens it, then, without lifting, up or down goes room to room (ringed on the page, its title at the finger) and lifting lands there |
 | `snap.js` | The picture a Tell takes of what was held |
 | `styles.js` | The styles |
 | `salience.js` | What matters right now: each card's score, its band (Now, Lead, Shown, Folded), its "because" line, and the room states |

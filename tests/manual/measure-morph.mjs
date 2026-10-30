@@ -46,10 +46,14 @@
  *     row as a pill (amber while on, aria-pressed, a 44px target on
  *     touch), not as a tile, also while the room is folded, and is a tile
  *     again in Edit;
- *   * the room rail on a touch screen's right edge: a vertical swipe on it
- *     scrolls the page and jumps nowhere; a short pull left opens it (with
- *     a haptic), sliding then goes room to room; resting on it, pulling and
- *     a tap each say what to do, inside the rail and never over the page.
+ *   * the room rail on a touch screen's right edge (and not on a fine
+ *     pointer): a column of notches; a vertical swipe on it scrolls the
+ *     page and jumps nowhere; a pull left follows the finger with ratchet
+ *     ticks and opens it (a heavy haptic), wider and still with the floor
+ *     names beside it; sliding then goes room to room, the room ringed, the
+ *     others dimmed and its title level with the finger, the floor names
+ *     never moving; lifting closes it on that room and the dimming clears;
+ *     resting on it, pulling and a tap each say what to do.
  *
  * Exits non-zero with every failure listed.
  */
@@ -1211,7 +1215,16 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     atRest(`${where} with a header switch`, await still(p));
   }
 
-  // 3. The room rail (touch only): a vertical swipe scrolls, a pull opens.
+  // 3. The room rail (touch only): a vertical swipe scrolls, a pull left
+  // opens the notched rail (wider, still, the floor names beside it), and
+  // without lifting, sliding goes room to room: the room is ringed, the
+  // others dim, and its title sits level with the finger. Lifting lands on
+  // it and closes the rail.
+  if (!touch) {
+    const drawn = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]'); return r ? r.getBoundingClientRect().width : 0; });
+    if (drawn > 0) fail(where, `the room rail is drawn on a fine pointer (${drawn}px wide)`);
+    await shot(p, `rail-none-${name}`);
+  }
   if (touch) {
     await p.evaluate(() => { const P = window.__panel; P.$('.scroll').scrollTop = 0; });
     await settle(p, 500);
@@ -1219,60 +1232,122 @@ for (const [w, h, name] of W([[1200, 860, 'wide'], [390, 844, 'phone']])) {
     if (!rail || rail.w < 4) fail(where, 'there is no room rail on the right edge of a touch screen');
     else {
       const rx = rail.x + rail.w / 2;
-      const state = () => p.evaluate(() => { const P = window.__panel; const r = P.shadowRoot.querySelector('[data-rail]'); return { top: P.$('.scroll').scrollTop, jumps: P.railJumps || 0, open: r.classList.contains('open'), text: r.innerText.replace(/\s+/g, ' ').trim(), fill: (() => { const f = r.querySelector('[data-rail-fill]'); return f ? f.getBoundingClientRect().width : 0; })(), title: !!r.querySelector('[title]') || r.hasAttribute('title') }; });
-      // Nothing of the rail is over the page.
+      const state = () => p.evaluate(() => {
+        const P = window.__panel; const R = P.shadowRoot; const r = R.querySelector('[data-rail]');
+        const panel = r.querySelector('.srpanel');
+        const notches = [...r.querySelectorAll('.srnotches i')].map((i) => { const b = i.getBoundingClientRect(); return { id: i.getAttribute('data-r'), x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; });
+        const floors = [...r.querySelectorAll('[data-floor-label]')].map((f) => { const b = f.getBoundingClientRect(); return { t: f.textContent, x: Math.round(b.left), y: Math.round(b.top) }; });
+        const secs = [...R.querySelectorAll('[data-board] section[data-sec]')].filter((e) => !e.getAttribute('data-sec').startsWith('__'));
+        const on = secs.find((e) => e.classList.contains('railon'));
+        const dim = secs.filter((e) => e !== on && e.offsetHeight > 24).map((e) => parseFloat(getComputedStyle(e).opacity));
+        const h2 = on && (on.querySelector('.sechead h2') || on.querySelector('.sechead'));
+        const hb = h2 && h2.getBoundingClientRect();
+        const ring = on ? getComputedStyle(on.querySelector('.secbg')).boxShadow : '';
+        return {
+          top: P.$('.scroll').scrollTop, jumps: P.railJumps || 0, open: r.classList.contains('open'),
+          width: panel ? panel.getBoundingClientRect().width : 0,
+          text: r.innerText.replace(/\s+/g, ' ').trim(),
+          title: !!r.querySelector('[title]') || r.hasAttribute('title'),
+          notches, floors, on: on ? on.getAttribute('data-sec') : '',
+          titleY: hb ? hb.top + hb.height / 2 : null,
+          ring, dimMax: dim.length ? Math.max(...dim) : 1, dimMin: dim.length ? Math.min(...dim) : 1,
+          bubble: r.querySelector('.srtip') && !r.querySelector('.srtip').hidden ? r.querySelector('.srtip').innerText.trim() : '',
+        };
+      });
+      // Nothing of the rail is over the page while it rests.
       const over = await p.evaluate(() => { const r = window.__panel.shadowRoot.querySelector('[data-rail]').getBoundingClientRect(); return [...window.__panel.shadowRoot.querySelectorAll('[data-sec], .wrap > *')].filter((e) => { const b = e.getBoundingClientRect(); return b.width && b.right > r.left + 0.5 && b.bottom > r.top && b.top < r.bottom; }).map((e) => e.getAttribute('data-sec') || e.className || e.tagName).slice(0, 4); });
       if (over.length) fail(where, `the rail lies over the page: ${over.join(', ')}`);
-      // A vertical swipe that starts on the rail scrolls the page.
+      // The rail is a column of notches: one per room, vertical rectangles,
+      // and never a list of room names.
       const b0 = await state();
+      if (b0.notches.length < 3) fail(where, `the rail does not draw a notch per room (${b0.notches.length})`);
+      if (b0.notches.some((n) => n.h <= n.w)) fail(where, `a notch is not a vertical rectangle (${JSON.stringify(b0.notches.slice(0, 3))})`);
+      if (b0.text) fail(where, `the resting rail carries words (${b0.text.slice(0, 80)})`);
+      await shot(p, `rail-closed-${name}`);
+      // A vertical swipe that starts on the rail scrolls the page.
       const pts = [[rx, 640]]; for (let i = 1; i <= 12; i++) pts.push([rx + (i % 2), 640 - i * 30]);
       const sw = await touchPath(p, pts, 16);
       await sw.end();
       await settle(p, 700);
       const b1 = await state();
       if (b1.top - b0.top < 80) fail(where, `a vertical swipe on the rail did not scroll the page (${b0.top} → ${b1.top})`);
-      if (b1.jumps !== b0.jumps || b1.open) fail(where, 'a vertical swipe on the rail jumped to a room or opened the index');
+      if (b1.jumps !== b0.jumps || b1.open) fail(where, 'a vertical swipe on the rail jumped to a room or opened the rail');
       await p.evaluate(() => { window.__panel.$('.scroll').scrollTop = 0; });
       await settle(p, 400);
       // Resting on it says what to do.
       const rest = await touchPath(p, [[rx, 420]], 16, 400);
       const r1 = await state();
       if (!/Pull left to open the rooms/.test(r1.text)) fail(where, `resting on the rail does not say "Pull left to open the rooms" (${r1.text.slice(0, 80)})`);
-      await shot(p, `rail-rest-${name}`);
       await rest.end();
       await settle(p, 300);
       const r2 = await state();
       if (!/A little further left, then slide up or down to a room/.test(r2.text)) fail(where, `a tap on the rail leaves no hint (${r2.text.slice(0, 80)})`);
       if (r2.jumps !== b0.jumps || r2.open) fail(where, 'a tap on the rail jumped to a room');
-      await shot(p, `rail-hint-${name}`);
       await settle(p, 2600);
       const r3 = await state();
       if (/A little further left/.test(r3.text)) fail(where, 'the rail\'s hint does not go away');
-      // A short pull: "Keep pulling left" and a bar that fills.
+      // A short pull: the rail follows the finger, with ratchet ticks, and
+      // does not open yet.
       await p.evaluate(() => { window.__haptics = []; window.addEventListener('haptic', (e) => window.__haptics.push(e.detail)); });
-      const pull = await touchPath(p, [[rx, 420], [rx - 2, 420], [rx - 5, 421]], 30);
+      const fy = 420;
+      const pull = await touchPath(p, [[rx, fy], [rx - 3, fy], [rx - 6, fy], [rx - 10, fy]], 30);
       const r4 = await state();
       if (!/Keep pulling left/.test(r4.text)) fail(where, `a pull does not say "Keep pulling left" (${r4.text.slice(0, 80)})`);
-      if (!(r4.fill > 0)) fail(where, 'the pull bar does not fill');
-      if (r4.open) fail(where, 'a 5px pull already opened the rooms');
-      await shot(p, `rail-pull-${name}`);
-      // ...on to 12px: open, a haptic, then sliding goes to a room.
-      for (const x of [rx - 8, rx - 12]) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: 421 }] }); await p.waitForTimeout(30); }
+      if (!(r4.width > b0.width + 2)) fail(where, `the rail does not follow a pull (${b0.width} → ${r4.width})`);
+      if (r4.open) fail(where, 'a 10px pull already opened the rail');
+      const tick = await p.evaluate(() => window.__haptics.slice());
+      if (tick.filter((k) => k === 'selection').length < 2) fail(where, `the pull gave no ratchet ticks (${JSON.stringify(tick)})`);
+      // ...on to 16px: open, a heavy tap; wider, still, floor names beside.
+      for (const x of [rx - 12, rx - 16]) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: fy }] }); await p.waitForTimeout(30); }
       const r5 = await state();
-      if (!r5.open) fail(where, 'a 12px pull left did not open the rooms');
-      const hap = await p.evaluate(() => window.__haptics);
-      if (!hap.includes('medium')) fail(where, `opening the rooms gave no medium haptic (${JSON.stringify(hap)})`);
-      for (let y = 430; y <= 760; y += 30) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rx - 12, y }] }); await p.waitForTimeout(20); }
-      await settle(p, 300);
-      const r6 = await state();
+      if (!r5.open) fail(where, 'a 16px pull left did not open the rail');
+      const hap = await p.evaluate(() => window.__haptics.slice());
+      if (!hap.includes('heavy')) fail(where, `opening the rail gave no heavy haptic (${JSON.stringify(hap)})`);
+      if (!(r5.width > b0.width + 8)) fail(where, `the open rail is not wider (${b0.width} → ${r5.width})`);
+      if (r5.floors.length < 2) fail(where, `the open rail does not name the floors beside it (${JSON.stringify(r5.floors)})`);
+      if (r5.bubble) fail(where, `the open rail shows a room name or a tip by the finger (${r5.bubble})`);
+      // Without lifting: down the rail, room to room.
+      let maxOff = 0, scrubs = 0;
+      const offs = [];
+      const notchY = r5.notches.map((n) => n.y + n.h / 2);
+      // Visit a room in the middle of the screen, then rooms further down.
+      const aims = notchY.filter((y) => y > 300 && y < 560).slice(0, 3);
+      for (const y of aims) {
+        for (let k = 1; k <= 4; k++) { await pull.cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rx - 16, y: Math.round(fy + (y - fy) * k / 4) }] }); await p.waitForTimeout(16); }
+        await settle(p, 700);
+        const m = await state();
+        scrubs++;
+        if (m.open !== true) fail(where, 'the rail closed while the finger was still down');
+        if (!m.on) { fail(where, `sliding to a notch at ${Math.round(y)} lit no room`); continue; }
+        if (!/inset/.test(m.ring) || m.ring === 'none') fail(where, `the room the rail is on is not ringed (${m.ring})`);
+        if (m.dimMax > 0.6) fail(where, `the other rooms are not dimmed while scrubbing (opacity up to ${m.dimMax})`);
+        if (JSON.stringify(m.floors) !== JSON.stringify(r5.floors)) fail(where, `the floor names moved while scrubbing (${JSON.stringify(r5.floors)} → ${JSON.stringify(m.floors)})`);
+        const still = JSON.stringify(m.notches.map((n) => [n.x, n.w])) === JSON.stringify(r5.notches.map((n) => [n.x, n.w]));
+        if (!still) fail(where, 'the notches move sideways or scale while the rail is open');
+        if (Math.abs(m.width - r5.width) > 0.5) fail(where, `the open rail changes width while scrubbing (${r5.width} → ${m.width})`);
+        const off = Math.abs(m.titleY - y);
+        offs.push(Math.round(off)); maxOff = Math.max(maxOff, off);
+      }
       await shot(p, `rail-open-${name}`);
+      if (!scrubs) fail(where, 'no notch to slide to in the middle of the screen');
+      if (maxOff > 15) fail(where, `the room's title is not level with the finger while scrubbing (off by ${offs.join(', ')}px)`);
+      const r6 = await state();
       if (r6.jumps <= b0.jumps) fail(where, 'sliding the opened rail did not go to a room');
-      if (r6.top <= 0) fail(where, 'sliding the opened rail to the bottom did not move the page');
+      if (r6.top <= 0) fail(where, 'sliding the opened rail did not move the page');
       await pull.end();
-      await settle(p, 400);
+      await settle(p, 300);
       const r7 = await state();
       if (r7.open) fail(where, 'the rail stays open after the finger lifts');
-      if (r1.title || r4.title) fail(where, 'the rail\'s tip is a title tooltip');
+      if (r7.floors.length) fail(where, 'the floor names stay after the finger lifts');
+      if (Math.abs(r7.width - b0.width) > 0.5) fail(where, `the rail does not close to its resting width (${r7.width})`);
+      if (r7.dimMin < 0.9) fail(where, `the other rooms stay dimmed after the finger lifts (${r7.dimMin})`);
+      const hap2 = await p.evaluate(() => window.__haptics.slice());
+      if (hap2[hap2.length - 1] !== 'light') fail(where, `landing gave no light haptic (${JSON.stringify(hap2)})`);
+      await shot(p, `rail-landed-${name}`);
+      await settle(p, 1200);
+      const r8 = await state();
+      if (r8.on) fail(where, 'the landed room keeps its ring');
+      if (r1.title || r4.title || r5.title) fail(where, 'the rail\'s tip is a title tooltip');
     }
   }
   const sw = await snapshot(p);

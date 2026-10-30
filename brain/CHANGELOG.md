@@ -2,6 +2,13 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.14
+
+### Changed
+
+- **Morph's room rail is the notched rail again, and one gesture.** On a phone the rail is a slim column of notches, one per room in its own colour, grouped by floor. A pull left opens it (it follows the finger, ticks twice and lands with a firm tap); without lifting, sliding moves room to room, and letting go lands on that room and closes the rail. Open, it is wider and holds still, with the floor names fixed beside it and no room-name popup. The room being gone to is ringed in its own colour while the rest of the page dims, its title sits level with your thumb, and the page glides there smoothly even when frames drop (#541, #542, #543, #544, #545, #546).
+- **Updating a house's own Morph files keeps the house's components.** When brAIn merges a new Morph into files the house changed, it no longer swaps one of the house's own parts for Morph's built-in equivalent unless its summary says so, naming both (#541).
+
 ## 4.0.13
 
 ### Added
