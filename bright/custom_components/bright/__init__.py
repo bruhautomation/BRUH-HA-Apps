@@ -28,6 +28,7 @@ from .const import (
     SERVICE_STOP_SHOW,
 )
 from .coordinator import BrightCoordinator
+from .fingerprint import record_loaded
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
@@ -39,6 +40,10 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
+    # What this Home Assistant loaded (fingerprint.py, taken at import), for the
+    # add-on's run.sh: it says a restart is needed only when the code it deploys
+    # differs from this.
+    await hass.async_add_executor_job(record_loaded, hass.config.path(".bright/integration.json"))
     _register_services(hass)
     return True
 

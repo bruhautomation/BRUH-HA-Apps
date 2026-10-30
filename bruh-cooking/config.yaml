@@ -1,7 +1,7 @@
 ---
 name: "BRUH Cooking"
 description: "Breville+ and Sage cooking appliances — the Joule sous vide and the Joule Oven Air Fryer Pro — in Home Assistant and brAIn: start, stop and watch a cook, presets, and a sidebar panel that draws each appliance. Requires brAIn."
-version: "0.1.0"
+version: "0.1.1"
 slug: "bruh-cooking"
 init: false
 

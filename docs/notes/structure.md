@@ -168,6 +168,7 @@ BRUH-HA-Apps/
 │           ├── sensor.py        # Anthropic usage-limit sensors
 │           ├── bridge.py        # File-based IPC with the add-on
 │           ├── repairs.py       # "Restart required" repair flow
+│           ├── fingerprint.py   # The code's fingerprint: a restart only when it moved (every integration's copy)
 │           ├── todo.py          # todo.brain: the open findings, as HA's own to-do items
 │           ├── ai_task.py       # brAIn as HA's AI Task entity, read-only and validated twice
 │           ├── llm_api.py       # brAIn's measurements, for other agents, through HA's LLM API

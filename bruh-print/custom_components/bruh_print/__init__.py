@@ -9,6 +9,7 @@ Registers:
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 import voluptuous as vol
 
@@ -18,7 +19,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, cal
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 
 from .bridge import send_request
 from .const import (
@@ -40,6 +41,7 @@ from .const import (
     card_url,
 )
 from .coordinator import BruhPrintCoordinator
+from .fingerprint import record_loaded
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -113,6 +115,10 @@ SERVICES = {
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
+    # What this Home Assistant loaded (fingerprint.py, taken at import), for the
+    # add-on's run.sh: it says a restart is needed only when the code it deploys
+    # differs from this.
+    await hass.async_add_executor_job(record_loaded, hass.config.path(".bruh_print/integration.json"))
     _register_services(hass)
     return True
 
@@ -122,6 +128,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await _register_card(hass)
+
+    async def _follow(_now) -> None:
+        await _follow_card(hass)
+
+    entry.async_on_unload(async_track_time_interval(
+        hass, _follow, timedelta(seconds=CARD_FOLLOW_S), cancel_on_shutdown=True))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -183,6 +195,7 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
     except ImportError:  # pragma: no cover - frontend is always there in core
         return
     add_extra_js_url(hass, url)
+    _CARD["url"] = url
     _sync_local_issue(hass)
     if tries:
         # Worth a line at info: somebody whose card appeared four minutes
@@ -190,6 +203,32 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
         _LOGGER.info("Registered the BRUH Print card at %s", url)
     else:
         _LOGGER.debug("Registered the BRUH Print card at %s", url)
+
+
+# The card URL registered with the frontend. The add-on copies a new card in
+# on every start, and an update that changed no integration code owes no
+# restart of Home Assistant, so the URL follows the file: when its hash
+# moves, the old URL goes and the new one is registered, and a page reload
+# loads the new card.
+CARD_FOLLOW_S = 60
+_CARD: dict = {"url": None}
+
+
+async def _follow_card(hass: HomeAssistant) -> None:
+    def _url() -> str | None:
+        return card_url(CARD_FILE) if CARD_FILE.is_file() else None
+
+    old = _CARD["url"]
+    url = await hass.async_add_executor_job(_url)
+    if not old or not url or url == old:
+        return
+    try:
+        from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
+    except ImportError:  # pragma: no cover - frontend is always there in core
+        return
+    remove_extra_js_url(hass, old)
+    add_extra_js_url(hass, url)
+    _CARD["url"] = url
 
 
 def _local_is_served(hass: HomeAssistant) -> bool:

@@ -13,13 +13,16 @@ Core's REST API:
 * once Core knows the integration and no entry exists, it starts the config
   flow itself and finishes it (the flow asks nothing), so the integration is
   set up the moment Home Assistant has loaded it;
-* while Core does not know it yet (or runs an older copy than the one on
-  disk), it says a restart is needed — on the Printers tab, and once per
-  version as a Home Assistant notification — and offers the restart as a
-  press, never on its own.
+* while Core does not know it yet (or runs different integration code than
+  the copy on disk), it says a restart is needed — on the Printers tab, and
+  once per version as a Home Assistant notification — and offers the
+  restart as a press, never on its own.
 
 The integration writes /config/.bruh_bambu/integration.json when it sets
-up, which is how a running copy's version is read without asking Core.
+up, which is how a running copy's version, and the fingerprint of its code
+(integration_fingerprint.py, the integration's own fingerprint.py), are
+read without asking Core. An update that moved only the version, or only
+the card, owes no restart: the fingerprints are the same.
 """
 from __future__ import annotations
 
@@ -31,6 +34,8 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from integration_fingerprint import fingerprint
 
 log = logging.getLogger("bruh_bambu.ha_setup")
 
@@ -74,12 +79,29 @@ def deployed_version() -> str | None:
         return None
 
 
+def running_record() -> dict:
+    """What Core last set the integration up with, as it wrote it."""
+    try:
+        data = json.loads((SHARED / "integration.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def running_version() -> str | None:
     """The version Core last set the integration up with, as it wrote it."""
-    try:
-        return json.loads((SHARED / "integration.json").read_text()).get("version")
-    except (OSError, ValueError):
-        return None
+    return running_record().get("version")
+
+
+def restart_owed(record: dict, deployed: str | None) -> bool:
+    """Whether Core runs different integration code than the copy on disk.
+    By the code's fingerprint when the record has one; a record an older
+    integration wrote has none, and then (once) by version."""
+    loaded = record.get("fingerprint")
+    if loaded:
+        return loaded != fingerprint(str(DEPLOYED))
+    running = record.get("version")
+    return bool(running and deployed and running != deployed)
 
 
 def entries() -> list | None:
@@ -137,7 +159,8 @@ def check(force: bool = False) -> dict:
     if not force and time.time() - _CHECKED["at"] < CHECK_EVERY_S:
         return STATE
     _CHECKED["at"] = time.time()
-    deployed, running = deployed_version(), running_version()
+    deployed, record = deployed_version(), running_record()
+    running = record.get("version")
     STATE.update(checked_at=int(time.time()), deployed=deployed, running=running, error="")
     if os.environ.get("ENABLE_HA_INTEGRATION", "true") != "true":
         STATE.update(restart_needed=False, reason="disabled", entry=None)
@@ -163,8 +186,12 @@ def check(force: bool = False) -> dict:
                 STATE.update(error=f"Home Assistant would not set the integration up: {why}")
         entry = found[0] if found else None
         STATE["entry"] = {"state": entry.get("state"), "entry_id": entry.get("entry_id")} if entry else None
-        stale = bool(running and deployed and running != deployed)
+        stale = restart_owed(record, deployed)
         STATE.update(restart_needed=stale, reason="update" if stale else "")
+        if not stale and record.get("fingerprint"):
+            # The same code under a newer version is the deployed copy
+            # running: nothing here may read it as a version behind.
+            STATE["running"] = deployed
         if stale:
             notify_restart(deployed)
     except (OSError, ValueError) as exc:

@@ -1064,8 +1064,10 @@ DIAG_STATE: dict = {"published_at": 0.0}
 # running the old code until it restarts — so the add-on and the
 # integration can be a version apart for days, and the only thing that
 # said so was a Repairs entry. The integration writes what it loaded
-# (`integration_loaded.json`, at setup), run.sh writes the marker while a
-# restart is owed, and the panel reads both for the fault list.
+# (`integration_loaded.json`, at setup: version and code fingerprint),
+# run.sh writes the marker only when the code it deployed differs from the
+# code loaded (an update that moved only the version owes no restart), and
+# the panel reads both for the fault list.
 INTEGRATION_LOADED_FILE = Path(os.environ.get(
     "BRAIN_INTEGRATION_LOADED_FILE", "/config/.brain/integration_loaded.json"))
 RESTART_MARKER_FILE = Path(os.environ.get(
@@ -1087,8 +1089,15 @@ def _integration_versions() -> dict:
     marker = _read(RESTART_MARKER_FILE)
     loaded_v = str(loaded.get("version") or "") or None
     required = str((marker or {}).get("required_version") or "") or None
-    pending = marker is not None and (
-        not required or not loaded_v or required != loaded_v)
+    # By the code's fingerprint when both sides carry one (the version moves
+    # with every release, the code does not), else by version.
+    wanted_fp = str((marker or {}).get("fingerprint") or "")
+    loaded_fp = str(loaded.get("fingerprint") or "")
+    if marker is not None and wanted_fp and loaded_fp:
+        pending = wanted_fp != loaded_fp
+    else:
+        pending = marker is not None and (
+            not required or not loaded_v or required != loaded_v)
     return {"loaded": loaded_v, "required": required,
             "restart_pending": bool(pending)}
 

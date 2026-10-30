@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.4
+
+### Changed
+
+- **The add-on says when Home Assistant needs a restart, and only then.** It compares the integration code Home Assistant loaded with what was just installed and says so in its log only when they differ. The first update with this change still asks once.
+
 ## 0.14.3
 
 ### Changed

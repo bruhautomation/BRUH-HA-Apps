@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+### Changed
+
+- **An update asks for a restart only when it needs one.** The panel compares the integration code Home Assistant loaded with what was just installed, so a version-only update shows no restart banner or notification, and the printer card follows its own file so a card change needs only a page reload. The first update with this change still asks once. The card's retry also now runs on Home Assistant's event loop, where it belongs.
+
 ## 0.4.2
 
 ### Fixed

@@ -10,7 +10,9 @@ same insert.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
@@ -49,8 +51,20 @@ from .const import (
     VERSION,
 )
 from .coordinator import GardenRxCoordinator
+from .fingerprint import record_loaded
 
 _LOGGER = logging.getLogger(__name__)
+
+# What this Home Assistant loaded (fingerprint.py: the fingerprint of the
+# code, taken at import), written at setup. The add-on's run.sh reads the
+# record to say whether an update it deployed needs a restart of Home
+# Assistant — only when the code differs.
+LOADED_FILE = ".gardenrx/integration.json"
+
+# The cards' URL carries a hash of the file and follows it: an update that
+# changed only the cards owes no restart, so the URL has to move without one
+# (it is served with a long cache header) for a page reload to load them.
+CARDS_FOLLOW_S = 60
 
 PLATFORMS = [Platform.SENSOR]
 
@@ -140,8 +154,19 @@ SCHEMAS = {
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     hass.data.setdefault(DOMAIN, {})
+    await hass.async_add_executor_job(record_loaded, hass.config.path(LOADED_FILE), VERSION)
     await _register_cards(hass)
     return True
+
+
+def _cards_url(path: Path, url_dir: str) -> str | None:
+    """The cards' URL with the file's own bytes on the end. Reads the file,
+    so call it in the executor."""
+    try:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return None
+    return f"{url_dir}/{CARDS_FILE}?v={digest}"
 
 
 async def _register_cards(hass: HomeAssistant) -> None:
@@ -163,11 +188,23 @@ async def _register_cards(hass: HomeAssistant) -> None:
         )
     except ImportError:  # Home Assistant before 2024.7
         hass.http.register_static_path(url_dir, str(path.parent), True)
-    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
+    from homeassistant.helpers.event import async_track_time_interval
 
-    add_extra_js_url(hass, f"{url_dir}/{CARDS_FILE}")
-    hass.data[DOMAIN]["cards_registered"] = True
-    _LOGGER.debug("GardenRX cards served at %s/%s", url_dir, CARDS_FILE)
+    url = await hass.async_add_executor_job(_cards_url, path, url_dir) or f"{url_dir}/{CARDS_FILE}"
+    add_extra_js_url(hass, url)
+    hass.data[DOMAIN]["cards_registered"] = url
+    _LOGGER.debug("GardenRX cards served at %s", url)
+
+    async def _follow(_now=None) -> None:
+        now = await hass.async_add_executor_job(_cards_url, path, url_dir)
+        before = hass.data[DOMAIN].get("cards_registered")
+        if now and isinstance(before, str) and now != before:
+            remove_extra_js_url(hass, before)
+            add_extra_js_url(hass, now)
+            hass.data[DOMAIN]["cards_registered"] = now
+
+    async_track_time_interval(hass, _follow, timedelta(seconds=CARDS_FOLLOW_S), cancel_on_shutdown=True)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

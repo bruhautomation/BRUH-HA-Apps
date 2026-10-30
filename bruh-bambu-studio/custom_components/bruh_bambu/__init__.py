@@ -11,18 +11,20 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HassJob, HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 
 from .bridge import send_request
+from .fingerprint import LOADED_FINGERPRINT
 from .const import (
     CARD_FILE,
     CARD_RETRY_SECONDS,
@@ -180,16 +182,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(notifier.start())
     await hass.async_add_executor_job(_record_running)
     await _register_card(hass)
+
+    async def _follow(_now) -> None:
+        await _follow_card(hass)
+
+    entry.async_on_unload(async_track_time_interval(
+        hass, _follow, timedelta(seconds=CARD_FOLLOW_S), cancel_on_shutdown=True))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
-def _record_running() -> None:
-    """Tell the add-on which copy of the integration Home Assistant runs."""
+def _loaded_version() -> str | None:
+    """The version of the copy being imported, taken at import (as the
+    fingerprint is): the add-on may overwrite the files on disk afterwards."""
     try:
-        manifest = json.loads((Path(__file__).parent / "manifest.json").read_text())
+        return json.loads((Path(__file__).parent / "manifest.json").read_text()).get("version")
+    except (OSError, ValueError):
+        return None
+
+
+LOADED_VERSION = _loaded_version()
+
+
+def _record_running() -> None:
+    """Tell the add-on which copy of the integration Home Assistant runs:
+    its version and the fingerprint of its code, which is what the add-on
+    compares to decide whether a restart is owed."""
+    try:
         RUNNING_FILE.parent.mkdir(parents=True, exist_ok=True)
-        RUNNING_FILE.write_text(json.dumps({"version": manifest.get("version"),
+        RUNNING_FILE.write_text(json.dumps({"version": LOADED_VERSION,
+                                            "fingerprint": LOADED_FINGERPRINT,
                                             "at": int(time.time())}))
     except (OSError, ValueError):
         pass  # the add-on then reads "restart needed" a little longer than it is
@@ -209,14 +231,51 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
     url = await hass.async_add_executor_job(_url)
     if url is None:
         if tries + 1 < CARD_RETRY_TRIES:
-            async_call_later(hass, CARD_RETRY_SECONDS,
-                             lambda _now: hass.async_create_task(_register_card(hass, tries + 1)))
+            _schedule_card_retry(hass, tries)
         return
     try:
         from homeassistant.components.frontend import add_extra_js_url
     except ImportError:  # pragma: no cover - frontend is always there in core
         return
     add_extra_js_url(hass, url)
+    _CARD["url"] = url
+
+
+def _schedule_card_retry(hass: HomeAssistant, tries: int) -> None:
+    """Look for the card again in a while. The action is a coroutine
+    function, so Core runs it on the event loop: a plain lambda is run in
+    the executor, and `hass.async_create_task` from there is a call off the
+    loop. Cancelled when Home Assistant shuts down."""
+    async def _retry(_now) -> None:
+        await _register_card(hass, tries + 1)
+
+    async_call_later(hass, CARD_RETRY_SECONDS, HassJob(
+        _retry, "bruh_bambu card retry", cancel_on_shutdown=True))
+
+
+# The card URL registered with the frontend. A new card reaches the add-on
+# without a restart of Home Assistant (an update that changed no integration
+# code owes none), so the URL follows the file: its hash moves, the old URL
+# goes and the new one is registered, and a page reload loads the new card.
+CARD_FOLLOW_S = 60
+_CARD: dict = {"url": None}
+
+
+async def _follow_card(hass: HomeAssistant) -> None:
+    def _url() -> str | None:
+        return card_url(CARD_FILE) if CARD_FILE.is_file() else None
+
+    old = _CARD["url"]
+    url = await hass.async_add_executor_job(_url)
+    if not old or not url or url == old:
+        return
+    try:
+        from homeassistant.components.frontend import add_extra_js_url, remove_extra_js_url
+    except ImportError:  # pragma: no cover - frontend is always there in core
+        return
+    remove_extra_js_url(hass, old)
+    add_extra_js_url(hass, url)
+    _CARD["url"] = url
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.24
+
+### Changed
+
+- **An update asks for a restart only when it needs one.** brAIn now fingerprints the integration code Home Assistant actually loaded and compares it with what was just installed: an update that only moves the version number no longer asks for a restart, and the health status, the Repairs issue and the Morph banner all give the same answer. Screen-only changes need just a page reload. The first update with this change still asks once, because the integration running now never recorded what it loaded.
+
 ## 4.0.23
 
 ### Changed

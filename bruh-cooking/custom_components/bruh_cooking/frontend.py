@@ -211,6 +211,28 @@ async def _async_sync(hass: HomeAssistant) -> None:
     state.title = title
 
 
+async def async_follow_bundle(hass: HomeAssistant) -> None:
+    """Register the panel again under a new URL when the add-on put a new
+    bundle in place. An update that changed only the panel owes no restart
+    of Home Assistant, and the files are cached for good under each URL, so
+    the URL has to follow the file for a page reload to load the new panel."""
+    state = hass.data.get(DATA)
+    if state is None or state.module_url is None or not state.bundle_read:
+        return
+    now = await hass.async_add_executor_job(bundle_hash, FRONTEND_DIR / BUNDLE)
+    if now is None or now == state.bundle_hash:
+        return
+    try:
+        async with state.lock:
+            state.bundle_hash = now
+            if state.module_url is not None:
+                state.module_url = state.title = None
+                frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
+            await _async_sync(hass)
+    except Exception:
+        _LOGGER.exception("Could not update the BRUH Cooking sidebar panel")
+
+
 async def _async_serve(hass: HomeAssistant, state: PanelState) -> bool:
     """Read the bundle's hash and serve its folder, once per process; whether that worked."""
     if not state.bundle_read:
