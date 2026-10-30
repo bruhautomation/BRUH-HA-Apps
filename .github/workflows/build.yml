@@ -49,6 +49,7 @@ jobs:
   build:
     name: ${{ matrix.addon }} (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write

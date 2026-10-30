@@ -48,6 +48,7 @@ jobs:
   replay:
     name: Score the prompts against the corpus
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
