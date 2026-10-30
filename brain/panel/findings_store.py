@@ -3001,7 +3001,8 @@ def nobody_has_touched(entry: dict) -> bool:
     """An open row no person has answered, replied under or put back, and
     no run is planning or fixing — the one kind a look may still set aside
     once it is on screen, and only when the look said the row is not news
-    (`resident.ALREADY`: already answered, marked wrong before, a duplicate).
+    (`resident.ALREADY`: already answered, marked wrong before, a duplicate,
+    already over, or the thing's ordinary state).
 
     "A row on screen never vanishes into a run" is about a run overruling
     somebody; a row nobody has done anything with, under a look that says

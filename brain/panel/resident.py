@@ -106,13 +106,17 @@ _RANK = {word: i for i, word in enumerate(VERDICTS)}
 
 # What a look may say a row ALREADY is, in a word rather than in its
 # sentence: something the house already answers, something the household
-# has marked wrong before, or the same thing as another open card. A row
+# has marked wrong before, the same thing as another open card, a problem
+# that has already ended, or the ordinary state of a thing (a device that
+# is switched off). The last two are #537: "the TV has been off since the
+# evening" and "all the plugs are connected now" were looks saying there
+# was nothing to do, beside a card still asking somebody to do it. A row
 # the look says one of these about is not news, whatever verdict came
 # beside it, and it is held rather than shown — "the household marked this
 # wrong before" under a card on the list was the look being right and the
 # loop not listening. A word and not a reading of the reason, because
 # prose is what gets reworded.
-ALREADY = ("answered", "marked_wrong", "duplicate")
+ALREADY = ("answered", "marked_wrong", "duplicate", "recovered", "explained")
 
 # One sentence per signal, shown on nothing and read in the log and the
 # diagnostics — long enough to say what was read, short enough that a
@@ -225,8 +229,7 @@ FIRST_LOOK_SCHEMA = {
                                          "act"]},
                     "why": {"type": "string"},
                     "already": {"type": "string",
-                                "enum": ["", "answered", "marked_wrong",
-                                         "duplicate"]},
+                                "enum": ["", *ALREADY]},
                 },
                 "required": ["id", "verdict", "why"],
                 "additionalProperties": False,
@@ -345,8 +348,13 @@ Rules:
 - "already" says, in one word, that a row is not news: "answered" (the
   house or memory already answers it), "marked_wrong" (the household has
   marked this report, or one just like it, wrong before), "duplicate" (it
-  is the same problem as another open card or row). Leave it out
-  otherwise. A row you give one of these is set aside whatever verdict
+  is the same problem as another open card or row), "recovered" (the
+  problem has already ended: the device answers again, the reading is back
+  in its range), "explained" (what the row reports is the ordinary state
+  of the thing: the device is switched off, the room is not in use, the
+  season). Leave it out otherwise. When your reason says there is nothing
+  for anybody to do, it needs one of these words — a reason like that
+  beside a card that stays on the list contradicts the card. A row you give one of these is set aside whatever verdict
   you write, so never use it to dismiss something you would investigate
   for any other reason — and your "why" names what already answers it.
 - Judge each signal on what you were given. You cannot look anything up
