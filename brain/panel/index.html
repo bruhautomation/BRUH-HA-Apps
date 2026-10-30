@@ -49,7 +49,13 @@
   <!-- The household's name for brAIn, in the wordmark's place while
        Personality is on (`applyName`). -->
   <span id="brandName" class="brandname" aria-hidden="true"></span>
+  <!-- The house's own picture (`applyHeader`), at the wordmark's height. -->
+  <img id="brandImg" class="brandimg" alt="" hidden>
   </span>
+  <!-- The running version, on a wide screen only (`.barver`, CSS): the same
+       What's new link as ⚙'s `#versionChip`, painted by `paintVersion`. -->
+  <a id="barVersion" class="verlink barver" href="https://github.com/bruhautomation/BRUH-HA-Apps/blob/main/brain/CHANGELOG.md"
+     target="_blank" rel="noopener noreferrer" aria-label="brAIn {{VERSION}}: what's new (the changelog)"><span class="vertext">v{{VERSION}}</span></a>
 
   <!-- Three tabs: Insights, Ask, Memory. Insights is what brAIn has to
        tell you — the insight cards first, then what needs a decision
@@ -1437,6 +1443,23 @@
           <p id="persOff" class="hint" hidden>Personality is switched off in
             <a class="linkish" href="#" data-open-sec="features">Features</a>: what is
             here is kept, and nothing reads it until it is switched on.</p>
+          <h4 class="sethead">Header</h4>
+          <label for="hdrBrand">What the top bar shows</label>
+          <select id="hdrBrand" class="sel selin">
+            <option value="logo">brAIn logo</option>
+            <option value="name" id="hdrOptName">The assistant's name</option>
+            <option value="custom">Your own</option>
+          </select>
+          <div id="hdrCustom" hidden>
+            <label for="hdrText">Your text</label>
+            <input id="hdrText" class="persname" type="text" maxlength="24" autocomplete="off"
+              placeholder="Up to 24 characters">
+            <label for="hdrFile">Your picture</label>
+            <input id="hdrFile" type="file" accept="image/png,image/jpeg,image/webp">
+            <p class="hint tight">PNG, JPEG or WebP, 256 KB at most. Shown 28px tall.</p>
+            <button type="button" id="hdrClear" class="btn" hidden>Delete picture</button>
+          </div>
+          <div class="row persacts"><button type="button" id="hdrSave" class="btn primary">Save</button></div>
           <label for="persName">Name</label>
           <input id="persName" class="persname" type="text" maxlength="60" autocomplete="off"
             placeholder="brAIn">

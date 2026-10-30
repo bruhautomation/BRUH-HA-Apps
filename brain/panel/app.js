@@ -2608,6 +2608,14 @@ function paintVersion() {
   a.title = pending ? restart : `What changed in brAIn ${v}`;
   a.setAttribute("aria-label", `brAIn ${v}: what's new (the changelog)`
     + (pending ? `. ${restart}` : ""));
+  const bar = $("#barVersion");
+  if (bar) {
+    bar.querySelector(".vertext").textContent = "v" + v;
+    bar.href = a.href;
+    bar.classList.toggle("pending", pending);
+    bar.title = a.title;
+    bar.setAttribute("aria-label", a.getAttribute("aria-label"));
+  }
 }
 
 // What's new: the version opens the release notes INSIDE the panel, read
@@ -2693,7 +2701,7 @@ async function openWhatsNew() {
   prefSet(WHATS_NEW_SEEN, sections[0].version);
 }
 
-$("#versionChip").addEventListener("click", (ev) => {
+for (const link of [$("#versionChip"), $("#barVersion")]) link.addEventListener("click", (ev) => {
   // A modified press keeps the link's own meaning (a new tab, a window).
   if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) return;
   ev.preventDefault();
@@ -12532,6 +12540,7 @@ function syncHomeTab() {
   if (typeof f.morph === "boolean") setSummary("setSumFeatures", featSummary(f));
   if (!on && currentView === "home") switchView("insights");
   applyName();
+  applyHeader();
 }
 
 // ---- the header's tabs, named and drawn the way the house chose ---------
@@ -12801,6 +12810,42 @@ function applyName() {
   speakAll(document.body, was);
 }
 
+// The top bar's mark (⚙ › Personality › Header): the wordmark, the
+// assistant's name, or the house's own text and/or picture. Unset means what
+// the page always did: the name while Personality is on, else the logo. This
+// changes the mark only; how the page refers to brAIn is `applyName`'s.
+function headerMark() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  let mode = h.brand || (named ? "name" : "logo");
+  if (mode === "name" && !named) mode = "logo";
+  const text = String(h.text || "").trim();
+  if (mode === "custom") {
+    if (h.image && text) return { cls: "hb-both", text, image: h.image };
+    if (h.image) return { cls: "hb-img", text: "", image: h.image };
+    if (text) return { cls: "hb-text", text, image: null };
+    mode = named && !h.brand ? "name" : "logo";
+  }
+  if (mode === "name") return { cls: "hb-text", text: f.name, image: null, isName: true };
+  return { cls: "hb-logo", text: "", image: null };
+}
+
+function applyHeader() {
+  const m = headerMark();
+  const root = document.documentElement;
+  for (const c of ["hb-logo", "hb-text", "hb-img", "hb-both"]) root.classList.toggle(c, c === m.cls);
+  const nameEl = $("#brandName");
+  if (nameEl && m.text) nameEl.textContent = m.text;
+  else if (nameEl && !root.classList.contains("named")) nameEl.textContent = "";
+  const img = $("#brandImg");
+  if (img) {
+    if (m.image) { if (img.getAttribute("src") !== m.image) img.setAttribute("src", m.image); } else img.removeAttribute("src");
+    img.hidden = !m.image;
+  }
+}
+
 const SPEAK_SKIP = new Set(["TEXTAREA", "INPUT", "CODE", "PRE", "SCRIPT", "STYLE", "SELECT"]);
 const SPEAK_ATTRS = ["placeholder", "aria-label", "title", "data-tip", "alt"];
 
@@ -12816,7 +12861,7 @@ function speakAll(root, from = "brAIn") {
       return;
     }
     if (node.nodeType !== 1 || SPEAK_SKIP.has(node.tagName) || node.isContentEditable) return;
-    if (node.closest && node.closest(".wordmark")) return;
+    if (node.closest && node.closest(".wordmark, .brandlink")) return;
     for (const a of SPEAK_ATTRS) {
       const v = node.getAttribute && node.getAttribute(a);
       if (v && v.includes(from)) node.setAttribute(a, speakText(v, from));
@@ -12834,7 +12879,7 @@ function speakAll(root, from = "brAIn") {
       if (rec.type === "characterData") {
         const n = rec.target;
         const p = n.parentElement;
-        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea")) {
+        if (n.nodeValue.includes("brAIn") && p && !SPEAK_SKIP.has(p.tagName) && !p.closest("code, pre, textarea, .brandlink")) {
           n.nodeValue = speakText(n.nodeValue, "brAIn");
         }
       } else if (rec.type === "attributes") {
@@ -17733,6 +17778,7 @@ function renderPersonality() {
   // cards quote it (`personality.identity`).
   if ($("#persVoice")) $("#persVoice").value = d.voice || "";
   renderPersonaSections(d.persona, !!d.cut_at_old_limit);
+  renderHeaderChoice();
   $("#persCut").hidden = !d.cut_at_old_limit;
   setPersonaEditing(false);
   const list = $("#persGrowth");
@@ -17749,6 +17795,54 @@ function renderPersonality() {
     list.appendChild(li);
   });
 }
+
+// ---- Header: what the top bar shows --------------------------------------
+function renderHeaderChoice() {
+  const st = state.status || {};
+  const f = st.features || {};
+  const h = st.header || {};
+  const named = !!(f.personality && f.name);
+  const opt = $("#hdrOptName");
+  if (opt) opt.hidden = opt.disabled = !named;
+  const cur = h.brand || (named ? "name" : "logo");
+  $("#hdrBrand").value = cur === "name" && !named ? "logo" : cur;
+  $("#hdrText").value = h.text || "";
+  $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom";
+  $("#hdrClear").hidden = !h.image;
+}
+
+async function saveHeader(extra) {
+  const brand = $("#hdrBrand").value;
+  const text = $("#hdrText").value;
+  await api("api/settings", { method: "PUT", body: JSON.stringify({ header_brand: brand, header_text: text }) });
+  state.status = state.status || {};
+  state.status.header = { ...(state.status.header || {}), brand, text: text.trim().slice(0, 24), ...(extra || {}) };
+  applyHeader();
+  renderHeaderChoice();
+}
+
+$("#hdrBrand").addEventListener("change", () => { $("#hdrCustom").hidden = $("#hdrBrand").value !== "custom"; });
+$("#hdrSave").addEventListener("click", async () => {
+  try { await saveHeader(); toast("Saved."); } catch (e) { toast(e.message); }
+});
+$("#hdrFile").addEventListener("change", async (ev) => {
+  const file = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!file) return;
+  if (file.size > 256 * 1024) { toast("The picture is at most 256 KB."); return; }
+  try {
+    const r = await api("api/header/logo", { method: "PUT", body: file });
+    await saveHeader({ image: r.image });
+    toast("Saved.");
+  } catch (e) { toast(e.message); }
+});
+$("#hdrClear").addEventListener("click", async () => {
+  try {
+    await api("api/header/logo", { method: "DELETE" });
+    await saveHeader({ image: null });
+    toast("Picture deleted.");
+  } catch (e) { toast(e.message); }
+});
 
 $("#persEdit").addEventListener("click", () => setPersonaEditing(true));
 $("#persCancel").addEventListener("click", () => {
