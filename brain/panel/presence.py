@@ -113,7 +113,6 @@ REACTION_WORDS = {"thanks": "Thanks", "not_now": "Not now",
 RETIRE_SCORE = -2.0
 BACKOFF_STREAK = 3
 BACKOFF_PAUSE_S = 7 * 86400
-SCORE_WINDOW = 10
 
 # ---- the queue and the run -----------------------------------------------
 IDEA_TTL_S = 36 * 60 * 60

@@ -115,7 +115,7 @@ class PresenceCase(DispatchCase):
             {"personality": personality_on, "learning_loop": learning_on}),
             encoding="utf-8")
 
-    def queue(self, pid, kind, text, reason="Because they asked."):
+    def queue_idea(self, pid, kind, text, reason="Because they asked."):
         state = self.presence.load()
         self.presence.add_ideas(state, [{"person": pid, "kind": kind,
                                          "text": text, "reason": reason}],
@@ -163,7 +163,7 @@ class TestOffMeansNothing(PresenceCase):
         for on in ((False, True), (True, False)):
             with self.subTest(switches=on):
                 self.switch(*on)
-                self.queue(WREN, "arrival", "Welcome back, Wren.")
+                self.queue_idea(WREN, "arrival", "Welcome back, Wren.")
                 self.left(WREN)
                 self.bus(self.arrive(WREN))
                 self.assertEqual(self.sent, [])
@@ -180,7 +180,7 @@ class TestOffMeansNothing(PresenceCase):
 class TestTheArrivalGreeting(PresenceCase):
 
     def test_an_arrival_is_greeted_once_in_the_assistants_voice(self):
-        self.queue(WREN, "arrival", "Welcome back, Wren — brAIn put the "
+        self.queue_idea(WREN, "arrival", "Welcome back, Wren — brAIn put the "
                                     "porch light on.")
         self.left(WREN)
         self.bus(self.arrive(WREN))
@@ -201,14 +201,14 @@ class TestTheArrivalGreeting(PresenceCase):
         self.assertEqual(touch["delivery"], rows[0]["id"])
         # The tracker flapping is the same arrival; and a fresh greeting
         # queued for later the same day is held by the budget.
-        self.queue(WREN, "arrival", "Hello again, Wren.")
+        self.queue_idea(WREN, "arrival", "Hello again, Wren.")
         self.bus(self.go(WREN), self.arrive(WREN))
         self.assertEqual(len(self.sent), 1)
 
     def test_never_in_the_quiet_hours(self):
         hour = dt.datetime.now(UTC).hour
         self.server._quiet_hours = lambda: (hour, (hour + 1) % 24)
-        self.queue(WREN, "arrival", "Welcome back, Wren.")
+        self.queue_idea(WREN, "arrival", "Welcome back, Wren.")
         self.left(WREN)
         self.bus(self.arrive(WREN))
         self.assertEqual(self.sent, [])
@@ -217,7 +217,7 @@ class TestTheArrivalGreeting(PresenceCase):
     def test_never_to_somebody_elses_phone(self):
         # The notify target is Wren's phone; Ilo is greeted nowhere, since
         # Speak first is off.
-        self.queue(ILO, "arrival", "Welcome back, Ilo.")
+        self.queue_idea(ILO, "arrival", "Welcome back, Ilo.")
         self.left(ILO)
         self.bus(self.arrive(ILO))
         self.assertEqual(self.sent, [])
@@ -229,7 +229,7 @@ class TestTheArrivalGreeting(PresenceCase):
         self.assertEqual(self.sent, [])
 
     def test_less_like_this_on_the_phone_stops_that_kind_at_once(self):
-        self.queue(WREN, "arrival", "Welcome back, Wren.")
+        self.queue_idea(WREN, "arrival", "Welcome back, Wren.")
         self.left(WREN)
         self.bus(self.arrive(WREN))
         less = next(a for a in self.presses() if ".less." in a)
@@ -319,13 +319,13 @@ class TestTheNightlyReflection(PresenceCase):
         for mod in self.copies("presence"):
             self._restore.append((mod, "WINDOWS", mod.WINDOWS))
             mod.WINDOWS = {**mod.WINDOWS, "followup": (0, 24)}
-        self.queue(WREN, "followup", "Wren, the filter you asked about "
+        self.queue_idea(WREN, "followup", "Wren, the filter you asked about "
                                      "arrives Thursday.")
         out = asyncio.run(self.server._presence_pass(time.time()))
         self.assertEqual(out.get("sent"), 1)
         self.assertEqual(len(self.sent), 1)
         # The budget: the second pass the same day sends nothing more.
-        self.queue(WREN, "followup", "Wren, one more thing.")
+        self.queue_idea(WREN, "followup", "Wren, one more thing.")
         asyncio.run(self.server._presence_pass(time.time() + 120))
         self.assertEqual(len(self.sent), 1)
 
