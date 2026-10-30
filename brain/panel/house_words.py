@@ -647,3 +647,244 @@ def calm(text: str, readings_agree: bool) -> str:
     out = _URGENT.sub("", text)
     out = re.sub(r"\s+([,.;!?])", r"\1", out).replace("!", ".")
     return re.sub(r"\s{2,}", " ", out).strip()
+
+
+# ---------------------------------------------------------------------------
+# The household is "you" (#562)
+# ---------------------------------------------------------------------------
+#
+# One house's look conclusions said "The homeowner said…" and "The owner
+# wants…" beside cards saying "You've marked…", and a finding called the
+# dashboard "Morph": three narrators' habits on one screen. The prompts say
+# both (`prompt_kit.ADDRESS`); this is the floor under a model's row for the
+# first — "Morph" stays the prompts' job, because brAIn's own questions about
+# Morph's code name it on purpose (`tests/test_morph_suggestion_yes.py`). It only
+# rewrites what cannot mean anybody else: "the homeowner" anywhere, and "the
+# owner" / "the user" as the subject opening a sentence with a verb after it
+# ("The owner wants…", "The user marked…"), and their possessive ("the
+# owner's" → "your", never "the owner's manual"). "The owner of the car next
+# door" and "a previous owner left it" are somebody else, and stay.
+
+_PRESENT = {
+    "is": "are", "was": "were", "has": "have", "does": "do",
+    "isn't": "aren't", "wasn't": "weren't", "hasn't": "haven't",
+    "doesn't": "don't", "isn’t": "aren’t", "wasn’t": "weren’t",
+    "hasn’t": "haven’t", "doesn’t": "don’t",
+}
+_S_VERBS = frozenset(
+    "says wants asks prefers likes uses keeps needs goes tries knows thinks "
+    "expects plans works leaves sleeps travels marks notes mentions confirms "
+    "dismisses ignores replies answers chooses sets puts turns runs reads "
+    "sees watches wishes feels considers agrees disagrees means opens "
+    "closes starts stops lets gets".split())
+_PAST = frozenset(
+    "said told chose put set wrote thought felt meant knew saw ran got let "
+    "left kept made gave took".split())
+_YOU_ADVERB = (r"(?:(?:also|already|previously|just|still|often|usually|"
+               r"always|never|recently|explicitly|once)\s+)?")
+_HOMEOWNER = r"home[\s-]?owner"
+_OWNER_POSSESSIVE = re.compile(
+    r"\b([Tt])he\s+(?:" + _HOMEOWNER + r"|owner|user)['’]s\b"
+    r"(?!\s+(?:manual|guide|handbook|instructions)\b)")
+_HOMEOWNER_SUBJECT = re.compile(
+    r"\b([Tt])he\s+" + _HOMEOWNER + r"s?\b(\s+" + _YOU_ADVERB + r")?([\w'’]+)?")
+_OWNER_SUBJECT = re.compile(
+    r"(^|(?<=[.!?]\s)|(?<=[.!?]\s\s)|(?<=[\"“(]))The\s+(?:owner|user)\b"
+    r"(\s+" + _YOU_ADVERB + r")([\w'’]+)")
+
+
+def _as_you(verb: str) -> str | None:
+    """``verb`` with "you" as its subject, or None when it is not a verb
+    this floor knows."""
+    low = verb.lower()
+    if low in _PRESENT:
+        return _PRESENT[low]
+    if low in _S_VERBS:
+        if low.endswith("ies"):
+            return verb[:-3] + "y"
+        if re.search(r"(?:ss|sh|ch|x|z|o)es$", low):
+            return verb[:-2]
+        return verb[:-1]
+    if low in _PAST or (low.endswith("ed") and len(low) > 3):
+        return verb
+    return None
+
+
+def _cap(word: str, upper: bool) -> str:
+    return word[:1].upper() + word[1:] if upper else word
+
+
+def _household(text: str) -> str:
+    out = _OWNER_POSSESSIVE.sub(lambda m: _cap("your", m.group(1) == "T"), text)
+
+    def homeowner(m: re.Match) -> str:
+        # Only as the subject of a verb this floor knows: "tell the
+        # homeowner" is an object, and "tell you" is not always a sentence.
+        adverb, word = m.group(2) or "", m.group(3) or ""
+        verb = _as_you(word) if word else None
+        if verb is None:
+            return m.group(0)
+        return _cap("you", m.group(1) == "T") + adverb + verb
+
+    out = _HOMEOWNER_SUBJECT.sub(homeowner, out)
+
+    def owner(m: re.Match) -> str:
+        verb = _as_you(m.group(3))
+        if verb is None:
+            return m.group(0)
+        return m.group(1) + "You" + m.group(2) + verb
+
+    out = _OWNER_SUBJECT.sub(owner, out)
+
+    return out
+
+
+def household(text: str) -> str:
+    """``text`` (a model's, for a person) addressing the household as "you".
+    Quoted words are left alone,
+    and text with nothing to change comes back exactly as it was."""
+    if not isinstance(text, str) or not text:
+        return text
+    try:
+        out = _outside_quotes(text, _household)
+    except Exception:  # noqa: BLE001 — a cleanup must never cost the row
+        return text
+    return out if out != text else text
+
+
+# ---------------------------------------------------------------------------
+# Technical details: kept, but not in the sentence (#563)
+# ---------------------------------------------------------------------------
+#
+# Findings about brAIn's own files showed the owner
+# "/config/.brain/instructions/chat_identity.md line 27", a tool name
+# ("note_personality_change"), a hex error code ("0x0c") and a firmware
+# build string. Each is true and worth keeping for whoever reads the
+# Details, and none is a word a household reads. `technical` takes them
+# out of the sentence (a path or file becomes "a configuration file", a
+# hex code "an error code", a tool "one of brAIn's tools", a build string
+# its version) and hands them back, so the row keeps them in `technical`.
+# A version number ("firmware 1.2 is fine", 2026.10.1) and a clock time
+# ("at 0:30") are a household's words and are never touched.
+
+_PATH = (r"(?<![\w/.])/(?:config|data|opt|usr|etc|var|share|ssl|addons?|"
+         r"media|tmp|homeassistant)(?:/[\w.\-]+)+/?")
+_FILE = (r"(?<![\w/.])[\w-]+(?:\.[\w-]+)*\.(?:md|json|ya?ml|py|sh|txt|log|"
+         r"toml|db|conf|jsonl)\b")
+_LINE = r"(?:\s+(?:at\s+|on\s+)?line\s+\d+|:\d+\b)?"
+_FILE_RE = re.compile(
+    r"(?:\b(?:at\s+|on\s+)?line\s+\d+\s+(?:of|in)\s+)?(?:" + _PATH + "|" + _FILE
+    + r")" + _LINE, re.I)
+_HEX_RE = re.compile(
+    r"\s*\(\s*0x[0-9a-f]{1,16}\s*\)"
+    r"|\b(?:(?:an?\s+)?(?:error|fault|status|result)\s+)?(?:code\s+)?"
+    r"0x[0-9a-f]{1,16}\b", re.I)
+_BUILD_RE = re.compile(
+    r"\b(v?\d+(?:\.\d+){1,3})[-+](?:build[.\-]?\d+[\w.]*|g?[0-9a-f]{7,}|"
+    r"\d{6,}|[a-z]+\d*\.[0-9a-f]{6,})\b", re.I)
+_MCP_RE = re.compile(r"`?\bmcp__\w+`?")
+_TOOL_NAMES: frozenset | None = None
+_TOOL_FILES = ("/opt/ha-mcp-server/ha_mcp_server.py",)
+
+
+def tool_names() -> frozenset:
+    """The MCP server's tool names, read once off its own source (the image
+    ships it at /opt/ha-mcp-server, a checkout beside this panel): one list,
+    never a copy that drifts from the server's. Only snake_case names: a
+    one-word tool ("recall", "habits") is also an everyday word."""
+    global _TOOL_NAMES
+    if _TOOL_NAMES is None:
+        here = __import__("pathlib").Path(__file__).resolve().parent
+        names: set[str] = set()
+        for path in (*_TOOL_FILES,
+                     str(here.parent / "ha-mcp-server" / "ha_mcp_server.py")):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    source = fh.read()
+            except OSError:
+                continue
+            names |= set(re.findall(r'^\s+"name":\s*"([a-z][a-z0-9]*(?:_[a-z0-9]+)+)"',
+                                    source, re.M))
+            if names:
+                break
+        _TOOL_NAMES = frozenset(names)
+    return _TOOL_NAMES
+
+
+def _tool_re():
+    names = tool_names()
+    if not names:
+        return None
+    return re.compile(r"`?(?<![\w.])(?:" + "|".join(
+        sorted(map(re.escape, names), key=len, reverse=True))
+        + r")(?!\w|\.\w)`?")
+
+
+def technical(text: str, files: bool = True) -> tuple[str, list[str]]:
+    """``(text, found)``: ``text`` with the strings only a developer reads
+    taken out of the sentence, and those strings. Text with none comes back
+    exactly as it was, with an empty list. ``files=False`` leaves paths and
+    file names (a look's conclusion, whose file names are held on screen by
+    `tests/test_open_row_look_reason.py`)."""
+    if not isinstance(text, str) or not text:
+        return text, []
+    found: list[str] = []
+
+    def keep(token: str) -> None:
+        token = token.strip().strip("`").strip()
+        if token and token not in found:
+            found.append(token)
+
+    def swap(words: str):
+        def sub(m: re.Match) -> str:
+            keep(m.group(0))
+            lead = m.group(0)[:len(m.group(0)) - len(m.group(0).lstrip())]
+            return lead + words if words else ""
+        return sub
+
+    def build(m: re.Match) -> str:
+        keep(m.group(0))
+        return m.group(1)
+
+    def hexcode(m: re.Match) -> str:
+        whole = m.group(0)
+        keep(re.search(r"0x[0-9a-f]+", whole, re.I).group(0))
+        if whole.strip().startswith("("):
+            return ""
+        lead = whole[:len(whole) - len(whole.lstrip())]
+        return lead + "an error code"
+
+    try:
+        out = _BUILD_RE.sub(build, text)
+        out = _HEX_RE.sub(hexcode, out)
+        out = _MCP_RE.sub(swap("one of brAIn's tools"), out)
+        tools = _tool_re()
+        if tools is not None:
+            out = tools.sub(swap("one of brAIn's tools"), out)
+        if files:
+            out = _FILE_RE.sub(swap("a configuration file"), out)
+    except Exception:  # noqa: BLE001 — a cleanup must never cost the row
+        return text, []
+    if not found:
+        return text, []
+    out = re.sub(r"\s+([,.;:!?])", r"\1", re.sub(r"[ \t]{2,}", " ", out))
+    out = re.sub(r"\(\s*\)", "", out).strip()
+    return out, found
+
+
+# brAIn's own setup — its instructions, personality, identity, voice — as
+# the SUBJECT of a row, narrower than `about_self`: "the voice satellite in
+# the den" is the house's, "brAIn's spoken voice" and "its instructions
+# file" are brAIn's. A row about it beside an open question about it asks
+# the household the same thing twice (`findings_store.add_many`).
+_OWN_SETUP_RE = re.compile(
+    r"\b(?:brAIn['’]s|[Mm]y|its own)\s+(?:own\s+)?(?:\w+\s+)?(?:instructions?|"
+    r"personality|identity|wake word|spoken voice|voice)\b"
+    r"|\b(?:brAIn|the assistant)\s+(?:is\s+)?(?:called|named)\b"
+    r"|\binstructions?\s+(?:file|override)s?\b"
+    r"|\bpersonality\b|\bchat_identity\b|\bnote_personality_change\b")
+
+
+def about_own_setup(*texts) -> bool:
+    """Whether a row's words are about brAIn's own setup."""
+    return any(_OWN_SETUP_RE.search(str(t or "")) for t in texts)

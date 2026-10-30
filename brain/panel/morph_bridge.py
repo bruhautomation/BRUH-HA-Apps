@@ -45,6 +45,7 @@ import time
 from pathlib import Path
 
 import atomic_write
+import textclip
 
 log = logging.getLogger("brain.morph")
 
@@ -358,6 +359,9 @@ def case_row(case: dict, *, todo_text: str, thread: list, ask: str,
     return row
 
 
+ASK_MAX = 300
+
+
 def ask_line(case: dict, situation: str) -> str:
     """What brAIn wants from the person on this card, one line, or "".
 
@@ -381,9 +385,10 @@ def ask_line(case: dict, situation: str) -> str:
         return ""
     if situation == "gap":
         return "Where is it, or what does it do?"
+    # Whole sentences, never a slice that stops mid-word (#560).
     if case.get("fixable") and fix:
-        return f"Fix it? {fix}"[:300]
-    return fix[:300]
+        return textclip.shorten(f"Fix it? {fix}", ASK_MAX)
+    return textclip.shorten(fix, ASK_MAX)
 
 
 def todo_rows(items: list, snoozes: dict, area_of, word=None) -> list:

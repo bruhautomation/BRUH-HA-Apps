@@ -182,6 +182,9 @@ ACTION_SHAPES = ("notify", "edit_file", "call_service", "write_automation")
 # to whoever writes the memory line, never a line written here: `memory.md`
 # has one writer and this store is not it.
 MAX_MEMORY_HINT = 300
+# The strings a model row carried that only a developer reads (#563).
+MAX_TECHNICAL = 8
+MAX_TECHNICAL_CHARS = 200
 
 # The imperative sentence To Do shows for this row ("Replace the battery in
 # the hallway motion sensor."): what needs doing, naming the thing — never
@@ -578,8 +581,16 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
                                    ("text", "claim", "detail", "fix")))
     agree = house_words.readings_agree(row.get("evidence"))
     out = dict(row)
+    # What only a developer reads — a path, a tool's name, a hex code, a
+    # build string — leaves the sentence for `technical`, which the card
+    # shows under Details (#563). Collected off the words as written,
+    # before the passes below drop a sentence that held one.
+    technical = clean_technical(row.get("technical"))
     for key in keys:
         if isinstance(out.get(key), str) and out[key]:
+            for token in house_words.technical(out[key])[1]:
+                if token not in technical:
+                    technical.append(token)
             out[key] = plain(out[key], names, tz)
             # One narrator, one stored answer for its voice.
             out[key] = house_words.self_said(
@@ -599,6 +610,26 @@ def _plain_row(row: dict, keys=("claim", "detail", "fix", "todo_text")) -> dict:
             # may weigh two causes, the step a person carries out may not.
             if key in FORK_REFUSED and house_words.fork(out[key]):
                 out[key] = ""
+            out[key] = house_words.technical(out[key])[0]
+            # The household is "you", the dashboard the dashboard (#562).
+            out[key] = house_words.household(out[key])
+    technical = clean_technical(technical)
+    if technical:
+        out["technical"] = technical
+    return out
+
+
+def clean_technical(value) -> list[str]:
+    """A row's technical details (`house_words.technical`): short strings,
+    at most `MAX_TECHNICAL`, or []."""
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and len(out) < MAX_TECHNICAL:
+            token = item.strip()[:MAX_TECHNICAL_CHARS]
+            if token not in out:
+                out.append(token)
     return out
 
 
@@ -710,8 +741,8 @@ def _publish_state(items: list[dict]) -> None:
                 # byte-for-byte the file the integration has always read.
                 {**{k: s[k] for k in ("ts", "text", "severity", "status",
                                       "entity_id", "fixable", "source_title")},
-                 "detail": textclip.clip(s["detail"], STATE_MAX_PROSE),
-                 "fix": textclip.clip(s["fix"], STATE_MAX_PROSE),
+                 "detail": textclip.shorten(s["detail"], STATE_MAX_PROSE),
+                 "fix": textclip.shorten(s["fix"], STATE_MAX_PROSE),
                  # The presses this row can be given from outside the
                  # panel, `[{action, label}]`, decided by the same table
                  # the feed renders from. Repairs shows this subset and
@@ -813,7 +844,7 @@ def _clean_plan(value) -> dict:
         "needs_you": needs_you,
         "steps": steps,
         "risk": textclip.clip(str(value.get("risk") or "").strip(), MAX_PLAN_RISK),
-        "summary": textclip.clip(str(value.get("summary") or "").strip(), MAX_PLAN_SUMMARY),
+        "summary": textclip.shorten(str(value.get("summary") or "").strip(), MAX_PLAN_SUMMARY),
         "at": int(value.get("at") or 0),
     }
     # The typed half — the ops Apply carries out, re-validated on every
@@ -972,6 +1003,10 @@ def shown_look(record: dict, entry: dict) -> dict:
         # one about the row as it is — which costs no run of its own.
         return {**record, "reason": ""}
     said = house_reason(record["reason"])
+    # A look's conclusion is a model's sentence a person reads: "you", and
+    # no tool name, hex code or build string (#562, #563). A file name stays
+    # (`tests/test_open_row_look_reason.py` holds it on screen).
+    said = house_words.household(house_words.technical(said, files=False)[0])
     if said == record["reason"]:
         return record
     return {**record, "reason": said}
@@ -1031,7 +1066,7 @@ def _clean_triage(value) -> dict:
         return {}
     return {
         "verdict": verdict,
-        "reason": textclip.clip(str(value.get("reason") or "").strip(), triage.MAX_REASON),
+        "reason": textclip.shorten(str(value.get("reason") or "").strip(), triage.MAX_REASON),
         "run_id": str(value.get("run_id") or "").strip()[:64],
         "at": int(value.get("at") or 0),
         # Set when a person pressed "Bring it to the front" on a held row.
@@ -1389,7 +1424,7 @@ def _case_fields(entry: dict) -> dict:
     # literal True, so nothing on the wire can set it by being truthy.
     if entry.get("informational") is True:
         out["informational"] = True
-    claim = textclip.clip(str(entry.get("claim") or "").strip(), MAX_CLAIM)
+    claim = textclip.shorten(str(entry.get("claim") or "").strip(), MAX_CLAIM)
     if claim:
         out["claim"] = claim
     confidence = entry.get("confidence")
@@ -1409,6 +1444,9 @@ def _case_fields(entry: dict) -> dict:
     hint = textclip.clip(str(entry.get("memory_hint") or "").strip(), MAX_MEMORY_HINT)
     if hint:
         out["memory_hint"] = hint
+    technical = clean_technical(entry.get("technical"))
+    if technical:
+        out["technical"] = technical
     investigation = entry.get("investigation")
     if isinstance(investigation, dict):
         run_id = str(investigation.get("run_id") or "").strip()[:64]
@@ -1431,8 +1469,8 @@ def _shape(entry: dict) -> dict:
     out = {
         "ts": int(entry.get("ts") or 0),
         "text": textclip.clip(str(entry.get("text") or ""), MAX_TEXT),
-        "detail": textclip.clip(str(entry.get("detail") or ""), MAX_DETAIL),
-        "fix": textclip.clip(str(entry.get("fix") or ""), MAX_FIX),
+        "detail": textclip.shorten(str(entry.get("detail") or ""), MAX_DETAIL),
+        "fix": textclip.shorten(str(entry.get("fix") or ""), MAX_FIX),
         # Whose sentence `fix` is: "" for the rule's own, "triage" for the
         # run that looked at the row before it was shown, "chat" for a
         # conversation the homeowner had about it. The card says which.
@@ -1811,8 +1849,8 @@ def coerce(obj: dict) -> dict | None:
     severity = str(obj.get("severity") or "").strip().lower()
     entry = {
         "text": text,
-        "detail": textclip.clip(detail, MAX_DETAIL),
-        "fix": textclip.clip(str(obj.get("fix") or "").strip(), MAX_FIX),
+        "detail": textclip.shorten(detail, MAX_DETAIL),
+        "fix": textclip.shorten(str(obj.get("fix") or "").strip(), MAX_FIX),
         "severity": severity if severity in SEVERITIES else "warning",
         # absent means fixable; only an explicit false means hands required
         "fixable": obj.get("fixable", True) is not False,
@@ -2374,6 +2412,15 @@ def quotes_other_counts(sentence, detail) -> bool:
     return False
 
 
+def _asks_about_own_setup(row: dict) -> bool:
+    """Whether ``row`` is an open question to the household about brAIn's
+    own setup: `self_care`'s, or any question whose words are about it."""
+    if row.get("kind") != "question" or row.get("status") not in CROSS_FOLD_STATUSES:
+        return False
+    return row.get("source") == "self_care" or house_words.about_own_setup(
+        row.get("text"), row.get("claim"))
+
+
 @_mutates
 def add_many(objs: list[dict]) -> list[dict]:
     """Record a batch of wire-shaped findings in ONE read and ONE write.
@@ -2415,6 +2462,10 @@ def add_many(objs: list[dict]) -> list[dict]:
     lane_tripped = {str(f.get("entity_id") or "") for f in items
                     if f.get("source") == SAFETY_LANE_SOURCE
                     and f.get("entity_id")}
+    # An open question to the household about brAIn's own setup (its
+    # instructions, personality, voice): a model's row about the same is
+    # that question asked twice, and is folded into it (#563).
+    own_question = any(_asks_about_own_setup(f) for f in items)
     held: list[tuple[int, str]] = []
     created = []
     refreshed = False
@@ -2435,6 +2486,12 @@ def add_many(objs: list[dict]) -> list[dict]:
             entry.update(care)
         if entry is None:
             continue
+        if (own_question and not care and _model_written(entry.get("source"))
+                and house_words.about_own_setup(*(entry.get(k) for k in (
+                    "text", "claim", "detail", "fix")))):
+            continue
+        if _asks_about_own_setup(entry):
+            own_question = True
         if (_sweepable(entry, None) and is_drop_report(entry)
                 and says_recovered(entry.get("detail"))):
             # Its own detail says the trouble has stopped: a card titled as
@@ -2617,7 +2674,7 @@ def add_case(row: dict, *, run_id: str = "", when: float | None = None) -> dict 
         ("claim", "detail", "fix", "todo_text")
         if str(row.get("source") or "") in SUBJECT_FOLD_EXCLUDED
         else ("claim", "detail", "fix", "text", "todo_text")))
-    claim = textclip.clip(str(row.get("claim") or "").strip(), MAX_CLAIM)
+    claim = textclip.shorten(str(row.get("claim") or "").strip(), MAX_CLAIM)
     if not claim:
         return None
     stamp = int(when if when is not None else time.time())
@@ -2679,7 +2736,7 @@ def refine(ts: int, case: dict, run_id: str = "",
             return None
         merged = {**entry, **{k: case[k] for k in (
             "claim", "kind", "confidence", "stakes", "actions",
-            "memory_hint") if case.get(k) not in (None, "", [])}}
+            "memory_hint", "technical") if case.get(k) not in (None, "", [])}}
         evidence = list(case.get("evidence") or []) + list(
             entry.get("evidence") or [])
         merged["evidence"] = evidence
@@ -2688,10 +2745,10 @@ def refine(ts: int, case: dict, run_id: str = "",
         entry.update(_case_fields(merged))
         detail = str(case.get("detail") or "").strip()
         if detail:
-            entry["detail"] = textclip.clip(detail, MAX_DETAIL)
+            entry["detail"] = textclip.shorten(detail, MAX_DETAIL)
         fix = str(case.get("fix") or "").strip()
         if fix:
-            entry["fix"] = textclip.clip(fix, MAX_FIX)
+            entry["fix"] = textclip.shorten(fix, MAX_FIX)
             entry["fix_by"] = "resident"
         # And the To Do sentence, in the words of the run that looked.
         todo = clean_todo_text(case.get("todo_text"))
@@ -2759,7 +2816,7 @@ def hold_after_look(ts: int, reason: str, run_id: str = "",
             said = ""
         entry["triage"] = _clean_triage({
             "verdict": "held",
-            "reason": textclip.clip(said, triage.MAX_REASON),
+            "reason": textclip.shorten(said, triage.MAX_REASON),
             "run_id": run_id,
             "at": int(when if when is not None else time.time()),
             "wrote_fix": False, "v": triage.LOOK_VERSION})
@@ -3975,7 +4032,7 @@ def set_fix(ts: int, fix: str, by: str) -> dict | None:
     """
     # Every author on `FIX_AUTHORS` is a model, so its sentence is stored
     # in the house's words.
-    fix = textclip.clip(plain(str(fix or "").strip()), MAX_FIX)
+    fix = textclip.shorten(plain(str(fix or "").strip()), MAX_FIX)
     if (not fix or by not in FIX_AUTHORS or house_words.placeholder(fix)
             or house_words.fork(fix)):
         return None
@@ -4173,7 +4230,7 @@ def annotate(ts: int, line: str) -> dict | None:
             continue
         detail = str(entry.get("detail") or "").strip()
         merged = f"{detail} {line}".strip() if detail else line
-        entry["detail"] = textclip.clip(merged, MAX_DETAIL)
+        entry["detail"] = textclip.shorten(merged, MAX_DETAIL)
         _write(items)
         return _shape(entry)
     return None

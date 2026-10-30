@@ -6228,6 +6228,10 @@ input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-of
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .qplan .qfixtext { -webkit-line-clamp: unset; display: block; }
+/* Opening Details opens the card: the account and the step it clamps above
+   are read whole there, so no field is only ever seen cut (#560). */
+.qcard:has(> details.qdetails[open]) > .card-body,
+.qcard:has(> details.qdetails[open]) .qfixtext { -webkit-line-clamp: unset; display: block; }
 .qplan .findsteps { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-body); line-height: var(--lh-body); }
 .qplan .findrisk, .qcard .qundoline {
   margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2);
@@ -6238,6 +6242,7 @@ p.qplanline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body);
 .qdline { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--ink-2); }
 .qdlabel { font-size: var(--fs-meta); font-weight: 600; color: var(--ink-3); margin-right: var(--sp-2); }
 .qdid { font-size: var(--fs-meta); color: var(--ink-3); overflow-wrap: anywhere; }
+.qtechlist { margin: 0; padding-left: var(--sp-5); }
 .qdpre { margin: 0; font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
 .qerror { margin: 0; font-size: var(--fs-body); line-height: var(--lh-body); color: var(--serious-ink); }
 .qtidylist { display: grid; gap: var(--sp-2); }

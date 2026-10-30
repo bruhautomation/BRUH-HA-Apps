@@ -6598,6 +6598,21 @@ function caseDetailsBody(box, row) {
   }
   const seen = triageLine(caseTriageRow(row));
   if (seen) box.appendChild(seen);
+  qTechnical(box, row.technical);
+}
+
+// The paths, tool names and codes a model wrote, taken out of the card's
+// sentences and kept here, under Details, for whoever wants them (#563).
+function qTechnical(box, items) {
+  if (!(items || []).length) return;
+  qDetailLine(box, "Technical details", " ");
+  const list = el("ul", "qtechlist");
+  items.slice(0, 8).forEach((t) => {
+    const li = el("li", null);
+    li.appendChild(el("code", "qdid", String(t)));
+    list.appendChild(li);
+  });
+  box.appendChild(list);
 }
 
 // A case in the shape `triageLine` reads.
@@ -7148,6 +7163,7 @@ function makeLooseFinding(f) {
   if (f.entity_id) more.appendChild(el("code", "qdid", f.entity_id));
   const seen = triageLine(f);
   if (seen) more.appendChild(seen);
+  qTechnical(more, f.technical);
   card.appendChild(more);
   const actions = el("div", "card-actions");
   const btns = [];
