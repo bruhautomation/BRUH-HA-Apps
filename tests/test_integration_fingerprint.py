@@ -622,6 +622,53 @@ class TestCardsFollowTheirFile(unittest.TestCase):
         self.assertIsNone(module._cards_url(tmp / "missing.js", "/x"))
 
 
+class TestBambuCardRetryRunsOnTheLoop(unittest.TestCase):
+    """The card retry handed `async_call_later` a plain lambda that called
+    `hass.async_create_task`. Core runs a plain function in the executor, so
+    that was a call off the event loop. The retry is a coroutine function
+    now (Core awaits it on the loop), cancelled on shutdown."""
+
+    def test_the_retry_is_awaited_on_the_loop_and_cancelled_on_shutdown(self):
+        import inspect
+        import threading
+
+        module = load_stubbed("bruh-bambu-studio")
+        scheduled = []
+
+        class _Job:
+            def __init__(self, target, name=None, *, cancel_on_shutdown=None):
+                self.target, self.cancel_on_shutdown = target, cancel_on_shutdown
+
+        seen = []
+
+        async def register(hass, tries=0):
+            seen.append((tries, threading.current_thread() is threading.main_thread()))
+
+        with mock.patch.object(module, "HassJob", _Job), \
+                mock.patch.object(module, "async_call_later",
+                                  side_effect=lambda hass, delay, job: scheduled.append((delay, job))), \
+                mock.patch.object(module, "_register_card", register):
+            module._schedule_card_retry(_CardHass(), 2)
+            self.assertEqual(1, len(scheduled))
+            delay, job = scheduled[0]
+            self.assertEqual(module.CARD_RETRY_SECONDS, delay)
+            self.assertIsInstance(job, _Job, "a HassJob, so it can carry cancel_on_shutdown")
+            self.assertTrue(job.cancel_on_shutdown)
+            self.assertTrue(inspect.iscoroutinefunction(job.target),
+                            "a plain function would be run in the executor")
+            asyncio.run(job.target(None))
+        self.assertEqual([(3, True)], seen, "the next try, awaited on the loop's thread")
+
+    def test_a_missing_card_schedules_the_retry_this_way(self):
+        module = load_stubbed("bruh-bambu-studio")
+        with mock.patch.object(module, "CARD_FILE", Path(tempfile.gettempdir()) / "bruh-bambu-no-such-card.js"), \
+                mock.patch.object(module, "_schedule_card_retry") as retry:
+            asyncio.run(module._register_card(_CardHass()))
+        retry.assert_called_once()
+        source = (integration_dir("bruh-bambu-studio") / "__init__.py").read_text()
+        self.assertNotIn("lambda _now: hass.async_create_task", source)
+
+
 # ------------------------------------------- the siblings' run.sh ----
 
 @pytest.mark.slow

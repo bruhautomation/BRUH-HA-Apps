@@ -18,7 +18,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.core import HassJob, HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
@@ -231,8 +231,7 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
     url = await hass.async_add_executor_job(_url)
     if url is None:
         if tries + 1 < CARD_RETRY_TRIES:
-            async_call_later(hass, CARD_RETRY_SECONDS,
-                             lambda _now: hass.async_create_task(_register_card(hass, tries + 1)))
+            _schedule_card_retry(hass, tries)
         return
     try:
         from homeassistant.components.frontend import add_extra_js_url
@@ -240,6 +239,18 @@ async def _register_card(hass: HomeAssistant, tries: int = 0) -> None:
         return
     add_extra_js_url(hass, url)
     _CARD["url"] = url
+
+
+def _schedule_card_retry(hass: HomeAssistant, tries: int) -> None:
+    """Look for the card again in a while. The action is a coroutine
+    function, so Core runs it on the event loop: a plain lambda is run in
+    the executor, and `hass.async_create_task` from there is a call off the
+    loop. Cancelled when Home Assistant shuts down."""
+    async def _retry(_now) -> None:
+        await _register_card(hass, tries + 1)
+
+    async_call_later(hass, CARD_RETRY_SECONDS, HassJob(
+        _retry, "bruh_bambu card retry", cancel_on_shutdown=True))
 
 
 # The card URL registered with the frontend. A new card reaches the add-on
