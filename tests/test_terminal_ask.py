@@ -54,6 +54,7 @@ class TestTheWindowOpensWithTheWords(unittest.TestCase):
             "PATH": os.environ["PATH"],
             "BRAIN_TERMINAL_HANDOFF": str(self.handoff),
             "BRAIN_TERMINAL_PROMPT_FILE": str(self.prompt_file),
+            "BRAIN_TERMINAL_SETTINGS_FILE": str(root / "no-settings.json"),
             "BRAIN_PERMISSIONS_FILE": str(root / "no-perms"),
             "BRAIN_PERMS_ENV_FILE": str(root / "no-env"),
             "BRAIN_CLAUDE_RUN": str(self.run),

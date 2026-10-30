@@ -17412,11 +17412,7 @@ function paintContextMap() {
       top.appendChild(el("span", "kctxlabel", p.label));
       top.appendChild(el("span", "kctxsize", ctxSize(p)));
       li.appendChild(top);
-      let about = p.about || "";
-      if (p.only === "chat" && d.memory && d.memory.face !== "chat") {
-        about += " Only in the chat: Ask opens as a terminal here, which has no per-message hook.";
-      }
-      const line = el("p", "kctxabout", about);
+      const line = el("p", "kctxabout", p.about || "");
       if (p.sec === "knowledge") {
         line.appendChild(document.createTextNode(" "));
         const a = el("a", "linkish", "Open the document");

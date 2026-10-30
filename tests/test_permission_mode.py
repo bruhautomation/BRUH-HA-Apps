@@ -506,6 +506,7 @@ class TestTheTerminalStartsWithTheCurrentValue(unittest.TestCase):
             "BRAIN_PERMS_LIB": str(LIB),
             "BRAIN_TERMINAL_HANDOFF": str(root / "no-handoff.json"),
             "BRAIN_TERMINAL_PROMPT_FILE": str(root / "no-prompt.md"),
+            "BRAIN_TERMINAL_SETTINGS_FILE": str(root / "no-settings.json"),
             "BRAIN_TASK_DIR": str(root / "tasks"),
             "CLAUDE_PROJECT_DIR": str(root),
         }
@@ -583,12 +584,20 @@ class TestTheTerminalStartsWithTheCurrentValue(unittest.TestCase):
         return self.log.read_text().splitlines()
 
     def test_the_picker_reads_the_switch_when_a_session_starts(self):
+        """The picker's sessions start through brain-terminal-start now (the
+        chat/terminal parity: the same prompt and settings), which reads the
+        switch as the session starts — the tmux command names no flag, and
+        what that window then runs is the switch's value at that moment."""
+        start = "/usr/local/bin/brain-terminal-start --no-handoff"
         self.file.write_text("bypass\n")
-        self.assertEqual(self._picker("1")[-1], f"claude-run {FLAG}")
+        self.assertEqual(self._picker("1")[-1], start)
+        self.assertEqual(self._start("--no-handoff"), [FLAG])
         self.file.write_text("ask\n")
-        self.assertEqual(self._picker("1")[-1].strip(), "claude-run")
+        self.assertEqual(self._picker("1")[-1], start)
+        self.assertEqual(self._start("--no-handoff"), [])
         self.file.write_text("garbage")
-        self.assertEqual(self._picker("2")[-1].strip(), "claude-run  -c")
+        self.assertEqual(self._picker("2")[-1], f"{start} -c")
+        self.assertEqual(self._start("--no-handoff", "-c"), ["-c"])
 
 
 class ChatCase(unittest.IsolatedAsyncioTestCase):

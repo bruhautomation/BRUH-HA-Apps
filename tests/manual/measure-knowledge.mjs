@@ -1584,7 +1584,7 @@ import context_map
 src = dict(identity='x' * 5200, personality='y' * 310, house_now='z' * 240,
            claude_md='a' * 9000 + '\\n## Learned Home Knowledge\\n' + 'm' * 8000
                      + '\\n## Available Directories\\n',
-           terminal_ui='classic', chat_hook=True, chat_context_chars=1500,
+           context_hook=True, chat_context_chars=1500,
            analyst_tools=['mcp__home-assistant__recall', 'mcp__home-assistant__get_history'],
            mcp_tools=['recall', 'get_history', 'call_service', 'control_light'],
            gather_mode='search', card_rules='r' * 9000, card_memory_cap=3000,
@@ -1660,8 +1660,10 @@ for (const width of WIDTHS) {
     if (!/\d/.test(p.text) && !/nothing/.test(p.text)) note(at, `${p.key} carries no size`);
     if (p.right > width + 0.5) note(at, `${p.key} hangs off the side`);
   }
-  if (!m.parts.some((p) => p.key === 'facts_for_message' && /Only in the chat/.test(p.text))) {
-    note(at, 'a terminal house is not told the per-message facts are the chat\'s');
+  // Both faces of Ask carry the same per-message hook, so the page draws
+  // the facts the same whichever face is saved — no "only in the chat".
+  if (m.parts.some((p) => /Only in the chat|Not wired/.test(p.text))) {
+    note(at, 'the per-message facts are drawn as one face\'s');
   }
   if (m.heads.join('|') !== 'Given at the start|With each message|Looks up while it works') {
     note(at, `the run's headings read ${m.heads.join(', ')}`);

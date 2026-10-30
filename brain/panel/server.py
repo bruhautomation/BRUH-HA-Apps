@@ -22784,6 +22784,15 @@ Severity: {severity}{context}
 You flagged this in my home. Tell me what is actually going on, and say
 plainly whether you think it is really a problem here. {look}"""
 
+# What a discussion in the TERMINAL is told instead of DISCUSS_OFFER: the
+# same "make the change you are asked for", with Claude Code's own prompt
+# where the chat has its approval card, and none of the buttons — the
+# terminal has nothing to draw `offer_resolutions` or a plan on.
+DISCUSS_ACT_TERMINAL = """
+
+If I ask you to change something, make the change here and tell me what you
+changed — Claude Code may ask me first, depending on my settings."""
+
 # What only the conversation in the chat is told — a reply from a phone
 # runs read-only and offers nothing, so it is handed the context above
 # without this.
@@ -22882,9 +22891,11 @@ def _discuss_context(finding: dict) -> tuple[str, bool]:
     return ("\n" + "\n".join(lines) + "\n") if lines else "\n", bool(evidence)
 
 
-def _discuss_prompt(finding: dict, offer: bool = True) -> str:
+def _discuss_prompt(finding: dict, offer: bool = True,
+                    act: bool = False) -> str:
     """The Discuss opener for one finding. ``offer`` is the chat's; a reply
-    typed into a notification runs read-only and offers nothing."""
+    typed into a notification runs read-only and offers nothing; ``act``
+    is the terminal's — told to make a change, offered no buttons."""
     context, has_evidence = _discuss_context(finding)
     entity = finding.get("entity_id") or ""
     if not entity:
@@ -22905,7 +22916,9 @@ def _discuss_prompt(finding: dict, offer: bool = True) -> str:
         entity=entity_line,
         severity=finding.get("severity") or "warning",
         context=context, look=look)
-    return prompt + (DISCUSS_OFFER if offer else "")
+    if offer:
+        return prompt + DISCUSS_OFFER
+    return prompt + (DISCUSS_ACT_TERMINAL if act else "")
 
 
 # Person-facing free text, read on a lock screen. It used to open "You are
@@ -23720,10 +23733,11 @@ async def h_finding_discuss(request: web.Request) -> web.Response:
     finding = _finding_or_404(request)
     if settings_store.load().get("terminal_ui") == "classic":
         # Ask is Claude Code's own terminal: the finding opens there as a new
-        # conversation whose first message is the card. It names no
-        # resolution tool, because the buttons it would offer belong to the
-        # chat renderer; the card's own presses stay on the card.
-        prompt = await asyncio.to_thread(_discuss_prompt, finding, False)
+        # conversation whose first message is the card. It is told to make a
+        # change it is asked for, as the chat is, but names no resolution
+        # tool, because the buttons it would offer belong to the chat
+        # renderer; the card's own presses stay on the card.
+        prompt = await asyncio.to_thread(_discuss_prompt, finding, False, True)
         out = await _open_terminal("", prompt)
         return web.json_response({**out, "finding": finding,
                                   "face": "terminal"})
@@ -26064,19 +26078,59 @@ TERMINAL_PROMPT_FILE = Path(os.environ.get(
     "BRAIN_TERMINAL_PROMPT_FILE", "/data/brain-terminal-prompt.md"))
 
 
+# ...and the same settings the chat's process is spawned with: the
+# per-message context hook (`chat_session.conversation_settings`, the one
+# definition both faces read), the model the chat's picker chose
+# (`eff_chat_model`, which the chat passes as `--model`), and the platform
+# deny-list the chat puts on its argv when it runs without asking.
+# brain-terminal-start passes the file's contents as `--settings` when it
+# parses, and starts without it when it does not.
+# Beside the prompt file unless named: /data in the add-on, and wherever a
+# test pointed the prompt (conftest's sandbox) rather than the machine's /data.
+TERMINAL_SETTINGS_FILE = Path(
+    os.environ.get("BRAIN_TERMINAL_SETTINGS_FILE")
+    or TERMINAL_PROMPT_FILE.parent / "brain-terminal-settings.json")
+
+
+def _terminal_settings() -> dict:
+    """The terminal session's own `--settings`, built from what the chat's
+    spawn is built from."""
+    out = chat_session.conversation_settings()
+    # Always, where the chat adds it only in bypass: a deny the project file
+    # already holds costs nothing when the session asks, and the terminal's
+    # switch is read by the start script, after this file was written.
+    out["permissions"] = {"deny": list(engine.PLATFORM_DENIED)}
+    model = eff_chat_model()
+    if model:
+        out["model"] = model
+    return out
+
+
 def _write_terminal_prompt() -> bool:
-    """Write the terminal's appended prompt. Never raises."""
+    """Write the terminal's appended prompt and its settings. Never raises.
+    Answers for the prompt; the settings file is written beside it."""
     try:
         text = _chat_system_prompt(None)
         if not TERMINAL_PROMPT_FILE.parent.is_dir():
             return False
         atomic_write.write_text(TERMINAL_PROMPT_FILE, text, mode=0o644)
-        return True
+        written = True
     except Exception as exc:  # noqa: BLE001 — a terminal without the
         # appended prompt still has /config/CLAUDE.md; a refusal here must
         # not stop the window opening.
         log.warning("could not write the terminal prompt: %s", exc)
-        return False
+        written = False
+    try:
+        if TERMINAL_SETTINGS_FILE.parent.is_dir():
+            atomic_write.write_text(
+                TERMINAL_SETTINGS_FILE,
+                json.dumps(_terminal_settings(), separators=(",", ":")),
+                mode=0o644)
+    except Exception as exc:  # noqa: BLE001 — a terminal without its
+        # settings is a terminal without the per-message facts, not one
+        # that does not open.
+        log.warning("could not write the terminal settings: %s", exc)
+    return written
 
 
 async def _open_terminal(session_id: str = "", prompt: str = "") -> dict:
@@ -26901,8 +26955,7 @@ def _context_sources() -> dict:
     src["house_now"] = "; ".join(read(_chat_house_lines, []))
     src["claude_md"] = read(lambda: Path(ha_data.CONTEXT_FILE).read_text(
         encoding="utf-8", errors="replace"))
-    src["terminal_ui"] = read(lambda: settings_store.load().get("terminal_ui"))
-    src["chat_hook"] = os.path.isfile(chat_session.CONTEXT_HOOK)
+    src["context_hook"] = bool(chat_session.conversation_settings())
     src["chat_context_chars"] = CHAT_CONTEXT_CHARS
     src["mcp_tools"] = context_map.mcp_tool_names()
     src["analyst_tools"] = list(engine.ANALYST_TOOLS)
@@ -27587,6 +27640,9 @@ async def h_chat_model(request: web.Request) -> web.Response:
         # here — the session's own sentence, which says the same thing.
         raise web.HTTPConflict(reason=_refusal(exc))
     out["chat_model"] = settings.get("chat_model") or ""
+    # The terminal is the same Claude Code: its next session starts on the
+    # model just picked.
+    await asyncio.to_thread(_write_terminal_prompt)
     return web.json_response(out)
 
 
