@@ -183,17 +183,16 @@ def placeholder(text: str) -> str:
 
 # A step that hands the household a choice or a lookup brAIn could have
 # settled itself (#536): "either … or …", "if not, …", "also confirm …",
-# "check whether …", "if asked" / "if needed". A what-to-do is ONE step,
-# already chosen from what brAIn read. Only an unresolved fork: "either way"
-# has settled it, and "check the gutter for leaves" is a step in the world.
+# "if asked". A what-to-do is ONE step, already chosen from what brAIn read.
+# Only an unresolved fork: "either way" has settled it, and "check whether
+# the filter is clogged" or "re-pair it if needed" is a step in the world
+# that only a person can take, so the floor leaves those to the prompts.
 _FORK_RE = re.compile(
     r"\beither\b(?!\s+way\b)[^.;:!?]{2,}?\bor\b"
     r"|\bif\s+(?:not|so|it\s+(?:does|is|did|was)n'?t|that\s+"
     r"(?:does|did)n'?t(?:\s+work)?|that\s+fails)\s*,"
-    r"|\balso\s+(?:confirm|check|verify|make\s+sure|ensure|see)\b"
-    r"|\b(?:confirm|check|verify|see)\s+(?:whether|if)\b"
-    r"|\bif\s+(?:asked|requested|needed|necessary|required|you\s+"
-    r"(?:want|prefer|like|wish))\b"
+    r"|\balso\s+(?:confirm|verify|make\s+sure|ensure)\b"
+    r"|\bif\s+(?:asked|requested|you\s+(?:want|prefer|like|wish))\b"
     r"|\bwhichever\b", re.I)
 
 

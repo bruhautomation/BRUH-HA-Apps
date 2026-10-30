@@ -38,8 +38,7 @@ FORKS = (
      + "is set to 15."),
     "Restart the doorbell; if not, re-add it to the integration.",
     "Put the old schedule back if asked.",
-    "Check whether the porch light's automation is still enabled.",
-    "Turn the dehumidifier back on if needed.",
+    "Turn the dehumidifier back on if you want it drier.",
 )
 ONE_STEP = (
     "Replace the coin-cell battery in the garage freezer thermometer.",
@@ -49,6 +48,8 @@ ONE_STEP = (
     "Move the porch light's schedule to 18:30, after sunset this month.",
     "Nothing is needed: the speaker was switched off at 21:00.",
     "Check the gutter above the back door for leaves.",
+    "Check whether the dryer's lint filter is clogged, and clean it.",
+    "Replace the remote's battery and re-pair it if needed.",
 )
 
 
