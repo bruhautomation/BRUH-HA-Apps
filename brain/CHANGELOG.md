@@ -2,6 +2,12 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.22
+
+### Added
+
+- **The assistant grows, and keeps in touch — gently.** With Personality and the Learning loop both on, once a night it looks back at how the household answered it and writes at most two short notes about how to be (never touching the persona you wrote), and queues a few small ways to keep in touch with each person: a welcome home, a morning or evening check-in, a follow-up on something they said, an occasion from a calendar you shared. A message goes to that person's own phone, or is said aloud in an occupied room when Speak first is on. It is hard-capped: one a day and three a week per person, three a day for the whole house, 08:00–21:00, never in quiet hours or to someone who is away. "Not now" stops it for that person for the day, "Less like this" retires that kind of message, and kinds nobody answers retire themselves. ⚙ › Personality › "How <name> is growing" shows its own notes, the ideas waiting, what it has learned, and every message it sent with the reason, each removable.
+
 ## 4.0.21
 
 ### Added
