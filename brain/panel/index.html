@@ -1465,6 +1465,15 @@
           <p class="hint tight">Ask opens a conversation with brAIn about who it is; what you settle there is added below.</p>
           <h4 class="sethead">How it has grown</h4>
           <ul id="persGrowth" class="persgrowth" aria-label="How brAIn's personality has grown"></ul>
+          <!-- The presence loop (panel/presence.py): what the assistant
+               noted about itself overnight, the small touches it has in
+               mind for each person, and the ones it sent with their
+               reasons. Runs only while Personality and the Learning loop
+               are both on. Its own notes are listed here and not in the
+               list above, so nothing is shown twice. -->
+          <h4 class="sethead" id="presHead">How brAIn is growing</h4>
+          <p id="presWhat" class="hint tight"></p>
+          <div id="presBody" class="presbody" aria-labelledby="presHead"></div>
         </div>
       </section>
 
