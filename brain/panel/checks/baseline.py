@@ -745,12 +745,24 @@ def unusual(snap: dict, now: float) -> list[dict]:
         # vocabulary `base.heater_idle` and `chore.job_done` read), so while
         # it says working the band stands down; idle, finished and "could
         # not tell" are compared exactly as before.
-        state, _since, status = chores.machine_status(house, eid)
+        state, since, status = chores.machine_status(house, eid)
         if state == "working":
             house.gave_up("base.unusual", [{"entity_id": eid}],
                           f"{house.name(status)} says the machine is running "
                           "— a reading that moves with the job is the "
                           "machine working", kind="explained")
+            continue
+        # And the same machine just after it stopped: a hot part takes time
+        # to cool, so a temperature above its band within the cooling time
+        # of "finished" or "idle" is the job's tail, not a fault
+        # (`base.heater_idle` waits the same time before it speaks).
+        if (state == "idle" and since is not None
+                and now - since < HEATER_COOL_S and value > found["median"]
+                and str(attrs.get("device_class") or "") == "temperature"):
+            house.gave_up("base.unusual", [{"entity_id": eid}],
+                          f"{house.name(status)} said the machine finished "
+                          "only a short while ago — a hot part is still "
+                          "cooling", kind="explained")
             continue
         # Dry air beside the room's own dehumidifier is the machine
         # working. Below the band only: damp air beside a running one is

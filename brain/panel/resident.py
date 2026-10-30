@@ -871,7 +871,8 @@ Rules that matter more than anything about style:
   automation-config tools find the rest — and judge it by the sensor and
   threshold THAT automation watches, not a sensor that only shares its
   room. A unit that stayed off while its own trigger never crossed its
-  threshold is working."""
+  threshold, or the room had reached the unit's own set point, is
+  working."""
 
 # The part that applies only when the run was sent a ROW brAIn filed
 # (`refines=`): rewriting it in place, or holding it back. It used to sit
@@ -1175,7 +1176,14 @@ _DID_NOT_RUN_RE = re.compile(
     r"activated?|switch(?:ed)?\s+on|cycled?)\b"
     r"|\bshould\s+have\s+(?:run|turned\s+on|come\s+on|started|kicked\s+in|"
     r"switched\s+on)\b"
-    r"|\bstayed\s+off\b|\bnot\s+running\b", re.I)
+    r"|\bstayed\s+off\b|\bnot\s+running\b"
+    # Idle, standby and broken are the same claim in a power reading's
+    # words: "it sat idle", "it drew only standby power", "may be broken".
+    r"|\b(?:been|is|was|sat|sitting|stayed|remain(?:ed|s)?|went|gone)\s+idle\b(?!-)"
+    r"|\bstopped\s+(?:running|working)\b"
+    r"|\b(?:drew|drawn|drawing|draws?)\s+(?:only\s+)?(?:no|standby)\s+power\b"
+    r"|\b(?:is|was|may\s+be|might\s+be|seems|looks|appears)\s+"
+    r"(?:to\s+be\s+)?broken\b", re.I)
 _ENTITY_IN_WORDS_RE = re.compile(r"\b([a-z_]+)\.([a-z0-9_]+)\b")
 # What a claim may compare an actuator with: a reading.
 READING_DOMAINS = frozenset({"sensor", "binary_sensor", "weather"})
@@ -1205,10 +1213,88 @@ def drivers_of(automations, house) -> dict[str, list[dict]]:
         if conditions:
             reads |= set(house.entity_refs(conditions))
         alias = str(cfg.get("alias") or cfg.get("id") or "an automation")[:80]
-        row = {"alias": alias, "reads": sorted(reads - acts)}
+        # What starts it, as bounds a reading can be held against
+        # (`not_due`): None where a time, a state or an event can also.
+        trig, cond = shadow.bounds_of(cfg)
         for eid in sorted(acts):
-            out.setdefault(eid, []).append(row)
+            out.setdefault(eid, []).append({
+                "alias": alias, "reads": sorted(reads - acts),
+                "starts": shadow.starts(cfg, eid),
+                "trigger_bounds": trig, "condition_bounds": cond})
     return out
+
+
+def device_aliases(drivers: dict, house) -> dict[str, str]:
+    """``{entity: actuator}`` for the other entities on a driven device —
+    the plug's power sensor is how a claim about the plug is usually
+    worded, so a claim naming it is a claim about what the plug runs."""
+    out: dict[str, str] = {}
+    for actuator in sorted(drivers or ()):
+        for sib in house.siblings(actuator):
+            if sib not in drivers and sib not in out:
+                out[sib] = actuator
+    return out
+
+
+def not_due(case: dict, drivers: dict, value_of, aliases=None) -> str:
+    """Why a "not running" claim is about a machine that is not due, or "".
+
+    The claim says a device is not running (idle, at standby, did not
+    turn on); it names a device some automation starts — or another
+    entity on its device; and EVERY rule that starts it is waiting on a
+    numeric trigger or condition whose sensor reads on the wrong side of
+    its bound now. Then idle is the rule working, and nothing is filed.
+    A reading nobody could read never holds, and neither does a rule a
+    time, a state or an event can start.
+    """
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
+
+    if not isinstance(case, dict) or not drivers:
+        return ""
+    words = " ".join(str(case.get(k) or "") for k in ("claim", "text",
+                                                       "detail"))
+    if not _DID_NOT_RUN_RE.search(words):
+        return ""
+    aliases = aliases or {}
+    named: list[str] = []
+    seen: dict[str, list[float]] = {}
+    evidence = [r for r in case.get("evidence") or () if isinstance(r, dict)]
+    for row in evidence:
+        found = re.search(r"-?\d+(?:\.\d+)?", str(row.get("value") or ""))
+        if found:
+            seen.setdefault(str(row.get("entity") or ""), []).append(
+                float(found.group(0)))
+    for eid in ([str(case.get("entity_id") or "")]
+                + [str(r.get("entity") or "") for r in evidence]
+                + [m.group(0) for m in _ENTITY_IN_WORDS_RE.finditer(words)]):
+        actuator = eid if drivers.get(eid) else aliases.get(eid, "")
+        if actuator and actuator not in named:
+            named.append(actuator)
+    said = []
+    for actuator in named:
+        rules = [r for r in drivers[actuator] if r.get("starts")]
+        if not rules:
+            continue
+        held = [(r, shadow.waiting(r.get("trigger_bounds"),
+                                   r.get("condition_bounds"), value_of, seen))
+                for r in rules]
+        if not all(bounds for _r, bounds in held):
+            return ""
+        for rule, bounds in held:
+            bits = []
+            for b in bounds[:2]:
+                now = value_of(b["entity"])
+                side = (f"above {b['above']}" if b.get("above") not in (None, "")
+                        else f"below {b['below']}")
+                bits.append(f"{b['entity']} {side}, and it reads "
+                            + (f"{now:g}" if isinstance(now, (int, float))
+                               else "otherwise"))
+            said.append(f"{actuator} is started by “{rule['alias']}” when "
+                        + "; ".join(bits))
+    if not said:
+        return ""
+    return textclip.clip("; ".join(said) + " — so it is not due to run",
+                         MAX_WHY)
 
 
 def ungrounded_did_not_run(case: dict, drivers: dict) -> str:
@@ -1640,4 +1726,5 @@ __all__ = [
     "note_withheld", "parse_case", "parse_dismissal", "parse_first_look",
     "rejudge_due", "tier_for", "watch", "watch_note", "watched",
     "READING_DOMAINS", "drivers_of", "ungrounded_did_not_run",
+    "device_aliases", "not_due",
 ]

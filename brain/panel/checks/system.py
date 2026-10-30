@@ -461,6 +461,14 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
     claimed = {str(e.get("entry_id")) for _, needs in needed_stopped(snap)
                for e in needs}
     rows = [e for e in rows if str(e.get("entry_id")) not in claimed]
+    # An entry the household answered ("expected, those are unplugged") stays
+    # quiet until it changes: loads and fails again after the answer, and it
+    # is asked about once more.
+    house = House(snap)
+    rows = [e for e in rows
+            if not house.answered_since(f"entry:{e.get('entry_id')}",
+                                        "sys.entry_failed",
+                                        e.get("failing_since"))]
     if not rows:
         return []
     groups: dict[str, list[str]] = {}
@@ -490,6 +498,9 @@ def entry_failed(snap: dict, now: float) -> list[dict]:
         "severity": "serious",
         "fixable": False,
         "entity_id": "",
+        # Each entry, so a Wrong is stored against it and not against the
+        # sentence (`entry:` like `device:`, left out of the card's list).
+        "items": [f"entry:{e.get('entry_id')}" for e in rows],
     }]
 
 

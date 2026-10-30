@@ -1556,6 +1556,8 @@ def _shape(entry: dict) -> dict:
     wake = clean_items(entry.get("snooze_wake"))
     if wake and int(entry.get("snoozed_until") or 0):
         out["snooze_wake"] = wake
+    if entry.get("earlier_answer") and not int(entry.get("snoozed_until") or 0):
+        out["detail"] = (out["detail"] + " " + EARLIER_ANSWER).strip()
     out.update(_subject_fields(entry))
     # brAIn's own upkeep (`self_care`): the instruction line its Yes takes
     # out. Absent on every other row.
@@ -3214,7 +3216,7 @@ def elevate(ts: int) -> dict | None:
 
 
 @_mutates
-def snooze(ts: int, until: int, wake=None) -> dict | None:
+def snooze(ts: int, until: int, wake=None, worse=None) -> dict | None:
     """Take a finding off the list until ``until`` (epoch seconds).
 
     Deliberately does NOT touch the status. "Remind me later" and "not a
@@ -3226,12 +3228,25 @@ def snooze(ts: int, until: int, wake=None) -> dict | None:
     return ends the snooze early (`wake_returned`) — the "I'm fixing it"
     snooze, which is over the moment the thing it is about reports again;
     any other snooze clears it.
+
+    ``worse`` (``{"below": 10}``) is the other early end, for "it's on my
+    list, don't remind me": the card stays away for the whole period unless
+    the thing gets clearly worse (`wake_worse`) — a reading at or under
+    ``below``, or the device going unavailable.
     """
     items = _load()
     for entry in items:
         if int(entry.get("ts") or 0) != ts:
             continue
         entry["snoozed_until"] = max(0, int(until))
+        if isinstance(worse, dict) and until > 0 and worse.get("entities"):
+            entry["snooze_worse"] = {
+                "entities": clean_items(worse["entities"]),
+                "below": worse.get("below"), "from": {}}
+        else:
+            entry.pop("snooze_worse", None)
+        if until <= 0:
+            entry.pop("earlier_answer", None)
         wake = clean_items(wake) if wake and until > 0 else []
         if wake:
             entry["snooze_wake"] = wake
@@ -3283,6 +3298,70 @@ def wake_returned(states, now: float | None = None) -> list[dict]:
         kept.append(entry)
     if changed:
         _write(kept)
+    return touched
+
+
+# How far under where it stood when the card went to sleep a reading must
+# fall before "I'll handle it" is no longer enough. A reading that wobbles a
+# point or two is the same battery.
+WORSE_DROP = 3
+EARLIER_ANSWER = ("You said you would handle this, and it has got worse "
+                  "since.")
+
+
+def _numeric(state) -> float | None:
+    try:
+        return float(str(state).strip().rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+
+
+@_mutates
+def wake_worse(states, now: float | None = None) -> list[dict]:
+    """End the "I'll handle it" snoozes whose thing got clearly worse.
+
+    ``states`` is the snapshot a checks pass already fetched. A row asleep
+    with `snooze_worse` is woken when one of its entities reads at or under
+    the row's ``below`` (and at least `WORSE_DROP` under where it stood on
+    the first pass after the answer), or goes unavailable having been
+    reporting. Otherwise it sleeps on. A woken row carries
+    `EARLIER_ANSWER` in its detail, so the card says the answer was heard.
+    """
+    if not isinstance(states, dict) or not states:
+        return []
+    now = time.time() if now is None else now
+    items = _load()
+    touched, changed = [], False
+    for entry in items:
+        worse = entry.get("snooze_worse")
+        if not isinstance(worse, dict) \
+                or float(entry.get("snoozed_until") or 0) <= now:
+            continue
+        base = worse.setdefault("from", {})
+        hit = False
+        for eid in clean_items(worse.get("entities")):
+            st = states.get(eid)
+            raw = str(st.get("state") or "").lower() if isinstance(st, dict) else ""
+            if eid not in base:
+                base[eid] = raw
+                changed = True
+            if raw in ("unavailable", "unknown", ""):
+                # Only a device that was reporting has "gone".
+                hit = hit or base[eid] not in ("unavailable", "unknown", "")
+                continue
+            level, was = _numeric(raw), _numeric(base[eid])
+            below = worse.get("below")
+            if level is not None and isinstance(below, (int, float)) \
+                    and level <= below \
+                    and (was is None or level <= was - WORSE_DROP):
+                hit = True
+        if hit:
+            entry["snoozed_until"] = 0
+            entry.pop("snooze_worse", None)
+            entry["earlier_answer"] = EARLIER_ANSWER
+            touched.append(_shape(entry))
+    if changed or touched:
+        _write(items)
     return touched
 
 
@@ -3389,6 +3468,15 @@ def _remember_settled(shaped: dict, kind: str, when: int = 0,
         **({"items": clean_items(shaped.get("items"))}
            if clean_items(shaped.get("items")) else {}),
     })
+    # A row that names config entries (`entry:<id>`) keeps one text however
+    # many entries it is about, and each answer replaces the entry above:
+    # the entries answered before stay answered.
+    if prior is not None and kind == "ignored":
+        old = [i for i in clean_items(prior.get("items"))
+               if i.startswith("entry:")]
+        new = clean_items(ledger[-1].get("items"))
+        if old and any(i.startswith("entry:") for i in new):
+            ledger[-1]["items"] = clean_items(new + old)
     _write_settled(ledger[-MAX_SETTLED:])
 
 
@@ -3422,6 +3510,9 @@ def answered_checks() -> dict[str, dict[str, dict]]:
             row = out.setdefault(subject, {}).setdefault(
                 check, {"wrong": 0, "notes": []})
             row["wrong"] += wrong
+            # When it was last answered, for an answer that holds only
+            # until the thing changes (`House.answered_since`).
+            row["at"] = max(int(row.get("at") or 0), int(e.get("ts") or 0))
             if note and note not in row["notes"]:
                 row["notes"].append(note)
     return out

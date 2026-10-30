@@ -2,6 +2,21 @@
 
 All notable changes to **brAIn**, newest first. This project adheres to [Semantic Versioning](https://semver.org).
 
+## 4.0.19
+
+### Fixed
+
+- **"It's on my to-do list" on a low-battery card comes back only when it matters.** The card stays away for the month, and returns early only if the battery drops to 10% or below and a few points further, or the device stops answering; when it returns it says you already said you would handle it (#565).
+- **An answer on a failed-setup or unplugged-plug card holds until things change.** Answering the "did not finish setting up" card is kept against that integration until it fails again, and an answer about an unplugged plug is kept while it stays unplugged. Before the overnight check says scenes still use a missing plug, it checks the plug is still missing (#559).
+- **A machine that has just finished is not reported as unusually hot while it cools.** Within the first 45 minutes after a job, a temperature above its usual range on a machine with its own status is not filed; long after, or below its range, it still is (#564).
+
+## 4.0.18
+
+### Fixed
+
+- **A machine an automation starts is not called idle or broken while it is waiting.** Before brAIn says a dehumidifier (or any device an automation switches on at a reading) is not running, it reads the automation's sensor and threshold and what that sensor says now; while the threshold is not met, nothing is filed, and the dehumidifier chore says nothing either. Once the sensor passes the threshold and the machine stays off, it is still reported (#558).
+- **brAIn does not ask what the house already says.** A "where is…" question about something that already has a room, and a "how is it disarmed / unlocked / opened" question that an automation already answers, are not asked, by the house book or by an investigation. A question nothing in the house answers is still asked (#561).
+
 ## 4.0.17
 
 ### Changed

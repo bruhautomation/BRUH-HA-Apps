@@ -749,9 +749,20 @@ DRY_STOPPED_H = 3.0
 DRY_MARGIN = 5.0
 
 
+def _reading(house: House):
+    """`value_of` over the pass's states: a number, or None."""
+    def value_of(eid: str):
+        try:
+            return float((house.states.get(eid) or {}).get("state"))
+        except (TypeError, ValueError):
+            return None
+    return value_of
+
+
 def dehumidifier(snap: dict, now: float) -> list[dict]:
     """Dehumidifiers at standby in a room damper than they run at."""
     import appliances  # noqa: PLC0415
+    import shadow  # noqa: PLC0415 — panel-local, a leaf
 
     store = snap.get("appliances") or {}
     shapes = store.get("entities") or {}
@@ -780,6 +791,19 @@ def dehumidifier(snap: dict, now: float) -> list[dict]:
             continue
         plug = next((o for o in switches
                      if (house.states.get(o) or {}).get("state") == "on"), "")
+        # The automation that starts it decides when it should run, off its
+        # own sensor and threshold; while that reading is on the wrong side
+        # of it, standby is the rule working, whatever this room reads.
+        waits = next((w for w in (shadow.not_due(snap.get("automations"), a,
+                                                 _reading(house))
+                                  for a in [eid] + house.siblings(eid)) if w),
+                     None)
+        if waits:
+            alias, bounds = waits[0]
+            house.gave_up("chore.dehumidifier", [{"entity_id": eid}],
+                          f"“{alias}” starts it on {bounds[0]['entity']}, "
+                          "which is not past its threshold", kind="explained")
+            continue
         points = recent.get(eid) or []
         reading = appliances.state_at(shape, points, now)
         if reading.get("state") not in (appliances.IDLE, appliances.FINISHED):
