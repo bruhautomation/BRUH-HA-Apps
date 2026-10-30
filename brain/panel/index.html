@@ -1322,16 +1322,20 @@
           <p class="hint tight">How Ask opens. ⋯ on Ask switches it too.</p>
           <label for="setChatSessions">Conversations kept running at once</label>
           <select id="setChatSessions" class="sel selin">
+            <option value="">No limit (default)</option>
             <option value="1">1 — one at a time</option>
             <option value="2">2</option>
-            <option value="3">3 (default)</option>
+            <option value="3">3</option>
             <option value="4">4</option>
-            <option value="5">5</option>
             <option value="6">6</option>
             <option value="8">8</option>
+            <option value="12">12</option>
+            <option value="16">16</option>
+            <option value="24">24</option>
+            <option value="32">32</option>
           </select>
-          <p class="hint tight">You can have as many conversations as you like; this is how many
-            stay running.</p>
+          <p class="hint tight">With no limit every conversation can be working at once. When
+            memory runs short brAIn puts the quietest idle one to sleep; a message wakes it.</p>
         </div>
       </section>
 

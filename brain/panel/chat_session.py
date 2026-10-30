@@ -52,6 +52,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -67,6 +68,8 @@ import journal
 import permission_mode
 import settings_store
 import textclip
+
+log = logging.getLogger("brain.chat")
 
 # Where the chat runs. /config so the project's settings.local.json (the
 # permission set) and CLAUDE.md (the description of this house) both apply —
@@ -99,10 +102,21 @@ ATTACHED_FILE = ".attached"
 # How many CLI processes the chat may hold at once. Not a config.yaml
 # option: it is a panel setting (``chat_max_sessions``), because it is the
 # sort of number somebody changes while looking at the chat and not the
-# sort that wants a restart.
-DEFAULT_MAX_SESSIONS = 3
+# sort that wants a restart. **None is the default and means no limit**:
+# every conversation may be live and busy at once, and memory — not a
+# count — is what puts an idle one to sleep (``MEM_FLOOR_MB`` below). A
+# number is only ever a person's own choice.
+DEFAULT_MAX_SESSIONS = None
 MIN_SESSIONS = 1
-MAX_SESSIONS = 8
+MAX_SESSIONS = 32
+
+# The memory floor that replaces a count. Below this much MemAvailable,
+# opening another process first puts the least recently active IDLE ones to
+# sleep (stopped, reopened with --resume on their next message) until the
+# box is back above it. A busy one is never touched; with nothing idle the
+# new one starts anyway and the log says memory is short.
+MEM_FLOOR_MB = int(os.environ.get("BRAIN_CHAT_MEM_FLOOR_MB", "600") or 600)
+MEMINFO = os.environ.get("BRAIN_MEMINFO", "/proc/meminfo")
 
 # A session id becomes a filename, so it is checked rather than trusted —
 # the resume route takes one off the wire. Claude Code's are UUIDs.
@@ -232,14 +246,34 @@ def _read_attached() -> str | None:
     return value if safe_id(value) else None
 
 
-def max_sessions() -> int:
-    """The cap on live processes, clamped to something a Pi can hold."""
+def max_sessions() -> int | None:
+    """The person's cap on live processes, or None for no limit.
+
+    Anything that is not a number in range — absent, null, a hand-typed 0
+    or 99 — is the default, which is no limit: memory is what puts an idle
+    conversation to sleep, never a count nobody chose.
+    """
     try:
-        value = int(settings_store.load().get("chat_max_sessions")
-                    or DEFAULT_MAX_SESSIONS)
-    except (TypeError, ValueError):
-        value = DEFAULT_MAX_SESSIONS
-    return max(MIN_SESSIONS, min(MAX_SESSIONS, value))
+        value = settings_store.load().get("chat_max_sessions")
+    except (OSError, ValueError):
+        return DEFAULT_MAX_SESSIONS
+    if isinstance(value, int) and not isinstance(value, bool) \
+            and MIN_SESSIONS <= value <= MAX_SESSIONS:
+        return value
+    return DEFAULT_MAX_SESSIONS
+
+
+def mem_available_mb() -> int | None:
+    """MemAvailable from ``/proc/meminfo`` in MB, or None when unreadable
+    (which is "do not evict on memory", never "memory is short")."""
+    try:
+        with open(MEMINFO, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
 
 
 class SessionCapReached(RuntimeError):
@@ -340,9 +374,17 @@ def row_state_payload(state: str, cap: int | None = None) -> dict:
     """``{state, label, hint}`` for one of ``ROW_STATES``."""
     spec = ROW_STATES.get(state) or ROW_STATES["paused"]
     state = state if state in ROW_STATES else "paused"
+    cap = cap if cap is not None else max_sessions()
+    hint = spec["hint"]
+    if state == "paused_room" and cap is None:
+        # No count to name: with no limit set, only memory pauses one.
+        hint = PAUSED_FOR_MEMORY
     return {"state": state, "label": spec["label"],
-            "hint": spec["hint"].format(cap=cap if cap is not None
-                                        else max_sessions())}
+            "hint": hint.format(cap=cap)}
+
+
+PAUSED_FOR_MEMORY = ("brAIn put this one to sleep while memory was short. "
+                     "Sending picks it back up")
 
 
 # Published context windows. Used ONLY to turn a token count into a
@@ -2543,10 +2585,11 @@ class SessionRegistry:
 
     Three rules make that safe on a box that also runs a house.
 
-    * **The cap is on live PROCESSES** (``chat_max_sessions``, default 3).
-      A conversation with no process is free — it is a transcript and an id
-      the CLI can resume — so what the cap governs is memory and CPU, not
-      how many conversations you may have.
+    * **There is no cap unless a person sets one** (``chat_max_sessions``,
+      default no limit). Every conversation may be live and busy at once;
+      memory (``MEM_FLOOR_MB``) is what puts an IDLE one to sleep. A
+      conversation with no process is free — it is a transcript and an id
+      the CLI can resume.
     * **Eviction takes the least recently active IDLE session.** Never a
       busy one: the entire point of holding several is that an answer being
       written survives you looking somewhere else, and an LRU that could
@@ -2834,35 +2877,70 @@ class SessionRegistry:
             return {"ok": True, "session_id": session.session_id,
                     "attached": True, "spawned": False}
 
+    def _idle_others(self, target: ChatSession) -> tuple[list, list]:
+        others = [s for s in self._sessions if s.alive() and s is not target]
+        return others, [s for s in others if s.state != "busy"]
+
+    async def _evict(self, victim: ChatSession, text: str) -> None:
+        await victim.stop()
+        self._evicted += 1
+        # On the row as well as in the transcript: the notice below is
+        # read only once somebody opens it, and "Paused to make room"
+        # is what tells them, from the list, that opening it is what
+        # picks it back up.
+        now = time.time()
+        victim.meta["evicted_at"] = now
+        if victim.session_id:
+            self._evicted_ids[victim.session_id] = now
+        victim._emit({"type": "notice", "text": text})
+        victim._persist()
+
     async def _make_room(self, target: ChatSession) -> None:
-        """Free a slot for ``target``'s process, or say why there is none."""
-        while True:
-            others = [s for s in self._sessions
-                      if s.alive() and s is not target]
-            cap = max_sessions()
+        """Make way for ``target``'s process.
+
+        Two rules, and only the first can refuse. A cap the PERSON set
+        (``chat_max_sessions``; none by default) is kept the way it always
+        was — the quietest idle one is stopped, and with every live one
+        busy that is the one 409. Then memory: below ``MEM_FLOOR_MB`` the
+        least recently active idle processes are put to sleep until the box
+        is back above it. A busy one is never touched, and with nothing
+        idle the new one starts anyway — refusing a conversation because
+        the others are all working is the limit the owner asked to lose.
+        """
+        cap = max_sessions()
+        while cap is not None:
+            others, idle = self._idle_others(target)
             if len(others) < cap:
-                return
-            idle = [s for s in others if s.state != "busy"]
+                break
             if not idle:
                 raise SessionCapReached(len(others), cap)
+            await self._evict(
+                min(idle, key=lambda s: s.last_activity),
+                "brAIn closed this chat's session to make room for "
+                f"another one — it keeps {cap} alive at once "
+                "(chat_max_sessions in Settings). Claude Code still "
+                "has the conversation: your next message here picks "
+                "it straight back up.")
+        while True:
+            free = mem_available_mb()
+            if free is None or free >= MEM_FLOOR_MB:
+                return
+            others, idle = self._idle_others(target)
+            if not idle:
+                log.warning(
+                    "chat: memory is short (%d MB available, floor %d MB) "
+                    "and all %d open conversations are busy — starting "
+                    "another anyway", free, MEM_FLOOR_MB, len(others))
+                return
             victim = min(idle, key=lambda s: s.last_activity)
-            await victim.stop()
-            self._evicted += 1
-            # On the row as well as in the transcript: the notice below is
-            # read only once somebody opens it, and "Paused to make room"
-            # is what tells them, from the list, that opening it is what
-            # picks it back up.
-            now = time.time()
-            victim.meta["evicted_at"] = now
-            if victim.session_id:
-                self._evicted_ids[victim.session_id] = now
-            victim._emit({"type": "notice", "text":
-                          "brAIn closed this chat's session to make room for "
-                          f"another one — it keeps {cap} alive at once "
-                          "(chat_max_sessions in Settings). Claude Code still "
-                          "has the conversation: your next message here picks "
-                          "it straight back up."})
-            victim._persist()
+            log.info("chat: memory is short (%d MB available, floor %d MB) "
+                     "— putting the quietest idle conversation (%s) to sleep",
+                     free, MEM_FLOOR_MB, victim.session_id or "unnamed")
+            await self._evict(
+                victim,
+                "brAIn put this conversation to sleep while memory was "
+                "short, to keep the house running. Claude Code still has "
+                "it: your next message here picks it straight back up.")
 
     async def open(self, session_id: str, replay: list[dict],
                    spawn: bool = True) -> dict:

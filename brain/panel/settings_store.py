@@ -20,13 +20,16 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     rendered as messages) or "classic" (ttyd + tmux, the
                     character grid). Both drive the same CLI with the same
                     permissions; the difference is entirely presentation.
-  chat_max_sessions — how many chat conversations may hold a live Claude
-                    Code process at once (1-8, default 3). Switching
-                    between conversations stops nothing, so this is the
-                    number of processes the box carries, not the number of
-                    conversations you may have: past it, the least
-                    recently active IDLE one is stopped and reopens with
-                    --resume.
+  chat_max_sessions — an optional limit on how many conversations may hold
+                    a live Claude Code process at once. None (the default)
+                    is no limit: every conversation may be live and busy at
+                    once, and only memory puts an IDLE one to sleep
+                    (chat_session.MEM_FLOOR_MB). A number (1-32) is a
+                    person's own choice: past it, the least recently active
+                    IDLE one is stopped and reopens with --resume. Every
+                    save writes the effective settings back, so a stored 3
+                    from an install that predates "No limit" cannot be
+                    told apart from somebody choosing 3, and is kept.
   capture         — whether every card run writes what the analyst was
                     sent and what it answered to /data/capture, so a
                     prompt change can be scored against real houses. OFF
@@ -147,8 +150,8 @@ OPTION_BOOLS = ("dangerously_skip_permissions",)
 # The chat's live-process cap. A range rather than a free integer for the
 # same reason budget_percent has one: the low end has to leave the chat
 # usable and the high end has to leave the box usable.
-CHAT_SESSIONS_RANGE = (1, 8)
-DEFAULT_CHAT_SESSIONS = 3
+CHAT_SESSIONS_RANGE = (1, 32)
+DEFAULT_CHAT_SESSIONS = None   # no limit
 
 DEFAULTS = {
     # A fresh install has no cards and no schedule. brAIn studies the home
@@ -567,10 +570,12 @@ def save(fields: dict) -> dict:
             clean[key] = value
         elif key == "chat_max_sessions":
             lo, hi = CHAT_SESSIONS_RANGE
-            if not isinstance(value, int) or isinstance(value, bool) \
-                    or not lo <= value <= hi:
+            if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool)
+                    or not lo <= value <= hi):
                 raise ValueError(
-                    f"chat_max_sessions must be an integer {lo}-{hi}")
+                    f"chat_max_sessions must be null (no limit) or an "
+                    f"integer {lo}-{hi}")
             clean[key] = value
         elif key == "thermal_outdoor":
             # None (or "") is "let brAIn rank them".

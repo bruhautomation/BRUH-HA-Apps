@@ -3232,7 +3232,17 @@ function renderSettingsForm(data) {
   $("#setEnabled").checked = data.settings.auto_enabled !== false;
   $("#setCapture").checked = data.settings.capture === true;
   $("#setTerminalUi").value = data.settings.terminal_ui || "chat";
-  $("#setChatSessions").value = String(data.settings.chat_max_sessions || 3);
+  {
+    // Null is "No limit", the default. A number somebody set by hand that
+    // the list does not offer still shows as itself rather than as blank.
+    const cap = data.settings.chat_max_sessions;
+    const sel = $("#setChatSessions");
+    const want = cap ? String(cap) : "";
+    if (want && ![...sel.options].some((o) => o.value === want)) {
+      sel.add(new Option(want, want));
+    }
+    sel.value = want;
+  }
   // Only an explicit true ticks it: a value that arrived missing or
   // malformed is asking, which is what the terminal and the chat will do.
   $("#setSkipPerms").checked = data.settings.dangerously_skip_permissions === true;
@@ -5494,9 +5504,11 @@ $("#setRefreshMode").addEventListener("change", async () => {
 });
 // Applies to the next switch rather than immediately: lowering it does not
 // go round shutting conversations down, it means the next one you open
-// closes the oldest idle one to make room.
-$("#setChatSessions").addEventListener("change", () =>
-  saveSettings({ chat_max_sessions: Number($("#setChatSessions").value) }));
+// closes the oldest idle one to make room. "" is No limit (null).
+$("#setChatSessions").addEventListener("change", () => {
+  const v = $("#setChatSessions").value;
+  saveSettings({ chat_max_sessions: v ? Number(v) : null });
+});
 // One switch with two doors: saving it writes the add-on's own
 // `dangerously_skip_permissions` option, so the Configuration tab moves with
 // it, and the server republishes it to the file a terminal session reads
