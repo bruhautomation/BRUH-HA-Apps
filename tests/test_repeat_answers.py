@@ -160,8 +160,9 @@ class TestDontRemindMe(RouteCase):
         return self.drive(body)
 
     def test_the_words_are_read(self):
-        for said in ("Don't remind me", "It's on my to do list, stop "
-                     "reminding me", "I am aware don't bring this up again",
+        for said in ("Don't remind me",
+                     "It's on my to do list, stop reminding me",
+                     "I am aware don't bring this up again",
                      "I know about it"):
             self.assertTrue(corrections.deferral(said), said)
         for said in ("this sensor is broken", "I need to fix this light",
