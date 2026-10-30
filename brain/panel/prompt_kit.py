@@ -90,8 +90,9 @@ DEVICE_WORDS = (
 
 # A what-to-do hands the household one step brAIn has already chosen, never
 # a fork it could have settled (#536). Held by tests/test_finding_one_step.py
-# in the investigation, the refine and the card contract, and by the floor
-# `house_words.fork` where a model-written row is stored.
+# in the investigation and the refine (the card contract says it in its own
+# short words), and by the floor `house_words.fork` where a model-written row
+# is stored.
 ONE_STEP = (
     "A step is ONE step, already chosen. Never \"either … or …\" with a "
     "step for each, never \"if not, …\", never \"also confirm\" or "

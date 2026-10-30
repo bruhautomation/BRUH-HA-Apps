@@ -32,10 +32,10 @@ import prompt_kit  # noqa: E402
 import resident  # noqa: E402
 
 FORKS = (
-    "Either the boiler's filter is blocked or the pressure has dropped; "
-    "bleed the radiators or top up the pressure.",
-    "Replace the battery in the shed sensor. Also confirm the hub's channel "
-    "is set to 15.",
+    ("Either the boiler's filter is blocked or the pressure has dropped; "
+     + "bleed the radiators or top up the pressure."),
+    ("Replace the battery in the shed sensor. Also confirm the hub's channel "
+     + "is set to 15."),
     "Restart the doorbell; if not, re-add it to the integration.",
     "Put the old schedule back if asked.",
     "Check whether the porch light's automation is still enabled.",
@@ -43,8 +43,8 @@ FORKS = (
 )
 ONE_STEP = (
     "Replace the coin-cell battery in the garage freezer thermometer.",
-    "Re-add the doorbell to its integration; it has been unavailable since "
-    "14:10.",
+    ("Re-add the doorbell to its integration; it has been unavailable since "
+     + "14:10."),
     "Either way the hub is online, so replace the shed sensor's battery.",
     "Move the porch light's schedule to 18:30, after sunset this month.",
     "Nothing is needed: the speaker was switched off at 21:00.",
@@ -133,7 +133,10 @@ class TestThePromptsSayIt(unittest.TestCase):
         self.assertIn("either", rule.lower())
         self.assertIn(rule, resident.INVESTIGATE_SYSTEM)
         self.assertIn(rule, resident.REFINE_SYSTEM)
-        self.assertIn(rule, categories._CARD_CONTRACT)
+        # The card contract is held under a size ceiling, so it carries the
+        # rule in its own short words beside its findings line.
+        self.assertIn('"fix" is ONE chosen step, never "either…or"',
+                      categories._CARD_CONTRACT)
 
 
 if __name__ == "__main__":
