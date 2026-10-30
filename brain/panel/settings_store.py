@@ -27,9 +27,10 @@ the panel's ⚙ dialog edits at runtime — no add-on restart needed:
                     (chat_session.MEM_FLOOR_MB). A number (1-32) is a
                     person's own choice: past it, the least recently active
                     IDLE one is stopped and reopens with --resume. Every
-                    save writes the effective settings back, so a stored 3
-                    from an install that predates "No limit" cannot be
-                    told apart from somebody choosing 3, and is kept.
+                    save before "No limit" wrote the old default 3 back, so
+                    a 3 stored without `chat_max_sessions_v` is read once
+                    as no limit (the next save records the version, and a
+                    3 chosen after that is kept); any other number is kept.
   capture         — whether every card run writes what the analyst was
                     sent and what it answered to /data/capture, so a
                     prompt change can be scored against real houses. OFF
@@ -152,6 +153,13 @@ OPTION_BOOLS = ("dangerously_skip_permissions",)
 # usable and the high end has to leave the box usable.
 CHAT_SESSIONS_RANGE = (1, 32)
 DEFAULT_CHAT_SESSIONS = None   # no limit
+# The version a stored `chat_max_sessions` was saved under. Every save before
+# "No limit" wrote the old default (3) back whether or not anybody chose it,
+# so a 3 with no version is read ONCE as no limit, the owner's decision; the
+# next save writes the version, and a 3 chosen from then on is kept. Any
+# other unversioned number was somebody's choice and is kept as it is.
+CHAT_SESSIONS_VERSION = 2
+OLD_DEFAULT_CHAT_SESSIONS = 3
 
 DEFAULTS = {
     # A fresh install has no cards and no schedule. brAIn studies the home
@@ -195,6 +203,7 @@ DEFAULTS = {
     "dangerously_skip_permissions": None,
     "chat_model": None,
     "chat_max_sessions": DEFAULT_CHAT_SESSIONS,
+    "chat_max_sessions_v": CHAT_SESSIONS_VERSION,
     # How hard brAIn thinks, as one word rather than a model per job. The
     # model plan (model_plan.py) tiers every run — Haiku looks, Sonnet
     # thinks, Opus acts — and this steps the tiers down ("light": cheaper
@@ -369,8 +378,12 @@ def load() -> dict:
     lo, hi = CHAT_SESSIONS_RANGE
     sessions = data.get("chat_max_sessions")
     if isinstance(sessions, int) and not isinstance(sessions, bool) \
-            and lo <= sessions <= hi:
+            and lo <= sessions <= hi \
+            and not (sessions == OLD_DEFAULT_CHAT_SESSIONS
+                     and data.get("chat_max_sessions_v")
+                     != CHAT_SESSIONS_VERSION):
         out["chat_max_sessions"] = sessions
+    out["chat_max_sessions_v"] = CHAT_SESSIONS_VERSION
     try:
         out["occasion_calendars"] = clean_calendars(
             data.get("occasion_calendars"))

@@ -172,6 +172,45 @@ class TestNoLimitByDefault(_RegistryCase):
             self.settings_store.save({"chat_max_sessions": 0})
 
 
+class TestTheOldDefaultIsResetOnce(_RegistryCase):
+    """Every save before "No limit" wrote the old default 3 back, so a 3
+    with no version is read once as no limit; a 3 chosen afterwards stays."""
+
+    def _store(self, data):
+        import json
+        with open(os.environ["BRAIN_SETTINGS_FILE"], "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+
+    def _stored(self):
+        import json
+        with open(os.environ["BRAIN_SETTINGS_FILE"], encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_a_stored_3_from_before_is_no_limit_and_stays_so(self):
+        self._store({"chat_max_sessions": 3, "budget_percent": 40})
+        self.assertIsNone(self.chat_session.max_sessions())
+        # Any later save records the version with the effective value.
+        self.settings_store.save({"budget_percent": 50})
+        self.assertIsNone(self._stored()["chat_max_sessions"])
+        self.assertEqual(self._stored()["chat_max_sessions_v"],
+                         self.settings_store.CHAT_SESSIONS_VERSION)
+        self.assertIsNone(self.chat_session.max_sessions())
+
+    def test_a_3_chosen_after_the_migration_is_kept(self):
+        self._store({"chat_max_sessions": 3})
+        self.settings_store.save({"budget_percent": 50})      # migrated
+        self.settings_store.save({"chat_max_sessions": 3})    # chosen
+        self.assertEqual(self.chat_session.max_sessions(), 3)
+        self.settings_store.save({"budget_percent": 60})
+        self.assertEqual(self.chat_session.max_sessions(), 3)
+
+    def test_any_other_old_number_is_kept(self):
+        self._store({"chat_max_sessions": 5})
+        self.assertEqual(self.chat_session.max_sessions(), 5)
+        self.settings_store.save({"budget_percent": 50})
+        self.assertEqual(self.chat_session.max_sessions(), 5)
+
+
 class TestTheMemoryFloor(_RegistryCase):
 
     def test_meminfo_is_read_in_megabytes(self):
